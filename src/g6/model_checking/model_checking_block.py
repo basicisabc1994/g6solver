@@ -8,7 +8,7 @@ jar missing) is a ``blocked-escalated`` result, never a raised error. Unknown op
 typed input (``G6_E_INPUT_VALIDATION``), so no field can carry code, name a jar or a download, or pass Java an option.
 
 The symbolic ops run Z3 in process and are callable over MCP. :data:`SENSITIVE_OPS` run TLC or SANY, a program that
-runs your spec as you, so the package lists them in ``__g6_sensitive_ops__`` and the registry refuses them over MCP
+runs your spec (inside G6's operating-system boundary where one is ready, elsewhere as you), so the package lists them in ``__g6_sensitive_ops__`` and the registry refuses them over MCP
 unless the person who runs the server lists them in ``G6_MCP_SENSITIVE``; they run from Python
 (``get_registry().invoke(...)``, or :func:`g6.model_checking.tlc_check` and :func:`g6.model_checking.sany_parse`).
 """

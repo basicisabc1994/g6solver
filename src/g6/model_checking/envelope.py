@@ -24,6 +24,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import WarningCard
 from g6.model_checking.schema import ModelCheckResult
 
@@ -99,6 +100,7 @@ TLC_VERDICTS = {"invariant_violated": TLC_INVARIANT_VIOLATED, "property_violated
                 "spec_error": TLC_SPEC_ERROR, "failed": TLC_FAILED, "unrecognised": TLC_UNRECOGNISED}
 
 _ACTIONS = {
+    ISOLATION_UNAVAILABLE: ISOLATION_ACTION,
     VIOLATION: "Read the trace: it starts in an initial state and each step follows the transition. Fix the model or "
                "the invariant, then check again.",
     DEADLOCK: "Read the trace to the state with no successor. Add the step it is missing, or allow it to stay put "

@@ -34,10 +34,10 @@ re-checked on fresh solvers before it is reported.
 - `reachable`: a trace to a state meeting `goal`, or none within the bound.
 - `tlc_check`: TLC's verdict on a TLA+ `spec`, given either `config` text or the fields `specification`,
   `invariants`, `properties` and `constants` (not both), with `check_deadlock` and `workers`, and its counts and
-  trace (sensitive: runs TLC, from the TLA+ tools on Java, as you with no sandbox; a spec can write files through
-  TLC's own modules, such as `Json`).
+  trace (sensitive: runs TLC, from the TLA+ tools on Java, inside G6's operating-system boundary where one is ready
+  and as you elsewhere; a spec can write files through TLC's own modules, such as `Json`).
 - `sany_parse`: SANY's syntax, semantic and level check of `spec`, nothing model-checked (sensitive: runs SANY on
-  Java, as you, with no sandbox).
+  Java, inside G6's boundary where one is ready, as you elsewhere).
 
 ## Reading the result
 

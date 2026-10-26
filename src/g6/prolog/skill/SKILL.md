@@ -11,8 +11,9 @@ by clause and never consulted, so no directive runs; the program and the goal mu
 and every answer is re-checked in a second, fresh SWI-Prolog process.
 
 The restricted syntax is not a security boundary, and neither is SWI-Prolog's sandbox library, which checks the goal as
-an extra layer: SWI-Prolog runs as you. Run programs you do not trust inside your own sandbox, such as a container or a
-virtual machine.
+an extra layer. G6 runs SWI-Prolog inside its operating-system boundary where one is ready (bubblewrap on Linux, an
+AppContainer on Windows); elsewhere SWI-Prolog runs as you. Run programs you do not trust inside your own sandbox, such
+as a container or a virtual machine.
 
 ## When to use it
 
@@ -30,7 +31,7 @@ virtual machine.
 - A program that reads or writes files, prints, changes the database (`assertz/1`), catches errors, uses constraints
   (`dif/2`, a constraint library) or calls a goal it builds while running (`call/1`): the restricted syntax refuses it,
   by design. Run it in your own SWI-Prolog.
-- A program you do not trust, run outside your own sandbox: G6 does not contain it.
+- A program you do not trust, run where G6 has no boundary ready and outside your own sandbox: nothing contains it.
 - SWI-Prolog is not installed and the person running the server has not allowed it: say so, and ask them.
 
 ## Ops
@@ -110,9 +111,9 @@ Composed:
 
 ## Blind spots
 
-- Not a security boundary: the restricted syntax and SWI-Prolog's sandbox library check what a program calls, but
-  SWI-Prolog runs as you, and containing a program you do not trust is your own sandbox's job (a container or a
-  virtual machine).
+- Not a security boundary: the restricted syntax and SWI-Prolog's sandbox library check what a program calls. Where
+  G6 has no operating-system boundary ready, SWI-Prolog runs as you, and containing a program you do not trust is your
+  own sandbox's job (a container or a virtual machine).
 - Not derivable means not derivable from this program under Prolog's closed world, not false: a fact or rule the
   program leaves out makes a true goal fail.
 - The answers are what your program says as SWI-Prolog runs it, depth first. A wrong fact or rule gives a wrong answer

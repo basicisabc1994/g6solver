@@ -23,7 +23,8 @@ for:
    is passed.
 
 A SageMath answer is ``qualified-draft`` (``G6_E_ALGEBRA_SAGE_ANSWER``) and its card says G6 did not re-check it. Both
-ops are sensitive: SageMath is a program that runs on your machine, as you. They run from Python, or over MCP only
+ops are sensitive: SageMath is a program that runs on your machine, inside G6's operating-system boundary where one is
+ready (:mod:`g6.algebra.runner`) and as you elsewhere. They run from Python, or over MCP only
 when the person running the server lists them in ``G6_MCP_SENSITIVE``.
 """
 from __future__ import annotations

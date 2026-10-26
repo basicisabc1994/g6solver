@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """LeanBlock: the registry and MCP door (``g6_invoke``) to g6.lean.
 
-``check_proof``, ``lean_version`` and ``prove`` run Lean, a program that runs the caller's source as you, so the package
+``check_proof``, ``lean_version`` and ``prove`` run Lean, a program that runs the caller's source (inside G6's
+operating-system boundary where one is ready, ``g6.lean.runner``; elsewhere as you), so the package
 lists them in ``__g6_sensitive_ops__`` and the registry refuses them over MCP unless the person who runs the server
 lists them in ``G6_MCP_SENSITIVE``. ``prove`` and ``sketch`` use the model caller the block was built with
 (``LeanBlock(llm=...)``, from the person's own code, or over MCP the model the person configured in their key file);

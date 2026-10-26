@@ -46,7 +46,8 @@ A pass is ``qualified-draft`` (``G6_E_LEAN_PROOF_CHECKED``), never ``verified``:
 exactly this statement, using only the axioms listed, and whether the statement says what you mean, with the
 definitions and instances it uses from your file, is for a person to inspect. A failure is ``blocked-escalated`` with
 Lean's messages (file, line, column and text) on your own line numbers. ``lean_version`` reads ``lean --version``.
-Both ops are sensitive, because Lean runs your source as you: callable from Python, and over MCP only when the person
+Both ops are sensitive, because Lean runs your source (inside G6's operating-system boundary where one is ready,
+elsewhere as you): callable from Python, and over MCP only when the person
 who runs the server lists them in ``G6_MCP_SENSITIVE``. ``ops`` and ``help`` answer over MCP. Codes are ``G6_E_LEAN_*``.
 
 Proof search (:mod:`g6.lean.search`, the archive's ``lean_prover`` rewritten): ``prove`` writes the goal itself from

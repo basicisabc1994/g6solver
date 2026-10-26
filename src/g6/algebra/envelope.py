@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from g6.algebra.schema import AlgebraResult
+from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import WarningCard
 
 _P = "G6_E_ALGEBRA_"
@@ -72,6 +73,7 @@ INSTALL_SAGE = (f"SageMath is a separate program under the GPL, so G6 never inst
                 f"yourself as sagemath.org describes, then put sage on PATH or set {SAGE_ENV} to the sage program.")
 
 _ACTIONS = {
+    ISOLATION_UNAVAILABLE: ISOLATION_ACTION,
     PARSE_ERROR: "Correct the expression at the line and column given. Write every product with * (2*x, not 2x), "
                  "powers with ^ or **, and call functions with parentheses, such as sin(x).",
     CONSTRUCT_REFUSED: "Remove what the reason names: the language has numbers, declared symbols, + - * / ^, "

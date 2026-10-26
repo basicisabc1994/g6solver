@@ -25,6 +25,7 @@ from collections.abc import Callable
 from typing import Any
 
 from g6.core.outside import OutsideProgram
+from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import WarningCard
 from g6.prolog.schema import PrologResult
 
@@ -74,6 +75,7 @@ CLOSED_WORLD = ("Under Prolog's closed world, a goal that fails is not derivable
                 "same as false: a fact or rule the program leaves out makes a true goal fail.")
 
 _ACTIONS = {
+    ISOLATION_UNAVAILABLE: ISOLATION_ACTION,
     SWIPL_MISSING: INSTALL_SWIPL,
     INPUT_INVALID: "Correct the input as the reason says and run it again.",
     INPUT_TOO_LARGE: "Reduce the program, the goal or the limit below what the reason names.",

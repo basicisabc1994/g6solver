@@ -307,11 +307,44 @@ def program_paths(program: str, *extra: str) -> tuple[str, ...]:
     """The folders an outside program (SWI-Prolog, Lean, Java, SageMath) reads to start, for a plan that names no
     interpreter: the folder that holds it, its links followed, and, when that folder is a ``bin``, the installation
     above it (its ``lib`` and ``share``, a toolchain's or a JDK's root); then those of ``extra`` that exist (``ELAN_HOME``,
-    ``SAGE_ROOT`` and the like)."""
+    ``SAGE_ROOT`` and the like); then the folders the links in those folders lead to outside them
+    (:func:`_links_out`)."""
     folder = Path(os.path.realpath(program)).parent
     found = [str(folder), *([str(folder.parent)] if folder.name.lower() == "bin" else [])]
     found += [os.path.realpath(path) for path in extra if path and os.path.exists(path)]
+    found += [target for root in list(found) if root not in _SYSTEM_ROOTS for target in _links_out(root)]
     return tuple(dict.fromkeys(found))
+
+
+#: How many entries :func:`_links_out` reads under one installation at most.
+_LINKS_READ = 5000
+#: The shared system folders a program on PATH may live in: not an installation of its own, so not searched for links.
+_SYSTEM_ROOTS = frozenset({"/usr", "/usr/bin", "/usr/sbin", "/usr/local", "/usr/local/bin", "/bin", "/sbin"})
+
+
+def _links_out(root: str) -> list[str]:
+    """The folders that the links in the top four levels of ``root`` lead to outside it, ``/usr`` aside (a link to a
+    file gives the file's folder; a folder inside another found one is left out): an installation may keep part of
+    itself elsewhere (Debian's JDK links ``conf/security/java.security``, ``lib/jvm.cfg`` and more into
+    ``/etc/java-*``), and a confined run reads only the paths it names. Links are not followed further down."""
+    found: list[str] = []
+    pending, read = [(root, 0)], 0
+    while pending and read < _LINKS_READ:
+        folder, depth = pending.pop()
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        for entry in entries:
+            read += 1
+            if entry.is_symlink():
+                target = os.path.realpath(entry.path)
+                if os.path.exists(target) and not _inside(target, root) and not _inside(target, "/usr"):
+                    found.append(target if os.path.isdir(target) else os.path.dirname(target))
+            elif depth < 3 and entry.is_dir(follow_symlinks=False):
+                pending.append((entry.path, depth + 1))
+    found = list(dict.fromkeys(found))
+    return [path for path in found if not any(other != path and _inside(path, other) for other in found)]
 
 
 def _home(cfg: Path, *, posix: bool = os.name == "posix") -> list[str]:

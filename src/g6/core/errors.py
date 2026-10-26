@@ -16,6 +16,9 @@ UNKNOWN_OP = "G6_E_UNKNOWN_OP"
 #: Untrusted code was not run: ``G6_REQUIRE_ISOLATION`` asked for operating-system isolation and no backend can give it
 #: here (``g6.core.confine``).
 ISOLATION_UNAVAILABLE = "G6_E_ISOLATION_UNAVAILABLE"
+#: What a card that carries it suggests, the same words wherever it is said.
+ISOLATION_ACTION = ("Run g6 doctor: it says what this computer needs for G6's operating-system boundary to confine "
+                    "the run. Then run it again.")
 #: A block's ``screen_raw`` hook raised, or answered with something that is not a Result: the call is refused.
 SCREEN_RAW_FAILED = "G6_E_SCREEN_RAW_FAILED"
 _LISTED = 8
@@ -35,4 +38,4 @@ def unknown_op(component: str, op: str, valid_ops: Iterable[str]) -> Result:
     return Result.fail(f"[{UNKNOWN_OP}] {component} has no op {op!r}; {hint}")
 
 
-__all__ = ["ISOLATION_UNAVAILABLE", "SCREEN_RAW_FAILED", "UNKNOWN_OP", "unknown_op"]
+__all__ = ["ISOLATION_ACTION", "ISOLATION_UNAVAILABLE", "SCREEN_RAW_FAILED", "UNKNOWN_OP", "unknown_op"]
