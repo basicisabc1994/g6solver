@@ -55,7 +55,10 @@ _WITNESS_NON_CORE_KEYS = frozenset(
 #: result's own content) and ``replay(witness) -> promotion_evaluator.ReplayOutcome`` (the re-check itself, which
 #: derives the execution identity from what it re-ran, never from the witness). Only an oracle named here can
 #: promote; ``promotion_evaluator.register_oracle`` is open to any code and is not read by the law.
-_G6_RECHECKERS: dict[str, tuple[str, str]] = {}
+_G6_RECHECKERS: dict[str, tuple[str, str]] = {
+    # re-hashes the root, compares the manifest and the pin, and checks that a planted control is caught
+    "integrity": ("g6.integrity.tree", "g6.integrity.tree"),
+}
 
 
 def _witness_content_digest(witness: Mapping[str, Any]) -> str:
