@@ -42,7 +42,7 @@ class BundleResult:
         """The result inside the library envelope; anything short of ``verified`` carries a warning card. The bundle's
         own ``verified`` goes through the door rule (``g6.core.door``): G6 does not re-run a bundle's checks, so it is
         held at ``qualified-draft`` with a ``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``."""
-        from g6.core.door import door_envelope
+        from g6.core.door import door_envelope, held_copy
         from g6.core.reliability_envelope import warning_card
 
         envelope = door_envelope(self.completion_state, who="this bundle", request_id=request_id, run_id=run_id)
@@ -50,7 +50,10 @@ class BundleResult:
             code = self.code or ("G6_E_BLOCKED" if envelope["completion_state"] == BLOCKED_ESCALATED
                                  else "G6_E_QUALIFIED_DRAFT")
             envelope["warning_card"] = warning_card(code, self.summary)
-        return {**envelope, "summary": self.summary, "rows": self.rows, "notes": self.notes}
+        # A row's label is the bundle's own word too: G6 re-runs no row, so none reads as verified on the page.
+        rows = held_copy(self.rows, envelope["completion_state"] if envelope["completion_state"] != VERIFIED
+                         else QUALIFIED_DRAFT)
+        return {**envelope, "summary": self.summary, "rows": rows, "notes": self.notes}
 
 
 def weakest(states: list[str]) -> str:

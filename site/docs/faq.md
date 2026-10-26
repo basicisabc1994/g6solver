@@ -257,7 +257,8 @@ never says the code is correct, and it raises no result's label. No qualified pe
 
 ### How do components compose?
 You can call them one by one, or let `g6.harness` compose them. A harness run takes a standard (a goal and its
-checks) through intake, plan, execute, adjudicate and remember. The evidence issuer decides the label.
+checks) through intake, plan, execute, adjudicate and remember. The evidence issuer writes a certificate; the
+run's label is a qualified draft at best, because the harness does not re-run your checks itself.
 `navigator.check_plan` checks a plan of component calls before anything runs.
 
 ### How mature are the components?

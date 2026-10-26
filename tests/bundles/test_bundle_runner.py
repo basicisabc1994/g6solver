@@ -205,6 +205,16 @@ def test_a_bundle_that_says_verified_is_held():
     assert drafted["warning_card"]["code"] == "G6_E_SAFE_ACTIONS" and "claimed_completion_state" not in drafted
 
 
+@pytest.mark.parametrize("state", ["verified", "qualified-draft", "blocked-escalated"])
+def test_a_row_that_says_verified_is_held_the_same_way(state):
+    """A bundle's rows are its own word too: G6 does not re-run them, so no row reads as verified on the page."""
+    rows = [{"item": "a", "label": "verified"}, {"item": "b", "label": "Verified_Ready", "ok": True}]
+    out = BundleResult(state, "rows", rows=rows).to_dict()
+    expected = "qualified-draft" if state == "verified" else state
+    assert [r["label"] for r in out["rows"]] == [expected, expected] and out["rows"][1]["ok"] is True
+    assert rows[0]["label"] == "verified"   # the bundle's own result is not changed, only what the door hands on
+
+
 def test_cli_lists_bundles(capsys):
     from g6.cli import main
 
