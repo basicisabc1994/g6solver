@@ -36,13 +36,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-# The shared task-contract gating primitives live in ``core`` (trust-critical,
-# reused by the promotion-law door); re-exported here so existing callers are
-# unchanged.
+# The shared "available verifier" predicate lives in ``core`` (trust-critical);
+# re-exported here so existing callers are unchanged.
 from g6.core.task_contract_verifier import (
     HUMAN_VERIFIER_PREFIX,
-    effective_task_contract_enforce_mode,
-    task_contract_enforce_mode,
     verifier_available,
 )
 
@@ -147,14 +144,10 @@ def derive_criteria(
     return tuple(out)
 
 
-# ── Slice 2: the fit-for-purpose caps (dark by default) ─────────────────────
+# ── Slice 2: the fit-for-purpose caps ───────────────────────────────────────
 # Both caps are DEMOTE-ONLY and OPT-IN (a legacy contract — evidentiary mode,
-# non-critical criteria — yields no reasons, so it is byte-identical even under
-# ``enforce``). The pipeline consumes ``task_contract_cap_reasons`` at the same
-# ``verified_ready`` seam as the context/refutation floors; the canonical state
-# machine, never this module, sets the resulting state.
-# ``task_contract_enforce_mode`` is re-exported from ``core`` (shared with the
-# promotion-law door so both stage on the same G6_TASK_CONTRACT_ENFORCE flag).
+# non-critical criteria — yields no reasons). Nothing in the library consumes
+# them yet; the canonical state machine, never this module, sets a state.
 
 
 def task_contract_cap_reasons(contract: Any) -> list[str]:
@@ -249,9 +242,7 @@ __all__ = [
     "TaskMode",
     "coerce_task_mode",
     "derive_criteria",
-    "effective_task_contract_enforce_mode",
     "task_contract_cap_reasons",
-    "task_contract_enforce_mode",
     "task_contract_human_verifier_audit",
     "verifier_available",
 ]

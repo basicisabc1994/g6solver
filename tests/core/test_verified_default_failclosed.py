@@ -453,8 +453,6 @@ NOT_A_FREE_DEFAULT: dict[str, tuple[int, str]] = {
     'g6/core/reliability_envelope.py _apply_promotion_law: return "verified"': (
         3, "demote-only gate, reached only when the producer stated verified: keeps or lowers that state, never "
            "raises one"),
-    'g6/core/reliability_envelope.py _apply_task_contract_floor: return "verified"': (
-        3, "the same demote-only gate for the task contract floor"),
     'g6/evidence/certificate.py _state: return "verified"': (
         1, "the issuer's rule: only when every predicate is supported by a pass receipt from an independent, frozen, "
            "controlled check G6 resolved in its own ledger, and every gate is decided"),

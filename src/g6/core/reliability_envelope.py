@@ -39,15 +39,6 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
-# The shared task-contract gating primitives (trust-critical "available verifier"
-# predicate + the G6_TASK_CONTRACT_ENFORCE tri-state) — same definitions the
-# reliability-pipeline seam uses, so the fit-for-purpose floor means the same thing
-# at both doors. Safe at module top: this module has no top-level mvp imports.
-from g6.core.task_contract_verifier import (
-    effective_task_contract_enforce_mode,
-    task_contract_enforce_mode,
-    task_contract_floor_reasons,
-)
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReliabilityLabel = Literal["verified", "qualified-draft", "blocked-escalated"]
@@ -670,8 +661,8 @@ class ReliabilityEnvelope(BaseModel):
         defaults are now ``qualified-draft``, so ``verified`` is something a
         producer must state outright rather than something it receives by saying
         nothing. A stated ``verified`` still has to survive the promotion law
-        (``_apply_promotion_law``) and the task-contract floor exactly as before —
-        this removes the free ride, it does not weaken either gate.
+        (``_apply_promotion_law``) exactly as before — this removes the free ride,
+        it does not weaken the gate.
 
         The warning_card ``verified`` flag is intentionally NOT a degradation
         signal here: per INV-ENV-2 that flag is a *derived echo* of the envelope
@@ -688,11 +679,6 @@ class ReliabilityEnvelope(BaseModel):
         weakest = max(candidates, key=lambda label: _LABEL_RANK.get(label, 1))
         if weakest == "verified":
             weakest = self._apply_promotion_law()
-        if weakest == "verified":
-            # K-P0-2 Slice 3a-door: the fit-for-purpose floor, ported to the
-            # promotion-law door so a surface that emits `verified` HERE is also
-            # held to its declared critical criteria. DEMOTE-only, dark by default.
-            weakest = self._apply_task_contract_floor()
         self.reliability_label = weakest  # type: ignore[assignment]
         self.completion_state = weakest
         self.degraded = weakest != "verified"
@@ -750,86 +736,6 @@ class ReliabilityEnvelope(BaseModel):
         if note not in self.missing_checks:
             self.missing_checks.append(note)
         return "qualified-draft"
-
-    def _apply_task_contract_floor(self) -> str:
-        """K-P0-2 fit-for-purpose floor at the promotion-law door (dark; DEMOTE-only).
-
-        Ported from the reliability-pipeline ``verified_ready`` seam so a surface
-        that emits ``verified`` at THIS door is also held to its DECLARED critical
-        criteria (the fit-for-purpose half of the crown jewel: an oracle reproduced
-        the output AND the output meets the task's critical, checkable criteria).
-        Reached only on a still-``verified`` envelope (after the promotion law), so
-        it can demote but never upgrade. Staged on the SAME flag as the pipeline cap
-        (``G6_TASK_CONTRACT_ENFORCE``): ``off`` (default) inert; ``shadow`` logs a
-        would-cap and applies nothing; ``enforce`` caps to ``qualified-draft``.
-
-        Reads the DECLARED task contract from the envelope's ``extra`` fields
-        (``task_mode`` / ``task_success_criteria``), so an envelope that carries no
-        criteria is byte-identical even under ``enforce`` — dark until a surface
-        declares them. Never raises. Under a scoped
-        ``G6_TASK_CONTRACT_ENFORCE_SURFACES`` this identity-less door resolves to
-        shadow; enforce here requires the global/wildcard setting.
-        """
-        # The core door has no surface identity, so under a scoped enforce
-        # (G6_TASK_CONTRACT_ENFORCE_SURFACES set) it resolves to shadow — the
-        # product path enforces only via a global/wildcard setting.
-        mode = effective_task_contract_enforce_mode(None)
-        if mode == "off":
-            return "verified"
-        reasons = _task_contract_floor_reasons(self)
-        if not reasons:
-            return "verified"
-        if mode == "shadow":
-            payload = {
-                "mode": "shadow",
-                "would_demote_to": "qualified-draft",
-                "reasons": reasons,
-                "request_id": self.request_id,
-                "task_id": self.task_id,
-                "run_id": self.run_id,
-            }
-            if task_contract_enforce_mode() == "enforce":
-                # Enforce is on globally but this door is scoped out.
-                payload["enforce_scoped_out"] = True
-            _LOGGER.warning(
-                "G6_TASK_CONTRACT shadow would-cap (NOT applied): %s",
-                json.dumps(payload, sort_keys=True),
-            )
-            return "verified"
-        # enforce: demote with the honest reason surfaced (mirrors _apply_promotion_law).
-        if not self.degradation_reason.strip():
-            self.degradation_reason = "task contract: " + "; ".join(reasons)
-        note = (
-            "Fit-for-purpose task contract (G6_TASK_CONTRACT_ENFORCE) requires every "
-            "critical success criterion to name an available verifier; one or more did not."
-        )
-        if note not in self.missing_checks:
-            self.missing_checks.append(note)
-        return "qualified-draft"
-
-
-def _task_contract_floor_reasons(envelope: Any) -> list[str]:
-    """Fit-for-purpose reasons the (core) promotion-law door must cap a ``verified``.
-
-    DEMOTE-only. Reads the envelope's DECLARED task contract from its ``extra`` fields
-    (``task_mode`` / ``task_success_criteria``, dict-shaped) and delegates to the
-    shared :func:`task_contract_floor_reasons` — single-sourced with the pipeline
-    ``verified_ready`` seam AND the surface (``attach_surface_reliability``) door, so
-    "unfit for verified" means the same thing at every seam and cannot drift. Never
-    raises (a missing / duck-typed field yields no reason).
-    """
-    # Extract the two fields INDEPENDENTLY so a raising descriptor on one cannot drop
-    # a reason the other would have produced (exact parity with the pre-refactor inline
-    # body, whose exploratory-mode append survived a raise on the criteria read).
-    try:
-        mode = getattr(envelope, "task_mode", "")
-    except Exception:  # noqa: BLE001 - a duck-typed field never forces a demote
-        mode = ""
-    try:
-        criteria = getattr(envelope, "task_success_criteria", None)
-    except Exception:  # noqa: BLE001 - a duck-typed field never forces a demote
-        criteria = None
-    return task_contract_floor_reasons(mode, criteria)
 
 
 def warning_card(code: str, message: str, suggested_action: str | None = None) -> dict[str, Any]:
