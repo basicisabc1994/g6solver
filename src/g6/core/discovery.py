@@ -23,6 +23,7 @@ from typing import Any
 
 from g6.core import vetting
 from g6.core.confine import UNCONFINED_WARNING
+from g6.core.door import THREAT_STATEMENT
 from g6.core.failure_modes import FailureModeRegistry, declared
 from g6.core.registry import get_registry
 from g6.core.skills import front_matter, skill_text
@@ -148,9 +149,11 @@ HELP = (
     "they guard against; describe(component) gives maturity, ops, dependencies, the failure modes it guards "
     "against and can cause, the programs and extras it needs from outside G6, and the component's skill; "
     "invoke(component, op, "
-    "params) runs one op through the component's typed input and returns its own result unchanged; over MCP the "
-    "reply also carries completion_state and a warning_card. Results carry the component's reliability label; "
-    "discovery never upgrades it, and a result that reports no label is a qualified-draft. An op that needs a model "
+    "params) runs one op through the component's typed input and returns its result; over MCP the reply also "
+    "carries completion_state and a warning_card. Results carry the component's reliability label; discovery never "
+    "upgrades it, and a result that reports no label is a qualified-draft. Over MCP and g6 invoke, a component's own "
+    "verified stands only when G6's own code re-runs a check at the door and reproduces it; any other is held at "
+    "qualified-draft (G6_E_PROMOTION_LAW, claimed_completion_state). " + THREAT_STATEMENT + " An op that needs a model "
     "uses the one your user set in their key file (~/.g6/.env, for example G6_LLM_PROVIDER=claude_code); with none it "
     "is refused with a *_NO_MODEL code: then do that step yourself and call the op that checks it. A sensitive op (it "
     "runs a program, reaches the network or changes the machine) is refused over MCP unless your user lists it in "

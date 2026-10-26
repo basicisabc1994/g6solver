@@ -23,6 +23,9 @@ from g6.core.reliability_envelope import PROMOTION_LAW, door_witness, envelope_f
 from g6.core.reliability_envelope import warning_card as new_card
 
 _RANK = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
+#: What G6 does and does not defend against, said wherever the door rule is read (plan A1).
+THREAT_STATEMENT = ("G6 re-checks artifacts with its own code; it does not defend against malicious code in its own "
+                    "process.")
 #: What a held result's card tells its reader to do.
 HELD_NEXT_STEP = ("Treat it as a qualified draft: check it yourself, or use a component whose results G6 re-checks.")
 _CODE = re.compile(r"^\[(G6_E_[A-Z0-9_]+)\]\s*")
@@ -116,4 +119,4 @@ def door_reply(component: str, op: str, outcome: Any, *, request_id: str = "") -
     return {"ok": True, "result": _corrected(value, envelope["completion_state"]), **envelope}
 
 
-__all__ = ["blocked_reply", "card", "door_envelope", "door_reply"]
+__all__ = ["HELD_NEXT_STEP", "THREAT_STATEMENT", "blocked_reply", "card", "door_envelope", "door_reply"]

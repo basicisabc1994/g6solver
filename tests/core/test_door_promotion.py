@@ -324,3 +324,29 @@ def test_cli_keeps_a_verified_g6s_recheck_reproduces(monkeypatch: pytest.MonkeyP
                                                       capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     value, _ = _integrity_value(tmp_path)
     assert _cli(monkeypatch, capsys, "integrity", value)["completion_state"] == "verified"
+
+# --------------------------------------------------------------------------------------------------------------------
+# The threat statement: where a person or an agent reads the rule, it says what G6 does and does not defend against
+# --------------------------------------------------------------------------------------------------------------------
+
+THREAT = "G6 re-checks artifacts with its own code; it does not defend against malicious code in its own process."
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_the_threat_statement_is_where_the_rule_is_read() -> None:
+    import g6.mcp
+    from g6.core import discovery, door, promotion_evaluator, reliability_envelope
+
+    readme = (SRC.parents[1] / "README.md").read_text(encoding="utf-8")
+    guide = (SRC.parents[1] / "AGENT_GUIDE.md").read_text(encoding="utf-8")
+    assert getattr(door, "THREAT_STATEMENT", None) == THREAT
+    for name, text in (("README.md", readme), ("AGENT_GUIDE.md", guide), ("g6_help", discovery.HELP),
+                       ("g6.core.door", door.__doc__),
+                       ("g6.core.reliability_envelope", reliability_envelope.__doc__),
+                       ("g6.core.promotion_evaluator", promotion_evaluator.__doc__), ("g6.mcp", g6.mcp.__doc__)):
+        assert THREAT in _flat(text or ""), name
+    assert "Not every entry point enforces this yet" not in _flat(readme)
+    assert "nothing is `verified` without `evidence`" not in _flat(guide)

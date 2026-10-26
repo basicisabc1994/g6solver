@@ -16,10 +16,11 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
 
 - **The rule for labels.** `verified` should need independent evidence: a check the producer did not write, frozen
   before the work, that G6 has seen fail a planted wrong answer. A check you or your agent wrote is not independent,
-  so its result is `qualified-draft` at best, and a combined result takes the weakest label. Not every entry point
-  enforces this yet: the MCP server and `g6 invoke` pass on a component's own `verified` when it attaches any
-  evidence, and a pipeline of two steps that each say `verified` reports `verified`. Until that is fixed, read a
-  `verified` that comes through them as the component's own claim.
+  so its result is `qualified-draft` at best, and a combined result takes the weakest label. At every entry point
+  (the MCP server, `g6 invoke`, a pipeline of steps, a bundle and the harness) a `verified` stands only when G6's
+  own code re-runs a check there and reproduces it; any other is held at `qualified-draft`, and the reply says what
+  was claimed. G6 re-checks artifacts with its own code; it does not defend against malicious code in its own
+  process.
 - **Checks are hashed first.** In the harness, each check's source text is hashed before the work runs, so editing a
   check afterwards is caught. The hash covers the source only, not values the check reads from outside it, and the
   check runs in the same process as the work: it catches mistakes, not code written to defeat it.
