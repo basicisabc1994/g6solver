@@ -5,6 +5,7 @@ flags and reasons are built from facts the tests hand over. What a confined run 
 ``tests/core/test_confine_bwrap_linux.py``, through the ``bwrap_backend`` fixture."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -165,3 +166,64 @@ def test_bubblewrap_is_built_but_not_yet_chosen(monkeypatch) -> None:
     monkeypatch.setattr(confine.sys, "platform", "linux")
     # fails if bubblewrap is selected before its integration tests run (A2 step 4)
     assert confine._select()[0] is None
+
+
+# --- CI: bubblewrap installed on every Linux job, and its tests fail rather than skip without it --------------------------
+
+ROOT = Path(__file__).resolve().parents[2]
+SETUP = "bash tools/ci_bubblewrap.sh"
+
+
+def _jobs(workflow: str) -> dict[str, str]:
+    """Each job's text in a workflow file, by the job's name."""
+    body = workflow.split("\njobs:\n", 1)[1]
+    return {name: text for name, _, text in (block.partition(":") for block in
+                                             re.split(r"(?m)^  (?=[A-Za-z][\w-]*:\s*$)", body)[1:])}
+
+
+@pytest.mark.parametrize(("workflow", "job"), [("ci.yml", "test"), ("ci.yml", "conformance"),
+                                               ("bundles.yml", "build")])
+def test_every_linux_job_that_runs_g6_sets_up_bubblewrap(workflow: str, job: str) -> None:
+    text = _jobs((ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8"))[job]
+    # fails if a Linux job that runs G6's tests or builds its apps leaves bubblewrap out, so the boundary would be
+    # missing there and the bwrap tests would skip
+    assert "ubuntu-latest" in text and SETUP in text, (workflow, job)
+    assert text.index(SETUP) < max(text.find("tools/suite_split.ps1"), text.find("pytest"),
+                                   text.find("packaging/smoke_bundle.py"))
+
+
+def test_the_ci_setup_installs_bubblewrap_gives_it_its_apparmor_profile_and_expects_it() -> None:
+    script = (ROOT / "tools" / "ci_bubblewrap.sh").read_text(encoding="utf-8")
+    # fails if the setup stops installing bwrap, stops adding the AppArmor profile Ubuntu's runners need (their kernel
+    # restricts unprivileged user namespaces), or stops telling the tests to expect the backend
+    assert "apt-get install -y -qq bubblewrap" in script
+    assert "/proc/sys/kernel/apparmor_restrict_unprivileged_userns" in script and '= "1"' in script
+    assert "profile bwrap" in script and "userns," in script and "apparmor_parser -r /etc/apparmor.d/bwrap" in script
+    assert 'echo "G6_EXPECT_BACKEND=bubblewrap" >> "$GITHUB_ENV"' in script
+
+
+class _Unready:
+    name = confine.BUBBLEWRAP
+
+    def __init__(self, program: str | None = None) -> None:
+        pass
+
+    def ready(self, python: str, *, probe: bool = True) -> str:
+        return "unavailable: switched off by this test"
+
+
+def test_the_bwrap_fixture_fails_rather_than_skips_where_ci_expects_bubblewrap(monkeypatch, request) -> None:
+    monkeypatch.setattr(confine.sys, "platform", "linux")
+    monkeypatch.setattr(confine, "_Bubblewrap", _Unready)
+    monkeypatch.setenv("G6_EXPECT_BACKEND", "bubblewrap")
+    # fails if a CI job that expects bubblewrap lets its tests skip when it cannot confine a run
+    with pytest.raises(pytest.fail.Exception, match="switched off by this test"):
+        request.getfixturevalue("bwrap_backend")
+
+
+def test_the_bwrap_fixture_skips_where_nothing_expects_bubblewrap(monkeypatch, request) -> None:
+    monkeypatch.setattr(confine.sys, "platform", "linux")
+    monkeypatch.setattr(confine, "_Bubblewrap", _Unready)
+    monkeypatch.delenv("G6_EXPECT_BACKEND", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="switched off by this test"):
+        request.getfixturevalue("bwrap_backend")

@@ -52,6 +52,29 @@ def registry_reset():
     clear()
 
 
+#: Set on CI's Linux jobs (tools/ci_bubblewrap.sh): the bwrap tests then fail, never skip, where it cannot confine.
+EXPECT_BACKEND = "G6_EXPECT_BACKEND"
+
+
+@pytest.fixture
+def bwrap_backend():
+    """G6's Linux backend (``g6.core.confine._Bubblewrap``), ready to confine a child of this interpreter, or a skip that
+    says why; a failure instead of the skip where ``G6_EXPECT_BACKEND=bubblewrap`` (CI's Linux jobs), so a missing
+    boundary there is never a silent skip."""
+    from g6.core import confine
+    from g6.core.outside import find_program
+
+    expected = os.environ.get(EXPECT_BACKEND, "").strip().lower() == confine.BUBBLEWRAP
+    if sys.platform.startswith("linux"):
+        chosen = confine._Bubblewrap(find_program("bwrap"))
+        why = chosen.ready(sys.executable)
+        if not why:
+            return chosen
+    else:
+        why = f"bubblewrap is G6's backend for Linux, not {sys.platform}"
+    (pytest.fail if expected else pytest.skip)(f"bubblewrap cannot confine a run here: {why}")
+
+
 #: Top-level folders of an interpreter's standard library a confined child does not need, and the packages pytest needs.
 _NOT_NEEDED = {"site-packages", "idlelib", "tkinter", "turtledemo", "ensurepip", "test", "lib2to3", "pydoc_data"}
 _PYTEST = ("pytest", "_pytest", "pluggy", "iniconfig", "packaging", "pygments", "colorama", "py.py")
