@@ -128,6 +128,7 @@ def test_known_answer_the_working_tree_is_tested_where_it_is(root):
 
 
 @pytest.mark.parametrize("signal", ["stop", "deadline"])
+@pytest.mark.usefixtures("unconfined")
 def test_in_place_door_obeys_the_owner_control_during_execution(root, signal):
     from g6.safety_engine.schema import RuntimePolicy
     from g6.workforce.workers import WorkerSpec
@@ -243,6 +244,7 @@ def test_edge_a_request_that_cannot_run_is_refused(root, params, why):
     assert out["ok"] is False and why in out["error"]
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_edge_a_run_that_changes_a_tracked_file_is_refused_with_the_path(root):
     _write(root, "tests/test_touch.py", "from pathlib import Path\n\n\ndef test_touch():\n"
                                         "    Path(__file__).parents[1].joinpath('calc.py').write_text('X = 1\\n')\n")
@@ -250,6 +252,7 @@ def test_edge_a_run_that_changes_a_tracked_file_is_refused_with_the_path(root):
     assert out["ok"] is False and "calc.py" in out["error"] and rt.SAID["changed"] in out["error"]
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_edge_git_unreadable_after_the_run_is_refused_saying_so(root):
     """Review I5: a test that damages the index leaves git unable to say what the run changed."""
     _write(root, "tests/test_w.py", "from pathlib import Path\n\n\ndef test_w():\n"
@@ -284,6 +287,7 @@ def _alive(pid: int) -> bool:
         return True
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_edge_a_hung_test_ends_at_its_time_bound(root):
     """Review Focus 5: a test that starts a child process and hangs; the time bound ends both."""
     _write(root, "tests/test_hang.py",

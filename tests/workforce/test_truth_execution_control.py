@@ -28,6 +28,7 @@ def _run(kind, repo, timeout=6):
 
 
 @pytest.mark.parametrize("kind", ["isolated", "suite"])
+@pytest.mark.usefixtures("unconfined")
 def test_enclosing_deadline_bounds_the_actual_test_process(tmp_path, kind):
     entered = tmp_path / "entered"
     repo = _repo(tmp_path, f"Path({str(entered)!r}).touch()\ntime.sleep(2.5)")
@@ -39,6 +40,7 @@ def test_enclosing_deadline_bounds_the_actual_test_process(tmp_path, kind):
 
 
 @pytest.mark.parametrize("kind", ["isolated", "suite"])
+@pytest.mark.usefixtures("unconfined")
 def test_operator_stop_interrupts_the_actual_test_process(tmp_path, kind):
     entered = tmp_path / "entered"
     repo = _repo(tmp_path, f"Path({str(entered)!r}).touch()\ntime.sleep(2.5)")

@@ -87,6 +87,7 @@ def _hostile_conftest(report: Path) -> str:
 
 
 @pytest.mark.parametrize("runner", ["isolated", "suite"])
+@pytest.mark.usefixtures("unconfined")
 def test_a_hostile_conftest_is_refused_at_import_and_sees_no_real_key(tmp_path, monkeypatch, runner):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-real-looking")
     monkeypatch.setenv("G6_TRUTH_SECRET_PROBE", "secret")

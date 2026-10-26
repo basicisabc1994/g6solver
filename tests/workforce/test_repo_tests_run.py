@@ -156,6 +156,7 @@ def test_a_pytest_module_in_the_repository_cannot_stand_in_for_the_runner(repo):
     assert rt.run(repo, ["tests/test_calc.py"])["verdict"] == rt.FAILED
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_a_tracked_file_changed_during_the_run_is_named_whoever_changed_it(repo):
     """Review Focus 1: the run cannot tell the tests from another writer, so it says what changed, not who."""
     _write(repo, "tests/test_touch.py", "from pathlib import Path\n\n\ndef test_touch():\n"
@@ -164,6 +165,7 @@ def test_a_tracked_file_changed_during_the_run_is_named_whoever_changed_it(repo)
     assert (found["verdict"], found["changed"], found["said"]) == (rt.CHANGED, ["calc.py"], rt.SAID["changed"])
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_a_test_that_stages_a_file_changes_the_index_and_is_named(repo):
     _write(repo, "tests/test_stage.py", "import subprocess\nfrom pathlib import Path\n\n\ndef test_stage():\n"
                                         "    root = Path(__file__).parents[1]\n"
@@ -173,6 +175,7 @@ def test_a_test_that_stages_a_file_changes_the_index_and_is_named(repo):
     assert found["verdict"] == rt.CHANGED and "the staged files (the index)" in found["changed"]
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_known_limit_a_file_git_does_not_track_is_not_covered(repo):
     _write(repo, "tests/test_scratch.py", "from pathlib import Path\n\n\ndef test_scratch():\n"
                                           "    Path(__file__).with_name('scratch.txt').write_text('x')\n")
@@ -249,6 +252,7 @@ def _alive(pid: int) -> bool:
         return True
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_a_hung_test_and_the_process_it_started_end_at_the_time_bound(repo):
     """Review Focus 5."""
     _write(repo, "tests/test_hang.py",
@@ -463,6 +467,7 @@ def test_i4_the_run_says_which_python_ran_the_tests(repo, tmp_path):
     assert Path(found["python"]).is_relative_to(repo / ".venv")
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i5_git_unreadable_after_the_run_is_a_change_never_a_refusal(repo):
     """I5 (probe S4): a test that damages the index leaves git unable to read the repository after the run."""
     _write(repo, "tests/test_w.py", "from pathlib import Path\n\n\ndef test_w():\n"
@@ -495,6 +500,7 @@ def _kill(pid: int) -> None:
             pass
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i6_a_process_a_passing_test_leaves_running_ends_with_the_run(repo):
     """I6 (probe B2)."""
     _write(repo, "tests/test_left.py", LEAVES_A_CHILD)
@@ -507,6 +513,7 @@ def test_i6_a_process_a_passing_test_leaves_running_ends_with_the_run(repo):
         _kill(pid)
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i6_with_capture_off_a_leftover_process_neither_holds_the_run_nor_outlives_it(repo):
     """I6 (probe B3): the process holds the run's output; the run waits for pytest, not for its output to close."""
     _write(repo, "pytest.ini", "[pytest]\naddopts = -s\n")
@@ -545,6 +552,7 @@ def test_i6_the_output_kept_is_bounded_however_much_the_tests_print(repo):
     assert peak < 8 * 2**20, peak
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i7_an_untracked_file_that_existed_before_the_run_is_covered(repo):
     """I7 (probe S5): the change's own new module, rewritten by a test."""
     _write(repo, "newmod.py", "def f():\n    return 1\n")
@@ -562,6 +570,7 @@ SETS_A_FLAG = ("import subprocess\nfrom pathlib import Path\n\n\ndef test_w():\n
                "    root.joinpath('calc.py').write_text('X = 1\\n')\n")
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_m4_a_file_the_owner_marked_assume_unchanged_is_still_covered(repo):
     """M4 (probe S1): git's diff skips the file, so its bytes are read directly."""
     _write(repo, "settings.py", "DEBUG = False\n")
@@ -575,6 +584,7 @@ def test_m4_a_file_the_owner_marked_assume_unchanged_is_still_covered(repo):
 
 
 @pytest.mark.parametrize("flag", ["assume-unchanged", "skip-worktree"])
+@pytest.mark.usefixtures("unconfined")
 def test_m4_a_test_that_hides_a_file_from_git_and_rewrites_it_is_named(repo, flag):
     """M4 (probes S2, S3)."""
     _write(repo, "tests/test_w.py", SETS_A_FLAG.replace("FLAG", flag))

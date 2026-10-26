@@ -57,6 +57,17 @@ EXPECT_BACKEND = "G6_EXPECT_BACKEND"
 
 
 @pytest.fixture
+def unconfined(monkeypatch):
+    """For a test of what G6 does where no operating-system boundary confines a run (the git snapshot that names a file
+    a test changed, the process tree's kill of what a test leaves running, a deadline or a stop reaching a test that
+    signals it has started): the backend is switched off, so the test's code can write outside its run folder, as it
+    can on a machine with no boundary. Elsewhere such a write is refused (``tests/core/test_confine_bwrap_linux.py``)."""
+    from g6.core import confine
+
+    monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off for a test of the unconfined path"))
+
+
+@pytest.fixture
 def bwrap_backend():
     """G6's Linux backend (``g6.core.confine._Bubblewrap``), chosen and ready to confine a child of this interpreter, or
     a skip that says why; a failure instead of the skip where ``G6_EXPECT_BACKEND=bubblewrap`` (CI's Linux jobs), so a
