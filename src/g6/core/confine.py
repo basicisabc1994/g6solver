@@ -24,7 +24,8 @@ isolation.
   folder, holds it, or holds G6's own folder with the key file: such a run is not confined, and the reason says why.
   The first confined run of an interpreter is preceded by a test start of it in the container; until that succeeds
   nothing is reported as confined.
-* Linux: unavailable, "not tested on this platform": the bubblewrap backend is not built until its tests run.
+* Linux: unavailable, "not tested on this platform": the bubblewrap backend (:class:`_Bubblewrap`,
+  :func:`bwrap_arguments`) is built but not chosen until its tests on Linux run.
 * macOS: unavailable.
 
 Threat model, where a backend is active. Closed: reading files outside the declared read paths (the owner's home and
@@ -53,12 +54,14 @@ interpreter's own folders (an editable install), so that folder is one the acces
 """
 from __future__ import annotations
 
+import json
 import os
+import posixpath
 import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -291,7 +294,10 @@ def interpreter_paths(python: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(os.path.realpath(path) for path in found))
 
 
-def _home(cfg: Path) -> list[str]:
+def _home(cfg: Path, *, posix: bool = os.name == "posix") -> list[str]:
+    """The base installation a virtual environment's ``pyvenv.cfg`` names. On POSIX its ``home`` is the folder that
+    holds the base interpreter (``.../bin``), with the standard library beside it (``.../lib/python3.x``), so the
+    installation is that folder's parent."""
     try:
         lines = cfg.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -299,7 +305,10 @@ def _home(cfg: Path) -> list[str]:
     for line in lines:
         name, sep, value = line.partition("=")
         if sep and name.strip().lower() == "home" and value.strip():
-            return [value.strip()]
+            home = value.strip()
+            if posix and posixpath.basename(home.rstrip("/")) == "bin":
+                home = posixpath.dirname(home.rstrip("/"))
+            return [home]
     return []
 
 
@@ -952,6 +961,288 @@ class _Child:
             self._winapi.CloseHandle(handle)
 
 
-__all__ = ["APPCONTAINER", "Confinement", "NotStarted", "Plan", "REQUIRE", "UNCONFINED_WARNING", "backend",
-           "import_failure", "interpreter_paths", "not_started", "owned", "plan", "popen", "recording", "refusal",
-           "required", "run_folder", "started", "summary"]
+# --- Linux: bubblewrap ----------------------------------------------------------------------------------------------------
+
+BUBBLEWRAP = "bubblewrap"
+#: The top-level folders a merged /usr keeps as links into it; where one is a folder of its own it is bound read only.
+BWRAP_TOP = ("/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32")
+#: The only paths in /etc a confined child may read: the dynamic loader's cache and settings, the alternatives links
+#: (``/usr/bin/java`` on Debian goes through them), the time zone, and the user and group names.
+BWRAP_ETC = ("/etc/ld.so.cache", "/etc/ld.so.conf", "/etc/ld.so.conf.d", "/etc/alternatives", "/etc/localtime",
+             "/etc/passwd", "/etc/group", "/etc/nsswitch.conf")
+#: And, when the run asks for the network: name resolution and the certificate stores.
+BWRAP_ETC_NETWORK = ("/etc/resolv.conf", "/etc/hosts", "/etc/host.conf", "/etc/gai.conf", "/etc/ssl",
+                     "/etc/ca-certificates", "/etc/pki")
+#: The flags G6 gives bwrap; a bwrap whose help lists fewer is too old to use.
+BWRAP_NEEDS = ("--unshare-all", "--unshare-user", "--share-net", "--uid", "--gid", "--cap-drop", "--die-with-parent",
+               "--new-session", "--ro-bind", "--ro-bind-try", "--bind", "--symlink", "--proc", "--dev", "--chdir",
+               "--remount-ro")
+#: How the reason begins when bubblewrap's test run could see what it must not.
+BWRAP_LEAKED = "bubblewrap started, but its test run could see"
+INSTALL_BWRAP = ("sudo apt-get install bubblewrap (Debian, Ubuntu), sudo dnf install bubblewrap (Fedora) or sudo pacman "
+                 "-S bubblewrap (Arch)")
+#: The test run: what it can see of a file planted outside its run folder, the owner's home and G6's own folder, and
+#: which network interfaces it has (a private loopback only).
+_BWRAP_CANARY = ("import json, os, socket, sys\n"
+                 "planted, home, g6 = sys.argv[1:4]\n"
+                 "print(json.dumps({'planted': os.path.exists(planted), 'g6': os.path.exists(g6),\n"
+                 "                  'home': sorted(os.listdir(home)) if os.path.isdir(home) else [],\n"
+                 "                  'interfaces': sorted(name for _, name in socket.if_nameindex())}))\n")
+
+
+def bwrap_arguments(confinement: Confinement, reads: Sequence[str], *, uid: int, gid: int, cwd: str | None,
+                    disable_userns: bool, layout: Mapping[str, str | None]) -> list[str]:
+    """What G6 gives ``bwrap`` before ``--`` and the command: new namespaces of every kind (the network only a private
+    loopback, unless ``confinement.network``), the owner's own user and group ids, no capabilities, the child killed
+    with G6 and in a session of its own (and, where ``disable_userns``, no further user namespaces inside); ``/usr``, the
+    top-level links into it (``layout``: each of :data:`BWRAP_TOP` mapped to its link's target, ``""`` for a folder of
+    its own, None when absent), the few :data:`BWRAP_ETC` paths, ``reads`` and ``confinement.read_only`` read only; the
+    run's folders (``confinement.read_write``) writable, bound after the rest so a run folder inside a read-only one
+    stays writable; and the root remounted read only last. Nothing else of the host is there: not the owner's home,
+    not ``~/.g6``, not ``/run``, ``/var`` or ``/tmp``."""
+    args = ["--unshare-all", *(["--share-net"] if confinement.network else []), "--unshare-user", "--uid", str(uid),
+            "--gid", str(gid), "--cap-drop", "ALL", "--die-with-parent", "--new-session",
+            *(["--disable-userns"] if disable_userns else []), "--ro-bind", "/usr", "/usr"]
+    for top in BWRAP_TOP:
+        target = layout.get(top)
+        if target is not None:
+            args += ["--symlink", target, top] if target else ["--ro-bind", top, top]
+    for path in (*BWRAP_ETC, *(BWRAP_ETC_NETWORK if confinement.network else ())):
+        args += ["--ro-bind-try", path, path]
+    args += ["--proc", "/proc", "--dev", "/dev"]
+    for path in dict.fromkeys([*reads, *confinement.read_only]):
+        args += ["--ro-bind", path, path]
+    for path in confinement.read_write:
+        args += ["--bind", path, path]
+    if cwd:
+        args += ["--chdir", cwd]
+    return [*args, "--remount-ro", "/"]
+
+
+def bwrap_features(help_text: str) -> tuple[list[str], bool]:
+    """From ``bwrap --help``: the flags of :data:`BWRAP_NEEDS` it does not list, and whether it lists
+    ``--disable-userns``."""
+    listed = {word.rstrip(",") for word in help_text.split() if word.startswith("--")}
+    return [flag for flag in BWRAP_NEEDS if flag not in listed], "--disable-userns" in listed
+
+
+def _apparmor_profile_command(program: str) -> str:
+    profile = (f"abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile bwrap {program} flags=(unconfined) {{\\n  userns,"
+               "\\n  include if exists <local/bwrap>\\n}\\n")
+    return f"printf '{profile}' | sudo tee /etc/apparmor.d/bwrap && sudo apparmor_parser -r /etc/apparmor.d/bwrap"
+
+
+def bwrap_reason(facts: Mapping[str, Any]) -> str:
+    """Why bubblewrap cannot confine a run here, with the fix for Linux; "" when ``facts`` give no reason. ``facts``:
+    ``program`` (None: not installed), ``missing`` (flags its help does not list), ``max_user_namespaces`` and
+    ``unprivileged_userns_clone`` (the kernel's settings, as text), ``leaked`` (what the test run could see),
+    ``apparmor_restrict`` and ``apparmor_profile`` (Ubuntu's restriction on user namespaces, and whether a profile
+    lets bwrap make them), ``container`` (G6 runs inside one) and ``stderr`` (what bwrap said when it failed)."""
+    program = facts.get("program")
+    if not program:
+        return ("unavailable: bubblewrap (bwrap) is not installed, so G6 has no operating-system boundary on this "
+                f"Linux computer; install it: {INSTALL_BWRAP}")
+    if facts.get("missing"):
+        return (f"unavailable: {program} is too old: its help lists no {', '.join(facts['missing'])}; install "
+                f"bubblewrap 0.8 or later: {INSTALL_BWRAP}")
+    if facts.get("max_user_namespaces") == "0":
+        return ("unavailable: user namespaces are switched off on this computer (user.max_user_namespaces is 0), and "
+                "bubblewrap needs them; switch them on: sudo sysctl -w user.max_user_namespaces=15000")
+    if facts.get("unprivileged_userns_clone") == "0":
+        return ("unavailable: user namespaces are switched off on this computer (kernel.unprivileged_userns_clone is "
+                "0), and bubblewrap needs them; switch them on: sudo sysctl -w kernel.unprivileged_userns_clone=1")
+    if facts.get("leaked"):
+        return (f"unavailable: {BWRAP_LEAKED} {facts['leaked']}, so G6 does not use it here; report it with the "
+                "output of bwrap --version")
+    if facts.get("apparmor_restrict") == "1" and not facts.get("apparmor_profile"):
+        return ("unavailable: AppArmor's kernel.apparmor_restrict_unprivileged_userns is 1 (Ubuntu 23.10 and later) "
+                f"and no AppArmor profile lets {program} make user namespaces, so bubblewrap cannot start a confined "
+                f"child; add the profile once: {_apparmor_profile_command(program)}")
+    said = " ".join(str(facts.get("stderr") or "").split())[-400:]
+    if facts.get("container") and said:
+        return ("unavailable: G6 is running inside a container whose own security settings stop bubblewrap from "
+                f"making namespaces ({said}); start the container with --security-opt seccomp=unconfined "
+                "--security-opt apparmor=unconfined, or treat the container itself as the boundary")
+    return f"unavailable: bubblewrap could not start a confined child here: {said}" if said else ""
+
+
+def _read_setting(path: str) -> str | None:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+
+
+def _in_container() -> bool:
+    cgroup = _read_setting("/proc/1/cgroup") or ""
+    return (os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv") or bool(os.environ.get("container"))
+            or any(word in cgroup for word in ("docker", "kubepods", "containerd", "lxc", "podman")))
+
+
+def _apparmor_profile(program: str) -> bool:
+    """Whether a profile in ``/etc/apparmor.d`` names ``program`` and lets it make user namespaces."""
+    try:
+        entries = list(os.scandir("/etc/apparmor.d"))
+    except OSError:
+        return False
+    for entry in entries:
+        if entry.is_file():
+            text = _read_setting(entry.path) or ""
+            if program in text and "userns" in text:
+                return True
+    return False
+
+
+def _layout() -> dict[str, str | None]:
+    """This system's :data:`BWRAP_TOP`: each a link's target, ``""`` for a folder, None when absent."""
+    found: dict[str, str | None] = {}
+    for top in BWRAP_TOP:
+        found[top] = os.readlink(top) if os.path.islink(top) else "" if os.path.isdir(top) else None
+    return found
+
+
+def _quiet_env() -> dict[str, str]:
+    return {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ}
+
+
+class _BwrapRun:
+    """One run under bubblewrap: what it reads and writes. Nothing is held, so nothing is released."""
+
+    def __init__(self, confinement: Confinement, reads: tuple[str, ...]) -> None:
+        self.confinement, self.reads = confinement, reads
+
+    def close(self) -> str:
+        return ""
+
+
+class _Bubblewrap:
+    """The Linux backend: ``bwrap`` (bubblewrap), which the person installs; G6 runs it unprivileged, in new user,
+    mount, process, network, IPC and host-name namespaces (:func:`bwrap_arguments`)."""
+
+    name = BUBBLEWRAP
+
+    def __init__(self, program: str | None) -> None:
+        self.program = program
+        self._help: tuple[list[str], bool] | None = None
+        self._probed: dict[str, str] = {}
+        self._disable_userns = False
+
+    def _features(self) -> tuple[list[str], bool]:
+        if self._help is None:
+            try:
+                done = subprocess.run([self.program, "--help"], capture_output=True, timeout=30, env=_quiet_env(),
+                                      check=False)
+                self._help = bwrap_features(done.stdout.decode("utf-8", "replace")
+                                            + done.stderr.decode("utf-8", "replace"))
+            except (OSError, subprocess.TimeoutExpired):
+                self._help = (list(BWRAP_NEEDS), False)
+        return self._help
+
+    def _facts(self) -> dict[str, Any]:
+        facts: dict[str, Any] = {"program": self.program}
+        if self.program:
+            facts |= {"missing": self._features()[0],
+                      "max_user_namespaces": _read_setting("/proc/sys/user/max_user_namespaces"),
+                      "unprivileged_userns_clone": _read_setting("/proc/sys/kernel/unprivileged_userns_clone")}
+        return facts
+
+    def ready(self, python: str, *, probe: bool = True) -> str:
+        """"" when a child of ``python`` can be confined; else why not. ``probe=False`` reads the program, its flags and
+        the kernel's settings only; otherwise the first time for each interpreter a test run must start and see
+        nothing it must not (:data:`_BWRAP_CANARY`)."""
+        why = bwrap_reason(self._facts())
+        if why or not probe:
+            return why
+        key = _key(python)
+        if key not in self._probed:
+            self._probed[key] = self._probe(python)
+        return self._probed[key]
+
+    def started(self, python: str) -> bool:
+        return self._probed.get(_key(python)) == ""
+
+    def _probe(self, python: str) -> str:
+        from g6.core.storage import g6_home
+
+        home, g6 = os.path.realpath(os.path.expanduser("~")), os.path.realpath(g6_home())
+        reads = interpreter_paths(python)
+        allowed = {Path(read).relative_to(home).parts[0] for read in reads if _inside(read, home) and read != home}
+        uid, gid = os.getuid(), os.getgid()   # type: ignore[attr-defined]  # POSIX only, as is this backend
+        with run_folder("g6_confine_probe_") as cwd, tempfile.TemporaryDirectory(prefix="g6_confine_planted_") as hide:
+            planted = os.path.join(hide, "planted.txt")
+            Path(planted).write_text("G6 test file: a confined run must not see this\n", encoding="utf-8")
+            for disable in ([True, False] if self._features()[1] else [False]):
+                command = [self.program, *bwrap_arguments(Confinement(read_write=(cwd,)), reads, uid=uid, gid=gid,
+                                                          cwd=cwd, disable_userns=disable, layout=_layout()),
+                           "--", python, "-I", "-c", _BWRAP_CANARY, planted, home, g6]
+                try:
+                    done = subprocess.run(command, capture_output=True, timeout=PROBE_S, env=_quiet_env(),
+                                          check=False)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    return bwrap_reason({**self._facts(), "stderr": f"{type(exc).__name__}: {exc}"})
+                said = done.stderr.decode("utf-8", "replace")
+                if done.returncode == 0:
+                    break
+                if disable and "user_namespaces" in said:   # this kernel or container cannot honour it here
+                    continue
+                return bwrap_reason({**self._facts(), "apparmor_restrict": _read_setting(
+                    "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
+                    "apparmor_profile": _apparmor_profile(self.program), "container": _in_container(),
+                    "stderr": said.strip() or f"exit code {done.returncode}"})
+            try:
+                seen = json.loads(done.stdout.decode("utf-8", "replace").strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                return bwrap_reason({**self._facts(), "stderr": "its test run printed nothing G6 reads"})
+        leaks = [what for what, shown in (
+            (f"the file planted outside its run folder ({planted})", seen.get("planted")),
+            (f"G6's own folder ({g6})", seen.get("g6")),
+            (f"your home folder ({home}: {', '.join(set(seen.get('home') or ()) - allowed)})",
+             set(seen.get("home") or ()) - allowed),
+            (f"network interfaces other than a private loopback ({', '.join(seen.get('interfaces') or ())})",
+             seen.get("interfaces") != ["lo"])) if shown]
+        if leaks:
+            return bwrap_reason({**self._facts(), "leaked": "; ".join(leaks)})
+        self._disable_userns = disable
+        return ""
+
+    def prepare(self, confinement: Confinement, python: str) -> tuple[_BwrapRun | None, str]:
+        """The run's binds (``bwrap_arguments``); None and why when a path it names is guarded or bubblewrap is not
+        ready."""
+        named = [*confinement.read_write, *confinement.read_only]
+        guarded = [path for path in named if _guarded(path)]
+        if not guarded:
+            reads = tuple(dict.fromkeys([*interpreter_paths(python),
+                                         *(path for path in confinement.read_only if os.path.exists(path))]))
+            guarded = [path for path in reads if _guarded(path)]
+        if guarded:
+            from g6.core.storage import g6_home
+
+            return None, ("unavailable: " + ", ".join(guarded) + " is your home folder, holds it, or holds G6's own "
+                          f"folder ({g6_home()}) with your key file, so G6 never binds it into a confined run and this "
+                          "run cannot be confined; keep the repository and the interpreter in folders of their own")
+        why = self.ready(python)
+        if why:
+            return None, why
+        kept = Confinement(read_write=confinement.read_write, read_only=(), network=confinement.network)
+        return _BwrapRun(kept, reads), ""
+
+    def start(self, argv: list[str], identity: _BwrapRun, *, network: bool = False, creationflags: int = 0,
+              stdin: Any = None, stdout: Any = None, stderr: Any = None, env: dict[str, str] | None = None,
+              cwd: str | os.PathLike | None = None, **options: Any) -> subprocess.Popen:
+        """``argv`` inside bubblewrap, leading a session of its own (so the process tree kills its group whole; the
+        namespace's processes die with bwrap through ``--die-with-parent`` and the process namespace)."""
+        options.pop("start_new_session", None)
+        confinement = Confinement(read_write=identity.confinement.read_write, network=network)
+        uid, gid = os.getuid(), os.getgid()   # type: ignore[attr-defined]  # POSIX only, as is this backend
+        where = None if cwd is None else os.fspath(cwd)
+        command = [self.program, *bwrap_arguments(confinement, identity.reads, uid=uid, gid=gid, cwd=where,
+                                                  disable_userns=self._disable_userns, layout=_layout()),
+                   "--", *(os.fspath(arg) for arg in argv)]
+        return subprocess.Popen(command, stdin=stdin, stdout=stdout, stderr=stderr, env=env, cwd=cwd,
+                                start_new_session=True, **options)
+
+
+__all__ = ["APPCONTAINER", "BUBBLEWRAP", "BWRAP_ETC", "BWRAP_ETC_NETWORK", "BWRAP_LEAKED", "BWRAP_NEEDS", "BWRAP_TOP",
+           "Confinement", "INSTALL_BWRAP", "NotStarted", "Plan", "REQUIRE", "UNCONFINED_WARNING", "backend",
+           "bwrap_arguments", "bwrap_features", "bwrap_reason", "import_failure", "interpreter_paths", "not_started",
+           "owned", "plan", "popen", "recording", "refusal", "required", "run_folder", "started", "summary"]
