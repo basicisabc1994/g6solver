@@ -25,20 +25,19 @@ repository's tests) has your own rights: it can read your key file ~/.g6/.env an
 guard works inside Python only. You are responsible for what you run.
 
 Every ``g6_invoke`` reply carries the library envelope (``completion_state``, ``warning_card``,
-``evidence``, ``request_id``, ``run_id``) beside ``ok`` and ``result`` / ``error``. The door never
-raises a state: a failure is ``blocked-escalated`` with its ``G6_E_*`` code; a result is the state its
-component reported, ``qualified-draft`` when it reported none, and never ``verified`` without evidence.
+``evidence``, ``request_id``, ``run_id``) beside ``ok`` and ``result`` / ``error`` (``g6.core.door``). The door
+never raises a state: a failure is ``blocked-escalated`` with its ``G6_E_*`` code; a result is the state its
+component reported, ``qualified-draft`` when it reported none, and ``verified`` only when G6's own code re-runs a
+check at the door and reproduces it. Any other ``verified`` is held at ``qualified-draft`` with a
+``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``, and the ``result`` copy says the same. G6 re-checks
+artifacts with its own code; it does not defend against malicious code in its own process.
 """
 from __future__ import annotations
 
 import json
 import os
-import re
 import uuid
-from collections.abc import Mapping
 from typing import Any
-
-_CODE = re.compile(r"^\[(G6_E_[A-Z0-9_]+)\]\s*")
 
 #: The server's own setting: the sensitive components or ops (``component.op``) the person allows over MCP.
 SENSITIVE_ENV = "G6_MCP_SENSITIVE"
@@ -68,15 +67,6 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     return info
 
 
-def _card(found: Any, code: str, message: str) -> dict[str, Any]:
-    from g6.core.reliability_envelope import warning_card
-    from g6.invariants import ERROR_CODE_PATTERN
-
-    if isinstance(found, Mapping) and ERROR_CODE_PATTERN.match(str(found.get("code", ""))):
-        return dict(found)
-    return warning_card(code, message)
-
-
 def _person_model() -> Any:
     """The model the person configured for G6 (``g6.core.llm.provider_from_env``: ``G6_LLM_PROVIDER`` in their key
     file), or ``None`` when they configured none. A setting G6 cannot use gives a caller that says why when it is
@@ -96,16 +86,13 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
     sensitive op runs only when ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A
     component whose block takes a model (``__g6_model__``) is given the one the person configured, built once for
     the call; with none configured, nothing is passed."""
-    from g6.core.reliability_envelope import envelope_fields
+    from g6.core.door import blocked_reply, door_reply
     from g6.core.registry import get_registry
 
     request_id = uuid.uuid4().hex[:12]
 
     def failed(error: str) -> dict[str, Any]:
-        match = _CODE.match(error)
-        card = _card(None, match.group(1) if match else "G6_E_INVOKE_FAILED", error[match.end():] if match else error)
-        return {"ok": False, "error": error, **envelope_fields(reliability_label="blocked-escalated", warning_card=card,
-                                                             request_id=request_id, degradation_reason=error[:300])}
+        return blocked_reply(error, request_id=request_id)
 
     try:
         params = json.loads(params_json or "{}")
@@ -127,29 +114,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
                       f"runs this server can allow it, by adding {component}.{op} (or {component}) to {SENSITIVE_ENV} "
                       f"where the server is registered. {UNCONFINED_WARNING}")
         return failed(error)
-    value = result.unwrap()
-    said = value.get("completion_state") if isinstance(value, Mapping) else None
-    evidence = value.get("evidence") if isinstance(value, Mapping) and isinstance(value.get("evidence"), list) else []
-    found_card = value.get("warning_card") if isinstance(value, Mapping) else None
-    run_id = value.get("run_id") if isinstance(value, Mapping) and isinstance(value.get("run_id"), str) else ""
-    if said == "verified" and evidence:
-        envelope = envelope_fields(reliability_label="verified", evidence=evidence, request_id=request_id, run_id=run_id)
-        if envelope["completion_state"] != "verified":  # the core's promotion law held it below verified
-            envelope["warning_card"] = _card(None, "G6_E_PROMOTION_LAW", envelope.get("degradation_reason")
-                                             or "the promotion law held this result below verified")
-    elif said == "blocked-escalated":
-        card = _card(found_card, "G6_E_BLOCKED", f"{component}.{op} reported blocked-escalated")
-        envelope = envelope_fields(reliability_label="blocked-escalated", warning_card=card, evidence=evidence,
-                                   request_id=request_id, run_id=run_id)
-    else:
-        why = {"verified": "it reported verified with no evidence, so it is held at qualified-draft",
-               "qualified-draft": "it reported a qualified draft: usable with caution"}.get(
-            said, "it reported no reliability state, so treat the result as a draft")
-        code = "G6_E_VERIFIED_WITHOUT_EVIDENCE" if said == "verified" else "G6_E_QUALIFIED_DRAFT"
-        card = _card(found_card if said == "qualified-draft" else None, code, f"{component}.{op}: {why}")
-        envelope = envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
-                                   request_id=request_id, run_id=run_id)
-    return {"ok": True, "result": value, **envelope}
+    return door_reply(component, op, result, request_id=request_id)
 
 
 def build_server(surface: Any = None) -> Any:

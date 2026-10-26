@@ -31,7 +31,7 @@ def test_a_component_with_no_ops_says_so() -> None:
 
 def test_the_mcp_door_reads_its_code() -> None:
     # g6_invoke takes a failure's code from a leading "[G6_E_...]"; without the brackets it reports G6_E_INVOKE_FAILED
-    from g6.mcp import _CODE
+    from g6.core.door import _CODE
 
     match = _CODE.match(unknown_op("debate", "rnu", ["run"]).error)
     assert match is not None and match.group(1) == UNKNOWN_OP

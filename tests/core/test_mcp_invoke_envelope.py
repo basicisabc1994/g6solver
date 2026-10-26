@@ -57,8 +57,8 @@ def test_the_components_own_run_id_is_carried() -> None:
 
 def test_verified_without_evidence_is_held_at_draft() -> None:
     found = _reply(Success({"completion_state": "verified"}))
-    assert found["completion_state"] == "qualified-draft"
-    assert found["warning_card"]["code"] == "G6_E_VERIFIED_WITHOUT_EVIDENCE"
+    assert found["completion_state"] == "qualified-draft" and found["result"]["completion_state"] == "qualified-draft"
+    assert found["warning_card"]["code"] == "G6_E_PROMOTION_LAW"   # G6_E_VERIFIED_WITHOUT_EVIDENCE is retired
 
 
 def test_verified_with_evidence_is_held_without_g6s_recheck() -> None:

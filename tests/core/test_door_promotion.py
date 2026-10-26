@@ -198,3 +198,89 @@ def test_a_key_path_with_no_evaluator_service_says_so(monkeypatch: pytest.Monkey
     monkeypatch.setenv("G6_PROMOTION_EVALUATOR_KEY_PATH", str(tmp_path / "evaluator.key"))
     with pytest.raises(RuntimeError, match="no evaluator service"):
         promotion_evaluator.evaluator_configured()
+
+# --------------------------------------------------------------------------------------------------------------------
+# The MCP door (g6.core.door.door_reply): the reply's state and its result copy follow the same rule
+# --------------------------------------------------------------------------------------------------------------------
+
+class _Registry:
+    def __init__(self, value) -> None:
+        self.value = value
+
+    def invoke(self, component, op, params, *, block_sensitive=False, **kwargs):  # noqa: ANN001, ANN201
+        from returns.result import Success
+
+        return Success(self.value)
+
+
+def _mcp(component: str, value) -> dict:
+    from g6.invariants import check_envelope
+    from g6.mcp import invoke_reply
+
+    found = invoke_reply(component, "op", "{}", registry=_Registry(value), allow_sensitive=frozenset())
+    assert check_envelope(found) == [], found
+    return found
+
+
+def _integrity_value(base: Path) -> tuple[dict, Path]:
+    """A pinned integrity result as a component would return it over a door: its own fields, saying verified."""
+    from dataclasses import asdict
+
+    from g6.integrity import build_manifest, manifest_sha256, verify_tree
+
+    root = base / "pkg"
+    root.mkdir(parents=True)
+    (root / "a.py").write_text("A = 1\n", encoding="utf-8")
+    manifest = build_manifest(root)
+    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+    return {**asdict(result), "completion_state": "verified", "evidence": [{"kind": "integrity"}]}, root
+
+
+def test_verified_with_string_evidence_over_mcp_is_held_and_its_result_corrected() -> None:
+    found = _mcp("demo", {"completion_state": "verified", "evidence": ["all tests passed"], "answer": 42})
+    assert found["completion_state"] == "qualified-draft" and found["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
+    assert found["claimed_completion_state"] == "verified"
+    assert found["result"]["completion_state"] == "qualified-draft"
+    assert found["result"]["claimed_completion_state"] == "verified" and found["result"]["answer"] == 42
+
+
+def test_a_reliability_label_inside_the_result_is_corrected_too() -> None:
+    found = _mcp("demo", {"completion_state": "verified", "reliability_label": "verified"})
+    assert found["result"]["reliability_label"] == "qualified-draft"
+    assert _mcp("demo", {"reliability_label": "verified"})["result"]["reliability_label"] == "qualified-draft"
+
+
+def test_a_registered_g6_rechecker_promotes_over_mcp(tmp_path: Path) -> None:
+    value, _ = _integrity_value(tmp_path)
+    found = _mcp("integrity", value)
+    assert found["completion_state"] == "verified" and found["result"]["completion_state"] == "verified"
+    assert any(item.get("kind") == "g6_recheck" for item in found["evidence"])
+    assert "claimed_completion_state" not in found
+
+
+def test_a_rechecker_that_does_not_reproduce_is_held_over_mcp(tmp_path: Path) -> None:
+    value, root = _integrity_value(tmp_path)
+    (root / "a.py").write_text("A = 2\n", encoding="utf-8")
+    found = _mcp("integrity", value)
+    assert found["completion_state"] == "qualified-draft" and found["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
+    assert "did not reproduce" in found["warning_card"]["message"]
+
+
+def test_a_producers_witness_is_ignored_over_mcp(tmp_path: Path) -> None:
+    """Even a witness that would reproduce is not read: the door re-checks only what the result itself names."""
+    from g6.core.reliability_envelope import door_witness
+
+    value, _ = _integrity_value(tmp_path)
+    earned = door_witness("integrity", value)
+    found = _mcp("integrity", {"completion_state": "verified", "evidence": [{"kind": "test"}], "promotion_witness": earned})
+    assert found["completion_state"] == "qualified-draft"
+
+
+def test_a_transferred_witness_is_held_over_mcp(tmp_path: Path) -> None:
+    from g6.core.reliability_envelope import door_witness
+
+    value_a, _ = _integrity_value(tmp_path / "a")
+    value_b, root_b = _integrity_value(tmp_path / "b")
+    (root_b / "a.py").write_text("A = 'tampered'\n", encoding="utf-8")
+    found = _mcp("integrity", {**value_b, "promotion_witness": door_witness("integrity", value_a)})
+    assert found["completion_state"] == "qualified-draft"
