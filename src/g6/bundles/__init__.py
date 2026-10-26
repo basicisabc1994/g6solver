@@ -39,11 +39,14 @@ class BundleResult:
             raise ValueError(f"unknown completion state {self.completion_state!r}")
 
     def to_dict(self, *, request_id: str = "", run_id: str = "") -> dict[str, Any]:
-        """The result inside the library envelope; anything short of ``verified`` carries a warning card."""
-        from g6.core.reliability_envelope import envelope_fields, warning_card
+        """The result inside the library envelope; anything short of ``verified`` carries a warning card. The bundle's
+        own ``verified`` goes through the door rule (``g6.core.door``): G6 does not re-run a bundle's checks, so it is
+        held at ``qualified-draft`` with a ``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``."""
+        from g6.core.door import door_envelope
+        from g6.core.reliability_envelope import warning_card
 
-        envelope = envelope_fields(reliability_label=self.completion_state, request_id=request_id, run_id=run_id)
-        if envelope["completion_state"] != VERIFIED:
+        envelope = door_envelope(self.completion_state, who="this bundle", request_id=request_id, run_id=run_id)
+        if envelope["completion_state"] != VERIFIED and "claimed_completion_state" not in envelope:
             code = self.code or ("G6_E_BLOCKED" if envelope["completion_state"] == BLOCKED_ESCALATED
                                  else "G6_E_QUALIFIED_DRAFT")
             envelope["warning_card"] = warning_card(code, self.summary)

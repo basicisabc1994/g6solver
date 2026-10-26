@@ -130,11 +130,18 @@ def _try(check: Check, output: str) -> str:
 
 def _envelope(state: str, code: str, message: str, *, request_id: str, run_id: str, evidence: list[dict] | None = None,
               **extra: Any) -> dict[str, Any]:
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.door import door_envelope
+    from g6.core.reliability_envelope import warning_card
 
-    envelope = envelope_fields(reliability_label=state, request_id=request_id, run_id=run_id, evidence=evidence or [])
-    if envelope["completion_state"] != "verified":
+    # Plan A1: the issuer's verified is the certificate's (kept in certificate.state); this door does not re-run the
+    # checks, so it holds it at qualified-draft with a G6_E_PROMOTION_LAW card.
+    envelope = door_envelope(state, who="the evidence issuer", request_id=request_id, run_id=run_id,
+                             evidence=evidence or [])
+    held = "claimed_completion_state" in envelope
+    if envelope["completion_state"] != "verified" and not held:
         envelope["warning_card"] = warning_card(code, message)
+    if held and extra.get("next_action") == "None.":
+        extra["next_action"] = envelope["warning_card"]["suggested_action"]
     return {**envelope, **extra}
 
 

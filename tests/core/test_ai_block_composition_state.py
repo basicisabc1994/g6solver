@@ -62,3 +62,37 @@ def test_a_state_outside_the_three_is_never_relayed_as_verified() -> None:
     # Fails if ai_block._stage_state passes an unknown word through instead of reading it as qualified-draft.
     result = (_Says("L", "verified") >> _Says("R", "done")).infer("x")
     assert result.completion_state == "qualified-draft"
+
+
+def test_two_self_verified_stages_are_held() -> None:
+    """Plan A1: a stage's own verified is a claim; the chain keeps it only when G6's re-check reproduces it."""
+    result = (_Says("L", "verified") >> _Says("R", "verified")).infer("x")
+    assert result.completion_state == "qualified-draft"
+    assert result.claimed_completion_state == "verified"
+    assert result.warning_card["code"] == "G6_E_PROMOTION_LAW"
+
+
+class _Integrity(AIBlock):
+    """A stage named for the integrity component, returning a pinned integrity result over ``root``."""
+
+    def __init__(self, root) -> None:
+        super().__init__(name="integrity")
+        self._root = root
+
+    def infer(self, data: Any) -> Result[Any]:
+        from dataclasses import asdict
+
+        from g6.integrity import build_manifest, manifest_sha256, verify_tree
+
+        manifest = build_manifest(self._root)
+        found = verify_tree(self._root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+        return Result.ok({**asdict(found), "completion_state": found.reliability_label})
+
+
+def test_a_chain_keeps_verified_when_g6_rechecks_every_stage(tmp_path) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "a.py").write_text("A = 1\n", encoding="utf-8")
+    chain = _Integrity(root) >> _Integrity(root)
+    assert chain.infer("x").completion_state == "verified"
+    assert (_Integrity(root) >> _Says("R", "verified")).infer("x").completion_state == "qualified-draft"

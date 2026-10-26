@@ -19,9 +19,12 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-from g6.core.reliability_envelope import PROMOTION_LAW, door_witness, envelope_fields, warning_card
+from g6.core.reliability_envelope import PROMOTION_LAW, door_witness, envelope_fields
+from g6.core.reliability_envelope import warning_card as new_card
 
 _RANK = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
+#: What a held result's card tells its reader to do.
+HELD_NEXT_STEP = ("Treat it as a qualified draft: check it yourself, or use a component whose results G6 re-checks.")
 _CODE = re.compile(r"^\[(G6_E_[A-Z0-9_]+)\]\s*")
 
 
@@ -31,7 +34,7 @@ def card(found: Any, code: str, message: str) -> dict[str, Any]:
 
     if isinstance(found, Mapping) and ERROR_CODE_PATTERN.match(str(found.get("code", ""))):
         return dict(found)
-    return warning_card(code, message)
+    return new_card(code, message)
 
 
 def door_envelope(claimed: Any, *, who: str = "", component: str = "", value: Any = None,
@@ -56,9 +59,11 @@ def door_envelope(claimed: Any, *, who: str = "", component: str = "", value: An
                                      "summary": "G6 re-ran this check at the door and it reproduced"})
         return envelope
     reason = envelope.get("degradation_reason") or "G6 did not re-run a check that reproduces it"
-    envelope["warning_card"] = card(None, PROMOTION_LAW, f"{who or 'the producer'} reported verified, but G6 did not "
-                                                         f"re-run a check that reproduces it, so it is held at "
-                                                         f"qualified-draft ({reason})")
+    envelope["warning_card"] = new_card(
+        PROMOTION_LAW,
+        f"{who or 'the producer'} reported verified, but G6 did not re-run a check that reproduces it, so it is held "
+        f"at qualified-draft ({reason})",
+        HELD_NEXT_STEP)
     envelope["claimed_completion_state"] = "verified"
     return envelope
 

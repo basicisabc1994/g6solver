@@ -138,6 +138,24 @@ def test_evidence_01_a_callers_check_that_claims_to_be_g6s_never_lifts_a_run_to_
     assert any("control_not_generated_by_g6" in g for g in reply["gaps"])
 
 
+def test_an_issuers_verified_is_held_at_the_harness_door(memory, monkeypatch) -> None:
+    """Plan A1: the issuer's certificate keeps its persisted state, but its verified is held where it enters the
+    envelope, because the harness door does not re-run the checks itself."""
+    import g6.evidence as evidence
+
+    class _Verified:
+        state, gaps = "verified", ()
+
+        def as_dict(self) -> dict:
+            return {"state": "verified", "gaps": []}
+
+    monkeypatch.setattr(evidence, "issue", lambda *args, **kwargs: _Verified())
+    reply = _run(Standard(GOAL, (WINDOW,)), "Refunds within 14 days.", memory)
+    assert reply["completion_state"] == "qualified-draft" and reply["claimed_completion_state"] == "verified"
+    assert reply["warning_card"]["code"] == "G6_E_PROMOTION_LAW" and reply["certificate"]["state"] == "verified"
+    assert reply["next_action"] != "None."
+
+
 def test_a_plan_that_needs_revision_stops_the_run_before_execution(memory) -> None:
     """Audit 018 PC-003: the critique verdict is obeyed, not just reported."""
     from g6.reliability_pipeline.plan import Plan

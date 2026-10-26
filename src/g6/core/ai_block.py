@@ -203,10 +203,17 @@ class PipelineBlock(AIBlock[Input, Output, None]):
                 failed_stage="second",
             )
         # CORE_LABELS-01: library blocks report their state in the value dict, so read it there too.
+        claimed = _worst_completion_state(_stage_state(left_result), _stage_state(right_result))
+        # Plan A1: a stage's own verified stands only when G6's re-check at the door reproduces it.
         completion_state = _worst_completion_state(
-            _stage_state(left_result),
-            _stage_state(right_result),
+            _door_state(self._left, left_result),
+            _door_state(self._right, right_result),
         )
+        if claimed == "verified" and completion_state != "verified":
+            from g6.core.door import door_envelope
+
+            warning = door_envelope("verified", who=f"the pipeline {self.name}")["warning_card"]
+            setattr(right_result, "claimed_completion_state", claimed)
         return _annotate_result(
             right_result,
             evidence=evidence,
@@ -271,6 +278,19 @@ def _stage_state(result: Result[Any]) -> str:
         said.append(result.value.get("completion_state"))
         said.append(result.value.get("reliability_label"))
     return _worst_completion_state(*[state if isinstance(state, str) else "qualified-draft" for state in said if state])
+
+
+def _door_state(block: AIBlock[Any, Any, Any], result: Result[Any]) -> str:
+    """The state a stage's result keeps at the door: a stage's own ``verified`` stands only when G6's re-checker for
+    the stage's block re-runs the check its value names and reproduces it. A nested pipeline was already through the
+    door, so its state is kept."""
+    said = _stage_state(result)
+    if said != "verified" or isinstance(block, PipelineBlock):
+        return said
+    from g6.core.door import door_envelope
+
+    value = result.value if result.is_ok() else None
+    return door_envelope(said, component=block.name, value=value)["completion_state"]
 
 
 def _worst_completion_state(*states: str) -> str:
