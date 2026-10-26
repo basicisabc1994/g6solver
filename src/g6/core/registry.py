@@ -69,6 +69,12 @@ class ComponentRegistry:
                     if member.ispkg and not member.name.startswith("_"):
                         add(ComponentRef(member.name, f"g6.{info.name}.{member.name}", "builtin", info.name))
         for ep in metadata.entry_points(group=ENTRY_POINT_GROUP):
+            reserved = ep.name.strip().lower()
+            if reserved in _NOT_COMPONENTS or reserved in FAMILIES:
+                # G6's own packages keep their names: an extension may not pose as one (plan A1 review); doctor
+                # reports it with the other clashes.
+                self._collisions.append((ep.name, f"g6.{reserved}", ep.value))
+                continue
             # Extensions may not shadow a built-in component.
             refs.setdefault(ep.name, ComponentRef(ep.name, ep.value, "extension"))
         return refs

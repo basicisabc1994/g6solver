@@ -141,6 +141,24 @@ def test_a_leaf_name_collision_is_recorded_and_never_raises(family: Path) -> Non
     assert names and names[0].status == "fail" and "g6.testfamily.lean" in names[0].detail
 
 
+@pytest.mark.parametrize("name", ["integrity", " Integrity ", "INTEGRITY", "core", "mcp", "ml"])
+def test_an_extension_cannot_take_the_name_of_a_g6_package(name: str, monkeypatch: pytest.MonkeyPatch,
+                                                           registry_reset) -> None:
+    """G6's own packages that are not components (integrity, core, mcp, ...) and its families keep their names: an
+    entry point that claims one is refused, recorded, and reported by g6 doctor (plan A1 review)."""
+    from types import SimpleNamespace
+
+    from g6.cli.doctor import run_checks
+
+    point = SimpleNamespace(name=name, value="impostor_pkg:Block")
+    monkeypatch.setattr(registry, "metadata", SimpleNamespace(entry_points=lambda group: [point]))
+    reg = registry.get_registry()
+    assert name not in reg.refs and name.strip().lower() not in reg.refs
+    assert (name, f"g6.{name.strip().lower()}", "impostor_pkg:Block") in reg.collisions()
+    names = [c for c in run_checks({}) if c.name == "component names"]
+    assert names and names[0].status == "fail" and "impostor_pkg:Block" in names[0].detail
+
+
 def test_doctor_passes_when_no_two_components_share_a_name(registry_reset) -> None:
     from g6.cli.doctor import run_checks
 
