@@ -127,7 +127,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
       "rule": "friction"
     }
   ],
-  "digest": "cdacbd5a36c9777f1a0be8ba6e5658dd11dfb5f49386debaacc15cded8c155cf",
+  "digest": "48139a520eaa8ebadc889f18a66568d50762b62386708b23be1f604de2aa9758",
   "falsification": {
     "a_star": {
       "bounds": "2D/3D coordinates and lengths up to 1e6; stationary and tangent segments, small obstacles and support endpoints; 1..12 links, straight/folded chains; non-increasing times; finite Euler and constant acceleration; bounded grids and seeded RRT obstacles, direct paths and iteration/seed endpoints. Near-tangent point segments up to 1e6 m long; arm segments that sweep through an obstacle or keep clear by the source's sufficient condition, 1..12 links.",
@@ -3733,12 +3733,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
   "inherits": null,
   "inputs_sha256": "9305addaea9d2834da34f249c5faffb23a0f4b4c6562b068b774c4cf116115bb",
   "isolation": {
-    "backend": "appcontainer",
+    "backend": null,
     "network": false,
-    "why": ""
+    "why": "unavailable: the Windows AppContainer cannot read <folder>, so untrusted code would run with your permissions; to let G6 confine it, run once in a terminal (it grants read and execute to ALL APPLICATION PACKAGES on those folders and everything in them, and nothing else): icacls \"<folder>\" /grant \"*S-1-15-2-1:(OI)(CI)(RX)\", then icacls \"<folder>\" /grant \"*S-1-15-2-1:(RX)\" /T /C /Q"
   },
   "issuer": {
-    "artifact_seq": 5832,
+    "artifact_seq": 1,
     "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
     "catalogue_sha": "",
     "checks": [
@@ -3754,7 +3754,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3762,7 +3762,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3770,7 +3770,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3778,7 +3778,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3786,7 +3786,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3794,7 +3794,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3802,7 +3802,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3810,7 +3810,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3818,7 +3818,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3826,7 +3826,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3834,7 +3834,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
@@ -3842,12 +3842,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6317,
+        "positive_seq": 3,
         "predicates": [
           "a_star"
         ]
@@ -3864,7 +3864,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3872,7 +3872,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3880,7 +3880,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3888,7 +3888,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3896,7 +3896,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3904,7 +3904,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3912,7 +3912,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3920,7 +3920,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3928,7 +3928,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3936,7 +3936,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3944,7 +3944,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           },
           {
             "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
@@ -3952,12 +3952,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "a_star",
-            "seq": 6316
+            "seq": 2
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6317,
+        "positive_seq": 3,
         "predicates": [
           "a_star"
         ]
@@ -3974,7 +3974,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -3982,7 +3982,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -3990,7 +3990,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -3998,7 +3998,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4006,7 +4006,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4014,7 +4014,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4022,7 +4022,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4030,7 +4030,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4038,7 +4038,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4046,7 +4046,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4054,7 +4054,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
@@ -4062,12 +4062,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6320,
+        "positive_seq": 6,
         "predicates": [
           "average_speed"
         ]
@@ -4084,7 +4084,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4092,7 +4092,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4100,7 +4100,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4108,7 +4108,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4116,7 +4116,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4124,7 +4124,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4132,7 +4132,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4140,7 +4140,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4148,7 +4148,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4156,7 +4156,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4164,7 +4164,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           },
           {
             "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
@@ -4172,12 +4172,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "average_speed",
-            "seq": 6319
+            "seq": 5
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6320,
+        "positive_seq": 6,
         "predicates": [
           "average_speed"
         ]
@@ -4194,7 +4194,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4202,7 +4202,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4210,7 +4210,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4218,7 +4218,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4226,7 +4226,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4234,7 +4234,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4242,7 +4242,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4250,7 +4250,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4258,7 +4258,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4266,7 +4266,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4274,7 +4274,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4282,7 +4282,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4290,7 +4290,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4298,7 +4298,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           },
           {
             "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
@@ -4306,10 +4306,10 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6322
+            "seq": 8
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -4328,7 +4328,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4336,7 +4336,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4344,7 +4344,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4352,7 +4352,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4360,7 +4360,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4368,7 +4368,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4376,7 +4376,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4384,7 +4384,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4392,7 +4392,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
@@ -4400,12 +4400,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6326,
+        "positive_seq": 12,
         "predicates": [
           "chain"
         ]
@@ -4422,7 +4422,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4430,7 +4430,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4438,7 +4438,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4446,7 +4446,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4454,7 +4454,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4462,7 +4462,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4470,7 +4470,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4478,7 +4478,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4486,7 +4486,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           },
           {
             "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
@@ -4494,12 +4494,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "chain",
-            "seq": 6325
+            "seq": 11
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6326,
+        "positive_seq": 12,
         "predicates": [
           "chain"
         ]
@@ -4516,7 +4516,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4524,7 +4524,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4532,7 +4532,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4540,7 +4540,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4548,7 +4548,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4556,7 +4556,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4564,7 +4564,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4572,7 +4572,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
@@ -4580,12 +4580,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6329,
+        "positive_seq": 15,
         "predicates": [
           "closed_form"
         ]
@@ -4602,7 +4602,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4610,7 +4610,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4618,7 +4618,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4626,7 +4626,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4634,7 +4634,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4642,7 +4642,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4650,7 +4650,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4658,7 +4658,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           },
           {
             "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
@@ -4666,12 +4666,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "closed_form",
-            "seq": 6328
+            "seq": 14
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6329,
+        "positive_seq": 15,
         "predicates": [
           "closed_form"
         ]
@@ -4688,7 +4688,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "distance",
-            "seq": 6331
+            "seq": 17
           },
           {
             "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
@@ -4696,7 +4696,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 6331
+            "seq": 17
           },
           {
             "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
@@ -4704,12 +4704,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 6331
+            "seq": 17
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6332,
+        "positive_seq": 18,
         "predicates": [
           "distance"
         ]
@@ -4726,7 +4726,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "distance",
-            "seq": 6331
+            "seq": 17
           },
           {
             "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
@@ -4734,7 +4734,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 6331
+            "seq": 17
           },
           {
             "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
@@ -4742,12 +4742,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "distance",
-            "seq": 6331
+            "seq": 17
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6332,
+        "positive_seq": 18,
         "predicates": [
           "distance"
         ]
@@ -4764,7 +4764,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
@@ -4772,7 +4772,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
@@ -4780,7 +4780,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
@@ -4788,7 +4788,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
@@ -4796,12 +4796,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6335,
+        "positive_seq": 21,
         "predicates": [
           "euler"
         ]
@@ -4818,7 +4818,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
@@ -4826,7 +4826,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
@@ -4834,7 +4834,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
@@ -4842,7 +4842,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           },
           {
             "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
@@ -4850,12 +4850,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "euler",
-            "seq": 6334
+            "seq": 20
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6335,
+        "positive_seq": 21,
         "predicates": [
           "euler"
         ]
@@ -4872,7 +4872,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4880,7 +4880,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4888,7 +4888,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4896,7 +4896,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4904,7 +4904,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4912,7 +4912,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4920,7 +4920,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4928,7 +4928,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4936,7 +4936,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4944,7 +4944,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4952,7 +4952,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4960,7 +4960,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4968,7 +4968,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4976,7 +4976,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4984,7 +4984,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -4992,7 +4992,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -5000,7 +5000,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -5008,7 +5008,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -5016,7 +5016,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -5024,7 +5024,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -5032,7 +5032,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           },
           {
             "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
@@ -5040,10 +5040,10 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "force_tolerance",
-            "seq": 6337
+            "seq": 23
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -5062,7 +5062,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
@@ -5070,7 +5070,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
@@ -5078,7 +5078,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
@@ -5086,7 +5086,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
@@ -5094,7 +5094,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
@@ -5102,12 +5102,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6341,
+        "positive_seq": 27,
         "predicates": [
           "friction"
         ]
@@ -5124,7 +5124,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
@@ -5132,7 +5132,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
@@ -5140,7 +5140,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
@@ -5148,7 +5148,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
@@ -5156,7 +5156,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           },
           {
             "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
@@ -5164,12 +5164,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "friction",
-            "seq": 6340
+            "seq": 26
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6341,
+        "positive_seq": 27,
         "predicates": [
           "friction"
         ]
@@ -5186,7 +5186,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5194,7 +5194,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5202,7 +5202,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5210,7 +5210,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5218,7 +5218,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5226,7 +5226,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5234,7 +5234,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5242,7 +5242,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5250,7 +5250,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5258,7 +5258,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5266,7 +5266,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
@@ -5274,12 +5274,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6344,
+        "positive_seq": 30,
         "predicates": [
           "rrt"
         ]
@@ -5296,7 +5296,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5304,7 +5304,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5312,7 +5312,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5320,7 +5320,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5328,7 +5328,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5336,7 +5336,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5344,7 +5344,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5352,7 +5352,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5360,7 +5360,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5368,7 +5368,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5376,7 +5376,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           },
           {
             "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
@@ -5384,12 +5384,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "rrt",
-            "seq": 6343
+            "seq": 29
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6344,
+        "positive_seq": 30,
         "predicates": [
           "rrt"
         ]
@@ -5406,7 +5406,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5414,7 +5414,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5422,7 +5422,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5430,7 +5430,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5438,7 +5438,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5446,7 +5446,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5454,7 +5454,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5462,7 +5462,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5470,7 +5470,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5478,7 +5478,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5486,7 +5486,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
@@ -5494,12 +5494,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6347,
+        "positive_seq": 33,
         "predicates": [
           "swept_arm"
         ]
@@ -5516,7 +5516,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5524,7 +5524,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5532,7 +5532,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5540,7 +5540,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5548,7 +5548,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5556,7 +5556,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5564,7 +5564,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5572,7 +5572,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5580,7 +5580,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5588,7 +5588,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5596,7 +5596,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           },
           {
             "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
@@ -5604,12 +5604,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_arm",
-            "seq": 6346
+            "seq": 32
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6347,
+        "positive_seq": 33,
         "predicates": [
           "swept_arm"
         ]
@@ -5626,7 +5626,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5634,7 +5634,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5642,7 +5642,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5650,7 +5650,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5658,7 +5658,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5666,7 +5666,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5674,7 +5674,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5682,7 +5682,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5690,7 +5690,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5698,7 +5698,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5706,7 +5706,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
@@ -5714,12 +5714,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6350,
+        "positive_seq": 36,
         "predicates": [
           "swept_point"
         ]
@@ -5736,7 +5736,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5744,7 +5744,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5752,7 +5752,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5760,7 +5760,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5768,7 +5768,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5776,7 +5776,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5784,7 +5784,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5792,7 +5792,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5800,7 +5800,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5808,7 +5808,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5816,7 +5816,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           },
           {
             "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
@@ -5824,12 +5824,12 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "swept_point",
-            "seq": 6349
+            "seq": 35
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6350,
+        "positive_seq": 36,
         "predicates": [
           "swept_point"
         ]
@@ -5846,7 +5846,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5854,7 +5854,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5862,7 +5862,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5870,7 +5870,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5878,7 +5878,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5886,7 +5886,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5894,7 +5894,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5902,7 +5902,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5910,7 +5910,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5918,7 +5918,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5926,7 +5926,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5934,7 +5934,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5942,7 +5942,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5950,7 +5950,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5958,7 +5958,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5966,7 +5966,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5974,7 +5974,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5982,7 +5982,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5990,7 +5990,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -5998,7 +5998,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -6006,7 +6006,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -6014,7 +6014,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           },
           {
             "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
@@ -6022,10 +6022,10 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "tolerance",
-            "seq": 6352
+            "seq": 38
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -6044,7 +6044,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6052,7 +6052,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6060,7 +6060,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6068,7 +6068,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6076,7 +6076,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6084,7 +6084,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6092,7 +6092,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6100,7 +6100,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6108,7 +6108,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6116,7 +6116,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6124,7 +6124,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6132,7 +6132,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6140,7 +6140,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6148,7 +6148,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6156,7 +6156,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6164,7 +6164,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6172,7 +6172,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": true,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6180,7 +6180,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           },
           {
             "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
@@ -6188,10 +6188,10 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
             "generated_by": "g6",
             "killed": false,
             "predicate": "work_bound",
-            "seq": 6355
+            "seq": 41
           }
         ],
-        "frozen_seq": 6315,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -6201,7 +6201,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
     ],
     "cost_cents": null,
     "decisions": [],
-    "digest": "e92efb398f5590fcf0f5e1ea41922bf94f4e235429b5a8baf5e445f1d1c4be0a",
+    "digest": "fa1894107eab6c6d71763e51041668aca801d2416505d71913605a249ce14ad7",
     "formal": [],
     "gaps": [
       [
@@ -6392,7 +6392,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "03aba51225bd0dc8cd1611b418423bb1042b0eb984d23660512639360eee4d54",
         "receipt_id": "a_star:known:receipt",
         "result": "pass",
-        "seq": 6318
+        "seq": 4
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6400,7 +6400,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "f539fda250e4765d5d2d0c2aa862dc14ab2ef6fb5a66d57cfc15f2d01b677a49",
         "receipt_id": "a_star:second_route:receipt",
         "result": "pass",
-        "seq": 6318
+        "seq": 4
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6408,7 +6408,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "41fb5947c09f8fea602cef10ce43b72378d3186297445d473fe22b640bffd8da",
         "receipt_id": "average_speed:known:receipt",
         "result": "pass",
-        "seq": 6321
+        "seq": 7
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6416,7 +6416,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "97c9d62d493e1ceebd506c65aa27c2c2ae7a96d6608c48563eb57a9d0048e195",
         "receipt_id": "average_speed:second_route:receipt",
         "result": "pass",
-        "seq": 6321
+        "seq": 7
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6424,7 +6424,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "bafe3a55354f39ba643cc80b0ba1748783d2b46e0e649d56dcde55b07d65d111",
         "receipt_id": "bounds:known:receipt",
         "result": "pass",
-        "seq": 6324
+        "seq": 10
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6432,7 +6432,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "9efa063fb1d587687fc25d88f83b45a476725a4f9538bc9ce80861bba59208f6",
         "receipt_id": "chain:known:receipt",
         "result": "pass",
-        "seq": 6327
+        "seq": 13
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6440,7 +6440,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "25daaef03a873d0aee0c7409de56ede7bfaca75d80b1dec84338dba715e51ffe",
         "receipt_id": "chain:second_route:receipt",
         "result": "pass",
-        "seq": 6327
+        "seq": 13
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6448,7 +6448,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "82d81d16ac640c8be71dbcd41cd3e525d65819bd5fe4307da762a2ffb5b6304b",
         "receipt_id": "closed_form:known:receipt",
         "result": "pass",
-        "seq": 6330
+        "seq": 16
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6456,7 +6456,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "3bfac90001629a4f88bc0708ffd226d5b72bafd3e2ac457a7e962f0dd10a2c86",
         "receipt_id": "closed_form:second_route:receipt",
         "result": "pass",
-        "seq": 6330
+        "seq": 16
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6464,7 +6464,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "1aca0ff797d2cb3b83c98575c03a9ce337caeb95ddf714f11c86867e0cc9855e",
         "receipt_id": "distance:known:receipt",
         "result": "pass",
-        "seq": 6333
+        "seq": 19
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6472,7 +6472,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "b954b9b451ad90422c8ff9c97f8daa7e8ed6d13437968dcff48e88061fbb346e",
         "receipt_id": "distance:second_route:receipt",
         "result": "pass",
-        "seq": 6333
+        "seq": 19
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6480,7 +6480,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "79d408fd2fc104649be790227e2317563747c46fc76979e6c2310b748473bb5d",
         "receipt_id": "euler:known:receipt",
         "result": "pass",
-        "seq": 6336
+        "seq": 22
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6488,7 +6488,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "ef5a63674c49546e3852858ae7337f23864296bf5c219507ca44cf011552c3ee",
         "receipt_id": "euler:second_route:receipt",
         "result": "pass",
-        "seq": 6336
+        "seq": 22
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6496,7 +6496,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "8f86f189e3510c3c39a2a8e50b2c3ff2761d822d6d59bfd71a30e44f0fb2233f",
         "receipt_id": "force_tolerance:known:receipt",
         "result": "pass",
-        "seq": 6339
+        "seq": 25
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6504,7 +6504,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "bcfd682adeeae5235404c658715c804e527148bba00d3495e9543e27d310421b",
         "receipt_id": "friction:known:receipt",
         "result": "pass",
-        "seq": 6342
+        "seq": 28
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6512,7 +6512,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "482dbf7773a51d6ecc913a6b82bef1e18cc6b546c3537d39efd4a2120da8720c",
         "receipt_id": "friction:second_route:receipt",
         "result": "pass",
-        "seq": 6342
+        "seq": 28
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6520,7 +6520,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "387755acd27db608964ce7714d9926cdbc1d85adc092307700747798e624b8b4",
         "receipt_id": "rrt:known:receipt",
         "result": "pass",
-        "seq": 6345
+        "seq": 31
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6528,7 +6528,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "42d6b9b6269a8426b4593c0fd074bb65a47fa3c61f551e7575ccd7294f9ca70d",
         "receipt_id": "rrt:second_route:receipt",
         "result": "pass",
-        "seq": 6345
+        "seq": 31
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6536,7 +6536,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "10540ffddb821c567eaf0b8d993d546ae01281f37150a42113ff7dd14899e055",
         "receipt_id": "swept_arm:known:receipt",
         "result": "pass",
-        "seq": 6348
+        "seq": 34
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6544,7 +6544,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "a982108aeeb8229eed2edffe079bf2a08f20cb554d0ad5580c02c2142789196d",
         "receipt_id": "swept_arm:second_route:receipt",
         "result": "pass",
-        "seq": 6348
+        "seq": 34
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6552,7 +6552,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "cf8d24d07b9b861d20c57f7cffc75baa2d68e9a61ef10c32fd7ae962e2ba3892",
         "receipt_id": "swept_point:known:receipt",
         "result": "pass",
-        "seq": 6351
+        "seq": 37
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6560,7 +6560,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "d169ef8a48925f38cb43a4df484917fe8e95246048ba72551a6c1b939f8ec791",
         "receipt_id": "swept_point:second_route:receipt",
         "result": "pass",
-        "seq": 6351
+        "seq": 37
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6568,7 +6568,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "d175234834452ec05f6f4b763199a0f2076d43c1720baf2aac949f5e63c60f5d",
         "receipt_id": "tolerance:known:receipt",
         "result": "pass",
-        "seq": 6354
+        "seq": 40
       },
       {
         "artifact_sha": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
@@ -6576,7 +6576,7 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
         "check_sha": "86fc694564c81e829a4bb8372ad5bc70ac548806a704714306050854bdcd62cb",
         "receipt_id": "work_bound:known:receipt",
         "result": "pass",
-        "seq": 6357
+        "seq": 43
       }
     ],
     "rerun": [],
@@ -9575,63 +9575,63 @@ lavalle-2006-14.3.2-closed-form, lavalle-2006-14.3.2-euler, lavalle-2006-2.2.2, 
     }
   },
   "positions": {
-    "artifact": 5832,
+    "artifact": 1,
     "commits": {
-      "a_star:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "a_star:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "artifact": "bbbdde02548020310a7e9705d19ffae790faa3b6",
-      "average_speed:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "average_speed:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "bounds:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "chain:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "chain:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "closed_form:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "closed_form:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "distance:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "distance:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "euler:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "euler:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "force_tolerance:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "friction:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "friction:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "rrt:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "rrt:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "swept_arm:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "swept_arm:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "swept_point:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "swept_point:second_route": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "tolerance:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe",
-      "work_bound:known": "3b996aa01e2a178e431f6b81b1032dcf181165fe"
+      "a_star:known": "229873b5509c5be646de8d1778607555357e5697",
+      "a_star:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "artifact": "229873b5509c5be646de8d1778607555357e5697",
+      "average_speed:known": "229873b5509c5be646de8d1778607555357e5697",
+      "average_speed:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "bounds:known": "229873b5509c5be646de8d1778607555357e5697",
+      "chain:known": "229873b5509c5be646de8d1778607555357e5697",
+      "chain:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "closed_form:known": "229873b5509c5be646de8d1778607555357e5697",
+      "closed_form:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "distance:known": "229873b5509c5be646de8d1778607555357e5697",
+      "distance:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "euler:known": "229873b5509c5be646de8d1778607555357e5697",
+      "euler:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "force_tolerance:known": "229873b5509c5be646de8d1778607555357e5697",
+      "friction:known": "229873b5509c5be646de8d1778607555357e5697",
+      "friction:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "rrt:known": "229873b5509c5be646de8d1778607555357e5697",
+      "rrt:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "swept_arm:known": "229873b5509c5be646de8d1778607555357e5697",
+      "swept_arm:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "swept_point:known": "229873b5509c5be646de8d1778607555357e5697",
+      "swept_point:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "tolerance:known": "229873b5509c5be646de8d1778607555357e5697",
+      "work_bound:known": "229873b5509c5be646de8d1778607555357e5697"
     },
-    "controls": 6316,
+    "controls": 2,
     "frozen": {
-      "a_star:known": 6315,
-      "a_star:second_route": 6315,
-      "average_speed:known": 6315,
-      "average_speed:second_route": 6315,
-      "bounds:known": 6315,
-      "chain:known": 6315,
-      "chain:second_route": 6315,
-      "closed_form:known": 6315,
-      "closed_form:second_route": 6315,
-      "distance:known": 6315,
-      "distance:second_route": 6315,
-      "euler:known": 6315,
-      "euler:second_route": 6315,
-      "force_tolerance:known": 6315,
-      "friction:known": 6315,
-      "friction:second_route": 6315,
-      "rrt:known": 6315,
-      "rrt:second_route": 6315,
-      "swept_arm:known": 6315,
-      "swept_arm:second_route": 6315,
-      "swept_point:known": 6315,
-      "swept_point:second_route": 6315,
-      "tolerance:known": 6315,
-      "work_bound:known": 6315
+      "a_star:known": 1,
+      "a_star:second_route": 1,
+      "average_speed:known": 1,
+      "average_speed:second_route": 1,
+      "bounds:known": 1,
+      "chain:known": 1,
+      "chain:second_route": 1,
+      "closed_form:known": 1,
+      "closed_form:second_route": 1,
+      "distance:known": 1,
+      "distance:second_route": 1,
+      "euler:known": 1,
+      "euler:second_route": 1,
+      "force_tolerance:known": 1,
+      "friction:known": 1,
+      "friction:second_route": 1,
+      "rrt:known": 1,
+      "rrt:second_route": 1,
+      "swept_arm:known": 1,
+      "swept_arm:second_route": 1,
+      "swept_point:known": 1,
+      "swept_point:second_route": 1,
+      "tolerance:known": 1,
+      "work_bound:known": 1
     },
-    "positive": 6317,
-    "receipts": 6318
+    "positive": 3,
+    "receipts": 4
   },
   "printed_values": [
     {

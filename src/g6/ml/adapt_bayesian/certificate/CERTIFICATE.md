@@ -156,7 +156,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
       "rule": "moments"
     }
   ],
-  "digest": "b85fc79f769f911c997d1fb7327f9ff26dcba154936b7b20654001a43fd77c76",
+  "digest": "adfe96b384d5c8458435cae1f893006e865e218f35e00bb18994a4729a5641ef",
   "falsification": {
     "barber_example": {
       "bounds": "Conjugate parameters .01..10000; normal means and observations +/-1e6; binomial trials 1..10000 and total <=1e6. CDF support endpoints and algorithm switch; short tied, constant and shifted chains. MH scales 1e-12..100. Predictive route covers the normal likelihood only.",
@@ -6644,12 +6644,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
   "inherits": null,
   "inputs_sha256": "8b56976c73c1e63f73d3ea9687bc07a9d95aa483363a9963d1a52836ef74ce20",
   "isolation": {
-    "backend": "appcontainer",
+    "backend": null,
     "network": false,
-    "why": ""
+    "why": "unavailable: the Windows AppContainer cannot read <folder>, so untrusted code would run with your permissions; to let G6 confine it, run once in a terminal (it grants read and execute to ALL APPLICATION PACKAGES on those folders and everything in them, and nothing else): icacls \"<folder>\" /grant \"*S-1-15-2-1:(OI)(CI)(RX)\", then icacls \"<folder>\" /grant \"*S-1-15-2-1:(RX)\" /T /C /Q"
   },
   "issuer": {
-    "artifact_seq": 5832,
+    "artifact_seq": 1,
     "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
     "catalogue_sha": "",
     "checks": [
@@ -6665,7 +6665,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6673,7 +6673,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6681,7 +6681,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6689,7 +6689,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6697,7 +6697,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6705,7 +6705,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6713,7 +6713,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6721,7 +6721,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6729,7 +6729,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6737,7 +6737,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6745,7 +6745,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
@@ -6753,12 +6753,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6326,
+        "positive_seq": 3,
         "predicates": [
           "barber_example"
         ]
@@ -6775,7 +6775,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6783,7 +6783,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6791,7 +6791,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6799,7 +6799,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6807,7 +6807,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6815,7 +6815,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6823,7 +6823,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6831,7 +6831,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6839,7 +6839,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6847,7 +6847,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6855,7 +6855,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           },
           {
             "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
@@ -6863,12 +6863,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "barber_example",
-            "seq": 6325
+            "seq": 2
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6326,
+        "positive_seq": 3,
         "predicates": [
           "barber_example"
         ]
@@ -6885,7 +6885,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
@@ -6893,7 +6893,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
@@ -6901,7 +6901,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
@@ -6909,7 +6909,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
@@ -6917,7 +6917,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
@@ -6925,7 +6925,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
@@ -6933,12 +6933,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6329,
+        "positive_seq": 6,
         "predicates": [
           "beta"
         ]
@@ -6955,7 +6955,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
@@ -6963,7 +6963,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
@@ -6971,7 +6971,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
@@ -6979,7 +6979,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
@@ -6987,7 +6987,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
@@ -6995,7 +6995,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           },
           {
             "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
@@ -7003,12 +7003,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta",
-            "seq": 6328
+            "seq": 5
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6329,
+        "positive_seq": 6,
         "predicates": [
           "beta"
         ]
@@ -7025,7 +7025,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7033,7 +7033,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7041,7 +7041,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7049,7 +7049,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7057,7 +7057,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7065,7 +7065,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7073,7 +7073,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7081,7 +7081,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7089,7 +7089,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7097,7 +7097,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7105,7 +7105,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
@@ -7113,12 +7113,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6332,
+        "positive_seq": 9,
         "predicates": [
           "beta_cdf"
         ]
@@ -7135,7 +7135,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7143,7 +7143,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7151,7 +7151,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7159,7 +7159,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7167,7 +7167,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7175,7 +7175,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7183,7 +7183,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7191,7 +7191,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7199,7 +7199,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7207,7 +7207,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7215,7 +7215,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           },
           {
             "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
@@ -7223,12 +7223,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "beta_cdf",
-            "seq": 6331
+            "seq": 8
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6332,
+        "positive_seq": 9,
         "predicates": [
           "beta_cdf"
         ]
@@ -7245,7 +7245,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7253,7 +7253,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7261,7 +7261,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7269,7 +7269,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7277,7 +7277,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7285,7 +7285,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7293,7 +7293,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7301,7 +7301,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7309,7 +7309,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7317,7 +7317,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7325,7 +7325,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7333,7 +7333,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7341,7 +7341,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7349,7 +7349,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7357,7 +7357,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7365,7 +7365,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7373,7 +7373,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7381,7 +7381,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7389,7 +7389,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7397,7 +7397,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           },
           {
             "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
@@ -7405,10 +7405,10 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "bounds",
-            "seq": 6334
+            "seq": 11
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -7427,7 +7427,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7435,7 +7435,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7443,7 +7443,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7451,7 +7451,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7459,7 +7459,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7467,7 +7467,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7475,7 +7475,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7483,7 +7483,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7491,7 +7491,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7499,7 +7499,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7507,7 +7507,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
@@ -7515,12 +7515,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6338,
+        "positive_seq": 15,
         "predicates": [
           "convergence"
         ]
@@ -7537,7 +7537,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7545,7 +7545,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7553,7 +7553,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7561,7 +7561,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7569,7 +7569,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7577,7 +7577,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7585,7 +7585,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7593,7 +7593,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7601,7 +7601,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7609,7 +7609,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7617,7 +7617,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           },
           {
             "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
@@ -7625,12 +7625,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "convergence",
-            "seq": 6337
+            "seq": 14
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6338,
+        "positive_seq": 15,
         "predicates": [
           "convergence"
         ]
@@ -7647,7 +7647,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
@@ -7655,7 +7655,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
@@ -7663,7 +7663,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
@@ -7671,7 +7671,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
@@ -7679,7 +7679,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
@@ -7687,7 +7687,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
@@ -7695,12 +7695,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6341,
+        "positive_seq": 18,
         "predicates": [
           "credible_interval"
         ]
@@ -7717,7 +7717,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
@@ -7725,7 +7725,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
@@ -7733,7 +7733,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
@@ -7741,7 +7741,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
@@ -7749,7 +7749,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
@@ -7757,7 +7757,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           },
           {
             "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
@@ -7765,12 +7765,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "credible_interval",
-            "seq": 6340
+            "seq": 17
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6341,
+        "positive_seq": 18,
         "predicates": [
           "credible_interval"
         ]
@@ -7787,7 +7787,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7795,7 +7795,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7803,7 +7803,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7811,7 +7811,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7819,7 +7819,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7827,7 +7827,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7835,7 +7835,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7843,7 +7843,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7851,7 +7851,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7859,7 +7859,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7867,7 +7867,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
@@ -7875,12 +7875,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6344,
+        "positive_seq": 21,
         "predicates": [
           "evidence"
         ]
@@ -7897,7 +7897,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7905,7 +7905,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7913,7 +7913,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7921,7 +7921,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7929,7 +7929,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7937,7 +7937,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7945,7 +7945,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7953,7 +7953,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7961,7 +7961,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7969,7 +7969,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7977,7 +7977,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           },
           {
             "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
@@ -7985,12 +7985,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "evidence",
-            "seq": 6343
+            "seq": 20
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6344,
+        "positive_seq": 21,
         "predicates": [
           "evidence"
         ]
@@ -8007,7 +8007,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "271b0b381ec100183b8259c382f3341aaf823684a5fb55ec9da2d1c1c35628bd",
@@ -8015,7 +8015,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "271b0b381ec100183b8259c382f3341aaf823684a5fb55ec9da2d1c1c35628bd",
@@ -8023,7 +8023,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "271b0b381ec100183b8259c382f3341aaf823684a5fb55ec9da2d1c1c35628bd",
@@ -8031,7 +8031,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "271b0b381ec100183b8259c382f3341aaf823684a5fb55ec9da2d1c1c35628bd",
@@ -8039,7 +8039,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "271b0b381ec100183b8259c382f3341aaf823684a5fb55ec9da2d1c1c35628bd",
@@ -8047,12 +8047,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6347,
+        "positive_seq": 24,
         "predicates": [
           "gamma"
         ]
@@ -8069,7 +8069,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "ddcad30b865c6144f56e94270c967cc2680ef4784baa23c69dde354257348439",
@@ -8077,7 +8077,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "ddcad30b865c6144f56e94270c967cc2680ef4784baa23c69dde354257348439",
@@ -8085,7 +8085,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "ddcad30b865c6144f56e94270c967cc2680ef4784baa23c69dde354257348439",
@@ -8093,7 +8093,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "ddcad30b865c6144f56e94270c967cc2680ef4784baa23c69dde354257348439",
@@ -8101,7 +8101,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           },
           {
             "check_sha": "ddcad30b865c6144f56e94270c967cc2680ef4784baa23c69dde354257348439",
@@ -8109,12 +8109,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma",
-            "seq": 6346
+            "seq": 23
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6347,
+        "positive_seq": 24,
         "predicates": [
           "gamma"
         ]
@@ -8131,7 +8131,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8139,7 +8139,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8147,7 +8147,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8155,7 +8155,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8163,7 +8163,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8171,7 +8171,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8179,7 +8179,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8187,7 +8187,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8195,7 +8195,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8203,7 +8203,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8211,7 +8211,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
@@ -8219,12 +8219,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6350,
+        "positive_seq": 27,
         "predicates": [
           "gamma_cdf"
         ]
@@ -8241,7 +8241,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8249,7 +8249,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8257,7 +8257,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8265,7 +8265,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8273,7 +8273,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8281,7 +8281,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8289,7 +8289,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8297,7 +8297,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8305,7 +8305,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8313,7 +8313,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8321,7 +8321,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           },
           {
             "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
@@ -8329,12 +8329,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "gamma_cdf",
-            "seq": 6349
+            "seq": 26
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6350,
+        "positive_seq": 27,
         "predicates": [
           "gamma_cdf"
         ]
@@ -8351,7 +8351,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8359,7 +8359,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8367,7 +8367,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8375,7 +8375,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8383,7 +8383,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8391,7 +8391,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8399,7 +8399,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8407,7 +8407,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8415,7 +8415,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8423,7 +8423,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8431,7 +8431,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
@@ -8439,12 +8439,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6353,
+        "positive_seq": 30,
         "predicates": [
           "mh"
         ]
@@ -8461,7 +8461,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8469,7 +8469,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8477,7 +8477,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8485,7 +8485,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8493,7 +8493,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8501,7 +8501,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8509,7 +8509,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8517,7 +8517,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8525,7 +8525,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8533,7 +8533,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8541,7 +8541,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           },
           {
             "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
@@ -8549,12 +8549,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "mh",
-            "seq": 6352
+            "seq": 29
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6353,
+        "positive_seq": 30,
         "predicates": [
           "mh"
         ]
@@ -8571,7 +8571,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8579,7 +8579,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8587,7 +8587,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8595,7 +8595,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8603,7 +8603,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8611,7 +8611,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8619,7 +8619,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8627,7 +8627,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8635,7 +8635,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8643,7 +8643,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8651,7 +8651,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8659,7 +8659,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8667,7 +8667,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8675,7 +8675,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8683,7 +8683,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8691,7 +8691,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8699,7 +8699,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           },
           {
             "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
@@ -8707,10 +8707,10 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "misfit",
-            "seq": 6355
+            "seq": 32
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -8729,7 +8729,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8737,7 +8737,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8745,7 +8745,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8753,7 +8753,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8761,7 +8761,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8769,7 +8769,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8777,7 +8777,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8785,7 +8785,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8793,7 +8793,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8801,7 +8801,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8809,7 +8809,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
@@ -8817,12 +8817,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6359,
+        "positive_seq": 36,
         "predicates": [
           "moments"
         ]
@@ -8839,7 +8839,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8847,7 +8847,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8855,7 +8855,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8863,7 +8863,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8871,7 +8871,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8879,7 +8879,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8887,7 +8887,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8895,7 +8895,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8903,7 +8903,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8911,7 +8911,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8919,7 +8919,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           },
           {
             "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
@@ -8927,12 +8927,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "moments",
-            "seq": 6358
+            "seq": 35
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6359,
+        "positive_seq": 36,
         "predicates": [
           "moments"
         ]
@@ -8949,7 +8949,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -8957,7 +8957,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -8965,7 +8965,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -8973,7 +8973,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -8981,7 +8981,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -8989,7 +8989,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -8997,7 +8997,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -9005,7 +9005,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
@@ -9013,12 +9013,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6362,
+        "positive_seq": 39,
         "predicates": [
           "normal"
         ]
@@ -9035,7 +9035,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9043,7 +9043,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9051,7 +9051,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9059,7 +9059,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9067,7 +9067,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9075,7 +9075,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9083,7 +9083,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9091,7 +9091,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           },
           {
             "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
@@ -9099,12 +9099,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "normal",
-            "seq": 6361
+            "seq": 38
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6362,
+        "positive_seq": 39,
         "predicates": [
           "normal"
         ]
@@ -9121,7 +9121,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9129,7 +9129,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9137,7 +9137,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9145,7 +9145,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9153,7 +9153,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9161,7 +9161,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9169,7 +9169,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9177,7 +9177,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9185,7 +9185,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9193,7 +9193,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9201,7 +9201,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9209,7 +9209,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9217,7 +9217,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9225,7 +9225,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9233,7 +9233,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9241,7 +9241,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9249,7 +9249,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9257,7 +9257,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9265,7 +9265,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9273,7 +9273,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9281,7 +9281,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           },
           {
             "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
@@ -9289,10 +9289,10 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "numerics",
-            "seq": 6364
+            "seq": 41
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -9311,7 +9311,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9319,7 +9319,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9327,7 +9327,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9335,7 +9335,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9343,7 +9343,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9351,7 +9351,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9359,7 +9359,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9367,7 +9367,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9375,7 +9375,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9383,7 +9383,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9391,7 +9391,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
@@ -9399,12 +9399,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6368,
+        "positive_seq": 45,
         "predicates": [
           "prediction"
         ]
@@ -9421,7 +9421,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9429,7 +9429,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9437,7 +9437,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9445,7 +9445,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9453,7 +9453,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9461,7 +9461,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9469,7 +9469,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9477,7 +9477,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9485,7 +9485,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9493,7 +9493,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9501,7 +9501,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           },
           {
             "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
@@ -9509,12 +9509,12 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prediction",
-            "seq": 6367
+            "seq": 44
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
-        "positive_seq": 6368,
+        "positive_seq": 45,
         "predicates": [
           "prediction"
         ]
@@ -9531,7 +9531,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prior_shift",
-            "seq": 6370
+            "seq": 47
           },
           {
             "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
@@ -9539,7 +9539,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prior_shift",
-            "seq": 6370
+            "seq": 47
           },
           {
             "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
@@ -9547,7 +9547,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prior_shift",
-            "seq": 6370
+            "seq": 47
           },
           {
             "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
@@ -9555,7 +9555,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prior_shift",
-            "seq": 6370
+            "seq": 47
           },
           {
             "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
@@ -9563,7 +9563,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prior_shift",
-            "seq": 6370
+            "seq": 47
           },
           {
             "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
@@ -9571,7 +9571,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "prior_shift",
-            "seq": 6370
+            "seq": 47
           },
           {
             "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
@@ -9579,10 +9579,10 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "prior_shift",
-            "seq": 6370
+            "seq": 47
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -9601,7 +9601,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9609,7 +9609,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9617,7 +9617,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9625,7 +9625,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9633,7 +9633,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9641,7 +9641,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9649,7 +9649,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9657,7 +9657,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9665,7 +9665,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9673,7 +9673,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9681,7 +9681,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9689,7 +9689,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9697,7 +9697,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9705,7 +9705,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9713,7 +9713,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9721,7 +9721,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9729,7 +9729,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9737,7 +9737,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9745,7 +9745,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9753,7 +9753,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9761,7 +9761,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9769,7 +9769,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9777,7 +9777,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": true,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9785,7 +9785,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           },
           {
             "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
@@ -9793,10 +9793,10 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
             "generated_by": "g6",
             "killed": false,
             "predicate": "sampler_metadata",
-            "seq": 6373
+            "seq": 50
           }
         ],
-        "frozen_seq": 6324,
+        "frozen_seq": 1,
         "kind": "partial_falsifier",
         "positive_seq": null,
         "predicates": [
@@ -9806,7 +9806,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
     ],
     "cost_cents": null,
     "decisions": [],
-    "digest": "ecbbf5a6517ed3f1aaf226599e3c5a2b461a96cbfe7ed3182c4c011622d73821",
+    "digest": "19d10f6c720a18b3157ea7b54f3b9d7d027123f70b41f83996540b8929ad279a",
     "formal": [],
     "gaps": [
       [
@@ -10058,7 +10058,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
         "receipt_id": "barber_example:known:receipt",
         "result": "pass",
-        "seq": 6327
+        "seq": 4
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10066,7 +10066,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
         "receipt_id": "barber_example:second_route:receipt",
         "result": "pass",
-        "seq": 6327
+        "seq": 4
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10074,7 +10074,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
         "receipt_id": "beta:known:receipt",
         "result": "pass",
-        "seq": 6330
+        "seq": 7
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10082,7 +10082,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
         "receipt_id": "beta:second_route:receipt",
         "result": "pass",
-        "seq": 6330
+        "seq": 7
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10090,7 +10090,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
         "receipt_id": "beta_cdf:known:receipt",
         "result": "pass",
-        "seq": 6333
+        "seq": 10
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10098,7 +10098,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
         "receipt_id": "beta_cdf:second_route:receipt",
         "result": "pass",
-        "seq": 6333
+        "seq": 10
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10106,7 +10106,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
         "receipt_id": "bounds:known:receipt",
         "result": "pass",
-        "seq": 6336
+        "seq": 13
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10114,7 +10114,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
         "receipt_id": "convergence:known:receipt",
         "result": "pass",
-        "seq": 6339
+        "seq": 16
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10122,7 +10122,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
         "receipt_id": "convergence:second_route:receipt",
         "result": "pass",
-        "seq": 6339
+        "seq": 16
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10130,7 +10130,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
         "receipt_id": "credible_interval:known:receipt",
         "result": "pass",
-        "seq": 6342
+        "seq": 19
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10138,7 +10138,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
         "receipt_id": "credible_interval:second_route:receipt",
         "result": "pass",
-        "seq": 6342
+        "seq": 19
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10146,7 +10146,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
         "receipt_id": "evidence:known:receipt",
         "result": "pass",
-        "seq": 6345
+        "seq": 22
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10154,7 +10154,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
         "receipt_id": "evidence:second_route:receipt",
         "result": "pass",
-        "seq": 6345
+        "seq": 22
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10162,7 +10162,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "271b0b381ec100183b8259c382f3341aaf823684a5fb55ec9da2d1c1c35628bd",
         "receipt_id": "gamma:known:receipt",
         "result": "pass",
-        "seq": 6348
+        "seq": 25
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10170,7 +10170,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "ddcad30b865c6144f56e94270c967cc2680ef4784baa23c69dde354257348439",
         "receipt_id": "gamma:second_route:receipt",
         "result": "pass",
-        "seq": 6348
+        "seq": 25
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10178,7 +10178,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
         "receipt_id": "gamma_cdf:known:receipt",
         "result": "pass",
-        "seq": 6351
+        "seq": 28
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10186,7 +10186,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
         "receipt_id": "gamma_cdf:second_route:receipt",
         "result": "pass",
-        "seq": 6351
+        "seq": 28
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10194,7 +10194,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
         "receipt_id": "mh:known:receipt",
         "result": "pass",
-        "seq": 6354
+        "seq": 31
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10202,7 +10202,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
         "receipt_id": "mh:second_route:receipt",
         "result": "pass",
-        "seq": 6354
+        "seq": 31
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10210,7 +10210,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
         "receipt_id": "misfit:known:receipt",
         "result": "pass",
-        "seq": 6357
+        "seq": 34
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10218,7 +10218,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
         "receipt_id": "moments:known:receipt",
         "result": "pass",
-        "seq": 6360
+        "seq": 37
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10226,7 +10226,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
         "receipt_id": "moments:second_route:receipt",
         "result": "pass",
-        "seq": 6360
+        "seq": 37
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10234,7 +10234,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
         "receipt_id": "normal:known:receipt",
         "result": "pass",
-        "seq": 6363
+        "seq": 40
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10242,7 +10242,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
         "receipt_id": "normal:second_route:receipt",
         "result": "pass",
-        "seq": 6363
+        "seq": 40
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10250,7 +10250,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
         "receipt_id": "numerics:known:receipt",
         "result": "pass",
-        "seq": 6366
+        "seq": 43
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10258,7 +10258,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
         "receipt_id": "prediction:known:receipt",
         "result": "pass",
-        "seq": 6369
+        "seq": 46
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10266,7 +10266,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
         "receipt_id": "prediction:second_route:receipt",
         "result": "pass",
-        "seq": 6369
+        "seq": 46
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10274,7 +10274,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
         "receipt_id": "prior_shift:known:receipt",
         "result": "pass",
-        "seq": 6372
+        "seq": 49
       },
       {
         "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
@@ -10282,7 +10282,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
         "receipt_id": "sampler_metadata:known:receipt",
         "result": "pass",
-        "seq": 6375
+        "seq": 52
       }
     ],
     "rerun": [],
@@ -18555,73 +18555,73 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
     }
   },
   "positions": {
-    "artifact": 5832,
+    "artifact": 1,
     "commits": {
-      "artifact": "bbbdde02548020310a7e9705d19ffae790faa3b6",
-      "barber_example:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "barber_example:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "beta:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "beta:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "beta_cdf:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "beta_cdf:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "bounds:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "convergence:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "convergence:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "credible_interval:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "credible_interval:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "evidence:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "evidence:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "gamma:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "gamma:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "gamma_cdf:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "gamma_cdf:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "mh:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "mh:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "misfit:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "moments:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "moments:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "normal:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "normal:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "numerics:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "prediction:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "prediction:second_route": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "prior_shift:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146",
-      "sampler_metadata:known": "f6bcf74bcfe26dfa64d7836284371c376c1a4146"
+      "artifact": "229873b5509c5be646de8d1778607555357e5697",
+      "barber_example:known": "229873b5509c5be646de8d1778607555357e5697",
+      "barber_example:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "beta:known": "229873b5509c5be646de8d1778607555357e5697",
+      "beta:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "beta_cdf:known": "229873b5509c5be646de8d1778607555357e5697",
+      "beta_cdf:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "bounds:known": "229873b5509c5be646de8d1778607555357e5697",
+      "convergence:known": "229873b5509c5be646de8d1778607555357e5697",
+      "convergence:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "credible_interval:known": "229873b5509c5be646de8d1778607555357e5697",
+      "credible_interval:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "evidence:known": "229873b5509c5be646de8d1778607555357e5697",
+      "evidence:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "gamma:known": "229873b5509c5be646de8d1778607555357e5697",
+      "gamma:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "gamma_cdf:known": "229873b5509c5be646de8d1778607555357e5697",
+      "gamma_cdf:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "mh:known": "229873b5509c5be646de8d1778607555357e5697",
+      "mh:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "misfit:known": "229873b5509c5be646de8d1778607555357e5697",
+      "moments:known": "229873b5509c5be646de8d1778607555357e5697",
+      "moments:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "normal:known": "229873b5509c5be646de8d1778607555357e5697",
+      "normal:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "numerics:known": "229873b5509c5be646de8d1778607555357e5697",
+      "prediction:known": "229873b5509c5be646de8d1778607555357e5697",
+      "prediction:second_route": "229873b5509c5be646de8d1778607555357e5697",
+      "prior_shift:known": "229873b5509c5be646de8d1778607555357e5697",
+      "sampler_metadata:known": "229873b5509c5be646de8d1778607555357e5697"
     },
-    "controls": 6325,
+    "controls": 2,
     "frozen": {
-      "barber_example:known": 6324,
-      "barber_example:second_route": 6324,
-      "beta:known": 6324,
-      "beta:second_route": 6324,
-      "beta_cdf:known": 6324,
-      "beta_cdf:second_route": 6324,
-      "bounds:known": 6324,
-      "convergence:known": 6324,
-      "convergence:second_route": 6324,
-      "credible_interval:known": 6324,
-      "credible_interval:second_route": 6324,
-      "evidence:known": 6324,
-      "evidence:second_route": 6324,
-      "gamma:known": 6324,
-      "gamma:second_route": 6324,
-      "gamma_cdf:known": 6324,
-      "gamma_cdf:second_route": 6324,
-      "mh:known": 6324,
-      "mh:second_route": 6324,
-      "misfit:known": 6324,
-      "moments:known": 6324,
-      "moments:second_route": 6324,
-      "normal:known": 6324,
-      "normal:second_route": 6324,
-      "numerics:known": 6324,
-      "prediction:known": 6324,
-      "prediction:second_route": 6324,
-      "prior_shift:known": 6324,
-      "sampler_metadata:known": 6324
+      "barber_example:known": 1,
+      "barber_example:second_route": 1,
+      "beta:known": 1,
+      "beta:second_route": 1,
+      "beta_cdf:known": 1,
+      "beta_cdf:second_route": 1,
+      "bounds:known": 1,
+      "convergence:known": 1,
+      "convergence:second_route": 1,
+      "credible_interval:known": 1,
+      "credible_interval:second_route": 1,
+      "evidence:known": 1,
+      "evidence:second_route": 1,
+      "gamma:known": 1,
+      "gamma:second_route": 1,
+      "gamma_cdf:known": 1,
+      "gamma_cdf:second_route": 1,
+      "mh:known": 1,
+      "mh:second_route": 1,
+      "misfit:known": 1,
+      "moments:known": 1,
+      "moments:second_route": 1,
+      "normal:known": 1,
+      "normal:second_route": 1,
+      "numerics:known": 1,
+      "prediction:known": 1,
+      "prediction:second_route": 1,
+      "prior_shift:known": 1,
+      "sampler_metadata:known": 1
     },
-    "positive": 6326,
-    "receipts": 6327
+    "positive": 3,
+    "receipts": 4
   },
   "printed_values": [
     {
