@@ -1,0 +1,43 @@
+{
+ "massive": {
+  "examples": {
+   "wins": 14,
+   "losses": 2,
+   "p_two_sided": 0.0042
+  },
+  "vote3": {
+   "wins": 5,
+   "losses": 1,
+   "p_two_sided": 0.2188
+  }
+ },
+ "scifact": {
+  "conflict": {
+   "wins": 8,
+   "losses": 5,
+   "p_two_sided": 0.5811
+  },
+  "verify": {
+   "wins": 15,
+   "losses": 6,
+   "p_two_sided": 0.0784
+  },
+  "vote3": {
+   "wins": 6,
+   "losses": 4,
+   "p_two_sided": 0.7539
+  }
+ },
+ "mbpp": {
+  "repair3": {
+   "wins": 9,
+   "losses": 0,
+   "p_two_sided": 0.0039
+  },
+  "repair1": {
+   "wins": 8,
+   "losses": 3,
+   "p_two_sided": 0.2266
+  }
+ }
+}

@@ -1,0 +1,194 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "g6"
+dynamic = ["version"]
+description = "Open-source harness engineering for AI agents: checks, gates and honest labels for what an agent's work has shown."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.12,<3.14"
+authors = [{ name = "G6 contributors" }]
+keywords = ["agents", "harness-engineering", "metacognition", "verification", "mcp", "llm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Quality Assurance",
+]
+# Core stays tiny: every component must import with only these installed.
+dependencies = ["pydantic>=2.6", "returns>=0.22"]
+
+[project.optional-dependencies]
+# Optional local NLI (Apache-2.0 sentence-transformers; same closure as embeddings).
+# No default weights or download; torch's existing platform-specific licence waiver applies.
+nli = ["sentence-transformers>=5.0,<6"]
+# NetworkX labelled graph isomorphism (BSD-3-Clause; no required dependencies).
+graph = ["networkx>=3.2,<4"]
+# tinycss2 CSS syntax checks (BSD-3-Clause; webencodings BSD). Optional, not part of all.
+web = ["tinycss2>=1.4"]
+# Playwright driver (Apache-2.0; pyee MIT, greenlet MIT/PSF); browser installed by the user.
+render = ["playwright>=1.48"]
+# Django only in sandbox checks (BSD-3-Clause; asgiref BSD-3-Clause, sqlparse BSD-3-Clause, tzdata Apache-2.0).
+django = ["Django>=5.2,<6"]
+mcp = ["fastmcp>=2.14,<3", "mcp>=1.0"]
+abstraction = ["hypothesis>=6", "numpy>=1.24"]
+anthropic = ["anthropic>=0.70"]
+formal = ["z3-solver>=4.12"]
+# OR-Tools for g6.optimisation (Apache-2.0); NumPy and SciPy for CEGIS numeric fitting (BSD-3-Clause).
+optim = ["ortools>=9.15.6755", "numpy>=1.24", "scipy>=1.15"]
+# SciPy for g6.optimisation's minimise and global_search (BSD-3-Clause; it pulls NumPy, BSD-3-Clause; its wheels bundle
+# libgfortran under the GCC runtime library exception). Retain the narrower numerical-optimisation extra; it is
+# also included through optim for numeric sketches. At least 1.15 provides differential evolution rng.
+optim-nonlinear = ["scipy>=1.15"]
+# DoWhy for g6.causal's estimates (MIT; its graph ops need no extra). Heavy, about 37 packages among them numba, cvxpy,
+# scikit-learn and matplotlib (none GPL or AGPL), so opt-in and not part of "all" on any Python version: on Python 3.12
+# DoWhy 0.14 caps scipy at 1.15.3, which holds numpy below 2.5, and "all" keeps numpy 2.5.x.
+causal = ["dowhy>=0.14"]
+# SymPy for g6.algebra (BSD-3-Clause; it pulls mpmath, BSD-3-Clause), light, so part of "all". SageMath, which
+# g6.algebra can also run, is GPL and never an extra: it is a program you install yourself, found through G6_SAGE or PATH.
+cas = ["sympy>=1.14"]
+# DuckDB and pg8000 for g6.integrations.database's analytical and PostgreSQL backends (SQLite needs no extra). DuckDB is
+# MIT with no dependencies; pg8000 is BSD-3-Clause and pulls scramp (MIT-0), asn1crypto (MIT) and python-dateutil
+# (Apache-2.0 or BSD) with six (MIT). Never psycopg2 or psycopg 3, which are LGPL. pg8000 is capped below 2 because the
+# backend sends each statement with its execute_unnamed (the extended protocol, one statement per message).
+db = ["duckdb>=1.5,<2", "pg8000>=1.31,<2"]
+# RQ queue client: rq (BSD-2-Clause), redis-py (MIT). Redis server and the POSIX-only worker are outside programs.
+# Opt-in; dependency closure recording is performed by the owner when landing.
+rq = ["rq>=2.1,<3", "redis>=5,<9"]
+# PyReason, g6.graph_reasoning's optional second engine, is not an extra yet: 3.7.0 (its latest release) imports
+# pkg_resources, gone from setuptools 81, and its numba code does not compile on Python 3.12 (numba 0.64 to 0.68).
+# g6.graph_reasoning uses PyReason when it imports, and says so on the card when it does not.
+# Pillow for the media family's image inspector (decode, size, not blank) and its image files (MIT-CMU; Pillow
+# needs no other package), light, so part of "all".
+image = ["Pillow>=10.3"]
+# NumPy and Pillow for g6.media.adapt_generative_art's procedural techniques (NumPy BSD-3-Clause, with permissive
+# vendored parts: 0BSD, MIT, Zlib, CC0-1.0); light, so part of "all".
+procedural = ["Pillow>=10.3", "numpy>=1.26"]
+# NumPy for g6.media.adapt_audio's and adapt_synth's sound: filters, BS.1770 loudness, true peak, pitch (BSD-3-Clause,
+# with permissive vendored parts: 0BSD, MIT, Zlib, CC0-1.0); light, so part of "all". WAV files are read and written
+# with the standard library.
+audio = ["numpy>=1.26"]
+# pypdf for g6.knowledge.knowledge_converter's PDF text (BSD-3-Clause; it needs no other package on Python 3.12 and
+# later); 6.1 or later, for its limits on decompressed streams. Never PyMuPDF, which is AGPL.
+docs = ["pypdf>=6.1"]
+# scikit-learn for the ml family's fits and scores (g6.ml.adapt_sklearn; BSD-3-Clause; it pulls numpy, scipy, joblib
+# and threadpoolctl, all BSD-3-Clause; scipy's wheels bundle libgfortran under the GCC runtime library exception). At least 1.6, whose GroupKFold takes shuffle (g6.ml._fit.SKLEARN_FLOOR).
+# Opt-in, so not part of "all".
+ml = ["scikit-learn>=1.6"]
+# Optional scalar Bayesian sampling; PyMC and ArviZ Apache-2.0, PyTensor BSD-3-Clause.
+# PyMC is imported only in G6's fixed bounded child. Heavy, opt-in, not part of "all". PyTensor pulls cons (LGPL-3.0),
+# allowed in this extra only by the owner's ruling of 2026-10-22 (tools/data/licence_table.json).
+bayes = ["pymc>=5,<6", "arviz>=0.20,<1"]
+# FLAML's tuner for g6.ml.adapt_automl's search (MIT; it pulls only NumPy), over scikit-learn's own estimators, which
+# G6 cross-validates itself. Never FLAML's own "automl" extra: its AutoML class imports xgboost (whose Linux wheels
+# pull NVIDIA's NCCL) and lightgbm. Opt-in, so not part of "all".
+automl = ["flaml>=2.7,<3", "scikit-learn>=1.6"]
+# sentence-transformers for g6.knowledge.ctx_colbert's embeddings rung (Apache-2.0; it pulls torch, transformers,
+# huggingface-hub, scikit-learn and scipy). G6 never downloads model weights: the rung uses all-MiniLM-L6-v2
+# (Apache-2.0 by its model card; the terms of its training data are not established) only when the person already has
+# it in their Hugging Face cache. On Linux torch pulls NVIDIA's CUDA wheels, as for lora (owner ruling 2026-10-21).
+# Heavy, so not part of "all".
+embeddings = ["sentence-transformers>=3.0,<6"]
+# PyLate for g6.knowledge.ctx_colbert's ColBERT rung (MIT; it pulls sentence-transformers and the embeddings extra's
+# packages), never ragatouille (llama-index and langchain) or litellm. The rung uses the colbert-ir/colbertv2.0 weights
+# (MIT by their model card; the terms of their training data are not established) only when the person already has
+# them in their Hugging Face cache; G6 never downloads them. Heavy, so not part of "all".
+colbert = ["pylate>=1.2,<2"]
+# LoRA adapters for a local model in the meta-harness (owner ruling Q8); heavy, so not part of "all".
+lora = ["torch>=2.2", "transformers>=4.40", "peft>=0.10"]
+# PyTorch for g6.ml.adapt_pytorch's small networks (torch 2.14's metadata: Apache-2.0, BSD-2-Clause, BSD-3-Clause,
+# BSL-1.0 and MIT; it pulls filelock, MIT, typing-extensions, PSF-2.0, sympy and mpmath, BSD, networkx, jinja2,
+# MarkupSafe and fsspec, BSD-3-Clause, and setuptools, MIT). At least 2.6 (torch_child.TORCH_FLOOR): before 2.6.0,
+# torch.load(weights_only=True), which reads kept weights back, could be made to run code (CVE-2025-32434), and the
+# weights' hash beside them catches corruption, not a writer to G6_HOME. On Linux torch's wheels also pull triton
+# (MIT) and NVIDIA's CUDA wheels, under NVIDIA's own licence, carried under the owner's waiver for every extra that
+# pulls PyTorch (2026-10-21). Heavy, so not part of "all".
+torch = ["torch>=2.6"]
+# LangGraph for g6.agents.agent_langgraph (LangGraph and langgraph-checkpoint, MIT; they pull langchain-core and
+# langsmith, MIT, and their permissive dependencies: orjson, ormsgpack, xxhash, zstandard, httpx, requests, tenacity,
+# jsonpatch and the like). G6 keeps checkpoints in its own store, so not langgraph-checkpoint-sqlite. Heavy, so not
+# part of "all".
+agents-langgraph = ["langgraph>=1.2,<2", "langgraph-checkpoint>=4.3,<5"]
+# AutoGen's AgentChat for g6.agents.agent_autogen (autogen-agentchat and autogen-core, MIT; they pull jsonref, MIT,
+# opentelemetry-api, Apache-2.0, protobuf, BSD-3-Clause, and Pillow, MIT-CMU). Never autogen-ext, whose model clients
+# hold their own keys. Not part of "all".
+agents-autogen = ["autogen-agentchat>=0.7.5,<0.8", "autogen-core>=0.7.5,<0.8"]
+# smolagents for g6.agents.agent_smolagents (Apache-2.0, by the LICENSE its wheel carries: its metadata names none, so
+# tools/data/licence_table.json holds a reviewed entry; it pulls huggingface-hub, Apache-2.0, rich, MIT, jinja2,
+# BSD-3-Clause, requests, Apache-2.0, Pillow, MIT-CMU, python-dotenv, BSD-3-Clause, and their permissive
+# dependencies). Never its litellm, e2b or modal extras. Not part of "all".
+agents-smolagents = ["smolagents>=1.26,<2"]
+# The website in web/ (built to static files); not part of the library, so not part of "all".
+site = ["django>=5.1,<6", "markdown>=3.5"]
+dev =["pytest>=8", "ruff>=0.6", "import-linter>=2.1"]
+all = ["g6[mcp,abstraction,anthropic,formal,optim,cas,db,image,procedural,audio]"]
+
+[project.scripts]
+g6 = "g6.cli:main"
+g6-mcp = "g6.mcp:main"
+
+[project.urls]
+Homepage = "https://g6solver.com"
+
+[tool.hatch.version]
+path = "src/g6/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/g6"]
+# Certificate records ship beside each component, like its skill/SKILL.md.
+artifacts = ["src/g6/**/certificate/*.json", "src/g6/**/certificate/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider --import-mode=importlib"
+markers = ["heavy: slow or resource-hungry; run weekly in CI"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["src/g6/**/vendor"]
+
+[tool.ruff.lint]
+# Correctness rules only; style is not enforced on code ported from the archive.
+select = ["E4", "E7", "E9", "F", "B006", "B008"]
+
+[tool.importlinter]
+root_package = "g6"
+
+[[tool.importlinter.contracts]]
+name = "core is the kernel: it imports no component"
+type = "forbidden"
+source_modules = ["g6.core"]
+forbidden_modules = ["g6.harness", "g6.research", "g6.operator", "g6.mcp", "g6.cli", "g6.bundles", "g6.metaharness"]
+
+# The meta-harness is a layer on top of G6 (META_HARNESS_PLAN.md 4.6): it imports components, none imports it, and only
+# the MCP surface exposes it. tests/metaharness checks that this list names every package except mcp and metaharness;
+# a family package (the second block) covers every extension in it.
+[[tool.importlinter.contracts]]
+name = "the meta-harness is a layer on top: only the MCP surface imports it"
+type = "forbidden"
+source_modules = [
+  "g6.abstraction", "g6.action_gating", "g6.action_logic", "g6.algebra", "g6.bundles", "g6.causal", "g6.cegis",
+  "g6.cli",
+  "g6.coding_agent_gate",
+  "g6.context", "g6.core", "g6.csf", "g6.datalog", "g6.debate", "g6.distillation", "g6.epistemic_integrity",
+  "g6.evidence",
+  "g6.formal", "g6.goal_engine", "g6.graph_reasoning", "g6.grounding", "g6.guards", "g6.harness", "g6.integrity",
+  "g6.intent_engine",
+  "g6.invariants", "g6.lean", "g6.learning", "g6.llm_router", "g6.model_checking", "g6.navigator", "g6.operator",
+  "g6.optimisation", "g6.prolog", "g6.reasoning", "g6.reliability_pipeline",
+  "g6.research", "g6.safety_engine", "g6.self_training", "g6.skills", "g6.solver", "g6.triage", "g6.workforce",
+  "g6.agents", "g6.code", "g6.cogarch", "g6.deploy", "g6.domains", "g6.embodied", "g6.integrations", "g6.jobs",
+  "g6.knowledge", "g6.media", "g6.memory", "g6.ml", "g6.provers", "g6.sources", "g6.workspace",
+]
+forbidden_modules = ["g6.metaharness"]
+
+[[tool.importlinter.contracts]]
+name = "the meta-harness imports no research code (founder decision A1)"
+type = "forbidden"
+source_modules = ["g6.metaharness"]
+forbidden_modules = ["g6.research"]

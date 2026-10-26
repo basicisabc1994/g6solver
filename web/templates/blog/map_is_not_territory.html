@@ -1,0 +1,227 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}The Map Is Not the Territory: Statistical Models vs. Understanding{% endblock %}
+{% block meta_description %}Statistical models build extraordinarily detailed maps of language and reality — but maps are not territory. Understanding when they diverge is what separates useful intelligence from dangerous fluency.{% endblock %}
+{% block post_headline %}The Map Is Not the Territory: Statistical Models vs. Understanding{% endblock %}
+{% block post_date %}2025-07-19{% endblock %}
+{% block post_description %}Statistical models build extraordinarily detailed maps of language and reality — but maps are not territory. Understanding when they diverge is what separates useful intelligence from dangerous fluency.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Philosophy</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">The Map Is Not the Territory: Statistical Models vs. Understanding</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Maps are extraordinarily useful
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">There is something philosophically remarkable about what large language models have achieved. Without being taught physics, they can describe the behaviour of pendulums. Without studying medicine, they can suggest plausible differential diagnoses. Without formal training in law, they can draft contracts that survive first-pass legal review. They accomplish this by building what can only be described as extraordinarily detailed statistical maps of human language and, through language, of the world itself.</p>
+
+            <p class="gsap-reveal">These maps are not trivial. They capture the distributional structure of hundreds of billions of tokens drawn from the full breadth of human written output &mdash; scientific papers, legal opinions, forum conversations, codebases, poetry, instruction manuals. The resulting representations encode an astonishing amount of relational structure: that &ldquo;heart&rdquo; is closer to &ldquo;cardiac&rdquo; than to &ldquo;automobile,&rdquo; that code following a loop initialisation likely involves an increment, that certain symptom clusters predict certain diagnoses. In the parlance of information theory, these models compress the statistical regularities of human knowledge into a navigable latent space.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">And the maps work. GPT-4 and its successors pass professional examinations not because they understand the underlying domains but because the statistical structure of expert discourse is itself richly informative. If you learn which words experts use in which contexts, which claims they associate with which evidence, which conclusions they draw from which premises, you acquire something that functions surprisingly well as a proxy for expertise. Translation systems work because the statistical regularities across parallel corpora capture genuine semantic correspondences. Code generation works because programming languages are highly structured, and the map between natural language intent and syntactic implementation has learnable regularity.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup></p>
+
+            <p class="gsap-reveal">The pragmatist might reasonably ask: if the map works, why should we care whether it constitutes understanding? If a system can diagnose, translate, summarise, and generate code at a level that produces economic value, what philosophical distinction are we insisting on? This is a fair challenge, and it deserves a serious answer.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: The map is not the territory
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">When the Map Lies</h2>
+
+            <p class="gsap-reveal">Alfred Korzybski introduced his famous dictum &mdash; &ldquo;the map is not the territory&rdquo; &mdash; in 1933, arguing that human knowledge consists of abstractions and representations that necessarily differ from the reality they describe.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> The insight was not that maps are useless. It was that confusing the map for the territory leads to systematic errors that become more dangerous the more detailed and convincing the map appears.</p>
+
+            <p class="gsap-reveal">This is precisely the situation we face with statistical language models. Their maps are so detailed, so fluent, so convincingly structured that it becomes tempting to treat them as understanding. But the distinction matters, and it matters most at exactly the moments when the stakes are highest.</p>
+
+            <p class="gsap-reveal">Consider what a statistical map actually captures. It captures <em>co-occurrence</em> &mdash; the patterns of which tokens appear near which other tokens, across what contexts, with what frequencies. From co-occurrence, you can infer a great deal: semantic similarity, typical reasoning patterns, common associations. What you cannot reliably infer is <em>causation</em>. Judea Pearl's foundational work on causal inference draws a sharp line between observational statistics and causal understanding.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup> A model trained on medical records will learn that certain treatments correlate with certain outcomes, but correlation in observational data reflects confounding, selection bias, and the structure of medical practice as much as it reflects genuine therapeutic efficacy. The map shows that treatment X tends to co-occur with outcome Y. It does not show whether X <em>causes</em> Y.</p>
+
+            <p class="gsap-reveal">Bender and Koller articulated a related concern in their influential paper on natural language understanding: a system trained solely on form &mdash; on the distributional properties of linguistic tokens &mdash; cannot, in principle, learn meaning in the sense that meaning involves grounding in the external world.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> Their argument is not that language models are useless but that there is a ceiling on what distributional learning alone can achieve. The model can learn that &ldquo;fire is hot&rdquo; is a high-probability sequence, but it cannot learn what heat <em>is</em> from text alone. It can describe gravity &mdash; eloquently, accurately, in multiple languages &mdash; without understanding anything about mass, curvature, or the behaviour of objects in gravitational fields.</p>
+
+            <p class="gsap-reveal">David Hume identified the core philosophical problem nearly three centuries ago: induction from observed regularities provides no logical guarantee about unobserved cases.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> A model that has seen ten million examples of a pattern will confidently extend it to example ten million and one. When the pattern holds, this looks like understanding. When the pattern breaks &mdash; when the territory diverges from the map &mdash; the model has no mechanism to notice. It will extrapolate its map into uncharted territory with exactly the same confidence it brings to well-mapped regions.</p>
+
+            <!-- ── Diagram 1: Map vs Territory SVG ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 320" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing statistical map versus territory with divergence points">
+                    <defs>
+                        <filter id="glow-18" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Labels -->
+                    <text x="60" y="30" fill="#9ca3af" font-size="12" font-weight="600">STATISTICAL MAP</text>
+                    <text x="60" y="200" fill="#9ca3af" font-size="12" font-weight="600">TERRITORY (REALITY)</text>
+
+                    <!-- Map line (smooth, confident) -->
+                    <path d="M 60 80 C 160 60, 260 100, 360 70 C 460 40, 560 90, 700 65" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round"/>
+                    <text x="715" y="70" fill="#a5b4fc" font-size="10">Map</text>
+
+                    <!-- Territory line (with deviations) -->
+                    <path d="M 60 250 C 160 230, 260 270, 360 240 C 420 225, 440 310, 500 280 C 560 250, 620 260, 700 235" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/>
+                    <text x="715" y="240" fill="#6ee7b7" font-size="10">Reality</text>
+
+                    <!-- Alignment zones (where map matches territory) -->
+                    <rect x="60" y="110" width="200" height="80" rx="8" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)" stroke-width="1" stroke-dasharray="4,4"/>
+                    <text x="160" y="155" text-anchor="middle" fill="#6b7280" font-size="10">Map &asymp; Territory</text>
+                    <text x="160" y="170" text-anchor="middle" fill="#4b5563" font-size="9">Correlation = Causation</text>
+
+                    <!-- Divergence zone 1 (highlighted) -->
+                    <rect x="370" y="100" width="160" height="100" rx="10" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <rect x="370" y="100" width="160" height="100" rx="10" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#glow-18)"/>
+                    <text x="450" y="135" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600">DIVERGENCE</text>
+                    <text x="450" y="155" text-anchor="middle" fill="#9ca3af" font-size="9">Novel context</text>
+                    <text x="450" y="170" text-anchor="middle" fill="#9ca3af" font-size="9">Causal reversal</text>
+                    <text x="450" y="185" text-anchor="middle" fill="#9ca3af" font-size="9">Distribution shift</text>
+
+                    <!-- Divergence zone 2 -->
+                    <rect x="570" y="100" width="130" height="100" rx="10" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <text x="635" y="135" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600">DIVERGENCE</text>
+                    <text x="635" y="155" text-anchor="middle" fill="#9ca3af" font-size="9">Confounded data</text>
+                    <text x="635" y="170" text-anchor="middle" fill="#9ca3af" font-size="9">Selection bias</text>
+                    <text x="635" y="185" text-anchor="middle" fill="#9ca3af" font-size="9">Black swan event</text>
+
+                    <!-- Arrows showing divergence -->
+                    <line x1="420" y1="80" x2="420" y2="105" stroke="#f87171" stroke-width="1.5" stroke-dasharray="3,3"/>
+                    <line x1="480" y1="80" x2="480" y2="105" stroke="#f87171" stroke-width="1.5" stroke-dasharray="3,3"/>
+                    <line x1="420" y1="195" x2="420" y2="230" stroke="#f87171" stroke-width="1.5" stroke-dasharray="3,3"/>
+                    <line x1="480" y1="195" x2="480" y2="250" stroke="#f87171" stroke-width="1.5" stroke-dasharray="3,3"/>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; Statistical maps track reality in well-observed regions but diverge silently at novel, confounded, or causally distinct boundaries</p>
+            </div>
+
+            <p class="gsap-reveal">This is not merely an academic concern. In medicine, financial modelling, legal reasoning, and engineering, the consequences of mistaking correlation for causation can be severe. A model that recommends a treatment because it co-occurs with recovery in training data may be recommending a treatment that was given preferentially to healthier patients &mdash; a classic confounding pattern that no amount of distributional analysis will detect without explicit causal modelling.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup> A model that predicts market behaviour based on historical patterns will fail precisely when history stops rhyming &mdash; and it will fail confidently, because its uncertainty estimates are derived from the same distributional assumptions that have just been violated.</p>
+
+            <p class="gsap-reveal">The deeper problem is epistemic. Harnad's symbol grounding problem &mdash; the question of how formal symbols acquire meaning through connection to the world &mdash; remains unresolved in large language models.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> The symbols these models manipulate are grounded in other symbols, all the way down. There is no point at which the chain of statistical associations touches reality. This creates a fundamental vulnerability: the model cannot distinguish between a claim that is statistically likely and a claim that is true, because truth requires a connection to something outside the statistical map &mdash; to the territory itself.</p>
+
+            <p class="gsap-reveal">Wittgenstein observed that the limits of one's language are the limits of one's world.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> For language models, this observation cuts with particular force. Their world <em>is</em> language. Everything they know, they know through the lens of textual co-occurrence. This gives them extraordinary breadth but a particular kind of blindness: they cannot see the places where the text diverges from reality, because they have no access to reality independent of the text.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Knowing when the map fails
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Grounding the Map in the Territory</h2>
+
+            <p class="gsap-reveal">The resolution of this tension is neither to abandon statistical models nor to pretend they understand. It is to build systems that know when the map is likely to diverge from the territory &mdash; and that have mechanisms for checking. This is the grounding problem reframed as an engineering challenge rather than a philosophical dead end.</p>
+
+            <p class="gsap-reveal">Useful intelligence does not require full understanding. A pilot does not need to derive the Navier-Stokes equations from first principles to fly an aircraft safely. But the pilot does need to know when their instruments are unreliable &mdash; when the altimeter might be wrong, when the weather data is stale, when visual conditions demand direct observation rather than instrument trust. The analogy holds for AI systems: the critical capability is not understanding per se but the ability to detect when statistical predictions should not be trusted.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal">This points toward a specific architectural requirement. Between the statistical model and the downstream action, there must be a <em>grounding layer</em> &mdash; a set of mechanisms that anchor statistical associations in verifiable reality. Lake and colleagues have argued that human-like intelligence requires compositional, causal, and intuitive physical models that go beyond pattern recognition.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup> The question is not whether such models need to be built from scratch but whether they can be composed as verification layers around existing statistical capabilities.</p>
+
+            <p class="gsap-reveal">Three forms of grounding emerge as particularly important. The first is <strong class="text-gray-200">logical grounding</strong> &mdash; the ability to verify that a statistical prediction is logically consistent with known facts and formal constraints. If a model claims that a particular code path is correct, a formal verifier can check whether the code actually satisfies its specification. If a model claims that a mathematical proof follows, a proof assistant can verify each step. The statistical model generates the candidate; the logical layer verifies it. Neither alone is sufficient &mdash; the model provides speed and breadth, the verifier provides rigour and guarantees.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <p class="gsap-reveal">The second is <strong class="text-gray-200">empirical grounding</strong> &mdash; the ability to test statistical predictions against reality. When a model predicts that a certain intervention will have a certain effect, empirical grounding means running the experiment, observing the outcome, and updating the model's confidence accordingly. This is the scientific method applied to AI outputs: hypothesise, test, revise. The model's statistical map is treated as a hypothesis generator, not as an oracle.</p>
+
+            <p class="gsap-reveal">The third is <strong class="text-gray-200">expert grounding</strong> &mdash; structured mechanisms for incorporating human domain expertise at the points where statistical predictions are most uncertain or most consequential. This is not merely &ldquo;human-in-the-loop&rdquo; as a safety blanket. It is a deliberate architectural choice to route specific classes of decisions through human verification, guided by calibrated uncertainty estimates that tell the system when it is operating outside its reliable map boundaries.</p>
+
+            <!-- ── Diagram 2: Architecture Stack ── -->
+            <div class="gsap-reveal my-12 max-w-md mx-auto">
+                <div class="space-y-0">
+                    <!-- Top layer -->
+                    <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Output</p>
+                        <p class="text-white font-semibold">Verified Understanding</p>
+                        <p class="text-xs text-gray-500 mt-1">Causally grounded, empirically tested, expert-validated</p>
+                    </div>
+                    <!-- Middle layer (highlighted) -->
+                    <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Grounding Layer</p>
+                        <p class="text-white font-bold text-lg relative">Verification Infrastructure</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Logical Proof &bull; Empirical Test &bull; Expert Validation</p>
+                    </div>
+                    <!-- Bottom layer -->
+                    <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Foundation</p>
+                        <p class="text-white font-semibold">Statistical Model</p>
+                        <p class="text-xs text-gray-500 mt-1">Distributional patterns, co-occurrence maps, latent representations</p>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; The grounding layer transforms statistical associations into verified claims</p>
+            </div>
+
+            <p class="gsap-reveal">Mitchell's work on conceptual abstraction in AI systems reinforces this architectural intuition. She argues that genuine understanding requires the ability to form and manipulate abstract concepts that capture not just statistical regularities but the <em>structure</em> of the domain &mdash; the relationships that hold even when surface patterns change.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> A grounding layer provides exactly this: it transforms the model's flat statistical associations into structured claims that can be tested, verified, and reasoned about independently of their distributional frequency.</p>
+
+            <p class="gsap-reveal">The practical implications are significant. A system that merely generates plausible text has a failure mode proportional to the distance between the current context and its training distribution. A system that generates candidates and then verifies them has a fundamentally different risk profile: failures are caught rather than propagated. The map is still used &mdash; it has to be, because the territory is too vast to explore without it &mdash; but the map is treated as tentative, as a source of hypotheses rather than conclusions.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Calibrated Uncertainty as a Design Principle</h2>
+
+            <p class="gsap-reveal">One of the most important insights from the map-territory distinction is that the quality of a map is not just about accuracy in the regions it covers. It is equally about the quality of its <em>boundaries</em> &mdash; how clearly it marks where the mapped terrain ends and uncharted territory begins. A cartographer who leaves blank spaces where knowledge runs out is more trustworthy than one who fills those spaces with plausible-looking inventions.</p>
+
+            <p class="gsap-reveal">This principle translates directly into system design. Calibrated uncertainty &mdash; the ability to produce confidence estimates that accurately reflect the probability of being correct &mdash; is not a luxury feature. It is the mechanism by which a system communicates the boundaries of its reliable knowledge. Guo and colleagues demonstrated that modern neural networks are often poorly calibrated: they express high confidence even when wrong, particularly outside their training distribution.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup> This is the cartographic equivalent of drawing detailed contour lines in regions you have never surveyed.</p>
+
+            <p class="gsap-reveal">Fixing this requires more than post-hoc calibration. It requires architectural commitments to uncertainty-awareness at every level of the system. The statistical model generates candidates along with distributional confidence estimates. The grounding layer tests those candidates against verifiable reality and adjusts confidence accordingly. The system routes high-uncertainty, high-stakes decisions to expert review while allowing high-confidence, low-stakes operations to proceed autonomously. The result is a system that knows what it knows, knows what it does not know, and has principled mechanisms for handling the boundary between the two.</p>
+
+            <p class="gsap-reveal">Floridi has argued that the ethics of AI systems depends critically on their epistemic transparency &mdash; on whether they make their limitations visible to the people who rely on them.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup> A system that produces confident, fluent, well-formatted answers with no indication of when those answers might be wrong is not just technically limited. It is epistemically irresponsible. The grounding layer, with its verification mechanisms and calibrated uncertainty, is what transforms a fluent but opaque statistical engine into a trustworthy reasoning partner.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 CODA: Living with maps
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Living with Maps</h2>
+
+            <p class="gsap-reveal">Korzybski's insight was not that maps should be abandoned. It was that the relationship between map and territory should be understood, respected, and continuously interrogated. The same principle applies to statistical models. They are among the most useful cognitive tools humanity has ever built. The patterns they capture are real, the capabilities they enable are valuable, and the trajectory of improvement is genuine.</p>
+
+            <p class="gsap-reveal">But they remain maps. And the most important thing about a map is not how much territory it covers but how honestly it communicates the places where it might be wrong. The next phase of AI development is not about building more detailed maps. It is about building systems that maintain an honest, dynamic relationship between their statistical representations and the underlying reality those representations attempt to describe &mdash; systems that use the map aggressively where it is reliable and check the territory directly where it is not.</p>
+
+            <p class="gsap-reveal font-semibold text-white">The map will never be the territory. But a map that knows its own boundaries, that marks its uncertainties, that routes through verification where the terrain is dangerous &mdash; that is a map worth trusting. And building that map is what comes next.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Shannon, C. E. (1948). <a href="https://ieeexplore.ieee.org/document/6773024" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>A mathematical theory of communication</em></a>. <em>Bell System Technical Journal</em>, 27(3), 379&ndash;423. &mdash; The foundational framework for information-theoretic compression that underlies modern language model training.
+                </li>
+                <li id="ref-2">
+                    Brown, T. B., Mann, B., Ryder, N., Subbiah, M., Kaplan, J., Dhariwal, P., &hellip; &amp; Amodei, D. (2020). <a href="https://arxiv.org/abs/2005.14165" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Language models are few-shot learners</em></a>. <em>Advances in Neural Information Processing Systems</em>, 33, 1877&ndash;1901. &mdash; Demonstrates the breadth of tasks achievable through distributional learning at scale.
+                </li>
+                <li id="ref-3">
+                    Korzybski, A. (1933). <a href="https://esgs.free.fr/uk/art/sands.htm" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Science and Sanity: An Introduction to Non-Aristotelian Systems and General Semantics</em></a>. Institute of General Semantics. &mdash; The origin of &ldquo;the map is not the territory&rdquo; and the general semantics programme.
+                </li>
+                <li id="ref-4">
+                    Pearl, J. (2009). <a href="https://doi.org/10.1017/CBO9780511803161" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Causality: Models, Reasoning, and Inference</em></a> (2nd ed.). Cambridge University Press. &mdash; The definitive treatment of why statistical association does not imply causation and the formal tools required to distinguish them.
+                </li>
+                <li id="ref-5">
+                    Bender, E. M., &amp; Koller, A. (2020). <a href="https://doi.org/10.18653/v1/2020.acl-main.463" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Climbing towards NLU: On meaning, form, and understanding in the age of data</em></a>. <em>Proceedings of the 58th Annual Meeting of the ACL</em>, 5185&ndash;5198. &mdash; Argues that learning from form alone is insufficient for genuine natural language understanding.
+                </li>
+                <li id="ref-6">
+                    Hume, D. (1748/2007). <a href="https://doi.org/10.1093/actrade/9780199549900.book.1" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>An Enquiry Concerning Human Understanding</em></a>. Oxford University Press. &mdash; The classical statement of the problem of induction: observed regularities provide no logical guarantee about unobserved cases.
+                </li>
+                <li id="ref-7">
+                    Harnad, S. (1990). <a href="https://doi.org/10.1016/0167-2789(90)90002-8" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The symbol grounding problem</em></a>. <em>Physica D: Nonlinear Phenomena</em>, 42(1&ndash;3), 335&ndash;346. &mdash; How do formal symbols acquire meaning? The problem that purely text-trained systems leave unresolved.
+                </li>
+                <li id="ref-8">
+                    Wittgenstein, L. (1922/2001). <a href="https://www.gutenberg.org/ebooks/5740" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Tractatus Logico-Philosophicus</em></a>. Routledge. &mdash; &ldquo;The limits of my language mean the limits of my world&rdquo; (5.6).
+                </li>
+                <li id="ref-9">
+                    Floridi, L. (2023). <a href="https://doi.org/10.1007/s13347-023-00619-6" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The ethics of artificial intelligence: An introduction</em></a>. Oxford University Press. &mdash; On epistemic transparency and the ethical obligations of AI systems that interact with human decision-making.
+                </li>
+                <li id="ref-10">
+                    Lake, B. M., Ullman, T. D., Tenenbaum, J. B., &amp; Gershman, S. J. (2017). <a href="https://doi.org/10.1017/S0140525X16001837" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Building machines that learn and think like people</em></a>. <em>Behavioral and Brain Sciences</em>, 40, e253. &mdash; Argues for compositional, causal, and intuitive-physics models as prerequisites for human-like intelligence.
+                </li>
+                <li id="ref-11">
+                    de Moura, L., &amp; Bjorner, N. (2008). <a href="https://doi.org/10.1007/978-3-540-78800-3_24" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Z3: An efficient SMT solver</em></a>. <em>Proceedings of TACAS 2008</em>, 337&ndash;340. &mdash; Formal verification as a mechanism for grounding statistical code generation in logical correctness guarantees.
+                </li>
+                <li id="ref-12">
+                    Mitchell, M. (2021). <a href="https://doi.org/10.1126/science.abj2794" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Abstraction and analogy-making in artificial intelligence</em></a>. <em>Annals of the New York Academy of Sciences</em>, 1505(1), 79&ndash;101. &mdash; On the gap between statistical pattern matching and genuine conceptual abstraction.
+                </li>
+                <li id="ref-13">
+                    Guo, C., Pleiss, G., Sun, Y., &amp; Weinberger, K. Q. (2017). <a href="https://arxiv.org/abs/1706.04599" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>On calibration of modern neural networks</em></a>. <em>Proceedings of the 34th ICML</em>, 1321&ndash;1330. &mdash; Demonstrates that deep networks are often poorly calibrated, expressing high confidence even when wrong.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

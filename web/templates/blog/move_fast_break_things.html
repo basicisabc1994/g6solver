@@ -1,0 +1,229 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}Why "Move Fast and Break Things" Doesn't Work for AI{% endblock %}
+{% block meta_description %}AI systems are not web apps. Fast and safe are compatible — but only when safety is architectural, not procedural.{% endblock %}
+{% block post_headline %}Why "Move Fast and Break Things" Doesn't Work for AI{% endblock %}
+{% block post_date %}2025-05-31{% endblock %}
+{% block post_description %}AI systems are not web apps. Fast and safe are compatible — but only when safety is architectural, not procedural.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">AI Safety</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">Why &ldquo;Move Fast and Break Things&rdquo; Doesn&rsquo;t Work for AI</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: The iterative philosophy has worked brilliantly
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">Silicon Valley&rsquo;s most enduring contribution to technology culture is not a product or a platform. It is a philosophy: ship fast, learn from failures, iterate. &ldquo;Move fast and break things&rdquo; was not just a slogan &mdash; it was a genuine insight about how to build technology in conditions of uncertainty. When you do not know what users want, the fastest way to find out is to build something, put it in front of them, and watch what happens. Perfection is the enemy of progress. Launch, measure, learn, repeat.</p>
+
+            <p class="gsap-reveal">The results speak for themselves. The iterative approach produced the modern internet, the smartphone ecosystem, cloud computing, and the software-as-a-service model that powers most of the global economy&rsquo;s digital infrastructure. Companies that embraced rapid iteration outcompeted companies that planned meticulously and shipped slowly. The evidence was overwhelming: in software, speed wins. Facebook, Google, Amazon, and Stripe all built extraordinary businesses on the principle that it is better to ship an imperfect product today than a perfect product next year.</p>
+
+            <p class="gsap-reveal">The philosophy works because of a specific property of most software: the cost of failure is low and the cost of iteration is lower. If a web app crashes, users see an error page. If a feature confuses people, you roll it back. If a database query is slow, you optimise it in the next sprint. The blast radius of a software failure is typically bounded: a degraded user experience, a temporary outage, maybe some lost revenue. Unpleasant, but recoverable. And the learning from each failure feeds directly into the next iteration, making the system better in ways that careful planning alone could never achieve.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">This is not a naive philosophy. It is backed by serious thinking about decision-making under uncertainty. Eric Ries&rsquo;s Lean Startup methodology formalised the intuition: in complex, uncertain environments, validated learning through rapid experimentation is more effective than detailed upfront planning.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> The agile manifesto codified the same insight for software development: working software over comprehensive documentation, responding to change over following a plan. These are not slogans. They are evidence-based principles that have produced extraordinary results in the domains where they apply.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: AI is categorically different
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Blast Radius Problem</h2>
+
+            <p class="gsap-reveal">The iterative philosophy rests on an assumption so fundamental that it is rarely stated explicitly: <em>failure is survivable</em>. When a web app breaks, nobody dies. When a social media algorithm shows the wrong content, users can scroll past it. When an e-commerce recommendation is irrelevant, the customer ignores it and buys something else. The worst case is a bad experience, and bad experiences, while undesirable, are recoverable.</p>
+
+            <p class="gsap-reveal">AI systems deployed in high-stakes domains do not have this property. A diagnostic AI that misidentifies a malignant tumour as benign does not produce a bad experience &mdash; it produces a missed diagnosis that may cost a life. A legal AI that hallucinates a precedent does not produce an irrelevant recommendation &mdash; it produces a filing that can result in sanctions, malpractice liability, and harm to the client&rsquo;s legal interests. A financial AI that miscalculates risk exposure does not produce a slow page load &mdash; it produces losses that can cascade through interconnected markets.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">The blast radius is categorically different. And categorically different blast radii require categorically different development philosophies.</p>
+
+            <!-- ── Diagram 1: Blast Radius Comparison SVG ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 160" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram comparing web app failure blast radius versus AI failure blast radius">
+                    <!-- Web App Failure (left) -->
+                    <rect x="20" y="15" width="350" height="135" rx="12" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="195" y="12" text-anchor="middle" fill="#9ca3af" font-size="11" font-weight="600" letter-spacing="1">WEB APP FAILURE</text>
+
+                    <circle cx="120" cy="85" r="30" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <circle cx="120" cy="85" r="12" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="120" y="89" text-anchor="middle" fill="#a5b4fc" font-size="8" font-weight="600">BLAST</text>
+
+                    <text x="240" y="55" text-anchor="start" fill="#d1d5db" font-size="11" font-weight="600">Low Blast Radius</text>
+                    <text x="240" y="73" text-anchor="start" fill="#9ca3af" font-size="10">Error page shown</text>
+                    <text x="240" y="89" text-anchor="start" fill="#9ca3af" font-size="10">Feature rolled back</text>
+                    <text x="240" y="105" text-anchor="start" fill="#9ca3af" font-size="10">Users mildly annoyed</text>
+                    <text x="240" y="121" text-anchor="start" fill="#22c55e" font-size="10" font-weight="600">Recoverable</text>
+
+                    <!-- AI Failure (right) -->
+                    <rect x="430" y="15" width="350" height="135" rx="12" fill="rgba(239,68,68,0.02)" stroke="rgba(239,68,68,0.12)" stroke-width="1"/>
+                    <text x="605" y="12" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600" letter-spacing="1">AI SYSTEM FAILURE</text>
+
+                    <circle cx="530" cy="85" r="50" fill="rgba(239,68,68,0.04)" stroke="rgba(239,68,68,0.15)" stroke-width="1"/>
+                    <circle cx="530" cy="85" r="30" fill="rgba(239,68,68,0.06)" stroke="rgba(239,68,68,0.2)" stroke-width="1"/>
+                    <circle cx="530" cy="85" r="12" fill="rgba(239,68,68,0.15)" stroke="#ef4444" stroke-width="1.5"/>
+                    <circle cx="530" cy="85" r="12" fill="none" stroke="#ef4444" stroke-width="1" opacity="0.3" filter="url(#glow-11)"/>
+                    <text x="530" y="89" text-anchor="middle" fill="#fca5a5" font-size="8" font-weight="600">BLAST</text>
+
+                    <text x="640" y="55" text-anchor="start" fill="#d1d5db" font-size="11" font-weight="600">High Blast Radius</text>
+                    <text x="640" y="73" text-anchor="start" fill="#fca5a5" font-size="10">Misdiagnosis</text>
+                    <text x="640" y="89" text-anchor="start" fill="#fca5a5" font-size="10">Legal liability</text>
+                    <text x="640" y="105" text-anchor="start" fill="#fca5a5" font-size="10">Financial contagion</text>
+                    <text x="640" y="121" text-anchor="start" fill="#ef4444" font-size="10" font-weight="600">Irreversible</text>
+
+                    <defs>
+                        <filter id="glow-11" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; Web app failures are bounded and recoverable; AI failures in high-stakes domains cascade and may be irreversible</p>
+            </div>
+
+            <p class="gsap-reveal">This is not a hypothetical concern. The real-world evidence is already accumulating. In 2023, a lawyer submitted a brief to a federal court containing fictitious case citations generated by ChatGPT &mdash; cases that sounded plausible, read convincingly, and did not exist.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup> The consequences were not a bug report and a patch in the next sprint. They were court sanctions, professional embarrassment, and potential malpractice exposure. The system &ldquo;worked&rdquo; in the sense that it produced fluent, confident output. It failed in the sense that mattered: the output was wrong, and wrongness in a legal context has consequences that a rollback cannot undo.</p>
+
+            <p class="gsap-reveal">Healthcare presents even starker examples. Obermeyer and colleagues demonstrated that a widely deployed healthcare algorithm exhibited significant racial bias &mdash; systematically underestimating the illness severity of Black patients &mdash; because it used healthcare spending as a proxy for health need, and spending is confounded by systemic inequities in access to care.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> This was not a minor bug. It affected the care received by millions of patients. And it was deployed in production for years before the bias was identified and published.</p>
+
+            <p class="gsap-reveal">The European Union&rsquo;s AI Act, which entered force in 2024, represents the regulatory response to this reality. It classifies AI systems by risk level and imposes correspondingly stringent requirements: transparency, human oversight, data quality, conformity assessment, post-market monitoring.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> This is not regulatory overreach. It is the predictable consequence of deploying high-stakes technology with a low-stakes development philosophy. When the blast radius grows, the regulatory envelope tightens. This is how it has always worked, in every industry.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Compounding Error Problem</h2>
+
+            <p class="gsap-reveal">There is a second, subtler reason that the iterative philosophy fails for AI: errors compound. In a traditional web application, a bug in one feature is largely independent of bugs in other features. Fix the bug, deploy the fix, move on. But AI systems are, by their nature, interconnected. An error in one component &mdash; a biased training dataset, a flawed evaluation metric, a misspecified reward function &mdash; propagates through the system and manifests as downstream failures that are difficult to trace back to the root cause.</p>
+
+            <p class="gsap-reveal">This is especially dangerous in agentic AI systems, where the output of one reasoning step becomes the input to the next. A minor error in step three can cascade through steps four through forty, with each step amplifying the deviation from correct behaviour. By the time the error is detectable in the output, the system has built an elaborate, internally consistent chain of reasoning on a flawed foundation. Debugging this is not like debugging a web app. It is like debugging a chain of custody with forty links, any one of which might be the weak one.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup></p>
+
+            <p class="gsap-reveal">The &ldquo;move fast&rdquo; philosophy assumes that failures are isolated, detectable, and cheaply fixable. In AI systems, failures are interconnected, often invisible, and expensive to diagnose. The development methodology must account for this fundamental difference.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Move deliberately and verify things
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Move Deliberately and Verify Things</h2>
+
+            <p class="gsap-reveal">The answer is not to stop moving. Slow, cautious development with exhaustive upfront planning has its own pathologies: it delays deployment, delays learning, and gives less safety-conscious competitors a head start. The 2025 International AI Safety Report acknowledged this tension explicitly, noting that overly restrictive regulation risks driving AI development to jurisdictions with weaker safety standards.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> Speed matters. The question is what kind of speed.</p>
+
+            <p class="gsap-reveal">The synthesis is a different kind of fast: <em>rapid iteration within formal safety boundaries</em>. Not &ldquo;move fast and break things&rdquo; and not &ldquo;move slowly and break nothing.&rdquo; Instead: move deliberately and verify things. Ship frequently, but verify before every deployment. Iterate aggressively, but within bounds that prevent catastrophic failure. Learn from production behaviour, but monitor continuously so that learning happens from near-misses rather than from disasters.</p>
+
+            <p class="gsap-reveal">This is not a compromise between speed and safety. It is an architecture that makes them complementary. The insight comes from mature safety engineering disciplines: the fastest way to iterate is to have confidence that your iterations cannot cause irreversible harm. When safety is guaranteed at the architectural level, you can experiment aggressively at the application level. When the guardrails are structural, the engineering team does not need to exercise caution with every change &mdash; the structure exercises caution for them.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Architectural Safety vs. Procedural Safety</h2>
+
+            <p class="gsap-reveal">This distinction &mdash; between architectural and procedural safety &mdash; is the crux of the matter. Procedural safety relies on people following rules: review every change, test every feature, check every output. It is necessary, but it is fragile. People make mistakes. Processes are skipped under deadline pressure. Checklists are completed without genuine attention. Every serious accident investigation in aviation, nuclear, and healthcare reveals procedural failures that were supposed to be prevented by existing procedures.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal">Architectural safety does not rely on people following rules. It relies on structures that make unsafe behaviour impossible or immediately detectable. A system with hard resource bounds does not need a procedure for &ldquo;check that resource usage is within limits&rdquo; &mdash; the architecture enforces the limit automatically. A system with formal verification does not need a procedure for &ldquo;ensure this change preserves safety invariants&rdquo; &mdash; the build pipeline verifies it automatically. A system with layered privilege separation does not need a procedure for &ldquo;ensure the AI cannot modify its own safety constraints&rdquo; &mdash; the architecture makes it structurally impossible.</p>
+
+            <p class="gsap-reveal">Anthropic&rsquo;s Responsible Scaling Policy illustrates this principle. It does not simply ask researchers to &ldquo;be careful&rdquo; with more capable systems. It defines concrete capability thresholds &mdash; AI Safety Levels &mdash; that trigger specific, mandatory safety requirements. The safety measures are not optional guidelines; they are gates that must be passed before development proceeds.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup> This is architectural thinking applied to organisational process: making safety a structural property of the development pipeline rather than a behavioural expectation of the development team.</p>
+
+            <p class="gsap-reveal">The IEEE 7000 series of standards takes a complementary approach, providing a model process for translating ethical requirements into system design specifications.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> This is not ethics as aspiration. It is ethics as engineering: concrete, testable, auditable. When ethical requirements are embedded in the system&rsquo;s architecture rather than in its team&rsquo;s intentions, they survive personnel changes, deadline pressure, and the inevitable entropy that degrades procedural compliance over time.</p>
+
+            <!-- ── Diagram 2: Speed + Safety Architecture Stack ── -->
+            <div class="gsap-reveal my-12 max-w-md mx-auto">
+                <div class="space-y-0">
+                    <!-- Top layer: Rapid Iteration -->
+                    <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Application Layer</p>
+                        <p class="text-white font-semibold">Rapid Iteration</p>
+                        <p class="text-xs text-gray-500 mt-1">Ship daily &bull; Experiment aggressively &bull; Learn fast</p>
+                    </div>
+                    <!-- Middle layer: Safety Architecture (highlighted) -->
+                    <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Safety Architecture</p>
+                        <p class="text-white font-bold text-lg relative">Verify Before Deploy</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Formal bounds &bull; Automated checks &bull; Continuous monitoring</p>
+                    </div>
+                    <!-- Bottom layer: Immutable Constraints -->
+                    <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Foundation</p>
+                        <p class="text-white font-semibold">Immutable Constraints</p>
+                        <p class="text-xs text-gray-500 mt-1">Resource bounds &bull; Action whitelists &bull; Privilege separation</p>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; Speed and safety as complementary layers: iterate fast above, verify structurally below</p>
+            </div>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Verification Pipeline</h2>
+
+            <p class="gsap-reveal">In practice, &ldquo;move deliberately and verify things&rdquo; means building a verification pipeline that every change passes through before reaching production. This pipeline is the engineering embodiment of the safety architecture. It operates automatically, consistently, and without the variability of human judgement.</p>
+
+            <p class="gsap-reveal">The pipeline has stages. First, static analysis: the change is checked for structural correctness, type safety, and compliance with coding standards. Second, specification checking: the change is verified against formal specifications that encode the system&rsquo;s safety invariants. Third, regression testing: the change is evaluated against a comprehensive test suite that covers known failure modes, edge cases, and adversarial inputs. Fourth, behavioural testing: the change is deployed in a sandboxed environment and evaluated against behavioural benchmarks &mdash; not just &ldquo;does it produce correct output?&rdquo; but &ldquo;does it behave within expected bounds across a range of inputs?&rdquo; Fifth, monitoring integration: the change is deployed to production with monitoring hooks that detect behavioural anomalies in real time and trigger automatic rollback if thresholds are exceeded.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
+
+            <p class="gsap-reveal">This pipeline can run in minutes. It does not slow down iteration &mdash; it makes iteration safe. And because it is automated, it does not suffer from the procedural compliance failures that make human-dependent safety processes unreliable. The engineer ships a change. The pipeline verifies it. If it passes, it deploys. If it fails, it is rejected with a diagnostic report. The cycle time is fast. The safety is structural.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Regulatory Tailwind</h2>
+
+            <p class="gsap-reveal">Organisations that adopt this approach are not just building better products. They are positioning themselves for a regulatory environment that is tightening rapidly and will continue to tighten. The EU AI Act is the first comprehensive AI regulation, but it will not be the last. The NIST AI Risk Management Framework provides a voluntary but increasingly influential standard for AI governance in the United States.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup> China&rsquo;s algorithmic governance regulations are already in force. The UK, Canada, Japan, and others are developing their own frameworks.</p>
+
+            <p class="gsap-reveal">Every one of these frameworks converges on the same set of requirements: transparency, accountability, human oversight, risk assessment, and continuous monitoring. Organisations that build these capabilities into their architecture from the beginning will comply with current and future regulations by default. Organisations that treat safety as an afterthought will face an increasingly expensive and disruptive retrofitting process as regulatory requirements tighten.</p>
+
+            <p class="gsap-reveal">This is not speculative. It is the same dynamic that played out in financial services after 2008, in data privacy after GDPR, and in cybersecurity after the wave of high-profile breaches in the 2010s. In every case, organisations that built compliance into their architecture adapted smoothly. Organisations that bolted it on suffered. The pattern is clear enough to be predictive.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 CODA
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The New Velocity</h2>
+
+            <p class="gsap-reveal">&ldquo;Move fast and break things&rdquo; was the right philosophy for building web apps in a world where software failures were bounded and recoverable. It was never the right philosophy for building systems where failure is catastrophic and irreversible. The lesson is not that speed is bad. It is that the kind of speed that produces great web apps is not the kind of speed that produces safe AI systems.</p>
+
+            <p class="gsap-reveal">The new velocity is verification velocity: how fast you can validate that a change is safe, correct, and aligned with its specification. Organisations that invest in automated verification pipelines, formal safety specifications, and architectural constraints will iterate faster than organisations that rely on manual review, procedural checklists, and hope. They will ship more frequently, with more confidence, and with fewer catastrophic surprises. They will move faster <em>because</em> they verify, not despite it.</p>
+
+            <p class="gsap-reveal font-semibold text-white">The era of breaking things is over. The era of verifying things has begun &mdash; and it is faster than anyone expected.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Taplin, J. (2017). <a href="https://www.hachettebookgroup.com/titles/jonathan-taplin/move-fast-and-break-things/9780316275750/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Move fast and break things: How Facebook, Google, and Amazon cornered culture and undermined democracy</em></a>. Little, Brown. &mdash; Critical analysis of Silicon Valley&rsquo;s iterative philosophy and its societal consequences.
+                </li>
+                <li id="ref-2">
+                    Ries, E. (2011). <a href="http://theleanstartup.com/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The lean startup: How today&rsquo;s entrepreneurs use continuous innovation to create radically successful businesses</em></a>. Crown Business. &mdash; Validated learning through rapid experimentation as a development methodology.
+                </li>
+                <li id="ref-3">
+                    Amodei, D., Olah, C., Steinhardt, J., Christiano, P., Schulman, J., &amp; Man&eacute;, D. (2016). <a href="https://arxiv.org/abs/1606.06565" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Concrete problems in AI safety</em></a>. arXiv. &mdash; Taxonomy of failure modes in deployed AI systems: reward hacking, distributional shift, negative side effects.
+                </li>
+                <li id="ref-4">
+                    Weiser, B. (2023, May 27). <a href="https://www.nytimes.com/2023/05/27/nyregion/avianca-airline-lawsuit-chatgpt.html" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Here&rsquo;s what happens when your lawyer uses ChatGPT</em></a>. <em>The New York Times</em>. &mdash; The Mata v. Avianca case: fabricated legal citations submitted to federal court.
+                </li>
+                <li id="ref-5">
+                    Obermeyer, Z., Powers, B., Vogeli, C., &amp; Mullainathan, S. (2019). <a href="https://doi.org/10.1126/science.aax2342" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Dissecting racial bias in an algorithm used to manage the health of populations</em></a>. <em>Science</em>, 366(6464), 447&ndash;453. &mdash; Systemic racial bias in a healthcare algorithm affecting millions of patients.
+                </li>
+                <li id="ref-6">
+                    European Parliament. (2024). <a href="https://www.europarl.europa.eu/topics/en/article/20230601STO93804/eu-ai-act-first-regulation-on-artificial-intelligence" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>EU AI Act: First regulation on artificial intelligence</em></a>. &mdash; Risk-based classification, conformity assessment, and post-market monitoring requirements for AI systems.
+                </li>
+                <li id="ref-7">
+                    Hendrycks, D., Mazeika, M., &amp; Woodside, T. (2023). <a href="https://arxiv.org/abs/2306.12001" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>An overview of catastrophic AI risks</em></a>. arXiv. &mdash; Compounding error dynamics in agentic AI and the inadequacy of piecemeal risk mitigation.
+                </li>
+                <li id="ref-8">
+                    International AI Safety Report. (2025, January). <a href="https://www.internationalaisafetyreport.org/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>International AI Safety Report 2025</em></a>. &mdash; Balancing innovation incentives with safety requirements; regulatory arbitrage risks.
+                </li>
+                <li id="ref-9">
+                    Leveson, N. G. (2011). <a href="https://mitpress.mit.edu/books/engineering-a-safer-world" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Engineering a safer world: Systems thinking applied to safety</em></a>. MIT Press. &mdash; Architectural vs. procedural safety; why procedures alone are insufficient for complex systems.
+                </li>
+                <li id="ref-10">
+                    Anthropic. (2023). <a href="https://www.anthropic.com/index/anthropics-responsible-scaling-policy" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Anthropic&rsquo;s Responsible Scaling Policy</em></a>. &mdash; AI Safety Levels as structural gates: capability-triggered mandatory safety requirements.
+                </li>
+                <li id="ref-11">
+                    IEEE. (2021). <a href="https://standards.ieee.org/ieee/7000/6781/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>IEEE 7000-2021: Model process for addressing ethical concerns during system design</em></a>. IEEE Standards Association. &mdash; Translating ethical requirements into auditable engineering specifications.
+                </li>
+                <li id="ref-12">
+                    Seshia, S. A., Sadigh, D., &amp; Sastry, S. S. (2022). <a href="https://doi.org/10.1007/s10817-021-09614-y" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Toward verified artificial intelligence</em></a>. <em>Communications of the ACM</em>, 65(7), 46&ndash;55. &mdash; Automated verification pipelines for AI: specification, testing, and continuous assurance.
+                </li>
+                <li id="ref-13">
+                    National Institute of Standards and Technology. (2023). <a href="https://www.nist.gov/artificial-intelligence/ai-risk-management-framework" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>AI Risk Management Framework (AI RMF 1.0)</em></a>. NIST. &mdash; Voluntary framework for AI governance: map, measure, manage, and govern AI risks.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

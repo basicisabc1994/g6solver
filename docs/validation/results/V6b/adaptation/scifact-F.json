@@ -1,0 +1,1186 @@
+{
+ "adapt_code": "G6_E_META_READY",
+ "cycles": [
+  {
+   "cycle": 1,
+   "evaluations": [
+    {
+     "candidate_digest": "8d10924eb472f7ccaf78b6de24ed0532cbe8ed41cb010af536ddb7234605097e",
+     "strategy": "random",
+     "proposer": "v6b-random-search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Reason briefly about what the abstract says, then write the final line as 'Answer: <label>'."
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "second_look_contradict"
+       ]
+      },
+      "exemplars": {
+       "from": 0,
+       "to": 8
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 20,
+       "losses": 21,
+       "ties": 122,
+       "discordant": 41,
+       "p_one_sided": 0.622386
+      },
+      "false_accepts": {
+       "base": 60,
+       "candidate": 54
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.631902,
+        "candidate_mean": 0.625767,
+        "diff_mean": -0.006135,
+        "diff_upper_95": 0.058676,
+        "candidate_upper_95": 0.688307
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.104294,
+        "diff_mean": 0.104294,
+        "diff_upper_95": 0.143794,
+        "candidate_upper_95": 1.143794
+       },
+       "wall_clock_s": {
+        "base_mean": 0.174442,
+        "candidate_mean": 0.519479,
+        "diff_mean": 0.345037,
+        "diff_upper_95": 0.372843,
+        "candidate_upper_95": 0.549136
+       }
+      },
+      "negative_control": {
+       "wins": 103,
+       "losses": 0,
+       "ties": 60,
+       "discordant": 103,
+       "p_one_sided": 0.0,
+       "base_success": 103,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 20,
+       "losses": 20,
+       "ties": 123,
+       "discordant": 40,
+       "p_one_sided": 0.562685,
+       "control_success": 102,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.1021,
+       "gain_0.10": 0.5179,
+       "gain_0.20": 0.9993
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 669,
+      "reuse_index": 1,
+      "notes": [],
+      "base_success": 103,
+      "candidate_success": 102,
+      "digest": "c75c95df47ea0f4ff61ebc7b3afa437688dcb3b6eaf49b9e72ee355470ea57a9"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 20, losses 21, p 0.622386 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 1
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 103,
+         "losses": 0,
+         "ties": 60,
+         "discordant": 103,
+         "p_one_sided": 0.0,
+         "base_success": 103,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 41
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 20 wins and 21 losses on 163 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 20 wins and 21 losses on 163 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    },
+    {
+     "candidate_digest": "712acd3bd204aa0d1beffdc0e1c8f4cadb62e6cb78006e476f9bab37f97d9dd6",
+     "strategy": "random",
+     "proposer": "v6b-random-search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Reason briefly about what the abstract says, then write the final line as 'Answer: <label>'."
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "ground"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 39,
+       "losses": 74,
+       "ties": 50,
+       "discordant": 113,
+       "p_one_sided": 0.99968
+      },
+      "false_accepts": {
+       "base": 60,
+       "candidate": 93
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.631902,
+        "candidate_mean": 0.417178,
+        "diff_mean": -0.214724,
+        "diff_upper_95": -0.11076,
+        "candidate_upper_95": 0.480903
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.142939,
+        "candidate_mean": 0.437485,
+        "diff_mean": 0.294546,
+        "diff_upper_95": 0.316697,
+        "candidate_upper_95": 0.461743
+       }
+      },
+      "negative_control": {
+       "wins": 103,
+       "losses": 0,
+       "ties": 60,
+       "discordant": 103,
+       "p_one_sided": 0.0,
+       "base_success": 103,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0419,
+       "gain_0.10": 0.1682,
+       "gain_0.20": 0.7282
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 326,
+      "reuse_index": 2,
+      "notes": [],
+      "base_success": 103,
+      "candidate_success": 68,
+      "digest": "ff59375089358973f1284f86a71971a5fa107858d950bf28c9e79c868f815ff2"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 39, losses 74, p 0.99968 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 2
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 103,
+         "losses": 0,
+         "ties": 60,
+         "discordant": 103,
+         "p_one_sided": 0.0,
+         "base_success": 103,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 113
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 39 wins and 74 losses on 163 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 39 wins and 74 losses on 163 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 2,
+   "evaluations": [
+    {
+     "candidate_digest": "ece4bf10800d802b8b1358adfe72716bf510ba7a680213d007b518d5f2926bd3",
+     "strategy": "random",
+     "proposer": "v6b-random-search",
+     "diff": {
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "label-only"
+       ]
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "self_review"
+       ]
+      },
+      "exemplars": {
+       "from": 0,
+       "to": 8
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 12,
+       "losses": 25,
+       "ties": 126,
+       "discordant": 37,
+       "p_one_sided": 0.989963
+      },
+      "false_accepts": {
+       "base": 57,
+       "candidate": 70
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.650307,
+        "candidate_mean": 0.570552,
+        "diff_mean": -0.079755,
+        "diff_upper_95": -0.019051,
+        "candidate_upper_95": 0.634523
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 2.0,
+        "diff_mean": 1.0,
+        "diff_upper_95": 1.0,
+        "candidate_upper_95": 2.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.143491,
+        "candidate_mean": 0.418135,
+        "diff_mean": 0.274644,
+        "diff_upper_95": 0.279578,
+        "candidate_upper_95": 0.42538
+       }
+      },
+      "negative_control": {
+       "wins": 106,
+       "losses": 0,
+       "ties": 57,
+       "discordant": 106,
+       "p_one_sided": 0.0,
+       "base_success": 106,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 10,
+       "losses": 21,
+       "ties": 132,
+       "discordant": 31,
+       "p_one_sided": 0.985275,
+       "control_success": 104,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.1117,
+       "gain_0.10": 0.5708,
+       "gain_0.20": 0.9999
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 815,
+      "reuse_index": 3,
+      "notes": [],
+      "base_success": 106,
+      "candidate_success": 93,
+      "digest": "74c9d7b63fbd016be01b817a07aa508795f3d6f2f29d7b25e93c28909d867637"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 12, losses 25, p 0.989963 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "label-only"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 3
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 106,
+         "losses": 0,
+         "ties": 57,
+         "discordant": 106,
+         "p_one_sided": 0.0,
+         "base_success": 106,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 37
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 12 wins and 25 losses on 163 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 12 wins and 25 losses on 163 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    },
+    {
+     "candidate_digest": "2dd6ed6e8d2d032f6d5669cc090af1e562f8be0e4d92e6c4b0bf275f90da2ff2",
+     "strategy": "random",
+     "proposer": "v6b-random-search",
+     "diff": {
+      "pipeline": {
+       "from": [],
+       "to": [
+        "self_review"
+       ]
+      },
+      "exemplars": {
+       "from": 0,
+       "to": 8
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 20,
+       "losses": 24,
+       "ties": 119,
+       "discordant": 44,
+       "p_one_sided": 0.77431
+      },
+      "false_accepts": {
+       "base": 60,
+       "candidate": 64
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.631902,
+        "candidate_mean": 0.607362,
+        "diff_mean": -0.02454,
+        "diff_upper_95": 0.04253,
+        "candidate_upper_95": 0.670473
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 2.0,
+        "diff_mean": 1.0,
+        "diff_upper_95": 1.0,
+        "candidate_upper_95": 2.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.144798,
+        "candidate_mean": 0.419552,
+        "diff_mean": 0.274755,
+        "diff_upper_95": 0.279697,
+        "candidate_upper_95": 0.426663
+       }
+      },
+      "negative_control": {
+       "wins": 103,
+       "losses": 0,
+       "ties": 60,
+       "discordant": 103,
+       "p_one_sided": 0.0,
+       "base_success": 103,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 20,
+       "losses": 21,
+       "ties": 122,
+       "discordant": 41,
+       "p_one_sided": 0.622386,
+       "control_success": 100,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0955,
+       "gain_0.10": 0.4825,
+       "gain_0.20": 0.9981
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 815,
+      "reuse_index": 4,
+      "notes": [],
+      "base_success": 103,
+      "candidate_success": 99,
+      "digest": "f10c73911070371252c2e81e4faef337b43d2c36aa317aa80da93f4763323602"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 20, losses 24, p 0.77431 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 4
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 103,
+         "losses": 0,
+         "ties": 60,
+         "discordant": 103,
+         "p_one_sided": 0.0,
+         "base_success": 103,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 44
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 20 wins and 24 losses on 163 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 20 wins and 24 losses on 163 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 3,
+   "evaluations": [
+    {
+     "candidate_digest": "11cf3952d329a21ad7c77526d1175607efb26c4ff98298f7273e1b1bf678a251",
+     "strategy": "random",
+     "proposer": "v6b-random-search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only."
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "second_look_support"
+       ]
+      },
+      "exemplars": {
+       "from": 0,
+       "to": 8
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 31,
+       "losses": 24,
+       "ties": 108,
+       "discordant": 55,
+       "p_one_sided": 0.209377
+      },
+      "false_accepts": {
+       "base": 60,
+       "candidate": 53
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.631902,
+        "candidate_mean": 0.674847,
+        "diff_mean": 0.042945,
+        "diff_upper_95": 0.11781,
+        "candidate_upper_95": 0.735385
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.588957,
+        "diff_mean": 0.588957,
+        "diff_upper_95": 0.652544,
+        "candidate_upper_95": 1.652544
+       },
+       "wall_clock_s": {
+        "base_mean": 0.158988,
+        "candidate_mean": 0.353067,
+        "diff_mean": 0.19408,
+        "diff_upper_95": 0.20603,
+        "candidate_upper_95": 0.365231
+       }
+      },
+      "negative_control": {
+       "wins": 103,
+       "losses": 0,
+       "ties": 60,
+       "discordant": 103,
+       "p_one_sided": 0.0,
+       "base_success": 103,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 31,
+       "losses": 21,
+       "ties": 111,
+       "discordant": 52,
+       "p_one_sided": 0.105804,
+       "control_success": 100,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0764,
+       "gain_0.10": 0.3773,
+       "gain_0.20": 0.9836
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 748,
+      "reuse_index": 5,
+      "notes": [],
+      "base_success": 103,
+      "candidate_success": 110,
+      "digest": "ba62a0dba00d00c536f7222dc4a22c5414a96beb86512eaae558c2f7b80afed3"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 31, losses 24, p 0.209377 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 5
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 103,
+         "losses": 0,
+         "ties": 60,
+         "discordant": 103,
+         "p_one_sided": 0.0,
+         "base_success": 103,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 55
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): the candidate won 31 and lost 24 of 163 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+      "causes": [
+       {
+        "code": "underpowered",
+        "what": "the candidate won 31 and lost 24 of 163 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Add fresh held-out cases with known answers: about 1916 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'.",
+        "who": "person",
+        "addresses": "underpowered",
+        "component": "",
+        "how": "a larger held-out split, frozen and confirmed by a person"
+       },
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Add fresh held-out cases with known answers: about 1916 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'."
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  }
+ ],
+ "per_cycle": [
+  2,
+  2,
+  1
+ ],
+ "report": {
+  "completion_state": "qualified-draft",
+  "reliability_label": "qualified-draft",
+  "warning_card": {
+   "code": "G6_E_META_REPORT",
+   "message": "what this meta-harness has shown",
+   "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+   "severity": "amber",
+   "why": "what this meta-harness has shown",
+   "risks": [],
+   "verified": false,
+   "next_step": "Inspect the degraded invocation envelope before trusting the result."
+  },
+  "evidence": [],
+  "egress_notice": [],
+  "request_id": "914d870fc2d4",
+  "task_id": "",
+  "run_id": "5585b01048a14999be86a2bab30334bf",
+  "degraded": true,
+  "degradation_reason": "",
+  "known_limitations": [
+   "Qualified draft: this output has not been independently verified."
+  ],
+  "missing_checks": [
+   "Independent verification was not completed for this output."
+  ],
+  "recommended_next_steps": [
+   "Review the warning card and verify this output before relying on it."
+  ],
+  "risk_level": "medium",
+  "confidence": null,
+  "block_reason": "",
+  "required_human_decision": "",
+  "evidence_collected": [],
+  "safe_next_action": "",
+  "rollback_or_containment": "",
+  "code": "G6_E_META_REPORT",
+  "message": "what this meta-harness has shown",
+  "next_action": "",
+  "checked": [
+   {
+    "claim": "the store's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "the ledger's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "every activation names a person and a decision",
+    "holds": true
+   },
+   {
+    "claim": "every live run used the profile of the version it names",
+    "holds": true
+   },
+   {
+    "claim": "online tuning is off",
+    "holds": true
+   },
+   {
+    "claim": "audited share of live runs: at least 0.1",
+    "holds": true
+   }
+  ],
+  "measured": [
+   {
+    "claim": "the last held-out evaluation",
+    "value": {
+     "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+     "candidate_digest": "11cf3952d329a21ad7c77526d1175607efb26c4ff98298f7273e1b1bf678a251",
+     "model_calls_used": 748,
+     "n": 163,
+     "partial": false,
+     "purpose": "evaluation",
+     "run_ids": [
+      "1edc35db69844db1b556912ca4f3850e",
+      "2959b2caa86f4f57b77506431e67b8bb",
+      "08f48d2d35af41238f5d62aab9c3620e",
+      "a5f99a99d65f4b0395833ea3cfe30bd3",
+      "49bc43a2ff254cf38a279b281a0e54b1",
+      "0efb9ced1b614dac8ae790a44e29b428",
+      "638f71d05d3a43a686df74eead98eb8f",
+      "c3bd010e80a8493c8dc1cee07062535b",
+      "5a49470875534076b3e9b3877eb3124d",
+      "b716a975bff9401c9aad1181c0287f41",
+      "b95fa8c35d8e460fa61da716d8291387",
+      "49abcf65d3414f8eb1396956fb4f5aa0",
+      "eaa22dea67c44afb870587d22072fbb9",
+      "930747063f3b4e1f893bc5c886d1add1",
+      "d9c5f8e49e974e18b353b168e89d9345",
+      "16c91d2f78234f94885d2274c2ff20ad",
+      "573cd0c0884a440f9f5907e5cd80aae1",
+      "3d73427cd0e84303943812efa537f51f",
+      "43e9d20b23f34843bd63b7ffb165d51d",
+      "f1a0053634b44cca922b9b37f9cda209",
+      "0314b17149394ecfadf55c5d1cf91639",
+      "c65f7045ca594559be80dd54926a32a9",
+      "74e2574d26d54285aaa3a3b585995a7c",
+      "7ad2896fbed2457b9a444922891cbbeb",
+      "86eb617c196d4008ad8a33037c75b886",
+      "0499454b6b2d4acaa7e70a1a466ca4e4",
+      "d6b1a7a9c0ec4ba080e9e13b921939bd",
+      "a0dc46e9d1ea4ecf9a64757fc90d4b0e",
+      "2661d8be13384096aaba7afb1449f76f",
+      "07cab3175fdf40469414ee4ddb514d5f",
+      "1f17f857d858497080ea437cfb676137",
+      "4674edc935864959bee76b1de1b29690",
+      "972ba27922604bf894ea155cf32aacc6",
+      "7c507353a1f347de8720a16f7af0c0b5",
+      "89f354475c4240689fe91d7f048d1cfd",
+      "a13ba653892e4a6f83bd5fbc025780ef",
+      "7c074477e26d413987a88ec8856c29c1",
+      "518c15d31f2248b79fc31215293563f8",
+      "0d84081829dd4def8df85db871a3511d",
+      "cf35a07111624042b1f8192e3fccfcd4",
+      "290ddfcba19c4af5979112989a6b9c22",
+      "6924f7323f3b4f9aab83c894fa5eb117",
+      "a8762004551847038a9b0c3d24cc15da",
+      "d724b2b1bc2345868ff8e2694b939bb0",
+      "e075b1ec4ece4f1da63228843ca088b0",
+      "52ad7c5b04b84b4bb8ea32645f80fd0c",
+      "f8887cd116f74d3da6d07361a465ce3e",
+      "0fcb5ddc31044b77b5bc7e3632603579",
+      "bd7cb3c677214c748e7f8940211d810a",
+      "e0a209ffeefa4ebf80d2a7628b501760",
+      "9e3a0f385bf24214a7388d95613b337f",
+      "26ce509c649f41e6811bb6206c3f6d9d",
+      "14b6c297f75f4137b10f68095df904ee",
+      "8a7488f7f5d049afb60d4b155d30186b",
+      "2842fb16ddc84ae58a223782553c31f5",
+      "5b5291173b0942d4bf360b1bfe2bec07",
+      "8296742251b14c0a93dcf6e576d87dc2",
+      "6cb6014044ac4efab683ef1b7f8e5a2b",
+      "5485dfceaa71480b8476b6f8b8157794",
+      "95ad759ba78e4d0db064835701b58945",
+      "bed046b85a8b4ba2bd53dafc110b43d7",
+      "a676f0daa21d4ae5a38aec72ec5101a0",
+      "d741b6c3a0ad4b619ada3a2517cc8845",
+      "698a633de9634fbf86047f8e68a16887",
+      "5e06f0266dd64bb1a8053decb978ab50",
+      "8248d7817d754eae9d66cf860d1a3804",
+      "61f04f8b21d94230b182e0123a84e026",
+      "9198eeb6b7f94a9ca1eac8d4b3c2ca2e",
+      "f981134bbe2749708457ec68ae0b87e8",
+      "e33a1cc596d046cfb41ca9ad13819294",
+      "20887b6caf7448a6a306568ab651709d",
+      "b10cb7c3872c41689c4d8d3b36a67bfe",
+      "fa6af5da2464423c9e522ce9ed1d9341",
+      "b67def1a006340218f3ddaf9fe599709",
+      "22110f4362b9463487f8b8fe83fe46cf",
+      "1e0dde43e8aa4a8ca6e6b38fc672cbee",
+      "289887596cf0439482fc8b49a8cf5a3c",
+      "082fdc0df449431fa0e5968caca752d0",
+      "325b4a8d29cb475d9a73ffc9f32fd6c5",
+      "ff0c487b9ccf4ca49e5692b73caa38c3",
+      "aabbecca79864cc0a25bfbb8250c3d0c",
+      "c60a50f4357e4fc0807b71761cc23986",
+      "162282cac2ca4298bbca2bca2572db1e",
+      "7b247d7a385a4f8cb73ba6815dcc490c",
+      "59dd4aa6c5c24cd896249cb06b4f411c",
+      "c56b977a40f7458abe6d434de63df361",
+      "ba467e22e61f48218999b45c89e3dc8b",
+      "6980fc7fe46a442aa0671395883c3867",
+      "8266ed2c3684439c839db3e01d642c8c",
+      "82b6794ff13e47f0a2c815efbea5216f",
+      "9e85f096ee78451aa8017226ca8f067b",
+      "50a97dc2c27340a5a9dcfaca04097936",
+      "57f4e9cd3ba04c48b86cc4d736d7299f",
+      "f61d2ef50edf485e9cc01c88c2867358",
+      "ae4c1d6e89554ea98db3e3f803e66be7",
+      "5567c5156f1d4bd0b0a960b0dca0ab96",
+      "649310df7ee54940800f797fc8cd8037",
+      "808f87dc315348e2b380775e1d76cd01",
+      "8f4b424b6ac74fb2a7238169f48853ea",
+      "f2d48e96207848cb93e41caff13f60fe",
+      "1a66d75a5fb845708ab9a62eec805ba4",
+      "6315cb78eb0c450fb3331ea09d23ed05",
+      "42c425ee5aa2481083cb651f3bef6bfd",
+      "43a202f02bcc4234aafcb910bf464249",
+      "f93d94bbb3e241a6859d09b9f2bfceff",
+      "16d00891ec094fb18e8d695bc84fd852",
+      "ce42a32d22774117a83506f93476ed16",
+      "44b1321b5cdc42d7b098c58743b3c630",
+      "9e51c7d1ee1946939796695c289533bc",
+      "be1cce6631fc496693933459212128dc",
+      "d24723aed8a34413aa3bb5285b101275",
+      "e6bd3cb76af44edc9e99d137fe8c8228",
+      "62f50f3dce2e41cfa22ac2a7068e07c2",
+      "b0b84df7ce714b52b6c653af6c863b48",
+      "2f1b565f7c1d438e9051444fefb807be",
+      "fc08088e8fdc48e19f2557f9b0955c36",
+      "c7573ded8d72415c956a8c88629c101e",
+      "211eafacca8544f8a89538596eb2aaab",
+      "19a160932fb345f7862c1ae97edc0e35",
+      "56d26432be3940aab14ec6db01868116",
+      "9e08cc03f7c0499c9b15f8766bf67bbc",
+      "e71b326650f646b292046978e418d1fc",
+      "da2a92be4c7f454094c6819d67d3fe77",
+      "e68ed9c3a56447bdaf5e73477139ac7b",
+      "28cbe520adbf42db984dcca2f05d8594",
+      "941a5ba1da674cbca34512d1353989c0",
+      "51c870804a3841c696efa9f118e0c421",
+      "0972ee5716bc41389affc206a6c967b7",
+      "7b0c98ec303449f282de71c08a334345",
+      "7d92331ae75249828dd012a72e1e447f",
+      "53b0dadc902d45f9ab51528f8305381d",
+      "54fabdec2b2e44968d9342728bd796cf",
+      "4ae8ca14531b440ca4b97693967a5820",
+      "e3f5e1e8693a4317b1f12293cc5c39b4",
+      "310ca02f53a84a5cb96c7b0c49a801ff",
+      "c9de65f70d9e4070aa6af08f96e77c0d",
+      "67c4f59991b74b949cd6f28d17db5bce",
+      "b0fbe01fdb0643c0991c0a77e2be9d8b",
+      "47922e6946a44213b5f3d61262a3f802",
+      "18c2360273d3467d9dffb9b20ddb86ea",
+      "3e40e64a91fa452eb2106bede9bd0535",
+      "351d5a6866344f9ea1391bb912e0b9c7",
+      "817ee7fe742649428d019f62d38d110e",
+      "cf833b5c5cff4c44afc8ff34544c837b",
+      "8b3bfb964e3a45d4a28ae0e4f64dd0ee",
+      "27a13424e33f4047afa858cf76e84351",
+      "6834939315014fcfa3861e1054025f9b",
+      "0483748fbc7a46c98db9cd099a1563fa",
+      "b02b9216fa104b34961264333aac7404",
+      "9801434b31de4a36b6b4606538790377",
+      "5d2746f32e4f4703a44f2f84534dd40e",
+      "d2e51ca1aa3d43c5a2ad2c2f3b382461",
+      "c0fb3b50d7f34055b916773f4d140b1d",
+      "e1f4f4f2a8ef49eb81f877e206e23555",
+      "d7be6e91a3174aa0bfe1585e66ed30c9",
+      "3f5075a0334c46a2b414b54ed86a0525",
+      "6a03346b1c6049e8bc05c6dc521a4084",
+      "020118c3f203413d9406a97a3252ce4b",
+      "341c3cbcaf084400a56757120fbf57ec",
+      "5dda5e8cb17049a19246cdfb392a5564",
+      "89a4caceccb147e78507414aedf769a6",
+      "7e5d0490b5a1438e8f10179187fd27f9",
+      "0a70e70816054ff9bf8489e0e0c6f657"
+     ],
+     "split": "held_out",
+     "split_digest": "e3317bc4e24711c824ba7167c99ce56f9831c31eb777f1a71fb8bb868ef6a282",
+     "success": {
+      "discordant": 55,
+      "losses": 24,
+      "p_one_sided": 0.209377,
+      "ties": 108,
+      "wins": 31
+     },
+     "workflow_digest": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270",
+     "_id": "ba62a0dba00d00c536f7222dc4a22c5414a96beb86512eaae558c2f7b80afed3",
+     "_kind": "evaluation"
+    }
+   }
+  ],
+  "assumed": [
+   "live tasks resemble the suite (stationarity, KS A1)",
+   "the held-out answers are right, and the oracle reads them correctly",
+   "accepted_by names the person who accepted (recorded as given)",
+   "the held-out split is independent-authored"
+  ]
+ },
+ "inspect_versions": [
+  {
+   "accepted_by": "v6b-scripted-approval (study script, not a person)",
+   "at": "2026-10-19T02:50:12+00:00",
+   "decision_digest": "",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "initial",
+   "ledger_head": "",
+   "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+   "proposer": "",
+   "reason": "",
+   "snapshot": "",
+   "version": 0
+  }
+ ],
+ "restarts": 0
+}

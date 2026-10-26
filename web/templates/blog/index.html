@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block title %}Essays{% endblock %}
+{% block meta_description %}G6Solver blog — thoughts on cognitive AI, epistemology, safety engineering, and the architecture of intelligence.{% endblock %}
+
+{% block content %}
+<section class="py-24">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h1 class="text-5xl font-bold text-white mb-4 gsap-reveal">Essays</h1>
+        <p class="text-gray-400 mb-16 gsap-reveal">Research essays on what intelligence requires &mdash; and what it takes to build it.</p>
+
+        <!-- Cluster A: The Intelligence Gap -->
+        <h2 class="text-2xl font-mono text-g6-indigo uppercase tracking-wider mb-8 mt-[74px] text-center gsap-reveal">The Intelligence Gap</h2>
+        <div class="space-y-6 mb-16">
+            <a href="{% url 'blog:ai_cant_think' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Research</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">AI Can Talk &mdash; But It Can't Think</h2>
+                <p class="text-gray-400 leading-relaxed">Large language models are genuinely capable &mdash; but capability isn't competence. The gap between producing likely outputs and knowing what's correct won't close with scale alone.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:hallucination_is_design' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Research</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Hallucination Problem Is a Design Problem</h2>
+                <p class="text-gray-400 leading-relaxed">Hallucination isn't a bug to be patched &mdash; it's an inevitable consequence of optimising for token probability rather than truth. The fix is architectural: separate generation from verification.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:why_benchmarks_lie' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Research</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Why Benchmarks Lie</h2>
+                <p class="text-gray-400 leading-relaxed">When the benchmark becomes the target, it ceases to be a good measure. Goodhart's Law applies to AI evaluation with predictable consequences.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:context_window_is_not_memory' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Research</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Context Window Is Not Memory</h2>
+                <p class="text-gray-400 leading-relaxed">A context window is a buffer, not memory. It has no mechanism for prioritisation, consolidation, or retrieval by relevance. Real memory requires architecture.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:scaling_laws_ceiling' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Research</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Scaling Laws Have a Ceiling</h2>
+                <p class="text-gray-400 leading-relaxed">The ceiling isn't a wall &mdash; it's a signal that the next gains come from architecture, not scale. Post-training cognitive infrastructure changes the equation.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+        </div>
+
+        <!-- Cluster B: The Cognition Argument -->
+        <h2 class="text-2xl font-mono text-g6-indigo uppercase tracking-wider mb-8 mt-[74px] text-center gsap-reveal">The Cognition Argument</h2>
+        <div class="space-y-6 mb-16">
+            <a href="{% url 'blog:metacognition_missing_skill' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Cognitive Science</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Metacognition: The Skill AI Doesn't Know It's Missing</h2>
+                <p class="text-gray-400 leading-relaxed">Knowing is not the same as knowing that you know. Without metacognition, AI systems cannot distinguish between high-confidence correct answers and high-confidence confabulations.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:epistemology_of_ai' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Philosophy</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">What Epistemology Teaches Us About AI Knowledge</h2>
+                <p class="text-gray-400 leading-relaxed">Epistemology distinguishes true belief from justified true belief. LLMs hold statistical associations, not justified beliefs. Knowledge without justification is just lucky guessing at scale.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:two_types_of_thinking' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Cognitive Science</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Two Types of Thinking and Why AI Only Has One</h2>
+                <p class="text-gray-400 leading-relaxed">Current AI is all System 1: fast, associative, pattern-matching. It has no System 2: slow, deliberate, logical. When hard problems need careful reasoning, it produces fast answers dressed in slow language.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:learning_without_forgetting' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Research</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Learning Without Forgetting: The Continual Learning Problem</h2>
+                <p class="text-gray-400 leading-relaxed">A doctor who couldn't learn from new cases, or an engineer who forgot old principles when learning new ones, would be useless. So why do we accept this from AI?</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+        </div>
+
+        <!-- Cluster C: The Safety Imperative -->
+        <h2 class="text-2xl font-mono text-g6-indigo uppercase tracking-wider mb-8 mt-[74px] text-center gsap-reveal">The Safety Imperative</h2>
+        <div class="space-y-6 mb-16">
+            <a href="{% url 'blog:self_improvement_safety' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">AI Safety</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Self-Improvement Without Self-Destruction</h2>
+                <p class="text-gray-400 leading-relaxed">Safe self-modification is possible when the modification happens in an explicit, inspectable, formally verifiable layer &mdash; not in opaque neural weights.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:alignment_is_engineering' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">AI Safety</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Alignment Problem Is an Engineering Problem</h2>
+                <p class="text-gray-400 leading-relaxed">We have decades of safety engineering practice from aviation, nuclear, and medical devices. The problem isn't that we don't know how &mdash; it's that we haven't applied those disciplines to AI.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:move_fast_break_things' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">AI Safety</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Why &ldquo;Move Fast and Break Things&rdquo; Doesn't Work for AI</h2>
+                <p class="text-gray-400 leading-relaxed">A broken feature in a social media feed annoys users. A broken AI in healthcare causes real harm. The blast radius of AI failure is categorically different from software failure.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+        </div>
+
+        <!-- Cluster D: The Architecture of Intelligence -->
+        <h2 class="text-2xl font-mono text-g6-indigo uppercase tracking-wider mb-8 mt-[74px] text-center gsap-reveal">The Architecture of Intelligence</h2>
+        <div class="space-y-6 mb-16">
+            <a href="{% url 'blog:ai_needs_middleware' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Architecture</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Operating System Analogy: Why AI Needs Middleware</h2>
+                <p class="text-gray-400 leading-relaxed">LLMs are in the &ldquo;bare metal&rdquo; phase. Every application solves the same problems from scratch. What's needed is the cognitive equivalent of an operating system.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:algorithms_missing_intelligence' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Architecture</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Algorithms Are the Missing Intelligence</h2>
+                <p class="text-gray-400 leading-relaxed">Neural networks learn parameters, not procedures. The frontier isn't bigger networks &mdash; it's systems that can select, compose, and synthesise algorithms at runtime.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:formal_verification_safety_net' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Architecture</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Formal Verification: The Safety Net AI Doesn't Use</h2>
+                <p class="text-gray-400 leading-relaxed">Formal methods work in aviation, chip design, and nuclear systems. AI development has almost entirely ignored them. The question isn't whether to use them, but why we haven't been.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+        </div>
+
+        <!-- Cluster E: Economics and Power -->
+        <h2 class="text-2xl font-mono text-g6-indigo uppercase tracking-wider mb-8 mt-[74px] text-center gsap-reveal">Economics &amp; Power</h2>
+        <div class="space-y-6 mb-16">
+            <a href="{% url 'blog:economics_of_intelligence' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Economics</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Economics of Intelligence: Why AI Gets Cheaper When It Thinks</h2>
+                <p class="text-gray-400 leading-relaxed">A human employee gets faster over time; an LLM costs the same for its millionth query as its first. Systems that convert inference into reusable algorithms invert the economics entirely.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:democratising_agi' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Economics</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Democratising AGI: Who Gets to Build Intelligence?</h2>
+                <p class="text-gray-400 leading-relaxed">Concentration of intelligence-building power is concentration of power, full stop. The alternative is systems where users build their own intelligence on top of any model.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:augmentation_not_replacement' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Economics</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Human-AI Team: Augmentation, Not Replacement</h2>
+                <p class="text-gray-400 leading-relaxed">The most productive arrangement is structured collaboration &mdash; AI handles computation and retrieval, humans handle judgment and creativity. The interface is the hard engineering problem.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+        </div>
+
+        <!-- Cluster F: Philosophy and Foundations -->
+        <h2 class="text-2xl font-mono text-g6-indigo uppercase tracking-wider mb-8 mt-[74px] text-center gsap-reveal">Philosophy &amp; Foundations</h2>
+        <div class="space-y-6">
+            <a href="{% url 'blog:map_is_not_territory' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Philosophy</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Map Is Not the Territory</h2>
+                <p class="text-gray-400 leading-relaxed">Statistical co-occurrence captures correlations, not causation. Models can describe gravity without understanding it. The map is getting more detailed, but it remains a map.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:antifragile_ai' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Philosophy</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">Antifragility in AI: Systems That Improve Under Stress</h2>
+                <p class="text-gray-400 leading-relaxed">Current AI is fragile or at best robust. It is never antifragile. The difference is between a system that degrades over time and one that compounds value.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+
+            <a href="{% url 'blog:periodic_table_of_intelligence' %}" class="gsap-reveal block rounded-2xl glass p-8 hover:border-white/20 transition-all group">
+                <p class="text-sm text-g6-indigo font-mono mb-2">Philosophy</p>
+                <h2 class="text-2xl font-bold text-white group-hover:text-g6-indigo transition-colors mb-3">The Periodic Table of Intelligence</h2>
+                <p class="text-gray-400 leading-relaxed">Intelligence isn't a single substance but a composition of discrete cognitive primitives. General not because it does everything at once, but because it can do anything by composition.</p>
+                <p class="text-sm text-gray-600 mt-4">G6Solver Research Team</p>
+            </a>
+        </div>
+    </div>
+</section>
+{% endblock %}

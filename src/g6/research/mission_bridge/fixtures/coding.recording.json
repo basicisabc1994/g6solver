@@ -1,0 +1,31 @@
+{
+  "note": "Synthetic placeholders for replay. No operation was run and no value here is a result.",
+  "inputs": {
+    "task": "synthetic:task",
+    "repository": "synthetic:repository",
+    "patch": "synthetic:patch"
+  },
+  "decisions": [
+    "merge_approval"
+  ],
+  "outputs": {
+    "intake": {
+      "objective": "synthetic:objective"
+    },
+    "intake_check": {
+      "intake_ok": "synthetic:intake_ok"
+    },
+    "baseline": {
+      "baseline_result": "synthetic:baseline_result"
+    },
+    "baseline_check": {
+      "baseline_ok": "synthetic:baseline_ok"
+    },
+    "integrity": {
+      "weakening_report": "synthetic:weakening_report"
+    },
+    "integrity_check": {
+      "integrity_ok": "synthetic:integrity_ok"
+    }
+  }
+}

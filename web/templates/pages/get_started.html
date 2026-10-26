@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Get started{% endblock %}
+{% block meta_description %}Install G6 and connect it to Claude Code, Codex, OpenCode, Hermes, Muse Code, Cursor, VS Code, Gemini CLI, Windsurf, Zed or Claude Desktop; or use it as a Python library, or as a desktop app.{% endblock %}
+{% block content %}
+{% comment %}Each client's command and snippet comes from pages/clients.py (checked against its own documentation); the app
+section is content/install.md.{% endcomment %}
+<header class="wrap page-hero">
+    <h1 class="display">Get started</h1>
+    <p class="lede why">G6 works with the AI you already run, so there is nothing to replace. Add it, and your agent can
+    check its own work, gate its actions and engineer itself to your task.</p>
+    <p class="lede">Three ways to use G6, all on your own computer: from your agent, in your code, or as an app.</p>
+</header>
+
+<section class="band" aria-labelledby="from-agent">
+    <div class="wrap cols">
+        <div class="band__head">
+            <h2 class="h2" id="from-agent">From your agent</h2>
+            <p class="lede quiet">Your agent calls G6's tools through its MCP server.</p>
+        </div>
+        <ol class="band__body steps-list">
+            <li>
+                <h3 class="h3">Install</h3>
+                <p>Until the first release, install from a copy of the code.</p>
+                <div class="cmd"><code id="cmd-install">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
+pip install ".[mcp]"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-install">Copy</button></div>
+                {% comment %}CORE_SANDBOX-01 (owner ruling, 2026-10-23: warn, never restrict): g6.core.confine's
+                UNCONFINED_WARNING, word for word, as the README, g6 doctor and the sensitive-op help say it.{% endcomment %}
+                <p class="small">Where no operating-system backend confines it (Linux and macOS today, and Windows
+                before the one-time access grant), untrusted code that G6 runs for you (a patch, a generated script, a
+                repository's tests) has your own rights: it can read your key file ~/.g6/.env and your other files, and
+                its network guard works inside Python only. You are responsible for what you run. <code>g6 doctor</code>
+                says whether that code runs confined on your computer and, on Windows, prints the one-time commands that
+                grant the access.</p>
+            </li>
+            <li>
+                <h3 class="h3">Connect your agent</h3>
+                <div class="tabs" data-tabs>
+                    <div class="tabs__list" role="tablist" aria-label="Your agent or client">
+                        {% for c in clients %}<button type="button" role="tab" id="tab-{{ c.key }}" aria-controls="panel-{{ c.key }}" aria-selected="{% if forloop.first %}true{% else %}false{% endif %}">{{ c.name }}</button>{% endfor %}
+                    </div>
+                    {% for c in clients %}
+                    <div class="tabs__panel" role="tabpanel" id="panel-{{ c.key }}" aria-labelledby="tab-{{ c.key }}">
+                        {% if c.cli %}
+                        <p>Run:</p>
+                        <div class="cmd"><code id="cli-{{ c.key }}">{{ c.cli }}</code><button type="button" class="btn btn--small copy" data-copy="#cli-{{ c.key }}">Copy</button></div>
+                        <p>Or add this to {{ c.file }}:</p>
+                        {% else %}
+                        <p>Add this to {{ c.file }}:</p>
+                        {% endif %}
+                        <div class="cmd"><code id="cfg-{{ c.key }}">{{ c.snippet }}</code><button type="button" class="btn btn--small copy" data-copy="#cfg-{{ c.key }}">Copy</button></div>
+                        {% if c.note %}<p class="small quiet">{{ c.note }}</p>{% endif %}
+                        <p class="small"><a class="link" href="{{ c.docs }}" rel="noopener">{{ c.name }}'s documentation</a></p>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="small quiet">On Windows, if your agent cannot find <code>g6-mcp</code>, give its full path instead,
+                for example <code>C:\path\to\g6\.venv\Scripts\g6-mcp.exe</code>; in JSON, write each <code>\</code> as
+                <code>\\</code>.</p>
+            </li>
+            <li>
+                <h3 class="h3">Teach your agent to use G6</h3>
+                <p>The <code>using-g6</code> skill tells your agent which G6 step to take at each point of its work.
+                Run this in your project to copy it into <code>.claude/skills</code>, where Claude Code finds it; add
+                <code>--user</code> to have it in every project. For another agent, copy that folder to wherever it
+                reads skills.</p>
+                <div class="cmd"><code id="cmd-skills">g6 skills install</code><button type="button" class="btn btn--small copy" data-copy="#cmd-skills">Copy</button></div>
+                <p>For a coding agent, add the superpowers skills for the whole software lifecycle, which G6 ships
+                with credit to their author (unless you already use the superpowers plugin):</p>
+                <div class="cmd"><code id="cmd-superpowers">g6 skills install --with-superpowers</code><button type="button" class="btn btn--small copy" data-copy="#cmd-superpowers">Copy</button></div>
+                <p class="small quiet"><code>g6 skills list</code> shows every skill, including each component's
+                own.</p>
+            </li>
+            <li>
+                <h3 class="h3">Check it works</h3>
+                <p>Ask your agent which G6 tools it can see. It should list <code>g6_find</code>, <code>g6_describe</code>
+                and <code>g6_invoke</code>, and the meta-harness tools.</p>
+            </li>
+        </ol>
+    </div>
+</section>
+
+<section class="band" aria-labelledby="in-code">
+    <div class="wrap cols">
+        <div class="band__head">
+            <h2 class="h2" id="in-code">In your code</h2>
+            <p class="lede quiet">Import one component into your own app, or tune a whole task with the meta-harness.</p>
+        </div>
+        <div class="band__body">
+            <div class="cmd"><code id="cmd-lib">pip install .
+python -c "from g6.metaharness import adapt"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-lib">Copy</button></div>
+            <p>Where G6 itself calls a model, it uses the one you choose. Put these lines in your key file,
+            <code>.env</code> in G6's folder (<code>~/.g6/.env</code>, or <code>%USERPROFILE%\.g6\.env</code> on
+            Windows): a plain text file you create and only you edit. G6 reads keys only from that file, never from your
+            shell or your agent's settings, so a key there is your go-ahead for G6 to use it. A paid provider uses your
+            own account; G6 never picks one for you.</p>
+            <div class="tabs" data-tabs>
+                <div class="tabs__list" role="tablist" aria-label="G6's model">
+                    {% for m in models %}<button type="button" role="tab" id="tab-model-{{ m.key }}" aria-controls="panel-model-{{ m.key }}" aria-selected="{% if forloop.first %}true{% else %}false{% endif %}">{{ m.name }}</button>{% endfor %}
+                </div>
+                {% for m in models %}
+                <div class="tabs__panel" role="tabpanel" id="panel-model-{{ m.key }}" aria-labelledby="tab-model-{{ m.key }}">
+                    <div class="cmd"><code id="env-{{ m.key }}">{{ m.snippet }}</code><button type="button" class="btn btn--small copy" data-copy="#env-{{ m.key }}">Copy</button></div>
+                    {% if m.note %}<p class="small quiet">{{ m.note }}</p>{% endif %}
+                    {% if m.docs %}<p class="small"><a class="link" href="{{ m.docs }}" rel="noopener">About this model</a></p>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            <p class="small quiet">Then run <code>g6 doctor</code>: it names the keys it finds in that file and never
+            shows a value.</p>
+            <div class="actions"><a class="btn" href="{% url 'pages:developers' %}">Read the developer guide</a>
+            <a class="btn" href="{% url 'pages:metaharness' %}">How the meta-harness works</a></div>
+        </div>
+    </div>
+</section>
+
+<section class="band" aria-labelledby="as-app">
+    <div class="wrap cols">
+        <div class="band__head">
+            <h2 class="h2" id="as-app">As an app, no programming needed</h2>
+            <p class="lede quiet">Bundles are G6's components packaged into a desktop app for one job.</p>
+        </div>
+        <div class="band__body g6-prose">
+            {{ bundle_guide }}
+        </div>
+    </div>
+</section>
+{% endblock %}

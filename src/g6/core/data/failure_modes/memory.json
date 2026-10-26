@@ -1,0 +1,10 @@
+{
+  "family": "memory",
+  "codes": [
+    {"code": "buried_observation", "title": "a relevant observation buried under old ones"},
+    {"code": "unlinked_facts", "title": "facts spread across text with no links between them"}
+  ],
+  "planned": {
+    "g6.memory.adapt_memory": ["context_loss"]
+  }
+}

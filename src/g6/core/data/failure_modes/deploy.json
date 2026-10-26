@@ -1,0 +1,18 @@
+{
+  "family": "deploy",
+  "codes": [
+    {"code": "manual_deploy_error", "title": "a manual deployment step done wrong, or impossible to repeat"},
+    {"code": "unready_deploy", "title": "a deployment sent without a readiness check"},
+    {"code": "opaque_container_failure", "title": "container steps failing without clear errors"},
+    {"code": "overprivileged_container", "title": "containers that need root or a daemon to run", "severity": "high"}
+  ],
+  "planned": {
+    "g6.deploy.observability": ["unnoticed_drift"],
+    "g6.deploy.deploy_aws": ["manual_deploy_error"],
+    "g6.deploy.deploy_baremetal": ["manual_deploy_error"],
+    "g6.deploy.deploy_core": ["unready_deploy"],
+    "g6.deploy.deploy_docker": ["opaque_container_failure", "overprivileged_container"],
+    "g6.deploy.deploy_gcp": ["manual_deploy_error"],
+    "g6.deploy.deploy_k8s": ["rollback_missing"]
+  }
+}

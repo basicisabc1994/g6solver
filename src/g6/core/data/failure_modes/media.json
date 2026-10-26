@@ -1,0 +1,12 @@
+{
+  "family": "media",
+  "codes": [
+    {"code": "misleading_chart", "title": "a chart that misstates or hides what the data shows"},
+    {"code": "wrong_transcript", "title": "a transcript too empty or too long for the speech it came from"},
+    {"code": "unchosen_paid_service", "title": "a paid outside service used without the person choosing it"},
+    {"code": "no_simulation_test", "title": "an agent's behaviour never tried in a simulated world first"}
+  ],
+  "planned": {
+    "g6.media": ["poor_fit_route"]
+  }
+}

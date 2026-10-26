@@ -1,0 +1,128 @@
+{
+ "about": "The licence table the conformance kit (tests/conformance/kit.py, G8) reads offline against tools/data/extra_closures.json. A package passes only when every licence source it carries is allowed here; a banned name or licence fails, and so does anything this table cannot place (unknown fails). Edit it only with a reason, and cite the source for an override.",
+ "allowed": [
+  "0BSD",
+  "Apache-2.0",
+  "BSD",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CNRI-Python",
+  "HPND",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MIT-CMU",
+  "MPL-2.0",
+  "PSF-2.0",
+  "Python-2.0",
+  "TCL",
+  "Unlicense",
+  "Zlib"
+ ],
+ "banned_licences": [
+  "AGPL.*",
+  "GPL.*",
+  "LGPL.*",
+  "SSPL.*",
+  "CC-BY(-SA)?-NC.*",
+  "CC-BY-NC-ND.*",
+  "BUSL.*",
+  "Commons-Clause",
+  "PolyForm-Noncommercial.*",
+  "LicenseRef-.*Non-?Commercial.*",
+  "LicenseRef-CPML.*",
+  "LicenseRef-Banned-Wording"
+ ],
+ "banned_packages": {
+  "coqui-tts": "Coqui TTS: its models are under the non-commercial Coqui Public Model License (DoD G8)",
+  "fitz": "the import name of PyMuPDF, which is AGPL (DoD G8)",
+  "litellm": "model calls go through g6.core.llm alone (DoD G6, G8)",
+  "pymupdf": "AGPL (DoD G8)",
+  "pymupdfb": "PyMuPDF's binary part, AGPL (DoD G8)",
+  "tts": "Coqui TTS: its models are under the non-commercial Coqui Public Model License (DoD G8)"
+ },
+ "rulings": {
+  "MPL-2.0": "allowed: file-level copyleft that binds only changes to the MPL files themselves; G6 installs these packages unmodified and vendors none (certifi, hypothesis, tqdm on 2026-10-20)",
+  "LGPL": "fails unless the owner rules on a named package, and then only in the closures that ruling names: the owner's ban covers 'any GPL'; on 2026-10-22 the owner allowed cons (LGPL-3.0) in the bayes extra only",
+  "BSD": "the generic 'BSD License' classifier: every BSD variant is permissive",
+  "TCL": "allowed: the Tcl/Tk licence grants use, copying, modification, distribution and licensing for any purpose, keeping the copyright notices, with no copyleft (ujson's numeric decoder carries it; the LICENSE.txt in the ujson 5.12.0 wheel, read 2026-10-21)",
+  "conflicting metadata": "when a package's licence field and its classifiers disagree (nvidia-nvtx says Apache 2.0 and Other/Proprietary), every source must be allowed, so it fails"
+ },
+ "aliases": {
+  "2-clause bsd": "BSD-2-Clause",
+  "3-clause bsd license": "BSD-3-Clause",
+  "apache": "Apache-2.0",
+  "apache 2.0": "Apache-2.0",
+  "apache 2.0 license": "Apache-2.0",
+  "apache license 2.0": "Apache-2.0",
+  "apache license, version 2.0": "Apache-2.0",
+  "apache software license": "Apache-2.0",
+  "bsd": "BSD",
+  "bsd 2-clause license": "BSD-2-Clause",
+  "bsd 3-clause license": "BSD-3-Clause",
+  "bsd license": "BSD",
+  "isc": "ISC",
+  "isc license": "ISC",
+  "mit": "MIT",
+  "mit license": "MIT",
+  "psf": "PSF-2.0",
+  "the unlicense": "Unlicense"
+ },
+ "classifiers": {
+  "License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication": "CC0-1.0",
+  "License :: OSI Approved :: Apache Software License": "Apache-2.0",
+  "License :: OSI Approved :: BSD License": "BSD",
+  "License :: OSI Approved :: Boost Software License 1.0 (BSL-1.0)": "BSL-1.0",
+  "License :: OSI Approved :: GNU Affero General Public License v3": "AGPL-3.0-only",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)": "AGPL-3.0-or-later",
+  "License :: OSI Approved :: GNU General Public License (GPL)": "GPL",
+  "License :: OSI Approved :: GNU General Public License v2 (GPLv2)": "GPL-2.0-only",
+  "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)": "GPL-2.0-or-later",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)": "GPL-3.0-only",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)": "GPL-3.0-or-later",
+  "License :: OSI Approved :: GNU Lesser General Public License v2 (LGPLv2)": "LGPL-2.0-only",
+  "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)": "LGPL-2.0-or-later",
+  "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)": "LGPL-3.0-only",
+  "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)": "LGPL-3.0-or-later",
+  "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)": "LGPL",
+  "License :: OSI Approved :: Historical Permission Notice and Disclaimer (HPND)": "HPND",
+  "License :: OSI Approved :: ISC License (ISCL)": "ISC",
+  "License :: OSI Approved :: MIT License": "MIT",
+  "License :: OSI Approved :: MIT No Attribution License (MIT-0)": "MIT-0",
+  "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)": "MPL-2.0",
+  "License :: OSI Approved :: Python Software Foundation License": "PSF-2.0",
+  "License :: OSI Approved :: The Unlicense (Unlicense)": "Unlicense",
+  "License :: OSI Approved :: zlib/libpng License": "Zlib",
+  "License :: Other/Proprietary License": "LicenseRef-Proprietary"
+ },
+ "packages": {
+  "cons": {
+   "licence": "LGPL-3.0-only",
+   "source": "its PyPI metadata names no licence; the LICENSE.txt the cons 0.4.7 wheel carries (licenses/LICENSE.txt in its dist-info, read 2026-10-22) is the GNU Lesser General Public License, Version 3",
+   "owner_ruling": "owner, 2026-10-22: allow cons, PyTensor's dependency through PyMC, installed unmodified by pip only with the opt-in bayes extra, never vendored and never in all",
+   "only_in": ["bayes"]
+  },
+  "fast-plaid": {
+   "licence": "MIT",
+   "source": "its PyPI metadata names no licence; the LICENSE file the fast-plaid 1.4.6.2110 wheel carries (licenses/LICENSE in its dist-info, read 2026-10-21) is the MIT License, Copyright (c) 2025 LightOn"
+  },
+  "fsspec": {
+   "licence": "BSD-3-Clause",
+   "source": "PyPI's JSON for 2026.7.0 names no licence; that wheel's METADATA says License-Expression: BSD-3-Clause and its licenses/LICENSE (read 2026-10-21) is the BSD 3-Clause License, Copyright (c) 2018, Martin Durant"
+  },
+  "lupa": {
+   "licence": "MIT",
+   "source": "PyPI says only 'MIT style'; LICENSE.txt at github.com/scoder/lupa (read 2026-10-20) is the MIT permission notice"
+  },
+  "minikanren": {
+   "licence": "BSD-3-Clause",
+   "source": "its PyPI metadata names no licence; the LICENSE.txt the minikanren 1.0.5 wheel carries (licenses/LICENSE.txt in its dist-info, read 2026-10-22) is the three-clause BSD licence, Copyright (c) 2019 Brandon T. Willard and (c) 2012 Matthew Rocklin"
+  },
+  "smolagents": {
+   "licence": "Apache-2.0",
+   "source": "its metadata names no licence; the LICENSE file the smolagents 1.26.0 wheel carries (licenses/LICENSE in its dist-info, read 2026-10-21) is the Apache License, Version 2.0"
+  }
+ }
+}

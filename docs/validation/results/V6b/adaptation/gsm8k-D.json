@@ -1,0 +1,1365 @@
+{
+ "adapt_code": "G6_E_META_READY",
+ "cycles": [
+  {
+   "cycle": 1,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 2,
+     "dev_calls_used": 20,
+     "candidates": [
+      "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e"
+     ],
+     "diffs": [
+      {
+       "prompt": {
+        "from": "",
+        "to": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'."
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null,
+     "diagnosis_of_view": {
+      "summary": "18 of 20 dev cases fail: 18 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "18 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+        "cases": 18,
+        "examples": [
+         "gsm8k-test-0674",
+         "gsm8k-test-0245",
+         "gsm8k-test-0181",
+         "gsm8k-test-0334",
+         "gsm8k-test-0432"
+        ]
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Ask for the working, then the final answer on its own line ('Answer: <number>').",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "",
+        "how": "Profile(prompt=...)"
+       },
+       {
+        "action": "Vote over several worked answers (self-consistency), compared at equal compute.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "g6.reasoning.self_consistency / weighted_vote"
+       }
+      ],
+      "next_action": "Ask for the working, then the final answer on its own line ('Answer: <number>')."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 5,
+     "dev_calls_used": 515,
+     "candidates": [
+      "03fa097325c7b970800e9b659a833530999739d98d9fb98eacb1171b22dfcf6a"
+     ],
+     "diffs": [
+      {
+       "prompt": {
+        "from": "",
+        "to": "Work through the problem step by step. Then write the final answer on its own last line as 'Answer: <number>'."
+       },
+       "extra_checks": {
+        "from": [],
+        "to": [
+         "whole-number"
+        ]
+       },
+       "pipeline": {
+        "from": [],
+        "to": [
+         "self_review"
+        ]
+       },
+       "exemplars": {
+        "from": 0,
+        "to": 8
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e",
+     "strategy": "recovery",
+     "proposer": "auto:recovery",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'."
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 43,
+       "losses": 3,
+       "ties": 24,
+       "discordant": 46,
+       "p_one_sided": 0.0
+      },
+      "false_accepts": {
+       "base": 55,
+       "candidate": 15
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.214286,
+        "candidate_mean": 0.785714,
+        "diff_mean": 0.571429,
+        "diff_upper_95": 0.685289,
+        "candidate_upper_95": 0.866968
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.193457,
+        "candidate_mean": 1.208114,
+        "diff_mean": 1.014657,
+        "diff_upper_95": 1.3419,
+        "candidate_upper_95": 1.531982
+       }
+      },
+      "negative_control": {
+       "wins": 15,
+       "losses": 0,
+       "ties": 55,
+       "discordant": 15,
+       "p_one_sided": 3.1e-05,
+       "base_success": 15,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.022,
+       "gain_0.10": 0.0666,
+       "gain_0.20": 0.3255
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 140,
+      "reuse_index": 1,
+      "notes": [],
+      "base_success": 15,
+      "candidate_success": 55,
+      "digest": "df9b2e46f82836e26d975ac91a4f1382c0e451b8da464527ab8363667532bc94"
+     },
+     "decision": {
+      "verdict": "recommend",
+      "code": "G6_E_META_RECOMMENDED",
+      "reasons": [
+       "the candidate beat the base on the held-out split under every rule; a person must approve it before it is used"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "f95f2aea29deabba71071dcf6c8aa64aa47787707f978140f767e87110b63877"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 1
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 15,
+         "losses": 0,
+         "ties": 55,
+         "discordant": 15,
+         "p_one_sided": 3.1e-05,
+         "base_success": 15,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 46
+        }
+       },
+       {
+        "step": "success",
+        "result": "pass",
+        "detail": {
+         "wins": 43,
+         "losses": 3,
+         "ties": 24,
+         "discordant": 46,
+         "p_one_sided": 0.0
+        }
+       },
+       {
+        "step": "compute",
+        "result": "pass",
+        "detail": {
+         "over_base": false,
+         "control": null
+        }
+       },
+       {
+        "step": "objectives and false accepts",
+        "result": "pass",
+        "detail": {
+         "base": 55,
+         "candidate": 15
+        }
+       }
+      ]
+     }
+    },
+    {
+     "candidate_digest": "03fa097325c7b970800e9b659a833530999739d98d9fb98eacb1171b22dfcf6a",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Work through the problem step by step. Then write the final answer on its own last line as 'Answer: <number>'."
+      },
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "whole-number"
+       ]
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "self_review"
+       ]
+      },
+      "exemplars": {
+       "from": 0,
+       "to": 8
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 40,
+       "losses": 4,
+       "ties": 26,
+       "discordant": 44,
+       "p_one_sided": 0.0
+      },
+      "false_accepts": {
+       "base": 54,
+       "candidate": 16
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.228571,
+        "candidate_mean": 0.742857,
+        "diff_mean": 0.514286,
+        "diff_upper_95": 0.633771,
+        "candidate_upper_95": 0.829405
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 2.0,
+        "diff_mean": 1.0,
+        "diff_upper_95": 1.0,
+        "candidate_upper_95": 2.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.187343,
+        "candidate_mean": 2.219129,
+        "diff_mean": 2.031786,
+        "diff_upper_95": 2.399842,
+        "candidate_upper_95": 2.584189
+       }
+      },
+      "negative_control": {
+       "wins": 16,
+       "losses": 0,
+       "ties": 54,
+       "discordant": 16,
+       "p_one_sided": 1.5e-05,
+       "base_success": 16,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 37,
+       "losses": 1,
+       "ties": 32,
+       "discordant": 38,
+       "p_one_sided": 0.0,
+       "control_success": 16,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0226,
+       "gain_0.10": 0.0697,
+       "gain_0.20": 0.3435
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 350,
+      "reuse_index": 2,
+      "notes": [],
+      "base_success": 16,
+      "candidate_success": 52,
+      "digest": "7236cd9c1c0f1086508b1606c7f1a122925ff3b60b24efbde813f80f8ca3e58f"
+     },
+     "decision": {
+      "verdict": "recommend",
+      "code": "G6_E_META_RECOMMENDED",
+      "reasons": [
+       "the candidate beat the base on the held-out split under every rule; a person must approve it before it is used"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "f95f2aea29deabba71071dcf6c8aa64aa47787707f978140f767e87110b63877"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "whole-number"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 2
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 16,
+         "losses": 0,
+         "ties": 54,
+         "discordant": 16,
+         "p_one_sided": 1.5e-05,
+         "base_success": 16,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 44
+        }
+       },
+       {
+        "step": "success",
+        "result": "pass",
+        "detail": {
+         "wins": 40,
+         "losses": 4,
+         "ties": 26,
+         "discordant": 44,
+         "p_one_sided": 0.0
+        }
+       },
+       {
+        "step": "compute",
+        "result": "pass",
+        "detail": {
+         "over_base": true,
+         "control": {
+          "repeat": 2,
+          "wins": 37,
+          "losses": 1,
+          "ties": 32,
+          "discordant": 38,
+          "p_one_sided": 0.0,
+          "control_success": 16,
+          "control_calls_mean": 2.0
+         }
+        }
+       },
+       {
+        "step": "objectives and false accepts",
+        "result": "pass",
+        "detail": {
+         "base": 54,
+         "candidate": 16
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "16 of 20 dev cases fail: 16 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+    "recovery": {
+     "summary": "16 of 20 dev cases fail: 16 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "16 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+       "cases": 16,
+       "examples": [
+        "gsm8k-test-0674",
+        "gsm8k-test-0245",
+        "gsm8k-test-0181",
+        "gsm8k-test-0334",
+        "gsm8k-test-0432"
+       ]
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Ask for the working, then the final answer on its own line ('Answer: <number>').",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "",
+       "how": "Profile(prompt=...)"
+      },
+      {
+       "action": "Vote over several worked answers (self-consistency), compared at equal compute.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "g6.reasoning.self_consistency / weighted_vote"
+      }
+     ],
+     "next_action": "Ask for the working, then the final answer on its own line ('Answer: <number>')."
+    },
+    "dev_success": 4,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "activation": {
+    "code": "G6_E_META_ACTIVATED",
+    "head_version": 1,
+    "candidate_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e",
+    "strategy": "recovery",
+    "diff": {
+     "prompt": {
+      "from": "",
+      "to": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'."
+     }
+    },
+    "rule": "scripted: approve the recommended candidate with the most net wins on the gate split (ties: the first proposed)"
+   },
+   "head_version": 1,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'.",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e"
+  },
+  {
+   "cycle": 2,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_NO_NEW_CANDIDATE",
+     "message": "no new candidate: the strategy proposed nothing that is valid and new",
+     "dev_success": null,
+     "dev_calls_used": 20,
+     "candidates": [],
+     "diffs": [],
+     "refused": [],
+     "recovery": {
+      "summary": "the strategy proposed nothing valid and new",
+      "causes": [
+       {
+        "code": "search_exhausted",
+        "what": "the strategy proposed nothing valid and new",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it.",
+        "who": "candidate",
+        "addresses": "search_exhausted",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       },
+       {
+        "action": "Declare more options for the search (prompts, pipeline steps, extra checks, models), or write a candidate by hand with mh.candidate(...).",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       }
+      ],
+      "next_action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it."
+     },
+     "diagnosis_of_view": {
+      "summary": "5 of 20 dev cases fail: 5 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "5 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+        "cases": 5,
+        "examples": [
+         "gsm8k-test-0245",
+         "gsm8k-test-0943",
+         "gsm8k-test-0013",
+         "gsm8k-test-1025",
+         "gsm8k-test-0428"
+        ]
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Ask for the working, then the final answer on its own line ('Answer: <number>').",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "",
+        "how": "Profile(prompt=...)"
+       },
+       {
+        "action": "Vote over several worked answers (self-consistency), compared at equal compute.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "g6.reasoning.self_consistency / weighted_vote"
+       }
+      ],
+      "next_action": "Ask for the working, then the final answer on its own line ('Answer: <number>')."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 16,
+     "dev_calls_used": 600,
+     "candidates": [
+      "9ec5c79f92175891a7a0b3348634ce94e0d177c036c1af4baf969aac0b9d1929"
+     ],
+     "diffs": [
+      {
+       "prompt": {
+        "from": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'.",
+        "to": "Work through the problem step by step. Then write the final answer on its own last line as 'Answer: <number>'."
+       },
+       "exemplars": {
+        "from": 0,
+        "to": 8
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "9ec5c79f92175891a7a0b3348634ce94e0d177c036c1af4baf969aac0b9d1929",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'.",
+       "to": "Work through the problem step by step. Then write the final answer on its own last line as 'Answer: <number>'."
+      },
+      "exemplars": {
+       "from": 0,
+       "to": 8
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 5,
+       "losses": 7,
+       "ties": 58,
+       "discordant": 12,
+       "p_one_sided": 0.806152
+      },
+      "false_accepts": {
+       "base": 13,
+       "candidate": 15
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.814286,
+        "candidate_mean": 0.785714,
+        "diff_mean": -0.028571,
+        "diff_upper_95": 0.053222,
+        "candidate_upper_95": 0.866968
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 1.035043,
+        "candidate_mean": 1.169643,
+        "diff_mean": 0.1346,
+        "diff_upper_95": 0.290122,
+        "candidate_upper_95": 1.332641
+       }
+      },
+      "negative_control": {
+       "wins": 57,
+       "losses": 0,
+       "ties": 13,
+       "discordant": 57,
+       "p_one_sided": 0.0,
+       "base_success": 57,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0432,
+       "gain_0.10": 0.2568,
+       "gain_0.20": 0.992
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 140,
+      "reuse_index": 3,
+      "notes": [],
+      "base_success": 57,
+      "candidate_success": 55,
+      "digest": "2c45a1a9e0cf84f65e1bb6a9175d409c22bfe65af7c4040d68578fd17063eb09"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 5, losses 7, p 0.806152 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "f95f2aea29deabba71071dcf6c8aa64aa47787707f978140f767e87110b63877"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 3
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 57,
+         "losses": 0,
+         "ties": 13,
+         "discordant": 57,
+         "p_one_sided": 0.0,
+         "base_success": 57,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 12
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 5 wins and 7 losses on 70 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 5 wins and 7 losses on 70 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "4 of 20 dev cases fail: 4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+    "recovery": {
+     "summary": "4 of 20 dev cases fail: 4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+       "cases": 4,
+       "examples": [
+        "gsm8k-test-0245",
+        "gsm8k-test-0309",
+        "gsm8k-test-0652",
+        "gsm8k-test-0428"
+       ]
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Ask for the working, then the final answer on its own line ('Answer: <number>').",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "",
+       "how": "Profile(prompt=...)"
+      },
+      {
+       "action": "Vote over several worked answers (self-consistency), compared at equal compute.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "g6.reasoning.self_consistency / weighted_vote"
+      }
+     ],
+     "next_action": "Ask for the working, then the final answer on its own line ('Answer: <number>')."
+    },
+    "dev_success": 16,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "head_version": 1,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'.",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e"
+  },
+  {
+   "cycle": 3,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_NO_NEW_CANDIDATE",
+     "message": "no new candidate: the strategy proposed nothing that is valid and new",
+     "dev_success": null,
+     "dev_calls_used": 20,
+     "candidates": [],
+     "diffs": [],
+     "refused": [],
+     "recovery": {
+      "summary": "the strategy proposed nothing valid and new",
+      "causes": [
+       {
+        "code": "search_exhausted",
+        "what": "the strategy proposed nothing valid and new",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it.",
+        "who": "candidate",
+        "addresses": "search_exhausted",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       },
+       {
+        "action": "Declare more options for the search (prompts, pipeline steps, extra checks, models), or write a candidate by hand with mh.candidate(...).",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       }
+      ],
+      "next_action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it."
+     },
+     "diagnosis_of_view": {
+      "summary": "4 of 20 dev cases fail: 4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+        "cases": 4,
+        "examples": [
+         "gsm8k-test-0245",
+         "gsm8k-test-0943",
+         "gsm8k-test-1025",
+         "gsm8k-test-0428"
+        ]
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Ask for the working, then the final answer on its own line ('Answer: <number>').",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "",
+        "how": "Profile(prompt=...)"
+       },
+       {
+        "action": "Vote over several worked answers (self-consistency), compared at equal compute.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "g6.reasoning.self_consistency / weighted_vote"
+       }
+      ],
+      "next_action": "Ask for the working, then the final answer on its own line ('Answer: <number>')."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 16,
+     "dev_calls_used": 580,
+     "candidates": [
+      "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81"
+     ],
+     "diffs": [
+      {
+       "prompt": {
+        "from": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'.",
+        "to": "Work through the problem step by step. Then write the final answer on its own last line as 'Answer: <number>'."
+       },
+       "extra_checks": {
+        "from": [],
+        "to": [
+         "whole-number"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'.",
+       "to": "Work through the problem step by step. Then write the final answer on its own last line as 'Answer: <number>'."
+      },
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "whole-number"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 4,
+       "losses": 6,
+       "ties": 60,
+       "discordant": 10,
+       "p_one_sided": 0.828125
+      },
+      "false_accepts": {
+       "base": 13,
+       "candidate": 13
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.814286,
+        "candidate_mean": 0.785714,
+        "diff_mean": -0.028571,
+        "diff_upper_95": 0.04606,
+        "candidate_upper_95": 0.866968
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 1.1909,
+        "candidate_mean": 1.012429,
+        "diff_mean": -0.178471,
+        "diff_upper_95": 0.125316,
+        "candidate_upper_95": 1.08876
+       }
+      },
+      "negative_control": {
+       "wins": 57,
+       "losses": 0,
+       "ties": 13,
+       "discordant": 57,
+       "p_one_sided": 0.0,
+       "base_success": 57,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0492,
+       "gain_0.10": 0.3276,
+       "gain_0.20": 0.992
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 140,
+      "reuse_index": 4,
+      "notes": [],
+      "base_success": 57,
+      "candidate_success": 55,
+      "digest": "09357fd2aee4e87098bd2f86191a76279f313d39d6f165a68f5f34aa5d481751"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 4, losses 6, p 0.828125 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "f95f2aea29deabba71071dcf6c8aa64aa47787707f978140f767e87110b63877"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "whole-number"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 4
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 57,
+         "losses": 0,
+         "ties": 13,
+         "discordant": 57,
+         "p_one_sided": 0.0,
+         "base_success": 57,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 10
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 4 wins and 6 losses on 70 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 4 wins and 6 losses on 70 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "4 of 20 dev cases fail: 4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+    "recovery": {
+     "summary": "4 of 20 dev cases fail: 4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "4 of 20 dev answers passed the checks and were wrong (answer kind: number)",
+       "cases": 4,
+       "examples": [
+        "gsm8k-test-0245",
+        "gsm8k-test-0943",
+        "gsm8k-test-0652",
+        "gsm8k-test-0428"
+       ]
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Ask for the working, then the final answer on its own line ('Answer: <number>').",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "",
+       "how": "Profile(prompt=...)"
+      },
+      {
+       "action": "Vote over several worked answers (self-consistency), compared at equal compute.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "g6.reasoning.self_consistency / weighted_vote"
+      }
+     ],
+     "next_action": "Ask for the working, then the final answer on its own line ('Answer: <number>')."
+    },
+    "dev_success": 16,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "head_version": 1,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "Work through the task step by step. Then write the final answer on its own last line as 'Answer: <answer>'.",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e"
+  }
+ ],
+ "confirm": {
+  "code": "G6_E_META_CONFIRMED",
+  "workflow_digest": "f95f2aea29deabba71071dcf6c8aa64aa47787707f978140f767e87110b63877",
+  "judging_sha256": "b9b38a90d820604df055c3cda05dd241eb02cae7ff6bc4c69e2fb409baeda51f",
+  "held_out_digest": "a1b8fbc1170a6bcf2d69ff43137593b54881c1177a5339f5e2d5dcb94268465e",
+  "accept_risky": "v6b-scripted-approval (study script, not a person)"
+ },
+ "report": {
+  "completion_state": "qualified-draft",
+  "reliability_label": "qualified-draft",
+  "warning_card": {
+   "code": "G6_E_META_REPORT",
+   "message": "what this meta-harness has shown",
+   "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+   "severity": "amber",
+   "why": "what this meta-harness has shown",
+   "risks": [],
+   "verified": false,
+   "next_step": "Inspect the degraded invocation envelope before trusting the result."
+  },
+  "evidence": [],
+  "egress_notice": [],
+  "request_id": "70a702fe4e5c",
+  "task_id": "",
+  "run_id": "7e8f656a4d80417db64c881f657eb099",
+  "degraded": true,
+  "degradation_reason": "",
+  "known_limitations": [
+   "Qualified draft: this output has not been independently verified."
+  ],
+  "missing_checks": [
+   "Independent verification was not completed for this output."
+  ],
+  "recommended_next_steps": [
+   "Review the warning card and verify this output before relying on it."
+  ],
+  "risk_level": "medium",
+  "confidence": null,
+  "block_reason": "",
+  "required_human_decision": "",
+  "evidence_collected": [],
+  "safe_next_action": "",
+  "rollback_or_containment": "",
+  "code": "G6_E_META_REPORT",
+  "message": "what this meta-harness has shown",
+  "next_action": "",
+  "checked": [
+   {
+    "claim": "the store's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "the ledger's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "every activation names a person and a decision",
+    "holds": true
+   },
+   {
+    "claim": "every live run used the profile of the version it names",
+    "holds": true
+   },
+   {
+    "claim": "online tuning is off",
+    "holds": true
+   },
+   {
+    "claim": "audited share of live runs: at least 0.1",
+    "holds": true
+   }
+  ],
+  "measured": [
+   {
+    "claim": "the last held-out evaluation",
+    "value": {
+     "base_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e",
+     "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+     "model_calls_used": 140,
+     "n": 70,
+     "partial": false,
+     "purpose": "evaluation",
+     "run_ids": [
+      "afc55712880b45919a8a1ee0403eb35f",
+      "9a14dc2948344908bc27451f32b7a859",
+      "6007f0c4243c46d2b517d3d6cafb3737",
+      "61869fa4fa9f4046bf3df6cfc47d09af",
+      "ff494518a50b4486a527b1d8ef7c9b88",
+      "8836647f8a2843329c2b41c47eaad5da",
+      "5c67afa451cf4fae833b80e17acf5e7f",
+      "73417ddf73ab4580ba9ac834ea934e03",
+      "b5b761b33a1c46629df7e6514e3c43ee",
+      "8880450d80194fea8a3a1dd02ad884c4",
+      "8d4e60c629e943bcba92529ed4ea810d",
+      "2a496b0b2bf746db9da4bdbfb509e0b1",
+      "7682b45b23024cacad38ca01a5379c74",
+      "60ab66bc951343a3a361a783b0c8c797",
+      "71cedbaee5be43a8a17605fdad583282",
+      "9b64e06dc7e345189da6c94e1564246a",
+      "4b2f43547c004aeda12ea0072537e55f",
+      "c29bdd4fcdfa4c5180184b7fdcba36c3",
+      "1fe0782b606f4494a5d59faf479a4e90",
+      "a0b8251d52914a4eaec4d1f03db6b305",
+      "feb7e2d2091748c4a807452323c0ae06",
+      "997c04bc87ba4b01b93ca5fa2d5f57c4",
+      "f29ec55ffea44f22aca03bc115237aac",
+      "68ef233db9034cc9afbbdd6414b70ca3",
+      "04bad3fb141747748200647709f69f86",
+      "5450fb8f9fd94e55a648647798aa3dd6",
+      "dea600684b6345b8a3f206060f98b03e",
+      "4e00b4174dae4724962412132c2954c4",
+      "b54a316c3b7d48faaed78f6cb966d623",
+      "a87800d9dc9149af99199ef8ca88b49d",
+      "29fcb845c71143adb6633caf312f33ed",
+      "ac8e22848fbc4af4a4b5f00bb363255c",
+      "1f98cb2a82c0419dad5a12a3186d1290",
+      "5549c1060e694d37a1c65e0717d04701",
+      "c5a797ef64a6475ba456395c3b953a24",
+      "0ff08d5b2c4d4cf1949a8fc6e61add38",
+      "a67be884a70d4830a7a20a6b61d2f6cc",
+      "8c2ee2095b7c484dae403eeae35ae1a1",
+      "bd8ff2a30fcd4dffab81515b18a1ede3",
+      "57456eff4af842f0be419157477d0404",
+      "4d5f292ff86b4893b22af1df9e786043",
+      "747ad40bd9aa4645909fc2b71d6a2f46",
+      "5acaa0241b09460c8b323650ad6793ee",
+      "f49b83af7dc143eeaf3ac140aed85ba5",
+      "32d8e823f3d34ead985ea3762567af52",
+      "f3bf99ef3f96471a88cc8e26421bd2f3",
+      "01fe51ee2c7a4f61b7f72c127aed445c",
+      "a5f54632d8aa4c24a80736eeea2644fc",
+      "f19b5f1bb6224e9bb998cc2f14c7e652",
+      "22b76565b0404c63b3886520bb2a9e41",
+      "a5a0c0cf42d44495a571fc83cc9c42d5",
+      "94cf9312c171435497487672e20d6054",
+      "31403c8a67c74ee18c46036daf2aa91d",
+      "fad8551a8d704edc8c054cb31ab30706",
+      "02ab74d529c14d3f9729cb88d22d71cd",
+      "2a04ba3edfa449358cef4cae2aa68089",
+      "b30fd927874e4d939f1c0db91557c02c",
+      "f7d53fbaa7864de19cf327bc79efff5d",
+      "d2f10ee1962441feb13062315ce154e0",
+      "4e367fe1952145b49ff28b6bbc0a9ce1",
+      "db53c6c2b17646ad809e8b0fbb08524c",
+      "74b5c773b081416e9c979bf666eef8c4",
+      "82a815cb69c9443185a0ce25cd32f232",
+      "ca4ec782a1f5454e88f1d200efc1deab",
+      "d7687e8b1b074d30acb202cb3c9598da",
+      "b0e5e08264d349c296b5fe79f5dccb2c",
+      "4fdd21fcefd144718d186db89480de9f",
+      "83386ec7d4c84f838cb48fe465dc1877",
+      "519600b090eb463db233853842642209",
+      "a638d20f1e294a63969cd2ce477f7ea0"
+     ],
+     "split": "held_out",
+     "split_digest": "a1b8fbc1170a6bcf2d69ff43137593b54881c1177a5339f5e2d5dcb94268465e",
+     "success": {
+      "discordant": 10,
+      "losses": 6,
+      "p_one_sided": 0.828125,
+      "ties": 60,
+      "wins": 4
+     },
+     "workflow_digest": "f95f2aea29deabba71071dcf6c8aa64aa47787707f978140f767e87110b63877",
+     "_id": "09357fd2aee4e87098bd2f86191a76279f313d39d6f165a68f5f34aa5d481751",
+     "_kind": "evaluation"
+    }
+   }
+  ],
+  "assumed": [
+   "live tasks resemble the suite (stationarity, KS A1)",
+   "the held-out answers are right, and the oracle reads them correctly",
+   "accepted_by names the person who accepted (recorded as given)",
+   "the held-out split is independent-authored"
+  ]
+ },
+ "inspect_versions": [
+  {
+   "accepted_by": "v6b-scripted-approval (study script, not a person)",
+   "at": "2026-10-19T01:50:01+00:00",
+   "decision_digest": "",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "initial",
+   "ledger_head": "",
+   "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+   "proposer": "",
+   "reason": "",
+   "snapshot": "",
+   "version": 0
+  },
+  {
+   "accepted_by": "v6b-scripted-approval (study script, not a person)",
+   "at": "2026-10-19T02:00:08+00:00",
+   "decision_digest": "d20303d21442fcbbd650a3fc0b22dc4a6859e49b4335e7021fffc8c6a6689a5e",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "activate",
+   "ledger_head": "b0444739872314b08c5221d24bf5cab08475ca4f19d1c2fcb8f70c8920934aa2",
+   "profile_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e",
+   "proposer": "auto:recovery",
+   "reason": "",
+   "snapshot": "",
+   "version": 1
+  }
+ ],
+ "judging_sha256_end": "b9b38a90d820604df055c3cda05dd241eb02cae7ff6bc4c69e2fb409baeda51f",
+ "restarts": 0,
+ "canary": {
+  "views": 6,
+  "gate_snippets_in_views": 0,
+  "eval_snippets_in_views": 0,
+  "dev_snippets_in_views": 20,
+  "dev_cases": 20
+ }
+}

@@ -1,0 +1,3 @@
+# Vendored third-party files are pinned by the SHA-256 of their bytes (static/vendor/*/README.md), so git must not
+# rewrite their line endings on a checkout (core.autocrlf=true on Windows would add a carriage return).
+static/vendor/** -text

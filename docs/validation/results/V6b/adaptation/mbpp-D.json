@@ -1,0 +1,1564 @@
+{
+ "adapt_code": "G6_E_META_READY",
+ "cycles": [
+  {
+   "cycle": 1,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 12,
+     "dev_calls_used": 20,
+     "candidates": [
+      "5851675dadfcfb8658c46ab99fc5d83b68bd0f79add2da0d6378c76441d9def8"
+     ],
+     "diffs": [
+      {
+       "pipeline": {
+        "from": [],
+        "to": [
+         "repair_with_tests"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null,
+     "diagnosis_of_view": {
+      "summary": "8 of 20 dev cases fail: 8 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "8 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+        "cases": 8,
+        "examples": [
+         "mbpp-214",
+         "mbpp-183",
+         "mbpp-020",
+         "mbpp-247",
+         "mbpp-218"
+        ]
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test).",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "Workflow(pipeline_steps={'repair_with_tests': steps.repair_with_tests(rounds=3)}), then Profile(pipeline=['repair_with_tests']); g6.metaharness.coding for repository tasks"
+       },
+       {
+        "action": "For code with a fixed shape and a few unknown parts, search the parts against tests (counterexample-guided synthesis).",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "cegis",
+        "how": "g6.cegis.cegis"
+       }
+      ],
+      "next_action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test)."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 13,
+     "dev_calls_used": 1131,
+     "candidates": [
+      "ffbe88ee7553f5d7635616fed3e1124ce85c2b2fa47ed93744ccbce199ee8151"
+     ],
+     "diffs": [
+      {
+       "extra_checks": {
+        "from": [],
+        "to": [
+         "imports-cleanly"
+        ]
+       },
+       "pipeline": {
+        "from": [],
+        "to": [
+         "repair1"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "5851675dadfcfb8658c46ab99fc5d83b68bd0f79add2da0d6378c76441d9def8",
+     "strategy": "recovery",
+     "proposer": "auto:recovery",
+     "diff": {
+      "pipeline": {
+       "from": [],
+       "to": [
+        "repair_with_tests"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 11,
+       "losses": 5,
+       "ties": 54,
+       "discordant": 16,
+       "p_one_sided": 0.105057
+      },
+      "false_accepts": {
+       "base": 36,
+       "candidate": 29
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.485714,
+        "candidate_mean": 0.571429,
+        "diff_mean": 0.085714,
+        "diff_upper_95": 0.178853,
+        "candidate_upper_95": 0.669424
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 2.071429,
+        "diff_mean": 1.071429,
+        "diff_upper_95": 1.341954,
+        "candidate_upper_95": 2.341954
+       },
+       "wall_clock_s": {
+        "base_mean": 0.321429,
+        "candidate_mean": 1.083786,
+        "diff_mean": 0.762357,
+        "diff_upper_95": 1.00797,
+        "candidate_upper_95": 1.352714
+       }
+      },
+      "negative_control": {
+       "wins": 34,
+       "losses": 0,
+       "ties": 36,
+       "discordant": 34,
+       "p_one_sided": 0.0,
+       "base_success": 34,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 3,
+       "wins": 9,
+       "losses": 2,
+       "ties": 59,
+       "discordant": 11,
+       "p_one_sided": 0.032715,
+       "control_success": 33,
+       "control_calls_mean": 3.0
+      },
+      "power": {
+       "gain_0.05": 0.0352,
+       "gain_0.10": 0.1797,
+       "gain_0.20": 0.914
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 425,
+      "reuse_index": 1,
+      "notes": [],
+      "base_success": 34,
+      "candidate_success": 40,
+      "digest": "ceb83ed3f4e3a33b698f301e08ab17a5d2f8d10b325834648515dbc65a9abec1"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 11, losses 5, p 0.105057 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "94ed618c1ea28fb9ed892dba12b40913ff28571a63f82b1c09c518a6c11cfdcd"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 1
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 34,
+         "losses": 0,
+         "ties": 36,
+         "discordant": 34,
+         "p_one_sided": 0.0,
+         "base_success": 34,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 16
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): the candidate won 11 and lost 5 of 70 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+      "causes": [
+       {
+        "code": "underpowered",
+        "what": "the candidate won 11 and lost 5 of 70 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Add fresh held-out cases with known answers: about 326 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'.",
+        "who": "person",
+        "addresses": "underpowered",
+        "component": "",
+        "how": "a larger held-out split, frozen and confirmed by a person"
+       },
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Add fresh held-out cases with known answers: about 326 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'."
+     }
+    },
+    {
+     "candidate_digest": "ffbe88ee7553f5d7635616fed3e1124ce85c2b2fa47ed93744ccbce199ee8151",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "imports-cleanly"
+       ]
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "repair1"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 8,
+       "losses": 3,
+       "ties": 59,
+       "discordant": 11,
+       "p_one_sided": 0.113281
+      },
+      "false_accepts": {
+       "base": 35,
+       "candidate": 30
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.5,
+        "candidate_mean": 0.571429,
+        "diff_mean": 0.071429,
+        "diff_upper_95": 0.148642,
+        "candidate_upper_95": 0.669424
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.385714,
+        "diff_mean": 0.385714,
+        "diff_upper_95": 0.482105,
+        "candidate_upper_95": 1.482105
+       },
+       "wall_clock_s": {
+        "base_mean": 0.328486,
+        "candidate_mean": 0.715629,
+        "diff_mean": 0.387143,
+        "diff_upper_95": 0.468454,
+        "candidate_upper_95": 0.822152
+       }
+      },
+      "negative_control": {
+       "wins": 35,
+       "losses": 0,
+       "ties": 35,
+       "discordant": 35,
+       "p_one_sided": 0.0,
+       "base_success": 35,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 10,
+       "losses": 3,
+       "ties": 57,
+       "discordant": 13,
+       "p_one_sided": 0.046143,
+       "control_success": 33,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0459,
+       "gain_0.10": 0.2875,
+       "gain_0.20": 0.992
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 307,
+      "reuse_index": 2,
+      "notes": [],
+      "base_success": 35,
+      "candidate_success": 40,
+      "digest": "54a71eac6134cb18f3935d9db1777c5150f483879e532a5bd6a65f2b848a0174"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 8, losses 3, p 0.113281 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "94ed618c1ea28fb9ed892dba12b40913ff28571a63f82b1c09c518a6c11cfdcd"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "imports-cleanly"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 2
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 35,
+         "losses": 0,
+         "ties": 35,
+         "discordant": 35,
+         "p_one_sided": 0.0,
+         "base_success": 35,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 11
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): the candidate won 8 and lost 3 of 70 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+      "causes": [
+       {
+        "code": "underpowered",
+        "what": "the candidate won 8 and lost 3 of 70 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Add fresh held-out cases with known answers: about 323 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'.",
+        "who": "person",
+        "addresses": "underpowered",
+        "component": "",
+        "how": "a larger held-out split, frozen and confirmed by a person"
+       },
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Add fresh held-out cases with known answers: about 323 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'."
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "9 of 20 dev cases fail: 9 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+    "recovery": {
+     "summary": "9 of 20 dev cases fail: 9 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "9 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+       "cases": 9,
+       "examples": [
+        "mbpp-214",
+        "mbpp-183",
+        "mbpp-020",
+        "mbpp-132",
+        "mbpp-247"
+       ]
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test).",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "Workflow(pipeline_steps={'repair_with_tests': steps.repair_with_tests(rounds=3)}), then Profile(pipeline=['repair_with_tests']); g6.metaharness.coding for repository tasks"
+      },
+      {
+       "action": "For code with a fixed shape and a few unknown parts, search the parts against tests (counterexample-guided synthesis).",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "cegis",
+       "how": "g6.cegis.cegis"
+      }
+     ],
+     "next_action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test)."
+    },
+    "dev_success": 11,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 2,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 10,
+     "dev_calls_used": 20,
+     "candidates": [
+      "d0daa69cd10b605675c3cf9cfeacd1254e4db7a5805ce3cd9a397a940348c1e9"
+     ],
+     "diffs": [
+      {
+       "pipeline": {
+        "from": [],
+        "to": [
+         "repair1"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null,
+     "diagnosis_of_view": {
+      "summary": "10 of 20 dev cases fail: 10 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "10 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+        "cases": 10,
+        "examples": [
+         "mbpp-214",
+         "mbpp-183",
+         "mbpp-020",
+         "mbpp-132",
+         "mbpp-130"
+        ]
+       },
+       {
+        "code": "search_exhausted",
+        "what": "2 candidates were refused so far (G6_E_META_NO_GAIN x2)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test).",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "Workflow(pipeline_steps={'repair_with_tests': steps.repair_with_tests(rounds=3)}), then Profile(pipeline=['repair_with_tests']); g6.metaharness.coding for repository tasks"
+       },
+       {
+        "action": "For code with a fixed shape and a few unknown parts, search the parts against tests (counterexample-guided synthesis).",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "cegis",
+        "how": "g6.cegis.cegis"
+       },
+       {
+        "action": "Widen what is tried: declare pipeline steps built on the components named above, not only prompt wording.",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       },
+       {
+        "action": "Several candidates fell short on the held-out split: a larger split may be what is missing. Each decision's recovery estimates the size.",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       }
+      ],
+      "next_action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test)."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 11,
+     "dev_calls_used": 1115,
+     "candidates": [
+      "56480529fd744e7c1884945a28968cbae8381affef5d80fed5f5d3f644ecc79b"
+     ],
+     "diffs": [
+      {
+       "extra_checks": {
+        "from": [],
+        "to": [
+         "imports-cleanly"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "d0daa69cd10b605675c3cf9cfeacd1254e4db7a5805ce3cd9a397a940348c1e9",
+     "strategy": "recovery",
+     "proposer": "auto:recovery",
+     "diff": {
+      "pipeline": {
+       "from": [],
+       "to": [
+        "repair1"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 5,
+       "losses": 5,
+       "ties": 60,
+       "discordant": 10,
+       "p_one_sided": 0.623047
+      },
+      "false_accepts": {
+       "base": 36,
+       "candidate": 36
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.485714,
+        "candidate_mean": 0.485714,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.074846,
+        "candidate_upper_95": 0.584685
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.414286,
+        "diff_mean": 0.414286,
+        "diff_upper_95": 0.511831,
+        "candidate_upper_95": 1.511831
+       },
+       "wall_clock_s": {
+        "base_mean": 0.314914,
+        "candidate_mean": 0.750657,
+        "diff_mean": 0.435743,
+        "diff_upper_95": 0.691113,
+        "candidate_upper_95": 1.025108
+       }
+      },
+      "negative_control": {
+       "wins": 34,
+       "losses": 0,
+       "ties": 36,
+       "discordant": 34,
+       "p_one_sided": 0.0,
+       "base_success": 34,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 5,
+       "losses": 5,
+       "ties": 60,
+       "discordant": 10,
+       "p_one_sided": 0.623047,
+       "control_success": 34,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0492,
+       "gain_0.10": 0.3276,
+       "gain_0.20": 0.992
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 309,
+      "reuse_index": 3,
+      "notes": [],
+      "base_success": 34,
+      "candidate_success": 34,
+      "digest": "8e05a355ada3c0f96369ba8511126b5dc492ad22e09497257fee1389c460cbc3"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 5, losses 5, p 0.623047 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "94ed618c1ea28fb9ed892dba12b40913ff28571a63f82b1c09c518a6c11cfdcd"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 3
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 34,
+         "losses": 0,
+         "ties": 36,
+         "discordant": 34,
+         "p_one_sided": 0.0,
+         "base_success": 34,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 10
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 5 wins and 5 losses on 70 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 5 wins and 5 losses on 70 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    },
+    {
+     "candidate_digest": "56480529fd744e7c1884945a28968cbae8381affef5d80fed5f5d3f644ecc79b",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "imports-cleanly"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 5,
+       "losses": 8,
+       "ties": 57,
+       "discordant": 13,
+       "p_one_sided": 0.866577
+      },
+      "false_accepts": {
+       "base": 35,
+       "candidate": 39
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.485714,
+        "candidate_mean": 0.442857,
+        "diff_mean": -0.042857,
+        "diff_upper_95": 0.042057,
+        "candidate_upper_95": 0.54122
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.3357,
+        "candidate_mean": 0.4239,
+        "diff_mean": 0.0882,
+        "diff_upper_95": 0.115162,
+        "candidate_upper_95": 0.482271
+       }
+      },
+      "negative_control": {
+       "wins": 34,
+       "losses": 0,
+       "ties": 36,
+       "discordant": 34,
+       "p_one_sided": 0.0,
+       "base_success": 34,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0409,
+       "gain_0.10": 0.2323,
+       "gain_0.20": 0.992
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 140,
+      "reuse_index": 4,
+      "notes": [],
+      "base_success": 34,
+      "candidate_success": 31,
+      "digest": "fa05c1316d03b47889c0195437a4bdf1e51fc0a58568840d1ee3a19de4db94c1"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 5, losses 8, p 0.866577 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "94ed618c1ea28fb9ed892dba12b40913ff28571a63f82b1c09c518a6c11cfdcd"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "imports-cleanly"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 4
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 34,
+         "losses": 0,
+         "ties": 36,
+         "discordant": 34,
+         "p_one_sided": 0.0,
+         "base_success": 34,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 13
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 5 wins and 8 losses on 70 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 5 wins and 8 losses on 70 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "7 of 20 dev cases fail: 7 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+    "recovery": {
+     "summary": "7 of 20 dev cases fail: 7 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "7 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+       "cases": 7,
+       "examples": [
+        "mbpp-214",
+        "mbpp-183",
+        "mbpp-020",
+        "mbpp-218",
+        "mbpp-083"
+       ]
+      },
+      {
+       "code": "search_exhausted",
+       "what": "2 candidates were refused so far (G6_E_META_NO_GAIN x2)",
+       "cases": 0,
+       "examples": []
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test).",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "Workflow(pipeline_steps={'repair_with_tests': steps.repair_with_tests(rounds=3)}), then Profile(pipeline=['repair_with_tests']); g6.metaharness.coding for repository tasks"
+      },
+      {
+       "action": "For code with a fixed shape and a few unknown parts, search the parts against tests (counterexample-guided synthesis).",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "cegis",
+       "how": "g6.cegis.cegis"
+      },
+      {
+       "action": "Widen what is tried: declare pipeline steps built on the components named above, not only prompt wording.",
+       "who": "person",
+       "addresses": "search_exhausted",
+       "component": "",
+       "how": ""
+      },
+      {
+       "action": "Several candidates fell short on the held-out split: a larger split may be what is missing. Each decision's recovery estimates the size.",
+       "who": "person",
+       "addresses": "search_exhausted",
+       "component": "",
+       "how": ""
+      }
+     ],
+     "next_action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test)."
+    },
+    "dev_success": 13,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 3,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_NO_NEW_CANDIDATE",
+     "message": "no new candidate: the strategy proposed nothing that is valid and new",
+     "dev_success": null,
+     "dev_calls_used": 20,
+     "candidates": [],
+     "diffs": [],
+     "refused": [],
+     "recovery": {
+      "summary": "the strategy proposed nothing valid and new",
+      "causes": [
+       {
+        "code": "search_exhausted",
+        "what": "the strategy proposed nothing valid and new",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it.",
+        "who": "candidate",
+        "addresses": "search_exhausted",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       },
+       {
+        "action": "Declare more options for the search (prompts, pipeline steps, extra checks, models), or write a candidate by hand with mh.candidate(...).",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       }
+      ],
+      "next_action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it."
+     },
+     "diagnosis_of_view": {
+      "summary": "8 of 20 dev cases fail: 8 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "8 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+        "cases": 8,
+        "examples": [
+         "mbpp-214",
+         "mbpp-183",
+         "mbpp-020",
+         "mbpp-132",
+         "mbpp-218"
+        ]
+       },
+       {
+        "code": "search_exhausted",
+        "what": "4 candidates were refused so far (G6_E_META_NO_GAIN x4)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test).",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "Workflow(pipeline_steps={'repair_with_tests': steps.repair_with_tests(rounds=3)}), then Profile(pipeline=['repair_with_tests']); g6.metaharness.coding for repository tasks"
+       },
+       {
+        "action": "For code with a fixed shape and a few unknown parts, search the parts against tests (counterexample-guided synthesis).",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "cegis",
+        "how": "g6.cegis.cegis"
+       },
+       {
+        "action": "Widen what is tried: declare pipeline steps built on the components named above, not only prompt wording.",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       },
+       {
+        "action": "Several candidates fell short on the held-out split: a larger split may be what is missing. Each decision's recovery estimates the size.",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       }
+      ],
+      "next_action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test)."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 11,
+     "dev_calls_used": 1068,
+     "candidates": [
+      "16187ff4d93a5a3e56e3aefdf7635e16b81c546506104e5fc8c50a52a549738d"
+     ],
+     "diffs": [
+      {
+       "prompt": {
+        "from": "",
+        "to": "Reply with one Python code block that contains the complete function and any imports it needs. No explanation."
+       },
+       "pipeline": {
+        "from": [],
+        "to": [
+         "repair_with_tests"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "16187ff4d93a5a3e56e3aefdf7635e16b81c546506104e5fc8c50a52a549738d",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Reply with one Python code block that contains the complete function and any imports it needs. No explanation."
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "repair_with_tests"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 70,
+      "success": {
+       "wins": 11,
+       "losses": 3,
+       "ties": 56,
+       "discordant": 14,
+       "p_one_sided": 0.028687
+      },
+      "false_accepts": {
+       "base": 37,
+       "candidate": 29
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.471429,
+        "candidate_mean": 0.585714,
+        "diff_mean": 0.114286,
+        "diff_upper_95": 0.199904,
+        "candidate_upper_95": 0.68326
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.914286,
+        "diff_mean": 0.914286,
+        "diff_upper_95": 1.170828,
+        "candidate_upper_95": 2.170828
+       },
+       "wall_clock_s": {
+        "base_mean": 0.317029,
+        "candidate_mean": 1.042629,
+        "diff_mean": 0.7256,
+        "diff_upper_95": 1.036616,
+        "candidate_upper_95": 1.370824
+       }
+      },
+      "negative_control": {
+       "wins": 33,
+       "losses": 0,
+       "ties": 37,
+       "discordant": 33,
+       "p_one_sided": 0.0,
+       "base_success": 33,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 9,
+       "losses": 2,
+       "ties": 59,
+       "discordant": 11,
+       "p_one_sided": 0.032715,
+       "control_success": 34,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0388,
+       "gain_0.10": 0.212,
+       "gain_0.20": 0.992
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 344,
+      "reuse_index": 5,
+      "notes": [],
+      "base_success": 33,
+      "candidate_success": 41,
+      "digest": "7fb7a8356b25b60719c2f6ca77cd2c6dea928703b1640b662dff6b4b30334f2b"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 11, losses 3, p 0.028687 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "94ed618c1ea28fb9ed892dba12b40913ff28571a63f82b1c09c518a6c11cfdcd"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 5
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 33,
+         "losses": 0,
+         "ties": 37,
+         "discordant": 33,
+         "p_one_sided": 0.0,
+         "base_success": 33,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 70,
+         "discordant": 14
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): the candidate won 11 and lost 3 of 70 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+      "causes": [
+       {
+        "code": "underpowered",
+        "what": "the candidate won 11 and lost 3 of 70 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Add fresh held-out cases with known answers: about 161 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'.",
+        "who": "person",
+        "addresses": "underpowered",
+        "component": "",
+        "how": "a larger held-out split, frozen and confirmed by a person"
+       },
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Add fresh held-out cases with known answers: about 161 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'."
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "8 of 20 dev cases fail: 8 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+    "recovery": {
+     "summary": "8 of 20 dev cases fail: 8 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "8 of 20 dev answers passed the checks and were wrong (answer kind: code)",
+       "cases": 8,
+       "examples": [
+        "mbpp-214",
+        "mbpp-020",
+        "mbpp-132",
+        "mbpp-247",
+        "mbpp-218"
+       ]
+      },
+      {
+       "code": "search_exhausted",
+       "what": "4 candidates were refused so far (G6_E_META_NO_GAIN x4)",
+       "cases": 0,
+       "examples": []
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test).",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "Workflow(pipeline_steps={'repair_with_tests': steps.repair_with_tests(rounds=3)}), then Profile(pipeline=['repair_with_tests']); g6.metaharness.coding for repository tasks"
+      },
+      {
+       "action": "For code with a fixed shape and a few unknown parts, search the parts against tests (counterexample-guided synthesis).",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "cegis",
+       "how": "g6.cegis.cegis"
+      },
+      {
+       "action": "Widen what is tried: declare pipeline steps built on the components named above, not only prompt wording.",
+       "who": "person",
+       "addresses": "search_exhausted",
+       "component": "",
+       "how": ""
+      },
+      {
+       "action": "Several candidates fell short on the held-out split: a larger split may be what is missing. Each decision's recovery estimates the size.",
+       "who": "person",
+       "addresses": "search_exhausted",
+       "component": "",
+       "how": ""
+      }
+     ],
+     "next_action": "Run the example tests the task shows, out of process, and give the model the failure to repair, a few rounds at most (never a hidden test)."
+    },
+    "dev_success": 12,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  }
+ ],
+ "confirm": {
+  "code": "G6_E_META_CONFIRMED",
+  "workflow_digest": "94ed618c1ea28fb9ed892dba12b40913ff28571a63f82b1c09c518a6c11cfdcd",
+  "judging_sha256": "b9b38a90d820604df055c3cda05dd241eb02cae7ff6bc4c69e2fb409baeda51f",
+  "held_out_digest": "0edf1fc2af27e073fe8a860ecc9b2c356f34cd1721b3eeb4bacc54de8ed49e47",
+  "accept_risky": "v6b-scripted-approval (study script, not a person)"
+ },
+ "report": {
+  "completion_state": "qualified-draft",
+  "reliability_label": "qualified-draft",
+  "warning_card": {
+   "code": "G6_E_META_REPORT",
+   "message": "what this meta-harness has shown",
+   "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+   "severity": "amber",
+   "why": "what this meta-harness has shown",
+   "risks": [],
+   "verified": false,
+   "next_step": "Inspect the degraded invocation envelope before trusting the result."
+  },
+  "evidence": [],
+  "egress_notice": [],
+  "request_id": "29ecc3dbf504",
+  "task_id": "",
+  "run_id": "3713bb8481e4428388d63606c5e66bbd",
+  "degraded": true,
+  "degradation_reason": "",
+  "known_limitations": [
+   "Qualified draft: this output has not been independently verified."
+  ],
+  "missing_checks": [
+   "Independent verification was not completed for this output."
+  ],
+  "recommended_next_steps": [
+   "Review the warning card and verify this output before relying on it."
+  ],
+  "risk_level": "medium",
+  "confidence": null,
+  "block_reason": "",
+  "required_human_decision": "",
+  "evidence_collected": [],
+  "safe_next_action": "",
+  "rollback_or_containment": "",
+  "code": "G6_E_META_REPORT",
+  "message": "what this meta-harness has shown",
+  "next_action": "",
+  "checked": [
+   {
+    "claim": "the store's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "the ledger's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "every activation names a person and a decision",
+    "holds": true
+   },
+   {
+    "claim": "every live run used the profile of the version it names",
+    "holds": true
+   },
+   {
+    "claim": "online tuning is off",
+    "holds": true
+   },
+   {
+    "claim": "audited share of live runs: at least 0.1",
+    "holds": true
+   }
+  ],
+  "measured": [
+   {
+    "claim": "the last held-out evaluation",
+    "value": {
+     "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+     "candidate_digest": "16187ff4d93a5a3e56e3aefdf7635e16b81c546506104e5fc8c50a52a549738d",
+     "model_calls_used": 344,
+     "n": 70,
+     "partial": false,
+     "purpose": "evaluation",
+     "run_ids": [
+      "7e8106ca563b42c6abe2f04d72db6e9a",
+      "1697e242ae3243ec9522d3e2e8a41f37",
+      "3e1e8509ae974d23bbd207b2fa6e04ec",
+      "7f7f828183c5439dbbd784551ad33313",
+      "492c798a3bd64eeda700ac447524d2b9",
+      "98da609a8e874084ad4a9e96d34f6432",
+      "383b20bf951342e7a3ab7966b2a9410d",
+      "1a5d8968ee654795bca992c3b13f15b5",
+      "a6ba660f34bc46a08bef6aa8f4fd5eaf",
+      "59e285ee10c140eea73e551c7089e08e",
+      "2e975c0f745742468dd2fc8b717a1b3f",
+      "1c97350531674aedaf4d3eda7376d598",
+      "3798ae0c0a4e43108a36a5f700411ee2",
+      "bba311739aa943668ceab8046154d387",
+      "0b8daf58b97848788ec3e9077105bd78",
+      "6245af58ff584ef4a75dd280ae207bfa",
+      "a0270fb42e3a4ceaa20ad5badc5f588f",
+      "fd0729e8cb894243ad101836949dbbe8",
+      "bb3c3cc2d6ab4db69477fe66568efd53",
+      "f4afcbfd8e234aaa998c9705c94a7850",
+      "cb1c828afe0045d2964e586022c48b56",
+      "05d28ec43a804f1e86b68acc46b1cdab",
+      "4ba01e903c124332855ff821d0d70703",
+      "3d51746cfdd5486cb7a20eeb05ff2682",
+      "da4d2da2cbdb4763986ffc3df2e9ead5",
+      "22e8302ed56b4350a7d34ef6bee81786",
+      "44e80e64b2bd4dd0b66b421a061d8ff7",
+      "b6fd8a9903354482830283adab8bb55c",
+      "1abbc648116649769aa25a02751ceda9",
+      "cc4b6ca2bb9b40a8aec49de57151e074",
+      "5d370489b38b46a18fc47d75c1476462",
+      "9e2413ac077d4efb81fe84ef8831bc85",
+      "f9e385f6611e44e8b0cb478cdf486e44",
+      "2861f65efbbd4a4dbd35426e15448189",
+      "44f2f03035b645bf9699f9cbc4bc8031",
+      "90d9a22e97a7459b921ed83533d692ba",
+      "99727405362e434abacbd8246be3d7af",
+      "d74be1857da843e492c72c45c440ce02",
+      "13308aa26e4e46029c445f27a71ca25f",
+      "129964261cec46e7a0a8ee6e7c6cbabe",
+      "3e224d9bc84f47e09217293758c4ad2b",
+      "117974df62ce45a58e61325e28c8794c",
+      "49d2d97c7b444d59ab384efde338a350",
+      "af9e5b0460f945b89df51b6bdf04a31d",
+      "4b6b77891ff34e6bb01c60974705bea5",
+      "d36ff65934d04c9ba8c9320c52eaa5d5",
+      "cb52e3d1c4374fafadbae90cd587cde2",
+      "30388ece10ab4d2e8d47b5e50aa72b84",
+      "41f473878dc5483ba782d3d7f02bdb5e",
+      "74c3e1fc08f74b5190f559a71ead9ab3",
+      "5c726705230949558dbfd04c72deccce",
+      "75d0c8e3114641b69d6d95102d2062cd",
+      "616391b562b441b9b2b3bf4bdfeef6f3",
+      "9043d39e739d4e33903f7898945427ab",
+      "b00f8da9ff5e44d7aa095ac1e4a59c2f",
+      "27fb6b9c6948410ba9f52b7d2063f256",
+      "c8710c517f5a4918a6d3844f8b8a2335",
+      "0a4070aa3a324b94bd5cc175641fe1d8",
+      "7886265e0caa46ad889280c7dd2c5e11",
+      "88af6cce52d246b8b5b848e79ce98451",
+      "7ddfdd77598249438d9adaef9b696b69",
+      "53dad0abce8b454686ddb7c49b5e245c",
+      "097a306094b34fa9b41e14cf45ced529",
+      "72ece1e5e69849e7bef5eccde035dfa2",
+      "9a0a36e025eb4158802ec4f15fb16a65",
+      "0c4634b2cb78475fb395787ddaa35bf1",
+      "f847996a961b4178bb954c4313d471fb",
+      "8dc54a0503484054a54872b8be487273",
+      "55480451b9fb408ebdb827098fce7880",
+      "ca165dc051d64071934fabc4edd1d61c"
+     ],
+     "split": "held_out",
+     "split_digest": "0edf1fc2af27e073fe8a860ecc9b2c356f34cd1721b3eeb4bacc54de8ed49e47",
+     "success": {
+      "discordant": 14,
+      "losses": 3,
+      "p_one_sided": 0.028687,
+      "ties": 56,
+      "wins": 11
+     },
+     "workflow_digest": "94ed618c1ea28fb9ed892dba12b40913ff28571a63f82b1c09c518a6c11cfdcd",
+     "_id": "7fb7a8356b25b60719c2f6ca77cd2c6dea928703b1640b662dff6b4b30334f2b",
+     "_kind": "evaluation"
+    }
+   }
+  ],
+  "assumed": [
+   "live tasks resemble the suite (stationarity, KS A1)",
+   "the held-out answers are right, and the oracle reads them correctly",
+   "accepted_by names the person who accepted (recorded as given)",
+   "the held-out split is independent-authored"
+  ]
+ },
+ "inspect_versions": [
+  {
+   "accepted_by": "v6b-scripted-approval (study script, not a person)",
+   "at": "2026-10-19T03:02:32+00:00",
+   "decision_digest": "",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "initial",
+   "ledger_head": "",
+   "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+   "proposer": "",
+   "reason": "",
+   "snapshot": "",
+   "version": 0
+  }
+ ],
+ "judging_sha256_end": "b9b38a90d820604df055c3cda05dd241eb02cae7ff6bc4c69e2fb409baeda51f",
+ "restarts": 0,
+ "canary": {
+  "views": 6,
+  "gate_snippets_in_views": 0,
+  "eval_snippets_in_views": 0,
+  "dev_snippets_in_views": 20,
+  "dev_cases": 20
+ }
+}

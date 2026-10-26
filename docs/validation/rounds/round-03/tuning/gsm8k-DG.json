@@ -1,0 +1,244 @@
+{
+  "arm": "DG",
+  "canary_blind": 0,
+  "canary_hits": [],
+  "head_digest": "df74b095cb2ff193eb02d17571c10fcc80057fea3271f6c465ff34f675d6dc3f",
+  "head_profile": {
+    "adapter": null,
+    "budgets": {
+      "max_model_calls": 8,
+      "max_output_chars": 400000,
+      "max_wall_clock_s": 120.0
+    },
+    "code": {},
+    "context_budget_chars": 0,
+    "distillates": {},
+    "exemplars": 8,
+    "extra_checks": [
+      "whole-number"
+    ],
+    "hints": [],
+    "pipeline": [
+      "self_review"
+    ],
+    "prompt": "",
+    "prompt_layout": "default",
+    "retries": 0,
+    "routing": {
+      "answer": "local"
+    }
+  },
+  "initial_profile": {
+    "adapter": null,
+    "budgets": {
+      "max_model_calls": 8,
+      "max_output_chars": 400000,
+      "max_wall_clock_s": 120.0
+    },
+    "code": {},
+    "context_budget_chars": 0,
+    "distillates": {},
+    "exemplars": 8,
+    "extra_checks": [
+      "whole-number"
+    ],
+    "hints": [],
+    "pipeline": [
+      "self_review"
+    ],
+    "prompt": "",
+    "prompt_layout": "default",
+    "retries": 0,
+    "routing": {
+      "answer": "local"
+    }
+  },
+  "method": {
+    "candidates_per_cycle": 4,
+    "cycles": 3,
+    "merge_every": 3,
+    "propose_budget": 200,
+    "race_block": 10,
+    "race_keep": 0.5,
+    "reflect_calls": 3,
+    "select_budget": 2000,
+    "use_edits": false,
+    "use_recovery": true,
+    "use_reflection": true
+  },
+  "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+  "minutes": 17.0,
+  "reflector_calls": 6,
+  "run": {
+    "activated": null,
+    "base_digest": "df74b095cb2ff193eb02d17571c10fcc80057fea3271f6c465ff34f675d6dc3f",
+    "champion": "b8174837db53f076c27ccdc9b65e9fd814407e6c48ea8d1a30c9e90e91e540cd",
+    "confirmation": {
+      "false_accepts": {
+        "base": 15,
+        "candidate": 15
+      },
+      "level": 0.021286,
+      "model_calls_used": 240,
+      "n": 60,
+      "partial": false,
+      "report_digest": "a4e41f0242d55184b6c1f892bfc56469be3d497b3240e6d9ab260dad898e937a",
+      "success": {
+        "boundary": 0.021286,
+        "discordant": 20,
+        "look": 3,
+        "looks": 4,
+        "losses": 10,
+        "p_one_sided": 0.588099,
+        "ties": 40,
+        "wins": 10
+      }
+    },
+    "cycles": [
+      {
+        "cycle": 1,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "b8174837db53f076c27ccdc9b65e9fd814407e6c48ea8d1a30c9e90e91e540cd",
+            "dropped_at_block": null,
+            "fields": 1,
+            "losses": 6,
+            "n": 60,
+            "wins": 15
+          },
+          {
+            "candidate_digest": "ab386ee5a98366a618a16a9f98a417cd60bdcfe6d428a082d3c7c6003623b813",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 260,
+        "stopped": "",
+        "strategies": {
+          "recovery": {
+            "attempts": null,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": null,
+            "proposed": 2
+          },
+          "reflect": {
+            "attempts": 3,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 0,
+            "proposed": 0
+          }
+        },
+        "winner": "b8174837db53f076c27ccdc9b65e9fd814407e6c48ea8d1a30c9e90e91e540cd"
+      },
+      {
+        "cycle": 2,
+        "new_champion": false,
+        "raced": [
+          {
+            "candidate_digest": "b8174837db53f076c27ccdc9b65e9fd814407e6c48ea8d1a30c9e90e91e540cd",
+            "dropped_at_block": null,
+            "fields": 1,
+            "losses": 6,
+            "n": 60,
+            "wins": 15
+          },
+          {
+            "candidate_digest": "03fa097325c7b970800e9b659a833530999739d98d9fb98eacb1171b22dfcf6a",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 1,
+            "n": 10,
+            "wins": 2
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 260,
+        "stopped": "",
+        "strategies": {
+          "recovery": {
+            "attempts": null,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": null,
+            "proposed": 0
+          },
+          "reflect": {
+            "attempts": 6,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 2,
+            "proposed": 1
+          }
+        },
+        "winner": "b8174837db53f076c27ccdc9b65e9fd814407e6c48ea8d1a30c9e90e91e540cd"
+      },
+      {
+        "cycle": 3,
+        "new_champion": false,
+        "raced": [
+          {
+            "candidate_digest": "b8174837db53f076c27ccdc9b65e9fd814407e6c48ea8d1a30c9e90e91e540cd",
+            "dropped_at_block": null,
+            "fields": 1,
+            "losses": 6,
+            "n": 60,
+            "wins": 15
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 240,
+        "stopped": "",
+        "strategies": {
+          "recovery": {
+            "attempts": null,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": null,
+            "proposed": 0
+          },
+          "reflect": {
+            "attempts": 9,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 4,
+            "proposed": 0
+          }
+        },
+        "winner": "b8174837db53f076c27ccdc9b65e9fd814407e6c48ea8d1a30c9e90e91e540cd"
+      }
+    ],
+    "decision": {
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+        "wins 10, losses 10, p 0.588099 (needs p <= 0.021286 at look 3 of 4)"
+      ],
+      "verdict": "refuse"
+    },
+    "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+    "notes": [],
+    "outcome": "refused",
+    "recovery": {
+      "causes": [
+        {
+          "cases": 0,
+          "code": "no_sign_of_gain",
+          "examples": [],
+          "what": "no sign of a gain: 10 wins and 10 losses on 60 held-out cases"
+        }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+      "remedies": [
+        {
+          "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+          "addresses": "no_sign_of_gain",
+          "component": "metaharness",
+          "how": "mh.diagnose()",
+          "who": "candidate"
+        }
+      ],
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 10 wins and 10 losses on 60 held-out cases"
+    },
+    "workflow_digest": "33612ee800e13b864fe6506cdba9140deff8624377a39b020774f1b26f8e2722"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "entry_id": "stats.power_two_sample",
+  "known_author": "Claude case author (calc step 3a, 2026-10-23)",
+  "note": "One-sample cases of the same normal-approximation core: no printed two-sample example was found.",
+  "related_cases": [
+    {
+      "citation": {
+        "author": "National Institute of Standards and Technology and SEMATECH",
+        "title": "NIST/SEMATECH e-Handbook of Statistical Methods",
+        "edition": "online edition, retrieved 2026-10-23",
+        "publisher": "National Institute of Standards and Technology (United States government, public domain)",
+        "published": "undated page",
+        "url": "https://www.itl.nist.gov/div898/handbook/prc/section2/prc222.htm",
+        "locator": "Section 7.2.2.2, the one-sided example whose shift is one standard deviation (standard deviation known)"
+      },
+      "inputs": {
+        "alpha": {
+          "value": "0.05"
+        },
+        "beta": {
+          "value": "0.10"
+        }
+      },
+      "expected": {
+        "z_1_minus_alpha": {
+          "value": "1.645",
+          "printed_digits": 3
+        },
+        "z_1_minus_beta": {
+          "value": "1.282",
+          "printed_digits": 3
+        },
+        "n": {
+          "value": "8.567",
+          "printed_digits": 3
+        },
+        "n_rounded": {
+          "value": "9",
+          "printed_digits": 0
+        }
+      },
+      "quote": "For a test with \\(\\alpha\\) --> = 0.05 and \\(\\beta\\) --> = 0.10, the minimum sample size required for the test is $$ N = (1.645 + 1.282)^2 = 8.567 \\approx 9 \\, . $$ N = (1.645 + 1.282)2 = 8.567 ~ 9."
+    },
+    {
+      "citation": {
+        "author": "National Institute of Standards and Technology and SEMATECH",
+        "title": "NIST/SEMATECH e-Handbook of Statistical Methods",
+        "edition": "online edition, retrieved 2026-10-23",
+        "publisher": "National Institute of Standards and Technology (United States government, public domain)",
+        "published": "undated page",
+        "url": "https://www.itl.nist.gov/div898/handbook/prc/section2/prc222.htm",
+        "locator": "Section 7.2.2.2, the second estimate of the same example from t critical values at N - 1 = 8 degrees of freedom (standard deviation unknown)"
+      },
+      "inputs": {
+        "df": {
+          "value": "8"
+        }
+      },
+      "expected": {
+        "t_1_minus_alpha_df8": {
+          "value": "1.860",
+          "printed_digits": 3
+        },
+        "t_1_minus_beta_df8": {
+          "value": "1.397",
+          "printed_digits": 3
+        },
+        "n": {
+          "value": "10.6",
+          "printed_digits": 1
+        },
+        "n_rounded": {
+          "value": "11",
+          "printed_digits": 0
+        }
+      },
+      "quote": "Take the example discussed above where the the minimum sample size is computed to be \\(N\\) N --> = 9. This estimate is low. Now use the formula above with degrees of freedom \\(N\\) N --> - 1 = 8 which gives a second estimate of $$ N = (1.860 + 1.397)^2 = 10.6 \\approx 11 \\, . $$ N = (1.860 + 1.397)2 = 10.6 ~11."
+    }
+  ]
+}

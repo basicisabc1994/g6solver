@@ -1,0 +1,1890 @@
+[
+  {
+    "name": "abstraction",
+    "summary": "Abstraction engineering for costly black-box search.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "action_gating",
+    "summary": "Action gating: a deterministic pre-flight decision for an action an agent wants to take.",
+    "maturity": "beta",
+    "maturity_reason": "deterministic pre-flight gate over caller-declared action facts; executor is simulation-only",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "evaluate",
+      "explain",
+      "budget_check",
+      "budget_record",
+      "budget_report",
+      "budget_policy"
+    ],
+    "requires": [
+      "action_logic",
+      "epistemic_integrity",
+      "csf",
+      "evidence"
+    ],
+    "sensitive_ops": [
+      "budget_check",
+      "budget_policy",
+      "budget_record"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "action_logic",
+    "summary": "Action-logic: deterministic controls from the study of how complex decisions fail: act in small steps, watch for warnings, revise on disconfirming evidence.",
+    "maturity": "beta",
+    "maturity_reason": "W1 generic-invoke block over the deterministic D\u00f6rner controls; no live-gate wiring",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "assess_material_action",
+      "detect_conflicts",
+      "sequence_if_separable",
+      "check_crisis_monitoring",
+      "update_on_outcome",
+      "apply_disconfirming_evidence",
+      "disconfirming_evidence_severity",
+      "reauthorisation_severity"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "adapt_audio",
+    "summary": "g6.media.adapt_audio \u2014 edit, level, clean and measure sound in WAV files, each result measured again and never clipped silently.",
+    "maturity": "beta",
+    "maturity_reason": "NumPy DSP with BS.1770-4 loudness and oversampled true peak; every edit measured before and after and refused when it would clip or misses its target; qualified-draft at best: nothing judges how it sounds",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "metadata",
+      "loudness",
+      "spectrum",
+      "pitch",
+      "bpm",
+      "silence",
+      "phase_correlation",
+      "crest_factor",
+      "trim",
+      "concat",
+      "mix",
+      "fade",
+      "gain",
+      "resample",
+      "convert",
+      "eq",
+      "compress",
+      "limit",
+      "gate",
+      "de_ess",
+      "noise_reduce",
+      "normalise_loudness",
+      "dither",
+      "transcode"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "transcode"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_automl",
+    "summary": "g6.ml.adapt_automl \u2014 search estimators and settings within a budget, and score the choice on rows it held out.",
+    "maturity": "beta",
+    "maturity_reason": "FLAML's seeded tuner over scikit-learn estimators out of G6's process, under a deadline; scores computed by G6; built in a vetted area (statistical rules), awaiting review; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "search",
+      "backends"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": "reviewed"
+  },
+  {
+    "name": "adapt_bayesian",
+    "summary": "Exact Bayesian updates and checked posterior sampling: expose hidden uncertainty.",
+    "maturity": "beta",
+    "maturity_reason": "bounded scalar Bayesian core; qualified-draft at best; awaiting review",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "beta_binomial",
+      "gamma_poisson",
+      "normal_known",
+      "compare",
+      "sample",
+      "sample_pymc",
+      "prior_sensitivity",
+      "predictive_check"
+    ],
+    "requires": [
+      "action_gating"
+    ],
+    "sensitive_ops": [
+      "sample_pymc"
+    ],
+    "vetting": "reviewed"
+  },
+  {
+    "name": "adapt_blender",
+    "summary": "g6.media.adapt_blender \u2014 build, light, render and export 3D scenes with your Blender, each change read back and each render inspected.",
+    "maturity": "beta",
+    "maturity_reason": "Blender over its command line through g6.core.component_process with G6's own script and a clean environment; every change read back, every render and export inspected; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "session_new",
+      "session_delete",
+      "create_primitive",
+      "transform_object",
+      "delete_object",
+      "set_material",
+      "set_camera",
+      "add_light",
+      "build_scene",
+      "render",
+      "viewport_preview",
+      "export",
+      "import_file",
+      "list_objects",
+      "capabilities"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "add_light",
+      "build_scene",
+      "capabilities",
+      "create_primitive",
+      "delete_object",
+      "export",
+      "import_file",
+      "list_objects",
+      "render",
+      "set_camera",
+      "set_material",
+      "transform_object",
+      "viewport_preview"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_comfyui",
+    "summary": "g6.media.adapt_comfyui \u2014 make and edit pictures on the ComfyUI server you run, each one fetched into G6's media folder and inspected.",
+    "maturity": "beta",
+    "maturity_reason": "a ComfyUI HTTP client through g6.core.outside.call_service; graphs checked against the server's nodes before they are sent; every picture inspected and a failed one refused; qualified-draft at best: nothing judges what a picture shows",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "txt2img",
+      "img2img",
+      "inpaint",
+      "upscale",
+      "submit_workflow",
+      "get_image",
+      "list_models",
+      "capabilities",
+      "get_status"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "capabilities",
+      "get_image",
+      "get_status",
+      "img2img",
+      "inpaint",
+      "list_models",
+      "submit_workflow",
+      "txt2img",
+      "upscale"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_diagrams",
+    "summary": "g6.media.adapt_diagrams \u2014 write checked Mermaid, DOT, PlantUML or ASCII diagrams, and draw DOT with Graphviz.",
+    "maturity": "beta",
+    "maturity_reason": "dependency-free generators with per-dialect escaping; DOT drawn by the person's own Graphviz on screened source and inspected; qualified-draft at best: no layout or readability is judged, and Mermaid and PlantUML text is never parsed here",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "mermaid_flowchart",
+      "mermaid_sequence",
+      "graphviz_digraph",
+      "graphviz_graph",
+      "plantuml_sequence",
+      "plantuml_component",
+      "ascii_box",
+      "ascii_tree",
+      "ascii_table",
+      "render_dot"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "render_dot"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_django",
+    "summary": "Generate Django source without Django; check full projects in a separate, time-limited process, not a security boundary.",
+    "maturity": "beta",
+    "maturity_reason": "validated templates; optional Django checks need the caller's complete project",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "build",
+      "run_checks",
+      "write_files"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "run_checks",
+      "write_files"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_ffmpeg",
+    "summary": "g6.media.adapt_ffmpeg \u2014 convert, cut, join, resize, filter, subtitle and level video and sound with your ffmpeg, every result probed from disk before it is returned.",
+    "maturity": "beta",
+    "maturity_reason": "ffmpeg over its command line through g6.media's runner (argument lists, confined inputs, a deadline, a clean environment); every output probed and a failed one refused; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "probe",
+      "convert",
+      "trim",
+      "concat",
+      "extract_audio",
+      "add_audio",
+      "resize",
+      "framerate",
+      "filter",
+      "thumbnail",
+      "gif",
+      "overlay",
+      "speed",
+      "normalize_audio",
+      "subtitles"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "add_audio",
+      "concat",
+      "convert",
+      "extract_audio",
+      "filter",
+      "framerate",
+      "gif",
+      "normalize_audio",
+      "overlay",
+      "probe",
+      "resize",
+      "speed",
+      "subtitles",
+      "thumbnail",
+      "trim"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_generative_art",
+    "summary": "g6.media.adapt_generative_art \u2014 make procedural pictures, vector drawings and heightmap meshes from seeded techniques.",
+    "maturity": "beta",
+    "maturity_reason": "deterministic NumPy techniques from a seed; every file is inspected (decodes, size, not blank) and a failed one refused; qualified-draft at best: nothing judges what a picture shows",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "generate",
+      "mesh",
+      "techniques"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "adapt_healing",
+    "summary": "g6.code.adapt_healing \u2014 repair a failing step of Python code, keeping a patch only if it passes held-back tests its proposer never saw.",
+    "maturity": "beta",
+    "maturity_reason": "g6.triage, g6.core.sandbox and held-back judging, tested with scripted patches that fit the shown tests and fail held-back ones",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "heal",
+      "check_tests"
+    ],
+    "requires": [
+      "triage"
+    ],
+    "sensitive_ops": [
+      "heal"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_image",
+    "summary": "g6.media.adapt_image \u2014 edit, convert and measure pictures, and generate them through the media family's backends, local first, each one inspected.",
+    "maturity": "beta",
+    "maturity_reason": "Pillow edits with the result's size computed independently and inspected; generation through registered backends; a paid service only from a sensitive op, on g6.action_gating's allow; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "resize",
+      "crop",
+      "rotate",
+      "flip",
+      "adjust_colour",
+      "composite",
+      "convert",
+      "get_image_info",
+      "generate",
+      "generate_paid",
+      "backends"
+    ],
+    "requires": [
+      "action_gating"
+    ],
+    "sensitive_ops": [
+      "generate",
+      "generate_paid"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_library_synthesizer",
+    "summary": "Draft Python from a paper spec and check independently supplied examples.",
+    "maturity": "beta",
+    "maturity_reason": "bounded model drafts; paper interpretation still needs human review",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "backend_capabilities",
+      "extract_spec",
+      "build",
+      "run_checks",
+      "fetch_paper",
+      "write_files"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "build",
+      "extract_spec",
+      "fetch_paper",
+      "run_checks",
+      "write_files"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_pandas",
+    "summary": "g6.ml.adapt_pandas \u2014 read a table you give by one stated rule, and say where it mixes kinds, looks missing or repeats.",
+    "maturity": "beta",
+    "maturity_reason": "load and profile by G6's own reader over the standard library; nothing read from a file; qualified-draft at best: whether the values are true is not judged",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "load",
+      "profile"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "adapt_physical_ai",
+    "summary": "Check a robot's motion plan against its world and its own limits, segment by segment, before anything moves.",
+    "maturity": "beta",
+    "maturity_reason": "checks a plan against the world and limits the caller gives, from a committed source register; qualified-draft at best; no qualified person has reviewed it",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "check_plan",
+      "plan_astar",
+      "plan_rrt",
+      "forward_kinematics",
+      "integrate_step",
+      "grasp_margin"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": "reviewed"
+  },
+  {
+    "name": "adapt_pytorch",
+    "summary": "g6.ml.adapt_pytorch \u2014 train a small neural network on rows it holds out itself, seeded, and stopped on a broken loss.",
+    "maturity": "beta",
+    "maturity_reason": "trains out of G6's process under a deadline; scores computed by G6 from held-out answers the training never saw; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "train_eval",
+      "predict",
+      "models",
+      "forget",
+      "layers"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "forget"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_rq",
+    "summary": "Background JSON jobs on an operator-owned Redis queue, with registered functions and sensitive operations.",
+    "maturity": "beta",
+    "maturity_reason": "bounded queue operations; results are queue reports, qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "enqueue",
+      "enqueue_at",
+      "enqueue_in",
+      "job_status",
+      "cancel_job",
+      "list_workers",
+      "queue_snapshot",
+      "list_failed",
+      "requeue_failed"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "cancel_job",
+      "enqueue",
+      "enqueue_at",
+      "enqueue_in",
+      "job_status",
+      "list_failed",
+      "list_workers",
+      "queue_snapshot",
+      "requeue_failed"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_sklearn",
+    "summary": "g6.ml.adapt_sklearn \u2014 fit and score a scikit-learn model on rows it holds out itself, after checking for leakage.",
+    "maturity": "beta",
+    "maturity_reason": "fits out of G6's process under a deadline; scores computed by G6 from held-out answers the fit never saw; built in a vetted area (statistical rules), awaiting review; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "fit_eval",
+      "rank",
+      "estimators"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": "reviewed"
+  },
+  {
+    "name": "adapt_synth",
+    "summary": "g6.media.adapt_synth \u2014 make tones, notes, chords, scales, melodies, noise and drum patterns, each one measured against what was asked.",
+    "maturity": "beta",
+    "maturity_reason": "band-limited NumPy synthesis; every render measured from the written file against the request and refused when off; prompts read by rules, a model's reading a claim; qualified-draft at best: nothing judges the music",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "tone",
+      "fm",
+      "noise",
+      "note",
+      "chord",
+      "arpeggio",
+      "scale",
+      "envelope",
+      "sequence",
+      "drum_pattern",
+      "prompt_to_params"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "adapt_visualisation",
+    "summary": "g6.media.adapt_visualisation \u2014 chart the rows you give, and show the file holds every row and only the values given.",
+    "maturity": "beta",
+    "maturity_reason": "charts drawn by G6's own code from named columns; dropped rows refused unless asked for and always reported; every value read back from the file; qualified-draft at best: whether the chart answers the question asked is not judged",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "line",
+      "bar",
+      "scatter",
+      "histogram",
+      "box",
+      "heatmap"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "adapt_voice",
+    "summary": "g6.media.adapt_voice \u2014 speak text and transcribe speech, refusing a transcript that is empty or at an impossible speaking rate; a wrong one of a plausible length passes.",
+    "maturity": "beta",
+    "maturity_reason": "eSpeak NG over its command line, OpenAI and ElevenLabs through g6.core.http on the action gate's allow with keys from the person's key file; every voice inspected, every transcript's word count set against measured speech; qualified-draft at best: nothing judges what was said",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "speak",
+      "speak_paid",
+      "transcribe",
+      "voices",
+      "engines"
+    ],
+    "requires": [
+      "action_gating"
+    ],
+    "sensitive_ops": [
+      "speak",
+      "speak_paid",
+      "transcribe",
+      "voices"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "adapt_webpage",
+    "summary": "Build web pages and design tokens; check syntax, declared contrast and optional overflow.",
+    "maturity": "beta",
+    "maturity_reason": "bounded generators and checks; runtime validation remains caller-owned",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "build",
+      "backend_capabilities",
+      "run_checks",
+      "write_files"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "run_checks",
+      "write_files"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "agent_autogen",
+    "summary": "g6.agents.agent_autogen \u2014 run an AutoGen team (round robin, selector or swarm) on the model you pass in, stopped at a message limit, every tool call decided by G6's gate.",
+    "maturity": "beta",
+    "maturity_reason": "runs AutoGen round robin, selector and swarm teams on the model passed in, every tool call decided by the family's gate, stopped at a message limit the trusted policy caps; a finished team is a qualified draft",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "run_team",
+      "check_team"
+    ],
+    "requires": [
+      "action_gating",
+      "safety_engine"
+    ],
+    "sensitive_ops": [
+      "run_team"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "agent_claude",
+    "summary": "g6.agents.agent_claude \u2014 hand a coding task to Anthropic's Claude Code, which you installed: read tools only unless you grant edits, never its shell or the web.",
+    "maturity": "beta",
+    "maturity_reason": "starts Anthropic's Claude Code, which you installed, with its read tools only unless you grant writes and never its shell or web tools, in the workspace you name, with a clean environment and a deadline; what it reports is a claim, a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "run",
+      "available"
+    ],
+    "requires": [
+      "action_gating",
+      "safety_engine"
+    ],
+    "sensitive_ops": [
+      "available",
+      "run"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "agent_codex",
+    "summary": "g6.agents.agent_codex \u2014 hand a coding task to OpenAI's Codex, the coding agent you installed: read-only unless you grant writes, in the folder you name, under a deadline.",
+    "maturity": "beta",
+    "maturity_reason": "starts OpenAI's Codex, which you installed, read-only unless you grant writes, in the workspace you name, with a clean environment and a deadline; what Codex reports is a claim, a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "run",
+      "available"
+    ],
+    "requires": [
+      "action_gating",
+      "safety_engine"
+    ],
+    "sensitive_ops": [
+      "available",
+      "run"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "agent_langgraph",
+    "summary": "g6.agents.agent_langgraph \u2014 run a LangGraph workflow that saves its state after every step, so a run that is stopped or crashes resumes where it was.",
+    "maturity": "beta",
+    "maturity_reason": "runs LangGraph graphs checkpointed after every super-step under G6's state folder, with every tool call decided by the family's gate and llm nodes only on the model passed in; a finished graph is a qualified draft",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "run_graph",
+      "resume",
+      "list_checkpoints"
+    ],
+    "requires": [
+      "action_gating",
+      "safety_engine"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "agent_nanoclaw",
+    "summary": "g6.agents.agent_nanoclaw \u2014 a durable mailbox between agents: each reader pages through every message for it, and one it did not acknowledge comes back after a crash.",
+    "maturity": "beta",
+    "maturity_reason": "a durable SQLite mailbox under G6's state folder: cursors that page through every message, at-least-once delivery with acknowledgements, stored-once retries, addressed and typed messages; answers are facts of its own record",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "create_group",
+      "send",
+      "receive",
+      "ack",
+      "history",
+      "delete_group"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "delete_group"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "agent_runtime",
+    "summary": "g6.agents.agent_runtime \u2014 run any agent under one set of rules: declared tools and permissions, capped limits, G6's stop, and the action gate before each outward call.",
+    "maturity": "beta",
+    "maturity_reason": "the gate and the run loop are deterministic; tool calls are decided from what the task declares, and an agent's own report is never more than a qualified draft",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "check_task",
+      "decide"
+    ],
+    "requires": [
+      "action_gating",
+      "safety_engine"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "agent_smolagents",
+    "summary": "g6.agents.agent_smolagents \u2014 run a smolagents tool-calling or code agent; its code runs in a separate, time-limited process with Python's network calls blocked.",
+    "maturity": "beta",
+    "maturity_reason": "runs smolagents tool-calling and code agents on the model passed in, code steps screened and run in G6's sandbox, every tool call decided by the family's gate; an answer is a qualified draft",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "run",
+      "check"
+    ],
+    "requires": [
+      "action_gating",
+      "safety_engine"
+    ],
+    "sensitive_ops": [
+      "run"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "algebra",
+    "summary": "g6.algebra \u2014 computer algebra with SymPy: simplify, factor, solve, differentiate, integrate and more, every answer re-checked independently before it is reported.",
+    "maturity": "beta",
+    "maturity_reason": "SymPy in G6's own worker process under a time limit, on input read only by G6's own parser; every answer re-checked independently before it is reported, undecided re-checks said so; SageMath only as an external program the user installs, its ops sensitive; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "simplify",
+      "expand",
+      "factor",
+      "differentiate",
+      "integrate",
+      "solve",
+      "limit",
+      "series",
+      "determinant",
+      "inverse",
+      "eigenvalues",
+      "factor_integer",
+      "is_prime",
+      "gcd",
+      "sage_evaluate",
+      "sage_version"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "sage_evaluate",
+      "sage_version"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "align_prompt_library",
+    "summary": "g6.workspace.align_prompt_library \u2014 keeps every version of a prompt, spec or test set by the SHA-256 of its content, so a result can cite the exact version it used.",
+    "maturity": "beta",
+    "maturity_reason": "an append-only library on g6.core.ledger with content digests, tombstones and rollback as a new version, tested against edited, removed and re-chained entries; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "put",
+      "get",
+      "history",
+      "search",
+      "render",
+      "retire",
+      "rollback"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "put",
+      "retire",
+      "rollback"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "australian_legal_corpus",
+    "summary": "g6.sources.australian_legal_corpus \u2014 search Australian law on your own computer, each passage with its jurisdiction, link and collection date, never as current law.",
+    "maturity": "beta",
+    "maturity_reason": "a pinned revision of the publisher's dataset, hash-checked, indexed locally with SQLite FTS5; tested on an invented corpus and transport doubles, never on the dataset itself",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "status",
+      "fetch",
+      "register",
+      "build",
+      "search",
+      "get",
+      "remove"
+    ],
+    "requires": [
+      "action_gating",
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [
+      "fetch",
+      "remove"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "causal",
+    "summary": "g6.causal \u2014 work out from a causal graph whether an effect can be estimated and how, estimate it with DoWhy, and try to knock the estimate down.",
+    "maturity": "beta",
+    "maturity_reason": "exact graph criteria in pure Python, cross-checked against DoWhy; DoWhy's estimates recomputed by G6 for linear regression and tried by three refuters; qualified-draft at best, since data cannot confirm a causal graph",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "d_separated",
+      "backdoor_paths",
+      "adjustment_sets",
+      "instruments",
+      "identify",
+      "estimate_effect"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "cegis",
+    "summary": "g6.cegis \u2014 fill the holes in a code sketch by counterexample-guided synthesis, running every candidate out of process.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "formal",
+      "distillation"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "coding_agent_gate",
+    "summary": "Coding-agent gate: deterministic checks a coding agent runs before it acts and before it reports work as done.",
+    "maturity": "beta",
+    "maturity_reason": "deterministic checks over caller-declared evidence; text shortcut detector is a tripwire; never verified",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "preflight",
+      "verify_answer"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "cog_arch_actr",
+    "summary": "g6.cogarch.cog_arch_actr \u2014 rank an agent's memories by recency, frequency and context with ACT-R's equations, refusing a recall below the retrieval threshold.",
+    "maturity": "beta",
+    "maturity_reason": "ACT-R's base-level, spreading, noise, latency and utility equations with persisted learning and a small production matcher with variables and retrieval requests; parameters hand-set, not fitted to any data",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "add_chunk",
+      "retrieve",
+      "add_production",
+      "run",
+      "reward"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "cog_arch_aixi",
+    "summary": "g6.cogarch.cog_arch_aixi \u2014 run a bounded MC-AIXI-CTW agent on a registered environment and judge it by its regret against a random policy on the same seed.",
+    "maturity": "beta",
+    "maturity_reason": "a context-tree model with multi-bit rewards and rho-UCT over a clone, seeded; tested on toy environments only; a bounded approximation, never AIXI",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "create",
+      "act",
+      "observe",
+      "run_episode"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "run_episode"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "cog_arch_gps",
+    "summary": "g6.cogarch.cog_arch_gps \u2014 plan a sequence of steps to a goal by means-ends analysis, every plan replayed against its operators before it is offered.",
+    "maturity": "beta",
+    "maturity_reason": "means-ends analysis with the final goal check and goal-order retries, bounded by depth, nodes, orders and time; every plan replayed; tested on small symbolic problems, not on large planning domains",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "solve",
+      "validate_plan",
+      "encode",
+      "keep_operators"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "component_creator",
+    "summary": "g6.code.component_creator \u2014 scaffold a new G6 component in the library's own shape, and check a package against the library's standard before anyone calls it done.",
+    "maturity": "beta",
+    "maturity_reason": "scaffolds and static checks tested on the library's own packages; a scaffold refuses every op until written",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "spec_from_module",
+      "spec_from_text",
+      "render",
+      "check_conformance"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "render"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "context",
+    "summary": "g6.context \u2014 assemble a small, budget-bounded context packet for one agent call, each item labelled with where it came from.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "csf",
+    "summary": "g6.csf \u2014 compute safety bounds and checks on an agent model you supply: reachability, LTL properties, composition and rollback.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "formal"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "ctx_ace",
+    "summary": "g6.memory.ctx_ace \u2014 keep an agent's notes and find them again by relevance, each read back as data with its source, writer and age.",
+    "maturity": "beta",
+    "maturity_reason": "a SQLite store under G6's state folder ranked with g6.grounding's BM25; stale records apart; lessons held until approved; qualified-draft at best: retrieval quality is not measured",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "put",
+      "search",
+      "recall",
+      "forget",
+      "approve",
+      "status"
+    ],
+    "requires": [
+      "context",
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [
+      "approve",
+      "forget"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_cognee",
+    "summary": "g6.memory.ctx_cognee \u2014 add text to the Cognee server you run and follow the links its knowledge graph draws between facts, each result cited and untrusted.",
+    "maturity": "beta",
+    "maturity_reason": "a Cognee HTTP client through g6.core.outside.call_service; never imports cognee or litellm; changes are dry runs by default and checked afterwards; qualified-draft at best: what Cognee's model extracts is not checked against the text",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "status",
+      "datasets",
+      "add",
+      "search",
+      "graph",
+      "forget"
+    ],
+    "requires": [
+      "action_gating",
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [
+      "add",
+      "datasets",
+      "forget",
+      "graph",
+      "search",
+      "status"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_colbert",
+    "summary": "g6.knowledge.ctx_colbert \u2014 rank one call's passages by meaning, say which method ranked them, and refuse word matching when meaning is required.",
+    "maturity": "beta",
+    "maturity_reason": "the ladder, the weights check and the late-interaction scoring are tested with encoders registered in the tests; the PyLate and sentence-transformers paths need their extras and cached weights, and retrieval quality is not measured here",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "search",
+      "rungs"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "ctx_contexthub",
+    "summary": "g6.knowledge.ctx_contexthub \u2014 keep a documentation registry you name, each document with when it was read and a time to live, and refuse a copy past it.",
+    "maturity": "beta",
+    "maturity_reason": "context-hub's registry format read through knowledge_fetcher's guarded fetch or a folder; tested on fixtures and a transport double, not on a live registry; a document is a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "sync",
+      "search",
+      "get",
+      "note",
+      "registries"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [
+      "sync"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_elastic",
+    "summary": "g6.knowledge.ctx_elastic \u2014 search the Elasticsearch you run over fields its mapping holds, so a query that cannot match is refused rather than answered with no hits.",
+    "maturity": "beta",
+    "maturity_reason": "four read-only requests built from typed parts, through g6.core.outside; tested against a local server that answers as Elasticsearch does, not against a live cluster; a hit is a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "search",
+      "get_doc",
+      "count",
+      "mapping"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [
+      "count",
+      "get_doc",
+      "mapping",
+      "search"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_geo",
+    "summary": "g6.sources.ctx_geo \u2014 answer location questions from a map service, with its status read on every reply, so a refused key or a used-up quota is never \"no results\".",
+    "maturity": "beta",
+    "maturity_reason": "Google Maps Platform's web services through g6.core.http with every status mapped; tested on recorded replies, not live; a paid call only on the action gate's allow and the person's key file",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "geocode",
+      "reverse_geocode",
+      "directions",
+      "distance_matrix",
+      "search_places",
+      "elevation",
+      "timezone",
+      "backends"
+    ],
+    "requires": [
+      "action_gating",
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [
+      "directions",
+      "distance_matrix",
+      "elevation",
+      "geocode",
+      "reverse_geocode",
+      "search_places",
+      "timezone"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_git",
+    "summary": "g6.sources.ctx_git \u2014 read and change git repositories inside folders you declare, with every call logged and every change since a point reported, whoever made it.",
+    "maturity": "beta",
+    "maturity_reason": "git over its command line in g6.core.git_env's hardened environment, confined to declared roots; outward ops dry-run by default and decided by g6.action_gating; tested on fixture repositories, not on remotes",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "status",
+      "diff",
+      "log",
+      "show",
+      "blame",
+      "branch_list",
+      "tag_list",
+      "remote_list",
+      "changes_since",
+      "add",
+      "commit",
+      "branch_create",
+      "branch_switch",
+      "merge",
+      "stash_save",
+      "stash_pop",
+      "tag_create",
+      "reset_staged",
+      "fetch",
+      "pull",
+      "push",
+      "clone",
+      "roots"
+    ],
+    "requires": [
+      "action_gating",
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [
+      "add",
+      "blame",
+      "branch_create",
+      "branch_list",
+      "branch_switch",
+      "changes_since",
+      "clone",
+      "commit",
+      "diff",
+      "fetch",
+      "log",
+      "merge",
+      "pull",
+      "push",
+      "remote_list",
+      "reset_staged",
+      "show",
+      "stash_pop",
+      "stash_save",
+      "status",
+      "tag_create",
+      "tag_list"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_langextract",
+    "summary": "g6.sources.ctx_langextract \u2014 pull named fields out of a text, each value with its offsets in the text or refused, the whole text read.",
+    "maturity": "beta",
+    "maturity_reason": "span checks in fixed code over an injected model caller or the caller's patterns in bounded children; tested with deterministic model doubles, not with a real model",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "extract"
+    ],
+    "requires": [
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "ctx_library_mapper",
+    "summary": "g6.sources.ctx_library_mapper \u2014 find candidate libraries in PyPI, GitHub and Hugging Face, their declared licences looked up against yours.",
+    "maturity": "beta",
+    "maturity_reason": "PyPI's JSON API, GitHub's and Hugging Face's search through g6.core.http with a typed outcome per source; parsers tested on fixtures, not live; the licence verdicts are a table lookup",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "search_candidates",
+      "licence_check",
+      "sources"
+    ],
+    "requires": [
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [
+      "search_candidates"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_search",
+    "summary": "g6.knowledge.ctx_search \u2014 search the web through the SearXNG you run, or Brave when you approve it, and tell an engine that failed from one that found nothing.",
+    "maturity": "beta",
+    "maturity_reason": "SearXNG through g6.core.outside and Brave through g6.core.http and the action gate, each tested on a transport double, not live engines; a result is an engine's snippet and a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "search",
+      "backends"
+    ],
+    "requires": [
+      "action_gating",
+      "grounding"
+    ],
+    "sensitive_ops": [
+      "search"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "ctx_vision",
+    "summary": "g6.sources.ctx_vision \u2014 show a picture to an image-capable model you give it, record its account as a claim, and cross-check its reading of text with Tesseract.",
+    "maturity": "beta",
+    "maturity_reason": "an injected image-capable g6.core.llm caller; Pillow decode check; Tesseract as an outside program for the cross-check; tested with deterministic model doubles and a stand-in tesseract, not with a real model",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "describe",
+      "answer",
+      "extract_text",
+      "detect_objects"
+    ],
+    "requires": [
+      "grounding",
+      "knowledge"
+    ],
+    "sensitive_ops": [
+      "extract_text"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "database",
+    "summary": "g6.integrations.database \u2014 query and change a database the server's operator declares, reads on a connection that cannot write, changes dry-run first.",
+    "maturity": "beta",
+    "maturity_reason": "reads on connections that cannot write and changes dry-run first, both on databases only the server's operator declares; SQLite tested here, DuckDB and PostgreSQL with the db extra; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "query",
+      "explain",
+      "execute",
+      "list_tables",
+      "describe_table",
+      "get_schema"
+    ],
+    "requires": [
+      "action_gating"
+    ],
+    "sensitive_ops": [
+      "execute"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "datalog",
+    "summary": "g6.datalog \u2014 work out what follows from facts and rules in a strict Datalog, on two engines that must agree, and check every answer before it is reported.",
+    "maturity": "beta",
+    "maturity_reason": "a strict Datalog on a pure-Python engine and Z3's Datalog engine, which must agree; every model checked in pure Python before it is reported; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "assert_facts",
+      "reset",
+      "evaluate",
+      "query",
+      "explain",
+      "check"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "assert_facts",
+      "reset"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "debate",
+    "summary": "g6.debate \u2014 role-named agents answer a question in turn through one model, with two readings of how far they agree.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "decision_making",
+    "summary": "g6.cogarch.decision_making \u2014 standard, seeded decision rules for what to try next and how many retries to allow, each answer with its working and the same on every run.",
+    "maturity": "beta",
+    "maturity_reason": "a standard-library decision library behind a stateless door; deterministic and validated; the probabilities it is given decide every answer and are not estimated",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "expected_value_of_perfect_information",
+      "expected_information_gain",
+      "expected_improvement",
+      "expected_utility",
+      "value_iteration",
+      "plan_next_action",
+      "bandit_select",
+      "retry_budget"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "design_governance",
+    "summary": "g6.code.design_governance \u2014 check a codebase's structure for import cycles, layer breaches and pass-through wrappers, and which cycles a change introduced.",
+    "maturity": "beta",
+    "maturity_reason": "the archive's Tarjan, pass-through detector and refusal rules over any package given as a file map, tested on packages that are not the archive's",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "import_graph",
+      "cycles",
+      "layer_violations",
+      "pass_through",
+      "diff_cycles"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "distillation",
+    "summary": "g6.distillation \u2014 check and run a small distilled function, and test it on held-out cases before anyone relies on it.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "duty_of_care",
+    "summary": "Matches a fixed list of English crisis phrases; a paraphrase or another language passes. A match goes to a person.",
+    "maturity": "beta",
+    "maturity_reason": "scans stated words for crisis, scores the PHQ-9 and GAD-7 as their forms print them, gives a dated directory; qualified-draft at best; no qualified person has reviewed it",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "screen",
+      "instruments",
+      "score",
+      "directory",
+      "help"
+    ],
+    "requires": [
+      "guards"
+    ],
+    "sensitive_ops": [],
+    "vetting": "reviewed"
+  },
+  {
+    "name": "epistemic_integrity",
+    "summary": "Epistemic integrity: deterministic claim adjudication and evidence gating.",
+    "maturity": "beta",
+    "maturity_reason": "deterministic epistemic-integrity adjudication floor (G6-EI-001); HELD at qualified_draft (tier1_review_pending)",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "adjudicate"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "evidence",
+    "summary": "g6.evidence \u2014 the certificate issuer: what a mission's evidence supports, and nothing more.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "formal",
+    "summary": "g6.formal \u2014 decide logic questions exactly, optimisation included, with Z3 or pure Python, and label every answer.",
+    "maturity": "beta",
+    "maturity_reason": "Z3 and pure-Python logic in process; each answer re-checked where a check exists; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "check_contract",
+      "check_sat",
+      "check_validity",
+      "check_entailment",
+      "find_counterexample",
+      "check_propositional",
+      "optimise",
+      "unsat_core",
+      "simplify",
+      "eliminate_quantifiers",
+      "count_models",
+      "check_equivalence",
+      "belnap_eval",
+      "belnap_table",
+      "modal_eval",
+      "frame_check"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "goal_engine",
+    "summary": "g6.goal_engine \u2014 holds the subtasks you declare as a tree and checks them against what your executor reports.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "graph_reasoning",
+    "summary": "g6.graph_reasoning \u2014 work out the truth interval of each label on a graph's nodes and edges from facts and rules, and check every interval before it is reported.",
+    "maturity": "beta",
+    "maturity_reason": "annotated logic over graphs in the style of PyReason, on a pure-Python fixpoint over exact intervals; every interpretation checked for closure, support and soundness before it is reported; PyReason as a second engine when it imports, which PyReason 3.7.0 does not on this library's Python; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "reason",
+      "query",
+      "explain",
+      "check"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "grounding",
+    "summary": "Grounding: find the source passages behind a claim, and say honestly how well they support it.",
+    "maturity": "beta",
+    "maturity_reason": "lexical sentence support with negation/number conflict checks; not entailment; never verified",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "check_claim",
+      "check_claims",
+      "coverage"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "guards",
+    "summary": "g6.guards \u2014 flags a fixed list of English phrasings of prompt injection; a paraphrase passes.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "hat_orchestrator",
+    "summary": "Coordinate declared team capabilities and claims; operator ranks never authorise real-world actions.",
+    "maturity": "beta",
+    "maturity_reason": "operator roster and bounded coordination records; qualified-draft claims only",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "register_agent",
+      "allocate_task",
+      "create_sync_point",
+      "signal_ready",
+      "check_sync",
+      "complete_task",
+      "fail_task",
+      "resolve_authority"
+    ],
+    "requires": [
+      "action_gating"
+    ],
+    "sensitive_ops": [
+      "allocate_task",
+      "complete_task",
+      "create_sync_point",
+      "fail_task",
+      "register_agent",
+      "resolve_authority",
+      "signal_ready"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "intent_engine",
+    "summary": "g6.intent_engine \u2014 the intent contract a task is held to, and the deterministic elicitor that fills it.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "harness"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "invariants",
+    "summary": "g6.invariants \u2014 check that a result envelope says only what its own fields support.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "knowledge_chunker",
+    "summary": "g6.knowledge.knowledge_chunker \u2014 cut a document into passages with exact offsets and ids bound to their source, and check a citation against it.",
+    "maturity": "beta",
+    "maturity_reason": "deterministic spans over the text as given; every passage checked against the document before it is returned; a result says where words are, never that they are true",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "chunk",
+      "check"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "knowledge_converter",
+    "summary": "g6.knowledge.knowledge_converter \u2014 turn PDFs, web pages, Markdown and text into a document that says what converted it and what could not be read.",
+    "maturity": "beta",
+    "maturity_reason": "text, Markdown, standard-library HTML and pypdf's text layer; what could not be read is reported; OCR and transcription are not part of it; a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "convert",
+      "types"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "knowledge_fetcher",
+    "summary": "g6.knowledge.knowledge_fetcher \u2014 fetch pages and searches (arXiv, OAI-PMH, OpenAlex, Semantic Scholar) through G6's checked HTTP, and say exactly why a fetch failed.",
+    "maturity": "beta",
+    "maturity_reason": "every request through g6.core.http with a typed outcome per failure; parsers tested on fixtures, not on live sources; a fetched text is untrusted data and a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "fetch",
+      "sources"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [
+      "fetch"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "knowledge_indexer",
+    "summary": "g6.knowledge.knowledge_indexer \u2014 keep passages in a searchable index under a storage budget you set, and search them with each hit's source and a score on a stated scale.",
+    "maturity": "beta",
+    "maturity_reason": "SQLite FTS5 under G6's state folder with the budget checked before and during each write; ranking is lexical BM25, tested on fixtures, and a hit is a qualified draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "add",
+      "search",
+      "remove",
+      "status",
+      "backends"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [
+      "remove"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "knowledge_manifest",
+    "summary": "g6.knowledge.knowledge_manifest \u2014 keep the sources and passages an agent cites, and check a passage against its source as read again.",
+    "maturity": "beta",
+    "maturity_reason": "content-addressed SQLite records checked on read; verify_passage compares the source as re-read and only an exact match passes, as a qualified draft",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "record",
+      "get",
+      "verify_passage"
+    ],
+    "requires": [
+      "grounding"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "lean",
+    "summary": "g6.lean \u2014 check a Lean 4 proof of a named theorem: declared in your file, no sorry, only Lean's standard axioms, and the statement you expect.",
+    "maturity": "beta",
+    "maturity_reason": "Lean 4 out of process on a screened source; a pass needs Lean's own report of a theorem declared in the source, with no sorry, only the standard axioms and, when given, the expected statement; over MCP only when the person running the server allows it (G6_MCP_SENSITIVE); qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "check_proof",
+      "lean_version",
+      "prove",
+      "sketch"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "check_proof",
+      "lean_version",
+      "prove"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "learning",
+    "summary": "g6.learning \u2014 learn prompt hints from an agent's failures, and credit each one only from paired runs with and without it.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "llm_router",
+    "summary": "g6.llm_router \u2014 pick a language model for a kind of task from a committed table, local first, with an ordered fallback chain and dated cost estimates.",
+    "maturity": "beta",
+    "maturity_reason": "routes from a committed table of hand-assigned task scores and prices dated 2026-08-16; live calls go only to providers you allow; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "list_tasks",
+      "models_for_task",
+      "route",
+      "supervision_chain",
+      "model_profile",
+      "estimate_cost",
+      "record_outcome",
+      "outcome_stats",
+      "list_local_models",
+      "pull_model",
+      "delete_model",
+      "fetch_openrouter_catalogue"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "delete_model",
+      "fetch_openrouter_catalogue",
+      "list_local_models",
+      "pull_model"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "meta_programming",
+    "summary": "g6.code.meta_programming \u2014 rename and extract Python code through its syntax tree and scopes, each edit checked against the tree it should give, comments kept.",
+    "maturity": "beta",
+    "maturity_reason": "standard-library scopes and span edits, tested on shadowing, parameters, attributes, comments and moved statements",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "parse",
+      "analyze",
+      "rename",
+      "extract_function",
+      "run_tests"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "run_tests"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "metaharness",
+    "summary": "g6.metaharness \u2014 tune G6 to a task you repeat: it proposes changes, tests each one on held-out examples, and changes nothing until a person approves.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "action_gating",
+      "bundles",
+      "coding_agent_gate",
+      "context",
+      "distillation",
+      "guards",
+      "harness",
+      "integrity",
+      "intent_engine",
+      "learning",
+      "llm_router",
+      "navigator",
+      "reasoning",
+      "self_training",
+      "workforce"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "model_checking",
+    "summary": "g6.model_checking \u2014 check a state machine for broken invariants, deadlocks and reachable goals, with Z3 or TLA+'s TLC, and re-check every answer.",
+    "maturity": "beta",
+    "maturity_reason": "symbolic models checked with Z3 in process, every trace and every claim re-checked on fresh solvers; TLC and SANY out of process from a jar pinned by SHA-256, over MCP only when the person running the server allows them (G6_MCP_SENSITIVE); qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "check_invariant",
+      "prove_invariant",
+      "check_deadlock",
+      "reachable",
+      "tlc_check",
+      "sany_parse"
+    ],
+    "requires": [
+      "formal"
+    ],
+    "sensitive_ops": [
+      "sany_parse",
+      "tlc_check"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "navigator",
+    "summary": "g6.navigator \u2014 describe one operation from its contract, and check a plan of operation calls before anything runs.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "workforce"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "optimisation",
+    "summary": "g6.optimisation \u2014 solve linear, integer, constraint, routing, flow and scheduling problems with OR-Tools and non-linear ones with SciPy, and check every answer.",
+    "maturity": "beta",
+    "maturity_reason": "OR-Tools and SciPy in process; every answer checked in pure Python before it is reported; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "solve_lp",
+      "solve_mip",
+      "solve_cp",
+      "solve_knapsack",
+      "solve_job_shop",
+      "solve_assignment",
+      "solve_max_flow",
+      "solve_min_cost_flow",
+      "solve_routing",
+      "minimise",
+      "global_search"
+    ],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "prolog",
+    "summary": "g6.prolog \u2014 query a Prolog program in a restricted syntax with SWI-Prolog, out of process, bounded by limits, every answer re-checked.",
+    "maturity": "beta",
+    "maturity_reason": "SWI-Prolog out of process on a program read clause by clause, never consulted, in a restricted syntax (the program's own predicates and a short allow-list) that is not a security boundary; bounded by inference, time and stack limits; every answer re-checked in a second process; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "query",
+      "prove",
+      "check_program",
+      "swipl_version"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "check_program",
+      "prove",
+      "query",
+      "swipl_version"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "reasoning",
+    "summary": "Reasoning: budgets, honest comparisons and voting for multi-call reasoning.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "reliability_pipeline",
+    "summary": "g6.reliability_pipeline \u2014 task intake, stage values, the curated failure-mode skills and the premortem's bounded replay checks.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "intent_engine"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "safety_engine",
+    "summary": "g6.safety_engine \u2014 trusted runtime ceilings for one run: the policy, the counters, the pre-action check.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "self_training",
+    "summary": "Governed self-modification: the promotion authority for proposed harness changes, one governed improvement cycle, and a maturity scorecard.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "shared_workspace",
+    "summary": "g6.workspace.shared_workspace \u2014 lets several agents share one workspace folder without overwriting each other's work: the first write wins and a stale one is refused.",
+    "maturity": "beta",
+    "maturity_reason": "compare-and-swap writes and token locks on the family's shared workspace folder, tested with concurrent writers; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "read",
+      "write",
+      "lock",
+      "unlock",
+      "locks",
+      "conflicts"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "write"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "solver",
+    "summary": "g6.solver \u2014 run a goal through a fixed 15-step table of step functions you supply.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "swe_diagnostics",
+    "summary": "g6.code.swe_diagnostics \u2014 show a coding agent an unfamiliar repository before it changes it: its layout, build, tests and files, and what a change touches.",
+    "maturity": "beta",
+    "maturity_reason": "the archive's four tools brought in-package and tested on fixture repositories; patch_check through g6.workforce.repo_tests",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "repo_map",
+      "detect_build_env",
+      "test_analyze",
+      "code_summarize",
+      "patch_check"
+    ],
+    "requires": [
+      "workforce"
+    ],
+    "sensitive_ops": [
+      "patch_check"
+    ],
+    "vetting": null
+  },
+  {
+    "name": "workforce",
+    "summary": "g6.workforce \u2014 a local coding mission under a frozen standard: G6 freezes what counts as done, a person confirms it, and G6 checks the agent's patch.",
+    "maturity": "beta",
+    "maturity_reason": "",
+    "surface": "python",
+    "ops": [],
+    "requires": [
+      "evidence",
+      "formal",
+      "intent_engine",
+      "learning",
+      "reliability_pipeline",
+      "safety_engine"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "workspace_manager",
+    "summary": "g6.workspace.workspace_manager \u2014 gives each agent task its own workspace folder and checks every path as part of each read and write, so nothing lands outside it.",
+    "maturity": "beta",
+    "maturity_reason": "containment through g6.core.storage.contained, tested on '..', symbolic links, junctions, hard links, device and network paths and a folder swapped after the check; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "contained",
+      "read",
+      "files",
+      "status",
+      "write",
+      "backup",
+      "restore",
+      "cleanup"
+    ],
+    "requires": [],
+    "sensitive_ops": [
+      "backup",
+      "cleanup",
+      "restore",
+      "write"
+    ],
+    "vetting": null
+  }
+]

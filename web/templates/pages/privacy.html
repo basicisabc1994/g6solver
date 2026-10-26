@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Privacy{% endblock %}
+{% block meta_description %}This site sets no cookies, runs no analytics and collects nothing. G6 runs on your own computer and sends nothing to us.{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/content.css' %}">{% endblock %}
+{% block content %}
+{% comment %}DRAFT for the owner's review (site skeleton, 2026-10-19). It replaces an earlier policy, which
+described accounts and payments that no longer exist.{% endcomment %}
+<article class="g6-prose max-w-3xl mx-auto px-4 sm:px-6 py-16">
+    <h1>Privacy</h1>
+    <p class="why">Your work, your data and your prompts are yours, so nothing about G6 or this site is built to collect
+    them.</p>
+    <p><strong>This website collects nothing about you.</strong> It is a set of static pages. It sets no cookies, runs
+    no analytics or tracking, has no forms and no accounts, and keeps no record of your visit. The company that hosts
+    the pages may keep the standard short-lived server logs that any web host keeps.</p>
+    <p>The page fonts come from Google Fonts and some scripts from public code libraries (cdnjs and jsDelivr). Your
+    browser fetches them directly from those services, under their own privacy terms.</p>
+    <h2>G6 itself</h2>
+    <p>G6 is software you run on your own computer. It sends nothing to us: there is no account, no telemetry and no
+    service of ours behind it. If you connect G6 to an AI model provider, what you send goes to that provider under
+    your own agreement with them.</p>
+</article>
+{% endblock %}

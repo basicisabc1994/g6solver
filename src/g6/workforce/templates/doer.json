@@ -1,0 +1,17 @@
+{
+  "name": "doer",
+  "purpose": "Produce one unit's output by calling the capabilities the plan named for it, in code.",
+  "rung": "deterministic",
+  "read_only": false,
+  "allowed": "from_unit",
+  "policy": {
+    "max_steps": 10,
+    "max_tool_calls": 10,
+    "max_shell_commands": 0,
+    "max_files_modified": 0,
+    "max_lines_changed": 0,
+    "max_retries": 1,
+    "max_runtime_seconds": 300,
+    "max_privilege_level": 0
+  }
+}

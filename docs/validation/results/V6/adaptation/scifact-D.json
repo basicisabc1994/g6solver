@@ -1,0 +1,835 @@
+{
+ "adapt_code": "G6_E_META_READY",
+ "cycles": [
+  {
+   "cycle": 1,
+   "offers": [
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 10,
+     "dev_calls_used": 331,
+     "candidates": [
+      "17498c21d5aea885859a23a781101f19161e3eaf708bcab85af10c3bdc783208"
+     ]
+    },
+    {
+     "strategy": "hints",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 11,
+     "dev_calls_used": 18,
+     "candidates": [
+      "fbed46dbbf6c01045d23f7921e3478dfebccdf11cdc16db1b78f55d0c40c55da"
+     ]
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "17498c21d5aea885859a23a781101f19161e3eaf708bcab85af10c3bdc783208",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only."
+      },
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "label-only"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 15,
+       "losses": 4,
+       "ties": 21,
+       "discordant": 19,
+       "p_one_sided": 0.009605
+      },
+      "false_accepts": {
+       "base": 20,
+       "candidate": 9
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.375,
+        "candidate_mean": 0.65,
+        "diff_mean": 0.275,
+        "diff_upper_95": 0.441455,
+        "candidate_upper_95": 0.775631
+       },
+       "model_calls": {
+        "base_mean": 0.875,
+        "candidate_mean": 0.875,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 0.96211
+       },
+       "wall_clock_s": {
+        "base_mean": 1.92935,
+        "candidate_mean": 1.944875,
+        "diff_mean": 0.015525,
+        "diff_upper_95": 0.028605,
+        "candidate_upper_95": 2.138803
+       }
+      },
+      "negative_control": {
+       "wins": 15,
+       "losses": 0,
+       "ties": 25,
+       "discordant": 15,
+       "p_one_sided": 3.1e-05,
+       "base_success": 15,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0137,
+       "gain_0.10": 0.0397,
+       "gain_0.20": 0.2066
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 70,
+      "reuse_index": 1,
+      "notes": [],
+      "base_success": 15,
+      "candidate_success": 26,
+      "digest": "d4020f1af90f66781df76f3d5c2318c6dbeae42dbdbebe9d8653b76af19493ba"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 15, losses 4, p 0.009605 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "87a432123c46bca40de96bfacc316c27b3e4f2c235df6136d3ca157723cd6aff"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "label-only"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 1
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 15,
+         "losses": 0,
+         "ties": 25,
+         "discordant": 15,
+         "p_one_sided": 3.1e-05,
+         "base_success": 15,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 19
+        }
+       }
+      ]
+     }
+    },
+    {
+     "candidate_digest": "fbed46dbbf6c01045d23f7921e3478dfebccdf11cdc16db1b78f55d0c40c55da",
+     "strategy": "hints",
+     "proposer": "auto:hints",
+     "diff": {
+      "hints": {
+       "from": [],
+       "to": [
+        "th_44aa3d2f7ff8"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 11,
+       "losses": 2,
+       "ties": 27,
+       "discordant": 13,
+       "p_one_sided": 0.01123
+      },
+      "false_accepts": {
+       "base": 22,
+       "candidate": 13
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.325,
+        "candidate_mean": 0.55,
+        "diff_mean": 0.225,
+        "diff_upper_95": 0.362968,
+        "candidate_upper_95": 0.681037
+       },
+       "model_calls": {
+        "base_mean": 0.875,
+        "candidate_mean": 0.875,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 0.96211
+       },
+       "wall_clock_s": {
+        "base_mean": 1.8887,
+        "candidate_mean": 1.96795,
+        "diff_mean": 0.07925,
+        "diff_upper_95": 0.10393,
+        "candidate_upper_95": 2.164372
+       }
+      },
+      "negative_control": {
+       "wins": 13,
+       "losses": 0,
+       "ties": 27,
+       "discordant": 13,
+       "p_one_sided": 0.000122,
+       "base_success": 13,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0159,
+       "gain_0.10": 0.0544,
+       "gain_0.20": 0.3394
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 70,
+      "reuse_index": 2,
+      "notes": [],
+      "base_success": 13,
+      "candidate_success": 22,
+      "digest": "89f10de9c9d98221698f7b2414a2701a5521f6dfff05a1fc7bf66edac3bf8470"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 11, losses 2, p 0.01123 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "87a432123c46bca40de96bfacc316c27b3e4f2c235df6136d3ca157723cd6aff"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 2
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 13,
+         "losses": 0,
+         "ties": 27,
+         "discordant": 13,
+         "p_one_sided": 0.000122,
+         "base_success": 13,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 13
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 2,
+   "offers": [
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 12,
+     "dev_calls_used": 313,
+     "candidates": [
+      "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0"
+     ]
+    },
+    {
+     "strategy": "hints",
+     "code": "G6_E_META_NO_NEW_CANDIDATE",
+     "message": "the strategy failed: ValueError: G6_E_LEARNING_ID_EXISTS: these theory ids are already stored and are not overwritten: th_3cc1b0307cc5, th_44aa3d2f7ff8",
+     "dev_success": null,
+     "dev_calls_used": null,
+     "candidates": []
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only."
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 10,
+       "losses": 3,
+       "ties": 27,
+       "discordant": 13,
+       "p_one_sided": 0.046143
+      },
+      "false_accepts": {
+       "base": 19,
+       "candidate": 12
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.4,
+        "candidate_mean": 0.575,
+        "diff_mean": 0.175,
+        "diff_upper_95": 0.317908,
+        "candidate_upper_95": 0.705207
+       },
+       "model_calls": {
+        "base_mean": 0.875,
+        "candidate_mean": 0.875,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 0.96211
+       },
+       "wall_clock_s": {
+        "base_mean": 1.885925,
+        "candidate_mean": 1.966025,
+        "diff_mean": 0.0801,
+        "diff_upper_95": 0.099005,
+        "candidate_upper_95": 2.162291
+       }
+      },
+      "negative_control": {
+       "wins": 16,
+       "losses": 0,
+       "ties": 24,
+       "discordant": 16,
+       "p_one_sided": 1.5e-05,
+       "base_success": 16,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0159,
+       "gain_0.10": 0.0544,
+       "gain_0.20": 0.3394
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 70,
+      "reuse_index": 3,
+      "notes": [],
+      "base_success": 16,
+      "candidate_success": 23,
+      "digest": "61139557ba60ffc9929d882e11fed7dd3cdecf2fcdc28a911b30e13ec699e9d1"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 10, losses 3, p 0.046143 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "87a432123c46bca40de96bfacc316c27b3e4f2c235df6136d3ca157723cd6aff"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 3
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 16,
+         "losses": 0,
+         "ties": 24,
+         "discordant": 16,
+         "p_one_sided": 1.5e-05,
+         "base_success": 16,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 13
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 3,
+   "offers": [
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 12,
+     "dev_calls_used": 313,
+     "candidates": [
+      "a002d633703479522837b7ea214eec67809d90aa25fc88ae453b33624b90f689"
+     ]
+    },
+    {
+     "strategy": "hints",
+     "code": "G6_E_META_NO_NEW_CANDIDATE",
+     "message": "the strategy failed: ValueError: G6_E_LEARNING_ID_EXISTS: these theory ids are already stored and are not overwritten: th_3cc1b0307cc5, th_44aa3d2f7ff8",
+     "dev_success": null,
+     "dev_calls_used": null,
+     "candidates": []
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "a002d633703479522837b7ea214eec67809d90aa25fc88ae453b33624b90f689",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Reason briefly about what the abstract says, then write the final line as 'Answer: <label>'."
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 6,
+       "losses": 8,
+       "ties": 26,
+       "discordant": 14,
+       "p_one_sided": 0.788025
+      },
+      "false_accepts": {
+       "base": 17,
+       "candidate": 18
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.45,
+        "candidate_mean": 0.4,
+        "diff_mean": -0.05,
+        "diff_upper_95": 0.105269,
+        "candidate_upper_95": 0.529037
+       },
+       "model_calls": {
+        "base_mean": 0.875,
+        "candidate_mean": 0.875,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 0.96211
+       },
+       "wall_clock_s": {
+        "base_mean": 1.87725,
+        "candidate_mean": 2.2485,
+        "diff_mean": 0.37125,
+        "diff_upper_95": 0.425128,
+        "candidate_upper_95": 2.475352
+       }
+      },
+      "negative_control": {
+       "wins": 18,
+       "losses": 0,
+       "ties": 22,
+       "discordant": 18,
+       "p_one_sided": 4e-06,
+       "base_success": 18,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0155,
+       "gain_0.10": 0.0514,
+       "gain_0.20": 0.3084
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 70,
+      "reuse_index": 4,
+      "notes": [],
+      "base_success": 18,
+      "candidate_success": 16,
+      "digest": "1575d320525c25d13aa792c7c48e5f5aeb20bd6e2493dbb1d9310169215b267a"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 6, losses 8, p 0.788025 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "87a432123c46bca40de96bfacc316c27b3e4f2c235df6136d3ca157723cd6aff"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 4
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 18,
+         "losses": 0,
+         "ties": 22,
+         "discordant": 18,
+         "p_one_sided": 4e-06,
+         "base_success": 18,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 14
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  }
+ ],
+ "confirm": {
+  "code": "G6_E_META_CONFIRMED",
+  "workflow_digest": "87a432123c46bca40de96bfacc316c27b3e4f2c235df6136d3ca157723cd6aff",
+  "judging_sha256": "104ee34c0b989aa37ea12547bf35dde9fc226036c00bddd021bc0631819c1c8b",
+  "held_out_digest": "239ef7ff336b7ce446c11e09331c848856548a2dea00745f50923e16483a2eaa"
+ },
+ "report": {
+  "completion_state": "qualified-draft",
+  "reliability_label": "qualified-draft",
+  "warning_card": {
+   "code": "G6_E_META_REPORT",
+   "message": "what this meta-harness has shown",
+   "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+   "severity": "amber",
+   "why": "what this meta-harness has shown",
+   "risks": [],
+   "verified": false,
+   "next_step": "Inspect the degraded invocation envelope before trusting the result."
+  },
+  "evidence": [],
+  "egress_notice": [],
+  "request_id": "db0d0b103674",
+  "task_id": "",
+  "run_id": "0334121d1c244348b09d96752de43634",
+  "degraded": true,
+  "degradation_reason": "",
+  "known_limitations": [
+   "Qualified draft: this output has not been independently verified."
+  ],
+  "missing_checks": [
+   "Independent verification was not completed for this output."
+  ],
+  "recommended_next_steps": [
+   "Review the warning card and verify this output before relying on it."
+  ],
+  "risk_level": "medium",
+  "confidence": null,
+  "block_reason": "",
+  "required_human_decision": "",
+  "evidence_collected": [],
+  "safe_next_action": "",
+  "rollback_or_containment": "",
+  "code": "G6_E_META_REPORT",
+  "message": "what this meta-harness has shown",
+  "next_action": "",
+  "checked": [
+   {
+    "claim": "the store's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "the ledger's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "every activation names a person and a decision",
+    "holds": true
+   },
+   {
+    "claim": "every live run used the profile of the version it names",
+    "holds": true
+   },
+   {
+    "claim": "online tuning is off",
+    "holds": true
+   },
+   {
+    "claim": "audited share of live runs: at least 0.1",
+    "holds": true
+   }
+  ],
+  "measured": [
+   {
+    "claim": "the last held-out evaluation",
+    "value": {
+     "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+     "candidate_digest": "a002d633703479522837b7ea214eec67809d90aa25fc88ae453b33624b90f689",
+     "model_calls_used": 70,
+     "n": 40,
+     "partial": false,
+     "purpose": "evaluation",
+     "run_ids": [
+      "6827c649671e42b6a2882f820f560af1",
+      "ceef1f0ccb5249078eca743183066dc7",
+      "9a9cc87917c14fe8ad6a92c3decfa6e1",
+      "c3d8698c07be4244b9206e81e9dafec0",
+      "b3072952bd5f4c6f80595b22fef6d950",
+      "2ae153aee2da4331ace577a9c9b0cafa",
+      "9b499bd1042b4d6eb60057c762576ce6",
+      "6d9107a2bc6d454da27de0c61e0f9fed",
+      "80c61a74d4c8417995f8702cc882bd48",
+      "ce4a9f18dba343e9ad6e8b6fc4b9e26c",
+      "391fd832616843499c34216e858d685f",
+      "1731ca5b6e2f45698b707425d984ba2c",
+      "9ee0fc23a2054fa7a0d19189dcfeb6eb",
+      "242582346987435e8c2a477f4c685b39",
+      "aae4fa775f2944ceb09b2960fa0232d3",
+      "dfa9e9ceceab4fdc903eab1c30bfe930",
+      "5887c57274d84b35876ce4f3c84517b3",
+      "1df215914f9241699bf029439a794f6b",
+      "b501457db7e54826a0777140e4c9cc33",
+      "14c0ed8ea0fa438ba3167035e9f7cc87",
+      "63b12f6ed858497bb19487accce60a80",
+      "1a0c5ae48d224de9a671762aabbc4a82",
+      "19c526af62984a7f96843d841be07f2f",
+      "70d8f9d4dd6b4359896c18e61e927426",
+      "834c7c76b0094826b3af0153dbea330c",
+      "098d9001405d45d38027a657d0819172",
+      "f4057f122b684bf3b5d3cce747da22c3",
+      "0a5d67741997475dadc0a6e8404a2f39",
+      "9c7f74c9668e4a928d31abe45248869d",
+      "d57b99a78227466eb8a52d1536898bb2",
+      "403222cc089940b29135b6f25360f0da",
+      "dbb4e3f7129840a3ae67e43917ab3b22",
+      "fcffa9d88ceb48c0b6a87dc93174aee4",
+      "ed98ef36861b49458d7e45d8c4f9dbe1",
+      "e305e0301731450983f802c35d96aa71",
+      "d4be0290e2354e89b898b7b559f61a1f",
+      "47ef7de27c574957be59f735d366420c",
+      "51538440f0f04f9c999cd1e9c7029574",
+      "4e0377d2a2ac43988ea85dbfd373d3fc",
+      "66255d5b5e4f45dfa07e20398f9d80d4"
+     ],
+     "split": "held_out",
+     "split_digest": "239ef7ff336b7ce446c11e09331c848856548a2dea00745f50923e16483a2eaa",
+     "success": {
+      "discordant": 14,
+      "losses": 8,
+      "p_one_sided": 0.788025,
+      "ties": 26,
+      "wins": 6
+     },
+     "workflow_digest": "87a432123c46bca40de96bfacc316c27b3e4f2c235df6136d3ca157723cd6aff",
+     "_id": "1575d320525c25d13aa792c7c48e5f5aeb20bd6e2493dbb1d9310169215b267a",
+     "_kind": "evaluation"
+    }
+   }
+  ],
+  "assumed": [
+   "live tasks resemble the suite (stationarity, KS A1)",
+   "the held-out answers are right, and the oracle reads them correctly",
+   "accepted_by names the person who accepted (recorded as given)",
+   "the held-out split is independent-authored"
+  ]
+ },
+ "inspect_versions": [
+  {
+   "accepted_by": "v6-scripted-approval (study script, not a person)",
+   "at": "2026-10-18T19:01:53+00:00",
+   "decision_digest": "",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "initial",
+   "ledger_head": "",
+   "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+   "proposer": "",
+   "reason": "",
+   "snapshot": "",
+   "version": 0
+  }
+ ],
+ "judging_sha256_end": "104ee34c0b989aa37ea12547bf35dde9fc226036c00bddd021bc0631819c1c8b",
+ "theories": {
+  "th_3cc1b0307cc5": {
+   "failure_code": "NO_OUTPUT",
+   "instruction": "Give an answer: an empty response always fails.",
+   "status": "candidate"
+  },
+  "th_44aa3d2f7ff8": {
+   "failure_code": "WRONG_FORMAT",
+   "instruction": "Check the expected output format and structure before answering.",
+   "status": "candidate"
+  }
+ },
+ "restarts": 0,
+ "canary": {
+  "views": 6,
+  "gate_snippets_in_views": 0,
+  "eval_snippets_in_views": 0,
+  "dev_snippets_in_views": 20,
+  "dev_cases": 20
+ }
+}

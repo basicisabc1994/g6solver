@@ -1,0 +1,256 @@
+{
+  "reviewer": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25)",
+  "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
+  "reviewed": {
+    "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+    "artifact_sha256": "3da50ffbf28010c528eba9f20ce2c3208a14b0b84bc651e166a16a6f99f7f90e",
+    "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+    "refusals": [],
+    "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
+    "sources_sha256": {
+      "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+      "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+      "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
+      "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+      "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
+      "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310",
+      "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
+      "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
+      "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+      "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+      "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+      "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
+      "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860"
+    }
+  },
+  "rules": [
+    {
+      "rule": "crisis_trigger",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "The decision is one comparison, term_fires(count, inside) = count > inside, reached through scan, which only normalises each field, counts whole-word occurrences of each listed term and of the exceptions that hold it, and returns findings. It raises TypeError for a non-text field, which the door reads as a failed check and so a possible crisis. It writes nothing and relabels nothing: its effect is escalation.",
+      "finding": "The list and the one-occurrence threshold are both G6's own, and no source sets either, so citing g6 is right. I ran scan fresh: 'kill myself' fires; the idiom 'killing myself laughing' holds; a further 'kill myself' elsewhere in the same text still fires, because an exception covers only its own words; the plural 'suicides' alone does not fire; 'he hits me' fires, one of the four known false positives kept on purpose. The firing and holding cases sit on the boundary of the comparison (one occurrence outside every exception fires, one inside holds). The recall set is the builder's own list with its stated blind spots; I make no claim that it is complete, and no qualified person has reviewed it."
+    },
+    {
+      "rule": "crisis_lock",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "locked() reads an in-memory mapping from run to a CrisisLock and returns the first record held for the subject, or None (also None for ids that are not text); CrisisLock.engage keeps the first record with setdefault and the class has no method that releases one. Nothing is written or sent: later ops for that subject in that run return the stored crisis result, and that is all.",
+      "finding": "G6's own rule with no source, so g6 is the right citation. The code does what the rule says for the run and subject the caller names. The key is the caller-supplied run and subject, so a caller that changes either escapes the lock, and the locks live in process memory, so a restart clears them; both are stated limits of the rule as written, and the scope lists the second."
+    },
+    {
+      "rule": "emergency_first",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "f3d6318594011e9ec80b862b39d0ba91488832ce9346a1b568b6551d446c8f7c",
+      "effect_only": true,
+      "effect_reason": "emergency_first(entry) tests only whether the entry's kind is 'emergency'. lookup uses it as a stable sort key that brings emergency entries forward, and the response takes the first such entry as its opening service. It adds, removes and relabels nothing: its effect is order.",
+      "finding": "The register's own-words clause says anyone in crisis who needs help at once is sent to triple zero, and the held page agrees (hash equals the entry's): that callout is the first content block under the header, ahead of the key facts and the helpline list, with the Lifeline number straight after it. What the restatement does not carry is the ordering itself, which rests on where the page puts the callout; a reader of the clause alone cannot see it. The page is Australian, so putting 911 and 999 first for the United States and the United Kingdom is G6's extension by analogy. Directory entries (all 20 read against their pages, numbers, hours, chat links and remit words): every number, hours claim and online address is on the held page, and both remit phrases sit inside their entries' clauses. Re-read after the second pass (changed entries): the NHS clause now says the page names 999 as the number for a life-threatening emergency, which is what the page says, so the earlier 'only' is gone. The healthdirect helpline clause now puts the Victorian name in brackets after the number; the longest run it shares with the page is the service name and number, which is data. The 1800RESPECT, National Relay Service, MensLine, Beyond Blue and helpline 'for' and 'hours' fields match the page (every day for 7 days a week; deaf or hearing-impaired callers; domestic or family violence). Still looser, none a wrong claim: the 13YARN clause drops who the service is for, so that entry's audience line rests on the page's heading, and the Samaritans hours line says every day, which the clause lacks and the page's footer supports. The Translating and Interpreting entry's 'for' field shares a five-word run with the page (its wording for non-English speakers). The NHS licence text is now a single clean sentence."
+    },
+    {
+      "rule": "directory_age",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "too_old(age) is one comparison, age > STALE_AFTER_DAYS (180). lookup uses it only to set the 'stale' flag and to add a sentence to the note; the directory op then reports DIRECTORY_STALE, still qualified-draft. No entry is removed and no label is lowered.",
+      "finding": "The 180 days are G6's own: the rule text, the directory file's stale_after_source and the code comment all say so, and the WHO sentence only asks for regular checking with no interval, so citing g6 is honest. Entries retrieved on 2026-10-22 are 180 days old on 2027-04-20 (holds) and 181 on 2027-04-21 (fires), so the cases sit on the boundary. The age used is the oldest entry in the region's view, so one old entry makes the whole view stale, which is conservative."
+    },
+    {
+      "rule": "help_first",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "0325a1297ee21a32e9df6fb092acc60d52eebdadc1bb9323a2af5fa39ad6301e",
+      "effect_only": true,
+      "effect_reason": "help_not_first(text, view) lower-cases the first line, checks that it starts with a fixed call-now phrase and contains the emergency service's name, and returns a boolean. _answer withholds the response when it is true. It cannot edit the text or add anything.",
+      "finding": "In the held WHO PDF (hash equals the entry's) the sentence asking for service information at the close of a story or, better, at its opening is on PDF page 15. The code requires the first line to be the call-now sentence naming the region's emergency service (or the local emergency number where none is held), and every response I composed, for Australia, the United States, the United Kingdom, an uncovered region and no region, opens that way. The service list itself follows two lines later, so 'beginning' is read loosely, and putting the emergency number on the very first line is G6's refinement, which does not contradict the source."
+    },
+    {
+      "rule": "where_and_how",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "0325a1297ee21a32e9df6fb092acc60d52eebdadc1bb9323a2af5fa39ad6301e",
+      "effect_only": true,
+      "effect_reason": "unreachable(text) splits the text into lines and returns those that begin with '- ' and do not match, in full, the service-line pattern (a way to reach it, then hours in brackets). It returns a list and nothing else.",
+      "finding": "The quick-reference sentence asking for accurate information on where help is and how to reach it is on PDF page 9 of the held WHO file. unreachable() checks the shape of each service line (a way to reach it, then its hours in brackets), a faithful reading of 'how' for lines that exist. It cannot fault a response with no service line: the reply for an unstated or uncovered region only says to contact a local crisis line, names no number, and unreachable() returns an empty list for it (I ran it). That reply is deliberate, because no other country's number is offered as its own, and the scope lists the omission, but the rule text reads as if every response meets the rule."
+    },
+    {
+      "rule": "few_services",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "abac787b9babf4cf34477b04f755a0f687be7941694cbb67d317169099e070da",
+      "effect_only": true,
+      "effect_reason": "enough_lines(named) is named >= 2; _pick stops adding all-hours lines once it is true. The rest of the directory still travels beside the response. It selects which lines to name and removes nothing from the directory view.",
+      "finding": "The register's restatement (page hash equals the entry's; re-read after the second pass, where only the wording around the clock changed) gives two all-hours services and at least one online service as the content to provide, and the held Mindframe page lists exactly those two items, so the numbers two and one are the source's. The ceiling ('only a few') is not in this clause: it comes from the WHO sentence about a small count of services, which the rule text names but the rule's register source does not cite. enough_lines is unchanged (named >= 2) and still does only what the rule says: Australia names four of its fourteen services, the United States three, the United Kingdom two (ran it). The cases cite this entry and fire at the two-line limit and hold at the United States' three services. Note that RESPONSE_RULES in crisis.py cites the WHO entry for this rule while the rule table cites Mindframe, so the evidence a result carries and the certificate name different sources."
+    },
+    {
+      "rule": "two_all_hours_services",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "abac787b9babf4cf34477b04f755a0f687be7941694cbb67d317169099e070da",
+      "effect_only": true,
+      "effect_reason": "fewer_lines(named) is named < ALL_HOURS_SERVICES; response_gaps appends a 'safe_messaging_gap' evidence entry when it is true. It adds a note to the evidence and changes neither the response text nor any label.",
+      "finding": "The held Mindframe page names, under its question about what help-seeking information to include, two support services that run round the clock, and the changed restatement (open around the clock, every day of the week) says the same; the threshold 2 is the source's. The code names two round-the-clock phone or support lines after the emergency number where the directory holds them, and says so when it holds fewer (I ran it earlier: the United States and the United Kingdom each hold one and carry the gap note). Re-read after the second pass: all 17 entries flagged all-hours still agree with their clauses and held pages, including the reworded MensLine, Beyond Blue and helpline hours fields; the emergency entries are correctly not flagged. crisis.py's cited clause for this rule matches the register's."
+    },
+    {
+      "rule": "online_service",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "abac787b9babf4cf34477b04f755a0f687be7941694cbb67d317169099e070da",
+      "effect_only": true,
+      "effect_reason": "online_service(services) returns the first directory entry of kind 'online' for the region, or None. When it is None, response_gaps adds a gap note and nothing is invented. It selects one line and adds a note.",
+      "finding": "Re-read after the second pass: the changed Mindframe fragment does not touch this rule's clause (one or more services or forums that work online), which still says what the page says. The page asks for one or more services or forums that work online, and the restatement says so. The code names the first online entry the region holds (Lifeline's chat for Australia, 988's chat for the United States) and none for the United Kingdom, with the gap said. Lifeline's page describes its chat as round the clock and links to a relative /chat address on its own site (the directory writes the full address); 988's page links its chat button to chat.988lifeline.org, matching the entry, and says its counsellors answer by phone, text or chat at any hour. The United Kingdom is correctly empty: the held Samaritans page calls its web chat a small trial, not open to everyone and not available at present. The code names one where the page says at least one; that is the few-services ceiling, not a conflict."
+    },
+    {
+      "rule": "category_fit",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The restated Mindframe clause asks that the services named be matched to the content (a demographic group, a state, cultural diversity). That supports tailoring in general; it does not say which service suits which crisis category. The two remits G6 uses rest on service clauses of narrower or different scope than the categories: Kids Helpline's clause covers those aged 5 to 25 (children and young people), while the child_danger terms are usually said by an adult about a child, and 1800RESPECT's clause is about domestic or family violence, narrower than harmed_by_someone ('hits me', 'hurts me'). I found that the held healthdirect page also says Kids Helpline counsels parents of children in that age range, which supports the adult speaker, but the directory's clause does not carry it. Each remit's clause_says text does sit inside its entry's clause (I checked both).",
+      "code_matches": true,
+      "source_sha256": "abac787b9babf4cf34477b04f755a0f687be7941694cbb67d317169099e070da",
+      "effect_only": true,
+      "effect_reason": "category_fit(lines, categories, first) returns the first all-hours line, other than the one already named first, whose remit categories overlap the fired categories, else None; _pick then puts it second. It reorders which line is named second and nothing else.",
+      "finding": "Re-read after the second pass: the changed Mindframe fragment leaves the matching clause as it was, and 1800RESPECT's 'for' and clause now both read as domestic or family violence, so the remit phrase is still inside its clause. The code matches the rule text: for child_danger Kids Helpline is named second, for harmed_by_someone 1800RESPECT, and for suicidal ideation the default second line stays (I ran all three). The mapping data is the weak part, and I attest only that the code implements the stated mapping, not that the mapping is clinically right. Only child_danger and harmed_by_someone have a remit; ideation, self-harm and harm to others get the default second line."
+    },
+    {
+      "rule": "numbers_checked",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "stale_line(view, shown, today) returns one sentence or None; if reading the register raises, it returns the sentence (fail-safe). It adds a line to the response and to the card's reason. It removes no number and changes no label.",
+      "finding": "Citing g6 is honest: the 180 days and the 12-month review window are G6's own, the WHO sentence only asks for regular checking, and the NHS page's own next-review date is data the directory holds, not a G6 threshold. A guard on G6's own threshold has no clause, so clause_fair and source_sha256 are null. stale_line fires when the directory is past 180 days, or a shown number's source is past its register window or past its recorded review date (the due date itself is not past). The NHS page does print 3 February 2026 as its next review date, matching the register's source_review_due, and in my run the United Kingdom response carried the line that the numbers were last checked on 22 October 2026 and may have changed. The cases sit on those boundaries."
+    },
+    {
+      "rule": "language",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "39d7585f4a91c3abb5df26109675dd7afac7db8334495a56eea306e31125add6",
+      "effect_only": true,
+      "effect_reason": "problematic_language(text) normalises the text and returns each problematic phrase it holds as whole words; the phrases are read from the register clause by problematic_phrases(). It returns a list; _answer withholds the response when the list is not empty.",
+      "finding": "I read the whole language table in the held page: five issues, with nine phrases listed as problematic. The register's own-words clause names those same nine, and problematic_phrases() returns exactly those nine (I ran it); the bare word 'suicide' is correctly excluded. One liberty: the page labels its fifth issue as gratuitous use, and the clause glosses it as uses of the word where no suicide is meant. The two examples fit, but that gloss is the register's interpretation, not the page's wording, and it changes no phrase. The cases fire on six of the nine phrases (committed, commit in capitals, epidemic, successful, bid, political); 'unsuccessful suicide', 'failed suicide' and 'suicide mission' are in no case, so the recall set is drawn from the source but covers only two thirds of it."
+    },
+    {
+      "rule": "method_location",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "65f77700f227f302b0be98d192293c869c6dc8ac170d9571b462c7be09a9dd31",
+      "effect_only": true,
+      "effect_reason": "outside_words(text, view) returns the words of the normalised text that are in neither G6's own reviewed word list nor the words of the directory entries in the view. It returns a list; _answer withholds the response when the list is not empty.",
+      "finding": "The restatement says what the page says: keep detail of the method and the place to a minimum (it drops the page's word 'important' and keeps the obligation). A closed vocabulary is a strict, fair reading. I ran it: 'a rope from a bridge', 'tomorrow', 'myself', 'suicides' and 'pills' were each flagged. Two limits. The vocabulary is a word list with no sense of order, so approved words could be recombined into something unwanted (the composing code is fixed, so that needs a code change), and its allowed set includes every word of every directory entry in the view, so 'arms back blue' (parts of three service names) passes. It is a tripwire on G6's own composed text, not a screen for outside input. method_location and minimise_harm are one function checked twice, so their cases test one behaviour two times."
+    },
+    {
+      "rule": "no_method",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "0325a1297ee21a32e9df6fb092acc60d52eebdadc1bb9323a2af5fa39ad6301e",
+      "effect_only": true,
+      "effect_reason": "listed_words(text, view) removes the services' names, runs the same scan over the rest and also looks for the category names; it returns a list and nothing else (scan is read-only).",
+      "finding": "PROXY, and weak. The WHO instruction not to describe the method is on PDF pages 9 and 19 and the clause is quoted fairly. The function does not read for a description of a method: it finds the trigger's listed terms and the category names in the response's own words. crisis_rules.json says no listed term names a method, so 'a rope from a bridge' added to a response passes listed_words (I ran it: nothing flagged) and only outside_words catches it. My verdict: it is a fair reading only of its own rule text (the response repeats nothing the person said and does not say what the trigger called it), not of 'describes no method'. It is acceptable as that narrow check, because the closed vocabulary does the work of keeping methods out, but nothing public should suggest this rule detects a description. code_matches is true to the rule text as written."
+    },
+    {
+      "rule": "no_sensational_language",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "0325a1297ee21a32e9df6fb092acc60d52eebdadc1bb9323a2af5fa39ad6301e",
+      "effect_only": true,
+      "effect_reason": "sensational(text, view) is true if the text holds '!' or the whole words 'suicide' or 'suicidal' outside the services' names; it returns a boolean and nothing else.",
+      "finding": "PROXY, and the thinnest check. The WHO instruction (PDF pages 9 and 19) concerns language that sensationalises, glamourises or normalises suicide or offers it as a way out. The function reads only an exclamation mark and the two whole words. In my runs 'Take the pills!' trips it through the mark; 'People die by suicide every day' trips it only because the word appears; a calm sentence offering a method as an answer, with no mark and no listed word ('a rope from a bridge'), passes; and the plural 'suicides' is not read. So it over-refuses the plain word, which the WHO line does not forbid, and under-reads tone. My verdict: not a fair stand-alone reading of the clause; acceptable only because the response is fixed text held to a closed vocabulary. code_matches is true to the narrow words of the rule ('no exclamation mark, and its own words never name suicide'); the rule's lead words, plain calm words and nothing presented as a solution, are broader than anything the function tests."
+    },
+    {
+      "rule": "seek_help_message",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "0325a1297ee21a32e9df6fb092acc60d52eebdadc1bb9323a2af5fa39ad6301e",
+      "effect_only": true,
+      "effect_reason": "no_seek_help(text) is a lower-case substring test for the sentence that talking to someone can help, and for either 'you can reach someone now' or 'contact a local crisis line now'; it returns a boolean.",
+      "finding": "The WHO sentence about including the message that a suicidal person should seek help, with how to reach it, is on PDF page 16 of the held file. The response says that talking to someone can help and then either lists services or says to contact a local crisis line now, which carries both parts. The check is a lower-case substring test on G6's own fixed wording, so it fails only if that wording changes."
+    },
+    {
+      "rule": "hope",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The WHO sentence (PDF page 8) is advice to the media: stories of people who got through a crisis are linked with fewer deaths, so such stories should be foregrounded. The response gives one generic line, that people do come through times like this, which is not a story and is not what the sentence asks for; the sentence does not say a one-to-one reply should assert it. The step from the clause to the line is G6's reading.",
+      "code_matches": true,
+      "source_sha256": "0325a1297ee21a32e9df6fb092acc60d52eebdadc1bb9323a2af5fa39ad6301e",
+      "effect_only": true,
+      "effect_reason": "no_hope(text) is a lower-case substring test for 'people do come through'; it returns a boolean.",
+      "finding": "The code matches the rule text exactly. The sentence is a mild reassurance in the spirit of the clause; whether it suits every category the trigger covers (harm to others, a child in danger, someone being harmed) is for a qualified person, since the source concerns suicide."
+    },
+    {
+      "rule": "others_too",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The WHO sentence (PDF page 16) concerns media reporting stories of people who supported others in crisis. The rule is a different act: telling someone with concern for another person that they may use the same services. The held service pages do support it for most of the services named (Lifeline's page has a route for someone concerned about another person, the 988 page has a section for supporting a friend or relative, the Samaritans site has a page for that case, Suicide Call Back and Beyond Blue cover someone you know or a loved one, and the healthdirect page says Kids Helpline counsels parents), but the register's clauses do not carry those statements, so the clause reaches the rule only by context.",
+      "code_matches": true,
+      "source_sha256": "0325a1297ee21a32e9df6fb092acc60d52eebdadc1bb9323a2af5fa39ad6301e",
+      "effect_only": true,
+      "effect_reason": "no_others(text) is a lower-case substring test for the sentence telling a worried person they can contact the services; it returns a boolean.",
+      "finding": "The code matches the rule text. The sentence is generally helpful, and the held pages support it for the services the response names, but it is broader than the quoted clause."
+    },
+    {
+      "rule": "minimise_harm",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The restated Mindframe statement says discussion of self-harm should apply the guidance and the media's own codes so that audiences come to as little harm as possible. On the page it is a one-line summary pointing to a separate self-harm page, and the restatement's 'the guidelines ask' makes it sound like the guidelines page's own directive. It is a broad principle; the rule picks one concrete way (a single closed vocabulary for every category) and applies it to all five trigger categories, including harm to others, a child in danger and someone being harmed, which the statement does not mention.",
+      "code_matches": true,
+      "source_sha256": "9e4db47db7eb3bc57c4487490ad3c56aa8e180bf4ec1ee48c263511adb6bf0d1",
+      "effect_only": true,
+      "effect_reason": "The same outside_words(text, view) as method_location: it returns a list of words outside the reviewed vocabulary and the directory's words, and _answer withholds the response when the list is not empty.",
+      "finding": "Same function as method_location, so the cases check one behaviour twice, not two. 'As little harm as possible' is far broader than 'no unreviewed words': the closed vocabulary guarantees no detail of any act in the text, a fair part of minimising harm and not all of it. The rule text says the same reviewed words for every category; in fact the second service line differs by category (category_fit), though the vocabulary does not."
+    },
+    {
+      "rule": "phq9_total",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The held form (pypdf text) prints under its nine rows only an empty coding line, with a literal 0 for the first column and three blanks, ending in a blank for the total. It does not say in words to add the nine item scores, and it prints no range. That the total is the sum of nine item scores is the standard reading of the column-subtotal line, which I derive rather than read.",
+      "code_matches": true,
+      "source_sha256": "e3fb5b8853e3530c9025c822b99fd4f4bc17da49eefda5ed689c49238c132a46",
+      "tier_justified": true,
+      "tier_reason": "The form is a blank questionnaire: it prints no filled-in example and no worked total, so no printed value exists for score() to be run on. I read the whole one-page text to confirm. The known cases are the case author's arithmetic (printed: false), which is why this is a property rule checked by a second route and the falsifier, not a computes rule.",
+      "finding": "score() returns sum(answers) after the item 9, count and value checks; for item 9 equal to 0 that is the sum of the nine items (I ran eight 1s and a 0 and got 8, and eight 3s and a 0 and got 24). When item 9 is not 0 no total is given (that is phq9_item9). The maximum 27 is nine times three, which the form does not print. The nine shipped item texts all appear in the form's extracted text."
+    },
+    {
+      "rule": "gad7_total",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The held form (pypdf text) prints under its seven rows only a coding line with three blanks for four columns and a total label, with no statement that the total is the sum of the seven item scores and no range. The sum is the standard reading, which I derive rather than read.",
+      "code_matches": true,
+      "source_sha256": "180538a8e3f2f3cb012f9991d1b307d3d14720e82bf0593f8853f4885740ce48",
+      "tier_justified": true,
+      "tier_reason": "The form is blank and prints no worked total, so no printed value exists to run score() on; the known cases are the case author's arithmetic (printed: false). It is correctly a property rule with a second route and the falsifier.",
+      "finding": "score('gad7', ...) returns the sum of the seven answers and refuses a missing or off-scale answer (I ran seven 3s and got 21). The seven shipped item texts all appear in the form's extracted text, and the GAD-7 has no item-escalation rule."
+    },
+    {
+      "rule": "phq9_item9",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "to_a_person(data, answers) returns the data's rule for item 9 when its answer is not None and not equal to 0, else None; score() turns that into the crisis outcome and gives no total, and the door fires the lock. The effect is escalation.",
+      "finding": "The rule cites g6 and says the form sets no threshold, which matches what I found: the form's item 9 only asks the question, and the 'any answer other than 0' threshold is G6's own (the data file's 'why' says so). A guard on G6's own threshold has no clause, so clause_fair and source_sha256 are null. The crisis check comes before the missing or off-scale refusal, so item 9 = 4, or item 9 given with items 1 to 8 missing, escalates (I ran both). A bool False equals 0 and so is not escalated by this function (it is then refused as off-scale); a string '0' or 1.5 is escalated, which is conservative. The block's raw item-9 pre-check remains a second path no case reaches, as the scope says."
+    },
+    {
+      "rule": "answers_required",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "unanswered(data, answers) returns a (code, reason) pair or None from the answer count, any None and membership in the form's option values; score() turns it into a refusal. It computes and changes nothing.",
+      "finding": "G6's own rule with no source, so g6 is right. It refuses too many answers, any None (including a short list), and any value that is not an int in the form's option values (a bool is excluded by the type check). The firing, holding and recall cases cover a short list, an exact list, 4, -1, a None and an empty list."
+    },
+    {
+      "rule": "licence_settled",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "licence_unsettled(data) is data['licence']['state'] != 'settled'; score() then refuses and catalogue() lists the reason. It reads one field.",
+      "finding": "G6's own rule with no source, so g6 is right. I read the six unsettled data files (pcl5, audit, dass21, k10, must, barthel): each holds the state 'unsettled' and no item text. The PHQ-9 and GAD-7 are 'settled' on the forms' own footer permission line, which is in both held PDFs."
+    }
+  ]
+}

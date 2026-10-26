@@ -1,0 +1,16 @@
+{
+  "family": "ml",
+  "codes": [
+    {"code": "unsystematic_tuning", "title": "models tuned by hand without a systematic search"},
+    {"code": "hidden_uncertainty", "title": "a point estimate that hides its uncertainty"},
+    {"code": "training_loop_bug", "title": "setup or training-loop bugs in hand-written model code"},
+    {"code": "ill_suited_model", "title": "a model ill-suited to the data it is used on"},
+    {"code": "data_handling_error", "title": "data mistakes from ad hoc table handling"},
+    {"code": "train_test_leakage", "title": "a model scored on data it was trained on, or on a leaky split"}
+  ],
+  "planned": {
+    "g6.ml.adapt_algo_selector": ["ill_suited_model"],
+    "g6.ml.experiment_search": ["confounded_gain"],
+    "g6.ml.science_harness": ["overstated_certainty"]
+  }
+}

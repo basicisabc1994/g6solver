@@ -1,0 +1,2 @@
+{"id": 14, "claim": "Synthetic claim 4 holds.", "cited_doc_ids": [504], "evidence": {"504": [{"sentences": [0], "label": "CONTRADICT"}]}}
+{"id": 15, "claim": "Synthetic claim 5 holds.", "cited_doc_ids": [505], "evidence": {}}

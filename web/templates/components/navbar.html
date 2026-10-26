@@ -1,0 +1,32 @@
+{% load static %}{% with p=request.path %}
+<nav class="nav" id="header" aria-label="Main">
+    <div class="wrap nav__bar">
+        <a href="{% url 'pages:landing' %}" class="brand" aria-label="G6, home"><img src="{% static 'images/android-chrome-192x192.png' %}" width="36" height="36" alt=""><span class="wordmark">G6</span></a>
+        <ul class="nav__links">
+            <li><a href="{% url 'pages:metaharness' %}"{% if p == "/metaharness/" %} aria-current="page"{% endif %}>Meta-harness</a></li>
+            <li><a href="{% url 'pages:components' %}"{% if p == "/components/" %} aria-current="page"{% endif %}>Components</a></li>
+            <li><a href="{% url 'pages:research' %}"{% if p == "/research/" %} aria-current="page"{% endif %}>Research</a></li>
+            <li><a href="{% url 'docs_hub:landing' %}"{% if p|slice:":6" == "/docs/" %} aria-current="page"{% endif %}>Docs</a></li>
+            <li><a href="{% url 'pages:guide' %}"{% if p|slice:":7" == "/guide/" %} aria-current="page"{% endif %}>Guide</a></li>
+            <li><a href="{% url 'blog:index' %}"{% if p|slice:":8" == "/essays/" %} aria-current="page"{% endif %}>Essays</a></li>
+            <li><a href="{% url 'pages:faq' %}"{% if p == "/faq/" %} aria-current="page"{% endif %}>FAQ</a></li>
+        </ul>
+        <div class="nav__end">
+            <a href="https://github.com/basicisabc1994/g6solver">GitHub</a>
+            <a href="{% url 'pages:get_started' %}" class="btn btn--small cta">Get started</a>
+        </div>
+        <button id="mobile-menu-btn" class="btn btn--small nav__menu" aria-controls="mobile-menu" aria-expanded="false">Menu</button>
+    </div>
+    <div id="mobile-menu" class="wrap nav__drawer">
+        <a href="{% url 'pages:metaharness' %}">Meta-harness</a>
+        <a href="{% url 'pages:components' %}">Components</a>
+        <a href="{% url 'pages:research' %}">Research</a>
+        <a href="{% url 'docs_hub:landing' %}">Docs</a>
+        <a href="{% url 'pages:guide' %}">Guide</a>
+        <a href="{% url 'blog:index' %}">Essays</a>
+        <a href="{% url 'pages:faq' %}">FAQ</a>
+        <a href="https://github.com/basicisabc1994/g6solver">GitHub</a>
+        <a href="{% url 'pages:get_started' %}" class="btn cta">Get started</a>
+    </div>
+</nav>
+{% endwith %}

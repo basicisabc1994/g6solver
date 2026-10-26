@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}About{% endblock %}
+{% block meta_description %}G6 is a Mixture-of-Algorithms cognitive framework. LLMs orchestrate — algorithms solve.{% endblock %}
+
+{% block content %}
+{% comment %}The About text is the owner's (drafts only); this page changes its layout, not its words, except where the
+owner asked: 2026-10-20, the "No fine-tuning ... a human diagnoses failures" paragraph revised to what G6 does now, and
+"proof of concept" renamed "worked example" across the site.{% endcomment %}
+<header class="wrap page-hero">
+    <p class="label">Why we exist</p>
+    <h1 class="display">LLMs alone can't automate the real world.</h1>
+    <p class="lede why">They hallucinate. They forget. They can&rsquo;t learn on the job. They have no concept of failure or recovery.
+    Meanwhile, hand-written software remains absurdly expensive to create &mdash; and the organisations that need
+    automation most can&rsquo;t afford either path.</p>
+    <p class="lede strong">We decided to fix the architecture, not the prompt.</p>
+</header>
+
+<section class="band">
+    <div class="wrap cols">
+        <div class="band__head"><h2 class="h2">AI gives you the most likely answer. Not the right one.</h2></div>
+        <div class="band__body prose-body">
+            <p>Making models bigger yields diminishing returns. The industry has hit the ceiling of what pretraining alone can do. More data, more parameters, more GPU hours won't get us to AGI. The next step is better systems built on top of existing models.</p>
+            <p>Deep learning excels at pattern recognition but struggles with systematic reasoning, formal verification, and learning from a single failure. It lacks the structured self-correction that real-world autonomy demands.</p>
+            <p>Deep learning is a black box. You can&rsquo;t audit what you can&rsquo;t see.</p>
+            <p>The result: a seemingly intractable tradeoff. Improving cost damages reliability. Improving quality damages speed. Every axis trades off against another &mdash; and organisations are stuck choosing which failures to accept.</p>
+        </div>
+    </div>
+</section>
+
+<section class="band">
+    <div class="wrap cols">
+        <div class="band__head"><p class="label">Our mission</p><h2 class="h2">AI work you can check, with you in charge.</h2></div>
+        <div class="band__body prose-body">
+            <p><strong>Safe.</strong> No runaway superintelligence. Interpretable models with human-in-the-loop supervision at every level. You see what the system is doing and why.</p>
+            <p><strong>Equitable.</strong> AI should not concentrate wealth. Historically, reliable automation required teams of expensive engineers &mdash; concentrating its benefits among those who could already afford them. G6 distributes the economics of intelligent systems broadly: domain experts deploy production-grade AI using their own data, without hiring ML teams.</p>
+            <p><strong>Accessible.</strong> Our goal: domain experts deploy production-grade AI using their own data, without hiring ML teams. Today, G6 works best with a technical champion in the loop &mdash; the system requires Claude Code and some developer proficiency. As the product matures, we are building toward non-technical self-service. See our <a href="{% url 'pages:faq' %}#who-is-g6-for" class="link">FAQ</a> for an honest assessment of who G6 serves today.</p>
+            <p><strong>Collaborative.</strong> G6 works with human expertise, not in spite of it. Safer than autonomous AI.</p>
+            <p class="quiet"><em>Building a periodic table of intelligence, one element at a time.</em></p>
+        </div>
+    </div>
+</section>
+
+<section class="band">
+    <div class="wrap cols">
+        <div class="band__head"><p class="label">The founder</p><h2 class="h2">Built by Dr Dan</h2></div>
+        <div class="band__body prose-body">
+            <p>Dr Dan is an Australian-trained dental surgeon with a decade of clinical experience and an MSc in Artificial Intelligence, specialising in natural language processing.</p>
+            <p>Dentistry is unusually difficult to automate. It requires practitioners to integrate evidence, biomechanics, engineering, biomaterials, ethics, artistry and hands-on judgement&mdash;often under uncertainty, where the consequences of error are real. Safe decisions cannot come from pattern recognition alone. They must be diagnosed, verified, documented and continually reassessed.</p>
+            <p>G6 grew from Dr Dan&rsquo;s work translating this clinical discipline into a technical system. He identified the heuristics, safeguards and decision-making methods that make complex clinical practice reliable, then combined them with his knowledge of modern AI architectures.</p>
+            <p>The result is a fundamentally different approach: not a replacement for large language models, but a complementary system designed to make them safer, more dependable and more useful. G6 adds the structure needed to trace decisions, diagnose failures and validate improvements before deployment.</p>
+            <p>G6 exists because powerful AI is not enough. Domain experts need systems they can interrogate, verify and trust&mdash;built with the same rigour they apply to their own work.</p>
+        </div>
+    </div>
+</section>
+
+<section class="band">
+    <div class="wrap cols">
+        <div class="band__head"><p class="label">How it works</p><h2 class="h2">Symbolic AI meets deep learning.</h2></div>
+        <div class="band__body prose-body">
+            <p>G6 builds symbolic meta-models — deterministic, non-neural-network systems — that live on top of LLMs. These augment language models with explicit continual learning, reasoning, and memory that the models themselves lack.</p>
+            <p>Rather than competing with foundation labs building better deep learning, G6 takes an orthogonal approach. We integrate symbolic AI — formal logic, explicit rules, human-readable representations — with modern deep learning to get the best of both worlds.</p>
+            <p>G6 builds deterministic algorithms that replace LLM calls for recurring problem classes. Your base model&rsquo;s weights never change. As the system encounters problems, it distils verified solutions into reusable code artifacts tailored to the problem class. Each artifact is interpretable, auditable, and reusable. (The distillation pipeline is fully wired; the template library is in early development &mdash; most tasks currently use the full LLM reasoning path.)</p>
+            <p><strong>G6 engineers itself, and you stay in charge.</strong> It diagnoses why its answers fail, proposes fixes, tests each one on held-out tasks it has never seen, and keeps a change only when it wins and a person approves it. In a worked example on one local model, that lifted some public task sets by a wide margin within minutes, and changed nothing where it found nothing it could prove. Results will vary with your task and the data you have. <a href="{% url 'pages:research' %}#reading" class="link">How to read the results</a></p>
+        </div>
+    </div>
+</section>
+
+<section class="band">
+    <div class="wrap cols">
+        <div class="band__head"><p class="label">The architecture</p><h2 class="h2">Seven cognitive systems. Four levels of adaptation.</h2></div>
+        <ol class="band__body systems">
+            <li><h3 class="h3">Self-Learning</h3><p>Agents that record failures and store reusable solutions across sessions (T1&ndash;T3). The effect on results is not yet measured.</p></li>
+            <li><h3 class="h3">Self-Modification</h3><p>Supervised code rewriting. Agents debug and improve their own reasoning under safety constraints.</p></li>
+            <li><h3 class="h3">Failure Engineering</h3><p>Built-in failure detection and rollback. When an agent cannot continue safely it stops and names the next human action.</p></li>
+            <li><h3 class="h3">Alignment Engineering</h3><p>Safety and correctness by design. Not bolted on. Agents seek clarification instead of guessing.</p></li>
+            <li><h3 class="h3">Formal Methods</h3><p>Mathematical verification support. SAT solving, theorem proving, and program synthesis can provide stronger guarantees when the backend is configured and the property is formally specified.</p></li>
+            <li><h3 class="h3">Symbolic ML</h3><p>Hybrid neural-symbolic reasoning. Combines statistical learning with logical inference for reliable outputs.</p></li>
+            <li><h3 class="h3">Skill Evolution</h3><p>Evolutionary skill synthesis &mdash; candidate strategies are proposed from failures, scored on a validation set, and the top-scoring ones are kept.</p></li>
+        </ol>
+    </div>
+</section>
+{% endblock %}

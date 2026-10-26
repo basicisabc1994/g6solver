@@ -1,0 +1,38 @@
+{
+  "medico_legal": {
+    "standard_id": "std-medico-legal-001",
+    "text": "medico-legal frozen standard v1",
+    "source_provenance": "synthetic fixture (the audit's illustration, G6_Integrated_CSIR_ECHA_Wiring_Audit_2026-10-10)",
+    "predicates": [
+      "material_claims_source_linked",
+      "contrary_evidence_disclosed",
+      "image_interpretation_independently_reviewed_if_used_for_conclusion",
+      "privacy_approved",
+      "human_expert_signoff_if_required"
+    ]
+  },
+  "engineering": {
+    "standard_id": "std-engineering-001",
+    "text": "engineering frozen standard v1",
+    "source_provenance": "synthetic fixture (the audit's illustration, G6_Integrated_CSIR_ECHA_Wiring_Audit_2026-10-10)",
+    "predicates": [
+      "units_consistent",
+      "design_load_declared",
+      "applicable_standard_identified",
+      "calculation_reproduced",
+      "geometry_status_disclosed",
+      "human_engineer_review_if_required"
+    ]
+  },
+  "coding": {
+    "standard_id": "std-coding-001",
+    "text": "coding frozen standard v1",
+    "source_provenance": "synthetic fixture (the audit's illustration, G6_Integrated_CSIR_ECHA_Wiring_Audit_2026-10-10)",
+    "predicates": [
+      "baseline_tests_green_or_declared",
+      "change_tests_pass",
+      "no_test_weakened",
+      "independent_verification"
+    ]
+  }
+}

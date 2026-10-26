@@ -1,0 +1,15 @@
+{
+  "family": "integrations",
+  "codes": [
+    {"code": "unchosen_model", "title": "a task sent to a paid or unsuitable model nobody chose",
+     "description": "A router picks a model the person did not choose, including one that costs money or cannot do the task."},
+    {"code": "stale_price", "title": "a cost quoted from a price that is unknown or out of date",
+     "description": "A cost estimate uses a price that was never confirmed, or that has changed since it was read."},
+    {"code": "poor_fit_route", "title": "a task or request sent to a tool or agent that is a poor fit for it"},
+    {"code": "unseen_job_failure", "title": "a long job blocking an agent or failing unseen"},
+    {"code": "unsafe_db_access", "title": "unsafe or inconsistent database access", "severity": "high"},
+    {"code": "unclear_authority", "title": "unclear authority in mixed human and AI teams"},
+    {"code": "authority_conflict", "seed": true, "title": "conflicting claims about who may decide or act"}
+  ],
+  "planned": {}
+}

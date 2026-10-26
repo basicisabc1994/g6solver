@@ -1,0 +1,3 @@
+{"id": "Synthetic_test_0", "question": "Which synthetic option 0 is right?", "choices": {"text": ["first", "second", "third", "fourth"], "label": ["A", "B", "C", "D"]}, "answerKey": "B"}
+{"id": "Synthetic_test_1", "question": "Which synthetic option 1 is right?", "choices": {"text": ["first", "second", "third", "fourth"], "label": ["A", "B", "C", "D"]}, "answerKey": "C"}
+{"id": "Synthetic_test_2", "question": "Which synthetic option 2 is right?", "choices": {"text": ["first", "second", "third", "fourth"], "label": ["1", "2", "3", "4"]}, "answerKey": "4"}

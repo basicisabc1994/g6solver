@@ -1,0 +1,189 @@
+{
+  "arm": "F",
+  "canary_blind": 0,
+  "canary_hits": [],
+  "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+  "head_profile": {
+    "adapter": null,
+    "budgets": {
+      "max_model_calls": 8,
+      "max_output_chars": 400000,
+      "max_wall_clock_s": 120.0
+    },
+    "code": {},
+    "context_budget_chars": 0,
+    "distillates": {},
+    "exemplars": 0,
+    "extra_checks": [],
+    "hints": [],
+    "pipeline": [],
+    "prompt": "",
+    "prompt_layout": "default",
+    "retries": 0,
+    "routing": {
+      "answer": "local"
+    }
+  },
+  "method": {
+    "candidates_per_cycle": 4,
+    "cycles": 3,
+    "merge_every": 3,
+    "propose_budget": 200,
+    "race_block": 10,
+    "race_keep": 0.5,
+    "reflect_calls": 3,
+    "select_budget": 2000,
+    "use_edits": true,
+    "use_recovery": false,
+    "use_reflection": false
+  },
+  "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+  "minutes": 0.7,
+  "reflector_calls": 0,
+  "run": {
+    "activated": null,
+    "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+    "champion": "cd476b4394ff4389afd783f59b3c1dbd026514f27a9876c45910206ac148c5bf",
+    "confirmation": {
+      "false_accepts": {
+        "base": 9,
+        "candidate": 9
+      },
+      "level": 0.005367,
+      "model_calls_used": 172,
+      "n": 40,
+      "partial": false,
+      "report_digest": "218b1d60102fd71781e49eade504c2eca07eb5cc2b9765397dd51d4a3e9bfd06",
+      "success": {
+        "boundary": 0.005367,
+        "discordant": 0,
+        "look": 2,
+        "looks": 4,
+        "losses": 0,
+        "p_one_sided": 1.0,
+        "ties": 40,
+        "wins": 0
+      }
+    },
+    "cycles": [
+      {
+        "cycle": 1,
+        "new_champion": false,
+        "raced": [],
+        "select_code": "",
+        "selection_calls": 0,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 3,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 0,
+            "proposed": 0
+          }
+        },
+        "winner": null
+      },
+      {
+        "cycle": 2,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "cd476b4394ff4389afd783f59b3c1dbd026514f27a9876c45910206ac148c5bf",
+            "dropped_at_block": null,
+            "fields": 1,
+            "losses": 0,
+            "n": 60,
+            "wins": 1
+          },
+          {
+            "candidate_digest": "506960c4051f3deab787b4712e7a186cf3d3c40c08ef039f078f3c0635ee9b74",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 150,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 6,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 1,
+            "proposed": 2
+          }
+        },
+        "winner": "cd476b4394ff4389afd783f59b3c1dbd026514f27a9876c45910206ac148c5bf"
+      },
+      {
+        "cycle": 3,
+        "new_champion": false,
+        "raced": [
+          {
+            "candidate_digest": "46f57e32bba752b1d6c405888da28276409ec80d46fc60044a55e5623fac48e0",
+            "dropped_at_block": null,
+            "fields": 1,
+            "losses": 4,
+            "n": 60,
+            "wins": 4
+          },
+          {
+            "candidate_digest": "cd476b4394ff4389afd783f59b3c1dbd026514f27a9876c45910206ac148c5bf",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 191,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 9,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 3,
+            "proposed": 1
+          }
+        },
+        "winner": null
+      }
+    ],
+    "decision": {
+      "code": "G6_E_META_INSUFFICIENT_EVIDENCE",
+      "reasons": [
+        "40 held-out cases (30 needed) and 0 where base and candidate differ (5 needed)",
+        "power: {'gain_0.05': 0.0869, 'gain_0.10': 0.2624, 'gain_0.20': 0.9241}"
+      ],
+      "verdict": "refuse"
+    },
+    "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+    "notes": [],
+    "outcome": "refused",
+    "recovery": {
+      "causes": [
+        {
+          "cases": 0,
+          "code": "no_sign_of_gain",
+          "examples": [],
+          "what": "no sign of a gain: 0 wins and 0 losses on 40 held-out cases"
+        }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+      "remedies": [
+        {
+          "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+          "addresses": "no_sign_of_gain",
+          "component": "metaharness",
+          "how": "mh.diagnose()",
+          "who": "candidate"
+        }
+      ],
+      "summary": "not recommended (G6_E_META_INSUFFICIENT_EVIDENCE): no sign of a gain: 0 wins and 0 losses on 40 held-out cases"
+    },
+    "workflow_digest": "cd7aeb4f384da33da72818996eb9d3242b802d34d51fc493e8beb197bd36d803"
+  }
+}

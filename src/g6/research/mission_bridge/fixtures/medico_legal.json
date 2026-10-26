@@ -1,0 +1,222 @@
+{
+  "mission_id": "synthetic-medico-legal-001",
+  "domain": "medico_legal_claims_research",
+  "high_stakes": true,
+  "inputs": {
+    "case_data": "case_record",
+    "jurisdiction": "jurisdiction"
+  },
+  "standard": {
+    "standard_id": "std-medico-legal-001",
+    "standard_sha256": "d03f03a708ddce5e66bba70e346a30b3103930e8f6b3e8b49bb01f7183dd9e1c",
+    "predicates": [
+      "material_claims_source_linked",
+      "contrary_evidence_disclosed",
+      "image_interpretation_independently_reviewed_if_used_for_conclusion",
+      "privacy_approved",
+      "human_expert_signoff_if_required"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "scope",
+      "role": "task_standard",
+      "source_operation": "intent_engine.elicit",
+      "declared_effect": "read",
+      "requires": {
+        "case_data": "case_record",
+        "jurisdiction": "jurisdiction"
+      },
+      "provides": {
+        "scope": "scope"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "scope_check",
+      "role": "scope_review",
+      "source_operation": "align_evals.evaluate",
+      "declared_effect": "read",
+      "requires": {
+        "scope": "scope"
+      },
+      "provides": {
+        "scope_ok": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "scope"
+    },
+    {
+      "id": "search_approval",
+      "role": "approval",
+      "gate": true,
+      "source_operation": "",
+      "declared_effect": "read",
+      "requires": {
+        "scope": "scope"
+      },
+      "provides": {
+        "search_approved": "approval"
+      },
+      "data_class": "public",
+      "egress": "none",
+      "budget_cents": 0
+    },
+    {
+      "id": "context",
+      "role": "retrieval",
+      "source_operation": "ctx_search.search",
+      "declared_effect": "external",
+      "requires": {
+        "scope": "scope",
+        "search_approved": "approval"
+      },
+      "provides": {
+        "primary_sources": "source_list"
+      },
+      "data_class": "public",
+      "egress": "declared",
+      "budget_cents": null
+    },
+    {
+      "id": "context_check",
+      "role": "retrieval_review",
+      "source_operation": "ctx_rag.rag_evaluate_retrieval",
+      "declared_effect": "read",
+      "requires": {
+        "primary_sources": "source_list"
+      },
+      "provides": {
+        "retrieval_ok": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "context"
+    },
+    {
+      "id": "legal_analysis",
+      "role": "domain_reasoning",
+      "source_operation": "job_lawyer.analyze_case",
+      "declared_effect": "local_write",
+      "requires": {
+        "scope": "scope",
+        "primary_sources": "source_list",
+        "case_data": "case_record"
+      },
+      "provides": {
+        "legal_issues": "issue_list"
+      },
+      "data_class": "sensitive",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "challenge",
+      "role": "adversarial_review",
+      "source_operation": "debate.debate",
+      "declared_effect": "read",
+      "requires": {
+        "legal_issues": "issue_list"
+      },
+      "provides": {
+        "counterarguments": "argument_list"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "legal_analysis"
+    },
+    {
+      "id": "image_permission",
+      "role": "approval",
+      "gate": true,
+      "source_operation": "",
+      "declared_effect": "read",
+      "requires": {
+        "scope": "scope"
+      },
+      "provides": {
+        "image_permitted": "approval"
+      },
+      "data_class": "public",
+      "egress": "none",
+      "budget_cents": 0
+    },
+    {
+      "id": "image_assessment",
+      "role": "specialist_analysis",
+      "source_operation": "ctx_vision.describe_image",
+      "declared_effect": "read",
+      "requires": {
+        "scope": "scope",
+        "image_permitted": "approval"
+      },
+      "provides": {
+        "image_findings": "advisory_findings"
+      },
+      "data_class": "sensitive",
+      "egress": "declared",
+      "budget_cents": null
+    },
+    {
+      "id": "image_check",
+      "role": "specialist_review",
+      "source_operation": "job_medical_surgical.review_imaging",
+      "declared_effect": "read",
+      "requires": {
+        "image_findings": "advisory_findings"
+      },
+      "provides": {
+        "image_review": "check_result"
+      },
+      "data_class": "sensitive",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "image_assessment"
+    },
+    {
+      "id": "expert_signoff",
+      "role": "human_review",
+      "gate": true,
+      "source_operation": "",
+      "declared_effect": "read",
+      "requires": {
+        "counterarguments": "argument_list",
+        "image_review": "check_result",
+        "scope_ok": "check_result",
+        "retrieval_ok": "check_result"
+      },
+      "provides": {
+        "signoff": "approval"
+      },
+      "data_class": "public",
+      "egress": "none",
+      "budget_cents": 0
+    }
+  ],
+  "budget_cents": 500,
+  "charged": false,
+  "approvals": [
+    {
+      "node": "context",
+      "scope": "egress"
+    },
+    {
+      "node": "image_assessment",
+      "scope": "egress_sensitive"
+    }
+  ],
+  "required_roles": [
+    "task_standard",
+    "retrieval",
+    "domain_reasoning",
+    "adversarial_review",
+    "specialist_analysis",
+    "human_review"
+  ]
+}

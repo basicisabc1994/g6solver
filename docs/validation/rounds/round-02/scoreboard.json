@@ -1,0 +1,295 @@
+{
+  "data": {
+    "arc": "CC BY-SA 4.0",
+    "banking77": "CC BY 4.0",
+    "gsm8k": "MIT",
+    "massive": "CC BY 4.0",
+    "mbpp": "CC BY 4.0"
+  },
+  "label": "Development, not a validation",
+  "method_code_digest": "c36c26da3c5f454904b4365cc7de9f4e0a84580020eb90faacbf5908c3303b79",
+  "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+  "model": "llama3.1:8b",
+  "model_digest": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+  "pooled": {
+    "A": {
+      "n": 500,
+      "success": 288
+    },
+    "B": {
+      "n": 500,
+      "success": 288
+    },
+    "D": {
+      "n": 500,
+      "success": 388
+    },
+    "F": {
+      "n": 500,
+      "success": 314
+    },
+    "H": {
+      "n": 500,
+      "success": 319
+    }
+  },
+  "reflector": "gpt-oss:20b",
+  "reflector_digest": "9ba9cc2b4e02463b933096090530aef679d534dd91ecc9afadfb2dbfdc59f3c5",
+  "repeat": {
+    "arc": {
+      "identical": 100,
+      "n": 100
+    },
+    "banking77": {
+      "identical": 100,
+      "n": 100
+    },
+    "gsm8k": {
+      "identical": 100,
+      "n": 100
+    },
+    "massive": {
+      "identical": 100,
+      "n": 100
+    },
+    "mbpp": {
+      "identical": 100,
+      "n": 100
+    }
+  },
+  "round": 2,
+  "tuning": {
+    "arc-D": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 3.5,
+      "outcome": "refused"
+    },
+    "arc-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 0.7,
+      "outcome": "refused"
+    },
+    "banking77-D": {
+      "canary_hits": 0,
+      "head_digest": "9085db49ccdb2cfc2b565824b470696b86b959e4f506134ea83f7d341c8d9502",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 6.0,
+      "outcome": "activated"
+    },
+    "banking77-F": {
+      "canary_hits": 0,
+      "head_digest": "770c24202543a36018162728346c2c655379848f7aa254b0f3ab7d08b5bf970a",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 2.3,
+      "outcome": "activated"
+    },
+    "gsm8k-D": {
+      "canary_hits": 0,
+      "head_digest": "8e7982b40081cad4276d4c94ddfae1988e5704522d7a26843fc131b27a81f23e",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 8.9,
+      "outcome": "activated"
+    },
+    "gsm8k-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 7.6,
+      "outcome": "refused"
+    },
+    "massive-D": {
+      "canary_hits": 0,
+      "head_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 1.7,
+      "outcome": "activated"
+    },
+    "massive-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 2.1,
+      "outcome": "refused"
+    },
+    "mbpp-D": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 14.5,
+      "outcome": "refused"
+    },
+    "mbpp-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 11.6,
+      "outcome": "refused"
+    }
+  },
+  "workflows": {
+    "arc": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 82
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 82
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 82
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 82
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 76
+      }
+    },
+    "banking77": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 52
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 52
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 81
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 78
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 54
+      }
+    },
+    "gsm8k": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 26
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 26
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 90
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 26
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 85
+      }
+    },
+    "massive": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 67
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 67
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 74
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 67
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 47
+      }
+    },
+    "mbpp": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 61
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 98,
+        "success": 61
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 98,
+        "success": 61
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 98,
+        "success": 61
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 57
+      }
+    }
+  }
+}

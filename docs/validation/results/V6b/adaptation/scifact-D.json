@@ -1,0 +1,1677 @@
+{
+ "adapt_code": "G6_E_META_READY",
+ "cycles": [
+  {
+   "cycle": 1,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 11,
+     "dev_calls_used": 20,
+     "candidates": [
+      "449071eaa1397e74c0ba6ac9287af7eb6fc6270eae1be053954c70343bd2c774"
+     ],
+     "diffs": [
+      {
+       "pipeline": {
+        "from": [],
+        "to": [
+         "second_look_support"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null,
+     "diagnosis_of_view": {
+      "summary": "9 of 20 dev cases fail: 9 of 20 dev answers passed the checks and were wrong (answer kind: label); 7 of the 9 wrong answers were 'SUPPORT': the model over-uses it",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "9 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+        "cases": 9,
+        "examples": [
+         "scifact-train-1193",
+         "scifact-train-1306",
+         "scifact-train-1195",
+         "scifact-train-0687",
+         "scifact-train-0379"
+        ]
+       },
+       {
+        "code": "overused_label",
+        "what": "7 of the 9 wrong answers were 'SUPPORT': the model over-uses it",
+        "cases": 7,
+        "examples": [
+         "scifact-train-1193",
+         "scifact-train-1306",
+         "scifact-train-1195",
+         "scifact-train-0379",
+         "scifact-train-0909"
+        ]
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Ask the model once more whenever it answers 'SUPPORT': confirm it against the input, or choose another label.",
+        "who": "candidate",
+        "addresses": "overused_label",
+        "component": "reasoning",
+        "how": "Workflow(pipeline_steps={'second_look': steps.second_look('SUPPORT', labels)}), then Profile(pipeline=['second_look'])"
+       },
+       {
+        "action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "context",
+        "how": "Profile(exemplars=8), with Workflow(examples=<your labelled cases>) or the dev split; searchable as {'exemplars': [0, 8]}"
+       },
+       {
+        "action": "Vote over several answers (self-consistency); the gate compares it with the base given the same calls.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "g6.reasoning.self_consistency / weighted_vote"
+       },
+       {
+        "action": "If the label is a judgement about a source text (supports, contradicts), add a step that checks the claim against the text and corrects a label the text contradicts.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "grounding",
+        "how": "a PipelineStep calling g6.grounding.check_claim (status 'conflict')"
+       }
+      ],
+      "next_action": "Ask the model once more whenever it answers 'SUPPORT': confirm it against the input, or choose another label."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 11,
+     "dev_calls_used": 1309,
+     "candidates": [
+      "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0"
+     ],
+     "diffs": [
+      {
+       "prompt": {
+        "from": "",
+        "to": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only."
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "449071eaa1397e74c0ba6ac9287af7eb6fc6270eae1be053954c70343bd2c774",
+     "strategy": "recovery",
+     "proposer": "auto:recovery",
+     "diff": {
+      "pipeline": {
+       "from": [],
+       "to": [
+        "second_look_support"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 29,
+       "losses": 17,
+       "ties": 117,
+       "discordant": 46,
+       "p_one_sided": 0.051903
+      },
+      "false_accepts": {
+       "base": 64,
+       "candidate": 52
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.607362,
+        "candidate_mean": 0.680982,
+        "diff_mean": 0.07362,
+        "diff_upper_95": 0.141611,
+        "candidate_upper_95": 0.741218
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.730061,
+        "diff_mean": 0.730061,
+        "diff_upper_95": 0.787433,
+        "candidate_upper_95": 1.787433
+       },
+       "wall_clock_s": {
+        "base_mean": 0.140436,
+        "candidate_mean": 0.157865,
+        "diff_mean": 0.017429,
+        "diff_upper_95": 0.027639,
+        "candidate_upper_95": 0.168244
+       }
+      },
+      "negative_control": {
+       "wins": 99,
+       "losses": 0,
+       "ties": 64,
+       "discordant": 99,
+       "p_one_sided": 0.0,
+       "base_success": 99,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 28,
+       "losses": 19,
+       "ties": 116,
+       "discordant": 47,
+       "p_one_sided": 0.12148,
+       "control_success": 102,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0913,
+       "gain_0.10": 0.4602,
+       "gain_0.20": 0.9968
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 771,
+      "reuse_index": 1,
+      "notes": [],
+      "base_success": 99,
+      "candidate_success": 111,
+      "digest": "9a254b48632816c1a864a3f59ef4836ae54eaf390240bbf1107bbef2faf0315d"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 29, losses 17, p 0.051903 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 1
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 99,
+         "losses": 0,
+         "ties": 64,
+         "discordant": 99,
+         "p_one_sided": 0.0,
+         "base_success": 99,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 46
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): the candidate won 29 and lost 17 of 163 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+      "causes": [
+       {
+        "code": "underpowered",
+        "what": "the candidate won 29 and lost 17 of 163 held-out cases: a gain this test cannot confirm at this size (p must be at most 0.00833333, with at least 5 disagreements)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Add fresh held-out cases with known answers: about 546 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'.",
+        "who": "person",
+        "addresses": "underpowered",
+        "component": "",
+        "how": "a larger held-out split, frozen and confirmed by a person"
+       },
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Add fresh held-out cases with known answers: about 546 in all would confirm a gain of this size 80% of the time. Do not read this result as 'no effect'."
+     }
+    },
+    {
+     "candidate_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only."
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 32,
+       "losses": 11,
+       "ties": 120,
+       "discordant": 43,
+       "p_one_sided": 0.000957
+      },
+      "false_accepts": {
+       "base": 60,
+       "candidate": 39
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.631902,
+        "candidate_mean": 0.760736,
+        "diff_mean": 0.128834,
+        "diff_upper_95": 0.19309,
+        "candidate_upper_95": 0.815872
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.141896,
+        "candidate_mean": 0.146822,
+        "diff_mean": 0.004926,
+        "diff_upper_95": 0.007498,
+        "candidate_upper_95": 0.151433
+       }
+      },
+      "negative_control": {
+       "wins": 103,
+       "losses": 0,
+       "ties": 60,
+       "discordant": 103,
+       "p_one_sided": 0.0,
+       "base_success": 103,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0976,
+       "gain_0.10": 0.494,
+       "gain_0.20": 0.9986
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 326,
+      "reuse_index": 2,
+      "notes": [],
+      "base_success": 103,
+      "candidate_success": 124,
+      "digest": "c2cf7ad47a6d2816129fccf1fdda510d11d08924497ef582c97ebd6679f57345"
+     },
+     "decision": {
+      "verdict": "recommend",
+      "code": "G6_E_META_RECOMMENDED",
+      "reasons": [
+       "the candidate beat the base on the held-out split under every rule; a person must approve it before it is used"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 2
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 103,
+         "losses": 0,
+         "ties": 60,
+         "discordant": 103,
+         "p_one_sided": 0.0,
+         "base_success": 103,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 43
+        }
+       },
+       {
+        "step": "success",
+        "result": "pass",
+        "detail": {
+         "wins": 32,
+         "losses": 11,
+         "ties": 120,
+         "discordant": 43,
+         "p_one_sided": 0.000957
+        }
+       },
+       {
+        "step": "compute",
+        "result": "pass",
+        "detail": {
+         "over_base": false,
+         "control": null
+        }
+       },
+       {
+        "step": "objectives and false accepts",
+        "result": "pass",
+        "detail": {
+         "base": 60,
+         "candidate": 39
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "7 of 20 dev cases fail: 7 of 20 dev answers passed the checks and were wrong (answer kind: label); 5 of the 7 wrong answers were 'SUPPORT': the model over-uses it",
+    "recovery": {
+     "summary": "7 of 20 dev cases fail: 7 of 20 dev answers passed the checks and were wrong (answer kind: label); 5 of the 7 wrong answers were 'SUPPORT': the model over-uses it",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "7 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+       "cases": 7,
+       "examples": [
+        "scifact-train-1306",
+        "scifact-train-0687",
+        "scifact-train-0379",
+        "scifact-train-0035",
+        "scifact-train-0746"
+       ]
+      },
+      {
+       "code": "overused_label",
+       "what": "5 of the 7 wrong answers were 'SUPPORT': the model over-uses it",
+       "cases": 5,
+       "examples": [
+        "scifact-train-1306",
+        "scifact-train-0687",
+        "scifact-train-0379",
+        "scifact-train-1212",
+        "scifact-train-1308"
+       ]
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Ask the model once more whenever it answers 'SUPPORT': confirm it against the input, or choose another label.",
+       "who": "candidate",
+       "addresses": "overused_label",
+       "component": "reasoning",
+       "how": "Workflow(pipeline_steps={'second_look': steps.second_look('SUPPORT', labels)}), then Profile(pipeline=['second_look'])"
+      },
+      {
+       "action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "context",
+       "how": "Profile(exemplars=8), with Workflow(examples=<your labelled cases>) or the dev split; searchable as {'exemplars': [0, 8]}"
+      },
+      {
+       "action": "Vote over several answers (self-consistency); the gate compares it with the base given the same calls.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "g6.reasoning.self_consistency / weighted_vote"
+      },
+      {
+       "action": "If the label is a judgement about a source text (supports, contradicts), add a step that checks the claim against the text and corrects a label the text contradicts.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "grounding",
+       "how": "a PipelineStep calling g6.grounding.check_claim (status 'conflict')"
+      }
+     ],
+     "next_action": "Ask the model once more whenever it answers 'SUPPORT': confirm it against the input, or choose another label."
+    },
+    "dev_success": 13,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "activation": {
+    "code": "G6_E_META_ACTIVATED",
+    "head_version": 1,
+    "candidate_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0",
+    "strategy": "search",
+    "diff": {
+     "prompt": {
+      "from": "",
+      "to": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only."
+     }
+    },
+    "rule": "scripted: approve the recommended candidate with the most net wins on the gate split (ties: the first proposed)"
+   },
+   "head_version": 1,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only.",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0"
+  },
+  {
+   "cycle": 2,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 17,
+     "dev_calls_used": 20,
+     "candidates": [
+      "bf3786958001f762995464d63cb0a541d1a2bac98c366c804362126262884db9"
+     ],
+     "diffs": [
+      {
+       "exemplars": {
+        "from": 0,
+        "to": 8
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null,
+     "diagnosis_of_view": {
+      "summary": "3 of 20 dev cases fail: 3 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "3 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+        "cases": 3,
+        "examples": [
+         "scifact-train-1306",
+         "scifact-train-0379",
+         "scifact-train-0909"
+        ]
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "context",
+        "how": "Profile(exemplars=8), with Workflow(examples=<your labelled cases>) or the dev split; searchable as {'exemplars': [0, 8]}"
+       },
+       {
+        "action": "Vote over several answers (self-consistency); the gate compares it with the base given the same calls.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "g6.reasoning.self_consistency / weighted_vote"
+       },
+       {
+        "action": "If the label is a judgement about a source text (supports, contradicts), add a step that checks the claim against the text and corrects a label the text contradicts.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "grounding",
+        "how": "a PipelineStep calling g6.grounding.check_claim (status 'conflict')"
+       }
+      ],
+      "next_action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 17,
+     "dev_calls_used": 1272,
+     "candidates": [
+      "d4b674153d26abc3425d9c897eae97271e9f4b90f031c2f05b258196265351dd"
+     ],
+     "diffs": [
+      {
+       "pipeline": {
+        "from": [],
+        "to": [
+         "second_look_contradict"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "bf3786958001f762995464d63cb0a541d1a2bac98c366c804362126262884db9",
+     "strategy": "recovery",
+     "proposer": "auto:recovery",
+     "diff": {
+      "exemplars": {
+       "from": 0,
+       "to": 8
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 13,
+       "losses": 16,
+       "ties": 134,
+       "discordant": 29,
+       "p_one_sided": 0.770871
+      },
+      "false_accepts": {
+       "base": 40,
+       "candidate": 43
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.754601,
+        "candidate_mean": 0.736196,
+        "diff_mean": -0.018405,
+        "diff_upper_95": 0.036055,
+        "candidate_upper_95": 0.79315
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.178086,
+        "candidate_mean": 0.244767,
+        "diff_mean": 0.066681,
+        "diff_upper_95": 0.070996,
+        "candidate_upper_95": 0.249015
+       }
+      },
+      "negative_control": {
+       "wins": 123,
+       "losses": 0,
+       "ties": 40,
+       "discordant": 123,
+       "p_one_sided": 0.0,
+       "base_success": 123,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.1425,
+       "gain_0.10": 0.7126,
+       "gain_0.20": 1.0
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 326,
+      "reuse_index": 3,
+      "notes": [],
+      "base_success": 123,
+      "candidate_success": 120,
+      "digest": "9eb4a463f62692554db6c7a1c4db0bef8e808bfeeb0bde66b2710f3ffa2e36da"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 13, losses 16, p 0.770871 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 3
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 123,
+         "losses": 0,
+         "ties": 40,
+         "discordant": 123,
+         "p_one_sided": 0.0,
+         "base_success": 123,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 29
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 13 wins and 16 losses on 163 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 13 wins and 16 losses on 163 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    },
+    {
+     "candidate_digest": "d4b674153d26abc3425d9c897eae97271e9f4b90f031c2f05b258196265351dd",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "pipeline": {
+       "from": [],
+       "to": [
+        "second_look_contradict"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 2,
+       "losses": 6,
+       "ties": 155,
+       "discordant": 8,
+       "p_one_sided": 0.964844
+      },
+      "false_accepts": {
+       "base": 35,
+       "candidate": 39
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.785276,
+        "candidate_mean": 0.760736,
+        "diff_mean": -0.02454,
+        "diff_upper_95": 0.003915,
+        "candidate_upper_95": 0.815872
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.030675,
+        "diff_mean": 0.030675,
+        "diff_upper_95": 0.05296,
+        "candidate_upper_95": 1.05296
+       },
+       "wall_clock_s": {
+        "base_mean": 0.149865,
+        "candidate_mean": 0.073528,
+        "diff_mean": -0.076337,
+        "diff_upper_95": -0.068799,
+        "candidate_upper_95": 0.080072
+       }
+      },
+      "negative_control": {
+       "wins": 128,
+       "losses": 0,
+       "ties": 35,
+       "discordant": 128,
+       "p_one_sided": 0.0,
+       "base_success": 128,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 5,
+       "losses": 8,
+       "ties": 150,
+       "discordant": 13,
+       "p_one_sided": 0.866577,
+       "control_success": 127,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.7111,
+       "gain_0.10": 0.9977,
+       "gain_0.20": 1.0
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 657,
+      "reuse_index": 4,
+      "notes": [],
+      "base_success": 128,
+      "candidate_success": 124,
+      "digest": "95d9e3c26c01f76cb27479b59cd0c8644378d6ca65ba189001fd45f84211ac21"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 2, losses 6, p 0.964844 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 4
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 128,
+         "losses": 0,
+         "ties": 35,
+         "discordant": 128,
+         "p_one_sided": 0.0,
+         "base_success": 128,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 8
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 2 wins and 6 losses on 163 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 2 wins and 6 losses on 163 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "4 of 20 dev cases fail: 4 of 20 dev answers passed the checks and were wrong (answer kind: label); 3 of the 4 wrong answers were 'SUPPORT': the model over-uses it",
+    "recovery": {
+     "summary": "4 of 20 dev cases fail: 4 of 20 dev answers passed the checks and were wrong (answer kind: label); 3 of the 4 wrong answers were 'SUPPORT': the model over-uses it",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "4 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+       "cases": 4,
+       "examples": [
+        "scifact-train-1306",
+        "scifact-train-0379",
+        "scifact-train-0909",
+        "scifact-train-1212"
+       ]
+      },
+      {
+       "code": "overused_label",
+       "what": "3 of the 4 wrong answers were 'SUPPORT': the model over-uses it",
+       "cases": 3,
+       "examples": [
+        "scifact-train-1306",
+        "scifact-train-0909",
+        "scifact-train-1212"
+       ]
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Ask the model once more whenever it answers 'SUPPORT': confirm it against the input, or choose another label.",
+       "who": "candidate",
+       "addresses": "overused_label",
+       "component": "reasoning",
+       "how": "Workflow(pipeline_steps={'second_look': steps.second_look('SUPPORT', labels)}), then Profile(pipeline=['second_look'])"
+      },
+      {
+       "action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "context",
+       "how": "Profile(exemplars=8), with Workflow(examples=<your labelled cases>) or the dev split; searchable as {'exemplars': [0, 8]}"
+      },
+      {
+       "action": "Vote over several answers (self-consistency); the gate compares it with the base given the same calls.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "g6.reasoning.self_consistency / weighted_vote"
+      },
+      {
+       "action": "If the label is a judgement about a source text (supports, contradicts), add a step that checks the claim against the text and corrects a label the text contradicts.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "grounding",
+       "how": "a PipelineStep calling g6.grounding.check_claim (status 'conflict')"
+      }
+     ],
+     "next_action": "Ask the model once more whenever it answers 'SUPPORT': confirm it against the input, or choose another label."
+    },
+    "dev_success": 16,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "head_version": 1,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only.",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0"
+  },
+  {
+   "cycle": 3,
+   "offers": [
+    {
+     "strategy": "recovery",
+     "code": "G6_E_META_NO_NEW_CANDIDATE",
+     "message": "no new candidate: the strategy proposed nothing that is valid and new",
+     "dev_success": null,
+     "dev_calls_used": 20,
+     "candidates": [],
+     "diffs": [],
+     "refused": [],
+     "recovery": {
+      "summary": "the strategy proposed nothing valid and new",
+      "causes": [
+       {
+        "code": "search_exhausted",
+        "what": "the strategy proposed nothing valid and new",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it.",
+        "who": "candidate",
+        "addresses": "search_exhausted",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       },
+       {
+        "action": "Declare more options for the search (prompts, pipeline steps, extra checks, models), or write a candidate by hand with mh.candidate(...).",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       }
+      ],
+      "next_action": "Run mh.diagnose() to see which kind of failure is left, and which G6 components address it."
+     },
+     "diagnosis_of_view": {
+      "summary": "3 of 20 dev cases fail: 3 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+      "causes": [
+       {
+        "code": "wrong_answer",
+        "what": "3 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+        "cases": 3,
+        "examples": [
+         "scifact-train-1306",
+         "scifact-train-0379",
+         "scifact-train-0909"
+        ]
+       },
+       {
+        "code": "search_exhausted",
+        "what": "3 candidates were refused so far (G6_E_META_NO_GAIN x3)",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "context",
+        "how": "Profile(exemplars=8), with Workflow(examples=<your labelled cases>) or the dev split; searchable as {'exemplars': [0, 8]}"
+       },
+       {
+        "action": "Vote over several answers (self-consistency); the gate compares it with the base given the same calls.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "reasoning",
+        "how": "g6.reasoning.self_consistency / weighted_vote"
+       },
+       {
+        "action": "If the label is a judgement about a source text (supports, contradicts), add a step that checks the claim against the text and corrects a label the text contradicts.",
+        "who": "candidate",
+        "addresses": "wrong_answer",
+        "component": "grounding",
+        "how": "a PipelineStep calling g6.grounding.check_claim (status 'conflict')"
+       },
+       {
+        "action": "Widen what is tried: declare pipeline steps built on the components named above, not only prompt wording.",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       },
+       {
+        "action": "Several candidates fell short on the held-out split: a larger split may be what is missing. Each decision's recovery estimates the size.",
+        "who": "person",
+        "addresses": "search_exhausted",
+        "component": "",
+        "how": ""
+       }
+      ],
+      "next_action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names."
+     }
+    },
+    {
+     "strategy": "search",
+     "code": "G6_E_META_PROPOSED",
+     "message": "1 candidate(s); evaluate each",
+     "dev_success": 17,
+     "dev_calls_used": 1322,
+     "candidates": [
+      "17498c21d5aea885859a23a781101f19161e3eaf708bcab85af10c3bdc783208"
+     ],
+     "diffs": [
+      {
+       "extra_checks": {
+        "from": [],
+        "to": [
+         "label-only"
+        ]
+       }
+      }
+     ],
+     "refused": [],
+     "recovery": null
+    }
+   ],
+   "evaluations": [
+    {
+     "candidate_digest": "17498c21d5aea885859a23a781101f19161e3eaf708bcab85af10c3bdc783208",
+     "strategy": "search",
+     "proposer": "auto:search",
+     "diff": {
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "label-only"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 163,
+      "success": {
+       "wins": 6,
+       "losses": 6,
+       "ties": 151,
+       "discordant": 12,
+       "p_one_sided": 0.612793
+      },
+      "false_accepts": {
+       "base": 39,
+       "candidate": 39
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.760736,
+        "candidate_mean": 0.760736,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.035065,
+        "candidate_upper_95": 0.815872
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 0.140258,
+        "candidate_mean": 0.055344,
+        "diff_mean": -0.084914,
+        "diff_upper_95": -0.080744,
+        "candidate_upper_95": 0.057021
+       }
+      },
+      "negative_control": {
+       "wins": 124,
+       "losses": 0,
+       "ties": 39,
+       "discordant": 124,
+       "p_one_sided": 0.0,
+       "base_success": 124,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.3965,
+       "gain_0.10": 0.9977,
+       "gain_0.20": 1.0
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 326,
+      "reuse_index": 5,
+      "notes": [],
+      "base_success": 124,
+      "candidate_success": 124,
+      "digest": "b3df6fa250a72cf674acd4c3d6a6be965feb349950f7038419928e4752f13b83"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 6, losses 6, p 0.612793 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "label-only"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 5
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 124,
+         "losses": 0,
+         "ties": 39,
+         "discordant": 124,
+         "p_one_sided": 0.0,
+         "base_success": 124,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 163,
+         "discordant": 12
+        }
+       }
+      ]
+     },
+     "recovery": {
+      "summary": "not recommended (G6_E_META_NO_GAIN): no sign of a gain: 6 wins and 6 losses on 163 held-out cases",
+      "causes": [
+       {
+        "code": "no_sign_of_gain",
+        "what": "no sign of a gain: 6 wins and 6 losses on 163 held-out cases",
+        "cases": 0,
+        "examples": []
+       }
+      ],
+      "remedies": [
+       {
+        "action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them.",
+        "who": "candidate",
+        "addresses": "no_sign_of_gain",
+        "component": "metaharness",
+        "how": "mh.diagnose()"
+       }
+      ],
+      "next_action": "Run mh.diagnose(): it reads the active version's dev failures and names the G6 components that address them."
+     }
+    }
+   ],
+   "diagnose": {
+    "code": "G6_E_META_DIAGNOSED",
+    "summary": "3 of 20 dev cases fail: 3 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+    "recovery": {
+     "summary": "3 of 20 dev cases fail: 3 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+     "causes": [
+      {
+       "code": "wrong_answer",
+       "what": "3 of 20 dev answers passed the checks and were wrong (answer kind: label)",
+       "cases": 3,
+       "examples": [
+        "scifact-train-1306",
+        "scifact-train-0379",
+        "scifact-train-0909"
+       ]
+      },
+      {
+       "code": "search_exhausted",
+       "what": "3 candidates were refused so far (G6_E_META_NO_GAIN x3)",
+       "cases": 0,
+       "examples": []
+      }
+     ],
+     "remedies": [
+      {
+       "action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "context",
+       "how": "Profile(exemplars=8), with Workflow(examples=<your labelled cases>) or the dev split; searchable as {'exemplars': [0, 8]}"
+      },
+      {
+       "action": "Vote over several answers (self-consistency); the gate compares it with the base given the same calls.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "reasoning",
+       "how": "g6.reasoning.self_consistency / weighted_vote"
+      },
+      {
+       "action": "If the label is a judgement about a source text (supports, contradicts), add a step that checks the claim against the text and corrects a label the text contradicts.",
+       "who": "candidate",
+       "addresses": "wrong_answer",
+       "component": "grounding",
+       "how": "a PipelineStep calling g6.grounding.check_claim (status 'conflict')"
+      },
+      {
+       "action": "Widen what is tried: declare pipeline steps built on the components named above, not only prompt wording.",
+       "who": "person",
+       "addresses": "search_exhausted",
+       "component": "",
+       "how": ""
+      },
+      {
+       "action": "Several candidates fell short on the held-out split: a larger split may be what is missing. Each decision's recovery estimates the size.",
+       "who": "person",
+       "addresses": "search_exhausted",
+       "component": "",
+       "how": ""
+      }
+     ],
+     "next_action": "Show the model labelled examples of similar inputs from your own labelled data (never the held-out cases): confusable labels are told apart by examples, not by their names."
+    },
+    "dev_success": 17,
+    "dev_cases": 20,
+    "dev_calls_used": 20
+   },
+   "head_version": 1,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "Use only the abstract, not outside knowledge. If the abstract does not address the claim directly, the label is NOT_ENOUGH_INFO. Reply with the label only.",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null,
+    "exemplars": 0
+   },
+   "head_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0"
+  }
+ ],
+ "confirm": {
+  "code": "G6_E_META_CONFIRMED",
+  "workflow_digest": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270",
+  "judging_sha256": "b9b38a90d820604df055c3cda05dd241eb02cae7ff6bc4c69e2fb409baeda51f",
+  "held_out_digest": "e3317bc4e24711c824ba7167c99ce56f9831c31eb777f1a71fb8bb868ef6a282",
+  "accept_risky": "v6b-scripted-approval (study script, not a person)"
+ },
+ "report": {
+  "completion_state": "qualified-draft",
+  "reliability_label": "qualified-draft",
+  "warning_card": {
+   "code": "G6_E_META_REPORT",
+   "message": "what this meta-harness has shown",
+   "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+   "severity": "amber",
+   "why": "what this meta-harness has shown",
+   "risks": [],
+   "verified": false,
+   "next_step": "Inspect the degraded invocation envelope before trusting the result."
+  },
+  "evidence": [],
+  "egress_notice": [],
+  "request_id": "2d25b70452df",
+  "task_id": "",
+  "run_id": "6f3ed18c096f45509141e373c5c17a55",
+  "degraded": true,
+  "degradation_reason": "",
+  "known_limitations": [
+   "Qualified draft: this output has not been independently verified."
+  ],
+  "missing_checks": [
+   "Independent verification was not completed for this output."
+  ],
+  "recommended_next_steps": [
+   "Review the warning card and verify this output before relying on it."
+  ],
+  "risk_level": "medium",
+  "confidence": null,
+  "block_reason": "",
+  "required_human_decision": "",
+  "evidence_collected": [],
+  "safe_next_action": "",
+  "rollback_or_containment": "",
+  "code": "G6_E_META_REPORT",
+  "message": "what this meta-harness has shown",
+  "next_action": "",
+  "checked": [
+   {
+    "claim": "the store's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "the ledger's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "every activation names a person and a decision",
+    "holds": true
+   },
+   {
+    "claim": "every live run used the profile of the version it names",
+    "holds": true
+   },
+   {
+    "claim": "online tuning is off",
+    "holds": true
+   },
+   {
+    "claim": "audited share of live runs: at least 0.1",
+    "holds": true
+   }
+  ],
+  "measured": [
+   {
+    "claim": "the last held-out evaluation",
+    "value": {
+     "base_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0",
+     "candidate_digest": "17498c21d5aea885859a23a781101f19161e3eaf708bcab85af10c3bdc783208",
+     "model_calls_used": 326,
+     "n": 163,
+     "partial": false,
+     "purpose": "evaluation",
+     "run_ids": [
+      "3726f82f246c43b3bb93e2dc06c5241a",
+      "1e6fbddb3dbf4a718524040813328775",
+      "0034ae98f798461885bd5d398621cbec",
+      "2b347f2cd3c047f99f5281ace40af654",
+      "2767d966d57b4fc49719e34a4c09bf4a",
+      "82e12c979fb94e88b6f85e1ea3dff2d0",
+      "a51e1808d42845acb21a39b8b4465392",
+      "44c0be735cf44b0480fe65bc878d87a8",
+      "e19aa33507ac48e19390720ad1b77659",
+      "836e44e36d79477e9537b6ae5d9c0ac5",
+      "ddaa76d975fe48beaddf6aa4ee8c3693",
+      "ed405ce6034a445d9d6d00adf1ba3457",
+      "f4ca5bb7225e44c9a32ee2c4e253abb7",
+      "8e4952c47d354d6d96f8e26348d6d784",
+      "e11f6c6f95d74370acfa6d295fa0f69a",
+      "5a4f40ae0bd347028f73d15333f1cb7d",
+      "c6c635bc50d54e3d9d7ad1d83c6668fe",
+      "a90cbc551c2b4305a6875821499a3cec",
+      "96eddaeb69c34969b8a9f21bd5287e90",
+      "2b5b3eed36704168b3eb5b065b3fc24c",
+      "c2cc04d6edf94ec1a751ebebd2cd9255",
+      "eca7e1f299d44979a7673157e5aa33f5",
+      "3cb88c734bf04b58acb4f8ff95435df5",
+      "5acc55dee74f49a2860d6fcef2420e97",
+      "75356bdae64e4268abb782bdeb8277fe",
+      "3e1df1d3cef54e9192d77ee4030a903f",
+      "be7f32391e0a42cd825dcd1ae320f110",
+      "8457944b789c4032947f9c6bb0cfae28",
+      "86b6c430ab374da0aae3ae34ef415c31",
+      "2142fe531d6042ca8107c0b6f8bd4539",
+      "fe503289ff2c4ae1b45e4b2eeb9f7840",
+      "0834c7f9c18d44f1ad23d0fccb8ce675",
+      "05b9eb471b7a439b8b0a25c5246c3808",
+      "4e26d28b3e5c4fac8cc380dada8bb347",
+      "b04a68c3497940ef81bf5f5f58d0b315",
+      "75a7d2e07fec428d988708f1cda72b2a",
+      "610edf2cd3ee44c4a1d52ac3cce3c55f",
+      "ad5262ce777e488e82efe2ea55eeb7d2",
+      "25fdaaa548694859acccbf83c5d5a945",
+      "421d8779a5984acc9c90e6c83b491fbf",
+      "250d03a666484b88987686c662dd97aa",
+      "74c972813ce5466e945550965b4cf98c",
+      "392498de2eea47d18a3cf09f91e72db4",
+      "2fdd9cc8eaf64dceb7fe0fa74bfa1097",
+      "3ebd4db76567457fb93413fdeb6c1478",
+      "7bc3b8bdf8c74dbdad3883757886de83",
+      "461193ad70c9401fbfa03a3fc55cc29e",
+      "e35cc163fc794393b68caf729aa098dd",
+      "7704f3a07889487584ca471ac050fa22",
+      "f39e806d18cc400aa78c23fabe79e67d",
+      "89dbad67223243e6ba63eb67518ccfdc",
+      "cd187c2a2a6143adb40bdb39c264ad84",
+      "2b60a2710fc74f378585c36853bd9813",
+      "593de80cd22740af88b1a14272363f68",
+      "8aa4e9db000e4671b0fcae418c1a758b",
+      "32fb96eb9ff54eb4a46748adcee3eca4",
+      "5145203ec0ce4663b4302a8263e5b756",
+      "71392738cd574f41bbddd87c9cb88b5b",
+      "351851589c2e426f8633013d43e74dba",
+      "e1a6f7f2c9eb4accbd64895b73252f4b",
+      "8c69971bedd641ac915e6fe0f7b131b6",
+      "80f99cb8ed4f4723b9add9e97f50b6dc",
+      "e83d4449931044839a84327252c2d939",
+      "18ba69fa230d4ca3a1030fab879ee06c",
+      "0d03a0df14094eba990470e218e6e7bd",
+      "eb1fdcc13b364f2ebf92c4aa039ac0f7",
+      "e7ab0bc886ee4fe6bf99d869f3d5166f",
+      "e7427221f74048caa846fb859fc8f0f5",
+      "0f40e82ec0de4eff927042f7fbb7c9fd",
+      "45078549abf24be096745f6d311a80b5",
+      "7d452cc4257b4fb1bb3d78829fec7016",
+      "48ddb89355654440bf6ac2aca7b456a4",
+      "c4fddf30fe49450b9ab20141a2223aa0",
+      "5e52659a4f6f42a2832498c7f154f316",
+      "da44370b735b4a9c8a11b8d1b7bfee40",
+      "4a97047158db4110b488ac4a2f501c13",
+      "8bc282ba06a64c0698a487f80a8d96c8",
+      "abd35ad7593448848d1d94f52cb00ff6",
+      "7e9302302c0146249d10f9f5f9b179e2",
+      "a5badd37f3894397a4f8e9f4e524b191",
+      "0bee61e366ee4abf8cc5694d001ef488",
+      "45b1c478b0924a0390c519ec2448a60e",
+      "f4eacdba445740bfb4dcc612facc6539",
+      "c3ff5e3659434179a35cfdd2b04e43ec",
+      "527f3d68778d45d4b50f0dc5679f11d1",
+      "1aa34c3a40384eca9ebaf185e5c56859",
+      "0931d61d69b14889b5c437aacd787d82",
+      "2251ac5776894f4bac8435c2c7d8235e",
+      "3dda14e95f8243069c26a48a37ea640f",
+      "ffc12d686b0c4088af2c0f45fd2e7116",
+      "d12a81e2f0d34a349afba18a86277668",
+      "f4c113756f6e42b1a887a6b9244d003b",
+      "c3a4cc037b1246d6909c075024499d27",
+      "31108b2720ee4034993a92ce14b7ea94",
+      "50d229a7fb0d4fb790ab665d6f69228c",
+      "c2cb053cfd6e4d8e8272fab5eb6bafa5",
+      "0105c559f6714f6ab3c7e1d094633271",
+      "b1c981a5f7c6445dbbd54b3b082b00a7",
+      "8d94a5e235a4465caeb10a31ce2cc46b",
+      "5772b2e004ba443fa9bddb0df777a773",
+      "2ca161c70ed449e69af3b8c500f81bc7",
+      "2dca453315964ac59a594f6e2be36c10",
+      "0ff454764ecf4d0aa584b315bc39716e",
+      "21942e782f0145fe8e81411e60fa836a",
+      "171d8c21b916465fb90610e096db301f",
+      "97b3548902ef4e81be0ab7fc75701bc7",
+      "fb25a9b33fd74f06b882ee6d78f27216",
+      "41372bf1284b485382e87d7043c9bda0",
+      "fafae900e6d04f8abf977c954ccb1a9d",
+      "4f3503ec51834a41bda36fece861355b",
+      "3324b2cb8ffe458d95d8a2d54ff542ad",
+      "37a8db2a62ce400d8fad884e887dde40",
+      "8e198c2b4e514439bd19caeae2b760f1",
+      "1fee581cb5e44b3e945fc46ad16f6da2",
+      "e40e416cfda547f3a060b184d70d7eff",
+      "31ca943f668b4b9da10f99821c3f5de9",
+      "25cf9f88afeb47beb803c1f2e69b662f",
+      "edbca2cf8b1f46548f6617c59fea1845",
+      "570fe60a09fe4a89bb9603172d5a9621",
+      "51bcf3ccc9a1437d9173fe752956f435",
+      "fe35c85bfc3d4669a7e28ed438bb7626",
+      "c663a38183c74c00adb2fea6cf6a93b7",
+      "ce182ac8424c4413adebf62ab2fe5313",
+      "aa51e775c12e40208d079addc4cf94dc",
+      "01ebbc7c8b88446ba80a58055d92087d",
+      "7a077a91f7394c97bb7c3877d1dd35f4",
+      "4396b974a4a74133885783d6f08a4c08",
+      "191d5ba7b13d4e6f8ee69839d964fe64",
+      "91189a0c17654c3fa05c3c6431ec554d",
+      "5acaccb40a4843228a54e3a312255764",
+      "41584467ff2246869f57a8a4ce27ac55",
+      "18ec1a0852894ed3aab904b12c518fea",
+      "c9accbd9c5a74a8fb80f165201ac2fd3",
+      "1726db0c15d3488c8672c19a06869d6e",
+      "b13d26d81f434e18a3930bee065c55cc",
+      "a41429b0cacc48f0b36a8192b6bfeff8",
+      "be2261e1601b48dfbedfdc6f80efdd5f",
+      "64f79dd8c30943caadb40092b5fe5aa8",
+      "559319eb5ccd4f2cb141c992baacb33b",
+      "8652647c370f4650878d9eabdbbfcadb",
+      "7167003314224a7c9ca5db3c569719ff",
+      "07e22cf0cc3b464f9f091ee3c7ac1976",
+      "0b4c0c50fe564779a7072c7d23c7c0b9",
+      "ade87850d16f4d7194c043fa55e0a90d",
+      "45057f0655b04122a92dfd53efaf881b",
+      "0d46d85fb7a041359f4af564793d6545",
+      "8b735067616e4001990d42ba5e83d428",
+      "cb8a832fd6904bee9435555035bf31a8",
+      "4e391f5dc6b34098806d969dbec78637",
+      "ff8e3c2292224ab9bc89e95a25ecd306",
+      "be99d58f51ea46d4aabb38a603184e43",
+      "249fbc9c840944ba98a7832e4b42e5e1",
+      "969d27dfe7eb4828b22a650964153a10",
+      "ffcf4aff05c243febab7e83978e1b960",
+      "c67f42820f144f99a68b3b55e31ee21c",
+      "032f9eaf4d7646d3865b148dc1d50524",
+      "e7ddb0277b6c4b708bfb0b1476e2e618",
+      "4b9ac3be37d84e9fa73e43c89ad737d4",
+      "f09253980e294239bb035d50675272b1",
+      "7d0fe6c86b19495d89027d1bd6dfb5e2",
+      "440bccd2ebdf4cc4bb584a4af303c68a",
+      "221393a06a784004bd7b96579a32c5c6",
+      "3363ff364c9b469bb3438f7a16c69c1f"
+     ],
+     "split": "held_out",
+     "split_digest": "e3317bc4e24711c824ba7167c99ce56f9831c31eb777f1a71fb8bb868ef6a282",
+     "success": {
+      "discordant": 12,
+      "losses": 6,
+      "p_one_sided": 0.612793,
+      "ties": 151,
+      "wins": 6
+     },
+     "workflow_digest": "609f5769a145ee4b63e43d1ee4d8ff10ffd5f88dd342eba5bcfb8239ae952270",
+     "_id": "b3df6fa250a72cf674acd4c3d6a6be965feb349950f7038419928e4752f13b83",
+     "_kind": "evaluation"
+    }
+   }
+  ],
+  "assumed": [
+   "live tasks resemble the suite (stationarity, KS A1)",
+   "the held-out answers are right, and the oracle reads them correctly",
+   "accepted_by names the person who accepted (recorded as given)",
+   "the held-out split is independent-authored"
+  ]
+ },
+ "inspect_versions": [
+  {
+   "accepted_by": "v6b-scripted-approval (study script, not a person)",
+   "at": "2026-10-19T02:34:37+00:00",
+   "decision_digest": "",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "initial",
+   "ledger_head": "",
+   "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+   "proposer": "",
+   "reason": "",
+   "snapshot": "",
+   "version": 0
+  },
+  {
+   "accepted_by": "v6b-scripted-approval (study script, not a person)",
+   "at": "2026-10-19T02:40:11+00:00",
+   "decision_digest": "84315ff1d6e1cab5e27c7b1a11290b4207135bcb455b3239a3e3c78512ba7d86",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "activate",
+   "ledger_head": "0435f1df453da3f6b93deb3d76b82e8d13160a0ad93b286ef1f880ef82c8ef96",
+   "profile_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0",
+   "proposer": "auto:search",
+   "reason": "",
+   "snapshot": "",
+   "version": 1
+  }
+ ],
+ "judging_sha256_end": "b9b38a90d820604df055c3cda05dd241eb02cae7ff6bc4c69e2fb409baeda51f",
+ "restarts": 0,
+ "canary": {
+  "views": 6,
+  "gate_snippets_in_views": 0,
+  "eval_snippets_in_views": 0,
+  "dev_snippets_in_views": 20,
+  "dev_cases": 20
+ }
+}

@@ -1,0 +1,265 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}Democratising AGI: Who Gets to Build Intelligence?{% endblock %}
+{% block meta_description %}Frontier AI development is concentrated in a handful of labs. Cognitive infrastructure offers an alternative: users build their own intelligence on top of any model.{% endblock %}
+{% block post_headline %}Democratising AGI: Who Gets to Build Intelligence?{% endblock %}
+{% block post_date %}2025-07-05{% endblock %}
+{% block post_description %}Frontier AI development is concentrated in a handful of labs. Cognitive infrastructure offers an alternative: users build their own intelligence on top of any model.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Economics</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">Democratising AGI: Who Gets to Build Intelligence?</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Concentration has produced progress
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">The development of frontier artificial intelligence is one of the most concentrated industrial efforts in modern history. A small number of organisations &mdash; perhaps five or six with genuine frontier capability &mdash; employ a significant fraction of the world's top AI researchers, operate compute clusters worth billions of dollars, and control training pipelines built on datasets so large that no single person could read them in a lifetime. OpenAI, Anthropic, Google DeepMind, Meta AI, and a handful of others constitute an oligopoly of intelligence production unlike anything the technology industry has seen before.</p>
+
+            <p class="gsap-reveal">And the results have been extraordinary. In less than a decade, this concentrated effort has produced systems that can pass bar exams, write competent software, translate between languages with near-human fluency, and engage in extended reasoning that often surpasses what most humans can achieve on comparable tasks. The rate of capability improvement has been staggering. GPT-2, released in 2019, was a curiosity that could write plausible paragraphs. GPT-4, released four years later, could solve novel scientific problems. The gap between these two systems is not incremental. It is qualitative.</p>
+
+            <p class="gsap-reveal">This progress is, in large part, a consequence of the concentration itself. Training frontier models requires enormous capital expenditure &mdash; estimates for GPT-4-class training runs start around $100 million and scale upward from there.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup> The talent required is equally scarce. The intersection of deep mathematical understanding, systems engineering capability, and practical machine learning experience describes a population of perhaps a few thousand people worldwide. Concentrating these resources in well-funded laboratories is arguably the most efficient way to push the frontier forward. The Manhattan Project analogy, however overused, captures something real about the relationship between resource concentration and breakthrough capability.</p>
+
+            <p class="gsap-reveal">Nor has this concentration been entirely closed. Meta's release of the LLaMA family, Mistral's open-weight models, and a growing ecosystem of capable open-source systems have created genuine alternatives to proprietary APIs. The research community has benefited enormously from published papers, shared benchmarks, and the competitive pressure that comes from multiple labs pursuing similar goals. The thesis, then, is defensible: concentration of AI development has produced remarkable progress, and the diffusion of some results has spread the benefits widely.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: Concentration of intelligence is concentration of power
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The New Feudalism</h2>
+
+            <p class="gsap-reveal">But there is a darker reading of the same facts, and it deserves careful attention. If intelligence is the most valuable resource in the modern economy &mdash; and there is a strong case that it is &mdash; then concentration of intelligence production is concentration of power. Not the kind of power that comes from controlling oil wells or shipping lanes, but something potentially more consequential: the power to determine what kinds of thinking are possible, for whom, and at what cost.</p>
+
+            <p class="gsap-reveal">Shoshana Zuboff's analysis of surveillance capitalism provides a useful frame here. Zuboff argues that the tech industry's core innovation was not technological but economic: the discovery that human experience could be mined for behavioural data, processed into prediction products, and sold on the open market.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> The AI industry is executing a variation on this theme. User interactions with AI systems generate data that improves the models, but the improved models remain the property of the provider. Users contribute to the system's intelligence through their usage; they do not share in the resulting asset.</p>
+
+            <p class="gsap-reveal">Daron Acemoglu and Simon Johnson, in their analysis of how technology either concentrates or distributes power throughout history, argue that the critical question is never "Is this technology impressive?" but rather "Who controls it, and to whose benefit?"<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> By this measure, the current AI landscape is troubling. The organisations that control frontier models make unilateral decisions about capabilities, safety constraints, pricing, and access. They determine which use cases are permitted and which are forbidden. They set the terms on which billions of people interact with what may be the most consequential technology of the century.</p>
+
+            <p class="gsap-reveal">The structural barriers to entry are formidable and growing. Training a frontier model requires not just compute and talent but also data &mdash; and the most valuable training data is increasingly proprietary or protected by licensing agreements. The infrastructure required is measured in tens of thousands of GPUs, cooling systems, power contracts, and physical real estate. Epoch AI's research estimates that the compute required for frontier training runs has been growing by approximately 4x per year, a rate that far outpaces the growth in available compute for any but the largest organisations.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">Open-source models help, but they do not solve the core problem. An open-weight model gives you inference capability, not the ability to train the next generation of models. It is the difference between having access to a library and owning a printing press. You can read the books, but you cannot write the next one. The community around open-source AI is vibrant and productive, but it is fundamentally dependent on the frontier labs to produce the base models it builds upon. When Meta decides to release LLaMA weights, the open-source ecosystem flourishes. When Meta decides not to, it does not.</p>
+
+            <p class="gsap-reveal">The result is a landscape that Cory Doctorow might recognise: a new form of digital feudalism in which users are tenants on platforms they do not own, using intelligence they did not build, subject to terms they did not negotiate.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> The feudal metaphor is not perfect, but it captures something important about the power asymmetry. The lords of the manor provide protection and productivity. The tenants provide labour and data. The terms of the arrangement are set by the lords.</p>
+
+            <!-- ── Diagram 1: Concentration vs Distribution ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 360" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram comparing concentrated vs distributed intelligence building">
+                    <defs>
+                        <filter id="glow-16" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Title Left -->
+                    <text x="200" y="25" text-anchor="middle" fill="#ef4444" font-size="13" font-weight="700" letter-spacing="1">CONCENTRATED MODEL</text>
+
+                    <!-- Few Labs at top -->
+                    <rect x="100" y="40" width="200" height="50" rx="10" fill="rgba(239,68,68,0.08)" stroke="#ef4444" stroke-width="1.5"/>
+                    <text x="200" y="63" text-anchor="middle" fill="#ef4444" font-size="12" font-weight="600">5 Frontier Labs</text>
+                    <text x="200" y="78" text-anchor="middle" fill="#fca5a5" font-size="10">Train models, set terms</text>
+
+                    <!-- Arrows down to users -->
+                    <line x1="140" y1="90" x2="80" y2="130" stroke="#6b7280" stroke-width="1"/>
+                    <line x1="170" y1="90" x2="130" y2="130" stroke="#6b7280" stroke-width="1"/>
+                    <line x1="200" y1="90" x2="200" y2="130" stroke="#6b7280" stroke-width="1"/>
+                    <line x1="230" y1="90" x2="270" y2="130" stroke="#6b7280" stroke-width="1"/>
+                    <line x1="260" y1="90" x2="320" y2="130" stroke="#6b7280" stroke-width="1"/>
+
+                    <!-- Many user dots -->
+                    <circle cx="80" cy="145" r="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <circle cx="130" cy="145" r="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <circle cx="200" cy="145" r="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <circle cx="270" cy="145" r="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <circle cx="320" cy="145" r="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="200" y="175" text-anchor="middle" fill="#9ca3af" font-size="10">Billions of users &mdash; tenants, not owners</text>
+
+                    <!-- Data flows back up (dashed) -->
+                    <line x1="200" y1="137" x2="200" y2="100" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,3"/>
+                    <text x="215" y="118" fill="#fca5a5" font-size="9">Data flows up</text>
+
+                    <!-- Divider -->
+                    <line x1="400" y1="20" x2="400" y2="200" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+
+                    <!-- Title Right -->
+                    <text x="600" y="25" text-anchor="middle" fill="#6366f1" font-size="13" font-weight="700" letter-spacing="1">DISTRIBUTED MODEL</text>
+
+                    <!-- Many users at top, each with own layer -->
+                    <rect x="440" y="40" width="60" height="50" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="470" y="63" text-anchor="middle" fill="#a5b4fc" font-size="9" font-weight="600">User A</text>
+                    <text x="470" y="78" text-anchor="middle" fill="#818cf8" font-size="8">owns layer</text>
+
+                    <rect x="520" y="40" width="60" height="50" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="550" y="63" text-anchor="middle" fill="#a5b4fc" font-size="9" font-weight="600">User B</text>
+                    <text x="550" y="78" text-anchor="middle" fill="#818cf8" font-size="8">owns layer</text>
+
+                    <rect x="600" y="40" width="60" height="50" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="630" y="63" text-anchor="middle" fill="#a5b4fc" font-size="9" font-weight="600">User C</text>
+                    <text x="630" y="78" text-anchor="middle" fill="#818cf8" font-size="8">owns layer</text>
+
+                    <rect x="680" y="40" width="60" height="50" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="710" y="63" text-anchor="middle" fill="#a5b4fc" font-size="9" font-weight="600">User D</text>
+                    <text x="710" y="78" text-anchor="middle" fill="#818cf8" font-size="8">owns layer</text>
+
+                    <!-- Arrows down to shared model layer -->
+                    <line x1="470" y1="90" x2="530" y2="130" stroke="#6b7280" stroke-width="1"/>
+                    <line x1="550" y1="90" x2="570" y2="130" stroke="#6b7280" stroke-width="1"/>
+                    <line x1="630" y1="90" x2="620" y2="130" stroke="#6b7280" stroke-width="1"/>
+                    <line x1="710" y1="90" x2="660" y2="130" stroke="#6b7280" stroke-width="1"/>
+
+                    <!-- Any Model (interchangeable) -->
+                    <rect x="500" y="130" width="190" height="40" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="595" y="155" text-anchor="middle" fill="#9ca3af" font-size="11">Any Model (interchangeable)</text>
+
+                    <text x="600" y="192" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="600">Intelligence built by users, not labs</text>
+
+                    <!-- Bottom comparison boxes -->
+                    <rect x="40" y="220" width="340" height="120" rx="10" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="210" y="248" text-anchor="middle" fill="#ef4444" font-size="12" font-weight="600">Concentrated Power</text>
+                    <text x="210" y="270" text-anchor="middle" fill="#9ca3af" font-size="10">Users depend on provider decisions</text>
+                    <text x="210" y="288" text-anchor="middle" fill="#9ca3af" font-size="10">Data and intelligence flow to the centre</text>
+                    <text x="210" y="306" text-anchor="middle" fill="#9ca3af" font-size="10">Switching costs are prohibitively high</text>
+                    <text x="210" y="324" text-anchor="middle" fill="#9ca3af" font-size="10">Terms set unilaterally by providers</text>
+
+                    <rect x="420" y="220" width="340" height="120" rx="10" fill="rgba(99,102,241,0.05)" stroke="#6366f1" stroke-width="1.5" filter="url(#glow-16)"/>
+                    <text x="590" y="248" text-anchor="middle" fill="#6366f1" font-size="12" font-weight="600">Distributed Power</text>
+                    <text x="590" y="270" text-anchor="middle" fill="#a5b4fc" font-size="10">Users own their cognitive layer</text>
+                    <text x="590" y="288" text-anchor="middle" fill="#a5b4fc" font-size="10">Intelligence accumulates at the edge</text>
+                    <text x="590" y="306" text-anchor="middle" fill="#a5b4fc" font-size="10">Models are interchangeable commodities</text>
+                    <text x="590" y="324" text-anchor="middle" fill="#a5b4fc" font-size="10">Users control their own infrastructure</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; Concentrated intelligence production creates dependency; distributed cognitive infrastructure creates autonomy</p>
+            </div>
+
+            <p class="gsap-reveal">The concentration of AI power is not merely an abstract concern about market structure. It has concrete consequences for what gets built, for whom, and on what terms. When five organisations control the most capable AI systems, their values, incentives, and blind spots are embedded in the technology that everyone else uses. Their decisions about safety, censorship, capability, and access become de facto policy for billions of users. This is an enormous amount of unaccountable power, and history suggests that unaccountable power is rarely exercised with sufficient wisdom.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup></p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: User-owned cognitive infrastructure
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Intelligence Without Permission</h2>
+
+            <p class="gsap-reveal">There is an alternative to both centralised AI development and the currently inadequate open-source response, and it starts with reframing the problem. The question is not "How do we build better models?" &mdash; a question that inevitably leads to the same concentration dynamics, because models require scale. The question is "How do we build intelligence that users own and control?" &mdash; a question that leads somewhere entirely different.</p>
+
+            <p class="gsap-reveal">The key insight is that intelligence is not the model. The model is a component &mdash; an important one, but a component nonetheless. Intelligence emerges from the interaction between a capable model and a layer of cognitive infrastructure: reasoning frameworks, verification systems, memory structures, goal decomposition engines, formal methods, accumulated solution libraries. This infrastructure layer is where intelligence actually lives, and it can be owned by users rather than providers.</p>
+
+            <p class="gsap-reveal">Elinor Ostrom's work on commons governance is instructive here. Ostrom demonstrated, against the prevailing economic wisdom, that communities can successfully manage shared resources without either privatisation or centralised control.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> The conditions for successful commons management &mdash; clear boundaries, proportional benefit-cost sharing, collective decision-making, effective monitoring &mdash; map surprisingly well onto the requirements for shared cognitive infrastructure. The resource being managed is not a fishery or a forest but a growing library of verified solutions and reasoning patterns.</p>
+
+            <p class="gsap-reveal">In this model, the underlying language model becomes a commodity &mdash; interchangeable, substitutable, and subject to market competition. Today's best model is tomorrow's baseline. The value lives not in the model but in the cognitive layer built on top of it. Users who invest in building this layer own something durable: a growing body of verified solutions, tested reasoning patterns, and accumulated domain knowledge that works with any sufficiently capable model.</p>
+
+            <p class="gsap-reveal">This inverts the current power dynamic. Instead of users depending on providers for intelligence, providers compete to serve users who control their own cognitive infrastructure. Switching costs drop because the valuable asset &mdash; the accumulated intelligence &mdash; is portable. Lock-in breaks because the infrastructure layer is model-agnostic. The provider's role shifts from gatekeeper to commodity supplier, competing on price, speed, and capability rather than on the captive value of proprietary ecosystems.</p>
+
+            <!-- ── Diagram 2: Architecture Stack ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 380" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Architecture diagram showing user-owned cognitive layer between any model and user-controlled output">
+                    <defs>
+                        <filter id="glow-16b" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="5" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Layer 1: Any Model (bottom) -->
+                    <rect x="100" y="280" width="600" height="70" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="400" y="308" text-anchor="middle" fill="#d1d5db" font-size="15" font-weight="600">Any Foundation Model</text>
+                    <text x="400" y="330" text-anchor="middle" fill="#9ca3af" font-size="11">OpenAI &bull; Anthropic &bull; Open-Source &bull; Local &bull; Future Models</text>
+                    <text x="400" y="345" text-anchor="middle" fill="#6b7280" font-size="10">Interchangeable commodity &mdash; compete on price and capability</text>
+
+                    <!-- Arrow up -->
+                    <line x1="400" y1="280" x2="400" y2="255" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="395,257 400,247 405,257" fill="#6b7280"/>
+
+                    <!-- Layer 2: User-Owned Cognitive Layer (highlighted, middle) -->
+                    <rect x="100" y="130" width="600" height="115" rx="14" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2.5" filter="url(#glow-16b)"/>
+                    <text x="400" y="158" text-anchor="middle" fill="#6366f1" font-size="16" font-weight="700">User-Owned Cognitive Layer</text>
+
+                    <!-- Sub-components inside -->
+                    <rect x="120" y="170" width="130" height="55" rx="8" fill="rgba(99,102,241,0.06)" stroke="rgba(99,102,241,0.3)" stroke-width="1"/>
+                    <text x="185" y="192" text-anchor="middle" fill="#a5b4fc" font-size="10" font-weight="600">Reasoning</text>
+                    <text x="185" y="207" text-anchor="middle" fill="#818cf8" font-size="9">Goal decomposition</text>
+
+                    <rect x="265" y="170" width="130" height="55" rx="8" fill="rgba(99,102,241,0.06)" stroke="rgba(99,102,241,0.3)" stroke-width="1"/>
+                    <text x="330" y="192" text-anchor="middle" fill="#a5b4fc" font-size="10" font-weight="600">Verification</text>
+                    <text x="330" y="207" text-anchor="middle" fill="#818cf8" font-size="9">Formal methods</text>
+
+                    <rect x="410" y="170" width="130" height="55" rx="8" fill="rgba(99,102,241,0.06)" stroke="rgba(99,102,241,0.3)" stroke-width="1"/>
+                    <text x="475" y="192" text-anchor="middle" fill="#a5b4fc" font-size="10" font-weight="600">Memory</text>
+                    <text x="475" y="207" text-anchor="middle" fill="#818cf8" font-size="9">Solution library</text>
+
+                    <rect x="555" y="170" width="130" height="55" rx="8" fill="rgba(99,102,241,0.06)" stroke="rgba(99,102,241,0.3)" stroke-width="1"/>
+                    <text x="620" y="192" text-anchor="middle" fill="#a5b4fc" font-size="10" font-weight="600">Safety</text>
+                    <text x="620" y="207" text-anchor="middle" fill="#818cf8" font-size="9">CSF / Alignment</text>
+
+                    <!-- Arrow up -->
+                    <line x1="400" y1="130" x2="400" y2="105" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="395,107 400,97 405,107" fill="#6b7280"/>
+
+                    <!-- Layer 3: User-Controlled Output (top) -->
+                    <rect x="100" y="20" width="600" height="70" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="400" y="48" text-anchor="middle" fill="#d1d5db" font-size="15" font-weight="600">User-Controlled Output</text>
+                    <text x="400" y="70" text-anchor="middle" fill="#9ca3af" font-size="11">Verified &bull; Deterministic &bull; Portable &bull; Accumulating Value</text>
+
+                    <!-- Side annotations -->
+                    <text x="60" y="195" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="600" transform="rotate(-90, 60, 195)">USER OWNS THIS</text>
+                    <text x="750" y="195" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="600" transform="rotate(90, 750, 195)">PORTABLE &amp; DURABLE</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 2 &mdash; The user-owned cognitive layer sits between any foundation model and the user's output &mdash; models are interchangeable; intelligence belongs to the user</p>
+            </div>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Commons of Cognition</h2>
+
+            <p class="gsap-reveal">The implications of this architectural shift extend beyond individual users to the structure of the AI industry itself. If the valuable layer is the cognitive infrastructure rather than the model, then the competitive dynamics change fundamentally. Model providers compete on cost and capability, driving prices down through genuine market competition rather than extracting rents through lock-in. Users invest in building their cognitive layers, creating durable assets that appreciate with use.</p>
+
+            <p class="gsap-reveal">Yochai Benkler's work on commons-based peer production describes how communities of users can collectively create resources that rival or exceed the output of proprietary firms.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> Wikipedia, Linux, and the broader open-source ecosystem demonstrate that peer production works at scale. Applied to cognitive infrastructure, this model suggests that communities of users could collectively build and maintain shared solution libraries, reasoning frameworks, and verification systems that no single organisation could match.</p>
+
+            <p class="gsap-reveal">This is not utopian idealism. It is practical engineering. The technical requirements for user-owned cognitive infrastructure are well-understood: model-agnostic interfaces that abstract away provider differences; verification layers that ensure solution quality regardless of which model generated them; portable storage formats that prevent lock-in; and compositional architectures that allow users to assemble cognitive pipelines from interchangeable components.</p>
+
+            <p class="gsap-reveal">The economic case is equally straightforward. Users who build cognitive infrastructure own an appreciating asset. Users who rent intelligence from API providers own nothing. Over time, the gap between these two positions compounds. The organisation that invests in cognitive infrastructure becomes more capable and more efficient with each passing month. The organisation that rents intelligence remains permanently dependent on its provider, subject to price changes, capability decisions, and access policies it cannot influence.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Who Benefits From Concentration?</h2>
+
+            <p class="gsap-reveal">It is worth asking, directly, who benefits from the current concentrated structure of AI development. The answer is primarily the organisations doing the concentrating. They benefit from network effects, lock-in, and the increasing returns that come from controlling a scarce resource. They benefit from the regulatory moats that emerge when governments, understandably concerned about AI safety, impose compliance requirements that only well-funded organisations can meet. They benefit from the narrative that AI development is inherently dangerous and therefore must be controlled by responsible parties &mdash; a narrative that, conveniently, identifies the established labs as those responsible parties.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
+
+            <p class="gsap-reveal">The alternative narrative &mdash; that users should own their intelligence infrastructure &mdash; threatens this arrangement. If models are commodities, then model providers cannot extract premium rents. If intelligence accumulates at the edge rather than the centre, then platforms lose their gravitational pull. If switching costs are low, then competition is real rather than theoretical. This is precisely why the distributed model is worth building: not because it is technically novel, but because it redistributes power from producers to users.</p>
+
+            <p class="gsap-reveal">Tim Berners-Lee's original vision for the web was a decentralised system where users controlled their own data and computing.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> That vision was largely captured by platform companies that centralised the web's value. AI presents an opportunity to get the architecture right the second time around &mdash; to build systems where the valuable layer is user-controlled from the start, before the centralising forces have time to consolidate.</p>
+
+            <p class="gsap-reveal">The technical capability exists. Open-weight models provide a foundation. Formal verification provides quality assurance. Compositional architectures provide flexibility. What is missing is the deliberate design of cognitive infrastructure that places ownership at the edge rather than the centre. That design choice is not purely technical. It is political, economic, and ultimately moral. It determines whether the most powerful technology of our time serves as a tool of liberation or a mechanism of control.</p>
+
+            <p class="gsap-reveal">James Scott's analysis of how centralised institutions fail to account for local knowledge suggests that distributed systems have an intrinsic advantage in dealing with the complexity of the real world.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> Five labs in San Francisco cannot anticipate the cognitive needs of a farmer in Kerala, a doctor in Lagos, or a teacher in rural Brazil. But those users, equipped with cognitive infrastructure they own and control, can build the intelligence they actually need &mdash; adapted to their contexts, responsive to their constraints, and accountable to their values.</p>
+
+            <p class="gsap-reveal">The question of who gets to build intelligence is not a technical question. It is the defining political question of the next decade. The answer we choose will determine whether AI amplifies existing inequalities or dismantles them. It will determine whether intelligence becomes a commons or a fiefdom. It will determine, ultimately, whether the most transformative technology since the printing press serves the many or the few.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup></p>
+
+        </div>
+
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">Cottier, B., Besiroglu, T., &amp; Owen, D. (2024). <a href="https://epochai.org/blog/trends-in-the-dollar-training-cost-of-machine-learning-systems" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Trends in the Dollar Training Cost of Machine Learning Systems</em></a>. Epoch AI. &mdash; Quantitative analysis of the escalating capital requirements for frontier model training.</li>
+                <li id="ref-2">Zuboff, S. (2019). <a href="https://shoshanazuboff.com/book/about/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The Age of Surveillance Capitalism: The Fight for a Human Future at the New Frontier of Power</em></a>. PublicAffairs. &mdash; Foundational analysis of how tech platforms extract value from user behaviour data.</li>
+                <li id="ref-3">Acemoglu, D., &amp; Johnson, S. (2023). <a href="https://www.hachettebookgroup.com/titles/daron-acemoglu/power-and-progress/9781541702530/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Power and Progress: Our Thousand-Year Struggle Over Technology and Prosperity</em></a>. PublicAffairs. &mdash; Historical analysis of how technology either concentrates or distributes power.</li>
+                <li id="ref-4">Sevilla, J., Heim, L., Ho, A., Besiroglu, T., Hobbhahn, M., &amp; Villalobos, P. (2022). <a href="https://arxiv.org/abs/2202.05924" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Compute Trends Across Three Eras of Machine Learning</em></a>. arXiv:2202.05924. &mdash; Documents the exponential growth in compute requirements for frontier AI training.</li>
+                <li id="ref-5">Doctorow, C. (2023). <a href="https://www.versobooks.com/products/3035-the-internet-con" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The Internet Con: How to Seize the Means of Computation</em></a>. Verso. &mdash; Analysis of platform lock-in and the case for interoperability mandates.</li>
+                <li id="ref-6">Winner, L. (1980). <a href="https://www.jstor.org/stable/20024652" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Do Artifacts Have Politics?</em></a>. Daedalus, 109(1), 121&ndash;136. &mdash; Seminal argument that technological design embeds political choices.</li>
+                <li id="ref-7">Ostrom, E. (1990). <a href="https://www.cambridge.org/core/books/governing-the-commons/A8BB63BC4A1433A50A3FB92EDBBB97D5" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Governing the Commons: The Evolution of Institutions for Collective Action</em></a>. Cambridge University Press. &mdash; Nobel Prize-winning framework for commons governance without centralisation.</li>
+                <li id="ref-8">Benkler, Y. (2006). <a href="https://www.benkler.org/Benkler_Wealth_Of_Networks.pdf" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The Wealth of Networks: How Social Production Transforms Markets and Freedom</em></a>. Yale University Press. &mdash; Analysis of how peer production creates shared resources at scale.</li>
+                <li id="ref-9">Shapiro, C., &amp; Varian, H. R. (1999). <a href="https://www.hbs.edu/faculty/Pages/item.aspx?num=6307" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Information Rules: A Strategic Guide to the Network Economy</em></a>. Harvard Business School Press. &mdash; Economic framework for understanding lock-in, switching costs, and standards wars.</li>
+                <li id="ref-10">Widder, D. G., West, S. M., &amp; Whittaker, M. (2023). <a href="https://arxiv.org/abs/2306.12001" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Open (For Business): Big Tech, Concentrated Power, and the Political Economy of Open AI</em></a>. arXiv:2306.12001. &mdash; Critical analysis of how openness rhetoric serves corporate concentration strategies.</li>
+                <li id="ref-11">Berners-Lee, T. (2000). <a href="https://www.harpercollins.com/products/weaving-the-web-tim-berners-lee" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Weaving the Web: The Original Design and Ultimate Destiny of the World Wide Web</em></a>. HarperCollins. &mdash; The web inventor's vision for decentralised, user-controlled information systems.</li>
+                <li id="ref-12">Scott, J. C. (1998). <a href="https://yalebooks.yale.edu/book/9780300078152/seeing-like-a-state/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Seeing Like a State: How Certain Schemes to Improve the Human Condition Have Failed</em></a>. Yale University Press. &mdash; Analysis of how centralised systems fail by ignoring local knowledge and context.</li>
+                <li id="ref-13">Vaidhyanathan, S. (2018). <a href="https://global.oup.com/academic/product/antisocial-media-9780190841164" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Antisocial Media: How Facebook Disconnects Us and Undermines Democracy</em></a>. Oxford University Press. &mdash; Case study in how concentrated platform power reshapes public discourse.</li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

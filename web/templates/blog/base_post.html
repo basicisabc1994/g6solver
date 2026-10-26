@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block jsonld %}
+<script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "headline": "{% block post_headline %}{% endblock %}",
+    "datePublished": "{% block post_date %}2025-01-01{% endblock %}",
+    "description": "{% block post_description %}{% endblock %}",
+    "author": {
+        "@type": "Person",
+        "name": "Dr. Dan",
+        "jobTitle": "Founder & CEO",
+        "url": "{{ SITE_URL }}/about/"
+    },
+    "publisher": {
+        "@type": "Organization",
+        "name": "G6Solver",
+        "url": "{{ SITE_URL }}",
+        "logo": {
+            "@type": "ImageObject",
+            "url": "{{ SITE_URL }}{% static 'images/android-chrome-512x512.png' %}",
+            "width": 512,
+            "height": 512
+        }
+    },
+    "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "{{ SITE_URL }}{{ request.path }}"
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,8 @@
+license_status: Apache-2.0
+owner: core-platform
+docs_path: docs/mkdocs/docs/components/action_gating.md
+related_components: []
+external_links: []
+risk_level: medium
+allowed_autonomy: none
+rollback_method: extension_revert

@@ -1,0 +1,21 @@
+{
+  "component": "workforce",
+  "op": "run_tests_in_place",
+  "required": {"repo": "str", "tests": "list"},
+  "optional": {"roots": "list", "timeout_s": "int"},
+  "probe_params": {"repo": "__probe__", "tests": ["tests/test_probe.py::test_probe"]},
+  "expect_field": "passed",
+  "side_effect": "read",
+  "check": "input_model",
+  "model_free": true,
+  "operational": {
+    "mitigates_failure_modes": [
+      {"failure_mode": "unreproduced_failure", "when": "",
+       "evidence": "tests/mvp/venture/test_workforce_bench_in_place.py::test_known_answer_the_working_tree_is_tested_where_it_is"}
+    ],
+    "introduces_failure_modes": ["live_working_tree"],
+    "state_reads": ["venture_repo"],
+    "state_writes": ["scratch"],
+    "state_evidence": "tests/mvp/venture/test_workforce_bench_in_place.py::test_edge_a_run_that_changes_a_tracked_file_is_refused_with_the_path"
+  }
+}

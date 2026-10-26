@@ -1,0 +1,199 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Resolve the core's and each extra's dependency closure and record each pinned package's licence metadata (G8).
+
+Networked: it runs ``uv pip compile`` on ``pyproject.toml`` for one pinned platform and Python, then reads each pinned
+package's licence fields from PyPI's JSON API. A person or the weekly ``closures`` workflow runs it; the conformance
+kit (``tests/conformance``) then checks the committed ``tools/data/extra_closures.json`` offline: that it covers every
+extra and was generated from the current requirement strings, and that every licence is allowed by
+``tools/data/licence_table.json``. The output is sorted and carries no timestamp, so an unchanged resolution writes the
+same bytes.
+
+    python tools/gen_extra_closures.py            # resolve and write the file
+    python tools/gen_extra_closures.py --check    # resolve, and exit 1 only on requirement drift or a licence
+
+``--check`` (the weekly job) fails only when an extra's requirements in ``pyproject.toml`` are not the ones the
+committed file was generated from (an extra added, removed or edited), or when a package of today's resolution has a
+licence the kit does not allow or cannot place (the kit's own verdict and its waivers). New releases, versions that
+moved and changed licence metadata of an allowed package are printed as information and exit 0: regenerate the file
+when convenient.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
+import tomllib
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+OSS = Path(__file__).resolve().parents[1]
+PYPROJECT = OSS / "pyproject.toml"
+OUT = OSS / "tools" / "data" / "extra_closures.json"
+KIT = OSS / "tests" / "conformance" / "kit.py"
+PYTHON = "3.12"
+PLATFORM = "x86_64-manylinux_2_28"
+PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==(\S+)$")
+PYPI = "https://pypi.org/pypi/{name}/{version}/json"
+
+
+def requirements() -> tuple[list[str], dict[str, list[str]]]:
+    project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
+    return list(project.get("dependencies", [])), {k: list(v) for k, v in project.get("optional-dependencies",
+                                                                                       {}).items()}
+
+
+def resolve(extra: str | None) -> list[str]:
+    """The pinned closure (``name==version``, sorted) of the core, or of the core with ``extra``."""
+    uv = shutil.which("uv")
+    if uv is None:
+        raise SystemExit("gen_extra_closures needs uv on PATH (https://docs.astral.sh/uv/)")
+    cmd = [uv, "pip", "compile", str(PYPROJECT), "--python-version", PYTHON, "--python-platform", PLATFORM,
+           "--no-header", "--no-annotate", "--no-config", "--quiet"]
+    if extra:
+        cmd += ["--extra", extra]
+    done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=900, cwd=OSS)
+    if done.returncode:
+        raise SystemExit(f"uv pip compile failed for {extra or 'the core'}:\n{done.stderr[-2000:]}")
+    pins = []
+    for line in done.stdout.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        found = PIN.match(line)
+        if not found:
+            raise SystemExit(f"unexpected line from uv for {extra or 'the core'}: {line!r}")
+        pins.append(f"{re.sub(r'[-_.]+', '-', found.group(1)).lower()}=={found.group(2)}")
+    return sorted(pins, key=lambda pin: pin.split("==", 1))
+
+
+def licence(pin: str) -> dict[str, object]:
+    """A pinned package's licence metadata from PyPI: the SPDX expression, the first line of the licence field, and
+    the licence classifiers."""
+    name, version = pin.split("==", 1)
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(PYPI.format(name=name, version=version), timeout=30) as reply:
+                info = json.load(reply)["info"]
+            break
+        except (urllib.error.URLError, TimeoutError, OSError):
+            if attempt == 3:
+                raise
+            time.sleep(2 ** attempt)
+    text = " ".join((next((ln for ln in (info.get("license") or "").splitlines() if ln.strip()), "")).split())
+    return {"license_expression": (info.get("license_expression") or "").strip(), "license": text[:200],
+            "classifiers": sorted(c for c in info.get("classifiers") or [] if c.startswith("License ::"))}
+
+
+def build() -> dict[str, object]:
+    core, extras = requirements()
+    names = [None, *extras]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        closures = dict(zip(names, pool.map(resolve, names)))
+    pins = sorted({pin for closure in closures.values() for pin in closure})
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        packages = dict(zip(pins, pool.map(licence, pins)))
+    return {
+        "about": "Generated by tools/gen_extra_closures.py; do not edit. Each extra's resolved dependency closure and "
+                 "each pinned package's licence metadata, checked offline by the conformance kit (G8).",
+        "python": PYTHON,
+        "platform": PLATFORM,
+        "core": {"requires": core, "closure": closures[None]},
+        "extras": {extra: {"requires": extras[extra], "closure": closures[extra]} for extra in extras},
+        "packages": packages,
+    }
+
+
+def render(data: dict[str, object]) -> str:
+    return json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def _scopes(old: dict, new: dict) -> dict[str, tuple[dict | None, dict | None]]:
+    """The core and each extra, as recorded (``old``) and as resolved today (``new``); ``None`` where one is absent."""
+    scopes: dict[str, tuple[dict | None, dict | None]] = {"core": (old.get("core"), new.get("core"))}
+    for extra in sorted(set(old.get("extras", {})) | set(new.get("extras", {}))):
+        scopes[extra] = (old.get("extras", {}).get(extra), new.get("extras", {}).get(extra))
+    return scopes
+
+
+def _kit() -> Any:
+    """The conformance kit (``tests/conformance/kit.py``), for its licence verdict and its waivers; it needs only the
+    ``g6`` package's top level, taken from ``src`` when ``g6`` is not installed."""
+    if "conformance_kit" in sys.modules:
+        return sys.modules["conformance_kit"]
+    if importlib.util.find_spec("g6") is None:
+        sys.path.insert(0, str(OSS / "src"))
+    spec = importlib.util.spec_from_file_location("conformance_kit", KIT)
+    kit = importlib.util.module_from_spec(spec)
+    sys.modules["conformance_kit"] = kit
+    spec.loader.exec_module(kit)
+    return kit
+
+
+def classify(old: dict, new: dict) -> tuple[list[str], list[str]]:
+    """``(failures, drift)`` between the committed file (``old``) and today's resolution (``new``). A failure is
+    requirement drift (an extra, or the core, whose requirements are not the recorded ones, or that is recorded or
+    declared on one side only) or a package of today's resolution whose licence the kit does not allow or cannot place
+    (``kit.licence_problems``), unless one of the kit's waivers names it. Drift, reported only, is every pin that moved
+    and every allowed package whose licence metadata changed."""
+    kit = _kit()
+    failures, drift = [], []
+    for scope, (was, now) in _scopes(old, new).items():
+        if was is None or now is None:
+            failures.append(f"{scope}: {'not in the committed file' if was is None else 'no longer in pyproject.toml'}"
+                            "; regenerate the file")
+        elif was.get("requires") != now.get("requires"):
+            failures.append(f"{scope}: requirements {was.get('requires')} -> {now.get('requires')}; regenerate the file")
+        if was is not None and now is not None:
+            gone = sorted(set(was.get("closure", [])) - set(now.get("closure", [])))
+            added = sorted(set(now.get("closure", [])) - set(was.get("closure", [])))
+            if gone or added:
+                drift.append(f"{scope}: -{gone} +{added}")
+    waivers = kit.load_waivers()
+    for problem in kit.licence_problems(new, kit.licence_table()):
+        if not any(w.covers("g6", problem) for w in waivers):
+            failures.append(f"licence: {problem.message}")
+    for pin in sorted(set(old.get("packages", {})) & set(new.get("packages", {}))):
+        if old["packages"][pin] != new["packages"][pin]:
+            drift.append(f"{pin}: licence metadata changed (its licence is still allowed)")
+    return failures, drift
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--check", action="store_true",
+                        help="exit 1 on requirement drift or a licence not allowed; report version drift")
+    args = parser.parse_args(argv)
+    data = build()
+    text = render(data)
+    if args.check:
+        where = OUT.relative_to(OSS).as_posix()
+        current = OUT.read_text(encoding="utf-8") if OUT.is_file() else ""
+        failures, drift = classify(json.loads(current) if current else {}, data)
+        if drift:
+            print(f"{where}: versions moved since it was generated (information; regenerate when convenient):")
+            for line in drift:
+                print("  " + line)
+        if failures:
+            print(f"{where} needs attention; fix the licence or run: python tools/gen_extra_closures.py")
+            for line in failures:
+                print("  " + line)
+            return 1
+        print(f"{where}: requirements unchanged and every licence of today's resolution allowed"
+              + ("; the file is current" if current == text else "; regenerate it when convenient"))
+        return 0
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(text, encoding="utf-8", newline="\n")
+    print(f"wrote {OUT.relative_to(OSS).as_posix()}: {len(data['extras'])} extras, {len(data['packages'])} pins")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

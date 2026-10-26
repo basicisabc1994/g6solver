@@ -1,0 +1,247 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}Scaling Laws Have a Ceiling{% endblock %}
+{% block meta_description %}Neural scaling laws show predictable improvement with more compute, data, and parameters — but power laws have diminishing returns built in. The next gains come from architecture, not scale.{% endblock %}
+{% block post_headline %}Scaling Laws Have a Ceiling{% endblock %}
+{% block post_date %}2025-04-12{% endblock %}
+{% block post_description %}Neural scaling laws show predictable improvement with more compute, data, and parameters — but power laws have diminishing returns built in. The next gains come from architecture, not scale.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Research</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">Scaling Laws Have a Ceiling</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Scaling laws are real and powerful
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">In January 2020, a team at OpenAI published a paper that would reshape the economics and engineering of artificial intelligence for the next half-decade. Kaplan et al. demonstrated that the performance of neural language models follows remarkably clean power-law relationships with three variables: the number of model parameters, the size of the training dataset, and the amount of compute expended during training.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup> Double the compute, and loss drops by a predictable amount. Add an order of magnitude of parameters, and capabilities expand on a smooth, extrapolable curve. The result was not a vague trend but a precise mathematical relationship &mdash; one that held across seven orders of magnitude.</p>
+
+            <p class="gsap-reveal">The implications were immediate and profound. If performance is a predictable function of scale, then building better AI becomes primarily an investment problem: spend more on compute, gather more data, train larger models, and improvements will follow as surely as compound interest. This framing catalysed the largest capital allocation to a single technology category in the history of computing. Billions of dollars flowed into GPU clusters, training infrastructure, and data acquisition &mdash; all predicated on the assumption that the scaling curve would continue to deliver.</p>
+
+            <p class="gsap-reveal">And deliver it did. GPT-3 at 175 billion parameters showed emergent capabilities that GPT-2 at 1.5 billion simply did not possess. GPT-4, trained with substantially more compute, passed professional exams that its predecessors could not approach. Each generation confirmed the trend: more scale, more capability, on schedule and on budget. The empirical evidence was not merely suggestive. It was overwhelming.</p>
+
+            <p class="gsap-reveal">So the scaling hypothesis &mdash; the proposition that intelligence is fundamentally a function of scale, and that sufficient scale will produce artificial general intelligence &mdash; is not a fantasy. It is grounded in real observations. The question is whether those observations support the conclusion that is usually drawn from them. And here, the mathematics of power laws has something important to say.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: Diminishing returns are built in
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Mathematics of Diminishing Returns</h2>
+
+            <p class="gsap-reveal">A power law of the form L = aC<sup>-&alpha;</sup>, where L is loss, C is compute, and &alpha; is a small positive exponent, has a property that is easy to overlook when plotting on log-log axes: diminishing returns are <em>structural</em>, not accidental. On a log-log plot, the relationship looks linear &mdash; steady, reliable, infinite. On a linear plot, it tells a different story: each successive halving of loss requires exponentially more resources than the last. The curve flattens. It approaches an asymptote. This is not a bug in the empirical finding. It <em>is</em> the finding.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">Hoffmann et al.&rsquo;s Chinchilla paper in 2022 delivered the first major corrective to the naive scaling narrative.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> By carefully disentangling the contributions of model size and training data, they showed that the industry had been systematically misallocating resources: training models that were too large on datasets that were too small. Chinchilla, with 70 billion parameters trained on 1.4 trillion tokens, outperformed the 280-billion-parameter Gopher despite using less total compute. The scaling laws were real, but the industry had been following the wrong curve along the wrong axis.</p>
+
+            <p class="gsap-reveal">The Chinchilla result was important not because it invalidated scaling laws but because it revealed their complexity. There is not one scaling curve but a family of them, parameterised by the allocation of resources across model size, data, and compute. Optimising along the wrong dimension produces waste, not intelligence. And once the Chinchilla-optimal frontier was identified, a new problem became visible: the data wall.</p>
+
+            <p class="gsap-reveal">Villalobos et al.&rsquo;s analysis estimated that at current rates of data consumption, the supply of high-quality text data for training language models will be effectively exhausted between 2026 and 2032.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> This is not a theoretical concern &mdash; it is an engineering constraint that is already shaping decisions at frontier labs. Synthetic data generation offers a partial solution, but it introduces its own problems: models trained on the outputs of other models can exhibit mode collapse, where the diversity of the training distribution narrows with each generation. Shumailov et al. described this as &ldquo;model collapse,&rdquo; demonstrating that recursive training on synthetic data causes progressive degeneration of the learned distribution.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <!-- ── Diagram 1: Power Law Curve with Ceiling ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 380" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing power law scaling with diminishing returns and architecture gains region">
+                    <!-- Axes -->
+                    <line x1="80" y1="320" x2="760" y2="320" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <line x1="80" y1="320" x2="80" y2="40" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+
+                    <!-- Axis labels -->
+                    <text x="420" y="365" text-anchor="middle" fill="#9ca3af" font-size="12">Compute / Parameters / Data (log scale)</text>
+                    <text x="30" y="180" text-anchor="middle" fill="#9ca3af" font-size="12" transform="rotate(-90, 30, 180)">Capability</text>
+
+                    <!-- Grid lines -->
+                    <line x1="80" y1="260" x2="760" y2="260" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                    <line x1="80" y1="200" x2="760" y2="200" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                    <line x1="80" y1="140" x2="760" y2="140" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                    <line x1="80" y1="80" x2="760" y2="80" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+
+                    <!-- Scaling law curve (power law, flattening) -->
+                    <path d="M 100,310 C 150,280 200,230 280,190 C 360,155 450,130 540,118 C 620,110 700,106 750,104" fill="none" stroke="#9ca3af" stroke-width="2.5"/>
+
+                    <!-- Asymptote / ceiling line -->
+                    <line x1="80" y1="95" x2="760" y2="95" stroke="rgba(239,68,68,0.4)" stroke-width="1.5" stroke-dasharray="8,6"/>
+                    <text x="770" y="92" fill="#ef4444" font-size="11" font-weight="600" text-anchor="end">Scaling ceiling</text>
+
+                    <!-- Architecture gains region (highlighted) -->
+                    <rect x="500" y="48" width="250" height="55" rx="10" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <rect x="500" y="48" width="250" height="55" rx="10" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#glow-4)"/>
+                    <text x="625" y="70" text-anchor="middle" fill="#6366f1" font-size="11" font-weight="700">Architecture Gains</text>
+                    <text x="625" y="88" text-anchor="middle" fill="#a5b4fc" font-size="10">Cognitive infrastructure &bull; Post-training</text>
+
+                    <!-- Arrow from curve to architecture region -->
+                    <line x1="620" y1="108" x2="620" y2="105" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="4,3"/>
+                    <polygon points="615,105 620,95 625,105" fill="#6366f1"/>
+
+                    <!-- Diminishing returns annotation -->
+                    <path d="M 350,175 C 380,170 420,160 440,155" fill="none" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,3"/>
+                    <text x="330" y="175" text-anchor="end" fill="#6b7280" font-size="10">Diminishing returns</text>
+
+                    <!-- Early steep gains annotation -->
+                    <path d="M 170,270 C 180,260 190,255 200,250" fill="none" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,3"/>
+                    <text x="175" y="285" text-anchor="middle" fill="#6b7280" font-size="10">Steep early gains</text>
+
+                    <!-- Scale label on curve -->
+                    <text x="740" y="120" fill="#9ca3af" font-size="10" text-anchor="end">Scale alone</text>
+
+                    <defs>
+                        <filter id="glow-4" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; Power-law scaling delivers steep early gains but approaches a ceiling; architecture-level improvements unlock capability above the scaling asymptote</p>
+            </div>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Reasoning Gap</h2>
+
+            <p class="gsap-reveal">Even if the data wall could be overcome &mdash; through synthetic generation, multimodal data, or other means &mdash; a more fundamental question remains: are there capabilities that next-token prediction simply cannot produce, regardless of scale? The evidence increasingly suggests yes.</p>
+
+            <p class="gsap-reveal">Marcus has argued persistently and with considerable technical detail that certain cognitive capabilities &mdash; systematic compositionality, causal reasoning, robust abstraction &mdash; are not the kind of patterns that emerge from statistical regularities in text, no matter how much text you train on.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> This is not an argument against neural networks per se, but against the specific assumption that autoregressive language modelling is a sufficient computational primitive for general intelligence. A system trained to predict the next token in a sequence may learn impressive approximations of reasoning, but approximations break down at the boundaries &mdash; precisely where reliable reasoning matters most.</p>
+
+            <p class="gsap-reveal">Dziri et al.&rsquo;s work on compositional reasoning provides empirical support for this concern.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> They demonstrated that language models struggle with tasks requiring multi-step compositional reasoning &mdash; problems where the answer depends on combining multiple independent facts in a structured way. Critically, they showed that this failure mode does not improve smoothly with scale. Larger models are better at simple compositions but plateau on complex ones, suggesting a representational limitation rather than a capacity limitation.</p>
+
+            <p class="gsap-reveal">Planning presents a similar challenge. Valmeekam et al. systematically evaluated LLMs on classical planning benchmarks and found that even the most capable models fail at tasks that require explicit search over a space of possible actions.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> The models can describe plans fluently &mdash; they know what a plan should look like &mdash; but they cannot reliably generate correct plans for novel problem instances. This is the difference between having seen many examples of a pattern and being able to execute the underlying algorithm. Next-token prediction captures the former; it is unclear whether it can capture the latter at any scale.</p>
+
+            <p class="gsap-reveal">Verification may be the most telling case. A correct mathematical proof requires that every step follows logically from the previous ones &mdash; a single invalid step invalidates the entire chain. Language models can produce proofs that <em>look</em> correct, with proper notation and plausible-sounding reasoning, but systematic evaluation reveals frequent logical gaps that the model cannot detect because it has no mechanism for checking its own reasoning against formal rules.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> This is not a matter of insufficient training data. It reflects the absence of a verification primitive &mdash; a computational mechanism for checking whether a conclusion actually follows from its premises.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: The ceiling is a signal
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Ceiling Is a Signal, Not a Wall</h2>
+
+            <p class="gsap-reveal">The scaling ceiling should not be interpreted as a dead end. It is more accurately understood as a signal &mdash; an indication that the next generation of capability gains will come from a different source than the last. The pattern is not unprecedented in the history of computing. Moore&rsquo;s Law drove exponential improvements in transistor density for decades, but the gains in <em>usable performance</em> came increasingly from architectural innovations &mdash; caching, pipelining, out-of-order execution, specialised accelerators &mdash; rather than from raw transistor count alone. The same transition is now occurring in AI.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal">The foundation models are not going to get worse. They will continue to improve with scale, and that improvement will continue to be useful. But the rate of improvement per unit of investment is decelerating along the pure-scale axis, and the capabilities that matter most for reliable, autonomous AI operation &mdash; multi-step reasoning, self-verification, planning under uncertainty, persistent learning &mdash; appear to require computational mechanisms that next-token prediction does not naturally provide.</p>
+
+            <!-- ── Diagram 2: Three Columns ── -->
+            <div class="gsap-reveal my-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <!-- Column 1: Scale -->
+                <div class="rounded-xl glass p-6 text-center hover:border-white/20 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="4" y="4" width="16" height="16" rx="2"/>
+                            <path d="M9 9h6v6H9z" opacity="0.5"/>
+                            <path d="M4 12h16M12 4v16" opacity="0.3"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Scale</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed mb-3">More parameters, more compute, more GPUs</p>
+                    <p class="text-xs font-mono text-gray-600">Diminishing returns</p>
+                    <div class="mt-3 h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <div class="h-full w-3/4 bg-gray-600 rounded-full"></div>
+                    </div>
+                </div>
+                <!-- Column 2: Data -->
+                <div class="rounded-xl glass p-6 text-center hover:border-white/20 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2C6.5 2 2 4.2 2 7v10c0 2.8 4.5 5 10 5s10-2.2 10-5V7c0-2.8-4.5-5-10-5z"/>
+                            <path d="M2 12c0 2.8 4.5 5 10 5s10-2.2 10-5" opacity="0.5"/>
+                            <path d="M2 7c0 2.8 4.5 5 10 5s10-2.2 10-5" opacity="0.3"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Data</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed mb-3">More tokens, more domains, more modalities</p>
+                    <p class="text-xs font-mono text-gray-600">Approaching exhaustion</p>
+                    <div class="mt-3 h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <div class="h-full w-5/6 bg-gray-600 rounded-full"></div>
+                    </div>
+                </div>
+                <!-- Column 3: Architecture (highlighted) -->
+                <div class="rounded-xl border-2 border-g6-indigo bg-[rgba(99,102,241,0.04)] p-6 text-center hover:border-g6-indigo/80 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-g6-indigo/10 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>
+                            <circle cx="12" cy="12" r="9" stroke-dasharray="4,3"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Architecture</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed mb-3">Cognitive infrastructure, verification, memory</p>
+                    <p class="text-xs font-mono text-g6-indigo">Untapped frontier</p>
+                    <div class="mt-3 h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <div class="h-full w-1/4 bg-g6-indigo rounded-full"></div>
+                    </div>
+                </div>
+            </div>
+
+            <p class="gsap-reveal">This analysis points toward a specific research programme. Rather than investing exclusively in pre-training scale, the field needs to develop what might be called <strong class="text-gray-200">post-training cognitive infrastructure</strong> &mdash; the architectural layers that sit on top of foundation models and supply the computational primitives that pre-training alone cannot produce.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
+
+            <p class="gsap-reveal">The components of this infrastructure are becoming clearer. <strong class="text-gray-200">Structured reasoning</strong> systems that can decompose complex problems into verifiable steps, check intermediate conclusions against formal constraints, and backtrack when errors are detected. <strong class="text-gray-200">Memory architectures</strong> that persist knowledge across interactions, consolidate patterns from experience, and retrieve relevant information by content rather than by position in a token sequence. <strong class="text-gray-200">Planning mechanisms</strong> that can search over action spaces, evaluate consequences before committing, and adapt strategies based on feedback. And <strong class="text-gray-200">self-monitoring</strong> capabilities that allow the system to assess its own confidence, recognise when it is operating outside its competence, and request help rather than confabulating an answer.</p>
+
+            <p class="gsap-reveal">None of these capabilities require abandoning foundation models. They require <em>complementing</em> them. The language model provides the computational substrate &mdash; the ability to process natural language, reason about relationships, and generate coherent responses. The cognitive infrastructure provides the scaffolding that makes those capabilities <em>reliable</em> &mdash; that transforms impressive demonstrations into trustworthy tools.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Efficiency Argument</h2>
+
+            <p class="gsap-reveal">There is a practical dimension to this argument that is often underappreciated. Training frontier models is extraordinarily expensive &mdash; current estimates place the cost of training a GPT-4-class model in the range of $100 million, with next-generation models likely to cost substantially more.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> If the scaling curve is flattening, then each additional increment of pre-training capability comes at a higher marginal cost. Meanwhile, architectural improvements at the inference layer &mdash; better reasoning frameworks, memory systems, verification mechanisms &mdash; can extract more useful intelligence from <em>existing</em> models at a fraction of the cost.</p>
+
+            <p class="gsap-reveal">This is not a speculative claim. The explosion of post-training techniques &mdash; chain-of-thought prompting, retrieval-augmented generation, tool use, multi-agent architectures &mdash; has already demonstrated that substantial capability gains can be achieved without touching model weights at all. Anthropic&rsquo;s research on constitutional AI showed that careful post-training alignment can dramatically improve model behaviour without increasing model size.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> These are architectural gains, achieved through engineering rather than scale.</p>
+
+            <p class="gsap-reveal">The implication is that the most efficient path to more capable AI systems may not run through the data centre but through the systems engineering layer. A well-designed cognitive architecture can make a 70-billion-parameter model outperform a 700-billion-parameter model on tasks that require structured reasoning, persistent memory, or self-verification &mdash; not because the smaller model is inherently smarter, but because the architecture supplies computational mechanisms that raw scale does not. In the <a href="/" class="text-g6-green hover:text-white transition-colors">T0&ndash;T3 framework</a>, scaling alone produces T0 systems (zero adaptive traverses). Post-training cognitive infrastructure is what enables T1 (harness optimisation), T2 (continuous self-training), and T3 (structured theory building) &mdash; each level extracting more capability from the same base model.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Beyond the Curve</h2>
+
+            <p class="gsap-reveal">The scaling era has given us foundation models of remarkable capability &mdash; systems that process language with a fluency and breadth that would have seemed impossible a decade ago. That achievement is real, and it provides the substrate on which everything that follows will be built. But the scaling curve is bending. The power law that delivered the last five years of progress is approaching the diminishing-returns regime where each doubling of investment yields smaller incremental gains.</p>
+
+            <p class="gsap-reveal">This is not cause for pessimism. It is cause for a shift in engineering focus. The transition from &ldquo;make it bigger&rdquo; to &ldquo;make it smarter&rdquo; is not a retreat from ambition but an escalation of it. Building cognitive infrastructure &mdash; the reasoning, memory, planning, and verification systems that transform raw language modelling capability into reliable intelligence &mdash; is a harder problem than training a larger model. It requires insights from cognitive science, formal methods, systems engineering, and software architecture, integrated into coherent systems that work reliably under real-world conditions.</p>
+
+            <p class="gsap-reveal">The ceiling on the scaling curve is not a wall. It is an invitation &mdash; to look beyond the curve, to recognise that intelligence is not a quantity to be maximised but a system to be engineered, and to build the infrastructure that the foundation models have been waiting for.</p>
+
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Kaplan, J., McCandlish, S., Henighan, T., Brown, T. B., Chess, B., Child, R., Gray, S., Radford, A., Wu, J., &amp; Amodei, D. (2020). <a href="https://arxiv.org/abs/2001.08361" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Scaling laws for neural language models</em></a>. arXiv. &mdash; Establishes power-law relationships between model performance and compute, data, and parameter count.
+                </li>
+                <li id="ref-2">
+                    Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E., Cai, T., Rutherford, E., de Las Casas, D., Hendricks, L. A., Welbl, J., Clark, A., Hennigan, T., Noland, E., Millican, K., van den Driessche, G., Damoc, B., Guy, A., Osindero, S., Simonyan, K., Elsen, E., &hellip; Sifre, L. (2022). <a href="https://arxiv.org/abs/2203.15556" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Training compute-optimal large language models</em></a>. arXiv. &mdash; The &ldquo;Chinchilla&rdquo; paper; demonstrates that models should be trained on more data than previously assumed for a given compute budget.
+                </li>
+                <li id="ref-3">
+                    Villalobos, P., Ho, A., Sevilla, J., Besiroglu, T., Heim, L., &amp; Hobbhahn, M. (2024). <a href="https://arxiv.org/abs/2211.04325" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Will we run out of data? Limits of LLM scaling based on human-generated data</em></a>. arXiv. &mdash; Estimates exhaustion of high-quality text data between 2026 and 2032.
+                </li>
+                <li id="ref-4">
+                    Shumailov, I., Shumaylov, Z., Zhao, Y., Gal, Y., Papernot, N., &amp; Anderson, R. (2024). <a href="https://arxiv.org/abs/2305.17493" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>AI models collapse when trained on recursively generated data</em></a>. <em>Nature</em>, 631, 755&ndash;759. &mdash; Demonstrates progressive degeneration when models are trained on synthetic data from previous model generations.
+                </li>
+                <li id="ref-5">
+                    Marcus, G. (2020). <a href="https://arxiv.org/abs/2002.06177" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The next decade in AI: Four steps towards robust artificial intelligence</em></a>. arXiv. &mdash; Argues that deep learning alone is insufficient for robust AI and that hybrid neurosymbolic architectures are needed.
+                </li>
+                <li id="ref-6">
+                    Dziri, N., Lu, X., Sclar, M., Li, X. L., Jiang, L., Lin, B. Y., Welleck, S., West, P., Bhatt, C., Bras, R. L., Hwang, J. D., Sanber, S., Choudhury, S., Upadhyay, K., Hajishirzi, H., Smith, N. A., &amp; Choi, Y. (2024). <a href="https://arxiv.org/abs/2305.18654" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Faith and fate: Limits of transformers on compositionality</em></a>. <em>Advances in Neural Information Processing Systems</em>, 36. &mdash; Shows that transformer performance on compositional tasks does not scale smoothly with model size.
+                </li>
+                <li id="ref-7">
+                    Valmeekam, K., Marquez, M., Sreedharan, S., &amp; Kambhampati, S. (2024). <a href="https://arxiv.org/abs/2305.15771" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>On the planning abilities of large language models: A critical investigation</em></a>. <em>Advances in Neural Information Processing Systems</em>, 36. &mdash; Systematic evaluation showing LLMs cannot reliably generate correct plans for novel problem instances.
+                </li>
+                <li id="ref-8">
+                    Frieder, S., Pinchetti, L., Griffiths, R.-R., Salvatori, T., Lukasiewicz, T., Petersen, P. C., Chevalier, A., &amp; Berner, J. (2024). <a href="https://arxiv.org/abs/2301.13867" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Mathematical capabilities of ChatGPT</em></a>. <em>Advances in Neural Information Processing Systems</em>, 36. &mdash; Detailed analysis of mathematical reasoning failures in frontier language models.
+                </li>
+                <li id="ref-9">
+                    Sutton, R. (2019). <a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The bitter lesson</em></a>. Incomplete Ideas. &mdash; Argues that general methods leveraging computation ultimately outperform domain-specific engineering; contextualises the scale-vs-architecture debate.
+                </li>
+                <li id="ref-10">
+                    Weng, L. (2023, June 23). <a href="https://lilianweng.github.io/posts/2023-06-23-agent/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>LLM powered autonomous agents</em></a>. Lil&rsquo;Log. &mdash; Surveys agent architectures that add planning, memory, and tool use on top of foundation models.
+                </li>
+                <li id="ref-11">
+                    Cottier, B., Rahman, D., Heim, L., Besiroglu, T., &amp; Sevilla, J. (2024). <a href="https://epochai.org/blog/training-cost-trends" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Trends in the dollar training cost of machine learning systems</em></a>. Epoch AI. &mdash; Tracks the exponential growth in frontier model training costs.
+                </li>
+                <li id="ref-12">
+                    Bai, Y., Kadavath, S., Kundu, S., Askell, A., Kernion, J., Jones, A., Chen, A., Goldie, A., Mirhoseini, A., McKinnon, C., Chen, C., Olsson, C., Olah, C., Hernandez, D., Drain, D., Ganguli, D., Li, D., Tran-Johnson, E., Perez, E., &hellip; Kaplan, J. (2022). <a href="https://arxiv.org/abs/2212.08073" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Constitutional AI: Harmlessness from AI feedback</em></a>. arXiv. &mdash; Demonstrates that post-training alignment techniques can substantially improve model behaviour without increasing scale.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

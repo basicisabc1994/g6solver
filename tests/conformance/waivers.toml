@@ -1,0 +1,49 @@
+# Reviewed hits of the conformance kit (tests/conformance). A waiver lets one required hit stand while the finding it
+# names is open. Each names the component ("g6" for the distribution's extras, "g6.<family>" for a family's shared
+# code), the gate, the file (relative to oss/;
+# a folder ending in "/" covers the files under it), match (a substring of the flagged line; a runtime hit's line is
+# its message), a short reason, and the finding that tracks it: a tracker row, a ledger letter, a DECISIONS number,
+# or "permanent: <why>". A waiver that no longer matches a hit fails, and test_conformance.py pins MAX_WAIVERS: fix
+# the hit and delete its waiver, never add one to get past a new hit.
+
+# --- G2 / G9 ----------------------------------------------------------------------------------------------------------
+
+[[waiver]]
+component = "cegis"
+gate = "G2"
+file = "src/g6/cegis/_child.py"
+match = 'exec(compile(src, "<candidate>", "exec"), namespace)'
+reason = "Candidate code runs only here, in the child the runner starts with python -I through g6.core.component_process: kept-keys environment, a deadline, a memory cap, restricted builtins, source pre-checked."
+finding = "permanent: the one place CEGIS runs a candidate, out of G6's process"
+
+# --- G6 ---------------------------------------------------------------------------------------------------------------
+
+[[waiver]]
+component = "workforce"
+gate = "G6"
+file = "src/g6/workforce/repo_tests.py"
+match = "_MODEL_BLOCK = {"
+reason = "A dummy value written into the repository test child's environment so no real key reaches those tests; no key is read."
+finding = "permanent: it blocks the paid model in the child and reads nothing"
+
+# --- G8: the extras' licences -----------------------------------------------------------------------------------------
+# One pair for every extra that pulls PyTorch: tests/conformance/test_conformance.py
+# (test_cuda_wheels_come_only_with_pytorch_in_an_opt_in_extra) fails a CUDA wheel in the core, in all, or in an extra
+# without torch, and the licence page names each extra that installs them.
+
+[[waiver]]
+component = "g6"
+gate = "G8"
+file = "tools/data/extra_closures.json"
+match = ": nvidia-"
+reason = "On Linux torch pulls NVIDIA's CUDA wheels, under NVIDIA's proprietary licence or with no licence metadata, in each extra that pulls PyTorch (lora, colbert, embeddings); each is opt-in and not part of all."
+finding = "permanent: owner rulings 2026-10-21 (GPU support for lora, then for every extra that pulls PyTorch; the licence page says so)"
+
+[[waiver]]
+component = "g6"
+gate = "G8"
+file = "tools/data/extra_closures.json"
+match = ": cuda-toolkit"
+reason = "NVIDIA's cuda-toolkit wheel, pulled by torch on Linux in each extra that pulls PyTorch, carries no licence metadata."
+finding = "permanent: owner rulings 2026-10-21 (GPU support for lora, then for every extra that pulls PyTorch; the licence page says so)"
+# --- C1: none. The four owner-authorised retrofits were certified on 2026-10-23; no C1 waiver may be added. ----------

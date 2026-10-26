@@ -1,0 +1,53 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Long-form pages rendered from Markdown (content/*.md), set in the site's tokens (g6.css): a 36em measure, flush left. */
+.g6-prose { color: var(--ink); font-family: var(--font); font-size: 1.125rem; line-height: 1.6; max-width: 40em; }
+.g6-prose h1 { font-size: clamp(48px, 6vw, 88px); font-weight: 820; font-variation-settings: "wdth" 70; line-height: .92;
+               letter-spacing: -.01em; margin: 0 0 2rem; }
+.g6-prose h2 { font-size: 30px; font-weight: 740; font-variation-settings: "wdth" 80; line-height: 1.1; margin: 3rem 0 1rem; }
+.g6-prose h3 { font-size: 21px; font-weight: 650; margin: 2rem 0 .6rem; }
+.g6-prose p, .g6-prose ul, .g6-prose ol, .g6-prose table, .g6-prose pre { margin: 0 0 1.25rem; }
+.g6-prose p, .g6-prose li { max-width: 36em; }
+.g6-prose ul { list-style: disc; padding-left: 1.4rem; }
+.g6-prose ol { list-style: decimal; padding-left: 1.4rem; }
+.g6-prose a { color: var(--teal-ink); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .2em; }
+.g6-prose strong { font-weight: 650; }
+.g6-prose code { font-family: var(--mono); font-size: .88em; background: var(--paper-2); padding: .1em .35em; }
+.g6-prose pre { background: var(--paper-2); border-left: 2px solid var(--ink); padding: 1rem 1.1rem; overflow-x: auto;
+                font-size: 15px; line-height: 1.5; }
+.g6-prose pre code { background: none; padding: 0; font-size: 1em; }
+.g6-prose table { width: 100%; border-collapse: collapse; font-size: 16px; display: block; overflow-x: auto; }
+.g6-prose th, .g6-prose td { border-bottom: 1px solid var(--rule); padding: .55rem .9rem .55rem 0; text-align: left;
+                             vertical-align: top; }
+.g6-prose th { font-weight: 650; border-bottom: 2px solid var(--ink); }
+.g6-prose blockquote { border-left: 2px solid var(--ink); padding-left: 1rem; color: var(--graphite); margin: 0 0 1.25rem; }
+.g6-prose .admonition { border-left: 4px solid var(--teal); padding: .8rem 1.1rem; margin: 0 0 1.25rem; background: var(--paper-2); }
+.g6-prose .admonition-title { font-weight: 650; margin-bottom: .25rem; }
+
+/* Code, coloured by Pygments' classes (markdown's codehilite): the site's teal for keywords, with three quiet hues. */
+:root { --code-kw: #006A5F; --code-str: #8A4B08; --code-com: #5E6B67; --code-num: #8E2C66; --code-fn: #1F4FB4;
+        --code-op: #4A5451; }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --code-kw: #4AD6C4; --code-str: #F2C14E; --code-com: #8C9A95; --code-num: #FF9EC7;
+                                       --code-fn: #8AB4FF; --code-op: #98A39F; }
+}
+.g6-prose .highlight pre { border-left-color: var(--teal); }
+.highlight .k, .highlight .kn, .highlight .kc, .highlight .kd, .highlight .kr, .highlight .ow { color: var(--code-kw);
+    font-weight: 600; }
+.highlight .s, .highlight .s1, .highlight .s2, .highlight .sa, .highlight .sb, .highlight .sd, .highlight .se,
+.highlight .si, .highlight .sx { color: var(--code-str); }
+.highlight .c, .highlight .c1, .highlight .cm, .highlight .ch { color: var(--code-com); font-style: italic; }
+.highlight .m, .highlight .mi, .highlight .mf, .highlight .mh, .highlight .nd { color: var(--code-num); }
+.highlight .nf, .highlight .fm, .highlight .nc, .highlight .nb, .highlight .bp { color: var(--code-fn); }
+.highlight .o, .highlight .p { color: var(--code-op); }
+
+/* Diagrams: ```mermaid fences (pages/views.py), drawn by static/js/mermaid-init.js. Until it draws, or where it cannot,
+   the source reads as text. A wide diagram scrolls inside its figure, never the page; on a phone it keeps its size. */
+.g6-prose .diagram { margin: 2.25rem 0 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); max-width: 100%; }
+.g6-prose .diagram pre.mermaid { margin: 0; padding: 0 0 .5rem; background: none; border: 0; overflow-x: auto;
+                                 font-size: 15px; line-height: 1.4; }
+.g6-prose .diagram pre.mermaid:not([data-processed]) { padding: 1rem 1.1rem; background: var(--paper-2);
+                                                       font-family: var(--mono); color: var(--graphite); }
+.g6-prose .diagram svg { display: block; max-width: 100%; height: auto; }
+.g6-prose .diagram figcaption { margin-top: .6rem; font-size: 15px; line-height: 1.45; color: var(--graphite);
+                                max-width: 36em; }
+@media (max-width: 640px) { .g6-prose .diagram svg { max-width: none; } }

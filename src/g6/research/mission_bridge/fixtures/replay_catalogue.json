@@ -1,0 +1,108 @@
+{
+  "note": "What the replay assumes about each operation the fixtures name. An op the shipped census classes at A1 or above keeps that class ('shipped_census'); any other gets an ASSUMED class so the graph can be screened as if it were measured. The assumption is the experiment's, not a measurement, and no op here was probed or run.",
+  "census_build": "1747611d458d",
+  "census_date": "2026-10-06",
+  "census_digest": "06cb534ef45afd81dc6900b32d734f4621d7997cc889b8e6640f05b3e3caf3eb",
+  "ops": {
+    "adapt_blender.create_primitive": {
+      "effect": "local_write",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "align_evals.evaluate": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "shipped_census"
+    },
+    "coding_agent_gate.verify_answer": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "ctx_rag.rag_evaluate_retrieval": {
+      "effect": "read",
+      "authority": "A4",
+      "source": "shipped_census"
+    },
+    "ctx_search.search": {
+      "effect": "external",
+      "authority": "A2",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "ctx_vision.describe_image": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "shipped_census"
+    },
+    "debate.debate": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "formal_methods.solve": {
+      "effect": "read",
+      "authority": "A4",
+      "source": "shipped_census"
+    },
+    "intent_engine.elicit": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "shipped_census"
+    },
+    "job_engineer.design_system": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "job_labourer.evaluate_safety": {
+      "effect": "local_write",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "job_lawyer.analyze_case": {
+      "effect": "local_write",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "job_logistics.optimize_route": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "shipped_census"
+    },
+    "job_medical_surgical.review_imaging": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "mesh3d.analyze_mesh": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "A0"
+    },
+    "venture.weakened_tests": {
+      "effect": "read",
+      "authority": "A1",
+      "source": "assumed",
+      "shipped_census": "unmeasured"
+    },
+    "workforce.run_tests": {
+      "effect": "read",
+      "authority": "A4",
+      "source": "shipped_census"
+    },
+    "workforce.run_tests_in_place": {
+      "effect": "read",
+      "authority": "A4",
+      "source": "shipped_census"
+    }
+  }
+}

@@ -1,0 +1,228 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}AI Can Talk — But It Can't Think{% endblock %}
+{% block meta_description %}Between today's LLMs and true AGI lies a missing layer: the ability to think, not just talk. G6Solver adds the cognitive infrastructure.{% endblock %}
+{% block post_headline %}AI Can Talk — But It Can't Think{% endblock %}
+{% block post_date %}2025-03-15{% endblock %}
+{% block post_description %}Between today's LLMs and true AGI lies a missing layer: the ability to think, not just talk. G6Solver adds the cognitive infrastructure.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Research</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">AI Can Talk &mdash; But It Can't Think</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: AI is already remarkably capable
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">Something genuinely new has happened in computing. Large language models can draft legal briefs, debug unfamiliar codebases, translate between programming languages they were barely trained on, and hold extended conversations that feel &mdash; for lack of a better word &mdash; thoughtful. GPT-4, Claude, and their successors routinely pass bar exams, medical licensing tests, and graduate-level reasoning benchmarks. These are not parlour tricks. The underlying capability is real, and dismissing it would be intellectually dishonest.</p>
+
+            <p class="gsap-reveal">The enthusiasm is warranted, too. For the first time, a single general-purpose system can operate usefully across domains that used to require years of specialised training. A startup founder can get a passable first draft of a patent filing. A researcher can summarise a hundred papers overnight. A student wrestling with differential equations at two in the morning can get patient, step-by-step explanations that adapt to their confusion. These are meaningful improvements to how knowledge work gets done. The numbers bear this out &mdash; a recent survey of over a thousand developers and CTOs found that AI agents are already delivering measurable returns in production environments.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal">So the optimistic case deserves to be taken seriously. If you squint at the trajectory &mdash; from GPT-2's party-trick text completions to GPT-4's sophisticated reasoning chains &mdash; it is tempting to conclude that we are on a smooth curve toward artificial general intelligence. Perhaps we just need bigger models, more data, better fine-tuning. Perhaps the hard problems will yield to scale.</p>
+
+            <p class="gsap-reveal">Perhaps. But there is a problem with this story, and it becomes visible the moment you move from impressive demonstrations to high-stakes deployment.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: Capability isn't competence
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Difference Between Fluency and Understanding</h2>
+
+            <p class="gsap-reveal">Consider a medical scenario. A physician describes a cluster of symptoms &mdash; fatigue, joint pain, a butterfly-shaped facial rash &mdash; and asks an LLM for a differential diagnosis. The model will almost certainly suggest lupus, because that pattern appears frequently in its training data. And it will probably be right. But now imagine a subtler presentation: the same symptoms alongside an unusual medication history and a recent travel profile that shifts the probability landscape entirely. The model may still suggest lupus &mdash; confidently, fluently, with citations &mdash; because it is optimising for the most <em>statistically likely</em> response, not performing the kind of clinical reasoning that weighs competing hypotheses against each other.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">This is not a bug that better training will fix. It reflects something fundamental about how these systems work. LLMs are, at their core, extraordinarily sophisticated pattern matchers. They produce outputs that are <em>probable</em> given their training distribution. When probability and correctness align &mdash; which is often &mdash; the results look like intelligence. When they diverge, the results look like intelligence too, and that is precisely the danger.</p>
+
+            <p class="gsap-reveal">The issue runs deeper than occasional errors. Current models have no persistent memory across reasoning chains &mdash; each response is, in a meaningful sense, starting from scratch within its context window.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> Even standardised connectivity protocols like MCP, which give agents structured access to tools and data sources, do not solve the deeper reasoning gap &mdash; they wire the plumbing but cannot supply the judgement.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup> They cannot monitor their own reasoning processes, which means they lack the metacognitive capacity to notice when they are confused, uncertain, or contradicting something they said three paragraphs ago.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> Quantitative research confirms the intuition: agent reliability degrades measurably across extended interactions, with consistency and predictability declining as task horizons grow.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> A lawyer who could not remember their own prior arguments, or a doctor who could not tell when they were guessing, would be considered impaired. We hold these systems to a lower standard because their prose is so polished.</p>
+
+            <p class="gsap-reveal">And this is where the scaling hypothesis starts to strain. The gap between generating plausible text and performing reliable reasoning may not be the kind of gap that closes with more parameters. Even practical attempts to manage this complexity &mdash; stateful agent frameworks with human-in-the-loop checkpoints &mdash; run into hard limits as context windows exhaust themselves under real workloads.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> It seems more likely to be an architectural absence &mdash; a missing layer of cognitive infrastructure that no amount of next-token prediction will spontaneously produce.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup></p>
+
+            <!-- ── Diagram 1: The Gap ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 160" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing the gap between current LLMs and true AGI">
+                    <!-- LLMs Today box -->
+                    <rect x="20" y="40" width="200" height="80" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="120" y="72" text-anchor="middle" fill="#d1d5db" font-size="15" font-weight="600">LLMs Today</text>
+                    <text x="120" y="96" text-anchor="middle" fill="#9ca3af" font-size="11">Probabilistic text</text>
+
+                    <!-- Arrow 1 -->
+                    <line x1="230" y1="80" x2="280" y2="80" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="6,4"/>
+                    <polygon points="278,75 290,80 278,85" fill="#6b7280"/>
+
+                    <!-- THE GAP box (highlighted) -->
+                    <rect x="295" y="30" width="210" height="100" rx="14" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <!-- Glow effect -->
+                    <rect x="295" y="30" width="210" height="100" rx="14" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#glow)"/>
+                    <text x="400" y="62" text-anchor="middle" fill="#6366f1" font-size="13" font-weight="700" letter-spacing="3">THE GAP</text>
+                    <text x="400" y="84" text-anchor="middle" fill="#a5b4fc" font-size="10">Reasoning &bull; Self-Awareness</text>
+                    <text x="400" y="100" text-anchor="middle" fill="#a5b4fc" font-size="10">Adaptation &bull; Verification</text>
+
+                    <!-- Arrow 2 -->
+                    <line x1="515" y1="80" x2="565" y2="80" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="6,4"/>
+                    <polygon points="563,75 575,80 563,85" fill="#6b7280"/>
+
+                    <!-- True AGI box -->
+                    <rect x="580" y="40" width="200" height="80" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="680" y="72" text-anchor="middle" fill="#d1d5db" font-size="15" font-weight="600">True AGI</text>
+                    <text x="680" y="96" text-anchor="middle" fill="#9ca3af" font-size="11">Reliable reasoning</text>
+
+                    <defs>
+                        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; The missing cognitive layer between language models and general intelligence</p>
+            </div>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Cognitive infrastructure
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">What Resolves This Isn't More AI &mdash; It's a Different Kind of Engineering</h2>
+
+            <p class="gsap-reveal">Both sides of the debate tend to miss something. The sceptics look at the gap and conclude that current AI is overhyped. The optimists look at the trajectory and assume the gap will close on its own. But there is a third possibility, and it is arguably the most interesting one: the foundation is sound &mdash; these models <em>are</em> remarkably capable &mdash; and what is needed is not a better foundation but a different kind of structure built on top of it.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
+
+            <p class="gsap-reveal">The analogy that keeps proving useful is an old one from computing itself. Raw hardware is powerful, but without an operating system &mdash; without process management, memory allocation, file systems, security boundaries &mdash; that power is inaccessible for most practical work. LLMs are in a similar position. They are powerful substrates waiting for the right abstraction layer. The challenge is not to build a bigger engine but to design the cognitive operating system that makes the engine reliably useful.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup></p>
+
+            <!-- ── Diagram 3: Architecture Stack ── -->
+            <div class="gsap-reveal my-12 max-w-md mx-auto">
+                <div class="space-y-0">
+                    <!-- Top layer -->
+                    <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Output</p>
+                        <p class="text-white font-semibold">Real-World Solutions</p>
+                        <p class="text-xs text-gray-500 mt-1">Reliable, verified, domain-specific</p>
+                    </div>
+                    <!-- Middle layer (highlighted) -->
+                    <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Cognitive Layer</p>
+                        <p class="text-white font-bold text-lg relative">G6 Infrastructure</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Context &bull; Self-Awareness &bull; Self-Modification</p>
+                    </div>
+                    <!-- Bottom layer -->
+                    <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Foundation</p>
+                        <p class="text-white font-semibold">LLM Models</p>
+                        <p class="text-xs text-gray-500 mt-1">GPT, Claude, Llama, Mistral&hellip;</p>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; G6 as the cognitive middleware between raw LLMs and reliable output</p>
+            </div>
+
+            <p class="gsap-reveal">This reframing suggests that AGI is less a model-scaling problem than a systems engineering one.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> And if that is true, then the work to be done becomes clearer. The cognitive layer needs to supply exactly the capabilities that next-token prediction cannot: the ability to maintain coherent context across extended reasoning, the capacity for genuine self-monitoring, and the machinery for controlled self-improvement.</p>
+
+            <p class="gsap-reveal"><strong class="text-gray-200">Context management</strong> addresses the memory problem directly &mdash; tracking the evolving state of a complex task so that step forty of a reasoning chain is informed by what happened at step three, not just what fits in the current window.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> <strong class="text-gray-200">Self-awareness</strong> introduces metacognition: the system monitors its own reasoning, flags uncertainty, and recognises when it is operating outside its competence rather than confabulating an answer.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> And <strong class="text-gray-200">self-modification under supervision</strong> allows the system to rewrite its own strategies and code as it learns &mdash; but within guardrails that prevent the kind of unconstrained self-improvement that makes safety researchers lose sleep.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup><sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup></p>
+
+            <p class="gsap-reveal">That last point deserves emphasis. Safety cannot be an afterthought in a system that modifies itself. It has to be woven into the architecture from the beginning &mdash; not as a constraint that limits capability, but as the structure that makes capability trustworthy.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> The 2026 International AI Safety Report, backed by over thirty countries and led by Yoshua Bengio, reaches the same conclusion: safety-by-design is non-negotiable for agentic systems, and governance frameworks must evolve in lockstep with capability.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup> A self-improving system without robust safety boundaries is not more intelligent; it is more dangerous. The two concerns are inseparable.</p>
+
+            <!-- ── Diagram 2: Three Pillars ── -->
+            <div class="gsap-reveal my-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <!-- Pillar 1: Context Management -->
+                <div class="rounded-xl glass p-6 text-center hover:border-g6-indigo/40 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-g6-indigo/10 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>
+                            <circle cx="12" cy="12" r="9" stroke-dasharray="4,3"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Context Management</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed">Tracks evolving state across complex, multi-step reasoning chains</p>
+                </div>
+                <!-- Pillar 2: Self-Awareness -->
+                <div class="rounded-xl glass p-6 text-center hover:border-g6-violet/40 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-g6-violet/10 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="10" r="4"/>
+                            <path d="M6 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
+                            <path d="M15 4l2-2m-2 2l2 2" opacity="0.5"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Self-Awareness</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed">Recognises mistakes, knows its limits, and asks when uncertain</p>
+                </div>
+                <!-- Pillar 3: Self-Modification -->
+                <div class="rounded-xl glass p-6 text-center hover:border-g6-pink/40 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-pink-500/10 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Self-Modification</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed">Rewrites its own code and reasoning under supervised guardrails</p>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════════
+                 CODA: What this means
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">What Becomes Possible</h2>
+
+            <p class="gsap-reveal">If this framing is right &mdash; if the path to general intelligence runs through cognitive infrastructure rather than model scale &mdash; then something interesting follows. The interaction model for AI stops being &ldquo;ask a question, get an answer&rdquo; and starts looking more like a sustained reasoning session: a REPL for thinking, where ideas, logic, and execution fold into a continuous loop until the problem is actually solved.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> Not a chatbot that sounds confident. A system that reasons about its own reasoning &mdash; and gets better at it as it goes.</p>
+
+            <p class="gsap-reveal font-semibold text-white">The language models gave us fluency. What comes next is the harder, less glamorous work of giving AI a mind &mdash; the bridge between the eloquence of today and the intelligence of tomorrow.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Russell, S., &amp; Norvig, P. (2010). <a href="https://aima.cs.berkeley.edu/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Artificial Intelligence: A Modern Approach</em></a> (3rd&nbsp;ed., &sect;14.7). Prentice Hall. &mdash; On uncertain reasoning and how certainty-factor systems can yield &ldquo;disastrously incorrect degrees of belief.&rdquo;
+                </li>
+                <li id="ref-2">
+                    Zhang, Z., Bo, X., Ma, C., Li, R., Chen, X., Dai, Q., Zhu, J., Dong, Z., &amp; Wen, J.-R. (2024). <a href="https://arxiv.org/abs/2404.13501" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>A survey on the memory mechanism of large language model based agents</em></a>. <em>ACM Transactions on Information Systems</em>. &mdash; Agent memory vs. context engineering; the context window as a constrained computational resource.
+                </li>
+                <li id="ref-3">
+                    Flavell, J. H. (1979). <a href="https://doi.org/10.1037/0003-066X.34.10.906" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Metacognition and cognitive monitoring: A new area of cognitive-developmental inquiry</em></a>. <em>American Psychologist</em>, 34(10), 906&ndash;911. Paris, S. G., &amp; Winograd, P. (1990). <a href="https://doi.org/10.4324/9780203771686-2" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>How metacognition can promote academic learning and instruction</em></a>. In B. F. Jones &amp; L. Idol (Eds.), <em>Dimensions of thinking and cognitive instruction</em>. &mdash; Metacognition defined as &ldquo;self-appraisal and self-management of cognition.&rdquo;
+                </li>
+                <li id="ref-4">
+                    Yampolskiy, R. V., &amp; Fox, J. (2013). <a href="https://doi.org/10.1007/s11245-012-9128-9" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Safety engineering for artificial general intelligence</em></a>. <em>Topoi</em>, 32, 217&ndash;226. &mdash; Constraining self-improvement and AI confinement as safety requirements.
+                </li>
+                <li id="ref-5">
+                    Weng, L. (2023, June 23). <a href="https://lilianweng.github.io/posts/2023-06-23-agent/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>LLM powered autonomous agents</em></a>. Lil&rsquo;Log. &mdash; Agents&rsquo; perception, memory, reasoning, planning, and execution capabilities as a cognitive architecture.
+                </li>
+                <li id="ref-6">
+                    Robeyns, M., Szummer, M., &amp; Aitchison, L. (2025). <a href="https://arxiv.org/abs/2504.15228" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>A self-improving coding agent</em></a>. arXiv. &mdash; An agent that modifies its own source code through iterative self-improvement.
+                </li>
+                <li id="ref-7">
+                    Healy, J. (2024). <em class="text-gray-400">Machine Learning Systems</em>, Ch.&nbsp;20. &mdash; &ldquo;AGI emerges as primarily a systems engineering challenge&hellip; integrating perception, reasoning, planning, and action.&rdquo; [Source not linkable]
+                </li>
+                <li id="ref-8">
+                    Srivastava, S. (2021). <a href="https://ojs.aaai.org/index.php/AAAI/article/view/17769" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Unifying principles and metrics for safe and assistive AI</em></a>. <em>Proceedings of the AAAI Conference on Artificial Intelligence</em>, 35(17), 15064&ndash;15068. &mdash; On frameworks for human&ndash;AI collaboration and partnership.
+                </li>
+                <li id="ref-9">
+                    VentureBeat. (2026). <a href="https://venturebeat.com/orchestration/ai-agents-are-delivering-real-roi-heres-what-1-100-developers-and-ctos" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>AI agents are delivering real ROI</em></a>. &mdash; On agent scaling, tool-calling costs, and production deployment challenges.
+                </li>
+                <li id="ref-10">
+                    Anthropic. (2024, November 25). <a href="https://www.anthropic.com/news/model-context-protocol" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Introducing the Model Context Protocol</em></a>. &mdash; The universal connector for agent&ndash;tool integration; standardising how AI systems access local and remote data.
+                </li>
+                <li id="ref-11">
+                    <a href="https://arxiv.org/abs/2602.16666" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Towards a science of AI agent reliability</em></a>. (2026, February). arXiv. &mdash; Proposes 12 metrics decomposing agent reliability across consistency, robustness, predictability, and safety.
+                </li>
+                <li id="ref-12">
+                    Lakshmanan, L. (n.d.). <a href="https://medium.com/data-science/how-to-implement-a-genai-agent-using-autogen-or-langgraph-929135afd34d" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>How to implement a GenAI agent using Autogen or LangGraph</em></a>. Towards Data Science. &mdash; Comparative analysis of stateful agent frameworks, human-in-the-loop checkpoints, and context window management.
+                </li>
+                <li id="ref-13">
+                    International AI Safety Report. (2026, February). <a href="https://internationalaisafetyreport.org/publication/international-ai-safety-report-2026" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>International AI Safety Report 2026</em></a>. &mdash; Led by Yoshua Bengio with 100+ experts; covers governance, verification, and agentic liability.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

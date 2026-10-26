@@ -1,0 +1,9 @@
+text,category
+synthetic train query 0,card_arrival
+synthetic train query 1,card_delivery_estimate
+synthetic train query 2,contactless_not_working
+synthetic train query 3,transfer_not_received_by_recipient
+synthetic train query 4,edit_personal_details
+synthetic train query 5,compromised_card
+synthetic train query 6,request_refund
+synthetic train query 7,transaction_charged_twice

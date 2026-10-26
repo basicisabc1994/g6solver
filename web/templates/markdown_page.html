@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ title|default:"G6" }}{% endblock %}
+{% block content %}
+<article class="article wrap">
+    <div class="g6-prose">
+{{ body }}
+    </div>
+</article>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Failure modes{% endblock %}
+{% block meta_description %}Every way of failing that G6 names, and the components in the library that guard against each one today{% if show_planned %}, and the ones still to come{% endif %}.{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/components.css' %}">{% endblock %}
+{% block content %}
+{% comment %}Read from catalog/failure_modes.json, which tools/gen_failure_map.py writes from the registry and each
+component's own declarations (pages/failure_map.py); no failure mode is typed in this template. Planned packages are
+named only while show_planned (pages/extensions.py SHOW_PLANNED) is on.{% endcomment %}
+<header class="wrap page-hero">
+    <h1 class="display">Failure modes</h1>
+    <p class="lede why">A language model fails in ways built into how it works, so no single check catches every
+    failure. G6 stacks its components like slices of Swiss cheese: each one names the failures it guards against, and
+    where one slice has a hole, the next one catches what slips through.</p>
+    <p class="lede">This is the map of those slices: every failure mode G6 names, the components that guard against it
+    today, and the ones whose own use can cause it. It is generated from the code, so a component appears here only
+    when its package declares the mode.</p>
+    <dl class="cmp-counts">
+        <div><dt>Failure modes</dt><dd>{{ counts.total }}</dd></div>
+        <div><dt>Guarded today</dt><dd>{{ counts.guarded }}</dd></div>
+        {% if show_planned %}<div><dt>Planned</dt><dd>{{ counts.planned }}</dd></div>{% endif %}
+        <div><dt>No guard yet</dt><dd>{{ counts.unguarded }}</dd></div>
+    </dl>
+</header>
+{% for group in groups %}
+
+<section class="band" id="{{ group.key }}" aria-labelledby="{{ group.key }}-h">
+    <div class="wrap cols">
+        <div class="band__head">
+            <h2 class="h2" id="{{ group.key }}-h">{{ group.title }}</h2>
+            <p class="lede quiet">{{ group.lede }}</p>
+        </div>
+        <ul class="band__body cmp-list">
+            {% for m in group.modes %}
+            <li class="cmp" id="mode-{{ m.code }}">
+                <h3 class="cmp__title"><a class="link" href="/failure-modes/{{ m.code }}/">{{ m.title|capfirst }}</a></h3>
+                <p class="cmp__meta"><code>{{ m.code }}</code>{% if m.guards %}. Guarded by {% for g in m.guards %}<a href="{{ g.href }}"><code>{{ g.name }}</code></a>{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}{% if show_planned and m.planned %}. Planned in {% for p in m.planned %}<code>{{ p }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}{% if m.awaiting %}. Built, awaiting its certificate: {% for a in m.awaiting %}<a href="{{ a.href }}"><code>{{ a.name }}</code></a>{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}{% if m.causes %}. Can be caused by {% for c in m.causes %}<a href="{{ c.href }}"><code>{{ c.name }}</code></a>{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</p>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</section>
+{% endfor %}
+{% endblock %}

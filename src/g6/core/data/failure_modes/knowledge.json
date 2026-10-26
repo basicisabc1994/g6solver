@@ -1,0 +1,13 @@
+{
+  "family": "knowledge",
+  "codes": [
+    {"code": "incomplete_literature", "title": "conclusions drawn from an incomplete search of the literature"},
+    {"code": "unreadable_source", "title": "source material skipped or garbled because its format could not be read"},
+    {"code": "failure_read_as_empty", "title": "a failed or blocked search taken to mean there are no results"},
+    {"code": "unbounded_index", "title": "an index that outgrows its storage budget"},
+    {"code": "stale_citation", "title": "a citation to text that has since changed"}
+  ],
+  "planned": {
+    "g6.knowledge": ["unreadable_source"]
+  }
+}

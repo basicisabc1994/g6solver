@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}The Economics of AI Automation{% endblock %}
+{% block meta_description %}Our worldview on how AI will actually reshape the economy &mdash; gradually, unevenly, and bottleneck by bottleneck &mdash; and how that view shapes the way G6 is engineered.{% endblock %}
+
+{% block content %}
+<article class="article wrap">
+    <div class="g6-prose">
+        <header>
+            <p class="label">Principles</p>
+            <h1>The Economics of AI Automation</h1>
+            <p class="intro why">G6 exists because of a specific view about how AI will actually change the economy &mdash; gradually, unevenly, and bottleneck by bottleneck. That view shapes everything we build. Here it is in full, followed by how it translates into the way G6 works.</p>
+            <p>This analysis is adapted from Professor Chad Jones&rsquo;s talk <a href="https://www.youtube.com/watch?v=xBpGn3BDcOY" rel="noopener">&ldquo;A.I. and Our Economic Future&rdquo;</a> and its &ldquo;weak links&rdquo; framework, retold to explain how that view shapes the way G6 is engineered.</p>
+        </header>
+
+        <div>
+
+            <!-- Executive summary -->
+            <h2>Executive summary</h2>
+            <p>We believe AI could be the most transformative technology of our lifetime, but its effects may arrive more slowly than Silicon Valley&rsquo;s most dramatic forecasts suggest. The key reason is that economies, businesses, and jobs depend on many interlocking tasks. Automating some tasks does not automatically transform everything, because the remaining &ldquo;weak links&rdquo; become the bottlenecks.</p>
+            <p>We contrast two extreme scenarios. In the first, AI automates software engineering, then AI research, then general cognitive work, then robotics and physical labour, leading to explosive economic growth. In the second, AI behaves more like past transformative technologies &mdash; electricity, semiconductors, the internet &mdash; which changed the world but did not permanently raise U.S. growth above roughly 2% per year.</p>
+            <p>We believe the most likely outcome is somewhere in between: AI probably will have enormous long-run effects, potentially &ldquo;multiple internets&rdquo; in scale, but the full growth explosion may take decades rather than a few years. However, the downside risks &mdash; cyberattacks, biosecurity threats, and other catastrophic harms &mdash; could arrive much sooner.</p>
+
+            <!-- Main ideas -->
+            <h2>Main ideas</h2>
+
+            <h3>1. AI could produce explosive growth, but only if it automates both cognitive and physical work</h3>
+            <p>We believe the optimistic &ldquo;FOOM&rdquo; scenario is plausible: AI first automates coding, then uses that capability to improve AI itself, design better chips, accelerate science, develop drugs, and eventually control robots. Once machines can perform both cognitive and physical tasks, standard growth models imply that economic growth could accelerate dramatically.</p>
+            <p>We do not dismiss this scenario. We acknowledge that leading AI figures have predicted rapid progress and that recent AI models already appear extremely strong at software-related tasks.</p>
+
+            <h3>2. But history suggests transformative technologies often take decades to reshape the economy</h3>
+            <p>We contrast AI with electricity, internal combustion engines, antibiotics, semiconductors, IT, and the internet. These technologies were undeniably transformative, yet U.S. living standards have grown at roughly 2% per year for about 150 years.</p>
+            <p>We believe each major technology may have prevented growth from slowing, rather than causing a permanent jump in the growth rate. New technologies often require complementary inventions, organisational changes, infrastructure, and new business processes before their full impact is felt.</p>
+
+            <h3>3. &ldquo;Weak links&rdquo; are the core framework</h3>
+            <p>We believe the central concept is that a system is only as strong as its weakest link. A business, a supply chain, an economy, or a job depends on many tasks being completed successfully. Improving 17 out of 20 links does not fully solve the problem if the remaining 3 still bottleneck the whole system.</p>
+            <p>Three examples make the point concrete:</p>
+            <ul>
+                <li><strong>An iPhone</strong> is a bundle of parts that must all work. If just one falls short &mdash; the screen, the gyroscope, the camera &mdash; the value of the entire device drops sharply, however good everything else is.</li>
+                <li><strong>A silicon chip</strong> can be ruined by a single microscopic defect. One flaw among billions of transistors is enough to render the whole chip useless &mdash; yield is dictated by the defects, not the successes.</li>
+                <li><strong>The Space Shuttle Challenger</strong> was lost because of a roughly $25 O-ring that failed in the cold. One small, cheap part broke an extraordinarily complex and expensive system.</li>
+            </ul>
+            <p>Each is the same lesson: a system is only as strong as its weakest-performing component. That weakest link is the rate-limiting step of the whole process &mdash; and it is the rate-limiting step, not the parts that already work well, that determines the system&rsquo;s real cost.</p>
+            <p>This also explains why having vastly more computing power has not made researchers 100 million times more productive: computers are excellent at some tasks, but humans still need to decide which questions to ask, what data to use, and how to interpret results.</p>
+
+            <h3>4. Automating one task may have surprisingly limited immediate economic impact</h3>
+            <p>One striking example is software. We believe that even if software became infinitely abundant, the static gain to GDP might be around the software sector&rsquo;s share of GDP &mdash; roughly 2% &mdash; because other weak links would still constrain output.</p>
+            <p>The point is not that software automation is unimportant. Rather, one bottleneck being removed is not enough. For explosive growth, AI must repeatedly identify and automate the next bottlenecks across the whole economy.</p>
+
+            <h3>5. The model predicts eventual acceleration, but weak links slow it down</h3>
+            <p>We describe a model where ideas drive long-run growth, production has weak links, and automation gradually removes those weak links. When calibrated to historical U.S. data, the model suggests growth may eventually accelerate substantially.</p>
+            <p>However, in the baseline scenario, the acceleration is slow. Growth might rise from around 2% to 2.3% by 2050, with income per person only modestly above the old 2% trend by mid-century. In more aggressive scenarios, where AI raises automation across the whole economy at something like Moore&rsquo;s Law speed, growth accelerates much faster &mdash; but even then, the full transformation may take decades rather than just a few years.</p>
+
+            <h3>6. Jobs are bundles of tasks, so AI may raise wages in some fields before replacing them</h3>
+            <p>We use radiologists as an example. Geoff Hinton predicted in 2016 that radiologists would soon become unnecessary, but there are more radiologists now and they are paid more. We believe the explanation is that AI may automate many parts of a job while making the remaining human tasks more valuable.</p>
+            <p>Radiologists still consult, handle difficult cases, coordinate with other doctors, and interpret ambiguous situations. By contrast, we believe Uber drivers may be more vulnerable because self-driving cars aim to automate nearly the entire job.</p>
+
+            <h3>7. Software engineers may not disappear as quickly as people expect</h3>
+            <p>Although AI may be especially strong at coding, we believe companies will still need people to integrate AI into real businesses, handle sensitive data, make judgment calls, and manage implementation. The key question is not only whether AI can code, but whether organisations will trust AI systems to redesign important workflows without human oversight.</p>
+
+            <h3>8. Inequality is a major concern, but abundance could make redistribution easier</h3>
+            <p>We believe there is a risk that AI reduces the value of labour and increases the share of income going to capital. A more optimistic view is that if AI produces a world of abundance, there will be enough resources to make everyone better off &mdash; provided redistribution works.</p>
+            <p>We also note that many high-skilled workers own shares in the stock market, so they may benefit from capital income. The bigger concern is people who do not own financial assets. We see this as a political economy problem rather than a purely technical economic one.</p>
+
+            <h3>9. Meaningful work may also be disrupted</h3>
+            <p>We believe that if AI becomes better at producing research, analysis, or creative work than humans are, it could affect people&rsquo;s sense of meaning. A post-work world may resemble retirement or summer camp: people may still find meaning through family, hobbies, learning, and community, but the transition could be psychologically and socially difficult.</p>
+
+            <h3>10. Catastrophic risks may arrive before the economic benefits</h3>
+            <p>We end on a more worried note. There are two kinds of catastrophic risk:</p>
+            <ul>
+                <li><strong>Bad actor risk:</strong> A malicious person or group could use advanced AI to design cyberattacks, biological threats, or other dangerous tools.</li>
+                <li><strong>Alien intelligence risk:</strong> A more speculative concern that humanity may create entities more powerful than itself and struggle to retain control.</li>
+            </ul>
+            <p>The weak-link framework implies that benefits require strengthening many links over time, but harm may require breaking only one critical link. For example, AI-enabled attacks on the electric grid, financial system, banking system, or biological infrastructure could happen before the broader economic transformation is complete.</p>
+
+            <!-- How G6 works -->
+            <div>
+                <h2>How G6 works</h2>
+                <p>The essay above is the worldview: progress comes from strengthening one weak link after another, and a single broken link can sink the whole system. That is exactly the problem G6 is engineered around. Here, in plain language, is how that shows up in the way G6 is actually built.</p>
+
+                <h3>Seven guards against silent failure</h3>
+                <p>G6 starts from an uncomfortable premise: when a language model produces an answer, that is not success &mdash; it is a claim that still has to be checked. Before it attempts a task, G6 frames the work the way an experienced engineer would, asking what could go wrong and designing for it. A handful of non-negotiable guards follow: design the approach before executing it; build in redundancy so no single faulty component decides the outcome; run a pre-mortem so failure modes are named up front rather than discovered later; keep the reasoning inspectable so it can be audited and corrected; plan for both the common path and the messy long tail; and turn every repeated human intervention into a reusable, automated check.</p>
+                <p>A practical rule of thumb runs through all of this: at least two-thirds of decision-critical work should be grounded in verified prior work, real context, deterministic computation, tests, or external sources &mdash; not pure model guesswork. And because independent components can disagree, G6 borrows <strong>Byzantine fault tolerance</strong> from distributed systems: tolerate a faulty minority by requiring enough genuinely independent parts to agree before acting.</p>
+
+                <h3>Four-valued logic for incomplete evidence</h3>
+                <p>Real evidence is rarely a clean true or false, so G6&rsquo;s quality layer refuses to pretend otherwise. Every claim is placed in one of four states: <strong>supported-true</strong> (evidence backs it, nothing refutes it), <strong>supported-false</strong> (evidence refutes it), <strong>both</strong> (a genuine, unresolved conflict in the evidence), or <strong>neither</strong> (not enough evidence to say). On top of that, G6 can ask whether a claim is necessary or merely possible, known or only believed, required by policy, or true only at a particular moment in time.</p>
+                <p>This sounds abstract, but it is what keeps the system honest: when the documentation says one thing and the running code says another, that is recorded as a conflict to resolve &mdash; not quietly rounded up to &ldquo;probably fine.&rdquo;</p>
+
+                <h3>An untrusted planner behind trusted runtime controls</h3>
+                <p>The part of G6 that decides what to do next &mdash; the planner &mdash; is treated as untrusted. It can propose actions, but it never executes them directly. A policy engine sits in between and enforces a strict order of authority: hard runtime limits outrank the kill switch, which outranks policy, which outranks the validators&rsquo; vote, which outranks pattern detectors, which outrank the planner, which outranks raw model text.</p>
+                <p>If a safety check fails, a protected file is touched without approval, or a hard limit is approached, execution stops rather than letting the model talk its way past the guardrails. Agreement among checkers is treated as a useful signal, never as proof &mdash; the validator pool deliberately includes tests, type checkers, linters, and security scanners, not just other models.</p>
+
+                <h3>Swiss-cheese components and three honest labels</h3>
+                <p>G6 does not trust any single agent, model, or test. It layers them &mdash; like slices of Swiss cheese, arranged so the holes never line up. Different components play to their strengths: one designs architecture, another independently debugs and reviews, others apply changes safely, run tests, and keep documentation readable for humans.</p>
+                <p>The most important output of all this is an honest label. Every result is marked <strong>verified</strong> (it passed the required checks), <strong>qualified-draft</strong> (useful, but incomplete &mdash; with its limits stated), or <strong>blocked-escalated</strong> (too risky to proceed without a person). The label has to match the evidence; a confident-sounding answer with nothing behind it is exactly the failure G6 exists to prevent.</p>
+
+                <h3>Bounded, friendly governance</h3>
+                <p>As G6 changes, it has to stay the kind of system you would actually want to run. A set of invariants is held fixed no matter what changes: it should benefit the user, remain interruptible and correctable, keep changes reversible, tell the truth, surface its uncertainty, respect permissions, never deceive, and leave genuinely dangerous decisions to a human.</p>
+                <p>Low-risk changes &mdash; copy, test fixtures &mdash; move freely; high-risk ones &mdash; anything touching governance, deployments, payments, or secrets &mdash; require explicit approval. Before any self-change ships, it has to answer plainly: why does this help the user, what evidence supports it, what could go wrong, and does it preserve those invariants?</p>
+
+                <h3>Self-improvement through dogfooding</h3>
+                <p>G6 improves through supervised iteration, not an autonomous loop. When something fails, a person diagnoses why and decides the fix, and the fix is tested before it ships.</p>
+                <p>Improvements are allowed in the safe-to-change surfaces &mdash; prompts, routing and retry policies, failure classifiers, examples, and documentation &mdash; while the core governance, security boundaries, billing, and human-approval rules are off-limits to self-modification. Self-changes are held to the same bar as other work: tests, and a person’s approval when the change is high-risk.</p>
+
+                <h3>Curating minimal context for each agent</h3>
+                <p>More context is not better context. Instead of dumping an entire codebase and every policy into each model call, G6 assembles a small, high-signal bundle tailored to the job at hand. Governance and user intent stay compact and authoritative; repository details are pulled in just-in-time as file paths, diffs, and search results rather than loaded wholesale; and examples are curated down to a few canonical ones.</p>
+                <p>For long-running work, finished phases are summarised and notes are kept in structured memory so the system does not slowly lose the plot. Every piece of context is sourced and time-stamped &mdash; and nothing is labelled verified if the context it relied on was missing or past the freshness window its source declares.</p>
+            </div>
+        </div>
+
+        <footer>
+            <a href="/">&larr; Back to home</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

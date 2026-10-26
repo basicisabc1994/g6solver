@@ -1,0 +1,35 @@
+{
+  "id": "gad7",
+  "name": "GAD-7",
+  "source": "gad7-form",
+  "licence": {
+    "state": "settled",
+    "terms": "No permission required to reproduce, translate, display or distribute.",
+    "where": "the footer of the form: \"Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues, with an educational grant from Pfizer Inc. No permission required to reproduce, translate, display or distribute.\"",
+    "sha256": "180538a8e3f2f3cb012f9991d1b307d3d14720e82bf0593f8853f4885740ce48"
+  },
+  "stem": "Over the last 2 weeks, how often have you been bothered by the following problems?",
+  "options": [
+    {"value": 0, "label": "Not at all"},
+    {"value": 1, "label": "Several days"},
+    {"value": 2, "label": "More than half the days"},
+    {"value": 3, "label": "Nearly every day"}
+  ],
+  "items": [
+    {"number": 1, "text": "Feeling nervous, anxious or on edge"},
+    {"number": 2, "text": "Not being able to stop or control worrying"},
+    {"number": 3, "text": "Worrying too much about different things"},
+    {"number": 4, "text": "Trouble relaxing"},
+    {"number": 5, "text": "Being so restless that it is hard to sit still"},
+    {"number": 6, "text": "Becoming easily annoyed or irritable"},
+    {"number": 7, "text": "Feeling afraid as if something awful might happen"}
+  ],
+  "scoring": {
+    "rule": "sum",
+    "clause": "(For office coding: Total Score T____ = ____ + ____ + ____ )",
+    "minimum": 0,
+    "maximum": 21,
+    "note": "The total is the sum of the seven item scores, as the form's office-coding line adds its columns. The form prints no worked example, and the form prints no severity bands: G6 reports the score computed and nothing more."
+  },
+  "to_a_person": []
+}

@@ -1,0 +1,240 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}The Hallucination Problem Is a Design Problem{% endblock %}
+{% block meta_description %}LLM hallucinations are not bugs to be patched but architectural consequences of optimising for token probability over truth. The solution is structural: separate generation from verification.{% endblock %}
+{% block post_headline %}The Hallucination Problem Is a Design Problem{% endblock %}
+{% block post_date %}2025-03-22{% endblock %}
+{% block post_description %}LLM hallucinations are not bugs to be patched but architectural consequences of optimising for token probability over truth. The solution is structural: separate generation from verification.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Research</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">The Hallucination Problem Is a Design Problem</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Hallucination as a bug to be fixed
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">There is a quiet consensus forming in the AI industry about hallucination. The problem is acknowledged &mdash; large language models fabricate citations, invent statistics, confabulate historical events, and present fictional legal precedents with the same measured confidence they use for verifiable facts. And the consensus says: this is a bug. A serious one, certainly, but a bug nonetheless &mdash; something that better training, more careful reinforcement learning from human feedback, tighter guardrails, and retrieval-augmented generation will progressively reduce until it reaches acceptable levels.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">This framing is understandable. The engineering instinct, when confronted with a system producing incorrect outputs, is to treat those outputs as defects and seek fixes. And the fixes are real. RLHF has meaningfully reduced the frequency of blatant fabrications compared to earlier models.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> Retrieval-augmented generation, which grounds model responses in actual documents, demonstrably improves factual accuracy in many domains.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> Constitutional AI methods add another layer of self-correction.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup> Each intervention moves the needle. The trajectory looks encouraging.</p>
+
+            <p class="gsap-reveal">The enterprise response follows logically from this framing. Organisations deploying LLMs in production invest in guardrail layers &mdash; output classifiers, fact-checking pipelines, human review queues, and citation-verification systems. The NIST AI Risk Management Framework treats accuracy as a governance concern, recommending continuous monitoring and human oversight to manage the risk of incorrect outputs.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> The implicit promise is that with enough defensive engineering, the hallucination rate can be driven low enough that the remaining risk becomes manageable.</p>
+
+            <p class="gsap-reveal">This is a reasonable position. It is also, in a fundamental sense, wrong.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: Hallucination as architecture
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Mechanism, Not the Symptom</h2>
+
+            <p class="gsap-reveal">To understand why, you have to look at what a language model actually does when it generates text. At each step, the model produces a probability distribution over its vocabulary and samples the next token. The training objective &mdash; whether it is next-token prediction, masked language modelling, or a variant thereof &mdash; optimises for producing outputs that are <em>statistically plausible</em> given the input context and the training distribution. At no point in this process does the model consult a ground truth. There is no fact table. There is no verification step. There is only probability.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">This is not a subtle technical distinction. It is the generative mechanism itself. When a model produces a correct factual statement, it does so because the correct statement happens to be the most probable continuation. When it hallucinates, it does so for exactly the same reason &mdash; the hallucinated content is the most probable continuation given the model's internal representations. The model is not &ldquo;making a mistake&rdquo; in any meaningful sense. It is doing precisely what it was trained to do. It is completing patterns.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup></p>
+
+            <p class="gsap-reveal">Ji et al.'s comprehensive survey of hallucination in natural language generation identified this structural issue clearly: hallucination arises from the fundamental gap between the model's learned statistical regularities and the actual state of the world.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup> The model has no epistemic access to the world. It has access to patterns in text that was, at some point, about the world. These are profoundly different things.</p>
+
+            <p class="gsap-reveal">Now consider what RLHF actually does in this context. It adjusts the probability distribution to favour outputs that human raters judge as helpful, harmless, and honest. This is genuine progress &mdash; it shifts the likelihood surface away from egregiously wrong outputs. But it does not change the fundamental architecture. The model is still sampling from a probability distribution. It has simply been taught to hallucinate less <em>often</em>, not to verify whether its outputs are <em>true</em>. The distinction matters enormously when you move from reducing average-case error rates to guaranteeing worst-case correctness &mdash; the kind of guarantee that medical, legal, and financial applications actually require.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup></p>
+
+            <p class="gsap-reveal">Retrieval-augmented generation (RAG) is a more serious intervention, because it introduces external grounding. Instead of relying solely on parametric memory, the model retrieves relevant documents and conditions its response on them. This demonstrably helps.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> But RAG introduces its own failure modes that are often underappreciated. The retrieval step itself can fail &mdash; returning irrelevant documents, or relevant documents that contain outdated or incorrect information. Huang et al.'s survey documents what they term &ldquo;retrieval hallucination&rdquo;: cases where the model hallucinates despite having access to correct retrieved context, because the generative mechanism still prioritises fluency and coherence over fidelity to the source material.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> There is also the problem of context poisoning &mdash; adversarial or simply noisy documents in the retrieval corpus that contaminate the generation process.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup></p>
+
+            <p class="gsap-reveal">The deeper issue is that RAG treats the language model as a reader and summariser of retrieved text. But the model's &ldquo;reading&rdquo; is itself a probabilistic process. It does not parse retrieved documents the way a human does &mdash; extracting claims, evaluating their evidential weight, and synthesising them into a coherent judgement. It processes them as additional context that influences the next-token distribution. The retrieved facts are inputs to the same fundamentally ungrounded generation process.</p>
+
+            <!-- ── Diagram 1: Generation Pipeline with Verification Gap ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 180" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing the generation pipeline from prompt to output with a verification gap">
+                    <defs>
+                        <filter id="hall-glow-1" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Prompt box -->
+                    <rect x="20" y="50" width="140" height="70" rx="10" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="90" y="80" text-anchor="middle" fill="#d1d5db" font-size="14" font-weight="600">Prompt</text>
+                    <text x="90" y="100" text-anchor="middle" fill="#9ca3af" font-size="10">User intent</text>
+
+                    <!-- Arrow 1 -->
+                    <line x1="168" y1="85" x2="210" y2="85" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="208,80 220,85 208,90" fill="#6b7280"/>
+
+                    <!-- Token Probability box -->
+                    <rect x="225" y="40" width="170" height="90" rx="10" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="310" y="70" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Token Probability</text>
+                    <text x="310" y="90" text-anchor="middle" fill="#9ca3af" font-size="10">P(next | context)</text>
+                    <text x="310" y="106" text-anchor="middle" fill="#9ca3af" font-size="10">No truth table</text>
+
+                    <!-- Arrow 2 -->
+                    <line x1="403" y1="85" x2="440" y2="85" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="438,80 450,85 438,90" fill="#6b7280"/>
+
+                    <!-- VERIFICATION GAP (highlighted) -->
+                    <rect x="455" y="30" width="160" height="100" rx="12" fill="rgba(239,68,68,0.06)" stroke="#ef4444" stroke-width="2"/>
+                    <rect x="455" y="30" width="160" height="100" rx="12" fill="none" stroke="#ef4444" stroke-width="1" opacity="0.3" filter="url(#hall-glow-1)"/>
+                    <text x="535" y="62" text-anchor="middle" fill="#ef4444" font-size="11" font-weight="700" letter-spacing="2">VERIFICATION</text>
+                    <text x="535" y="78" text-anchor="middle" fill="#ef4444" font-size="11" font-weight="700" letter-spacing="2">GAP</text>
+                    <text x="535" y="100" text-anchor="middle" fill="#fca5a5" font-size="9">No grounding step</text>
+                    <text x="535" y="114" text-anchor="middle" fill="#fca5a5" font-size="9">No fact-checking</text>
+
+                    <!-- Arrow 3 -->
+                    <line x1="623" y1="85" x2="655" y2="85" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="653,80 665,85 653,90" fill="#6b7280"/>
+
+                    <!-- Output box -->
+                    <rect x="670" y="50" width="110" height="70" rx="10" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="725" y="80" text-anchor="middle" fill="#d1d5db" font-size="14" font-weight="600">Output</text>
+                    <text x="725" y="100" text-anchor="middle" fill="#9ca3af" font-size="10">Plausible, unverified</text>
+
+                    <!-- Label -->
+                    <text x="400" y="168" text-anchor="middle" fill="#6b7280" font-size="10" font-style="italic">The same mechanism produces truth and hallucination</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; The standard LLM generation pipeline contains no truth-verification step between probability sampling and user-facing output</p>
+            </div>
+
+            <p class="gsap-reveal">There is a mathematical dimension to this that is worth stating plainly. G&ouml;del's incompleteness theorems demonstrated that sufficiently powerful formal systems cannot verify all truths about themselves from within.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> While language models are not formal logical systems in G&ouml;del's sense, the underlying intuition transfers: a system that generates claims from internal representations alone cannot reliably distinguish its own correct outputs from its incorrect ones. Self-consistency checks &mdash; asking the model to verify its own output &mdash; are better than nothing, but they are fundamentally limited by the fact that the verifier shares the same biases and blind spots as the generator. You cannot pull yourself up by your own bootstraps.</p>
+
+            <p class="gsap-reveal">This is why the framing of hallucination as a &ldquo;bug&rdquo; is misleading. Bugs are deviations from intended behaviour. Hallucination is not a deviation from how language models work; it <em>is</em> how they work. The same mechanism that produces brilliantly correct responses produces confidently wrong ones. Treating the outputs as defects and trying to filter them after the fact is like trying to fix a bridge's structural design by painting over the cracks.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Limits of Post-Hoc Repair</h2>
+
+            <p class="gsap-reveal">To appreciate the depth of the problem, consider the taxonomy of current mitigation strategies. Each addresses a real symptom. None addresses the root cause.</p>
+
+            <p class="gsap-reveal"><strong class="text-gray-200">Guardrail classifiers</strong> scan model outputs for known hallucination patterns &mdash; fabricated URLs, non-existent citations, internally contradictory claims. These catch some fraction of errors, but they are reactive and brittle. They cannot detect novel hallucinations that do not match known patterns, and adversarial inputs can often bypass them.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal"><strong class="text-gray-200">Self-consistency methods</strong> generate multiple responses and check for agreement. If the model gives the same answer across several samples, it is more likely to be correct. This is a useful heuristic, but it conflates confidence with correctness. A model can consistently hallucinate the same wrong answer because the same statistical bias produces the same error across samples.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup></p>
+
+            <p class="gsap-reveal"><strong class="text-gray-200">Human review</strong> is the gold standard for catching errors, but it does not scale. In high-throughput production systems generating thousands of responses per minute, human review becomes a bottleneck that defeats the purpose of automation. And human reviewers themselves are susceptible to automation bias &mdash; the tendency to over-trust machine outputs, especially when those outputs are articulated fluently.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
+
+            <p class="gsap-reveal"><strong class="text-gray-200">Fine-tuning on curated data</strong> can reduce domain-specific hallucination rates, but it is expensive, time-consuming, and must be repeated as the target domain evolves. It also risks catastrophic forgetting &mdash; improving accuracy in one area while degrading it in others.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">The pattern across all these approaches is the same: they accept the fundamental architecture as given and try to compensate for its limitations through external mechanisms. This is understandable pragmatism. But it is not a solution. It is a coping strategy.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Architecture as the answer
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Separating Generation from Verification</h2>
+
+            <p class="gsap-reveal">If the hallucination problem is architectural rather than parametric, then the solution must also be architectural. And there is a design pattern &mdash; well-established in other engineering disciplines &mdash; that applies directly: <em>separate the component that generates proposals from the component that verifies them</em>.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <p class="gsap-reveal">In formal verification, this principle is foundational. A program synthesiser generates candidate programs; a verifier checks them against a specification. The synthesiser is allowed to be creative, heuristic, even probabilistic. The verifier is not. The verifier operates against formal constraints and rejects anything that does not satisfy them. The power of the approach comes from the asymmetry: generation is cheap and can tolerate error; verification is rigorous and eliminates it.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
+
+            <p class="gsap-reveal">This is not a new idea. It is how compilers work &mdash; the parser generates an abstract syntax tree, the type checker verifies it. It is how scientific publishing works &mdash; researchers propose findings, peer reviewers scrutinise them. It is how the legal system works &mdash; prosecutors make claims, defence attorneys challenge them. In every domain where correctness matters, we separate the proposer from the checker.</p>
+
+            <p class="gsap-reveal">Applied to language models, this means treating the LLM as what it actually is: a powerful, creative, unreliable proposal generator. The model's job is to produce candidate responses &mdash; hypotheses, if you will. A separate verification layer, operating on different principles, then evaluates those candidates against external grounding sources, logical consistency constraints, and domain-specific rules before anything reaches the user.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <!-- ── Diagram 2: Architecture Stack ── -->
+            <div class="gsap-reveal my-12 max-w-md mx-auto">
+                <div class="space-y-0">
+                    <!-- Top layer: Output -->
+                    <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Output</p>
+                        <p class="text-white font-semibold">Verified Response</p>
+                        <p class="text-xs text-gray-500 mt-1">Grounded, checked, traceable</p>
+                    </div>
+                    <!-- Middle layer: Verification (highlighted) -->
+                    <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Verification Layer</p>
+                        <p class="text-white font-bold text-lg relative">Formal Grounding</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Logical checks &bull; Source verification &bull; Constraint satisfaction</p>
+                    </div>
+                    <!-- Bottom layer: Generator -->
+                    <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Generator</p>
+                        <p class="text-white font-semibold">LLM Proposal Engine</p>
+                        <p class="text-xs text-gray-500 mt-1">Creative, probabilistic, fast</p>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; Separating generation from verification: the generator proposes, the verifier disposes</p>
+            </div>
+
+            <p class="gsap-reveal">The verification layer does not need to be a single component. It can be a pipeline of checks, each operating at a different level of rigour. At the simplest level, syntactic checks catch formatting errors and structural inconsistencies. At the next level, retrieval-based verification cross-references claims against a curated knowledge base &mdash; not to augment generation, but to independently check its outputs. At the highest level, formal methods can verify logical consistency, mathematical correctness, and compliance with domain-specific constraints.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
+
+            <p class="gsap-reveal">This architecture has a crucial property: the generator and the verifier can improve independently. Advances in language models make the generator more creative and capable. Advances in formal methods, knowledge bases, and verification techniques make the checker more rigorous. Neither is a bottleneck for the other. And because the verifier operates on the <em>output</em> of the generator rather than trying to modify its <em>internal</em> representations, it does not require access to model weights or training data. It works with any generator, including proprietary models whose internals are opaque.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">From Probability to Proof</h2>
+
+            <p class="gsap-reveal">The philosophical shift here is significant. The current paradigm asks: &ldquo;How do we make the model hallucinate less?&rdquo; The architectural paradigm asks: &ldquo;How do we build a system that detects and corrects hallucination before it matters?&rdquo; The first question accepts the model's output as the primary artifact and tries to improve its quality. The second treats the model's output as a draft and builds the editorial process around it.</p>
+
+            <p class="gsap-reveal">This is not merely an academic distinction. It changes the failure mode of the system. In the current paradigm, failure is invisible &mdash; a hallucinated response looks exactly like a correct one, and the user may have no way to tell the difference. In the verification paradigm, failure is explicit. When the verifier cannot confirm a claim, it can flag it, request additional evidence, or withhold the response entirely. The system fails safely rather than silently.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
+
+            <p class="gsap-reveal">There are legitimate objections to this approach. Verification adds latency. Formal methods do not scale to all domains. Some claims are inherently unverifiable. These are real constraints, and any practical system must navigate them. But they are engineering challenges, not fundamental barriers. The question is not whether verification is always possible &mdash; it is whether a system that verifies when it can, and honestly signals uncertainty when it cannot, is better than a system that always projects confidence regardless of its epistemic state.</p>
+
+            <p class="gsap-reveal">The answer seems clear. In domains where correctness matters &mdash; medicine, law, finance, engineering, scientific research &mdash; the cost of hallucination is not measured in user dissatisfaction. It is measured in misdiagnoses, invalid contracts, financial losses, and structural failures. These are domains where &ldquo;usually right&rdquo; is not good enough, and where the difference between a 95% accuracy rate and a 99.9% accuracy rate is the difference between an interesting demo and a deployable system.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup></p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Generator Proposes; the Verifier Disposes</h2>
+
+            <p class="gsap-reveal">There is an irony in the current discourse around hallucination. The AI industry spends enormous resources trying to make language models do something they were not designed to do &mdash; be reliably truthful &mdash; while neglecting the architectural pattern that could actually deliver reliability. The model does not need to be truthful. It needs to be <em>useful as a generator of hypotheses</em> within a system that has other components responsible for truth.</p>
+
+            <p class="gsap-reveal">This reframing also clarifies the role of techniques like RAG, RLHF, and constitutional AI. These are not solutions to the hallucination problem; they are <em>improvements to the generator</em>. A better generator produces better hypotheses, which means the verifier has less work to do. But they do not eliminate the need for verification. They make the system more efficient, not more reliable. Reliability comes from the architecture, not the components.</p>
+
+            <p class="gsap-reveal">The history of software engineering teaches this lesson repeatedly. Reliability does not come from writing perfect code. It comes from building systems that detect and handle failure &mdash; type systems, unit tests, integration tests, monitoring, circuit breakers, graceful degradation. The most reliable software in the world is not bug-free; it is bug-tolerant. It assumes failure and architects around it.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <p class="gsap-reveal">AI systems need the same design philosophy. Not models that never hallucinate, but architectures where hallucination is caught, flagged, and corrected before it causes harm. The generator proposes. The verifier disposes. And the user receives only what survives the gauntlet.</p>
+
+            <p class="gsap-reveal">This is not a call for conservatism or a retreat from the remarkable capabilities of large language models. It is the opposite. By freeing the generator from the impossible burden of being always right, we allow it to be more creative, more exploratory, more useful. And by placing the burden of correctness on a verification layer designed for that purpose, we get a system that is both more capable and more trustworthy than either component alone.</p>
+
+            <p class="gsap-reveal font-semibold text-white">The hallucination problem is not a training problem. It is not a data problem. It is not a scale problem. It is a design problem. And like all design problems, it has a design solution &mdash; one that the engineering discipline has understood for decades, and that AI is only now beginning to apply.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Ji, Z., Lee, N., Frieske, R., Yu, T., Su, D., Xu, Y., Ishii, E., Bang, Y. J., Madotto, A., &amp; Fung, P. (2023). <a href="https://doi.org/10.1145/3571730" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Survey of hallucination in natural language generation</em></a>. <em>ACM Computing Surveys</em>, 55(12), 1&ndash;38. &mdash; Comprehensive taxonomy of hallucination types, causes, and mitigation strategies across NLG systems.
+                </li>
+                <li id="ref-2">
+                    Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C., Mishkin, P., Zhang, C., Agarwal, S., Slama, K., Ray, A., Schulman, J., Hilton, J., Kelton, F., Miller, L., Simens, M., Askell, A., Welinder, P., Christiano, P., Leike, J., &amp; Lowe, R. (2022). <a href="https://arxiv.org/abs/2203.02155" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Training language models to follow instructions with human feedback</em></a>. <em>Advances in Neural Information Processing Systems</em>, 35. &mdash; The InstructGPT paper establishing RLHF as a method for aligning model outputs with human intent.
+                </li>
+                <li id="ref-3">
+                    Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., K&uuml;ttler, H., Lewis, M., Yih, W., Rockt&auml;schel, T., Riedel, S., &amp; Kiela, D. (2020). <a href="https://arxiv.org/abs/2005.11401" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Retrieval-augmented generation for knowledge-intensive NLP tasks</em></a>. <em>Advances in Neural Information Processing Systems</em>, 33. &mdash; The foundational RAG paper demonstrating improved factual accuracy through retrieval grounding.
+                </li>
+                <li id="ref-4">
+                    Bai, Y., Kadavath, S., Kundu, S., Askell, A., Kernion, J., Jones, A., Chen, A., Goldie, A., Mirhoseini, A., McKinnon, C., Chen, C., Olsson, C., Olah, C., Hernandez, D., Drain, D., Ganguli, D., Li, D., Tran-Johnson, E., Perez, E., &hellip; Kaplan, J. (2022). <a href="https://arxiv.org/abs/2212.08073" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Constitutional AI: Harmlessness from AI feedback</em></a>. arXiv. &mdash; Self-supervision methods for reducing harmful and inaccurate outputs without human labelling at every step.
+                </li>
+                <li id="ref-5">
+                    National Institute of Standards and Technology. (2023). <a href="https://www.nist.gov/artificial-intelligence/executive-order-safe-secure-and-trustworthy-artificial-intelligence" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>AI Risk Management Framework (AI RMF 1.0)</em></a>. U.S. Department of Commerce. &mdash; Federal guidance on managing AI risks including accuracy, reliability, and robustness in deployed systems.
+                </li>
+                <li id="ref-6">
+                    Huang, L., Yu, W., Ma, W., Zhong, W., Feng, Z., Wang, H., Chen, Q., Peng, W., Feng, X., Qin, B., &amp; Liu, T. (2025). <a href="https://arxiv.org/abs/2311.05232" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>A survey on hallucination in large language models: Principles, taxonomy, challenges, and open questions</em></a>. <em>ACM Computing Surveys</em>. &mdash; Distinguishes factuality and faithfulness hallucination; documents retrieval hallucination in RAG pipelines.
+                </li>
+                <li id="ref-7">
+                    Zou, A., Wang, Z., Kolter, J. Z., &amp; Fredrikson, M. (2023). <a href="https://arxiv.org/abs/2307.15043" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Universal and transferable adversarial attacks on aligned language models</em></a>. arXiv. &mdash; Demonstrates that aligned models remain vulnerable to adversarial suffixes that bypass safety training.
+                </li>
+                <li id="ref-8">
+                    G&ouml;del, K. (1931). <a href="https://doi.org/10.1007/BF01700692" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>&Uuml;ber formal unentscheidbare S&auml;tze der Principia Mathematica und verwandter Systeme I</em></a>. <em>Monatshefte f&uuml;r Mathematik und Physik</em>, 38, 173&ndash;198. &mdash; The incompleteness theorems establishing fundamental limits on self-verification in formal systems.
+                </li>
+                <li id="ref-9">
+                    Rebedea, T., Dinu, R., Sreedhar, M., Parisien, C., &amp; Cohen, J. (2023). <a href="https://arxiv.org/abs/2310.10501" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>NeMo Guardrails: A toolkit for controllable and safe LLM applications with programmable rails</em></a>. arXiv. &mdash; Programmable guardrail architectures for constraining LLM outputs in production deployments.
+                </li>
+                <li id="ref-10">
+                    Parasuraman, R., &amp; Manzey, D. H. (2010). <a href="https://doi.org/10.1177/0018720810376055" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Complacency and bias in human use of automation: An attentional integration</em></a>. <em>Human Factors</em>, 52(3), 381&ndash;410. &mdash; On automation bias and the tendency of humans to over-trust automated system outputs.
+                </li>
+                <li id="ref-11">
+                    Nardi, D. (2023). <a href="https://doi.org/10.1007/978-3-031-21203-1_34" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Introduction to Intelligent Systems</em></a>. Springer. &mdash; On multi-component system architectures that separate hypothesis generation from verification in AI pipelines.
+                </li>
+                <li id="ref-12">
+                    Solar-Lezama, A. (2008). <a href="https://people.csail.mit.edu/asolar/papers/thesis.pdf" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Program synthesis by sketching</em></a>. Ph.D. thesis, UC Berkeley. &mdash; The CEGIS paradigm: generate candidate programs, verify against specifications, refine iteratively.
+                </li>
+                <li id="ref-13">
+                    Singhal, K., Azizi, S., Tu, T., Mahdavi, S. S., Wei, J., Chung, H. W., Scales, N., Tanwani, A., Cole-Lewis, H., Pfohl, S., Payne, P., Seneviratne, M., Gamber, P., Kelly, C., Babiker, A., Sch&auml;rli, N., Chowdhery, A., Mansfield, P., Demner-Fushman, D., &hellip; Natarajan, V. (2023). <a href="https://arxiv.org/abs/2212.13138" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Large language models encode clinical knowledge</em></a>. <em>Nature</em>, 620, 172&ndash;180. &mdash; Demonstrates both the remarkable clinical capability and the residual hallucination risk of LLMs in medical domains.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

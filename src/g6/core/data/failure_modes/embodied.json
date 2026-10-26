@@ -1,0 +1,18 @@
+{
+  "family": "embodied",
+  "codes": [
+    {"code": "infeasible_motion_plan", "title": "a motion plan that collides, or asks a body for what it cannot do",
+     "severity": "high"},
+    {"code": "incompatible_interfaces", "title": "custom glue code between incompatible components"},
+    {"code": "unbuildable_geometry", "title": "an unprintable model or an invalid machine toolpath"},
+    {"code": "wrong_physics_expectation", "title": "a plan based on wrong physical expectations"},
+    {"code": "single_sensor_decision", "title": "a decision based on one noisy sensor"},
+    {"code": "grasp_failure", "title": "an object dropped or crushed when grasped"}
+  ],
+  "planned": {
+    "g6.embodied": ["incompatible_interfaces"],
+    "g6.embodied.mesh3d": ["unbuildable_geometry"],
+    "g6.embodied.physics_prediction": ["wrong_physics_expectation"],
+    "g6.embodied.sensory_fusion": ["single_sensor_decision"]
+  }
+}

@@ -1,0 +1,11 @@
+{% comment %}
+Feature card component.
+Variables: icon_svg, title, description, color_class
+{% endcomment %}
+<div class="gsap-reveal group glass rounded-2xl p-6 transition-all duration-300">
+    <div class="w-12 h-12 rounded-xl {{ color_class|default:'bg-g6-indigo/10' }} flex items-center justify-center mb-4">
+        {{ icon_svg|safe }}
+    </div>
+    <h3 class="text-lg font-semibold text-white mb-2">{{ title }}</h3>
+    <p class="text-sm text-gray-400 leading-relaxed">{{ description }}</p>
+</div>

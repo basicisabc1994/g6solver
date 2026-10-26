@@ -1,0 +1,14 @@
+{
+  "name": "verifier",
+  "purpose": "Judge one do unit's output with an executed oracle, independently of its producer; reads only, asks no model.",
+  "rung": "verify",
+  "read_only": true,
+  "allowed": "from_unit",
+  "policy": {
+    "max_steps": 5,
+    "max_tool_calls": 5,
+    "max_retries": 0,
+    "max_runtime_seconds": 120,
+    "max_privilege_level": 0
+  }
+}

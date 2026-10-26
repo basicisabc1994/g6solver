@@ -1,0 +1,5 @@
+# Paths (relative to repo root) copied into the public export. Everything else is excluded.
+# "src" keeps its path; "src -> dst" relocates it ("." is the export root). Directories are copied
+# recursively; the scanner still runs over every copied file.
+oss -> .
+docs/theory -> docs/theory

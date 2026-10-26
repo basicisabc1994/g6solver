@@ -1,0 +1,60 @@
+{
+  "entry_id": "stats.f",
+  "known_author": "Claude case author (calc step 3a, 2026-10-23)",
+  "cases": [
+    {
+      "citation": {
+        "author": "Erwin Kreyszig",
+        "title": "Advanced Engineering Mathematics",
+        "edition": "10th edition",
+        "publisher": "John Wiley & Sons",
+        "published": "2011",
+        "locator": "Section 25.4, Example 6 (comparing the variances of two normal distributions): the critical value, read from Appendix 5, Table A11"
+      },
+      "inputs": {
+        "p": {
+          "value": "95%"
+        },
+        "df_num": {
+          "value": "7"
+        },
+        "df_den": {
+          "value": "7"
+        }
+      },
+      "expected": {
+        "x": {
+          "value": "3.79",
+          "printed_digits": 2
+        }
+      }
+    },
+    {
+      "citation": {
+        "author": "Erwin Kreyszig",
+        "title": "Advanced Engineering Mathematics",
+        "edition": "10th edition",
+        "publisher": "John Wiley & Sons",
+        "published": "2011",
+        "locator": "Appendix 5, Table A11 (page A105, F(z) = 0.95): the example in its heading, (7, 4) degrees of freedom (numerator, denominator)"
+      },
+      "inputs": {
+        "p": {
+          "value": "0.95"
+        },
+        "df_num": {
+          "value": "7"
+        },
+        "df_den": {
+          "value": "4"
+        }
+      },
+      "expected": {
+        "x": {
+          "value": "6.09",
+          "printed_digits": 2
+        }
+      }
+    }
+  ]
+}

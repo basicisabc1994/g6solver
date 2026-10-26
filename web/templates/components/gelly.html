@@ -1,0 +1,139 @@
+{% comment %}
+Gelly, G6's mascot, and her cat: original characters (site design §3, owner 2026-10-19: "a small cute girl" with
+a pet cat "in the same style"). Ink line art with flat fills. Poses are separate drawings shown by data-state:
+standing (walk, giggle, cheer), sitting with her knees hugged (nap, huff) and peeking (head and one hand). The pose
+sheet the owner shared set the poses; nothing is traced. static/js/gelly.js runs them both, and the footer's
+"Hide Gelly" switch hides them.
+{% endcomment %}
+<button type="button" id="gelly" class="gelly" data-state="idle" aria-label="Gelly, the G6 mascot: click to tickle">
+    <svg class="gelly__art" viewBox="0 0 100 130" width="64" height="83" aria-hidden="true" focusable="false"
+         stroke="#2B2B2B" stroke-linecap="round" stroke-linejoin="round">
+        <g class="gl-stand">
+            <g class="gl-leg gl-leg--l">
+                <rect x="40.5" y="99" width="7" height="15" rx="3.5" fill="#FFF3EA" stroke-width="1.8"/>
+                <rect x="40.5" y="108" width="7" height="6" fill="#FFFFFF" stroke-width="1.8"/>
+                <ellipse cx="43.5" cy="116.5" rx="6" ry="3.6" fill="#2B2B2B" stroke-width="1"/>
+            </g>
+            <g class="gl-leg gl-leg--r">
+                <rect x="52.5" y="99" width="7" height="15" rx="3.5" fill="#FFF3EA" stroke-width="1.8"/>
+                <rect x="52.5" y="108" width="7" height="6" fill="#FFFFFF" stroke-width="1.8"/>
+                <ellipse cx="56.5" cy="116.5" rx="6" ry="3.6" fill="#2B2B2B" stroke-width="1"/>
+            </g>
+            <path d="M39 75 C 37 85 33 95 29.5 103.5 Q 50 109 70.5 103.5 C 67 95 63 85 61 75 Z" fill="#1FAE9C" stroke-width="2"/>
+            <path d="M31.5 99.5 Q 50 104.5 68.5 99.5" fill="none" stroke="#FFFFFF" stroke-width="2.2"/>
+            <g class="gl-arm gl-arm--l">
+                <path d="M41 79 Q 35 86 33 94" fill="none" stroke-width="8.6"/>
+                <path d="M41 79 Q 35 86 33 94" fill="none" stroke="#1FAE9C" stroke-width="5"/>
+                <circle cx="32.6" cy="96.8" r="3.7" fill="#FFF3EA" stroke-width="1.8"/>
+            </g>
+            <g class="gl-arm gl-arm--r">
+                <path d="M59 79 Q 65 86 67 94" fill="none" stroke-width="8.6"/>
+                <path d="M59 79 Q 65 86 67 94" fill="none" stroke="#1FAE9C" stroke-width="5"/>
+                <circle cx="67.4" cy="96.8" r="3.7" fill="#FFF3EA" stroke-width="1.8"/>
+            </g>
+            <g class="gl-arms-up">
+                <path d="M40 80 Q 20 76 7 61 M 60 80 Q 80 76 93 61" fill="none" stroke-width="8.6"/>
+                <path d="M40 80 Q 20 76 7 61 M 60 80 Q 80 76 93 61" fill="none" stroke="#1FAE9C" stroke-width="5"/>
+                <circle cx="5.6" cy="58.4" r="3.9" fill="#FFF3EA" stroke-width="1.8"/>
+                <circle cx="94.4" cy="58.4" r="3.9" fill="#FFF3EA" stroke-width="1.8"/>
+            </g>
+            <path d="M41 76.5 Q 44 83.5 50 79.5 Q 56 83.5 59 76.5 Q 50 73.5 41 76.5 Z" fill="#FFFFFF" stroke-width="1.6"/>
+        </g>
+        <g class="gl-sit">
+            <path d="M38 86 C 35 97 32 106 29.5 114 Q 50 119.5 70.5 114 C 68 106 65 97 62 86 Z" fill="#1FAE9C" stroke-width="2"/>
+            <ellipse cx="41.5" cy="117" rx="6" ry="3.6" fill="#2B2B2B" stroke-width="1"/>
+            <ellipse cx="58.5" cy="117" rx="6" ry="3.6" fill="#2B2B2B" stroke-width="1"/>
+            <circle cx="42.5" cy="101" r="8" fill="#FFF3EA" stroke-width="1.9"/>
+            <circle cx="57.5" cy="101" r="8" fill="#FFF3EA" stroke-width="1.9"/>
+            <path d="M33 101 Q 50 112 67 101" fill="none" stroke-width="8.6"/>
+            <path d="M33 101 Q 50 112 67 101" fill="none" stroke="#1FAE9C" stroke-width="5"/>
+            <circle cx="33" cy="100.5" r="3.6" fill="#FFF3EA" stroke-width="1.8"/>
+            <circle cx="67" cy="100.5" r="3.6" fill="#FFF3EA" stroke-width="1.8"/>
+        </g>
+        <g class="gl-head">
+            <path d="M50 8 C 75 8 91 25 91 49 C 91 60 90 69 87 77 C 82 80 76 79 73 75 L 27 75 C 24 79 18 80 13 77 C 10 69 9 60 9 49 C 9 25 25 8 50 8 Z" fill="#2F4A47" stroke-width="2"/>
+            <ellipse cx="50" cy="52" rx="29" ry="26" fill="#FFF3EA" stroke-width="2"/>
+            <path d="M16 76 C 11 62 12 40 22 27 C 30 16 40 11 50 11 C 60 11 70 16 78 27 C 88 40 89 62 84 76 C 81 78.5 77 78 75 75.5 C 74.5 64 74.5 53 72.5 44 Q 70 46 67.5 41.5 Q 64 46.5 59.5 42 Q 55 47 50 42.5 Q 45 47 40.5 42 Q 36 46.5 32.5 41.5 Q 30 46 27.5 44 C 25.5 53 25.5 64 25 75.5 C 23 78 19 78.5 16 76 Z" fill="#2F4A47" stroke-width="2"/>
+            <path d="M29 26 Q 38 17.5 50 16.5" fill="none" stroke="#5E8580" stroke-width="3"/>
+            <path d="M63 18.5 Q 67 19.5 70 22" fill="none" stroke="#5E8580" stroke-width="2.4"/>
+            <path d="M77.5 30 L 75 34.3 L 70 34.3 L 67.5 30 L 70 25.7 L 75 25.7 Z" fill="#FFC94D" stroke-width="1.6"/>
+            <g class="gl-cheeks" fill="#FF9DB0" stroke="none">
+                <ellipse cx="32" cy="65.5" rx="5" ry="2.9"/><ellipse cx="68" cy="65.5" rx="5" ry="2.9"/>
+            </g>
+            <g class="gl-eyes" stroke="none">
+                <ellipse cx="39" cy="58" rx="3.3" ry="4.3" fill="#2B2B2B"/><ellipse cx="61" cy="58" rx="3.3" ry="4.3" fill="#2B2B2B"/>
+                <circle cx="40.1" cy="56.2" r="1.25" fill="#FFFFFF"/><circle cx="62.1" cy="56.2" r="1.25" fill="#FFFFFF"/>
+            </g>
+            <g class="gl-shut" fill="none" stroke-width="2.3">
+                <path d="M35 58 Q 39 61.5 43 58"/><path d="M57 58 Q 61 61.5 65 58"/>
+            </g>
+            <g class="gl-happy" fill="none" stroke-width="2.4">
+                <path d="M35 59.5 Q 39 54 43 59.5"/><path d="M57 59.5 Q 61 54 65 59.5"/>
+            </g>
+            <g class="gl-brows" fill="none" stroke-width="2">
+                <path d="M34.5 51.5 L 42 49.5"/><path d="M65.5 51.5 L 58 49.5"/>
+            </g>
+            <path class="gl-mouth" d="M47.5 66.5 Q 50 68.6 52.5 66.5" fill="none" stroke-width="1.9"/>
+            <path class="gl-laugh" d="M46.3 65.6 Q 50 72.5 53.7 65.6 Z" fill="#2B2B2B" stroke-width="1.2"/>
+            <path class="gl-pout" d="M47 68.3 Q 50 65.6 53 68.3" fill="none" stroke-width="1.9"/>
+        </g>
+        <g class="gl-hand">
+            <circle cx="93.5" cy="64.8" r="2.6" fill="#FFF3EA" stroke-width="1.5"/>
+            <circle cx="94.8" cy="70" r="2.6" fill="#FFF3EA" stroke-width="1.5"/>
+            <circle cx="93.5" cy="75.2" r="2.6" fill="#FFF3EA" stroke-width="1.5"/>
+            <circle cx="89" cy="70" r="5.4" fill="#FFF3EA" stroke-width="1.8"/>
+        </g>
+        <g class="gl-puff" fill="#FFFFFF" stroke-width="1.5">
+            <circle cx="80" cy="84" r="3.4"/><circle cx="85.5" cy="81.5" r="4.2"/><circle cx="90.5" cy="85" r="3.2"/>
+        </g>
+        <g class="gl-z" font-family="Archivo, Arial, sans-serif" font-weight="700" fill="#4A5451" stroke="none">
+            <text x="84" y="38" font-size="12">z</text><text x="92" y="26" font-size="15">z</text><text x="100" y="12" font-size="18">z</text>
+        </g>
+    </svg>
+</button>
+<button type="button" id="gelly-cat" class="gcat" data-state="sit" aria-label="Gelly's cat: click to pet">
+    <svg class="gcat__art" viewBox="0 0 64 48" width="40" height="30" aria-hidden="true" focusable="false"
+         stroke="#2B2B2B" stroke-linecap="round" stroke-linejoin="round">
+        <g class="gc-up">
+            <g class="gc-tail">
+                <path d="M18 31 C 10 29 6 21 9 12" fill="none" stroke-width="6.6"/>
+                <path d="M18 31 C 10 29 6 21 9 12" fill="none" stroke="#FFF8EE" stroke-width="3.4"/>
+                <path d="M8.3 17 C 8.2 15 8.5 13.5 9 12" fill="none" stroke="#8E9996" stroke-width="3.4"/>
+            </g>
+            <g class="gc-legs gc-legs--a" fill="#FFF8EE" stroke-width="1.7">
+                <rect x="19" y="35" width="5.4" height="9" rx="2.7"/><rect x="38" y="35" width="5.4" height="9" rx="2.7"/>
+            </g>
+            <g class="gc-legs gc-legs--b" fill="#FFF8EE" stroke-width="1.7">
+                <rect x="25" y="35" width="5.4" height="9" rx="2.7"/><rect x="44" y="35" width="5.4" height="9" rx="2.7"/>
+            </g>
+            <ellipse cx="31" cy="31" rx="16" ry="9.5" fill="#FFF8EE" stroke-width="2"/>
+            <ellipse cx="26" cy="27" rx="6.5" ry="3.6" fill="#8E9996" stroke="none"/>
+            <g class="gc-head">
+                <path d="M40 16 L 40.5 5 L 47.5 11.5 Z" fill="#FFF8EE" stroke-width="1.9"/>
+                <path d="M50 11.5 L 56.5 5 L 57 16 Z" fill="#FFF8EE" stroke-width="1.9"/>
+                <path d="M41.6 13.5 L 41.9 8.6 L 45.2 11.6 Z M 52.2 11.6 L 55.3 8.6 L 55.5 13.5 Z" fill="#FF9DB0" stroke="none"/>
+                <circle cx="48.5" cy="21" r="10" fill="#FFF8EE" stroke-width="2"/>
+                <g class="gc-eyes" fill="#2B2B2B" stroke="none"><circle cx="45" cy="21" r="1.6"/><circle cx="52.5" cy="21" r="1.6"/></g>
+                <g class="gc-happy" fill="none" stroke-width="1.4"><path d="M43.2 21.6 Q 45 19 46.8 21.6"/><path d="M50.7 21.6 Q 52.5 19 54.3 21.6"/></g>
+                <path d="M47.6 24 L 49.4 24 L 48.5 25.2 Z" fill="#FF9DB0" stroke-width=".8"/>
+                <path d="M46.6 26.3 Q 47.6 27.5 48.5 26.3 Q 49.4 27.5 50.4 26.3" fill="none" stroke-width="1.1"/>
+                <ellipse cx="42.5" cy="24.5" rx="2.2" ry="1.3" fill="#FF9DB0" stroke="none" opacity=".7"/>
+                <ellipse cx="55" cy="24.5" rx="2.2" ry="1.3" fill="#FF9DB0" stroke="none" opacity=".7"/>
+            </g>
+            <path d="M40 27.5 Q 44 31.5 49.5 30.8" fill="none" stroke="#1FAE9C" stroke-width="2.6"/>
+            <circle cx="44.6" cy="31.3" r="1.8" fill="#FFC94D" stroke-width="1"/>
+        </g>
+        <g class="gc-loaf">
+            <path d="M50 38 C 56 42 52 47 40 47 L 24 47" fill="none" stroke-width="6.6"/>
+            <ellipse cx="34" cy="38" rx="17" ry="9" fill="#FFF8EE" stroke-width="2"/>
+            <ellipse cx="38" cy="33.5" rx="7" ry="3.5" fill="#8E9996" stroke="none"/>
+            <path d="M50 38 C 56 42 52 47 40 47 L 24 47" fill="none" stroke="#FFF8EE" stroke-width="3.4"/>
+            <path d="M14.5 29 L 14 20 L 20.5 25 Z M 24 25 L 29 19.5 L 30 28 Z" fill="#FFF8EE" stroke-width="1.9"/>
+            <circle cx="22" cy="35" r="9.5" fill="#FFF8EE" stroke-width="2"/>
+            <g fill="none" stroke-width="1.4"><path d="M16.8 34.5 Q 18.6 36.4 20.4 34.5"/><path d="M23.6 34.5 Q 25.4 36.4 27.2 34.5"/></g>
+            <ellipse cx="16" cy="38.5" rx="2" ry="1.2" fill="#FF9DB0" stroke="none" opacity=".7"/>
+            <ellipse cx="28.5" cy="38.5" rx="2" ry="1.2" fill="#FF9DB0" stroke="none" opacity=".7"/>
+        </g>
+        <path class="gc-heart" d="M56 9 C 56 6.5 59.5 6 60 8.6 C 60.5 6 64 6.5 64 9 C 64 11.5 60 14 60 14 C 60 14 56 11.5 56 9 Z" fill="#FF6F91" stroke-width="1.2"/>
+    </svg>
+</button>

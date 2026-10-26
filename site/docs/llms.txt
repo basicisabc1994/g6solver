@@ -1,0 +1,18 @@
+# G6
+
+> Open-source (Apache-2.0) harness for AI agents: it checks an agent's work, gates its risky actions, and labels every result for what the evidence shows (verified, qualified-draft, blocked-escalated). 34 components in the core harness, extensions in families of their own, 11 bundles, the end-to-end `g6.harness`. Python 3.12+, MCP server `g6-mcp` (the main surface), `g6` CLI. Local-first: Ollama or the user's own key; no account, no hosted service.
+
+## Start here
+
+- [Guide for coding agents](https://github.com/basicisabc1994/g6solver/blob/main/AGENT_GUIDE.md): discovery protocol (find → describe → invoke), the rules for labels, the stop
+- [Developers](https://g6solver.com/developers/): install, the harness, Python examples, model configuration
+- [Components](https://g6solver.com/components/): generated catalogue with maturity labels, ops and dependencies
+
+## Optional
+
+- [Research](https://g6solver.com/research/): status of every claim; the claim-checking, action-gate and meta-harness studies and their verdicts, as a worked example
+- [Tune it to your work](https://g6solver.com/metaharness/): the meta-harness, how a change is proposed, measured, gated and approved
+- [FAQ](https://g6solver.com/faq/): why G6, labels, local models, safety, the meta-harness
+- [Validation plan and results](https://github.com/basicisabc1994/g6solver/tree/main/docs/validation)
+- [Theory documents](https://github.com/basicisabc1994/g6solver/tree/main/docs/theory)
+- [Bundles](https://g6solver.com/bundles/): ready-made apps for non-programmers

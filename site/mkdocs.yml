@@ -1,0 +1,57 @@
+site_name: G6
+site_url: https://g6solver.com/
+site_description: Open-source harness for AI agents — checks their work, gates risky actions and labels every result for what the evidence shows. Free, local-first, Apache-2.0.
+repo_url: https://github.com/basicisabc1994/g6solver
+repo_name: G6 on GitHub
+docs_dir: docs
+site_dir: build
+copyright: G6 is open source under the Apache License 2.0 · Built in Australia · Local-first
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle: {icon: material/weather-sunny, name: Light mode}
+  features:
+    - navigation.tabs
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.superfences
+  - pymdownx.tabbed: {alternate_style: true}
+  - pymdownx.details
+  - toc: {permalink: true}
+
+extra_css:
+  - assets/site.css
+
+nav:
+  - Home: index.md
+  - Get started:
+      - For everyone (no code): install.md
+      - For developers and coding agents: developers.md
+      - Components: components.md
+  - Bundles: bundles/index.md
+  - Tune it to your work: metaharness.md
+  - Free guide: guide/index.md
+  - Research: research.md
+  - FAQ: faq.md
+  - Contribute: contribute.md
+  - About: about.md

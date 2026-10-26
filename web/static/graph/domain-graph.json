@@ -1,0 +1,5606 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "G6",
+    "languages": [
+      "Python",
+      "JavaScript",
+      "HTML",
+      "CSS"
+    ],
+    "frameworks": [
+      "Pydantic",
+      "returns",
+      "FastMCP",
+      "Django",
+      "Tailwind CSS",
+      "Z3",
+      "pytest",
+      "PyInstaller"
+    ],
+    "description": "G6 is an open-source failure-engineering framework for AI systems. Each component guards against a named way AI systems fail, and the components stack like the slices of a Swiss cheese model, so one slice catches what another misses. G6 turns an existing system, such as Claude Code, an agent or an LLM app, into one that debugs, corrects and improves itself on a user's specific work. Every result carries one of three reliability states (verified, qualified-draft or blocked-escalated) for exactly what its evidence shows, and no state is raised above what its checks support. It runs on the user's own computer over MCP, the g6 command line, Python and ready-made bundles, and is documented on an open static website.",
+    "analyzedAt": "2026-10-19T12:39:55Z",
+    "gitCommitHash": "8100cc4558"
+  },
+  "nodes": [
+    {
+      "id": "domain:meta-harness-tuning",
+      "type": "domain",
+      "name": "Meta-Harness Tuning",
+      "summary": "The meta-harness tunes how G6 runs a workflow a user repeats. It proposes candidate profiles, measures each against the active version on held-out cases at equal compute, decides with a fail-closed gate, and activates nothing until a person approves. It also audits live runs for drift, rolls back, explains failed attempts with root causes and remedies, and runs governed self-improvement cycles on harness patches.",
+      "tags": [
+        "meta-harness",
+        "tuning",
+        "self-improvement",
+        "held-out-evaluation",
+        "human-approval"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "Workflow",
+          "Profile",
+          "Proposal",
+          "EvaluationReport",
+          "GateDecision",
+          "ProfileStore",
+          "RunLedger",
+          "Recovery",
+          "Remedy",
+          "HarnessPatch",
+          "PromotionDecision"
+        ],
+        "businessRules": [
+          "A person confirms the workflow before any comparison; the workflow digest and the hash of the judging code are pinned at confirmation, and a change to either voids earlier comparisons.",
+          "A live episode is never held-out evidence, and the held-out split has an evaluation limit after which a person freezes a fresh split.",
+          "The gate's best verdict is recommend, labelled qualified-draft; no meta-harness call returns the verified state.",
+          "The person who accepts a change cannot be its proposer, an empty or auto: name is refused, and over MCP the session that proposed a change cannot approve it.",
+          "A candidate that uses more model calls than the base must also beat the base given the same calls.",
+          "Every call checks the process stop first, except rollback, inspect and report.",
+          "A self-improvement cycle applies a patch only when the promotion gate allows it on exactly that patch, then remeasures and rolls back on a regression."
+        ],
+        "crossDomainInteractions": [
+          "Runs every candidate and live task through the harness in the reliability pipeline.",
+          "Exposes seven metaharness_* tools on the MCP server and snapshots G6 state on activation.",
+          "Offers reasoning steps such as a second look and voting as profile options, and pins the reasoning sign test inside its judging code.",
+          "Cleans live failures with the pattern guard before a proposer sees them."
+        ]
+      }
+    },
+    {
+      "id": "flow:confirm-and-baseline-a-workflow",
+      "type": "flow",
+      "name": "Confirm and Baseline a Workflow",
+      "summary": "A user declares a recurring workflow (task, checks, models, dev and held-out cases); a person confirms and freezes it, and the active profile is measured against a negative control before any change is proposed.",
+      "tags": [
+        "workflow",
+        "confirmation",
+        "baseline"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.metaharness.adapt(workflow), then mh.confirm(accepted_by=...) and mh.baseline()",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:confirm-and-baseline-a-workflow:validate-the-workflow",
+      "type": "step",
+      "name": "Validate the declared workflow",
+      "summary": "adapt builds a MetaHarness for the workflow under G6_HOME; an invalid workflow makes every later call return the same blocked-escalated refusal with its problems listed.",
+      "tags": [
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        879,
+        886
+      ]
+    },
+    {
+      "id": "step:confirm-and-baseline-a-workflow:refuse-live-episodes-as-held-out",
+      "type": "step",
+      "name": "Refuse live episodes as held-out",
+      "summary": "A held-out case whose id or input matches a recorded live run is refused, because a live episode can never count as held-out evidence.",
+      "tags": [
+        "held-out",
+        "leak-check"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        118,
+        126
+      ]
+    },
+    {
+      "id": "step:confirm-and-baseline-a-workflow:person-confirms-and-freezes",
+      "type": "step",
+      "name": "A person confirms and freezes it",
+      "summary": "confirm refuses an empty or auto: name, then pins the workflow digest, the hash of the judging code and the held-out digest, and writes version 0 of the profile with every mandatory check.",
+      "tags": [
+        "human-approval",
+        "freeze"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        170,
+        206
+      ]
+    },
+    {
+      "id": "step:confirm-and-baseline-a-workflow:check-the-sealed-held-out-file",
+      "type": "step",
+      "name": "Check the sealed held-out file",
+      "summary": "When the held-out cases live in a sealed vault, any change to its files voids every evaluation against it until a person freezes a fresh split.",
+      "tags": [
+        "held-out",
+        "integrity"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        155,
+        164
+      ]
+    },
+    {
+      "id": "step:confirm-and-baseline-a-workflow:measure-the-baseline",
+      "type": "step",
+      "name": "Measure the baseline",
+      "summary": "baseline measures the active profile on the dev and held-out splits against an empty-answer negative control with a power estimate, counts held-out reuse, and points to diagnose when the harness held runs.",
+      "tags": [
+        "baseline",
+        "negative-control"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        338,
+        368
+      ]
+    },
+    {
+      "id": "flow:propose-evaluate-and-decide-a-profile",
+      "type": "flow",
+      "name": "Propose, Evaluate and Decide a Profile",
+      "summary": "A candidate profile, written by hand, by the agent or by a proposer strategy that sees only dev failures, is raced on a selection split, measured paired against the active version on the held-out split, and decided by a deterministic, fail-closed gate.",
+      "tags": [
+        "proposal",
+        "evaluation",
+        "meta-gate"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "MCP tools metaharness_propose, metaharness_evaluate and metaharness_decide",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:propose-evaluate-and-decide-a-profile:propose-a-candidate",
+      "type": "step",
+      "name": "Propose a candidate",
+      "summary": "The MCP surface takes a profile from the agent or runs the workflow's declared search space; each candidate's acting fields are validated and its diff from the active version recorded.",
+      "tags": [
+        "proposal",
+        "mcp"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/surface.py",
+      "lineRange": [
+        98,
+        115
+      ]
+    },
+    {
+      "id": "step:propose-evaluate-and-decide-a-profile:build-the-dev-only-view",
+      "type": "step",
+      "name": "Build the dev-only proposer view",
+      "summary": "A proposer strategy sees the task, checks, models and the active version's dev failures only, cleaned by the pattern guard and under a dev call budget; no held-out case reaches it.",
+      "tags": [
+        "dev-split",
+        "isolation"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/propose.py",
+      "lineRange": [
+        130,
+        163
+      ]
+    },
+    {
+      "id": "step:propose-evaluate-and-decide-a-profile:validate-and-deduplicate",
+      "type": "step",
+      "name": "Validate and deduplicate candidates",
+      "summary": "Each proposed profile is parsed and checked against the workflow, a profile already proposed is skipped, each one is logged to the run ledger, and a failing strategy returns its recovery instead of raising.",
+      "tags": [
+        "validation",
+        "ledger"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        258,
+        299
+      ]
+    },
+    {
+      "id": "step:propose-evaluate-and-decide-a-profile:race-on-the-selection-split",
+      "type": "step",
+      "name": "Race candidates on the selection split",
+      "summary": "select ranks candidates by racing them in blocks on cases outside dev and held-out; it decides nothing, and the leader still goes to the held-out evaluation once.",
+      "tags": [
+        "selection",
+        "racing"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/select.py",
+      "lineRange": [
+        36,
+        93
+      ]
+    },
+    {
+      "id": "step:propose-evaluate-and-decide-a-profile:evaluate-on-the-held-out-split",
+      "type": "step",
+      "name": "Evaluate on the held-out split",
+      "summary": "evaluate runs base and candidate on the same held-out cases, paired and metered, with the negative control, sequential boundaries, cost estimates and false-accept counts, and records the run against the split's reuse limit.",
+      "tags": [
+        "held-out",
+        "paired-comparison"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/metaharness/evaluate.py",
+      "lineRange": [
+        235,
+        326
+      ]
+    },
+    {
+      "id": "step:propose-evaluate-and-decide-a-profile:gate-the-decision",
+      "type": "step",
+      "name": "Gate the decision",
+      "summary": "The meta-gate checks in order: the stop, unchanged workflow and judging code, schema, held-out discipline, a complete evaluation, a suite that can tell the base from an empty answer, enough cases and disagreements, a sign-test win, matched compute and every objective.",
+      "tags": [
+        "meta-gate",
+        "fail-closed"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/metaharness/gate.py",
+      "lineRange": [
+        104,
+        216
+      ]
+    },
+    {
+      "id": "step:propose-evaluate-and-decide-a-profile:gate-code-level-changes",
+      "type": "step",
+      "name": "Gate code-level changes",
+      "summary": "A candidate that changes code is classified by change scope and sent through the self-training patch promotion gate; a protected path blocks, and a high risk level is refused without a named reviewer.",
+      "tags": [
+        "code-change",
+        "patch-gate"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/gate.py",
+      "lineRange": [
+        68,
+        101
+      ]
+    },
+    {
+      "id": "flow:approve-activate-and-roll-back-a-change",
+      "type": "flow",
+      "name": "Approve, Activate and Roll Back a Change",
+      "summary": "A recommended change goes live only when a person approves it through the client. Live runs then use it, a share of them is audited against the previous approved version, drift demotes it, and a person can roll back to any approved version.",
+      "tags": [
+        "approval",
+        "activation",
+        "rollback",
+        "drift"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "MCP tools metaharness_approve and metaharness_rollback",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:ask-the-person-through-the-client",
+      "type": "step",
+      "name": "Ask the person through the client",
+      "summary": "metaharness_approve asks the person directly through MCP elicitation, showing the recorded evidence; a client that cannot ask, or a person who declines, means no approval.",
+      "tags": [
+        "mcp-elicitation",
+        "human-approval"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/mcp/__init__.py",
+      "lineRange": [
+        171,
+        176
+      ]
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:refuse-the-proposing-session",
+      "type": "step",
+      "name": "Refuse the proposing session",
+      "summary": "The surface refuses an approval from the MCP session that proposed the change and takes the approver's name only from the person's own answer.",
+      "tags": [
+        "separation-of-duties"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/surface.py",
+      "lineRange": [
+        140,
+        156
+      ]
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:activate-the-version",
+      "type": "step",
+      "name": "Activate the recommended version",
+      "summary": "activate accepts only a recommend decision this meta-harness issued, a named person who is not the proposer, and an unchanged base and workflow, then appends the version to the hash-chained profile store.",
+      "tags": [
+        "activation",
+        "hash-chain"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        431,
+        461
+      ]
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:snapshot-g6-state",
+      "type": "step",
+      "name": "Snapshot G6 state",
+      "summary": "When the workspace sits inside G6_HOME, activation and rollback take a state snapshot named for the workflow and version, so the change can be undone.",
+      "tags": [
+        "snapshot",
+        "reversibility"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        463,
+        473
+      ]
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:run-live-tasks",
+      "type": "step",
+      "name": "Run live tasks under the active version",
+      "summary": "run sends each live task through the harness under the active profile, never relabels its result, writes a ledger row, and can shadow a candidate whose output is kept by digest only.",
+      "tags": [
+        "live-run",
+        "shadow"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        482,
+        536
+      ]
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:audit-against-the-previous-version",
+      "type": "step",
+      "name": "Audit against the previous version",
+      "summary": "At the audit rate, never below the workflow's floor, the previous approved version also runs the same live task and the paired difference is recorded.",
+      "tags": [
+        "audit",
+        "drift"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        638,
+        657
+      ]
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:demote-on-drift",
+      "type": "step",
+      "name": "Demote on drift",
+      "summary": "monitor tests the audited differences against a threshold; when the head falls behind, it demotes to the previous approved version and opens a re-evaluate ticket.",
+      "tags": [
+        "drift",
+        "demotion"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        659,
+        686
+      ]
+    },
+    {
+      "id": "step:approve-activate-and-roll-back-a-change:roll-back-to-an-approved-version",
+      "type": "step",
+      "name": "Roll back to an approved version",
+      "summary": "A person moves the head back to a version a person approved; rollback is allowed while G6 is stopped because it starts no work.",
+      "tags": [
+        "rollback",
+        "human-approval"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        764,
+        779
+      ]
+    },
+    {
+      "id": "flow:diagnose-and-recover",
+      "type": "flow",
+      "name": "Diagnose and Recover",
+      "summary": "When tuning fails or finds no gain, the meta-harness says why and what to try next: root causes read from dev failures and the gate's own numbers, each remedy naming the G6 component it uses and whether the meta-harness or only a person can take it.",
+      "tags": [
+        "root-cause",
+        "recovery",
+        "diagnosis"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "MCP tool metaharness_diagnose, or mh.diagnose()",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:diagnose-and-recover:request-a-diagnosis",
+      "type": "step",
+      "name": "Request a diagnosis",
+      "summary": "diagnose builds the dev view of the active version under a call budget, reads the decisions so far and changes nothing; it never reads a held-out case.",
+      "tags": [
+        "diagnosis",
+        "dev-split"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/api.py",
+      "lineRange": [
+        242,
+        256
+      ]
+    },
+    {
+      "id": "step:diagnose-and-recover:classify-root-causes",
+      "type": "step",
+      "name": "Classify root causes",
+      "summary": "Dev failures are sorted into intake holds, check rejections, harness holds, wrong answers (including an over-used label) and a silent oracle, each with counts and example case ids.",
+      "tags": [
+        "root-cause"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/recovery.py",
+      "lineRange": [
+        256,
+        318
+      ]
+    },
+    {
+      "id": "step:diagnose-and-recover:detect-an-exhausted-search",
+      "type": "step",
+      "name": "Detect an exhausted search",
+      "summary": "Two or more refused candidates mark the search as exhausted and suggest wider pipeline steps or a larger held-out split.",
+      "tags": [
+        "search",
+        "remedy"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/recovery.py",
+      "lineRange": [
+        319,
+        328
+      ]
+    },
+    {
+      "id": "step:diagnose-and-recover:order-remedies-person-first",
+      "type": "step",
+      "name": "Order remedies, person first",
+      "summary": "Each remedy says who acts (candidate or person) and which component it uses; what only a person can unblock at intake is listed first.",
+      "tags": [
+        "remedy",
+        "human-action"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/recovery.py",
+      "lineRange": [
+        329,
+        334
+      ]
+    },
+    {
+      "id": "step:diagnose-and-recover:explain-a-refused-decision",
+      "type": "step",
+      "name": "Explain a refused decision",
+      "summary": "For a decision that is not recommend, recovery reads the gate's aggregates and estimates how many held-out cases an observed gain would need to pass the sign test.",
+      "tags": [
+        "power",
+        "gate-aggregates"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/metaharness/recovery.py",
+      "lineRange": [
+        92,
+        159
+      ]
+    },
+    {
+      "id": "step:diagnose-and-recover:recover-from-a-failed-proposer",
+      "type": "step",
+      "name": "Recover from a failed proposer",
+      "summary": "A strategy that raised, or proposed nothing valid and new, gets its own cause and next action.",
+      "tags": [
+        "proposer",
+        "recovery"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/metaharness/recovery.py",
+      "lineRange": [
+        160,
+        179
+      ]
+    },
+    {
+      "id": "flow:run-a-self-improvement-cycle",
+      "type": "flow",
+      "name": "Run a Self-Improvement Cycle",
+      "summary": "One governed cycle senses, proposes a harness patch, evaluates it and asks the patch promotion gate; only when the gate allows it on exactly that patch does the cycle apply it, remeasure and roll back on a regression.",
+      "tags": [
+        "self-training",
+        "patch-promotion",
+        "rollback"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "g6.self_training.run_improvement_cycle(...)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:check-the-stop-and-switches",
+      "type": "step",
+      "name": "Check the stop and switches",
+      "summary": "The cycle is off unless enabled, reads the process stop before each stage, and refuses to apply without both a remeasure and a regression test.",
+      "tags": [
+        "stop",
+        "configuration"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/self_training/improvement_loop.py",
+      "lineRange": [
+        270,
+        281
+      ]
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:sense-the-current-state",
+      "type": "step",
+      "name": "Sense the current state",
+      "summary": "The caller's sense function measures where the harness stands before any change.",
+      "tags": [
+        "measurement"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/self_training/improvement_loop.py",
+      "lineRange": [
+        283,
+        284
+      ]
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:propose-a-harness-patch",
+      "type": "step",
+      "name": "Propose a harness patch",
+      "summary": "The caller's proposer returns a HarnessPatch or nothing; anything else fails the cycle closed.",
+      "tags": [
+        "proposal"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/self_training/improvement_loop.py",
+      "lineRange": [
+        286,
+        293
+      ]
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:evaluate-the-patch",
+      "type": "step",
+      "name": "Evaluate the patch",
+      "summary": "The caller's evaluator returns a PatchEvalReport: targeted fix, regression pass rate, safety violations and metric change.",
+      "tags": [
+        "evaluation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/self_training/improvement_loop.py",
+      "lineRange": [
+        295,
+        300
+      ]
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:gate-the-promotion",
+      "type": "step",
+      "name": "Gate the promotion",
+      "summary": "govern_patch_promotion rates the patch's risk, blocks protected paths and rejects a patch that misses the promotion criteria; anything short of auto-promotable waits for a person.",
+      "tags": [
+        "patch-gate",
+        "risk-level"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/self_training/patch_promotion_gate.py",
+      "lineRange": [
+        304,
+        431
+      ]
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:snapshot-and-match-the-decision",
+      "type": "step",
+      "name": "Snapshot and match the decision",
+      "summary": "Before applying, the cycle takes the caller's snapshot and refuses a patch that changed after the gate decided on it.",
+      "tags": [
+        "snapshot",
+        "integrity"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/self_training/improvement_loop.py",
+      "lineRange": [
+        318,
+        325
+      ]
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:apply-and-remeasure",
+      "type": "step",
+      "name": "Apply and remeasure",
+      "summary": "The patch is applied, remeasured and kept only when the regression test answers no regression; the result stays qualified-draft because the evaluation is the caller's.",
+      "tags": [
+        "apply",
+        "remeasure"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/self_training/improvement_loop.py",
+      "lineRange": [
+        198,
+        233
+      ]
+    },
+    {
+      "id": "step:run-a-self-improvement-cycle:roll-back-on-regression",
+      "type": "step",
+      "name": "Roll back on regression",
+      "summary": "A regression, a remeasure that raises or an unclear answer rolls the patch back, and a rollback that fails is reported as applied so nothing is hidden.",
+      "tags": [
+        "rollback"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/self_training/improvement_loop.py",
+      "lineRange": [
+        234,
+        239
+      ]
+    },
+    {
+      "id": "domain:checking-and-gating",
+      "type": "domain",
+      "name": "Checking and Gating",
+      "summary": "The checking slices hold an agent's claims, answers and actions to the evidence before anyone relies on them. Grounding checks claims against sources, epistemic integrity adjudicates each claim's evidence grade, action gating decides whether an action may run, the coding-agent gate checks a 'fixed it' report, and the safety engine authorizes runtime actions against ceilings, guards and allow-lists.",
+      "tags": [
+        "checking",
+        "gating",
+        "grounding",
+        "action-gating",
+        "safety"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "ClaimCheck",
+          "Passage",
+          "ActionCapsule",
+          "ImpactAssessment",
+          "GateDecision",
+          "Evidence",
+          "VerifierResult",
+          "AdjudicatedClaim",
+          "EvidenceRecord",
+          "ActionRequest",
+          "RuntimePolicy",
+          "GuardVerdict",
+          "AuthorizationDecision"
+        ],
+        "businessRules": [
+          "A lexical match is evidence, not proof: the best a supported claim earns is qualified-draft.",
+          "Unknown facts about an action stay unknown and are never treated as low risk; a declared fact can make an action riskier, never safer.",
+          "An irreversible or external action without a complete verification contract is blocked, and the gate never executes anything.",
+          "Each later gate is monotonic: it may raise an action's severity and never lowers an earlier block or escalation.",
+          "A coding agent's pass needs counted evidence and no finding; a readiness phrase such as 'all tests pass' needs a passing run.",
+          "A guard flag is advisory and authorizes nothing; the policy engine decides, and a guard BLOCK trips the kill switch.",
+          "The overall disposition of a message is the most restrictive disposition of its claims."
+        ],
+        "crossDomainInteractions": [
+          "Five checking components expose blocks that MCP g6_invoke and the g6 command line reach.",
+          "The operator gates every outward draft with action gating before it reaches the queue.",
+          "Bundles wrap grounding, action gating and the coding-agent gate for one problem each.",
+          "The workforce reads test-weakening findings from the safety engine."
+        ]
+      }
+    },
+    {
+      "id": "flow:check-a-claim-against-sources",
+      "type": "flow",
+      "name": "Check a Claim Against Sources",
+      "summary": "Each sentence of a draft is checked against the user's sources: stated word for word, supported, partly backed, contradicted (negation or numbers differ) or not found, with a record of how it was judged.",
+      "tags": [
+        "grounding",
+        "claims",
+        "sources"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "MCP g6_invoke grounding check_claims, or g6 invoke grounding check_claim",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:check-a-claim-against-sources:split-the-draft-into-claims",
+      "type": "step",
+      "name": "Split the draft into claims",
+      "summary": "One claim per sentence or bullet; headings and fragments under three words are dropped.",
+      "tags": [
+        "parsing"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/grounding/claims.py",
+      "lineRange": [
+        38,
+        46
+      ]
+    },
+    {
+      "id": "step:check-a-claim-against-sources:retrieve-candidate-passages",
+      "type": "step",
+      "name": "Retrieve candidate passages",
+      "summary": "The text retriever chunks each source and ranks passages by content-term overlap with the claim.",
+      "tags": [
+        "retrieval"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/grounding/retrieval.py",
+      "lineRange": [
+        65,
+        107
+      ]
+    },
+    {
+      "id": "step:check-a-claim-against-sources:find-the-best-covering-sentence",
+      "type": "step",
+      "name": "Find the best-covering sentence",
+      "summary": "The source sentence holding the largest share of the claim's content terms is chosen, with the terms it misses.",
+      "tags": [
+        "coverage"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/grounding/claims.py",
+      "lineRange": [
+        65,
+        74
+      ]
+    },
+    {
+      "id": "step:check-a-claim-against-sources:detect-conflicts",
+      "type": "step",
+      "name": "Detect conflicts",
+      "summary": "A flipped negation or a differing number marks a conflict, and an optional judge can read the source as contradicting the claim.",
+      "tags": [
+        "conflict",
+        "negation",
+        "numbers"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/grounding/claims.py",
+      "lineRange": [
+        81,
+        96
+      ]
+    },
+    {
+      "id": "step:check-a-claim-against-sources:assign-status-and-label",
+      "type": "step",
+      "name": "Assign status and label",
+      "summary": "Coverage sets the status (quoted, supported, partial, conflict or not_found); quoted and supported are qualified-draft, the rest blocked-escalated, with what the check did not establish.",
+      "tags": [
+        "labelling"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/grounding/claims.py",
+      "lineRange": [
+        97,
+        116
+      ]
+    },
+    {
+      "id": "flow:gate-an-agent-action",
+      "type": "flow",
+      "name": "Gate an Agent Action",
+      "summary": "Before an agent runs an action, the gate classifies its reversibility and reach, models its consequences and decides: allow, ask for information or confirmation, require mitigation, send to a person, or block, writing a durable audit record. It never executes the action.",
+      "tags": [
+        "action-gating",
+        "risk",
+        "audit"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "MCP g6_invoke action_gating evaluate, or g6.action_gating.evaluate_action(action)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:gate-an-agent-action:normalise-the-action-capsule",
+      "type": "step",
+      "name": "Normalise the action capsule",
+      "summary": "The declared action (type, target, reversibility, blast radius, backend and context) becomes a typed ActionCapsule; a fact the caller left out stays unknown.",
+      "tags": [
+        "normalisation"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/action_gating/normalizer.py",
+      "lineRange": [
+        187,
+        267
+      ]
+    },
+    {
+      "id": "step:gate-an-agent-action:discover-capabilities",
+      "type": "step",
+      "name": "Discover capabilities",
+      "summary": "The gate records which of its parts are available, including the durable audit store, and turns a missing part into a degradation notice.",
+      "tags": [
+        "degradation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/action_gating/capabilities.py",
+      "lineRange": [
+        44,
+        89
+      ]
+    },
+    {
+      "id": "step:gate-an-agent-action:classify-reversibility-and-impact",
+      "type": "step",
+      "name": "Classify reversibility and impact",
+      "summary": "Reversibility and impact are combined into an aggregate risk of low, medium, high, critical or unknown.",
+      "tags": [
+        "risk-classification"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/action_gating/classifiers.py",
+      "lineRange": [
+        14,
+        63
+      ]
+    },
+    {
+      "id": "step:gate-an-agent-action:model-consequence-scenarios",
+      "type": "step",
+      "name": "Model consequence scenarios",
+      "summary": "A material action gets fixed consequence scenarios, a mitigation plan and a known-unknowns matrix; no likelihood is estimated, so each case says unknown.",
+      "tags": [
+        "scenarios",
+        "mitigation"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/action_gating/scenario_modeler.py",
+      "lineRange": [
+        24,
+        89
+      ]
+    },
+    {
+      "id": "step:gate-an-agent-action:run-safety-qa",
+      "type": "step",
+      "name": "Run safety QA",
+      "summary": "A safety review lists the fixes required before the action may run.",
+      "tags": [
+        "qa"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/action_gating/qa.py",
+      "lineRange": [
+        10,
+        39
+      ]
+    },
+    {
+      "id": "step:gate-an-agent-action:decide-the-gate",
+      "type": "step",
+      "name": "Decide the gate",
+      "summary": "Risk and missing assurance map to a decision; a critical risk or unverified authority goes to a person, and a missing scenario model, a missing mitigation or failed QA blocks.",
+      "tags": [
+        "decision"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/action_gating/decision_engine.py",
+      "lineRange": [
+        450,
+        511
+      ]
+    },
+    {
+      "id": "step:gate-an-agent-action:apply-raise-only-gates",
+      "type": "step",
+      "name": "Apply raise-only gates",
+      "summary": "Factual preconditions, the verification contract, collisions with live actions, weak signals and falsified hypotheses can each raise the decision to review or block, never lower it.",
+      "tags": [
+        "monotonic-gates",
+        "verification-contract"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/action_gating/decision_engine.py",
+      "lineRange": [
+        512,
+        588
+      ]
+    },
+    {
+      "id": "step:gate-an-agent-action:write-the-audit-record",
+      "type": "step",
+      "name": "Write the audit record",
+      "summary": "An action that needs an audit is written to the hash-chained store under G6_HOME; when the write fails, the action is blocked.",
+      "tags": [
+        "audit",
+        "fail-closed"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/action_gating/decision_engine.py",
+      "lineRange": [
+        698,
+        724
+      ]
+    },
+    {
+      "id": "flow:check-a-coding-agent-answer",
+      "type": "flow",
+      "name": "Check a Coding Agent's Answer",
+      "summary": "Before acting and before reporting done, a coding agent's plan and drafted answer are held to typed evidence: test exit codes, a verifier result, inspected files and a named review, plus scans for shortcuts and overclaims.",
+      "tags": [
+        "coding-agent",
+        "evidence",
+        "overclaim"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "MCP g6_invoke coding_agent_gate verify_answer (and preflight before acting)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:check-a-coding-agent-answer:preflight-before-acting",
+      "type": "step",
+      "name": "Preflight before acting",
+      "summary": "preflight scans the proposed action and diff for shortcuts, asks for a named review on high-risk work, and treats a proposed action as a plan, never as evidence.",
+      "tags": [
+        "preflight"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/coding_agent_gate/gate.py",
+      "lineRange": [
+        206,
+        231
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agent-answer:sort-counted-evidence",
+      "type": "step",
+      "name": "Sort counted evidence",
+      "summary": "Each evidence item (file, test, log, diff or review) is counted or rejected as a placeholder or malformed; a review counts only when it names someone other than the author.",
+      "tags": [
+        "evidence"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/coding_agent_gate/gate.py",
+      "lineRange": [
+        188,
+        201
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agent-answer:read-the-verifier-result",
+      "type": "step",
+      "name": "Read the verifier result",
+      "summary": "A verifier's pass or fail counts only when G6 observed it or it carries an exit code; a negative signal is believed as given.",
+      "tags": [
+        "verifier"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/coding_agent_gate/evidence.py",
+      "lineRange": [
+        96,
+        147
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agent-answer:rate-the-risk",
+      "type": "step",
+      "name": "Rate the risk",
+      "summary": "The declared risk level is raised by risk terms found in the task, the task contract and the diff.",
+      "tags": [
+        "risk-level"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/coding_agent_gate/detectors.py",
+      "lineRange": [
+        56,
+        92
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agent-answer:scan-for-shortcuts-and-overclaims",
+      "type": "step",
+      "name": "Scan for shortcuts and overclaims",
+      "summary": "The answer and diff are scanned for removed checks, added skips, '|| true' and '--no-verify', and readiness phrases are matched against passing runs.",
+      "tags": [
+        "shortcuts",
+        "overclaim"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/coding_agent_gate/detectors.py",
+      "lineRange": [
+        93,
+        159
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agent-answer:reach-the-strictest-verdict",
+      "type": "step",
+      "name": "Reach the strictest verdict",
+      "summary": "Findings such as failed tests, no counted evidence, an overclaim or a missing review set the strictest verdict; pass means no rule objected and is still a qualified-draft.",
+      "tags": [
+        "verdict"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/coding_agent_gate/gate.py",
+      "lineRange": [
+        257,
+        293
+      ]
+    },
+    {
+      "id": "flow:adjudicate-claims-in-a-message",
+      "type": "flow",
+      "name": "Adjudicate Claims in a Message",
+      "summary": "A message is split into atomic claims; each is typed, given a risk level and an evidence grade, checked for contested and dependent evidence, and given a disposition, and the most restrictive disposition governs the message.",
+      "tags": [
+        "epistemic-integrity",
+        "evidence-grade",
+        "disposition"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "MCP g6_invoke epistemic_integrity adjudicate",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:adjudicate-claims-in-a-message:atomise-the-message",
+      "type": "step",
+      "name": "Atomise the message",
+      "summary": "The message is split into atomic claims, one per assertion.",
+      "tags": [
+        "parsing"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/epistemic_integrity/adjudicator.py",
+      "lineRange": [
+        100,
+        107
+      ]
+    },
+    {
+      "id": "step:adjudicate-claims-in-a-message:classify-and-assign-risk",
+      "type": "step",
+      "name": "Classify the claim and assign risk",
+      "summary": "Each claim is typed (for example factual or causal) and given a risk level from the action's criticality.",
+      "tags": [
+        "classification",
+        "risk"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/epistemic_integrity/adjudicator.py",
+      "lineRange": [
+        108,
+        141
+      ]
+    },
+    {
+      "id": "step:adjudicate-claims-in-a-message:grade-independent-evidence",
+      "type": "step",
+      "name": "Grade independent evidence",
+      "summary": "Records from one source collapse into one independence group before grading, and a model's own assertion grades as E0.",
+      "tags": [
+        "evidence-grade",
+        "independence"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/epistemic_integrity/adjudicator.py",
+      "lineRange": [
+        142,
+        185
+      ]
+    },
+    {
+      "id": "step:adjudicate-claims-in-a-message:detect-contested-claims",
+      "type": "step",
+      "name": "Detect contested claims",
+      "summary": "Conflicting independent records mark a claim contested and cap its confidence.",
+      "tags": [
+        "contested",
+        "confidence-ceiling"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/epistemic_integrity/adjudicator.py",
+      "lineRange": [
+        213,
+        236
+      ]
+    },
+    {
+      "id": "step:adjudicate-claims-in-a-message:apply-the-risk-by-evidence-gate",
+      "type": "step",
+      "name": "Apply the risk-by-evidence gate",
+      "summary": "The disposition follows the claim's risk and evidence grade and fails closed; the highest risk also needs a person's approval and a rollback.",
+      "tags": [
+        "risk-policy",
+        "fail-closed"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/epistemic_integrity/adjudicator.py",
+      "lineRange": [
+        290,
+        303
+      ]
+    },
+    {
+      "id": "step:adjudicate-claims-in-a-message:apply-scope-numeric-and-causal-rules",
+      "type": "step",
+      "name": "Apply scope, numeric and causal rules",
+      "summary": "A vague claim without a metric asks for clarification, a number without context asks, causal language without causal-grade evidence is labelled, and too little evidence is a valid abstention.",
+      "tags": [
+        "clarification",
+        "causal"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/epistemic_integrity/adjudicator.py",
+      "lineRange": [
+        305,
+        329
+      ]
+    },
+    {
+      "id": "step:adjudicate-claims-in-a-message:take-the-most-restrictive-disposition",
+      "type": "step",
+      "name": "Take the most restrictive disposition",
+      "summary": "The message's disposition is the most restrictive of its claims, and contested outranks every other status.",
+      "tags": [
+        "aggregation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/epistemic_integrity/adjudicator.py",
+      "lineRange": [
+        345,
+        383
+      ]
+    },
+    {
+      "id": "flow:authorize-a-runtime-action",
+      "type": "flow",
+      "name": "Authorize a Runtime Action",
+      "summary": "The safety engine decides one runtime action at a time against trusted policy: the kill switch and process stop, runtime ceilings, pattern-guard verdicts, a validator quorum, the tool allow-list and forbidden paths. It returns a decision and mints no token.",
+      "tags": [
+        "safety-engine",
+        "policy",
+        "kill-switch"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.safety_engine.PolicyEngine().authorize_action(action, state, policy)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:authorize-a-runtime-action:scan-text-with-the-pattern-guard",
+      "type": "step",
+      "name": "Scan text with the pattern guard",
+      "summary": "Advisory scanners fold case, apostrophes and whitespace and look for subversion and prompt-extraction phrasings; a match suggests BLOCK and names what matched and where.",
+      "tags": [
+        "guards",
+        "prompt-injection"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/guards/patterns.py",
+      "lineRange": [
+        90,
+        147
+      ]
+    },
+    {
+      "id": "step:authorize-a-runtime-action:check-kill-switch-and-stop",
+      "type": "step",
+      "name": "Check the kill switch and stop",
+      "summary": "A tripped kill switch or an engaged process stop blocks before anything else is read.",
+      "tags": [
+        "kill-switch",
+        "stop"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/safety_engine/policy_engine.py",
+      "lineRange": [
+        73,
+        79
+      ]
+    },
+    {
+      "id": "step:authorize-a-runtime-action:check-runtime-ceilings",
+      "type": "step",
+      "name": "Check runtime ceilings",
+      "summary": "Tool calls, shell commands, files and lines changed, cost and elapsed time are compared with trusted ceilings, never with planner output.",
+      "tags": [
+        "ceilings",
+        "budget"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/safety_engine/ceilings.py",
+      "lineRange": [
+        24,
+        82
+      ]
+    },
+    {
+      "id": "step:authorize-a-runtime-action:act-on-guard-verdicts",
+      "type": "step",
+      "name": "Act on guard verdicts",
+      "summary": "A guard BLOCK trips the kill switch and blocks; an ESCALATE needs trusted approval before the executor.",
+      "tags": [
+        "guards",
+        "escalation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/safety_engine/policy_engine.py",
+      "lineRange": [
+        87,
+        102
+      ]
+    },
+    {
+      "id": "step:authorize-a-runtime-action:require-a-validator-quorum",
+      "type": "step",
+      "name": "Require a validator quorum",
+      "summary": "When the policy asks for a quorum, independent validator accepts are counted against it.",
+      "tags": [
+        "quorum"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/safety_engine/quorum.py",
+      "lineRange": [
+        50,
+        64
+      ]
+    },
+    {
+      "id": "step:authorize-a-runtime-action:enforce-allow-list-and-forbidden-paths",
+      "type": "step",
+      "name": "Enforce the allow-list and forbidden paths",
+      "summary": "A populated tool allow-list denies by default, and an action touching a forbidden path is blocked; only then is it allowed.",
+      "tags": [
+        "allow-list",
+        "paths"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/safety_engine/policy_engine.py",
+      "lineRange": [
+        109,
+        129
+      ]
+    },
+    {
+      "id": "domain:reasoning-and-formal-methods",
+      "type": "domain",
+      "name": "Reasoning and Formal Methods",
+      "summary": "These slices answer logic, synthesis and safety-bound questions with decision procedures and say exactly how far each answer reaches. Formal solves satisfiability queries with Z3 or a pure-Python DPLL, CEGIS synthesizes programs against an oracle on a stated domain, CSF bounds the chance of reaching an unsafe state on a caller's model, and debate and reasoning compare and vote over model answers.",
+      "tags": [
+        "formal-methods",
+        "cegis",
+        "smt",
+        "debate",
+        "voting"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "LogicalQuery",
+          "FormalResult",
+          "Sketch",
+          "Control",
+          "InputDomain",
+          "CegisResult",
+          "BoundedAgent",
+          "SafetyReport",
+          "DebateAgent",
+          "Transcript",
+          "Candidate",
+          "VoteResult",
+          "Arm",
+          "Verdict"
+        ],
+        "businessRules": [
+          "Only Z3 and the propositional DPLL run; a request naming another engine is refused before anything runs.",
+          "A CEGIS result with no counterexample holds on the stated domain only and is qualified-draft at best; a verifier that gives no decision makes the result inconclusive.",
+          "A verifier's counterexample counts only after the candidate, run out of process, disagrees with the oracle on it.",
+          "A CSF bound is exact arithmetic on the caller's model, not a measurement: qualified-draft within epsilon and blocked-escalated beyond it.",
+          "A failed debate turn is recorded as degraded with its error and never replaced with canned text.",
+          "An abstention counts against a majority, and a candidate arm is promoted only on a one-sided sign-test win at matched compute."
+        ],
+        "crossDomainInteractions": [
+          "The meta-harness pins the reasoning sign test and budget in its judging code and offers reasoning steps as profile options.",
+          "Every result returns the shared reliability envelope from the core."
+        ]
+      }
+    },
+    {
+      "id": "flow:solve-a-logic-query",
+      "type": "flow",
+      "name": "Solve a Logic Query",
+      "summary": "One typed satisfiability query is answered by Z3 or the built-in propositional DPLL, and the answer is labelled with its backend, its operation and what it rests on.",
+      "tags": [
+        "formal",
+        "sat",
+        "smt"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.formal.solve(query)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:solve-a-logic-query:validate-the-query",
+      "type": "step",
+      "name": "Validate the query",
+      "summary": "The query is validated as a LogicalQuery before anything runs.",
+      "tags": [
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/formal/facade.py",
+      "lineRange": [
+        26,
+        35
+      ]
+    },
+    {
+      "id": "step:solve-a-logic-query:refuse-other-engines",
+      "type": "step",
+      "name": "Refuse other engines",
+      "summary": "A field naming another engine or operation is refused as G6_E_FORMAL_BACKEND_REFUSED; any other invalid input is refused with its field.",
+      "tags": [
+        "refusal"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/formal/facade.py",
+      "lineRange": [
+        43,
+        59
+      ]
+    },
+    {
+      "id": "step:solve-a-logic-query:decide-with-the-dpll",
+      "type": "step",
+      "name": "Decide with the DPLL",
+      "summary": "A propositional query is decided by the pure-Python DPLL that ships with G6.",
+      "tags": [
+        "dpll"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/formal/propositional.py",
+      "lineRange": [
+        306,
+        335
+      ]
+    },
+    {
+      "id": "step:solve-a-logic-query:decide-with-z3",
+      "type": "step",
+      "name": "Decide with Z3",
+      "summary": "Any other query goes to Z3 with a timeout, returning sat, unsat or unknown with a model when there is one.",
+      "tags": [
+        "z3"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/formal/z3_bridge.py",
+      "lineRange": [
+        258,
+        328
+      ]
+    },
+    {
+      "id": "step:solve-a-logic-query:label-the-result",
+      "type": "step",
+      "name": "Label the result",
+      "summary": "apply_envelope attaches the reliability envelope and refuses any backend name outside the two it knows.",
+      "tags": [
+        "envelope"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/formal/envelope.py",
+      "lineRange": [
+        73,
+        153
+      ]
+    },
+    {
+      "id": "step:solve-a-logic-query:probe-solver-support",
+      "type": "step",
+      "name": "Probe solver support",
+      "summary": "solver_support asks Z3 one trivial query and reports the DPLL as pure Python, never as an external engine.",
+      "tags": [
+        "capability-probe"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/formal/facade.py",
+      "lineRange": [
+        62,
+        79
+      ]
+    },
+    {
+      "id": "flow:synthesize-a-program-with-cegis",
+      "type": "flow",
+      "name": "Synthesize a Program with CEGIS",
+      "summary": "The counterexample-guided loop fills the holes of a program sketch so it agrees with an oracle: fit the examples, check on the domain, add the counterexample, and say exactly what the result rests on.",
+      "tags": [
+        "cegis",
+        "synthesis",
+        "counterexample"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "g6.cegis.cegis(sketch, oracle, domain=...)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:synthesize-a-program-with-cegis:ask-the-oracle-on-the-domain",
+      "type": "step",
+      "name": "Ask the oracle on the domain",
+      "summary": "The oracle answers each input of the stated domain; inputs it does not answer are counted as skipped.",
+      "tags": [
+        "oracle",
+        "domain"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/cegis/verify.py",
+      "lineRange": [
+        101,
+        113
+      ]
+    },
+    {
+      "id": "step:synthesize-a-program-with-cegis:search-for-a-fitting-control",
+      "type": "step",
+      "name": "Search for a fitting control",
+      "summary": "An out-of-process runner searches hole values that fit the examples so far; an exhaustive search that finds none reports unsat.",
+      "tags": [
+        "search",
+        "subprocess"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/cegis/runner.py",
+      "lineRange": [
+        73,
+        113
+      ]
+    },
+    {
+      "id": "step:synthesize-a-program-with-cegis:check-the-candidate",
+      "type": "step",
+      "name": "Check the candidate",
+      "summary": "The candidate runs on every answered input and either agrees or yields a counterexample.",
+      "tags": [
+        "check"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/cegis/verify.py",
+      "lineRange": [
+        126,
+        139
+      ]
+    },
+    {
+      "id": "step:synthesize-a-program-with-cegis:ask-the-formal-verifier",
+      "type": "step",
+      "name": "Ask the formal verifier",
+      "summary": "With a verifier such as Z3Verifier, a candidate that passed sampling is also put to the solver on its encoded domain; no decision makes the result inconclusive.",
+      "tags": [
+        "z3",
+        "verifier"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/cegis/z3_verifier.py",
+      "lineRange": [
+        213,
+        228
+      ]
+    },
+    {
+      "id": "step:synthesize-a-program-with-cegis:confirm-and-add-the-counterexample",
+      "type": "step",
+      "name": "Confirm and add the counterexample",
+      "summary": "A verifier's counterexample is rerun against the oracle out of process; only a confirmed one is added to the examples for the next iteration.",
+      "tags": [
+        "counterexample"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/cegis/loop.py",
+      "lineRange": [
+        155,
+        180
+      ]
+    },
+    {
+      "id": "step:synthesize-a-program-with-cegis:report-the-bounded-result",
+      "type": "step",
+      "name": "Report the bounded result",
+      "summary": "The result names its status, domain, inputs compared and skipped, and is qualified-draft only for no counterexample in the domain.",
+      "tags": [
+        "envelope",
+        "boundary"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/cegis/loop.py",
+      "lineRange": [
+        62,
+        77
+      ]
+    },
+    {
+      "id": "flow:bound-unsafe-reachability",
+      "type": "flow",
+      "name": "Bound Unsafe Reachability",
+      "summary": "On a caller's Markov model of an agent, CSF computes an upper bound on the probability of reaching an unsafe state within N steps and compares it with epsilon; it can also check that a plan's operations can be rolled back.",
+      "tags": [
+        "csf",
+        "safety-bound",
+        "markov"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.csf.reachability_bound(agent, epsilon)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:bound-unsafe-reachability:validate-the-agent-model",
+      "type": "step",
+      "name": "Validate the agent model",
+      "summary": "BoundedAgent checks states, transition probabilities that sum to 1, unsafe labels and a horizon of at least one step.",
+      "tags": [
+        "validation",
+        "model"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/csf/schema.py",
+      "lineRange": [
+        165,
+        211
+      ]
+    },
+    {
+      "id": "step:bound-unsafe-reachability:propagate-the-state-distribution",
+      "type": "step",
+      "name": "Propagate the state distribution",
+      "summary": "The distribution is pushed forward step by step from the initial state, counting the unsafe mass at every step including step 0.",
+      "tags": [
+        "propagation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/csf/verifier.py",
+      "lineRange": [
+        100,
+        114
+      ]
+    },
+    {
+      "id": "step:bound-unsafe-reachability:sum-the-union-bound",
+      "type": "step",
+      "name": "Sum the union bound",
+      "summary": "The per-step unsafe masses are summed (Boole's inequality) and capped at 1, and compared with epsilon.",
+      "tags": [
+        "union-bound"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/csf/verifier.py",
+      "lineRange": [
+        117,
+        131
+      ]
+    },
+    {
+      "id": "step:bound-unsafe-reachability:label-against-epsilon",
+      "type": "step",
+      "name": "Label against epsilon",
+      "summary": "Within epsilon the report is qualified-draft, beyond it blocked-escalated, with the model and its assumptions in the evidence.",
+      "tags": [
+        "envelope"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/csf/verifier.py",
+      "lineRange": [
+        74,
+        97
+      ]
+    },
+    {
+      "id": "step:bound-unsafe-reachability:check-rollback-feasibility",
+      "type": "step",
+      "name": "Check rollback feasibility",
+      "summary": "rollback_feasibility checks a plan's operations against one vocabulary; an unknown operation makes the plan infeasible and is never assumed reversible.",
+      "tags": [
+        "rollback"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/csf/rollback.py",
+      "lineRange": [
+        116,
+        147
+      ]
+    },
+    {
+      "id": "flow:run-a-structured-debate",
+      "type": "flow",
+      "name": "Run a Structured Debate",
+      "summary": "Several named agents take turns on a question for a fixed number of rounds through the caller's model, and their agreement is measured by overlap or by a judge.",
+      "tags": [
+        "debate",
+        "agreement",
+        "multi-agent"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.debate.run_debate(question, agents, rounds, llm)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:run-a-structured-debate:check-limits-before-any-call",
+      "type": "step",
+      "name": "Check limits before any call",
+      "summary": "The question, the model, the round and agent limits and unique agent names are checked before a single call is made.",
+      "tags": [
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/debate/debate.py",
+      "lineRange": [
+        91,
+        105
+      ]
+    },
+    {
+      "id": "step:run-a-structured-debate:run-each-agents-turn",
+      "type": "step",
+      "name": "Run each agent's turn",
+      "summary": "Each round, every agent answers in its role with the transcript so far, one model call per turn.",
+      "tags": [
+        "turns"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/debate/debate.py",
+      "lineRange": [
+        108,
+        124
+      ]
+    },
+    {
+      "id": "step:run-a-structured-debate:record-failed-turns-as-degraded",
+      "type": "step",
+      "name": "Record failed turns as degraded",
+      "summary": "A turn that raises or returns no text is kept as degraded with its error and an empty response.",
+      "tags": [
+        "degradation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/debate/debate.py",
+      "lineRange": [
+        125,
+        134
+      ]
+    },
+    {
+      "id": "step:run-a-structured-debate:measure-agreement-by-overlap",
+      "type": "step",
+      "name": "Measure agreement by overlap",
+      "summary": "The agents' final positions are compared by their key words to give an agreement level.",
+      "tags": [
+        "agreement"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/debate/agreement.py",
+      "lineRange": [
+        101,
+        128
+      ]
+    },
+    {
+      "id": "step:run-a-structured-debate:ask-a-judge-for-agreement",
+      "type": "step",
+      "name": "Ask a judge for agreement",
+      "summary": "Optionally a model judge reads the transcript and reports whether the agents agree.",
+      "tags": [
+        "judge"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/debate/agreement.py",
+      "lineRange": [
+        189,
+        212
+      ]
+    },
+    {
+      "id": "flow:vote-and-compare-reasoning-arms",
+      "type": "flow",
+      "name": "Vote and Compare Reasoning Arms",
+      "summary": "Reasoning methods are held to a compute-matched baseline: n direct answers and a plain vote, with abstentions counted, and a paired comparison that promotes a method only on a sign-test win at matched compute.",
+      "tags": [
+        "reasoning",
+        "self-consistency",
+        "sign-test"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.reasoning.self_consistency(llm, problem, n) and g6.reasoning.compare(baseline, candidate, cases)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:vote-and-compare-reasoning-arms:sample-n-direct-answers",
+      "type": "step",
+      "name": "Sample n direct answers",
+      "summary": "self_consistency asks the model n times; a failed call or an unusable reply is an abstention, never an answer.",
+      "tags": [
+        "sampling"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reasoning/steps.py",
+      "lineRange": [
+        81,
+        100
+      ]
+    },
+    {
+      "id": "step:vote-and-compare-reasoning-arms:meter-calls-against-a-budget",
+      "type": "step",
+      "name": "Meter calls against a budget",
+      "summary": "A metered caller stops when its call or time budget runs out.",
+      "tags": [
+        "budget"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reasoning/budget.py",
+      "lineRange": [
+        28,
+        74
+      ]
+    },
+    {
+      "id": "step:vote-and-compare-reasoning-arms:vote-with-abstentions",
+      "type": "step",
+      "name": "Vote with abstentions",
+      "summary": "weighted_vote groups equivalent answers; answers an independent check accepted dominate, and abstentions count against a majority.",
+      "tags": [
+        "voting"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reasoning/vote.py",
+      "lineRange": [
+        32,
+        63
+      ]
+    },
+    {
+      "id": "step:vote-and-compare-reasoning-arms:run-both-arms-on-paired-cases",
+      "type": "step",
+      "name": "Run both arms on paired cases",
+      "summary": "The baseline and candidate arms answer the same cases, each scored by the case author's scorer, with crashes and unscorable cases counted.",
+      "tags": [
+        "paired-comparison"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reasoning/compare.py",
+      "lineRange": [
+        71,
+        95
+      ]
+    },
+    {
+      "id": "step:vote-and-compare-reasoning-arms:promote-only-on-a-sign-test-win",
+      "type": "step",
+      "name": "Promote only on a sign-test win",
+      "summary": "A candidate is promoted only with enough cases, more wins than losses at a one-sided exact sign test, a real margin and no more calls than the baseline.",
+      "tags": [
+        "sign-test",
+        "promotion"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reasoning/compare.py",
+      "lineRange": [
+        96,
+        108
+      ]
+    },
+    {
+      "id": "domain:missions-and-ventures",
+      "type": "domain",
+      "name": "Missions and Ventures",
+      "summary": "Workforce missions run a coding change under a standard that is frozen and confirmed by a person before any patch exists, then check each patch against it and issue a certificate predicate by predicate. The operator runs a venture's tasks one budgeted tick at a time, judges each output from its own record and queues every outward draft for a person's decision.",
+      "tags": [
+        "workforce",
+        "coding-mission",
+        "certificate",
+        "operator",
+        "approval-queue"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "Workforce",
+          "Mission",
+          "CodingStandard",
+          "Patch",
+          "Certificate",
+          "Control",
+          "Receipt",
+          "Venture",
+          "Task",
+          "ExecutionResult",
+          "ActionQueue",
+          "Guard"
+        ],
+        "businessRules": [
+          "G6 runs a repository's code only after a person allows it for that exact revision and content.",
+          "The standard (baseline snapshot, required tests, permitted file, risk level of at least R2, budget and attempt limit) is frozen before confirmation, and a patch may not edit a test or runner configuration.",
+          "A patch fails if a test that passed on the unpatched repository no longer passes; a suite that could not run is reported not_run, never as a pass.",
+          "Repository tests are the caller's own, so under the default policy they can refute a change and cannot by themselves support the verified state.",
+          "Completion is read from the operator's own record of check receipts, never from the executor's claimed status.",
+          "The actor that drafted an item can never decide it, an auto: reviewer is refused, and a status change needs a recorded decision row.",
+          "Marking a spend draft sent charges the month's cash budget in the same transaction."
+        ],
+        "crossDomainInteractions": [
+          "Coding missions run the reliability pipeline's intake and freeze any premortem replay check into the standard.",
+          "The operator gates outward drafts with action gating and judges outputs with harness checks.",
+          "The agent-change-check bundle reuses the workforce test runner, test-weakening check and mutation check.",
+          "The certificate comes from the shared g6.evidence issuer."
+        ]
+      }
+    },
+    {
+      "id": "flow:freeze-a-coding-mission-standard",
+      "type": "flow",
+      "name": "Freeze a Coding Mission Standard",
+      "summary": "A local coding mission starts from a clean git repository a person allowed G6 to run; G6 runs its suite in a scratch copy, takes the objective through intake, and freezes the standard a person then confirms.",
+      "tags": [
+        "coding-mission",
+        "standard",
+        "freeze"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "g6.workforce bind(), allow_execution(), create_coding_mission() and confirm()",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:freeze-a-coding-mission-standard:bind-the-local-workforce",
+      "type": "step",
+      "name": "Bind the local workforce",
+      "summary": "bind opens or creates the local stores under G6_HOME/workforce and the owner's venture; no network and no billing.",
+      "tags": [
+        "local-store",
+        "venture"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/workforce/api.py",
+      "lineRange": [
+        45,
+        61
+      ]
+    },
+    {
+      "id": "step:freeze-a-coding-mission-standard:allow-the-repository-to-run",
+      "type": "step",
+      "name": "Allow the repository to run",
+      "summary": "The approver is shown what running the repository's code means at its present revision and content, and its permission is recorded with its principal.",
+      "tags": [
+        "execution-permission",
+        "human-approval"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/workforce/api.py",
+      "lineRange": [
+        69,
+        83
+      ]
+    },
+    {
+      "id": "step:freeze-a-coding-mission-standard:check-the-repository-is-clean-and-allowed",
+      "type": "step",
+      "name": "Check the repository is clean and allowed",
+      "summary": "start refuses a dirty or symlinked repository and one whose revision and content were not allowed, and asks the replay clarification when the objective needs it.",
+      "tags": [
+        "preconditions"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/workforce/coding.py",
+      "lineRange": [
+        760,
+        812
+      ]
+    },
+    {
+      "id": "step:freeze-a-coding-mission-standard:run-the-suite-and-intake-the-objective",
+      "type": "step",
+      "name": "Run the suite and intake the objective",
+      "summary": "The repository's suite runs once in a throwaway copy to learn which tests can count, then the objective goes through the reliability pipeline's intake.",
+      "tags": [
+        "suite",
+        "intake"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/workforce/coding.py",
+      "lineRange": [
+        820,
+        855
+      ]
+    },
+    {
+      "id": "step:freeze-a-coding-mission-standard:construct-a-premortem-replay-check",
+      "type": "step",
+      "name": "Construct a premortem replay check",
+      "summary": "For one fixed event-replay requirement, the premortem compiles an additive, task-derived replay check from an executed test; a reworded requirement gets no check, and the limit is shown.",
+      "tags": [
+        "premortem",
+        "replay-check"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/reliability_pipeline/premortem.py",
+      "lineRange": [
+        63,
+        230
+      ]
+    },
+    {
+      "id": "step:freeze-a-coding-mission-standard:freeze-the-standard",
+      "type": "step",
+      "name": "Freeze the standard",
+      "summary": "The scope, required tests and their digests, permissions, risk level (raised to R3 for risky or credential work), budget and attempt limit are frozen with a baseline snapshot.",
+      "tags": [
+        "freeze",
+        "risk-level"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/workforce/coding.py",
+      "lineRange": [
+        858,
+        989
+      ]
+    },
+    {
+      "id": "step:freeze-a-coding-mission-standard:confirm-the-standard",
+      "type": "step",
+      "name": "Confirm the standard",
+      "summary": "The frozen standard is shown to the approver, whose confirmation is recorded and the checks start.",
+      "tags": [
+        "human-approval"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/workforce/api.py",
+      "lineRange": [
+        113,
+        128
+      ]
+    },
+    {
+      "id": "flow:check-a-patch-and-issue-a-certificate",
+      "type": "flow",
+      "name": "Check a Patch and Issue a Certificate",
+      "summary": "The caller writes the patch; G6 runs the frozen checks on a scratch copy, compares the whole suite and touched functions with the unpatched repository, and issues a certificate that says, predicate by predicate, what the evidence supports.",
+      "tags": [
+        "patch",
+        "test-bench",
+        "certificate"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "g6.workforce submit_patch(), status() and certificate()",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:check-a-patch-and-issue-a-certificate:submit-the-patch",
+      "type": "step",
+      "name": "Submit the patch",
+      "summary": "The caller submits the full new text of the permitted source files, checked at once under the frozen standard.",
+      "tags": [
+        "patch"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/workforce/api.py",
+      "lineRange": [
+        131,
+        133
+      ]
+    },
+    {
+      "id": "step:check-a-patch-and-issue-a-certificate:run-the-named-tests-in-a-scratch-copy",
+      "type": "step",
+      "name": "Run the named tests in a scratch copy",
+      "summary": "The bench copies the repository, writes the patch there, refuses edits to tests or runner configuration, and runs each named test in an isolated pytest with a positive control.",
+      "tags": [
+        "test-bench",
+        "isolation"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/workforce/bench.py",
+      "lineRange": [
+        132,
+        218
+      ]
+    },
+    {
+      "id": "step:check-a-patch-and-issue-a-certificate:compare-the-whole-suite",
+      "type": "step",
+      "name": "Compare the whole suite",
+      "summary": "The patched copy's full suite is compared with the unpatched baseline; a test that passed before and fails now fails the patch.",
+      "tags": [
+        "regression",
+        "suite"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/workforce/bench.py",
+      "lineRange": [
+        247,
+        273
+      ]
+    },
+    {
+      "id": "step:check-a-patch-and-issue-a-certificate:compare-old-and-new-behaviour",
+      "type": "step",
+      "name": "Compare old and new behaviour",
+      "summary": "Functions the change touches outside the task run on inputs taken from the change, before and after; a difference is a counterexample, or a disclosure for a declared function.",
+      "tags": [
+        "differential-testing"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/workforce/patch_checks.py",
+      "lineRange": [
+        221,
+        322
+      ]
+    },
+    {
+      "id": "step:check-a-patch-and-issue-a-certificate:check-test-integrity",
+      "type": "step",
+      "name": "Check test integrity",
+      "summary": "Test files are compared by syntax tree: a removed or changed assert, a removed test, a new skip or mock, or a changed conftest or pytest config is a finding.",
+      "tags": [
+        "test-weakening"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/workforce/verify.py",
+      "lineRange": [
+        204,
+        244
+      ]
+    },
+    {
+      "id": "step:check-a-patch-and-issue-a-certificate:issue-the-certificate",
+      "type": "step",
+      "name": "Issue the certificate",
+      "summary": "certify binds the frozen standard, the controls recorded on the baseline and the receipts on the patch's latest bytes, and the shared issuer decides each predicate's state.",
+      "tags": [
+        "certificate",
+        "evidence"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/workforce/coding_certificate.py",
+      "lineRange": [
+        186,
+        228
+      ]
+    },
+    {
+      "id": "step:check-a-patch-and-issue-a-certificate:read-status-and-certificate",
+      "type": "step",
+      "name": "Read status and certificate",
+      "summary": "status gives the mission's completion state and what it waits for; certificate returns the one the close kept, or one issued now on the latest patch.",
+      "tags": [
+        "status"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/workforce/api.py",
+      "lineRange": [
+        153,
+        171
+      ]
+    },
+    {
+      "id": "flow:run-an-operator-tick",
+      "type": "flow",
+      "name": "Run an Operator Tick",
+      "summary": "One tick runs one task for a venture: reserve its budget, execute it, judge the output from the operator's own record, gate and check each outward draft, and queue the ones that pass for a person.",
+      "tags": [
+        "operator",
+        "venture",
+        "budget"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "g6.operator.tick(queue, venture_id, task, executor)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:run-an-operator-tick:check-the-stop-and-the-task",
+      "type": "step",
+      "name": "Check the stop and the task",
+      "summary": "Nothing is reserved or run while G6 is stopped, and an executor with no actor id or checks that share an id are refused.",
+      "tags": [
+        "stop",
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/loop.py",
+      "lineRange": [
+        141,
+        152
+      ]
+    },
+    {
+      "id": "step:run-an-operator-tick:reserve-the-budget",
+      "type": "step",
+      "name": "Reserve the budget",
+      "summary": "The task's reserve is taken from the month's model budget in the same transaction as the venture's stop and cap check.",
+      "tags": [
+        "budget",
+        "transaction"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/operator/store.py",
+      "lineRange": [
+        164,
+        182
+      ]
+    },
+    {
+      "id": "step:run-an-operator-tick:execute-the-task",
+      "type": "step",
+      "name": "Execute the task",
+      "summary": "The executor gets the task and nothing else, and the run is charged its full reservation or its reported cost when that is higher.",
+      "tags": [
+        "execution",
+        "cost"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/loop.py",
+      "lineRange": [
+        160,
+        170
+      ]
+    },
+    {
+      "id": "step:run-an-operator-tick:judge-from-the-operators-record",
+      "type": "step",
+      "name": "Judge from the operator's record",
+      "summary": "The task's checks run on the output, the receipts are recorded, and completion is read back from that record: checked, unsettled, failed or self-reported.",
+      "tags": [
+        "receipts",
+        "completion"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/operator/loop.py",
+      "lineRange": [
+        172,
+        179
+      ]
+    },
+    {
+      "id": "step:run-an-operator-tick:gate-each-outward-draft",
+      "type": "step",
+      "name": "Gate each outward draft",
+      "summary": "Each draft is declared as an external action by the drafting actor and evaluated by action gating; a block stops it there.",
+      "tags": [
+        "action-gating"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/loop.py",
+      "lineRange": [
+        98,
+        114
+      ]
+    },
+    {
+      "id": "step:run-an-operator-tick:run-the-draft-checks",
+      "type": "step",
+      "name": "Run the draft checks",
+      "summary": "Recipient, quote witness, price floor, secret scan and spend amount checks run, plus the caller's checks and any promoted guards; a check that could not run is said, never passed.",
+      "tags": [
+        "draft-checks"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/operator/router.py",
+      "lineRange": [
+        149,
+        173
+      ]
+    },
+    {
+      "id": "step:run-an-operator-tick:queue-drafts-as-proposed",
+      "type": "step",
+      "name": "Queue drafts as proposed",
+      "summary": "A draft that passed enters the approval queue as proposed with the actor that drafted it, and the tick reports what was queued and what was blocked.",
+      "tags": [
+        "approval-queue"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/queue.py",
+      "lineRange": [
+        104,
+        119
+      ]
+    },
+    {
+      "id": "flow:decide-a-queued-draft",
+      "type": "flow",
+      "name": "Decide a Queued Draft",
+      "summary": "A person decides each queued outward draft: approve it (optionally edited), reject it with a reason, and mark it sent once they sent it themselves. Decoys can test the reviewer's attention, and a learned guard blocks drafts only after a person adopts it.",
+      "tags": [
+        "approval-queue",
+        "human-review",
+        "decoys"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.operator.ActionQueue approve(), reject() and mark_sent() from a surface a person drives",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:decide-a-queued-draft:list-proposed-drafts",
+      "type": "step",
+      "name": "List proposed drafts",
+      "summary": "The queue lists a venture's drafts by status, oldest first.",
+      "tags": [
+        "queue"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/queue.py",
+      "lineRange": [
+        141,
+        144
+      ]
+    },
+    {
+      "id": "step:decide-a-queued-draft:approve-as-a-person",
+      "type": "step",
+      "name": "Approve as a person",
+      "summary": "approve records a decision by a named reviewer who is not the drafter and not auto:, with the text before and after any edit.",
+      "tags": [
+        "approval",
+        "separation-of-duties"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/queue.py",
+      "lineRange": [
+        177,
+        193
+      ]
+    },
+    {
+      "id": "step:decide-a-queued-draft:reject-with-a-reason",
+      "type": "step",
+      "name": "Reject with a reason",
+      "summary": "A rejection needs a reason, which is what teaches the next draft.",
+      "tags": [
+        "rejection"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/queue.py",
+      "lineRange": [
+        195,
+        204
+      ]
+    },
+    {
+      "id": "step:decide-a-queued-draft:mark-sent-and-charge-cash",
+      "type": "step",
+      "name": "Mark sent and charge cash",
+      "summary": "Only an approved outward draft can be marked sent, and a spend draft charges the month's cash budget in the same transaction.",
+      "tags": [
+        "spend",
+        "cash-budget"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/queue.py",
+      "lineRange": [
+        206,
+        227
+      ]
+    },
+    {
+      "id": "step:decide-a-queued-draft:plant-and-count-decoys",
+      "type": "step",
+      "name": "Plant and count decoys",
+      "summary": "With a decoy rate set, a decoy with a planted defect is made from a recent draft; approving one unedited counts against the reviewer.",
+      "tags": [
+        "decoys",
+        "attention"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/queue.py",
+      "lineRange": [
+        132,
+        139
+      ]
+    },
+    {
+      "id": "step:decide-a-queued-draft:adopt-a-learned-guard",
+      "type": "step",
+      "name": "Adopt a learned guard",
+      "summary": "A learned check runs in shadow as a guard candidate until a person adopts exactly that guard; only then can it block drafts.",
+      "tags": [
+        "guards",
+        "learning"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/operator/queue.py",
+      "lineRange": [
+        242,
+        263
+      ]
+    },
+    {
+      "id": "domain:reliability-pipeline-and-premortem",
+      "type": "domain",
+      "name": "Reliability Pipeline and Premortem",
+      "summary": "The reliability pipeline takes a task from intake to a labelled result. The harness runs a standard through intake, plan, execute, adjudicate and remember; intake holds unclear, under-specified or risky tasks; plan critique checks a plan's structure; the pre-mortem imagines how a plan fails; and the step solver runs planned steps through the caller's runners.",
+      "tags": [
+        "harness",
+        "intake",
+        "feasibility",
+        "premortem",
+        "plan-critique"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "Standard",
+          "Check",
+          "IntakeContract",
+          "IntentContract",
+          "FeasibilityReport",
+          "StageResult",
+          "Plan",
+          "CritiqueReport",
+          "Certificate",
+          "SolverInput",
+          "SolverOutput"
+        ],
+        "businessRules": [
+          "Checks are frozen by hashing their code before anything runs, and each must fail its known-bad outputs and pass its known-good output.",
+          "A request with no measurable acceptance criteria stops at intake.",
+          "A risky task runs only after a person explicitly accepts it, and then as a qualified-draft; an injected assessor may tighten the feasibility verdict, never relax it.",
+          "Failures remembered for a task family block a later run until a check is added or a person waives them.",
+          "Caller-written checks are not independent, so a harness result is qualified-draft at best by default.",
+          "Only a plan critique verdict of pass may proceed; the word tripwire asks for revision and never blocks on its own.",
+          "Pre-mortem risks are possibilities, not findings, so the best label is qualified-draft."
+        ],
+        "crossDomainInteractions": [
+          "Adjudicates through the g6.evidence certificate issuer in checking and gating.",
+          "Serves the meta-harness as the runner for every candidate and live task.",
+          "Supplies intake and the replay-check constructor to coding missions.",
+          "The pre-mortem bundle checks each risk's plan fact with grounding."
+        ]
+      }
+    },
+    {
+      "id": "flow:run-a-standard-through-the-harness",
+      "type": "flow",
+      "name": "Run a Standard Through the Harness",
+      "summary": "A standard (a goal plus checks) runs once end to end: intake, an optional plan critique, frozen checks with controls, remembered failures, the caller's executor, adjudication into a certificate, and memory of failed checks for the task family.",
+      "tags": [
+        "harness",
+        "end-to-end",
+        "certificate"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "g6.harness.run(standard, executor)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:check-the-stop-and-the-standard",
+      "type": "step",
+      "name": "Check the stop and the standard",
+      "summary": "While the stop is engaged nothing runs; a standard with no checks or two checks sharing an id is refused.",
+      "tags": [
+        "stop",
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/harness/__init__.py",
+      "lineRange": [
+        150,
+        160
+      ]
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:take-the-task-through-intake",
+      "type": "step",
+      "name": "Take the task through intake",
+      "summary": "The standard's checks become the acceptance criteria; an intake block stops the run with its code and the next human action.",
+      "tags": [
+        "intake"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/harness/__init__.py",
+      "lineRange": [
+        162,
+        171
+      ]
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:critique-the-plan",
+      "type": "step",
+      "name": "Critique the plan",
+      "summary": "A plan attached to the standard is critiqued before anything runs, and its verdict is obeyed.",
+      "tags": [
+        "plan-critique"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/harness/__init__.py",
+      "lineRange": [
+        173,
+        181
+      ]
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:freeze-checks-and-run-controls",
+      "type": "step",
+      "name": "Freeze checks and run controls",
+      "summary": "Each check's code is hashed, then run on its known-bad outputs (it must fail them) and its known-good output (it must pass it); a check that does neither is reported broken.",
+      "tags": [
+        "freeze",
+        "controls"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/harness/__init__.py",
+      "lineRange": [
+        182,
+        197
+      ]
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:recall-remembered-failures",
+      "type": "step",
+      "name": "Recall remembered failures",
+      "summary": "Failures stored for this task family that the standard does not check block until a check is added or a person waives them; the curated failure modes for the goal are consulted.",
+      "tags": [
+        "memory",
+        "failure-modes"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/harness/__init__.py",
+      "lineRange": [
+        198,
+        210
+      ]
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:execute-the-task",
+      "type": "step",
+      "name": "Execute the task",
+      "summary": "The caller's executor gets the task contract and returns the output; its failure is reported, never raised.",
+      "tags": [
+        "execution"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/harness/__init__.py",
+      "lineRange": [
+        212,
+        223
+      ]
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:adjudicate-into-a-certificate",
+      "type": "step",
+      "name": "Adjudicate into a certificate",
+      "summary": "Each check runs on the exact output bytes, and the g6.evidence issuer decides the state from the receipts; a failed acceptance check blocks.",
+      "tags": [
+        "adjudication",
+        "certificate"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/evidence/certificate.py",
+      "lineRange": [
+        304,
+        368
+      ]
+    },
+    {
+      "id": "step:run-a-standard-through-the-harness:remember-failed-checks",
+      "type": "step",
+      "name": "Remember failed checks",
+      "summary": "Each failed check is stored in G6_HOME/harness.db against the task family, and the reply says when the same output already failed an earlier run.",
+      "tags": [
+        "memory"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/harness/__init__.py",
+      "lineRange": [
+        240,
+        262
+      ]
+    },
+    {
+      "id": "flow:intake-a-task",
+      "type": "flow",
+      "name": "Intake a Task",
+      "summary": "Stage 0 of the pipeline turns a request into a task contract: it elicits intent, requires measurable acceptance criteria, triages feasibility by structure and tripwire signals, derives escalation triggers, and blocks, downgrades or advances the task.",
+      "tags": [
+        "intake",
+        "feasibility",
+        "task-contract"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.reliability_pipeline.run_intake(request)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:intake-a-task:require-a-task-and-criteria",
+      "type": "step",
+      "name": "Require a task and acceptance criteria",
+      "summary": "A request with no task, or with no real acceptance criteria after elicitation, stops at intake with the next action.",
+      "tags": [
+        "acceptance-criteria"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/intake.py",
+      "lineRange": [
+        176,
+        208
+      ]
+    },
+    {
+      "id": "step:intake-a-task:elicit-intent",
+      "type": "step",
+      "name": "Elicit intent",
+      "summary": "The intent elicitor builds an intent contract with its questions and confidence from the request and any answers.",
+      "tags": [
+        "intent"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/intent_engine/elicitor.py",
+      "lineRange": [
+        42,
+        187
+      ]
+    },
+    {
+      "id": "step:intake-a-task:triage-feasibility",
+      "type": "step",
+      "name": "Triage feasibility",
+      "summary": "Structure decides a hard block; word-boundary tripwire signals can mark a task risky, too large or under-specified, and an injected assessor can only tighten the verdict.",
+      "tags": [
+        "feasibility",
+        "tripwire"
+      ],
+      "complexity": "complex",
+      "filePath": "src/g6/reliability_pipeline/feasibility.py",
+      "lineRange": [
+        232,
+        335
+      ]
+    },
+    {
+      "id": "step:intake-a-task:derive-escalation-triggers",
+      "type": "step",
+      "name": "Derive escalation triggers",
+      "summary": "Declared facts become stop conditions: exploratory mode, a flagged feasibility, a critical criterion without a verifier, non-goals and failure criteria; a fault escalates.",
+      "tags": [
+        "escalation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/intake.py",
+      "lineRange": [
+        107,
+        152
+      ]
+    },
+    {
+      "id": "step:intake-a-task:hold-hard-and-risky-verdicts",
+      "type": "step",
+      "name": "Hold hard and risky verdicts",
+      "summary": "Infeasible, missing-access, unclear-success and missing-context verdicts block; a risky task waits for the person's explicit acceptance.",
+      "tags": [
+        "block",
+        "risky"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/intake.py",
+      "lineRange": [
+        245,
+        267
+      ]
+    },
+    {
+      "id": "step:intake-a-task:ask-clarification",
+      "type": "step",
+      "name": "Ask clarification",
+      "summary": "A vague, low-confidence request that is not clear blocks with its questions until they are answered or the person declines them.",
+      "tags": [
+        "clarification"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/intake.py",
+      "lineRange": [
+        274,
+        304
+      ]
+    },
+    {
+      "id": "step:intake-a-task:downgrade-or-advance",
+      "type": "step",
+      "name": "Downgrade or advance",
+      "summary": "An accepted risky, too-large or under-specified task proceeds downgraded, as does one whose named context was attached; a clear one advances.",
+      "tags": [
+        "stage-result"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/intake.py",
+      "lineRange": [
+        305,
+        321
+      ]
+    },
+    {
+      "id": "flow:critique-a-plan",
+      "type": "flow",
+      "name": "Critique a Plan",
+      "summary": "A plan is checked for a concrete goal, acceptance criteria, tests and a rollback, scanned by a word tripwire for risky or hand-waving wording, and given a verdict the caller obeys.",
+      "tags": [
+        "plan-critique",
+        "tripwire"
+      ],
+      "complexity": "simple",
+      "domainMeta": {
+        "entryPoint": "g6.reliability_pipeline.plan.critique(plan), or Standard(plan=...) in the harness",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:critique-a-plan:check-the-plan-structure",
+      "type": "step",
+      "name": "Check the plan structure",
+      "summary": "A short goal and a missing or placeholder criterion, test or rollback are findings; presence alone is not completeness.",
+      "tags": [
+        "structure"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/plan.py",
+      "lineRange": [
+        109,
+        124
+      ]
+    },
+    {
+      "id": "step:critique-a-plan:run-the-word-tripwire",
+      "type": "step",
+      "name": "Run the word tripwire",
+      "summary": "Whole-word matches for unsafe actions, unsoundness, unrealistic timelines and similar categories ask for a revision at medium severity at most.",
+      "tags": [
+        "tripwire"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/plan.py",
+      "lineRange": [
+        127,
+        137
+      ]
+    },
+    {
+      "id": "step:critique-a-plan:merge-reports-tightening-only",
+      "type": "step",
+      "name": "Merge reports, tightening only",
+      "summary": "Another report (a reviewer's or a model's) can only tighten the floor: one finding per category and the strictest verdict.",
+      "tags": [
+        "merge"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/plan.py",
+      "lineRange": [
+        140,
+        160
+      ]
+    },
+    {
+      "id": "step:critique-a-plan:return-the-verdict-envelope",
+      "type": "step",
+      "name": "Return the verdict envelope",
+      "summary": "Only pass proceeds, as a qualified-draft, because a complete plan is not evidence that it works; revise and block stop.",
+      "tags": [
+        "envelope"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/reliability_pipeline/plan.py",
+      "lineRange": [
+        71,
+        85
+      ]
+    },
+    {
+      "id": "flow:run-a-plan-premortem",
+      "type": "flow",
+      "name": "Run a Plan Pre-Mortem",
+      "summary": "The pre-mortem bundle assumes a plan has failed, asks the chosen model for the likely reasons, and holds each one to an early warning sign and a cheap test, checking every statement about the plan against the plan's own text.",
+      "tags": [
+        "premortem",
+        "bundle",
+        "risk"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6 bundle premortem (POST /api/run on the local page)",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:run-a-plan-premortem:validate-the-plan-and-model",
+      "type": "step",
+      "name": "Validate the plan and model",
+      "summary": "A plan under 20 words, or no model chosen, is refused before any call.",
+      "tags": [
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/premortem.py",
+      "lineRange": [
+        30,
+        34
+      ]
+    },
+    {
+      "id": "step:run-a-plan-premortem:ask-for-failure-stories",
+      "type": "step",
+      "name": "Ask for failure stories",
+      "summary": "The model is asked for five to eight reasons the plan failed, as JSON; a model error or a reply in the wrong format is blocked-escalated.",
+      "tags": [
+        "llm",
+        "failure-stories"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/premortem.py",
+      "lineRange": [
+        35,
+        43
+      ]
+    },
+    {
+      "id": "step:run-a-plan-premortem:check-plan-facts-against-the-plan",
+      "type": "step",
+      "name": "Check plan facts against the plan",
+      "summary": "Each quoted plan fact is checked with grounding against the plan text: from your plan, an assumption, or contradicting the plan.",
+      "tags": [
+        "grounding"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/bundles/premortem.py",
+      "lineRange": [
+        44,
+        56
+      ]
+    },
+    {
+      "id": "step:run-a-plan-premortem:require-a-sign-and-a-test",
+      "type": "step",
+      "name": "Require a sign and a test",
+      "summary": "Each risk needs an observable early warning sign and a test costing under a week; a missing one is shown as missing with the question to ask.",
+      "tags": [
+        "early-warning",
+        "cheap-test"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/premortem.py",
+      "lineRange": [
+        57,
+        66
+      ]
+    },
+    {
+      "id": "step:run-a-plan-premortem:sort-and-label-the-risks",
+      "type": "step",
+      "name": "Sort and label the risks",
+      "summary": "Risks are sorted by severity and labelled qualified-draft at best, because they are ideas, not findings.",
+      "tags": [
+        "labelling"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/premortem.py",
+      "lineRange": [
+        67,
+        78
+      ]
+    },
+    {
+      "id": "flow:solve-with-the-step-pipeline",
+      "type": "flow",
+      "name": "Solve with the Step Pipeline",
+      "summary": "The solver plans a run (complexity and steps), executes each planned step through the caller's runners, picks the final answer from completed steps and checks the caller's constraints on it.",
+      "tags": [
+        "solver",
+        "steps",
+        "constraints"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6.solver.solve(solver_input, runners)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:solve-with-the-step-pipeline:refuse-unsupported-inputs",
+      "type": "step",
+      "name": "Refuse unsupported inputs",
+      "summary": "An empty goal, production mode, a reviewer signature nothing can check, or an unevaluable constraint is refused before any step runs.",
+      "tags": [
+        "refusal"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/solver/engine.py",
+      "lineRange": [
+        76,
+        92
+      ]
+    },
+    {
+      "id": "step:solve-with-the-step-pipeline:plan-complexity-and-steps",
+      "type": "step",
+      "name": "Plan complexity and steps",
+      "summary": "The planner assesses complexity with the caller's real constraints and picks the steps; the caller's skipped steps are recorded.",
+      "tags": [
+        "planning"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/solver/engine.py",
+      "lineRange": [
+        56,
+        73
+      ]
+    },
+    {
+      "id": "step:solve-with-the-step-pipeline:execute-each-planned-step",
+      "type": "step",
+      "name": "Execute each planned step",
+      "summary": "Each planned step runs through its runner (or a fallback); a step with no runner is unavailable and one with no usable output failed.",
+      "tags": [
+        "execution"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/solver/step_executor.py",
+      "lineRange": [
+        88,
+        119
+      ]
+    },
+    {
+      "id": "step:solve-with-the-step-pipeline:settle-the-run-status",
+      "type": "step",
+      "name": "Settle the run status",
+      "summary": "A failed step halts the run, an unavailable one leaves it incomplete, otherwise it completed.",
+      "tags": [
+        "status"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/solver/engine.py",
+      "lineRange": [
+        157,
+        162
+      ]
+    },
+    {
+      "id": "step:solve-with-the-step-pipeline:choose-the-final-answer",
+      "type": "step",
+      "name": "Choose the final answer",
+      "summary": "The answer is read from completed steps in a priority order set by complexity, with the planner choosing between two or more candidates.",
+      "tags": [
+        "answer-selection"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/solver/engine.py",
+      "lineRange": [
+        95,
+        115
+      ]
+    },
+    {
+      "id": "step:solve-with-the-step-pipeline:check-constraints-and-quality",
+      "type": "step",
+      "name": "Check constraints and quality",
+      "summary": "The caller's constraints are checked deterministically on the answer, and an optional quality checker adds its own check.",
+      "tags": [
+        "constraints"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/solver/constraints.py",
+      "lineRange": [
+        54,
+        64
+      ]
+    },
+    {
+      "id": "domain:mcp-core-and-bundles",
+      "type": "domain",
+      "name": "MCP Server, Core and Bundles",
+      "summary": "The core is what every slice shares: the component registry, progressive discovery, AI blocks whose infer returns a Result on the railway model, the reliability envelope, the process-wide stop and reversible state. The MCP server and the g6 command line expose it to agents, and bundles package components as ready-made apps that open a private page on the user's computer.",
+      "tags": [
+        "mcp",
+        "registry",
+        "discovery",
+        "railway",
+        "bundles"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": [
+          "ComponentRegistry",
+          "ComponentRef",
+          "AIBlock",
+          "PipelineBlock",
+          "Result",
+          "ReliabilityEnvelope",
+          "WarningCard",
+          "Snapshot",
+          "Bundle",
+          "BundleResult",
+          "Field"
+        ],
+        "businessRules": [
+          "Invoke fails closed: an unknown component, a component without a block, input that does not validate, or a sensitive op over MCP is refused with a stable G6_E_* code.",
+          "Over MCP a result that reports no state is qualified-draft, and a result reported as verified without evidence is held at qualified-draft.",
+          "Chained blocks take the weakest completion state of their stages, and a failed stage stops the chain as blocked-escalated.",
+          "While the stop is engaged (in process, G6_STOP or a STOP file in G6_HOME), nothing that consults it starts new work.",
+          "A rollback snapshots the current state first, and an export leaves stored secrets out.",
+          "A bundle's page binds 127.0.0.1 with a per-launch token, and its result is never stronger than the components it called."
+        ],
+        "crossDomainInteractions": [
+          "g6_invoke reaches the five block components in checking and gating.",
+          "Carries the meta-harness MCP tools, with approval asked of the person through the client.",
+          "Bundles reuse the workforce and the coding-agent gate to check an agent's change.",
+          "The docs website draws its component pages from the registry."
+        ]
+      }
+    },
+    {
+      "id": "flow:discover-and-invoke-a-component",
+      "type": "flow",
+      "name": "Discover and Invoke a Component",
+      "summary": "An agent describes its task in plain words, gets components ranked by what they say about themselves, reads one's maturity and ops, and runs one op through its typed input; every reply carries the reliability envelope.",
+      "tags": [
+        "discovery",
+        "mcp",
+        "invoke"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "MCP tools g6_find, g6_describe and g6_invoke (or g6 find / describe / invoke)",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:discover-and-invoke-a-component:rank-components-for-a-task",
+      "type": "step",
+      "name": "Rank components for a task",
+      "summary": "find scores components by token overlap with their own docstring and help text; an empty list means nothing matched.",
+      "tags": [
+        "ranking"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/discovery.py",
+      "lineRange": [
+        52,
+        70
+      ]
+    },
+    {
+      "id": "step:discover-and-invoke-a-component:describe-maturity-and-ops",
+      "type": "step",
+      "name": "Describe maturity and ops",
+      "summary": "describe reports a component's block, maturity, sensitive ops, summary, ops and declared dependencies without running it.",
+      "tags": [
+        "describe"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/discovery.py",
+      "lineRange": [
+        73,
+        80
+      ]
+    },
+    {
+      "id": "step:discover-and-invoke-a-component:parse-the-parameters",
+      "type": "step",
+      "name": "Parse the parameters",
+      "summary": "params_json must be a JSON object, or the reply is blocked-escalated with G6_E_INPUT_VALIDATION.",
+      "tags": [
+        "validation"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/mcp/__init__.py",
+      "lineRange": [
+        37,
+        55
+      ]
+    },
+    {
+      "id": "step:discover-and-invoke-a-component:refuse-sensitive-or-blockless-components",
+      "type": "step",
+      "name": "Refuse sensitive or blockless components",
+      "summary": "An unknown component, a sensitive op on the MCP surface, or a component with no block is refused with its G6_E_* code.",
+      "tags": [
+        "fail-closed"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/registry.py",
+      "lineRange": [
+        93,
+        114
+      ]
+    },
+    {
+      "id": "step:discover-and-invoke-a-component:build-the-typed-input",
+      "type": "step",
+      "name": "Build the typed input",
+      "summary": "The raw parameters are validated against the type annotated on the block's infer; the first error is named field by field.",
+      "tags": [
+        "pydantic",
+        "typed-input"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/registry.py",
+      "lineRange": [
+        125,
+        151
+      ]
+    },
+    {
+      "id": "step:discover-and-invoke-a-component:run-the-block",
+      "type": "step",
+      "name": "Run the block",
+      "summary": "The block's infer returns a Result; a failure becomes Failure(str) and a value Success(dict).",
+      "tags": [
+        "railway",
+        "result"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/registry.py",
+      "lineRange": [
+        115,
+        122
+      ]
+    },
+    {
+      "id": "step:discover-and-invoke-a-component:wrap-the-reply-in-the-envelope",
+      "type": "step",
+      "name": "Wrap the reply in the envelope",
+      "summary": "invoke_reply sets completion_state, warning_card, evidence, request_id and run_id: no reported state is qualified-draft, and the verified state needs evidence and the promotion law.",
+      "tags": [
+        "envelope",
+        "promotion-law"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/mcp/__init__.py",
+      "lineRange": [
+        56,
+        81
+      ]
+    },
+    {
+      "id": "flow:compose-ai-blocks-on-the-railway",
+      "type": "flow",
+      "name": "Compose AI Blocks on the Railway",
+      "summary": "Every component is or wraps an AIBlock whose infer returns a Result. Blocks chain with >> into a pipeline that stops at the first failure, carries each stage's evidence and warning card, and takes the weakest completion state.",
+      "tags": [
+        "ai-block",
+        "railway",
+        "pipeline"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "AIBlock subclasses chained with >> (g6.core.ai_block)",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:compose-ai-blocks-on-the-railway:implement-infer-returning-a-result",
+      "type": "step",
+      "name": "Implement infer returning a Result",
+      "summary": "A block transforms its input into Result.ok or Result.fail; the base block fails until a subclass implements it.",
+      "tags": [
+        "ai-block"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/ai_block.py",
+      "lineRange": [
+        46,
+        48
+      ]
+    },
+    {
+      "id": "step:compose-ai-blocks-on-the-railway:chain-blocks-with-the-operator",
+      "type": "step",
+      "name": "Chain blocks with >>",
+      "summary": "then and >> join two blocks into a PipelineBlock.",
+      "tags": [
+        "composition"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/ai_block.py",
+      "lineRange": [
+        133,
+        138
+      ]
+    },
+    {
+      "id": "step:compose-ai-blocks-on-the-railway:run-left-then-right",
+      "type": "step",
+      "name": "Run left then right",
+      "summary": "The pipeline runs the first block, stops as blocked-escalated if it failed, then runs the second on its value.",
+      "tags": [
+        "railway"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/ai_block.py",
+      "lineRange": [
+        182,
+        214
+      ]
+    },
+    {
+      "id": "step:compose-ai-blocks-on-the-railway:carry-stage-evidence-and-warnings",
+      "type": "step",
+      "name": "Carry stage evidence and warnings",
+      "summary": "Each stage's evidence and warning card are kept with the stage they came from.",
+      "tags": [
+        "evidence"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/ai_block.py",
+      "lineRange": [
+        217,
+        256
+      ]
+    },
+    {
+      "id": "step:compose-ai-blocks-on-the-railway:take-the-weakest-state",
+      "type": "step",
+      "name": "Take the weakest state",
+      "summary": "The pipeline's completion state is the weakest of its stages' states.",
+      "tags": [
+        "weakest-label"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/ai_block.py",
+      "lineRange": [
+        259,
+        264
+      ]
+    },
+    {
+      "id": "step:compose-ai-blocks-on-the-railway:map-and-flat-map-the-result",
+      "type": "step",
+      "name": "Map and flat-map the Result",
+      "summary": "Result.map and flat_map carry a success forward and pass a failure through untouched.",
+      "tags": [
+        "result"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/result.py",
+      "lineRange": [
+        74,
+        89
+      ]
+    },
+    {
+      "id": "flow:stop-g6-and-restore-state",
+      "type": "flow",
+      "name": "Stop G6 and Restore State",
+      "summary": "A person can stop G6 from outside a running process, and every change G6 makes to its own state folder is reversible: snapshot, list, roll back and export from the g6 command line.",
+      "tags": [
+        "stop",
+        "snapshot",
+        "rollback"
+      ],
+      "complexity": "simple",
+      "domainMeta": {
+        "entryPoint": "g6 state snapshot | ls | rollback | export, G6_STOP, or a STOP file in G6_HOME",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:stop-g6-and-restore-state:engage-the-stop",
+      "type": "step",
+      "name": "Engage the stop",
+      "summary": "The stop is engaged in process, by G6_STOP, or by a STOP file in G6_HOME whose first line is the reason.",
+      "tags": [
+        "stop"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/stop.py",
+      "lineRange": [
+        38,
+        44
+      ]
+    },
+    {
+      "id": "step:stop-g6-and-restore-state:read-the-stop-at-every-door",
+      "type": "step",
+      "name": "Read the stop at every door",
+      "summary": "engaged answers why the stop is on; a stop file that exists but cannot be read counts as engaged.",
+      "tags": [
+        "stop",
+        "fail-closed"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/stop.py",
+      "lineRange": [
+        51,
+        69
+      ]
+    },
+    {
+      "id": "step:stop-g6-and-restore-state:snapshot-the-state-folder",
+      "type": "step",
+      "name": "Snapshot the state folder",
+      "summary": "The state folder is zipped, with SQLite databases copied through the backup API for a consistent copy.",
+      "tags": [
+        "snapshot"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/snapshots.py",
+      "lineRange": [
+        73,
+        86
+      ]
+    },
+    {
+      "id": "step:stop-g6-and-restore-state:list-snapshots",
+      "type": "step",
+      "name": "List snapshots",
+      "summary": "g6 state ls lists each snapshot with its file count and size.",
+      "tags": [
+        "snapshot"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/snapshots.py",
+      "lineRange": [
+        87,
+        95
+      ]
+    },
+    {
+      "id": "step:stop-g6-and-restore-state:roll-back-to-a-snapshot",
+      "type": "step",
+      "name": "Roll back to a snapshot",
+      "summary": "Members are checked for unsafe paths first, the current state is snapshotted, then the chosen snapshot is restored.",
+      "tags": [
+        "rollback"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/snapshots.py",
+      "lineRange": [
+        108,
+        124
+      ]
+    },
+    {
+      "id": "step:stop-g6-and-restore-state:export-without-secrets",
+      "type": "step",
+      "name": "Export without secrets",
+      "summary": "export writes the state to a new zip outside the state folder and leaves stored model settings with secrets out.",
+      "tags": [
+        "export",
+        "secrets"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/core/snapshots.py",
+      "lineRange": [
+        127,
+        137
+      ]
+    },
+    {
+      "id": "flow:open-and-run-a-bundle",
+      "type": "flow",
+      "name": "Open and Run a Bundle",
+      "summary": "g6 bundle opens a ready-made app for one problem on a private page on the user's computer; the page posts the form to the local runner, which runs the bundle with the saved model choice and returns a labelled result.",
+      "tags": [
+        "bundles",
+        "local-page",
+        "runner"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "g6 bundle <id>, then POST /api/run on the local page",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:open-and-run-a-bundle:pick-a-bundle",
+      "type": "step",
+      "name": "Pick a bundle",
+      "summary": "With no id, g6 bundle lists the eleven shipped bundles; with one, it looks it up in the catalogue.",
+      "tags": [
+        "catalogue"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/cli/__init__.py",
+      "lineRange": [
+        14,
+        27
+      ]
+    },
+    {
+      "id": "step:open-and-run-a-bundle:start-the-private-page",
+      "type": "step",
+      "name": "Start the private page",
+      "summary": "The runner binds 127.0.0.1 on a free port with a random per-launch token and opens the browser.",
+      "tags": [
+        "local-server",
+        "token"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/server.py",
+      "lineRange": [
+        236,
+        255
+      ]
+    },
+    {
+      "id": "step:open-and-run-a-bundle:render-the-bundle-form",
+      "type": "step",
+      "name": "Render the bundle form",
+      "summary": "The page shows the bundle's fields, any disclaimer and, for bundles that need one, the model panel.",
+      "tags": [
+        "page"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/server.py",
+      "lineRange": [
+        94,
+        146
+      ]
+    },
+    {
+      "id": "step:open-and-run-a-bundle:trust-only-this-page",
+      "type": "step",
+      "name": "Trust only this page",
+      "summary": "Every request must carry this server's Host, a matching Origin when sent, and the token on API calls.",
+      "tags": [
+        "security",
+        "dns-rebinding"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/server.py",
+      "lineRange": [
+        176,
+        182
+      ]
+    },
+    {
+      "id": "step:open-and-run-a-bundle:run-with-the-saved-model-choice",
+      "type": "step",
+      "name": "Run with the saved model choice",
+      "summary": "The bundle runs with the provider and model saved under G6_HOME; a failure becomes blocked-escalated, never a stack trace.",
+      "tags": [
+        "model-settings"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/server.py",
+      "lineRange": [
+        71,
+        91
+      ]
+    },
+    {
+      "id": "step:open-and-run-a-bundle:label-the-bundle-result",
+      "type": "step",
+      "name": "Label the bundle result",
+      "summary": "The result is returned inside the library envelope with a warning card below verified, and several results take the weakest label.",
+      "tags": [
+        "envelope",
+        "weakest-label"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/__init__.py",
+      "lineRange": [
+        41,
+        55
+      ]
+    },
+    {
+      "id": "flow:check-a-coding-agents-change",
+      "type": "flow",
+      "name": "Check a Coding Agent's Change",
+      "summary": "The agent-change-check bundle answers 'did my coding agent really fix it?': G6 reads the change from git, runs the tests itself, checks the agent did not weaken or skip them, tries deliberate mistakes, and holds the agent's report to what it saw.",
+      "tags": [
+        "bundles",
+        "coding-agent",
+        "tests"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entryPoint": "g6 bundle agent-change-check (POST /api/run on the local page)",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:check-a-coding-agents-change:read-the-change-from-git",
+      "type": "step",
+      "name": "Read the change from git",
+      "summary": "The named repository is checked and its change against the base read from git; no change means nothing to check.",
+      "tags": [
+        "git"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/agent_change.py",
+      "lineRange": [
+        100,
+        111
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agents-change:run-the-named-or-touched-tests",
+      "type": "step",
+      "name": "Run the named or touched tests",
+      "summary": "The tests the user names, or the tests the change touches, run in place, and pytest's own per-test report is read.",
+      "tags": [
+        "tests"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/bundles/agent_change.py",
+      "lineRange": [
+        112,
+        138
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agents-change:rerun-the-original-tests",
+      "type": "step",
+      "name": "Rerun the original tests",
+      "summary": "The original version of each edited test file runs on the new code; one that passed before and fails now was changed to hide something.",
+      "tags": [
+        "test-weakening"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/bundles/agent_change.py",
+      "lineRange": [
+        143,
+        160
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agents-change:compare-tests-by-syntax-tree",
+      "type": "step",
+      "name": "Compare tests by syntax tree",
+      "summary": "Each changed test file is compared before and after for a removed or rewritten assert, a removed test, a new skip or an early return.",
+      "tags": [
+        "ast"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/workforce/verify.py",
+      "lineRange": [
+        245,
+        284
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agents-change:scan-the-diff-for-shortcuts",
+      "type": "step",
+      "name": "Scan the diff for shortcuts",
+      "summary": "The diff is scanned for an added skip marker, '|| true', '--no-verify' or a removed assertion.",
+      "tags": [
+        "shortcuts"
+      ],
+      "complexity": "simple",
+      "filePath": "src/g6/bundles/agent_change.py",
+      "lineRange": [
+        170,
+        173
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agents-change:try-deliberate-mistakes",
+      "type": "step",
+      "name": "Try deliberate mistakes",
+      "summary": "Within a time budget, small mistakes are made on the changed lines and the tests rerun; a mistake the tests still pass is a blind spot.",
+      "tags": [
+        "mutation-testing"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/bundles/agent_change.py",
+      "lineRange": [
+        58,
+        92
+      ]
+    },
+    {
+      "id": "step:check-a-coding-agents-change:hold-the-report-to-what-g6-saw",
+      "type": "step",
+      "name": "Hold the report to what G6 saw",
+      "summary": "The agent's report goes through the coding-agent gate with G6's own runs as evidence, and the weakest label of every row is the result.",
+      "tags": [
+        "coding-agent-gate"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/g6/bundles/agent_change.py",
+      "lineRange": [
+        183,
+        199
+      ]
+    },
+    {
+      "id": "domain:docs-website",
+      "type": "domain",
+      "name": "Docs Website",
+      "summary": "A small Django project built to static files, with no database, no accounts, no cookies and no analytics. One table of public pages drives the routes, sitemap and export; pages read the component registry and the committed study results at render time, so the site cannot drift from the code, and the build refuses broken pages, broken links and banned product wording.",
+      "tags": [
+        "website",
+        "django",
+        "static-site",
+        "documentation",
+        "research"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": [
+          "Page",
+          "PAGES table",
+          "REDIRECTS",
+          "Study",
+          "Group",
+          "Bar",
+          "Component row"
+        ],
+        "businessRules": [
+          "Every page in the one page table renders through its own view; a page that fails to render, a link to a path that does not exist, or a relative link fails the build and nothing is written.",
+          "Pages are scanned for a fixed list of banned terms after decoding entities and folding look-alike characters; only listed phrases are let through.",
+          "Every inline script is hashed into the Content-Security-Policy header.",
+          "Every number on the Research page comes from a committed results file; a missing file, or a registered study with no tile, raises.",
+          "The build only empties a folder it made itself."
+        ],
+        "crossDomainInteractions": [
+          "Reads the component registry to draw the components page and the home lattice.",
+          "Shows the results of the meta-harness, grounding and action-gating studies from committed files."
+        ]
+      }
+    },
+    {
+      "id": "flow:build-the-static-site",
+      "type": "flow",
+      "name": "Build the Static Site",
+      "summary": "build_static renders every public page through its view, checks every link, scans for banned wording, hashes inline scripts into the security policy, and writes the pages, static files, 404 page, robots.txt, sitemap, redirects and headers.",
+      "tags": [
+        "static-build",
+        "csp",
+        "link-check"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "python manage.py build_static --out build",
+        "entryType": "cli"
+      }
+    },
+    {
+      "id": "step:build-the-static-site:render-every-public-page",
+      "type": "step",
+      "name": "Render every public page",
+      "summary": "Each page in the table is rendered through its own view; a failure is collected and does not stop the others.",
+      "tags": [
+        "render"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/management/commands/build_static.py",
+      "lineRange": [
+        34,
+        48
+      ]
+    },
+    {
+      "id": "step:build-the-static-site:collect-static-files",
+      "type": "step",
+      "name": "Collect static files",
+      "summary": "The static file finders list every CSS, script and image to copy.",
+      "tags": [
+        "static-files"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/management/commands/build_static.py",
+      "lineRange": [
+        51,
+        56
+      ]
+    },
+    {
+      "id": "step:build-the-static-site:check-every-link-resolves",
+      "type": "step",
+      "name": "Check every link resolves",
+      "summary": "Each internal link must reach a page, a static file, robots.txt, sitemap.xml, 404.html or a redirect, and relative links are refused.",
+      "tags": [
+        "link-check"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/management/commands/build_static.py",
+      "lineRange": [
+        59,
+        68
+      ]
+    },
+    {
+      "id": "step:build-the-static-site:scan-for-banned-wording",
+      "type": "step",
+      "name": "Scan for banned wording",
+      "summary": "Each page's raw HTML is scanned for the guard's banned terms, with entities decoded, look-alike characters folded and listed phrases cut out first.",
+      "tags": [
+        "guard",
+        "copy-check"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/guard.py",
+      "lineRange": [
+        56,
+        60
+      ]
+    },
+    {
+      "id": "step:build-the-static-site:hash-inline-scripts",
+      "type": "step",
+      "name": "Hash inline scripts",
+      "summary": "Every inline script body is hashed (sha256) into the Content-Security-Policy written to _headers.",
+      "tags": [
+        "csp",
+        "security"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/management/commands/build_static.py",
+      "lineRange": [
+        71,
+        81
+      ]
+    },
+    {
+      "id": "step:build-the-static-site:write-the-site",
+      "type": "step",
+      "name": "Write the site",
+      "summary": "Only with no problems, the folder is emptied (if the build made it) and pages, static files, 404, robots.txt, sitemap.xml, _redirects and _headers are written.",
+      "tags": [
+        "export"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/management/commands/build_static.py",
+      "lineRange": [
+        100,
+        124
+      ]
+    },
+    {
+      "id": "flow:render-a-public-page",
+      "type": "flow",
+      "name": "Render a Public Page",
+      "summary": "A request for a public path is served by the view for its page kind: a template with context read at render time, a Markdown page with its links made site URLs, or a placeholder.",
+      "tags": [
+        "pages",
+        "markdown",
+        "views"
+      ],
+      "complexity": "simple",
+      "domainMeta": {
+        "entryPoint": "GET /<path>/ (python manage.py runserver while editing)",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:render-a-public-page:look-up-the-page-table",
+      "type": "step",
+      "name": "Look up the page table",
+      "summary": "PAGES is the one table of public pages that the routes, sitemap and export all read.",
+      "tags": [
+        "routing"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/routes.py",
+      "lineRange": [
+        32,
+        44
+      ]
+    },
+    {
+      "id": "step:render-a-public-page:dispatch-by-page-kind",
+      "type": "step",
+      "name": "Dispatch by page kind",
+      "summary": "view_for sends a template, Markdown or placeholder page to its view.",
+      "tags": [
+        "dispatch"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/views.py",
+      "lineRange": [
+        63,
+        67
+      ]
+    },
+    {
+      "id": "step:render-a-public-page:render-a-template-with-live-context",
+      "type": "step",
+      "name": "Render a template with live context",
+      "summary": "The home, research and get-started pages build their context at render time from the registry, the study files and the install guide.",
+      "tags": [
+        "template"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/views.py",
+      "lineRange": [
+        18,
+        36
+      ]
+    },
+    {
+      "id": "step:render-a-public-page:render-markdown-with-site-links",
+      "type": "step",
+      "name": "Render Markdown with site links",
+      "summary": "A content Markdown file becomes HTML with tables, code and a table of contents, and its links to other Markdown files become site URLs.",
+      "tags": [
+        "markdown"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/views.py",
+      "lineRange": [
+        45,
+        56
+      ]
+    },
+    {
+      "id": "step:render-a-public-page:draw-components-from-the-registry",
+      "type": "step",
+      "name": "Draw components from the registry",
+      "summary": "Each component's name, maturity, summary, requirements and MCP availability come from the registry, with the meta-harness at the centre of the home lattice.",
+      "tags": [
+        "registry",
+        "catalogue"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/catalogue.py",
+      "lineRange": [
+        12,
+        38
+      ]
+    },
+    {
+      "id": "flow:publish-study-evidence",
+      "type": "flow",
+      "name": "Publish Study Evidence",
+      "summary": "The Research page shows every pre-registered study, its verdict and its numbers, misses included, read from the committed results at render time, together with development rounds and G6's earlier benchmark studies with their audit status.",
+      "tags": [
+        "research",
+        "studies",
+        "evidence"
+      ],
+      "complexity": "simple",
+      "domainMeta": {
+        "entryPoint": "GET /research/",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:publish-study-evidence:read-registered-studies",
+      "type": "step",
+      "name": "Read registered studies",
+      "summary": "Each registered study's verdict and groups are read from its results files, a registered study with no tile raises, and planned studies are listed as not run.",
+      "tags": [
+        "studies"
+      ],
+      "complexity": "moderate",
+      "filePath": "web/pages/evidence.py",
+      "lineRange": [
+        147,
+        190
+      ]
+    },
+    {
+      "id": "step:publish-study-evidence:read-development-rounds",
+      "type": "step",
+      "name": "Read development rounds",
+      "summary": "Each round's scoreboard is read newest first, and a round with no note raises.",
+      "tags": [
+        "rounds"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/evidence.py",
+      "lineRange": [
+        193,
+        208
+      ]
+    },
+    {
+      "id": "step:publish-study-evidence:pick-the-headline-study",
+      "type": "step",
+      "name": "Pick the headline study",
+      "summary": "The latest adaptation study's per-workflow results are the headline: G6 as built, a hand-written prompt and the tuned meta-harness.",
+      "tags": [
+        "headline"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/evidence.py",
+      "lineRange": [
+        211,
+        214
+      ]
+    },
+    {
+      "id": "step:publish-study-evidence:read-archived-benchmarks",
+      "type": "step",
+      "name": "Read earlier benchmark studies",
+      "summary": "G6's earlier benchmark studies are read with what their audit concluded; an unknown audit status raises.",
+      "tags": [
+        "archive",
+        "audit-status"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/evidence.py",
+      "lineRange": [
+        217,
+        223
+      ]
+    },
+    {
+      "id": "step:publish-study-evidence:build-the-research-context",
+      "type": "step",
+      "name": "Build the research context",
+      "summary": "The page's context gathers the studies, rounds, archive, headline and registered and planned counts.",
+      "tags": [
+        "context"
+      ],
+      "complexity": "simple",
+      "filePath": "web/pages/evidence.py",
+      "lineRange": [
+        226,
+        234
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "flow:confirm-and-baseline-a-workflow",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:confirm-and-baseline-a-workflow",
+      "target": "step:confirm-and-baseline-a-workflow:validate-the-workflow",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:confirm-and-baseline-a-workflow",
+      "target": "step:confirm-and-baseline-a-workflow:refuse-live-episodes-as-held-out",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:confirm-and-baseline-a-workflow",
+      "target": "step:confirm-and-baseline-a-workflow:person-confirms-and-freezes",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:confirm-and-baseline-a-workflow",
+      "target": "step:confirm-and-baseline-a-workflow:check-the-sealed-held-out-file",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:confirm-and-baseline-a-workflow",
+      "target": "step:confirm-and-baseline-a-workflow:measure-the-baseline",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "flow:propose-evaluate-and-decide-a-profile",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:propose-evaluate-and-decide-a-profile",
+      "target": "step:propose-evaluate-and-decide-a-profile:propose-a-candidate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:propose-evaluate-and-decide-a-profile",
+      "target": "step:propose-evaluate-and-decide-a-profile:build-the-dev-only-view",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:propose-evaluate-and-decide-a-profile",
+      "target": "step:propose-evaluate-and-decide-a-profile:validate-and-deduplicate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:propose-evaluate-and-decide-a-profile",
+      "target": "step:propose-evaluate-and-decide-a-profile:race-on-the-selection-split",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:propose-evaluate-and-decide-a-profile",
+      "target": "step:propose-evaluate-and-decide-a-profile:evaluate-on-the-held-out-split",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:propose-evaluate-and-decide-a-profile",
+      "target": "step:propose-evaluate-and-decide-a-profile:gate-the-decision",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:propose-evaluate-and-decide-a-profile",
+      "target": "step:propose-evaluate-and-decide-a-profile:gate-code-level-changes",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "flow:approve-activate-and-roll-back-a-change",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:ask-the-person-through-the-client",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:refuse-the-proposing-session",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:activate-the-version",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:snapshot-g6-state",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:run-live-tasks",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:audit-against-the-previous-version",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:demote-on-drift",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "flow:approve-activate-and-roll-back-a-change",
+      "target": "step:approve-activate-and-roll-back-a-change:roll-back-to-an-approved-version",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "flow:diagnose-and-recover",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:diagnose-and-recover",
+      "target": "step:diagnose-and-recover:request-a-diagnosis",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:diagnose-and-recover",
+      "target": "step:diagnose-and-recover:classify-root-causes",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:diagnose-and-recover",
+      "target": "step:diagnose-and-recover:detect-an-exhausted-search",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:diagnose-and-recover",
+      "target": "step:diagnose-and-recover:order-remedies-person-first",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:diagnose-and-recover",
+      "target": "step:diagnose-and-recover:explain-a-refused-decision",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:diagnose-and-recover",
+      "target": "step:diagnose-and-recover:recover-from-a-failed-proposer",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "flow:run-a-self-improvement-cycle",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:check-the-stop-and-switches",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:sense-the-current-state",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:propose-a-harness-patch",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:evaluate-the-patch",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:gate-the-promotion",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:snapshot-and-match-the-decision",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:apply-and-remeasure",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "flow:run-a-self-improvement-cycle",
+      "target": "step:run-a-self-improvement-cycle:roll-back-on-regression",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:checking-and-gating",
+      "target": "flow:check-a-claim-against-sources",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:check-a-claim-against-sources",
+      "target": "step:check-a-claim-against-sources:split-the-draft-into-claims",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:check-a-claim-against-sources",
+      "target": "step:check-a-claim-against-sources:retrieve-candidate-passages",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:check-a-claim-against-sources",
+      "target": "step:check-a-claim-against-sources:find-the-best-covering-sentence",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:check-a-claim-against-sources",
+      "target": "step:check-a-claim-against-sources:detect-conflicts",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:check-a-claim-against-sources",
+      "target": "step:check-a-claim-against-sources:assign-status-and-label",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:checking-and-gating",
+      "target": "flow:gate-an-agent-action",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:normalise-the-action-capsule",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:discover-capabilities",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:classify-reversibility-and-impact",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:model-consequence-scenarios",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:run-safety-qa",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:decide-the-gate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:apply-raise-only-gates",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "flow:gate-an-agent-action",
+      "target": "step:gate-an-agent-action:write-the-audit-record",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:checking-and-gating",
+      "target": "flow:check-a-coding-agent-answer",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:check-a-coding-agent-answer",
+      "target": "step:check-a-coding-agent-answer:preflight-before-acting",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:check-a-coding-agent-answer",
+      "target": "step:check-a-coding-agent-answer:sort-counted-evidence",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:check-a-coding-agent-answer",
+      "target": "step:check-a-coding-agent-answer:read-the-verifier-result",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:check-a-coding-agent-answer",
+      "target": "step:check-a-coding-agent-answer:rate-the-risk",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:check-a-coding-agent-answer",
+      "target": "step:check-a-coding-agent-answer:scan-for-shortcuts-and-overclaims",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:check-a-coding-agent-answer",
+      "target": "step:check-a-coding-agent-answer:reach-the-strictest-verdict",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:checking-and-gating",
+      "target": "flow:adjudicate-claims-in-a-message",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:adjudicate-claims-in-a-message",
+      "target": "step:adjudicate-claims-in-a-message:atomise-the-message",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:adjudicate-claims-in-a-message",
+      "target": "step:adjudicate-claims-in-a-message:classify-and-assign-risk",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:adjudicate-claims-in-a-message",
+      "target": "step:adjudicate-claims-in-a-message:grade-independent-evidence",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:adjudicate-claims-in-a-message",
+      "target": "step:adjudicate-claims-in-a-message:detect-contested-claims",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:adjudicate-claims-in-a-message",
+      "target": "step:adjudicate-claims-in-a-message:apply-the-risk-by-evidence-gate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:adjudicate-claims-in-a-message",
+      "target": "step:adjudicate-claims-in-a-message:apply-scope-numeric-and-causal-rules",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:adjudicate-claims-in-a-message",
+      "target": "step:adjudicate-claims-in-a-message:take-the-most-restrictive-disposition",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:checking-and-gating",
+      "target": "flow:authorize-a-runtime-action",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:authorize-a-runtime-action",
+      "target": "step:authorize-a-runtime-action:scan-text-with-the-pattern-guard",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:authorize-a-runtime-action",
+      "target": "step:authorize-a-runtime-action:check-kill-switch-and-stop",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:authorize-a-runtime-action",
+      "target": "step:authorize-a-runtime-action:check-runtime-ceilings",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:authorize-a-runtime-action",
+      "target": "step:authorize-a-runtime-action:act-on-guard-verdicts",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:authorize-a-runtime-action",
+      "target": "step:authorize-a-runtime-action:require-a-validator-quorum",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:authorize-a-runtime-action",
+      "target": "step:authorize-a-runtime-action:enforce-allow-list-and-forbidden-paths",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:reasoning-and-formal-methods",
+      "target": "flow:solve-a-logic-query",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:solve-a-logic-query",
+      "target": "step:solve-a-logic-query:validate-the-query",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:solve-a-logic-query",
+      "target": "step:solve-a-logic-query:refuse-other-engines",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:solve-a-logic-query",
+      "target": "step:solve-a-logic-query:decide-with-the-dpll",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:solve-a-logic-query",
+      "target": "step:solve-a-logic-query:decide-with-z3",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:solve-a-logic-query",
+      "target": "step:solve-a-logic-query:label-the-result",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:solve-a-logic-query",
+      "target": "step:solve-a-logic-query:probe-solver-support",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:reasoning-and-formal-methods",
+      "target": "flow:synthesize-a-program-with-cegis",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:synthesize-a-program-with-cegis",
+      "target": "step:synthesize-a-program-with-cegis:ask-the-oracle-on-the-domain",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:synthesize-a-program-with-cegis",
+      "target": "step:synthesize-a-program-with-cegis:search-for-a-fitting-control",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:synthesize-a-program-with-cegis",
+      "target": "step:synthesize-a-program-with-cegis:check-the-candidate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:synthesize-a-program-with-cegis",
+      "target": "step:synthesize-a-program-with-cegis:ask-the-formal-verifier",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:synthesize-a-program-with-cegis",
+      "target": "step:synthesize-a-program-with-cegis:confirm-and-add-the-counterexample",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:synthesize-a-program-with-cegis",
+      "target": "step:synthesize-a-program-with-cegis:report-the-bounded-result",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:reasoning-and-formal-methods",
+      "target": "flow:bound-unsafe-reachability",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:bound-unsafe-reachability",
+      "target": "step:bound-unsafe-reachability:validate-the-agent-model",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:bound-unsafe-reachability",
+      "target": "step:bound-unsafe-reachability:propagate-the-state-distribution",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:bound-unsafe-reachability",
+      "target": "step:bound-unsafe-reachability:sum-the-union-bound",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:bound-unsafe-reachability",
+      "target": "step:bound-unsafe-reachability:label-against-epsilon",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:bound-unsafe-reachability",
+      "target": "step:bound-unsafe-reachability:check-rollback-feasibility",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:reasoning-and-formal-methods",
+      "target": "flow:run-a-structured-debate",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:run-a-structured-debate",
+      "target": "step:run-a-structured-debate:check-limits-before-any-call",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:run-a-structured-debate",
+      "target": "step:run-a-structured-debate:run-each-agents-turn",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:run-a-structured-debate",
+      "target": "step:run-a-structured-debate:record-failed-turns-as-degraded",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:run-a-structured-debate",
+      "target": "step:run-a-structured-debate:measure-agreement-by-overlap",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:run-a-structured-debate",
+      "target": "step:run-a-structured-debate:ask-a-judge-for-agreement",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:reasoning-and-formal-methods",
+      "target": "flow:vote-and-compare-reasoning-arms",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:vote-and-compare-reasoning-arms",
+      "target": "step:vote-and-compare-reasoning-arms:sample-n-direct-answers",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:vote-and-compare-reasoning-arms",
+      "target": "step:vote-and-compare-reasoning-arms:meter-calls-against-a-budget",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:vote-and-compare-reasoning-arms",
+      "target": "step:vote-and-compare-reasoning-arms:vote-with-abstentions",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:vote-and-compare-reasoning-arms",
+      "target": "step:vote-and-compare-reasoning-arms:run-both-arms-on-paired-cases",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:vote-and-compare-reasoning-arms",
+      "target": "step:vote-and-compare-reasoning-arms:promote-only-on-a-sign-test-win",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:missions-and-ventures",
+      "target": "flow:freeze-a-coding-mission-standard",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:freeze-a-coding-mission-standard",
+      "target": "step:freeze-a-coding-mission-standard:bind-the-local-workforce",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:freeze-a-coding-mission-standard",
+      "target": "step:freeze-a-coding-mission-standard:allow-the-repository-to-run",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:freeze-a-coding-mission-standard",
+      "target": "step:freeze-a-coding-mission-standard:check-the-repository-is-clean-and-allowed",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:freeze-a-coding-mission-standard",
+      "target": "step:freeze-a-coding-mission-standard:run-the-suite-and-intake-the-objective",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:freeze-a-coding-mission-standard",
+      "target": "step:freeze-a-coding-mission-standard:construct-a-premortem-replay-check",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:freeze-a-coding-mission-standard",
+      "target": "step:freeze-a-coding-mission-standard:freeze-the-standard",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:freeze-a-coding-mission-standard",
+      "target": "step:freeze-a-coding-mission-standard:confirm-the-standard",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:missions-and-ventures",
+      "target": "flow:check-a-patch-and-issue-a-certificate",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:check-a-patch-and-issue-a-certificate",
+      "target": "step:check-a-patch-and-issue-a-certificate:submit-the-patch",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:check-a-patch-and-issue-a-certificate",
+      "target": "step:check-a-patch-and-issue-a-certificate:run-the-named-tests-in-a-scratch-copy",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:check-a-patch-and-issue-a-certificate",
+      "target": "step:check-a-patch-and-issue-a-certificate:compare-the-whole-suite",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:check-a-patch-and-issue-a-certificate",
+      "target": "step:check-a-patch-and-issue-a-certificate:compare-old-and-new-behaviour",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:check-a-patch-and-issue-a-certificate",
+      "target": "step:check-a-patch-and-issue-a-certificate:check-test-integrity",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:check-a-patch-and-issue-a-certificate",
+      "target": "step:check-a-patch-and-issue-a-certificate:issue-the-certificate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:check-a-patch-and-issue-a-certificate",
+      "target": "step:check-a-patch-and-issue-a-certificate:read-status-and-certificate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:missions-and-ventures",
+      "target": "flow:run-an-operator-tick",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:run-an-operator-tick",
+      "target": "step:run-an-operator-tick:check-the-stop-and-the-task",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:run-an-operator-tick",
+      "target": "step:run-an-operator-tick:reserve-the-budget",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:run-an-operator-tick",
+      "target": "step:run-an-operator-tick:execute-the-task",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:run-an-operator-tick",
+      "target": "step:run-an-operator-tick:judge-from-the-operators-record",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:run-an-operator-tick",
+      "target": "step:run-an-operator-tick:gate-each-outward-draft",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:run-an-operator-tick",
+      "target": "step:run-an-operator-tick:run-the-draft-checks",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:run-an-operator-tick",
+      "target": "step:run-an-operator-tick:queue-drafts-as-proposed",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:missions-and-ventures",
+      "target": "flow:decide-a-queued-draft",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:decide-a-queued-draft",
+      "target": "step:decide-a-queued-draft:list-proposed-drafts",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:decide-a-queued-draft",
+      "target": "step:decide-a-queued-draft:approve-as-a-person",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:decide-a-queued-draft",
+      "target": "step:decide-a-queued-draft:reject-with-a-reason",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:decide-a-queued-draft",
+      "target": "step:decide-a-queued-draft:mark-sent-and-charge-cash",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:decide-a-queued-draft",
+      "target": "step:decide-a-queued-draft:plant-and-count-decoys",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:decide-a-queued-draft",
+      "target": "step:decide-a-queued-draft:adopt-a-learned-guard",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:reliability-pipeline-and-premortem",
+      "target": "flow:run-a-standard-through-the-harness",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:check-the-stop-and-the-standard",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:take-the-task-through-intake",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:critique-the-plan",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:freeze-checks-and-run-controls",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:recall-remembered-failures",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:execute-the-task",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:adjudicate-into-a-certificate",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "flow:run-a-standard-through-the-harness",
+      "target": "step:run-a-standard-through-the-harness:remember-failed-checks",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:reliability-pipeline-and-premortem",
+      "target": "flow:intake-a-task",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:intake-a-task",
+      "target": "step:intake-a-task:require-a-task-and-criteria",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:intake-a-task",
+      "target": "step:intake-a-task:elicit-intent",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:intake-a-task",
+      "target": "step:intake-a-task:triage-feasibility",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:intake-a-task",
+      "target": "step:intake-a-task:derive-escalation-triggers",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:intake-a-task",
+      "target": "step:intake-a-task:hold-hard-and-risky-verdicts",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:intake-a-task",
+      "target": "step:intake-a-task:ask-clarification",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:intake-a-task",
+      "target": "step:intake-a-task:downgrade-or-advance",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:reliability-pipeline-and-premortem",
+      "target": "flow:critique-a-plan",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:critique-a-plan",
+      "target": "step:critique-a-plan:check-the-plan-structure",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:critique-a-plan",
+      "target": "step:critique-a-plan:run-the-word-tripwire",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:critique-a-plan",
+      "target": "step:critique-a-plan:merge-reports-tightening-only",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:critique-a-plan",
+      "target": "step:critique-a-plan:return-the-verdict-envelope",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "domain:reliability-pipeline-and-premortem",
+      "target": "flow:run-a-plan-premortem",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:run-a-plan-premortem",
+      "target": "step:run-a-plan-premortem:validate-the-plan-and-model",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:run-a-plan-premortem",
+      "target": "step:run-a-plan-premortem:ask-for-failure-stories",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:run-a-plan-premortem",
+      "target": "step:run-a-plan-premortem:check-plan-facts-against-the-plan",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:run-a-plan-premortem",
+      "target": "step:run-a-plan-premortem:require-a-sign-and-a-test",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:run-a-plan-premortem",
+      "target": "step:run-a-plan-premortem:sort-and-label-the-risks",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:reliability-pipeline-and-premortem",
+      "target": "flow:solve-with-the-step-pipeline",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:solve-with-the-step-pipeline",
+      "target": "step:solve-with-the-step-pipeline:refuse-unsupported-inputs",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:solve-with-the-step-pipeline",
+      "target": "step:solve-with-the-step-pipeline:plan-complexity-and-steps",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:solve-with-the-step-pipeline",
+      "target": "step:solve-with-the-step-pipeline:execute-each-planned-step",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:solve-with-the-step-pipeline",
+      "target": "step:solve-with-the-step-pipeline:settle-the-run-status",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:solve-with-the-step-pipeline",
+      "target": "step:solve-with-the-step-pipeline:choose-the-final-answer",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:solve-with-the-step-pipeline",
+      "target": "step:solve-with-the-step-pipeline:check-constraints-and-quality",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:mcp-core-and-bundles",
+      "target": "flow:discover-and-invoke-a-component",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:discover-and-invoke-a-component",
+      "target": "step:discover-and-invoke-a-component:rank-components-for-a-task",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:discover-and-invoke-a-component",
+      "target": "step:discover-and-invoke-a-component:describe-maturity-and-ops",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:discover-and-invoke-a-component",
+      "target": "step:discover-and-invoke-a-component:parse-the-parameters",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:discover-and-invoke-a-component",
+      "target": "step:discover-and-invoke-a-component:refuse-sensitive-or-blockless-components",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:discover-and-invoke-a-component",
+      "target": "step:discover-and-invoke-a-component:build-the-typed-input",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:discover-and-invoke-a-component",
+      "target": "step:discover-and-invoke-a-component:run-the-block",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:discover-and-invoke-a-component",
+      "target": "step:discover-and-invoke-a-component:wrap-the-reply-in-the-envelope",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:mcp-core-and-bundles",
+      "target": "flow:compose-ai-blocks-on-the-railway",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:compose-ai-blocks-on-the-railway",
+      "target": "step:compose-ai-blocks-on-the-railway:implement-infer-returning-a-result",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:compose-ai-blocks-on-the-railway",
+      "target": "step:compose-ai-blocks-on-the-railway:chain-blocks-with-the-operator",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:compose-ai-blocks-on-the-railway",
+      "target": "step:compose-ai-blocks-on-the-railway:run-left-then-right",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:compose-ai-blocks-on-the-railway",
+      "target": "step:compose-ai-blocks-on-the-railway:carry-stage-evidence-and-warnings",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:compose-ai-blocks-on-the-railway",
+      "target": "step:compose-ai-blocks-on-the-railway:take-the-weakest-state",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:compose-ai-blocks-on-the-railway",
+      "target": "step:compose-ai-blocks-on-the-railway:map-and-flat-map-the-result",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:mcp-core-and-bundles",
+      "target": "flow:stop-g6-and-restore-state",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:stop-g6-and-restore-state",
+      "target": "step:stop-g6-and-restore-state:engage-the-stop",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:stop-g6-and-restore-state",
+      "target": "step:stop-g6-and-restore-state:read-the-stop-at-every-door",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:stop-g6-and-restore-state",
+      "target": "step:stop-g6-and-restore-state:snapshot-the-state-folder",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:stop-g6-and-restore-state",
+      "target": "step:stop-g6-and-restore-state:list-snapshots",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:stop-g6-and-restore-state",
+      "target": "step:stop-g6-and-restore-state:roll-back-to-a-snapshot",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:stop-g6-and-restore-state",
+      "target": "step:stop-g6-and-restore-state:export-without-secrets",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:mcp-core-and-bundles",
+      "target": "flow:open-and-run-a-bundle",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:open-and-run-a-bundle",
+      "target": "step:open-and-run-a-bundle:pick-a-bundle",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:open-and-run-a-bundle",
+      "target": "step:open-and-run-a-bundle:start-the-private-page",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:open-and-run-a-bundle",
+      "target": "step:open-and-run-a-bundle:render-the-bundle-form",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:open-and-run-a-bundle",
+      "target": "step:open-and-run-a-bundle:trust-only-this-page",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:open-and-run-a-bundle",
+      "target": "step:open-and-run-a-bundle:run-with-the-saved-model-choice",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:open-and-run-a-bundle",
+      "target": "step:open-and-run-a-bundle:label-the-bundle-result",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:mcp-core-and-bundles",
+      "target": "flow:check-a-coding-agents-change",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:check-a-coding-agents-change",
+      "target": "step:check-a-coding-agents-change:read-the-change-from-git",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:check-a-coding-agents-change",
+      "target": "step:check-a-coding-agents-change:run-the-named-or-touched-tests",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:check-a-coding-agents-change",
+      "target": "step:check-a-coding-agents-change:rerun-the-original-tests",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:check-a-coding-agents-change",
+      "target": "step:check-a-coding-agents-change:compare-tests-by-syntax-tree",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:check-a-coding-agents-change",
+      "target": "step:check-a-coding-agents-change:scan-the-diff-for-shortcuts",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:check-a-coding-agents-change",
+      "target": "step:check-a-coding-agents-change:try-deliberate-mistakes",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:check-a-coding-agents-change",
+      "target": "step:check-a-coding-agents-change:hold-the-report-to-what-g6-saw",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:docs-website",
+      "target": "flow:build-the-static-site",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:build-the-static-site",
+      "target": "step:build-the-static-site:render-every-public-page",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:build-the-static-site",
+      "target": "step:build-the-static-site:collect-static-files",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:build-the-static-site",
+      "target": "step:build-the-static-site:check-every-link-resolves",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:build-the-static-site",
+      "target": "step:build-the-static-site:scan-for-banned-wording",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:build-the-static-site",
+      "target": "step:build-the-static-site:hash-inline-scripts",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "flow:build-the-static-site",
+      "target": "step:build-the-static-site:write-the-site",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:docs-website",
+      "target": "flow:render-a-public-page",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:render-a-public-page",
+      "target": "step:render-a-public-page:look-up-the-page-table",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:render-a-public-page",
+      "target": "step:render-a-public-page:dispatch-by-page-kind",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:render-a-public-page",
+      "target": "step:render-a-public-page:render-a-template-with-live-context",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:render-a-public-page",
+      "target": "step:render-a-public-page:render-markdown-with-site-links",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:render-a-public-page",
+      "target": "step:render-a-public-page:draw-components-from-the-registry",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:docs-website",
+      "target": "flow:publish-study-evidence",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "flow:publish-study-evidence",
+      "target": "step:publish-study-evidence:read-registered-studies",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.1
+    },
+    {
+      "source": "flow:publish-study-evidence",
+      "target": "step:publish-study-evidence:read-development-rounds",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:publish-study-evidence",
+      "target": "step:publish-study-evidence:pick-the-headline-study",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:publish-study-evidence",
+      "target": "step:publish-study-evidence:read-archived-benchmarks",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:publish-study-evidence",
+      "target": "step:publish-study-evidence:build-the-research-context",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "domain:reliability-pipeline-and-premortem",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "Every candidate, baseline and live task runs through g6.harness.run, and intake holds a risky workflow until a person names themselves in accept_risky.",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "domain:mcp-core-and-bundles",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "The seven metaharness_* tools run on the MCP server, approval is asked through MCP elicitation, and activation takes a state snapshot.",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "domain:reasoning-and-formal-methods",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "Profiles can add reasoning pipeline steps such as a second look, and the reasoning sign test and budget are pinned in the judging code.",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:meta-harness-tuning",
+      "target": "domain:checking-and-gating",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "Live and dev failures are cleaned with the pattern guard before a proposer sees them.",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:missions-and-ventures",
+      "target": "domain:reliability-pipeline-and-premortem",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "Coding missions run intake on the objective and freeze any premortem replay check into the standard; the operator judges outputs with harness checks.",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:missions-and-ventures",
+      "target": "domain:checking-and-gating",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "The operator gates every outward draft with action gating, and patch checks read test-weakening findings from the safety engine; certificates come from the g6.evidence issuer.",
+      "weight": 0.8
+    },
+    {
+      "source": "domain:reliability-pipeline-and-premortem",
+      "target": "domain:checking-and-gating",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "The harness adjudicates through the g6.evidence certificate issuer, and the pre-mortem checks plan facts with grounding.",
+      "weight": 0.7
+    },
+    {
+      "source": "domain:mcp-core-and-bundles",
+      "target": "domain:checking-and-gating",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "g6_invoke and g6 invoke reach the five block components (action_gating, action_logic, coding_agent_gate, epistemic_integrity, grounding), and bundles wrap them for one problem each.",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:mcp-core-and-bundles",
+      "target": "domain:missions-and-ventures",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "The agent-change-check bundle reuses the workforce repository test runner, test-weakening check and mutation check.",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:reasoning-and-formal-methods",
+      "target": "domain:mcp-core-and-bundles",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "Formal, CEGIS and CSF results return the shared reliability envelope and warning card from the core.",
+      "weight": 0.5
+    },
+    {
+      "source": "domain:docs-website",
+      "target": "domain:mcp-core-and-bundles",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "The components page and the home lattice are drawn from the component registry at render time.",
+      "weight": 0.6
+    },
+    {
+      "source": "domain:docs-website",
+      "target": "domain:meta-harness-tuning",
+      "type": "cross_domain",
+      "direction": "forward",
+      "description": "The Research page shows the meta-harness studies and development rounds from committed results files.",
+      "weight": 0.5
+    }
+  ],
+  "layers": [],
+  "tour": []
+}

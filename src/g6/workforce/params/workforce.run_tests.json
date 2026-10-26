@@ -1,0 +1,21 @@
+{
+  "component": "workforce",
+  "op": "run_tests",
+  "required": {"repo": "str", "tests": "list"},
+  "optional": {"files": "dict", "regression": "dict"},
+  "probe_params": {"repo": "__probe__", "tests": ["tests/test_probe.py::test_probe"]},
+  "expect_field": "passed",
+  "side_effect": "read",
+  "check": "input_model",
+  "model_free": true,
+  "operational": {
+    "mitigates_failure_modes": [
+      {"failure_mode": "unreproduced_failure", "when": "",
+       "evidence": "tests/mvp/venture/test_workforce_bench.py::test_the_unpatched_repository_fails_its_named_test"}
+    ],
+    "introduces_failure_modes": ["runner_in_process"],
+    "state_reads": ["venture_repo"],
+    "state_writes": ["scratch"],
+    "state_evidence": "tests/mvp/venture/test_workforce_bench.py::test_patched_code_that_changes_the_original_repository_is_caught"
+  }
+}

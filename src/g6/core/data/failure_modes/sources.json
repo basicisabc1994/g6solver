@@ -1,0 +1,12 @@
+{
+  "family": "sources",
+  "codes": [
+    {"code": "answered_from_memory", "title": "a factual question answered from the model's memory instead of a source"},
+    {"code": "untracked_repo_change", "title": "repository changes an agent made that nobody tracked"},
+    {"code": "missed_key_fact", "title": "key facts lost past a cut-off in long text, or given values the text does not hold"},
+    {"code": "reinvented_method", "title": "reimplementing a method that already exists"},
+    {"code": "misread_image", "title": "an image's content misread, or not read at all"},
+    {"code": "wrong_jurisdiction", "title": "a law or ruling from another jurisdiction given as the one asked about"}
+  ],
+  "planned": {}
+}

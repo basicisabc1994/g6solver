@@ -1,0 +1,290 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}Learning Without Forgetting: The Continual Learning Problem{% endblock %}
+{% block meta_description %}LLMs are frozen at training time. Fine-tuning destroys what they already know. The continual learning problem demands architectures that learn additively, not destructively.{% endblock %}
+{% block post_headline %}Learning Without Forgetting: The Continual Learning Problem{% endblock %}
+{% block post_date %}2025-05-10{% endblock %}
+{% block post_description %}LLMs are frozen at training time. Fine-tuning destroys what they already know. The continual learning problem demands architectures that learn additively, not destructively.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Research</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">Learning Without Forgetting: The Continual Learning Problem</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Train once, deploy — it works
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">The dominant paradigm in modern AI is deceptively simple: train a model on a large corpus of data, then deploy it. The training phase is expensive &mdash; millions of dollars in compute, months of engineering, petabytes of carefully curated data &mdash; but it only happens once (or at most, a few times per year). The resulting model is then frozen: its weights are fixed, its knowledge is static, and it is served to millions of users through an API. Updates, when they come, take the form of entirely new models trained from scratch on updated datasets.</p>
+
+            <p class="gsap-reveal">This paradigm works better than anyone expected. GPT-4, Claude, and their successors demonstrate that a model trained on data up to a particular cutoff date can remain useful for months or even years afterward. Most questions people ask do not require knowledge of yesterday&rsquo;s events. The fundamentals of physics, law, medicine, and software engineering do not change between model releases. And for the cases where up-to-date information is essential, retrieval-augmented generation &mdash; attaching a search engine to the model&rsquo;s input pipeline &mdash; provides a reasonable workaround.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">Fine-tuning extends this paradigm further. When a model needs to be adapted for a specific domain &mdash; medical records, legal contracts, a company&rsquo;s internal codebase &mdash; the standard approach is to take the pre-trained weights and continue training on domain-specific data. This is far cheaper than training from scratch and often produces models that outperform the general-purpose original on their target domain. The combination of large-scale pre-training followed by targeted fine-tuning has become the default recipe in applied machine learning, and it produces consistently good results across a wide range of tasks.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup></p>
+
+            <p class="gsap-reveal">So the thesis is reasonable: the train-then-deploy paradigm, augmented by fine-tuning and retrieval, is sufficient for most practical applications. Models do not need to learn continuously because they can be periodically retrained, and between retraining cycles, retrieval fills the knowledge gaps. For many use cases, this is not just adequate but optimal &mdash; a frozen model is predictable, testable, and auditable in ways that a continuously learning system may not be.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: The world doesn't stay still
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">What Happens When the World Moves</h2>
+
+            <p class="gsap-reveal">The problem with frozen knowledge becomes apparent the moment you consider domains where the environment is non-stationary &mdash; which is to say, nearly every domain that matters in practice. Financial markets shift their dynamics quarterly. Medical best practices update as new clinical trials report. Regulatory frameworks evolve. Codebases grow and refactor. Customer preferences change. Threat landscapes in cybersecurity transform weekly. A model that cannot learn from its deployment experience is a model that begins degrading the moment it is deployed.</p>
+
+            <p class="gsap-reveal">The obvious response &mdash; &ldquo;just fine-tune on new data&rdquo; &mdash; runs headlong into what may be the most fundamental unsolved problem in neural network learning: catastrophic forgetting. First identified by McCloskey and Cohen in 1989, catastrophic forgetting (also called catastrophic interference) is the phenomenon whereby training a neural network on new data causes it to lose performance on previously learned tasks.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> This is not a subtle degradation. It can be total. A model fine-tuned on radiology reports may lose its ability to write Python code. A model adapted for French legal texts may forget how to reason about mathematics.</p>
+
+            <p class="gsap-reveal">The mechanism is straightforward but pernicious. Neural network weights are shared across all learned tasks. When the model learns new information, the gradient updates that encode that information overwrite the weight configurations that encoded previous knowledge. There is no separation between &ldquo;old knowledge&rdquo; and &ldquo;new knowledge&rdquo; in the weight space &mdash; it is all a single undifferentiated statistical structure, and modifying any part of it risks disrupting any other part. Ratcliff documented this as early as 1990, showing that even simple connectionist networks exhibited severe interference when trained sequentially on related tasks.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <!-- ── Diagram 1: Catastrophic forgetting ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 300" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing catastrophic forgetting: new knowledge overwriting old knowledge in neural network weights">
+                    <defs>
+                        <filter id="glow-8" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Stage 1: Original model -->
+                    <text x="120" y="22" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Stage 1: Trained Model</text>
+                    <rect x="30" y="35" width="180" height="120" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <!-- Knowledge blocks inside -->
+                    <rect x="45" y="50" width="65" height="30" rx="6" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="77" y="70" text-anchor="middle" fill="#a5b4fc" font-size="9">Math</text>
+                    <rect x="120" y="50" width="75" height="30" rx="6" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="157" y="70" text-anchor="middle" fill="#a5b4fc" font-size="9">Code</text>
+                    <rect x="45" y="90" width="75" height="30" rx="6" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="82" y="110" text-anchor="middle" fill="#a5b4fc" font-size="9">Science</text>
+                    <rect x="130" y="90" width="65" height="30" rx="6" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="162" y="110" text-anchor="middle" fill="#a5b4fc" font-size="9">Language</text>
+                    <text x="120" y="145" text-anchor="middle" fill="#9ca3af" font-size="9">All capabilities intact</text>
+
+                    <!-- Arrow 1 -->
+                    <line x1="220" y1="95" x2="280" y2="95" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="278,90 290,95 278,100" fill="#6b7280"/>
+                    <text x="255" y="82" text-anchor="middle" fill="#ef4444" font-size="9">Fine-tune</text>
+                    <text x="255" y="115" text-anchor="middle" fill="#9ca3af" font-size="8">on medical data</text>
+
+                    <!-- Stage 2: After fine-tuning -->
+                    <text x="400" y="22" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Stage 2: After Fine-tuning</text>
+                    <rect x="310" y="35" width="180" height="120" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <!-- Overwritten blocks -->
+                    <rect x="325" y="50" width="65" height="30" rx="6" fill="rgba(239,68,68,0.1)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+                    <text x="357" y="70" text-anchor="middle" fill="#f87171" font-size="9">Math &#x2717;</text>
+                    <rect x="400" y="50" width="75" height="30" rx="6" fill="rgba(239,68,68,0.1)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+                    <text x="437" y="70" text-anchor="middle" fill="#f87171" font-size="9">Code &#x2717;</text>
+                    <rect x="325" y="90" width="75" height="30" rx="6" fill="rgba(34,197,94,0.15)" stroke="#22c55e" stroke-width="1.5"/>
+                    <text x="362" y="110" text-anchor="middle" fill="#4ade80" font-size="9">Medical &#x2713;</text>
+                    <rect x="410" y="90" width="65" height="30" rx="6" fill="rgba(239,68,68,0.1)" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,3"/>
+                    <text x="442" y="110" text-anchor="middle" fill="#f87171" font-size="9">Lang &#x2717;</text>
+                    <text x="400" y="145" text-anchor="middle" fill="#f87171" font-size="9">New skill gained, old skills lost</text>
+
+                    <!-- Arrow 2 -->
+                    <line x1="500" y1="95" x2="560" y2="95" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="558,90 570,95 558,100" fill="#6b7280"/>
+                    <text x="535" y="82" text-anchor="middle" fill="#ef4444" font-size="9">Retrain</text>
+                    <text x="535" y="115" text-anchor="middle" fill="#9ca3af" font-size="8">from scratch</text>
+
+                    <!-- Stage 3: The cost -->
+                    <text x="680" y="22" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Stage 3: Full Retrain</text>
+                    <rect x="590" y="35" width="180" height="120" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <rect x="605" y="50" width="65" height="30" rx="6" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="637" y="70" text-anchor="middle" fill="#a5b4fc" font-size="9">Math</text>
+                    <rect x="680" y="50" width="75" height="30" rx="6" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="717" y="70" text-anchor="middle" fill="#a5b4fc" font-size="9">Code</text>
+                    <rect x="605" y="90" width="75" height="30" rx="6" fill="rgba(34,197,94,0.15)" stroke="#22c55e" stroke-width="1"/>
+                    <text x="642" y="110" text-anchor="middle" fill="#4ade80" font-size="9">Medical</text>
+                    <rect x="690" y="90" width="65" height="30" rx="6" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="722" y="110" text-anchor="middle" fill="#a5b4fc" font-size="9">Language</text>
+                    <text x="680" y="145" text-anchor="middle" fill="#9ca3af" font-size="9">All restored, but at $10M+ cost</text>
+
+                    <!-- Bottom: the cycle problem -->
+                    <rect x="200" y="195" width="400" height="85" rx="14" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <rect x="200" y="195" width="400" height="85" rx="14" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#glow-8)"/>
+                    <text x="400" y="222" text-anchor="middle" fill="#6366f1" font-size="12" font-weight="700" letter-spacing="2">THE FORGETTING CYCLE</text>
+                    <text x="400" y="244" text-anchor="middle" fill="#a5b4fc" font-size="10">Learn new &rarr; forget old &rarr; retrain everything &rarr; learn new &rarr; forget old</text>
+                    <text x="400" y="264" text-anchor="middle" fill="#a5b4fc" font-size="10">Each cycle: months of compute, millions in cost, zero deployment learning</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; The catastrophic forgetting cycle: fine-tuning on new domains destroys existing capabilities, forcing expensive full retraining</p>
+            </div>
+
+            <p class="gsap-reveal">The analogy to human cognition is instructive precisely because of how different the situation is. A physician who spends a year learning cardiology does not forget how to treat infections. A programmer who learns Rust does not forget Python. Human learning is, by default, largely additive &mdash; new knowledge coexists with old knowledge, and the acquisition of new skills rarely destroys existing ones. This is not an accident. It reflects fundamental architectural features of biological neural networks: sparse representations, complementary learning systems, and the hippocampal-neocortical memory consolidation process that allows new experiences to be integrated without overwriting established knowledge.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
+
+            <p class="gsap-reveal">Artificial neural networks lack these architectural safeguards. Their representations are dense and distributed, meaning that every piece of knowledge is encoded across many weights and every weight participates in encoding many pieces of knowledge. This is what gives them their remarkable generalisation ability, but it is also what makes them catastrophically fragile under sequential learning. The same architectural feature that enables broad generalisation prevents stable accumulation.</p>
+
+            <p class="gsap-reveal">The research community has not ignored this problem. Kirkpatrick and colleagues proposed Elastic Weight Consolidation (EWC) in 2017, which attempts to protect important weights from being overwritten by penalising changes to parameters that are most critical for previously learned tasks.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> The approach is elegant in principle: compute the Fisher information matrix to identify which weights matter most for old tasks, then add a regularisation term that discourages large changes to those weights during new learning. In practice, EWC mitigates forgetting but does not eliminate it, and it scales poorly to the hundreds of billions of parameters in modern language models.</p>
+
+            <p class="gsap-reveal">Other approaches have explored architectural solutions. Progressive neural networks add new columns of parameters for each new task, preserving old weights entirely but at the cost of linear growth in model size.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> PackNet and related methods identify unused capacity in existing networks and allocate it to new tasks, but this assumes that the original model has substantial redundancy &mdash; an assumption that becomes less tenable as models are trained more efficiently. Parisi and colleagues provide a comprehensive survey of these approaches in their 2019 review, and the honest assessment is that none of them fully solves the problem at the scale required by modern LLMs.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup></p>
+
+            <p class="gsap-reveal">There is also a deployment learning problem that the train-then-deploy paradigm systematically ignores. Every interaction a deployed model has is a potential learning opportunity. When a user corrects a model&rsquo;s output, that correction contains information. When a model&rsquo;s recommendation is followed and the outcome is observed, that feedback loop contains information. When a model operates in a changing environment and its predictions begin to drift from reality, that drift contains information. Under the current paradigm, all of this information is discarded. The model serves its frozen weights until the next retraining cycle, blind to everything it could have learned from its own deployment. A doctor who could not learn from new cases would be considered incompetent. We accept this limitation in AI systems only because we have not yet figured out how to do better.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Stakes of Staying Static</h2>
+
+            <p class="gsap-reveal">The practical consequences of this limitation compound over time. Consider an AI system deployed to monitor cybersecurity threats. The threat landscape evolves continuously &mdash; new attack vectors emerge weekly, and adversaries actively adapt to defensive measures. A frozen model trained on last year&rsquo;s threat data is not just slightly outdated; it is systematically blind to the most dangerous current threats, which are precisely the ones that differ from historical patterns. Ring highlighted this temporal degradation problem as early as 1994, noting that any intelligent system operating in a non-stationary environment must be capable of continual adaptation or it will inevitably become obsolete.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal">The same logic applies, with varying urgency, across every domain where AI is deployed. Financial models degrade as market regimes shift. Medical AI becomes less accurate as treatment protocols evolve and new diseases emerge. Recommendation systems lose relevance as user preferences change. The current solution &mdash; periodic retraining from scratch &mdash; is expensive, slow, and wasteful. It discards all deployment experience, requires re-acquisition of existing knowledge alongside new knowledge, and introduces deployment gaps during the retraining period. At the scale of modern foundation models, a retraining cycle can cost tens of millions of dollars and take months to complete.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Additive, versioned knowledge
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Making Learning Additive, Not Destructive</h2>
+
+            <p class="gsap-reveal">The synthesis begins with a conceptual reframing. The reason fine-tuning causes catastrophic forgetting is that knowledge and parameters are entangled: modifying the parameters to encode new knowledge inevitably disturbs the encoding of old knowledge. The solution is to decouple them. Instead of storing all knowledge in the model&rsquo;s weights, build an explicit, external knowledge architecture that can be updated independently of the model itself.</p>
+
+            <p class="gsap-reveal">This is not retrieval-augmented generation, though RAG is a step in the right direction. RAG addresses the <em>access</em> problem &mdash; making new information available to the model at inference time &mdash; but it does not address the <em>learning</em> problem. A RAG system does not learn from its deployment experience, does not update its retrieval strategies based on feedback, and does not build new conceptual structures from accumulated interactions. What is needed is something architecturally more ambitious: a versioned knowledge library that serves as the system&rsquo;s long-term memory, growing and refining itself over time without modifying the underlying model weights. In the <a href="/" class="text-g6-green hover:text-white transition-colors">T0&ndash;T3 framework</a>, this versioned knowledge architecture is the mechanism that enables T2 (continuous self-training from validated experience) and T3 (building reusable theories that generalise across domains) &mdash; additive learning without catastrophic forgetting, because the base model weights are never touched.</p>
+
+            <!-- ── Diagram 2: Versioned knowledge library ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 400" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Architecture showing versioned knowledge library with additive learning">
+                    <!-- Base model (bottom) -->
+                    <rect x="200" y="330" width="400" height="55" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="400" y="355" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Frozen LLM Foundation</text>
+                    <text x="400" y="375" text-anchor="middle" fill="#9ca3af" font-size="10">Pre-trained weights &mdash; never modified after deployment</text>
+
+                    <!-- Knowledge Library (highlighted, center) -->
+                    <rect x="150" y="160" width="500" height="140" rx="14" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <rect x="150" y="160" width="500" height="140" rx="14" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#glow-8)"/>
+                    <text x="400" y="185" text-anchor="middle" fill="#6366f1" font-size="13" font-weight="700" letter-spacing="2">VERSIONED KNOWLEDGE LIBRARY</text>
+
+                    <!-- Version slots inside -->
+                    <rect x="175" y="200" width="90" height="80" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="220" y="220" text-anchor="middle" fill="#d1d5db" font-size="10" font-weight="600">v1.0</text>
+                    <text x="220" y="237" text-anchor="middle" fill="#9ca3af" font-size="8">Base domain</text>
+                    <text x="220" y="250" text-anchor="middle" fill="#9ca3af" font-size="8">knowledge</text>
+                    <text x="220" y="268" text-anchor="middle" fill="#4ade80" font-size="8">retained &#x2713;</text>
+
+                    <rect x="280" y="200" width="90" height="80" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="325" y="220" text-anchor="middle" fill="#d1d5db" font-size="10" font-weight="600">v1.1</text>
+                    <text x="325" y="237" text-anchor="middle" fill="#9ca3af" font-size="8">Deployment</text>
+                    <text x="325" y="250" text-anchor="middle" fill="#9ca3af" font-size="8">corrections</text>
+                    <text x="325" y="268" text-anchor="middle" fill="#4ade80" font-size="8">additive &#x2713;</text>
+
+                    <rect x="385" y="200" width="90" height="80" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="430" y="220" text-anchor="middle" fill="#d1d5db" font-size="10" font-weight="600">v1.2</text>
+                    <text x="430" y="237" text-anchor="middle" fill="#9ca3af" font-size="8">New domain</text>
+                    <text x="430" y="250" text-anchor="middle" fill="#9ca3af" font-size="8">expertise</text>
+                    <text x="430" y="268" text-anchor="middle" fill="#4ade80" font-size="8">additive &#x2713;</text>
+
+                    <rect x="490" y="200" width="90" height="80" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="535" y="220" text-anchor="middle" fill="#d1d5db" font-size="10" font-weight="600">v2.0</text>
+                    <text x="535" y="237" text-anchor="middle" fill="#9ca3af" font-size="8">Consolidated</text>
+                    <text x="535" y="250" text-anchor="middle" fill="#9ca3af" font-size="8">+ validated</text>
+                    <text x="535" y="268" text-anchor="middle" fill="#4ade80" font-size="8">merged &#x2713;</text>
+
+                    <!-- Arrow: new experience in -->
+                    <rect x="590" y="200" width="70" height="80" rx="8" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)" stroke-width="1" stroke-dasharray="4,3"/>
+                    <text x="625" y="235" text-anchor="middle" fill="#6b7280" font-size="9">v2.1</text>
+                    <text x="625" y="252" text-anchor="middle" fill="#6b7280" font-size="8">incoming...</text>
+
+                    <!-- Deployment experience input -->
+                    <line x1="720" y1="240" x2="665" y2="240" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="667,235 655,240 667,245" fill="#6b7280"/>
+                    <text x="745" y="225" text-anchor="start" fill="#9ca3af" font-size="9">Deployment</text>
+                    <text x="745" y="240" text-anchor="start" fill="#9ca3af" font-size="9">experience</text>
+                    <text x="745" y="255" text-anchor="start" fill="#9ca3af" font-size="9">feedback</text>
+
+                    <!-- Connection: library to model -->
+                    <line x1="400" y1="300" x2="400" y2="330" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="396,328 400,338 404,328" fill="#6b7280"/>
+                    <text x="440" y="318" text-anchor="start" fill="#9ca3af" font-size="9">context injection</text>
+
+                    <!-- Integration layer (top) -->
+                    <rect x="200" y="80" width="400" height="55" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="400" y="103" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Knowledge Integration Layer</text>
+                    <text x="400" y="123" text-anchor="middle" fill="#9ca3af" font-size="10">Retrieval &bull; Consistency checking &bull; Version resolution</text>
+
+                    <!-- Connection: library to integration -->
+                    <line x1="400" y1="160" x2="400" y2="135" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="396,137 400,128 404,137" fill="#6b7280"/>
+
+                    <!-- Output -->
+                    <rect x="300" y="10" width="200" height="50" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="400" y="33" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Informed Response</text>
+                    <text x="400" y="50" text-anchor="middle" fill="#9ca3af" font-size="10">Current + accumulated knowledge</text>
+
+                    <line x1="400" y1="80" x2="400" y2="60" stroke="#6b7280" stroke-width="1.5"/>
+                    <polygon points="396,62 400,53 404,62" fill="#6b7280"/>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 2 &mdash; A versioned knowledge library architecture: new learning is additive and versioned, the foundation model remains frozen, and deployment experience feeds back into the library</p>
+            </div>
+
+            <p class="gsap-reveal">The architecture of such a system has several key properties. First, the foundation model is frozen after training. Its weights are never modified in production. This eliminates catastrophic forgetting by eliminating the mechanism that causes it &mdash; you cannot overwrite weights that are never updated. Second, all new knowledge is stored in an explicit, structured, external library that is versioned like source code. Each addition creates a new version; old versions are preserved; changes can be audited, reverted, or branched. Third, the knowledge library is integrated with the model at inference time through a sophisticated retrieval and injection pipeline &mdash; not simple RAG, but a system that can reason about what knowledge is relevant, check consistency across versions, and resolve conflicts between older and newer information.</p>
+
+            <p class="gsap-reveal">This approach draws inspiration from the complementary learning systems (CLS) theory of biological memory, which proposes that the brain uses two distinct systems for learning: the hippocampus for rapid acquisition of new episodic memories, and the neocortex for slow consolidation of structured knowledge.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> New experiences are first encoded in the hippocampus, then gradually integrated into neocortical knowledge structures through a process of replay and consolidation that preserves existing knowledge while incorporating new information. The versioned knowledge library serves an analogous function: new deployment experiences are captured quickly and stored explicitly, then periodically consolidated through validation and merging processes that maintain consistency.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">What Additive Learning Enables</h2>
+
+            <p class="gsap-reveal">The practical implications of this architectural shift are substantial. A medical AI system built on this architecture would learn from every case it processes. When a diagnosis is corrected by a physician, that correction is stored as a versioned knowledge entry &mdash; not as a weight update that might corrupt existing knowledge, but as an explicit, auditable, retrievable fact. Over time, the system accumulates a growing library of case-specific knowledge that supplements its pre-trained general medical knowledge, becoming more accurate and more specialised without losing any of its original capabilities.</p>
+
+            <p class="gsap-reveal">The versioning mechanism provides additional benefits that go beyond preventing forgetting. Because every knowledge addition is versioned, the system can explain not just what it knows but <em>when</em> it learned it and <em>from what source</em>. This is critical for domains like medicine and law where the provenance of knowledge matters. A system that can say &ldquo;I believe X based on knowledge acquired from source Y at time Z, superseding my earlier belief W from source V&rdquo; is fundamentally more trustworthy than one that simply outputs a response with no epistemic trace.</p>
+
+            <p class="gsap-reveal">There is also a safety dimension. Continual learning in neural networks raises legitimate concerns about goal drift, value instability, and the accumulation of biased or adversarial information. De Lange and colleagues highlight these risks in their survey of continual learning methods.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> A versioned knowledge library addresses these concerns structurally: because all new knowledge is explicit and auditable, it can be reviewed before integration, tested for consistency with existing knowledge, and rolled back if problems are discovered. The learning process is transparent in a way that gradient-based weight updates never are.</p>
+
+            <p class="gsap-reveal">Zenke and colleagues have explored synaptic intelligence as a biologically inspired approach to continual learning, showing that tracking the importance of individual parameters across tasks can significantly reduce forgetting.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> Their work reinforces a broader insight: the solution to catastrophic forgetting is not better optimisation but better architecture. Whether the mechanism is parameter importance tracking, modular network expansion, or external knowledge libraries, the common thread is the introduction of structural separation between old and new knowledge &mdash; a principle that biological brains implement naturally but artificial networks must be explicitly designed to support.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Beyond Static Intelligence</h2>
+
+            <p class="gsap-reveal">The train-then-deploy paradigm was a reasonable starting point, and it has produced genuinely useful systems. But it embodies a fundamental limitation: it assumes that the world is stationary enough for frozen knowledge to remain adequate, and it discards the enormous volume of information that deployment experience provides. In a world that changes continuously, a system that cannot learn continuously is a system with an expiration date.</p>
+
+            <p class="gsap-reveal">The continual learning problem is, at its core, an architecture problem. Catastrophic forgetting is not an inevitable feature of machine learning; it is a consequence of specific architectural choices &mdash; dense, shared representations with no structural separation between old and new knowledge. Different architectural choices yield different outcomes. Systems that maintain explicit, versioned, additive knowledge libraries alongside frozen foundation models can learn without forgetting, not because they have solved the forgetting problem within neural networks, but because they have sidestepped it entirely by storing new knowledge where it cannot interfere with old knowledge.</p>
+
+            <p class="gsap-reveal font-semibold text-white">The foundation models gave us a remarkable starting point: broad, general knowledge compressed into a statistical structure. What comes next is the engineering that makes that knowledge living rather than fossilised &mdash; systems that grow smarter with every interaction, without losing anything they already knew.</p>
+
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., K&uuml;ttler, H., Lewis, M., Yih, W., Rockt&auml;schel, T., Riedel, S., &amp; Kiela, D. (2020). <a href="https://doi.org/10.48550/arXiv.2005.11401" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Retrieval-augmented generation for knowledge-intensive NLP tasks</em></a>. <em>Advances in Neural Information Processing Systems</em>, 33. &mdash; Foundational RAG paper: combining parametric and non-parametric memory for knowledge access.
+                </li>
+                <li id="ref-2">
+                    Howard, J., &amp; Ruder, S. (2018). <a href="https://doi.org/10.48550/arXiv.1801.06146" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Universal language model fine-tuning for text classification</em></a>. <em>Proceedings of the 56th Annual Meeting of the ACL</em>. &mdash; ULMFiT: the pre-train then fine-tune transfer learning paradigm that became standard practice.
+                </li>
+                <li id="ref-3">
+                    McCloskey, M., &amp; Cohen, N. J. (1989). <a href="https://doi.org/10.1016/S0079-7421(08)60536-8" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Catastrophic interference in connectionist networks: The sequential learning problem</em></a>. <em>Psychology of Learning and Motivation</em>, 24, 109&ndash;165. &mdash; The original identification of catastrophic forgetting in neural networks.
+                </li>
+                <li id="ref-4">
+                    Ratcliff, R. (1990). <a href="https://doi.org/10.1037/0033-295X.97.2.285" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Connectionist models of recognition memory: Constraints imposed by learning and forgetting functions</em></a>. <em>Psychological Review</em>, 97(2), 285&ndash;308. &mdash; Early demonstration that connectionist networks catastrophically forget when trained sequentially.
+                </li>
+                <li id="ref-5">
+                    McClelland, J. L., McNaughton, B. L., &amp; O&rsquo;Reilly, R. C. (1995). <a href="https://doi.org/10.1037/0033-295X.102.3.419" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Why there are complementary learning systems in the hippocampus and neocortex</em></a>. <em>Psychological Review</em>, 102(3), 419&ndash;457. &mdash; Complementary Learning Systems theory: the brain&rsquo;s architectural solution to catastrophic interference.
+                </li>
+                <li id="ref-6">
+                    Kirkpatrick, J., Pascanu, R., Rabinowitz, N., Veness, J., Desjardins, G., Rusu, A. A., Milan, K., Quan, J., Ramalho, T., Grabska-Barwinska, A., Hassabis, D., Clopath, C., Kumaran, D., &amp; Hadsell, R. (2017). <a href="https://doi.org/10.1073/pnas.1611835114" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Overcoming catastrophic forgetting in neural networks</em></a>. <em>Proceedings of the National Academy of Sciences</em>, 114(13), 3521&ndash;3526. &mdash; Elastic Weight Consolidation: protecting important weights from overwriting.
+                </li>
+                <li id="ref-7">
+                    Rusu, A. A., Rabinowitz, N. C., Desjardins, G., Soyer, H., Kirkpatrick, J., Kavukcuoglu, K., Pascanu, R., &amp; Hadsell, R. (2016). <a href="https://doi.org/10.48550/arXiv.1606.04671" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Progressive neural networks</em></a>. arXiv. &mdash; Adding new network columns for new tasks while freezing old ones to prevent forgetting.
+                </li>
+                <li id="ref-8">
+                    Parisi, G. I., Kemker, R., Part, J. L., Kanan, C., &amp; Wermter, S. (2019). <a href="https://doi.org/10.1016/j.neunet.2019.01.012" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Continual lifelong learning with neural networks: A review</em></a>. <em>Neural Networks</em>, 113, 54&ndash;71. &mdash; Comprehensive survey of continual learning approaches, their strengths, and their limitations.
+                </li>
+                <li id="ref-9">
+                    Ring, M. B. (1994). <a href="https://doi.org/10.1007/978-1-4615-2696-8" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Continual learning in reinforcement environments</em></a>. Springer. &mdash; Early monograph arguing that continual adaptation is a prerequisite for intelligent systems in non-stationary environments.
+                </li>
+                <li id="ref-10">
+                    Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E., Cai, T., Rutherford, E., Casas, D. de L., Hendricks, L. A., Welbl, J., Clark, A., Hennigan, T., Noland, E., Millican, K., van den Driessche, G., Damoc, B., Guy, A., Osindero, S., Simonyan, K., Elsen, E., &hellip; Sifre, L. (2022). <a href="https://doi.org/10.48550/arXiv.2203.15556" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Training compute-optimal large language models</em></a>. arXiv. &mdash; Chinchilla scaling laws demonstrating the enormous compute cost of training large language models from scratch.
+                </li>
+                <li id="ref-11">
+                    De Lange, M., Aljundi, R., Masana, M., Parisot, S., Jia, X., Leonardis, A., Slabaugh, G., &amp; Tuytelaars, T. (2021). <a href="https://doi.org/10.1109/TPAMI.2021.3057446" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>A continual learning survey: Defying forgetting in classification tasks</em></a>. <em>IEEE Transactions on Pattern Analysis and Machine Intelligence</em>, 44(7), 3366&ndash;3385. &mdash; Survey covering regularisation, replay, and architectural strategies with safety considerations.
+                </li>
+                <li id="ref-12">
+                    Zenke, F., Poole, B., &amp; Ganguli, S. (2017). <a href="https://proceedings.mlr.press/v70/zenke17a.html" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Continual learning through synaptic intelligence</em></a>. <em>Proceedings of the 34th International Conference on Machine Learning</em>. &mdash; Synaptic intelligence: tracking parameter importance online for continual learning without catastrophic forgetting.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

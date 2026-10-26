@@ -1,0 +1,307 @@
+# SPDX-License-Identifier: Apache-2.0
+# G6's own script for adapt_blender, the only one G6 ever gives Blender:
+#     blender --background --factory-startup --disable-autoexec [--offline-mode] --python-exit-code 1
+#             --python inside_blender.txt -- job.json
+# G6 never imports it (it is plain text to G6). It reads its job as JSON data, never as code: the op, its parameters,
+# the scene to open (or none for an empty one), where to save the scene, where to write a render or an export, and
+# where to write its result. It does the op with bpy, then writes what the scene holds (each object's transform,
+# colour, parent, vertex and face counts; the camera; the lights) to the result for G6 to compare with what was asked.
+# An error is written to the result and raised again, so Blender exits 1.
+import json
+import sys
+import traceback
+from pathlib import Path
+
+import bpy
+from mathutils import Vector
+
+with open(sys.argv[sys.argv.index("--") + 1], encoding="utf-8") as given:
+    JOB = json.load(given)
+PARAMS = JOB.get("params") or {}
+OUT = {"ok": False, "op": JOB["op"], "warnings": []}
+PRIMITIVES = {
+    "cube": lambda: bpy.ops.mesh.primitive_cube_add(size=2),
+    "sphere": lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=1),
+    "plane": lambda: bpy.ops.mesh.primitive_plane_add(size=2),
+    "cylinder": lambda: bpy.ops.mesh.primitive_cylinder_add(radius=1, depth=2),
+    "cone": lambda: bpy.ops.mesh.primitive_cone_add(radius1=1, depth=2),
+    "torus": lambda: bpy.ops.mesh.primitive_torus_add(),
+}
+
+
+def scene():
+    return bpy.context.scene
+
+
+def open_scene():
+    if JOB.get("blend"):
+        bpy.ops.wm.open_mainfile(filepath=JOB["blend"])
+    else:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
+def link(obj):
+    scene().collection.objects.link(obj)
+    return obj
+
+
+def place(obj, transform):
+    transform = transform or {}
+    for key in ("location", "rotation_euler", "scale"):
+        if transform.get(key) is not None:
+            setattr(obj, key, transform[key])
+
+
+def colour_of(obj):
+    mats = [m for m in getattr(obj.data, "materials", []) if m is not None]
+    if not mats:
+        return None
+    mat = mats[0]
+    tree = getattr(mat, "node_tree", None)
+    bsdf = next((n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"), None) if tree else None
+    if bsdf is not None:
+        return [round(float(v), 6) for v in bsdf.inputs["Base Color"].default_value[:3]]
+    return [round(float(v), 6) for v in mat.diffuse_color[:3]]
+
+
+def paint(obj, rgb):
+    mat = bpy.data.materials.get("G6 " + obj.name) or bpy.data.materials.new("G6 " + obj.name)
+    try:
+        mat.use_nodes = True
+    except (AttributeError, TypeError):
+        pass
+    tree = getattr(mat, "node_tree", None)
+    bsdf = next((n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"), None) if tree else None
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    mat.diffuse_color = (rgb[0], rgb[1], rgb[2], 1.0)
+    if obj.data.materials:
+        obj.data.materials[0] = mat
+    else:
+        obj.data.materials.append(mat)
+
+
+def primitive(name, kind, transform, rgb=None, parent=None):
+    PRIMITIVES[kind]()
+    obj = bpy.context.active_object
+    obj.name = name
+    obj.data.name = name
+    if parent:
+        obj.parent = bpy.data.objects[parent]
+    place(obj, transform)
+    if rgb is not None:
+        paint(obj, rgb)
+    return obj
+
+
+def look(obj, target):
+    direction = Vector(target) - Vector(obj.location)
+    obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+
+
+def camera(location, target, lens):
+    cam = bpy.data.objects.get("G6 Camera")
+    if cam is None:
+        cam = link(bpy.data.objects.new("G6 Camera", bpy.data.cameras.new("G6 Camera")))
+    cam.location = location
+    look(cam, target)
+    cam.data.lens = lens
+    scene().camera = cam
+    return cam
+
+
+def light(name, kind, location, energy, rgb):
+    data = bpy.data.lights.new(name, kind.upper())
+    data.energy = energy
+    data.color = rgb
+    obj = link(bpy.data.objects.new(name, data))
+    obj.location = location
+    return obj
+
+
+def has(module, name):
+    return name in dir(module)
+
+
+def import_mesh(path):
+    before = set(bpy.data.objects)
+    suffix = Path(path).suffix.lower()
+    if suffix == ".obj":
+        (bpy.ops.wm.obj_import if has(bpy.ops.wm, "obj_import") else bpy.ops.import_scene.obj)(filepath=path)
+    elif suffix == ".stl":
+        (bpy.ops.wm.stl_import if has(bpy.ops.wm, "stl_import") else bpy.ops.import_mesh.stl)(filepath=path)
+    elif suffix in (".glb", ".gltf"):
+        bpy.ops.import_scene.gltf(filepath=path)
+    else:  # never FBX: its texture paths are absolute and its importer opens them wherever they are
+        raise ValueError("no importer for " + suffix)
+    return [o for o in bpy.data.objects if o not in before]
+
+
+def mesh_object(name, path, transform, rgb=None, parent=None):
+    made = [o for o in import_mesh(path) if o.parent is None]
+    if len(made) == 1 and made[0].type == "MESH":
+        obj = made[0]
+        obj.name = name
+    else:
+        obj = link(bpy.data.objects.new(name, None))
+        for child in made:
+            child.parent = obj
+    if parent:
+        obj.parent = bpy.data.objects[parent]
+    place(obj, transform)
+    if rgb is not None and obj.type == "MESH":
+        paint(obj, rgb)
+    return obj
+
+
+def frame_camera():
+    """A camera that sees every object, when the scene has none (G6 says it placed one)."""
+    points = [o.matrix_world @ Vector(c) for o in scene().objects if o.type == "MESH" for c in o.bound_box]
+    if points:
+        lo = Vector([min(p[i] for p in points) for i in range(3)])
+        hi = Vector([max(p[i] for p in points) for i in range(3)])
+    else:
+        lo, hi = Vector((-1, -1, -1)), Vector((1, 1, 1))
+    centre, size = (lo + hi) / 2, max((hi - lo).length, 1.0)
+    camera(list(centre + Vector((1.0, -1.0, 0.75)) * size * 1.6), list(centre), 50.0)
+    OUT["camera_placed"] = True
+
+
+def backdrop():
+    if scene().world is None:
+        scene().world = bpy.data.worlds.new("G6 Backdrop")
+    try:
+        scene().world.color = (0.05, 0.05, 0.06)
+    except AttributeError:
+        pass
+
+
+def engines():
+    return [i.identifier for i in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
+
+
+def render(width, height, engine, samples):
+    s = scene()
+    wanted = {"workbench": ["BLENDER_WORKBENCH"], "eevee": ["BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"],
+              "cycles": ["CYCLES"]}[engine]
+    s.render.engine = next(e for e in wanted if e in engines())
+    if s.render.engine == "CYCLES":
+        s.cycles.samples = samples
+        s.cycles.device = "CPU"
+    if s.camera is None:
+        frame_camera()
+    if engine != "workbench" and not [o for o in s.objects if o.type == "LIGHT"]:
+        sun = light("G6 Sun", "sun", (4.0, -4.0, 8.0), 3.0, (1.0, 1.0, 1.0))
+        look(sun, (0.0, 0.0, 0.0))
+        OUT["light_placed"] = True
+    backdrop()
+    s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage = width, height, 100
+    s.render.film_transparent = False
+    s.render.image_settings.file_format = "PNG"
+    s.render.image_settings.color_mode = "RGB"
+    s.render.filepath = JOB["out"]
+    bpy.ops.render.render(write_still=True)
+
+
+def export(fmt):
+    out = JOB["out"]
+    if fmt == "obj":
+        if has(bpy.ops.wm, "obj_export"):
+            bpy.ops.wm.obj_export(filepath=out, export_materials=False)
+        else:
+            bpy.ops.export_scene.obj(filepath=out, use_materials=False)
+    elif fmt == "stl":
+        (bpy.ops.wm.stl_export if has(bpy.ops.wm, "stl_export") else bpy.ops.export_mesh.stl)(filepath=out)
+    elif fmt == "glb":
+        bpy.ops.export_scene.gltf(filepath=out, export_format="GLB")
+    else:
+        bpy.ops.export_scene.fbx(filepath=out)
+
+
+def readback():
+    objects = []
+    for o in scene().objects:
+        item = {"name": o.name, "type": o.type, "location": [round(float(v), 6) for v in o.location],
+                "rotation_euler": [round(float(v), 6) for v in o.rotation_euler],
+                "scale": [round(float(v), 6) for v in o.scale], "parent": o.parent.name if o.parent else None}
+        if o.type == "MESH":
+            item.update(vertices=len(o.data.vertices), faces=len(o.data.polygons), colour=colour_of(o))
+        elif o.type == "LIGHT":
+            item["light"] = {"kind": o.data.type, "energy": round(float(o.data.energy), 6),
+                             "colour": [round(float(v), 6) for v in o.data.color]}
+        elif o.type == "CAMERA":
+            item["lens"] = round(float(o.data.lens), 6)
+        objects.append(item)
+    cam = scene().camera
+    return {"objects": objects, "blender": bpy.app.version_string,
+            "camera": {"name": cam.name, "location": [round(float(v), 6) for v in cam.location],
+                       "lens": round(float(cam.data.lens), 6)} if cam else None}
+
+
+def run():
+    op, p = JOB["op"], PARAMS
+    if op == "capabilities":
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        OUT["engines"] = engines()
+        OUT["exporters"] = [f for f, ok in (("obj", has(bpy.ops.wm, "obj_export") or has(bpy.ops.export_scene, "obj")),
+                                            ("stl", has(bpy.ops.wm, "stl_export") or has(bpy.ops.export_mesh, "stl")),
+                                            ("glb", has(bpy.ops.export_scene, "gltf")),
+                                            ("fbx", has(bpy.ops.export_scene, "fbx"))) if ok]
+        return
+    open_scene()
+    if op == "create_primitive":
+        primitive(p["object"], p["primitive"], p.get("transform"), p.get("colour"))
+    elif op == "transform_object":
+        place(bpy.data.objects[p["object"]], p.get("transform"))
+    elif op == "delete_object":
+        bpy.data.objects.remove(bpy.data.objects[p["object"]], do_unlink=True)
+    elif op == "set_material":
+        paint(bpy.data.objects[p["object"]], p["colour"])
+    elif op == "set_camera":
+        camera(p["location"], p["look_at"], p["lens_mm"])
+    elif op == "add_light":
+        light(p["object"], p["kind"], p["location"], p["energy"], p["colour"])
+    elif op == "build_scene":
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        spec = p["scene"]
+        made = set()
+        pending = list(spec.get("objects", []))
+        while pending:  # parents before children
+            ready = [o for o in pending if not o.get("parent") or o["parent"] in made]
+            if not ready:
+                raise ValueError("a parent loop in the scene")
+            for o in ready:
+                if o.get("primitive"):
+                    primitive(o["name"], o["primitive"], o.get("transform"), o.get("colour"), o.get("parent"))
+                else:
+                    mesh_object(o["name"], o["mesh_path"], o.get("transform"), o.get("colour"), o.get("parent"))
+                made.add(o["name"])
+                pending.remove(o)
+        if spec.get("camera"):
+            c = spec["camera"]
+            camera(c["location"], c["look_at"], c["lens_mm"])
+        for item in spec.get("lights", []):
+            light(item["name"], item["kind"], item["location"], item["energy"], item["colour"])
+    elif op == "import_file":
+        OUT["imported"] = [o.name for o in import_mesh(p["path"])]
+    elif op in ("render", "viewport_preview"):
+        render(p["width"], p["height"], p["engine"], p.get("samples", 32))
+    elif op == "export":
+        export(p["format"])
+    elif op != "list_objects":
+        raise ValueError("no op " + op)
+
+
+try:
+    run()
+    OUT["scene"] = readback()
+    if JOB.get("save"):
+        bpy.ops.wm.save_as_mainfile(filepath=JOB["save"], check_existing=False)
+    OUT["ok"] = True
+except Exception as exc:
+    OUT["error"] = (type(exc).__name__ + ": " + str(exc))[:1000]
+    OUT["traceback"] = traceback.format_exc()[-4000:]
+    raise
+finally:
+    with open(JOB["result"], "w", encoding="utf-8") as handle:
+        json.dump(OUT, handle)

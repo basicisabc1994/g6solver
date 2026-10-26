@@ -1,0 +1,142 @@
+{
+  "arm": "D",
+  "canary_hits": [],
+  "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+  "head_profile": {
+    "adapter": null,
+    "budgets": {
+      "max_model_calls": 8,
+      "max_output_chars": 400000,
+      "max_wall_clock_s": 120.0
+    },
+    "code": {},
+    "context_budget_chars": 0,
+    "distillates": {},
+    "exemplars": 0,
+    "extra_checks": [],
+    "hints": [],
+    "pipeline": [],
+    "prompt": "",
+    "prompt_layout": "default",
+    "retries": 0,
+    "routing": {
+      "answer": "local"
+    }
+  },
+  "method": {
+    "candidates_per_cycle": 4,
+    "cycles": 3,
+    "merge_every": 3,
+    "propose_budget": 200,
+    "race_block": 10,
+    "race_keep": 0.5,
+    "reflect_calls": 3,
+    "select_budget": 2000,
+    "use_edits": false,
+    "use_recovery": true,
+    "use_reflection": true
+  },
+  "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+  "minutes": 6.5,
+  "reflector_calls": 6,
+  "run": {
+    "activated": null,
+    "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+    "champion": null,
+    "confirmation": null,
+    "cycles": [
+      {
+        "cycle": 1,
+        "new_champion": false,
+        "raced": [
+          {
+            "candidate_digest": "5851675dadfcfb8658c46ab99fc5d83b68bd0f79add2da0d6378c76441d9def8",
+            "dropped_at_block": null,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          },
+          {
+            "candidate_digest": "d0daa69cd10b605675c3cf9cfeacd1254e4db7a5805ce3cd9a397a940348c1e9",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 42,
+        "stopped": "",
+        "strategies": {
+          "recovery": {
+            "attempts": null,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": null,
+            "proposed": 2
+          },
+          "reflect": {
+            "attempts": 3,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 1,
+            "proposed": 0
+          }
+        },
+        "winner": null
+      },
+      {
+        "cycle": 2,
+        "new_champion": false,
+        "raced": [],
+        "select_code": "",
+        "selection_calls": 0,
+        "stopped": "",
+        "strategies": {
+          "recovery": {
+            "attempts": null,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": null,
+            "proposed": 0
+          },
+          "reflect": {
+            "attempts": 6,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 2,
+            "proposed": 0
+          }
+        },
+        "winner": null
+      },
+      {
+        "cycle": 3,
+        "new_champion": false,
+        "raced": [],
+        "select_code": "",
+        "selection_calls": 0,
+        "stopped": "",
+        "strategies": {
+          "recovery": {
+            "attempts": null,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": null,
+            "proposed": 0
+          },
+          "reflect": {
+            "attempts": 9,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 3,
+            "proposed": 0
+          }
+        },
+        "winner": null
+      }
+    ],
+    "decision": null,
+    "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+    "notes": [],
+    "outcome": "no_winner",
+    "recovery": null,
+    "workflow_digest": "ef9aa681bfac9417fe6e114fc9adf5c758f7089b6cce83b5b996a23fca60e9a7"
+  }
+}

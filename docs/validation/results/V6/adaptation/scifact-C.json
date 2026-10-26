@@ -1,0 +1,18 @@
+{
+ "code": "G6_E_META_PROPOSED",
+ "dev_success": 12,
+ "hints": [
+  "th_80e952b98a9b",
+  "th_d1eacefbde00"
+ ],
+ "theories": {
+  "th_80e952b98a9b": {
+   "failure_code": "WRONG_FORMAT",
+   "instruction": "Check the expected output format and structure before answering."
+  },
+  "th_d1eacefbde00": {
+   "failure_code": "NO_OUTPUT",
+   "instruction": "Give an answer: an empty response always fails."
+  }
+ }
+}

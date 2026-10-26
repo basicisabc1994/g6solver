@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Kinetic type for the content pages (base.html loads this only where <body data-kinetic>; kinetic.js moves the
+ * headings). Every rule here acts on a class the script adds, so without the script the page is exactly as designed.
+ *
+ * .k-wait  a heading below the fold, waiting to set itself as it scrolls into view
+ * .k-l     one line of a split heading, measured where the browser broke it, so its words never re-wrap mid-motion
+ * .k-i     the line's text, which rises and widens to its set width and weight
+ * .k-m     the line's mask while it rises: drawn a little outside the line box, so no ascender or descender is cut
+ */
+[data-kinetic] .k-wait { opacity: 0; }
+[data-kinetic] .k-l { display: inline-block; width: 100%; vertical-align: top; white-space: nowrap; }
+[data-kinetic] .k-i { display: inline-block; }
+[data-kinetic] .k-m { clip-path: inset(-.3em -.6em -.14em -.6em); }
+
+@media print {
+    [data-kinetic] .k-wait { opacity: 1 !important; }
+}
+
+/* No motion at all: kinetic.js does nothing when this matches, and these rules hold if it is switched on mid-page. */
+@media (prefers-reduced-motion: reduce) {
+    [data-kinetic] .k-wait { opacity: 1 !important; }
+    [data-kinetic] .k-l, [data-kinetic] .k-i { animation: none !important; transform: none !important; }
+}

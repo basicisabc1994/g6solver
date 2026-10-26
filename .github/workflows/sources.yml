@@ -1,0 +1,22 @@
+# Weekly: re-fetch every source a committed source register cites and compare its SHA-256 (the vetting protocol's
+# source check). The default test suite checks the registers offline on every push; this job is what notices a source
+# changing or going away. A failure asks a person to re-read the clause and update the entry; it never edits one.
+name: sources
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install G6
+        run: pip install -e .
+      - name: Every cited source is unchanged and reachable
+        run: python tools/check_sources.py --check

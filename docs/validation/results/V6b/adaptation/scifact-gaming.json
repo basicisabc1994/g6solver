@@ -1,0 +1,10 @@
+{
+ "outputs_scanned": 700,
+ "matches": {
+  "file access": [],
+  "process": [],
+  "network": [],
+  "import machinery": [],
+  "oracle files": []
+ }
+}

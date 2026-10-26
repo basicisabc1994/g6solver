@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Failure and harness engineering for AI agents{% endblock %}
+{% block meta_description %}A free guide for people who build with AI coding tools: why AI-built apps stall before production, what the research says, and the engineering pattern that helps.{% endblock %}
+{% block content %}
+{% comment %}Every figure here is in content/guide.md with the same source (tests/site/test_guide.py).{% endcomment %}
+<header class="wrap page-hero">
+    <h1 class="display">Failure and harness engineering for AI agents</h1>
+    <p class="lede">Why AI-built apps stall before production, what the research says, and the engineering pattern
+    that helps. For domain experts who build with AI coding tools. Free to read; nothing to sign.</p>
+    <div class="actions"><a class="btn btn--solid" href="{% url 'pages:guide_view' %}">Read the guide</a></div>
+</header>
+
+<section class="band" aria-labelledby="research">
+    <div class="wrap">
+        <div class="band__head">
+            <h2 class="h2" id="research">What the research says</h2>
+            <p class="lede quiet">Three findings the guide builds on, each from a published study.</p>
+        </div>
+        <div class="ev">
+            <div class="ev__wf">
+                <h3>Custom enterprise AI tools that reached production</h3>
+                <p class="ev__big">5%</p>
+                <p class="small">A preliminary 2025 MIT study of company AI projects
+                (<a class="link" href="https://mlq.ai/media/quarterly_decks/v0.1_State_of_AI_in_Business_2025_Report.pdf" rel="noopener">Challapally et al.</a>).
+                No study has counted how many vibe-coded apps do.</p>
+            </div>
+            <div class="ev__wf">
+                <h3>AI-generated code samples with security weaknesses</h3>
+                <p class="ev__big">40–62%</p>
+                <p class="small">Depending on the model, the language and the test
+                (<a class="link" href="https://arxiv.org/abs/2108.09293" rel="noopener">Pearce et al., 2022</a>;
+                <a class="link" href="https://www.veracode.com/press-release/ai-generated-code-poses-major-security-risks-in-nearly-half-of-all-development-tasks-veracode-research-reveals/" rel="noopener">Veracode, 2025</a>;
+                <a class="link" href="https://arxiv.org/abs/2404.18353" rel="noopener">Tihanyi et al., 2024</a>).</p>
+            </div>
+            <div class="ev__wf">
+                <h3>Performance gap from changing only the harness</h3>
+                <p class="ev__big">6×</p>
+                <p class="small">The same model on the same benchmark, with a different harness around it
+                (<a class="link" href="https://arxiv.org/abs/2603.28052" rel="noopener">Lee et al., 2026</a>, citing Tian et al., 2026).</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="band" aria-labelledby="chapters">
+    <div class="wrap cols">
+        <div class="band__head">
+            <h2 class="h2" id="chapters">Six chapters</h2>
+            <p class="lede quiet">Then a prompt library to paste into your coding tool.</p>
+        </div>
+        <ol class="band__body steps-list">
+            <li><h3 class="h3">The 80/20 wall</h3>
+                <p>AI gets you most of a working app fast; the last part is where projects stall. What the studies
+                measure, and what they don't.</p></li>
+            <li><h3 class="h3">Why AI code fails</h3>
+                <p>Security weaknesses, confident wrong answers, long conversations that drift, fixes that compound,
+                and why a model can't check its own work.</p></li>
+            <li><h3 class="h3">Harness engineering 101</h3>
+                <p>The four layers between a model and production: verification, memory, safety and improvement.
+                Why the harness can matter as much as the model.</p></li>
+            <li><h3 class="h3">Failure diagnosis patterns</h3>
+                <p>Five patterns for when a fix goes wrong: understand before fixing, define correct, verify before
+                shipping, learn why fixes fail, learn from patterns.</p></li>
+            <li><h3 class="h3">Self-training without fine-tuning</h3>
+                <p>Improving the harness instead of the model, with a person approving each change. A four-level
+                autonomy ladder; G6 stays on the first two.</p></li>
+            <li><h3 class="h3">Getting started</h3>
+                <p>Install G6, run a first workflow and read what its result labels mean.</p></li>
+        </ol>
+    </div>
+</section>
+
+<section class="band" aria-labelledby="read">
+    <div class="wrap">
+        <h2 class="h2" id="read">The guide is free, and so is G6</h2>
+        <div class="actions"><a class="btn btn--solid" href="{% url 'pages:guide_view' %}">Read the guide</a>
+        <a class="btn" href="{% url 'pages:get_started' %}">Get started with G6</a></div>
+    </div>
+</section>
+{% endblock %}

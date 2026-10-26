@@ -1,0 +1,173 @@
+{
+ "component": "cog_arch_actr",
+ "sources": {
+  "actr-manual": {
+   "work": "ACT-R 7.30+ Reference Manual",
+   "author": "Dan Bothell",
+   "issuer": "the ACT-R research group, Carnegie Mellon University (act-r.psy.cmu.edu)",
+   "version": "7.30+",
+   "url": "http://act-r.psy.cmu.edu/actr7.x/reference-manual.pdf",
+   "retrieved": "2026-10-21",
+   "file_sha256": "86157b5841f7c29ed1ed66552950648072e3ccfcd34312f3822f8a04bc074851",
+   "how_read": "fetched with WebFetch, which returned the PDF; its text was extracted outside the repository. Each clause is recorded with its white space collapsed, and clause_sha256 is the SHA-256 of the clause as recorded, not of the page.",
+   "equations": "the equations' layout is lost in the PDF's text (their operators and Greek letters are unmapped glyphs); each rule's used_as is the equation as the clauses beside it define its terms",
+   "licence": "not stated in the pages read; only short clauses are quoted"
+  },
+  "braisby-gellatly-2005": {
+   "work": "Cognitive Psychology",
+   "editors": "Nick Braisby and Angus Gellatly",
+   "publisher": "Oxford University Press in association with The Open University",
+   "edition": "first published 2005",
+   "where": "chapter 16, Cognitive modelling and cognitive architectures, p. 598",
+   "corpus_file": "Cognitive Psychology.md",
+   "file_sha256": "ed8fe46a6b58a9754773b3b9524176a1c0da52798928fbc9ac7f510f5fd57d58",
+   "licence": "copyright 2005 The Open University; one sentence quoted"
+  }
+ },
+ "rules": [
+  {
+   "id": "activation",
+   "source": "actr-manual",
+   "where": "p. 263 of the PDF",
+   "clause": "Here is the general equation for the activation (A) of a chunk i:",
+   "clause_sha256": "22a623ed8a3b83ea015749d885dcb6b2d3f1266063c7b1f09f579376e28da046",
+   "used_as": "A_i = B_i + S_i + noise (no partial matching)"
+  },
+  {
+   "id": "base_level_terms",
+   "source": "actr-manual",
+   "where": "p. 264 of the PDF",
+   "clause": "n: The number of presentations for chunk i. tj: The time since the jth presentation.",
+   "clause_sha256": "816f4fe68641316dced95b8610c4cb772724d1608932eda6e8d9282b28d5fea9",
+   "used_as": "B_i = ln(sum over presentations j of t_j^-d) + beta_i"
+  },
+  {
+   "id": "decay",
+   "source": "actr-manual",
+   "where": "p. 270 of the PDF",
+   "clause": "The recommended value for :bll is .5, and it is one of the few parameters which have a strong recommended value.",
+   "clause_sha256": "bbcc9476a1d7b40b46d74cdcb475cd213a8ac25247cef694e98d201f7aaa56b8",
+   "used_as": "d defaults to 0.5"
+  },
+  {
+   "id": "reference",
+   "source": "actr-manual",
+   "where": "p. 262 of the PDF",
+   "clause": "If the chunk being added is equivalent to a chunk which is already in DM, then the new chunk is merged with the existing chunk using the merge-chunks command and that chunk is strengthened by giving it another reference at the time of the merging.",
+   "clause_sha256": "6470281f4929dcc6fd96e382ae0a6d5e9248bc0303ae5c0eb8bd479fe83ed0be",
+   "used_as": "adding an equivalent chunk gives it another presentation"
+  },
+  {
+   "id": "highest_above_threshold",
+   "source": "actr-manual",
+   "where": "p. 262 of the PDF",
+   "clause": "among the chunks which match the request the one with the highest activation value, above a parameterized threshold, is the one that will be retrieved. If no matching chunk has an activation above the threshold then a failure to retrieve occurs.",
+   "clause_sha256": "09d1ea6f116e9ecdd3e26aae9586fe541a3bb87adbf76bc04bb1f01f5ddbd367",
+   "used_as": "the highest-activation match above the threshold is retrieved, else a failure"
+  },
+  {
+   "id": "threshold_default",
+   "source": "actr-manual",
+   "where": "p. 274 of the PDF",
+   "clause": "The retrieval threshold. This is the minimum activation a chunk must have to be able to be retrieved",
+   "clause_sha256": "4caf264d0c37c7351d141618d761219b855240b8d9afb59832254b34bb06afc9",
+   "used_as": "tau defaults to 0.0"
+  },
+  {
+   "id": "source_weight",
+   "source": "actr-manual",
+   "where": "p. 265 of the PDF",
+   "clause": "Wkj: This is the amount of activation from source j in buffer k. It is the source activation of buffer k divided by the number of sources j in that buffer by default.",
+   "clause_sha256": "9b1d75e69f5c924eab79a584b95cf7febf2f468a551b49b4ec021ec4db2e6f17",
+   "used_as": "W_kj = W_k / n_k"
+  },
+  {
+   "id": "fan_terms",
+   "source": "actr-manual",
+   "where": "p. 266 of the PDF",
+   "clause": "slotsj: the number of slots in which j is the value across all chunks in DM. slotsofji: the number of slots in chunk i which have j as the value (plus 1 when chunk i is chunk j).",
+   "clause_sha256": "0633a23b6193422b43cb0b32167fc82f1f08547f1937f1b74c370c89868dc13d",
+   "used_as": "S_ji = S - ln(fan_ji), fan_ji = (1 + slots_j) / slotsof_ji"
+  },
+  {
+   "id": "negative_strength",
+   "source": "actr-manual",
+   "where": "p. 266 of the PDF",
+   "clause": "By default the declarative module will print a warning if S ji becomes negative due to that calculation and use 0.0 instead of the negative value",
+   "clause_sha256": "2a447228f806e8bbec8328af6dac9a03cbd48e5be6b81f9eb471ff24d3dade7d",
+   "used_as": "a negative S_ji counts as 0.0"
+  },
+  {
+   "id": "noise",
+   "source": "actr-manual",
+   "where": "p. 267 of the PDF",
+   "clause": "Thus they are generated from a logistic distribution with a mean of 0 and an s as specified by the corresponding parameter of the declarative module.",
+   "clause_sha256": "1b52b0a52415e63c3236c0cc849cc913d68f1022fefb4f2b59911cc7fdd511a0",
+   "used_as": "noise = s ln(p / (1 - p)), p uniform on (0, 1)"
+  },
+  {
+   "id": "retrieval_time",
+   "source": "actr-manual",
+   "where": "p. 267 of the PDF",
+   "clause": "RT: The time to retrieve the chunk in seconds Ai: The activation of the chunk i which is being retrieved F: The latency factor parameter f : The latency exponent parameter",
+   "clause_sha256": "4cefe8d81771224e2ea66ce6eba93ebf73b7607f863cee906033038c7149f64f",
+   "used_as": "RT = F e^(-f A_i)"
+  },
+  {
+   "id": "failure_time",
+   "source": "actr-manual",
+   "where": "p. 268 of the PDF",
+   "clause": "If there is no chunk found in response to a request or the chunk with the highest activation is below the retrieval threshold then the time required to indicate a failure to retrieve any chunk is determined by this equation when subsymbolic computations are enabled:",
+   "clause_sha256": "45a44f505e6086fb581517dd1f7f0bd8eab6019ee3f08738af895e0d9eab7a49",
+   "used_as": "RT = F e^(-f tau) for a failure"
+  },
+  {
+   "id": "latency_defaults",
+   "source": "actr-manual",
+   "where": "p. 271 of the PDF",
+   "clause": "The latency factor value, F, in the equation for retrieval times. It can be set to any non-negative value and defaults to 1.0.",
+   "clause_sha256": "b80ab437ca15e67583fadc52be18cc0d545b71ed06b1a8e4c6e78792c23849b8",
+   "used_as": "F and f default to 1.0"
+  },
+  {
+   "id": "action_time",
+   "source": "actr-manual",
+   "where": "p. 203 of the PDF",
+   "clause": "The default action time parameter specifies the default time that it takes to fire a production in seconds. That is the amount of time that passes between a production’s selection and fired events. The default value is .05 (50ms)",
+   "clause_sha256": "18c9d6e68761554b18d1d78a550bbb2160b9bd35e244781af2c7d46a849da114",
+   "used_as": "each production firing takes 0.05 s"
+  },
+  {
+   "id": "utility_reward",
+   "source": "actr-manual",
+   "where": "p. 235 of the PDF",
+   "clause": "The effective reward for a production i is the reward value received after its nth usage minus the time since that nth selection of production i.",
+   "clause_sha256": "1fdaf95978767659a47ecf9f7bb05fcf0cb12b302e304504f9a641a08e1c2419",
+   "used_as": "U_i(n) = U_i(n-1) + alpha (R_i(n) - U_i(n-1)), R_i(n) = reward - time since the nth selection"
+  },
+  {
+   "id": "utility_alpha",
+   "source": "actr-manual",
+   "where": "p. 235 of the PDF",
+   "clause": "parameter in the utility learning equation. The default value is .2.",
+   "clause_sha256": "4660b5f287df122da3d3f4814581d497774db9ac60c1b1312b5533b6530e7930",
+   "used_as": "alpha defaults to 0.2"
+  },
+  {
+   "id": "goal_activation",
+   "source": "actr-manual",
+   "where": "p. 250 of the PDF",
+   "clause": "Activation spread parameter: :ga Default value: 0.0",
+   "clause_sha256": "8e1810730d0295674804bc53ffd2695173ad412d077add97db315626c4a525ca",
+   "used_as": "the goal buffer's source activation W defaults to 0.0"
+  },
+  {
+   "id": "fan_effect",
+   "source": "braisby-gellatly-2005",
+   "where": "chapter 16, Cognitive modelling and cognitive architectures, p. 598",
+   "clause": "The fan effect is the empirically observed ﬁnding that the greater the number of facts related to some concept that a subject has to memorize, the slower the subject will be to recall any one of them.",
+   "clause_sha256": "69b0e176c0b829d2d788be53cb1737ae76b1e469f70c3d2bf0ba6fba9fca849d",
+   "used_as": "the fan effect the spreading term reproduces"
+  }
+ ]
+}

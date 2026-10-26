@@ -1,0 +1,2653 @@
+{
+  "generated": "2026-10-20",
+  "source": "the extension tracker (DECISIONS #37), by data/from_tracker.py",
+  "counts": {
+    "rows": 238,
+    "listed": 194,
+    "hidden": 44,
+    "dropped": 20,
+    "family": {
+      "agents": 9,
+      "code": 12,
+      "cogarch": 4,
+      "core": 50,
+      "deploy": 8,
+      "domains": 7,
+      "embodied": 7,
+      "integrations": 5,
+      "jobs": 42,
+      "knowledge": 12,
+      "media": 13,
+      "memory": 3,
+      "ml": 11,
+      "provers": 1,
+      "sources": 6,
+      "workspace": 4
+    }
+  },
+  "dropped": [
+    "adapt_trm",
+    "affordance_kb",
+    "align_health",
+    "alignment",
+    "base_helpers",
+    "config",
+    "ctx_composer",
+    "ctx_fenic",
+    "decision_tree",
+    "design",
+    "extension_classifier",
+    "gdpval_harness",
+    "guide",
+    "math_harness",
+    "realtime_bridge",
+    "recursive_architect",
+    "self_debug",
+    "self_improvement",
+    "self_model",
+    "telemetry"
+  ],
+  "components": [
+    {
+      "name": "abstraction",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent learn simple, checked abstractions of a costly search space from past evaluations, so it can skip configurations that cannot beat the best so far.",
+      "failure_mode": "wasting costly evaluations on configurations that cannot win",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "action_gating",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent ask, before it acts, whether an action such as a deletion, payment, message or deploy should go ahead, wait for a person, or be blocked.",
+      "failure_mode": "an agent taking an irreversible or high-impact action unchecked",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "action_logic",
+      "family": null,
+      "package": null,
+      "summary": "Gives an agent's action checks plain rules drawn from how people fail in complex systems: no blind actions, coordinated changes, and heeding weak signals.",
+      "failure_mode": "acting without feedback, side effects or early warning signs",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "adapt_algo_selector",
+      "family": "ml",
+      "package": "g6.ml.adapt_algo_selector",
+      "summary": "Lets an agent pick a suitable machine-learning algorithm for a dataset by reading its size, shape, balance and other basic properties.",
+      "failure_mode": "choosing an ill-suited model for the data",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_audio",
+      "family": "media",
+      "package": "g6.media.adapt_audio",
+      "summary": "Lets an agent edit, analyse, clean up, mix and master audio, falling back to basic WAV handling when the heavier audio libraries are missing.",
+      "failure_mode": "an agent unable to process or repair audio itself",
+      "needs": [
+        "ffmpeg (optional)"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_automl",
+      "family": "ml",
+      "package": "g6.ml.adapt_automl",
+      "summary": "Lets an agent train and compare machine-learning models automatically across several AutoML engines, with built-in data preparation.",
+      "failure_mode": "hand-tuning models without a systematic search",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "adapt_autosklearn",
+      "family": "ml",
+      "package": "g6.ml.adapt_automl",
+      "summary": "Lets an agent ask for an AutoML engine by name and be told plainly when it is not shipped or not installed, with nothing run in its place.",
+      "failure_mode": "AutoML silently unavailable or misreported",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_bayesian",
+      "family": "ml",
+      "package": "g6.ml.adapt_bayesian",
+      "summary": "Lets an agent fit probabilistic models to data and update its beliefs, in closed form or by sampling when PyMC is installed.",
+      "failure_mode": "point estimates that hide uncertainty",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "adapt_bias",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system tune its own behavioural parameters in small bounded steps, test each change against the last, and roll back on regressions.",
+      "failure_mode": "parameter tweaks that drift behaviour without a test",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: rewrite needed"
+    },
+    {
+      "name": "adapt_blender",
+      "family": "media",
+      "package": "g6.media.adapt_blender",
+      "summary": "Lets an agent build, texture, animate, render and export 3D scenes by scripting Blender, with a plain mesh-file fallback when Blender is absent.",
+      "failure_mode": "an agent unable to create or render 3D content",
+      "needs": [
+        "Blender"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_comfyui",
+      "family": "media",
+      "package": "g6.media.adapt_comfyui",
+      "summary": "Lets an agent generate and edit images through a running ComfyUI server, from text prompts, other images, inpainting or custom workflows.",
+      "failure_mode": "an agent unable to run image-generation workflows",
+      "needs": [
+        "ComfyUI server"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_creative_api",
+      "family": "media",
+      "package": "g6.media.adapt_image",
+      "summary": "Lets an agent work with design and image services such as Figma, Canva, Stability AI and Replicate through one interface.",
+      "failure_mode": "separate glue code for each creative service",
+      "needs": [
+        "an account with the chosen design or image service"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_diagrams",
+      "family": "media",
+      "package": "g6.media.adapt_diagrams",
+      "summary": "Lets an agent produce diagrams as text, in Mermaid, Graphviz, PlantUML, ASCII or interactive chart formats, from nodes, edges or data.",
+      "failure_mode": "explanations that need a picture the agent cannot draw",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_django",
+      "family": "code",
+      "package": "g6.code.adapt_django",
+      "summary": "Lets an agent generate Django projects, apps, models, views, forms and tests as code, without Django installed.",
+      "failure_mode": "boilerplate web code written by hand, inconsistently",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_eurisko",
+      "family": "core",
+      "package": "g6.learning",
+      "summary": "Lets an agent keep a library of scored rules of thumb, apply them to a problem and learn which ones pay off.",
+      "failure_mode": "useful heuristics forgotten or never ranked",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_experta",
+      "family": "core",
+      "package": "g6.datalog",
+      "summary": "Lets an agent reason with a rule-based expert system that keeps facts across calls and fires rules in priority order.",
+      "failure_mode": "rules applied inconsistently across a long task",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_ffmpeg",
+      "family": "media",
+      "package": "g6.media.adapt_ffmpeg",
+      "summary": "Lets an agent convert, trim, join, resize and subtitle video and audio by driving ffmpeg, with suggested presets for common jobs.",
+      "failure_mode": "an agent unable to process video or audio files",
+      "needs": [
+        "ffmpeg"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_generative_art",
+      "family": "media",
+      "package": "g6.media.adapt_generative_art",
+      "summary": "Lets an agent make procedural art, such as L-systems, cellular automata, fractals, noise fields and evolved images, as image, vector or 3D files.",
+      "failure_mode": "an agent unable to produce procedural or generative art",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_healing",
+      "family": "code",
+      "package": "g6.code.adapt_healing",
+      "summary": "Lets an agent catch a failing step, classify the Python error, try a small bounded repair and check the result before it carries on.",
+      "failure_mode": "a recoverable error stopping a workflow, or a careless automatic fix",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_image",
+      "family": "media",
+      "package": "g6.media.adapt_image",
+      "summary": "Lets an agent resize, crop, rotate, adjust, convert and describe images, choosing a suitable backend for each operation automatically.",
+      "failure_mode": "an agent unable to edit or convert images itself",
+      "needs": [
+        "an image or vision model (optional)"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_instructor",
+      "family": "core",
+      "package": "g6.core.llm",
+      "summary": "Lets an agent pull structured data out of text by asking a model for output that must match a schema, retrying when it does not.",
+      "failure_mode": "model output that does not match the expected structure",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_keras",
+      "family": "ml",
+      "package": "g6.ml.adapt_pytorch",
+      "summary": "Lets an agent build, train, evaluate and export neural networks with Keras from a simple list of layers.",
+      "failure_mode": "deep-learning setup errors in hand-written model code",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_learning",
+      "family": "ml",
+      "package": "g6.ml.adapt_sklearn",
+      "summary": "Lets an agent compare a few scikit-learn estimators by cross-validation on the training rows only, with the best scored once on rows held out before the comparison.",
+      "failure_mode": "choosing an ill-suited model for the data",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_library_synthesizer",
+      "family": "code",
+      "package": "g6.code.adapt_library_synthesizer",
+      "summary": "Lets an agent turn the description of an algorithm in a research paper into a Python implementation with starter tests.",
+      "failure_mode": "promising research methods with no usable code",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_memory",
+      "family": "memory",
+      "package": "g6.memory.adapt_memory",
+      "summary": "Gives an agent a small working memory of named notes it can store, tag, list and recall during a session.",
+      "failure_mode": "an agent forgetting facts between steps of one session",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_optimisation",
+      "family": "core",
+      "package": "g6.optimisation",
+      "summary": "Lets an agent solve optimisation problems with standard solvers, metaheuristics and multi-objective search, and suggests which method to use.",
+      "failure_mode": "poor solutions from the wrong optimisation method",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_pandas",
+      "family": "ml",
+      "package": "g6.ml.adapt_pandas",
+      "summary": "Lets an agent load, profile, filter, transform and aggregate tabular data with pandas, and save reusable data pipelines.",
+      "failure_mode": "data mistakes from ad hoc table handling",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_physical_ai",
+      "family": "embodied",
+      "package": "g6.embodied.adapt_physical_ai",
+      "summary": "Lets an agent simulate physics, plan motion with search methods such as A* and RRT, and work out kinematics for simulated devices.",
+      "failure_mode": "motion plans that collide or cannot be carried out",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "adapt_pygad",
+      "family": "core",
+      "package": "g6.optimisation",
+      "summary": "Lets an agent evolve solutions to a problem with a genetic algorithm, tracking populations, convergence and replays.",
+      "failure_mode": "search problems with no gradient to follow",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_pytorch",
+      "family": "ml",
+      "package": "g6.ml.adapt_pytorch",
+      "summary": "Lets an agent build, train and run small PyTorch neural networks without managing the training loop by hand.",
+      "failure_mode": "training-loop bugs in hand-written model code",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_rq",
+      "family": "integrations",
+      "package": "g6.integrations.adapt_rq",
+      "summary": "Lets an agent run Python functions as background jobs on a Redis queue, check their status and recover failed jobs.",
+      "failure_mode": "long jobs blocking an agent or failing unseen",
+      "needs": [
+        "Redis"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_sklearn",
+      "family": "ml",
+      "package": "g6.ml.adapt_sklearn",
+      "summary": "Lets an agent train, evaluate, explain and save scikit-learn models through one consistent interface.",
+      "failure_mode": "inconsistent model training and evaluation",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "adapt_synth",
+      "family": "media",
+      "package": "g6.media.adapt_synth",
+      "summary": "Lets an agent generate tones, short musical patterns and sound effects, and analyse audio.",
+      "failure_mode": "an agent unable to create sound or music",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_synthetic_world",
+      "family": "media",
+      "package": "g6.media.adapt_generative_art",
+      "summary": "Lets an agent generate procedural terrain and manage a scene graph for simulated worlds.",
+      "failure_mode": "no simulated world to test an agent in",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_ui_design",
+      "family": "code",
+      "package": "g6.code.adapt_webpage",
+      "summary": "Lets an agent generate a design system, with colours, type scales, spacing and components, and check colour contrast for accessibility.",
+      "failure_mode": "interfaces with inconsistent styling or poor contrast",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_visualisation",
+      "family": "media",
+      "package": "g6.media.adapt_visualisation",
+      "summary": "Lets an agent turn rows of data into line, bar, scatter, histogram, box and heat-map charts as images.",
+      "failure_mode": "data results the user cannot take in at a glance",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_voice",
+      "family": "media",
+      "package": "g6.media.adapt_voice",
+      "summary": "Lets an agent speak text aloud and transcribe speech, using local engines first and online services only when allowed.",
+      "failure_mode": "an agent unable to talk or listen",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "adapt_webpage",
+      "family": "code",
+      "package": "g6.code.adapt_webpage",
+      "summary": "Lets an agent generate complete, self-contained web pages and components, with themes, animation and previews at several screen sizes.",
+      "failure_mode": "hand-built pages that break on some screens",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_autogen",
+      "family": "agents",
+      "package": "g6.agents.agent_autogen",
+      "summary": "Lets an agent run teams of AutoGen agents in patterns such as group chat, handoffs, debate and reflection.",
+      "failure_mode": "multi-agent workflows wired up by hand, without limits",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_claude",
+      "family": "agents",
+      "package": "g6.agents.agent_claude",
+      "summary": "Lets G6 drive Claude as an agent, with tool calling, retries and a safety check around each call.",
+      "failure_mode": "unguarded tool use by a Claude agent",
+      "needs": [
+        "Claude"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_codex",
+      "family": "agents",
+      "package": "g6.agents.agent_codex",
+      "summary": "Lets G6 hand a task to the Codex command-line agent, check that it is available, and choose how tightly it is sandboxed.",
+      "failure_mode": "a coding agent run with more access than it needs",
+      "needs": [
+        "Codex CLI"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_langchain",
+      "family": "core",
+      "package": "g6.core.llm",
+      "summary": "Lets an agent run LangChain chat sessions, tool calls and retrieval chains across several model providers through one interface.",
+      "failure_mode": "provider-specific glue code for each model",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_langgraph",
+      "family": "agents",
+      "package": "g6.agents.agent_langgraph",
+      "summary": "Lets an agent define a workflow as a graph of steps, with branches and saved checkpoints, and run it with LangGraph.",
+      "failure_mode": "long workflows that cannot resume after a failure",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_nanoclaw",
+      "family": "agents",
+      "package": "g6.agents.agent_nanoclaw",
+      "summary": "Lets several agents coordinate through durable group messages: create groups, then send, receive and broadcast.",
+      "failure_mode": "agents losing messages between them",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_openai",
+      "family": "core",
+      "package": "g6.core.llm",
+      "summary": "Lets G6 drive OpenAI-compatible chat models as an agent, with retries, a circuit breaker and logging.",
+      "failure_mode": "flaky model calls with no retry or fallback",
+      "needs": [
+        "OpenAI or a compatible model endpoint"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_openclaw",
+      "family": "agents",
+      "package": "g6.agents.agent_nanoclaw",
+      "summary": "Lets agents talk over typed, durable channels: connect, then send, receive and broadcast messages.",
+      "failure_mode": "lost or mixed-up messages between agents",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_router",
+      "family": "integrations",
+      "package": "g6.llm_router",
+      "summary": "Lets a system send each task to a suitable agent and inspect how those routing choices were made.",
+      "failure_mode": "tasks sent to an agent that is a poor fit",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_runtime",
+      "family": "agents",
+      "package": "g6.agents.agent_runtime",
+      "summary": "Gives every agent the same lifecycle handling, retries, circuit breaker, fallback routing, logging and metrics.",
+      "failure_mode": "each agent handling failure differently, or not at all",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "agent_smolagents",
+      "family": "agents",
+      "package": "g6.agents.agent_smolagents",
+      "summary": "Lets an agent run smolagents tool-using agents, with safer tool calling by default and bounded code execution when asked for.",
+      "failure_mode": "agents running generated code without limits",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "align_artifacts",
+      "family": "workspace",
+      "package": "g6.workspace.align_prompt_library",
+      "summary": "Lets a team keep versioned prompts, evaluation sets and specifications, so every change is kept and any version can be read back.",
+      "failure_mode": "losing track of which prompt or spec was used",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "align_coconstructive",
+      "family": "domains",
+      "package": "g6.domains.training_mode",
+      "summary": "Lets a system score how well a person and an AI are working together in a dialogue, watching for the person being deskilled.",
+      "failure_mode": "AI help that leaves the person less capable",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "align_csf",
+      "family": "core",
+      "package": "g6.action_gating",
+      "summary": "Lets a system put bounded, logged safety checks around risky operations, with a hazard limit for each operation.",
+      "failure_mode": "risky operations run without a safety bound",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "align_evals",
+      "family": "core",
+      "package": "g6.reasoning",
+      "summary": "Lets an agent score outputs with standard metrics such as accuracy, precision, recall and exact match, and compare them with a baseline.",
+      "failure_mode": "quality judged by impression instead of measurement",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "align_prompt_library",
+      "family": "workspace",
+      "package": "g6.workspace.align_prompt_library",
+      "summary": "Lets a team store versioned prompt templates with variables, examples and known failure modes, and search them.",
+      "failure_mode": "prompts copied around and edited without history",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "align_specs",
+      "family": "core",
+      "package": "g6.intent_engine",
+      "summary": "Lets an agent turn a goal and its constraints into a structured specification with clauses it can check outputs against.",
+      "failure_mode": "constraints forgotten between the request and the result",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "align_verbsamp",
+      "family": "core",
+      "package": "g6.epistemic_integrity",
+      "summary": "Lets an agent spot hedging, refusal, uncertainty and other alignment signals in text.",
+      "failure_mode": "uncertain or evasive answers passed off as confident",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "app_repair",
+      "family": "code",
+      "package": "g6.code.app_repair",
+      "summary": "Lets an agent repair a broken app by reproducing the failure, applying a minimal patch and checking it against the recorded baseline.",
+      "failure_mode": "fixes that break something else or fix nothing",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "australian_legal_corpus",
+      "family": "sources",
+      "package": "g6.sources.australian_legal_corpus",
+      "summary": "Lets an agent search Australian legislation and court decisions from the Open Australian Legal Corpus on your own computer, each passage with its jurisdiction, link and the date it was collected.",
+      "failure_mode": "a legal question answered from memory, from an out-of-date text or from another jurisdiction's law",
+      "needs": [
+        "the Open Australian Legal Corpus, downloaded from Hugging Face when you ask (about 9.4 GB)"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "auto_component_integrator",
+      "family": "code",
+      "package": "g6.code.component_creator",
+      "summary": "Lets an agent read a Python library's interface, map its operations and scaffold a G6 component around it, with validation checks.",
+      "failure_mode": "libraries wrapped by hand, inconsistently",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "auto_engineer",
+      "family": "code",
+      "package": "g6.code.component_creator",
+      "summary": "Lets an agent turn a plain-language description of a component into a spec and scaffold the component from it.",
+      "failure_mode": "new components started from scratch each time",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "autofix",
+      "family": null,
+      "package": null,
+      "summary": "Lets a team point an agent at a codebase to pick the next fix, propose it in an isolated copy and test it through the right interface.",
+      "failure_mode": "unreviewed automatic changes to a codebase",
+      "needs": [
+        "Git"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: archive tooling"
+    },
+    {
+      "name": "autonomous_orchestrator",
+      "family": null,
+      "package": null,
+      "summary": "Lets a pool of agents work through a task list around the clock, with rate limits, session logs and a human review queue.",
+      "failure_mode": "unattended agents working with no review point",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: archive tooling"
+    },
+    {
+      "name": "autonomy_governor",
+      "family": "agents",
+      "package": "g6.agents.autonomy_governor",
+      "summary": "Lets a system track how much autonomy an agent currently has, raise or lower it from outcomes, and schedule human checkpoints to match.",
+      "failure_mode": "an agent running with more autonomy than its record supports",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "benchmark_runner",
+      "family": "core",
+      "package": "g6.self_training",
+      "summary": "Lets a developer define benchmark cases for components, run them with timing, and keep the results for comparing runs and gating releases.",
+      "failure_mode": "regressions slipping in unnoticed between versions",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "cegis",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent fill the holes in a small program sketch by searching candidates and testing each one against a reference until no counterexample is found.",
+      "failure_mode": "accepting a synthesised program that fails on some input",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "coder",
+      "family": "core",
+      "package": "g6.workforce.local_coder",
+      "summary": "Lets small local models write code by breaking a task into tiny steps, checking each step, debating alternatives and learning from past attempts.",
+      "failure_mode": "small models producing code that does not work",
+      "needs": [
+        "a local language model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "coding_agent_gate",
+      "family": null,
+      "package": null,
+      "summary": "Lets a coding agent run quick checks before it acts and before it reports work as done, so a claim of success needs matching evidence.",
+      "failure_mode": "a coding agent claiming a fix it did not make or test",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "cog_arch_actr",
+      "family": "cogarch",
+      "package": "g6.cogarch.cog_arch_actr",
+      "summary": "Lets an agent model memory and skill the way the ACT-R cognitive architecture does, with chunk retrieval and production rules.",
+      "failure_mode": "agents that cannot model human-like recall",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "cog_arch_aixi",
+      "family": "cogarch",
+      "package": "g6.cogarch.cog_arch_aixi",
+      "summary": "Lets researchers try an approximate universal-agent design that models its environment and plans with tree search.",
+      "failure_mode": "no testbed for theoretical agent designs",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "cog_arch_dgm",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets an agent improve programs by mutating, crossing and benchmarking them in a tracked lineage, with a safety check on each.",
+      "failure_mode": "self-improving code with no record or safety check",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "cog_arch_gps",
+      "family": "cogarch",
+      "package": "g6.cogarch.cog_arch_gps",
+      "summary": "Lets an agent solve problems by means-ends analysis, finding operators that close the gap between the current state and the goal.",
+      "failure_mode": "agents that cannot plan a sequence of steps to a goal",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "cog_arch_soar",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent solve problems with a working memory and production rules, and learn new rules when it reaches an impasse.",
+      "failure_mode": "an agent stuck when no known rule applies",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "compliance",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent track evidence for security control frameworks such as SOC 2 and ISO 27001, and map controls between them.",
+      "failure_mode": "missing evidence for required controls",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: quarantined by audit"
+    },
+    {
+      "name": "component_creator",
+      "family": "code",
+      "package": "g6.code.component_creator",
+      "summary": "Lets an agent scaffold a complete new G6 component, with schema, block, tool server, skill and tests, from a short spec.",
+      "failure_mode": "new components missing tests or standard parts",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "context_engine",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent build a small, budget-bounded context packet for each model call and track how stable or novel its situation is.",
+      "failure_mode": "model calls given too much, too little or stale context",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "core",
+      "family": null,
+      "package": null,
+      "summary": "Provides the shared building blocks every G6 component uses: typed results, resource bounds, a component base class and common protocols.",
+      "failure_mode": "components disagreeing on results, limits and error handling",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "csf",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system describe an agent as a model of states and transitions and compute a bound on the chance that it reaches an unsafe state.",
+      "failure_mode": "deploying an agent with no bound on reaching harm",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "csf_audit",
+      "family": "core",
+      "package": "g6.action_gating.audit_store",
+      "summary": "Keeps a tamper-evident, hash-chained record of every safety decision, and can check later that no entry was edited, removed or added.",
+      "failure_mode": "safety decisions altered or lost after the fact",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "csf_auto_model",
+      "family": "core",
+      "package": "g6.csf",
+      "summary": "Builds a formal model of an agent from the log of what it actually did, so that safety checks reason about its real behaviour.",
+      "failure_mode": "safety analysis of a model that differs from real behaviour",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "csf_cognitive",
+      "family": "core",
+      "package": "g6.guards",
+      "summary": "Lets an agent screen a request for risk, privacy problems and blocked patterns before acting, with an optional model for harder judgements.",
+      "failure_mode": "acting on a risky or privacy-violating request",
+      "needs": [
+        "a language model (optional)"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "csf_gate",
+      "family": "core",
+      "package": "g6.action_gating",
+      "summary": "Gives an agent one safety call to make before any action, which always answers and refuses when its records or model are unavailable.",
+      "failure_mode": "a safety check that fails open when parts are missing",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "csf_strategy",
+      "family": "core",
+      "package": "g6.csf",
+      "summary": "Lets a person approve a cap on the risk g6.csf checks an agent model's bound against; the cap can only ever lower it. There is no registry of named strategies to run.",
+      "failure_mode": "a caller's word taken as a person's approval of a risk cap",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_ace",
+      "family": "memory",
+      "package": "g6.memory.ctx_ace",
+      "summary": "Gives an agent a working memory of tagged observations, ranked by relevance to the current question, that can forget what is stale.",
+      "failure_mode": "relevant observations buried under old ones",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_claude_context",
+      "family": "core",
+      "package": "g6.context",
+      "summary": "Lets an agent keep a long Claude conversation within its token budget by summarising or trimming the oldest messages.",
+      "failure_mode": "conversations overflowing the context window",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_cognee",
+      "family": "memory",
+      "package": "g6.memory.ctx_cognee",
+      "summary": "Lets an agent build a knowledge graph of entities and relations from text and query it, using Cognee when it is installed.",
+      "failure_mode": "facts spread across text with no links between them",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_colbert",
+      "family": "knowledge",
+      "package": "g6.knowledge.ctx_colbert",
+      "summary": "Lets an agent retrieve passages with ColBERT-style late interaction when available, falling back to simpler search otherwise.",
+      "failure_mode": "weak retrieval on long or technical documents",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_contexthub",
+      "family": "knowledge",
+      "package": "g6.knowledge.ctx_contexthub",
+      "summary": "Lets an agent search a curated registry of documentation, keep notes on entries, and manage several sources.",
+      "failure_mode": "agents relying on outdated or unofficial documentation",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_elastic",
+      "family": "knowledge",
+      "package": "g6.knowledge.ctx_elastic",
+      "summary": "Lets an agent search and retrieve documents from an Elasticsearch index, with filters.",
+      "failure_mode": "large document stores an agent cannot search",
+      "needs": [
+        "Elasticsearch"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_geo",
+      "family": "sources",
+      "package": "g6.sources.ctx_geo",
+      "summary": "Lets an agent look up places, addresses, directions, distances, elevation, time zones, weather and air quality.",
+      "failure_mode": "location questions answered from memory",
+      "needs": [
+        "a mapping and weather service"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_git",
+      "family": "sources",
+      "package": "g6.sources.ctx_git",
+      "summary": "Lets an agent run Git operations, such as status, diff, commit and branch, with every call logged.",
+      "failure_mode": "untracked repository changes by an agent",
+      "needs": [
+        "Git"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_langextract",
+      "family": "sources",
+      "package": "g6.sources.ctx_langextract",
+      "summary": "Lets an agent pull typed fields out of free text, using LangExtract when available and patterns otherwise.",
+      "failure_mode": "key facts missed in unstructured text",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_library_mapper",
+      "family": "sources",
+      "package": "g6.sources.ctx_library_mapper",
+      "summary": "Lets an agent find real Python libraries that implement a method from a paper, scored for quality and licence fit.",
+      "failure_mode": "reimplementing methods that already exist",
+      "needs": [
+        "internet access"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_markitdown",
+      "family": "knowledge",
+      "package": "g6.knowledge",
+      "summary": "Lets an agent turn PDFs, Word files, web pages and images into Markdown text it can read and quote.",
+      "failure_mode": "documents an agent cannot read in their original format",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_mnm",
+      "family": "core",
+      "package": "g6.context",
+      "summary": "Lets an agent merge scored passages from several retrievers into one context that fits a token budget, with near-duplicates removed.",
+      "failure_mode": "context overflowing its budget or repeating itself",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_rag",
+      "family": "core",
+      "package": "g6.grounding",
+      "summary": "Lets an agent split documents into chunks, index them, retrieve and rerank the best passages, and optionally answer from them.",
+      "failure_mode": "answers not grounded in the user's own documents",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_recursive",
+      "family": "core",
+      "package": "g6.context.compress",
+      "summary": "Lets an agent shrink a long text to a target length by repeatedly keeping its most informative sentences, without calling a model.",
+      "failure_mode": "text too long to fit in a model's context",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_research_scanner",
+      "family": "knowledge",
+      "package": "g6.knowledge.knowledge_fetcher",
+      "summary": "Lets an agent scan arXiv and chosen sites for papers relevant to a gap, and score how new they are.",
+      "failure_mode": "missing relevant new research",
+      "needs": [
+        "internet access"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_scrapling",
+      "family": "knowledge",
+      "package": "g6.knowledge.knowledge_fetcher",
+      "summary": "Lets an agent fetch web pages and extract their text or Markdown, with a lighter fallback when the full scraper is missing.",
+      "failure_mode": "web content an agent cannot read",
+      "needs": [
+        "internet access"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_search",
+      "family": "knowledge",
+      "package": "g6.knowledge.ctx_search",
+      "summary": "Lets an agent search the web through several engines, tell real empty results from engine failures, and plan research loops.",
+      "failure_mode": "missing results mistaken for no results",
+      "needs": [
+        "a web search engine"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "ctx_vision",
+      "family": "sources",
+      "package": "g6.sources.ctx_vision",
+      "summary": "Lets an agent describe images, answer questions about them, read the text in them and detect objects, using a vision model.",
+      "failure_mode": "an agent unable to see what is in an image",
+      "needs": [
+        "a vision model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "cybersecurity",
+      "family": "domains",
+      "package": "g6.domains.cybersecurity",
+      "summary": "Lets an agent scan code and dependency lists for vulnerabilities, leaked secrets and weak cryptography.",
+      "failure_mode": "insecure code or leaked secrets shipped",
+      "needs": [
+        "Bandit (optional)"
+      ],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "database",
+      "family": "integrations",
+      "package": "g6.integrations.database",
+      "summary": "Lets an agent query and inspect databases through one adapter, starting with SQLite and optionally others.",
+      "failure_mode": "unsafe or inconsistent database access",
+      "needs": [
+        "PostgreSQL, Redis, MongoDB or Neo4j (optional)"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "debate",
+      "family": null,
+      "package": null,
+      "summary": "Lets several role-playing agents, such as a proposer, a critic and a devil's advocate, argue a question in rounds and report how far they agree.",
+      "failure_mode": "a single unchallenged answer going out unexamined",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "decision_making",
+      "family": "cogarch",
+      "package": "g6.cogarch.decision_making",
+      "summary": "Gives an agent standard, seeded decision rules for choosing the next experiment or how many retries to allow, with the same answer on every run.",
+      "failure_mode": "ad hoc, unrepeatable choices about what to try next",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deep_understanding",
+      "family": "core",
+      "package": "g6.reasoning.structure_map",
+      "summary": "Lets an agent compare the structure of two domain models and score cross-domain analogies with symbolic checks.",
+      "failure_mode": "false analogies between domains that differ in structure",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deploy_aws",
+      "family": "deploy",
+      "package": "g6.deploy.deploy_aws",
+      "summary": "Lets an agent push container images and deploy them to AWS container services, with signature checks and secrets kept out of logs.",
+      "failure_mode": "error-prone manual cloud deployments",
+      "needs": [
+        "Docker",
+        "AWS CLI"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deploy_baremetal",
+      "family": "deploy",
+      "package": "g6.deploy.deploy_baremetal",
+      "summary": "Lets an agent deploy containers to a server over SSH and keep them running as system services.",
+      "failure_mode": "manual server deployments that are hard to repeat",
+      "needs": [
+        "SSH",
+        "systemd"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deploy_core",
+      "family": "deploy",
+      "package": "g6.deploy.deploy_core",
+      "summary": "Provides the shared types and checks that every deployment target uses, including a readiness gate before anything ships.",
+      "failure_mode": "deployments sent without a readiness check",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deploy_docker",
+      "family": "deploy",
+      "package": "g6.deploy.deploy_docker",
+      "summary": "Lets an agent build, push, run and stop Docker containers, with structured results.",
+      "failure_mode": "container steps failing without clear errors",
+      "needs": [
+        "Docker"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deploy_gcp",
+      "family": "deploy",
+      "package": "g6.deploy.deploy_gcp",
+      "summary": "Lets an agent deploy container images to Google Cloud Run with scaling, limits and access settings.",
+      "failure_mode": "error-prone manual cloud deployments",
+      "needs": [
+        "Google Cloud CLI"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deploy_k8s",
+      "family": "deploy",
+      "package": "g6.deploy.deploy_k8s",
+      "summary": "Lets an agent generate Kubernetes manifests, apply them, and roll back automatically when a rollout fails.",
+      "failure_mode": "broken rollouts left running",
+      "needs": [
+        "kubectl"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "deploy_podman",
+      "family": "deploy",
+      "package": "g6.deploy.deploy_docker",
+      "summary": "Lets an agent run rootless containers with Podman as a drop-in replacement for Docker.",
+      "failure_mode": "needing root or a daemon to run containers",
+      "needs": [
+        "Podman"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "design_governance",
+      "family": "code",
+      "package": "g6.code.design_governance",
+      "summary": "Lets a team check code against a software-complexity standard, flagging dependency cycles, layer violations and pass-through wrappers.",
+      "failure_mode": "code growing more complex than anyone can safely change",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "diagnostic_collector",
+      "family": "core",
+      "package": "g6.cli.doctor",
+      "summary": "Lets a system capture a cleaned-up error report, with stack trace and resource snapshot but no source code or user data.",
+      "failure_mode": "error reports that leak code or user data",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "document_stc",
+      "family": "core",
+      "package": "g6.grounding",
+      "summary": "Lets a system re-check a document's claims against its cited sources offline, before the document is trusted.",
+      "failure_mode": "documents citing sources that do not support them",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "domain_certification",
+      "family": "core",
+      "package": "g6.action_gating",
+      "summary": "Lets a team decide whether a narrow workflow may run as certified decision support, from its standards, validation and review records.",
+      "failure_mode": "workflows used beyond what their review supports",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "domain_quality",
+      "family": "domains",
+      "package": "g6.domains.professional_standards",
+      "summary": "Lets an agent check work against a field's professional standards and citations without implying that an expert reviewed it.",
+      "failure_mode": "outputs presented as expert-reviewed when they were not",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "domain_standards",
+      "family": "core",
+      "package": "g6.reliability_pipeline",
+      "summary": "Gives each field a standard for the evidence a result needs at each stage of the reliability pipeline.",
+      "failure_mode": "the same evidence bar applied to every field",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "domain_workflow",
+      "family": "core",
+      "package": "g6.harness",
+      "summary": "Lets a team turn their examples, rules, documents and evaluation criteria into a reusable harness that is tested before use.",
+      "failure_mode": "a clever prompt mistaken for a tested workflow",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "duty_of_care",
+      "family": "jobs",
+      "package": "g6.jobs.duty_of_care",
+      "summary": "Lets an AI system in a wellbeing or support role handle consent, screen for risk and escalate to a person when someone may be in danger.",
+      "failure_mode": "an AI missing signs that a vulnerable user is at risk",
+      "needs": [],
+      "vetting": [
+        "clinical",
+        "mental_health"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "embodiment",
+      "family": "embodied",
+      "package": "g6.embodied.embodiment",
+      "summary": "Lets an agent manage a simulated body: its actuators, sensors, energy use and what the body can physically do.",
+      "failure_mode": "plans that ignore what a body can actually do",
+      "needs": [
+        "MuJoCo, PyBullet or ROS 2 (optional)"
+      ],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "emergency",
+      "family": null,
+      "package": null,
+      "summary": "Lets a person stop all autonomous G6 work with one switch, snapshot a known-good state and roll back to it.",
+      "failure_mode": "no way to halt runaway automation quickly",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the library"
+    },
+    {
+      "name": "epistemic_integrity",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent sort its claims by type, grade the evidence behind each one, and hold back any claim whose evidence is too weak for the risk.",
+      "failure_mode": "stating claims more strongly than the evidence allows",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "evoskill",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets an agent propose better prompts or skills from its failures and keep a change only after it is tested against the current best.",
+      "failure_mode": "prompt changes adopted without testing whether they help",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "experience_loop",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent record what it tried and how it turned out, estimate its competence per task, and recommend actions from similar past cases.",
+      "failure_mode": "repeating actions that failed before in similar cases",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "experiment_search",
+      "family": "ml",
+      "package": "g6.ml.experiment_search",
+      "summary": "Keeps an automated experiment search honest: a baseline comes first, no parent is picked on score alone, and no unexplained regression steers it.",
+      "failure_mode": "experiment searches that chase noise or untraceable gains",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "feasibility",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent triage a task before starting: whether it is feasible as stated, risky, or needs more detail from the person asking.",
+      "failure_mode": "starting work on a task that cannot or should not be done",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "formal_methods",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent send logic questions, proofs and model checks to formal solvers such as Z3, Lean, Prolog and TLA+, and label each answer for what it is.",
+      "failure_mode": "trusting reasoning that a solver could have checked",
+      "needs": [
+        "Z3 (optional)"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "formal_verification",
+      "family": "core",
+      "package": "g6.formal",
+      "summary": "Maps a formal checker's answer onto G6's result labels, flagging properties that hold only vacuously and refusing a check with no property.",
+      "failure_mode": "a vacuous or missing property passing as a real proof",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "goal_engine",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent declare a goal as a tree of subtasks with guardrails, checkpoints, resource limits and breakpoints, and check them as work proceeds.",
+      "failure_mode": "long tasks drifting past their limits without a stop",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "golden_tests",
+      "family": "core",
+      "package": "g6.harness",
+      "summary": "Lets a team keep end-to-end scenario tests for their own workflows and rerun them to catch changes in behaviour.",
+      "failure_mode": "workflow behaviour changing silently between releases",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "governance",
+      "family": "core",
+      "package": "g6.coding_agent_gate",
+      "summary": "Lets a system decide who must approve a change, which files are off limits, and how risky a proposed patch is before it lands.",
+      "failure_mode": "an agent changing protected code or rules without approval",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "grounding",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent check whether the claims in a draft are backed by source passages, flagging wrong figures and flipped negations.",
+      "failure_mode": "invented facts, wrong numbers or reversed claims in answers",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "harness",
+      "family": "core",
+      "package": "g6.harness",
+      "summary": "Lets an agent run a workflow step by step, check each step against known failure patterns and a rubric, and see which steps failed.",
+      "failure_mode": "multi-step workflows failing in a step nobody checked",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "hat_orchestrator",
+      "family": "integrations",
+      "package": "g6.integrations.hat_orchestrator",
+      "summary": "Lets a system coordinate a team of people, AI agents and robots, allocating tasks and settling who has authority.",
+      "failure_mode": "unclear authority in mixed human and AI teams",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "human_development",
+      "family": "domains",
+      "package": "g6.domains.training_mode",
+      "summary": "Lets a system track a person's growing skill, spot over-reliance on AI, and suggest practice that keeps them capable.",
+      "failure_mode": "people losing skills as they lean on AI",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "hyperdistillation",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent turn repeated model reasoning into small, tested functions it can reuse instead of calling the model again.",
+      "failure_mode": "paying a model again for a problem already solved",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "immune_system",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system scan its components, configuration and code for inconsistencies and threats, and check files against a hash manifest.",
+      "failure_mode": "tampered files or unsafe configuration going unnoticed",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "integration",
+      "family": "embodied",
+      "package": "g6.embodied",
+      "summary": "Lets an agent pass data between physical-AI and media components, for example from a mesh toolpath to machine instructions.",
+      "failure_mode": "custom glue code between incompatible components",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "intent_engine",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent capture what a task really requires as an intent contract, asking for the missing pieces before work starts.",
+      "failure_mode": "work done against a misunderstood request",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "invariants",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system check that a result says only what its own fields support, such as no success label without evidence.",
+      "failure_mode": "results whose labels claim more than their evidence",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "job_accountant",
+      "family": "jobs",
+      "package": "g6.jobs.job_accountant",
+      "summary": "Lets an agent check bookkeeping you give it, such as bank reconciliations and journal-entry signals, with a reason for every match, for an accountant to review.",
+      "failure_mode": "books reported as reconciled when they are not",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_administration",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist with office work, such as documents, scheduling, records, correspondence and filings, for a person to review.",
+      "failure_mode": "admin errors in records, filings or correspondence",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_agriculture",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist farm planning with crop cycles, soil and weather checks, pest risk and harvest forecasts, for a person to review.",
+      "failure_mode": "farm decisions made without soil, weather or pest checks",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_ai",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist machine-learning teams with training runs, evaluation, data checks, drift and fairness reviews, for a person to review.",
+      "failure_mode": "models shipped without evaluation, drift or fairness checks",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_allied_health",
+      "family": "jobs",
+      "package": "g6.jobs.job_allied_health",
+      "summary": "Lets an agent assist allied health staff with assessments, therapy plans, progress notes and referrals, always for clinician review.",
+      "failure_mode": "unreviewed clinical notes or therapy plans",
+      "needs": [],
+      "vetting": [
+        "clinical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_analyst",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist analysts with dataset queries, simple models, trends, segments and insights, for a person to review.",
+      "failure_mode": "insights drawn from unchecked data or models",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_business",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist business development with market and opportunity analysis, business cases and KPI tracking, for a person to review.",
+      "failure_mode": "business decisions made without a structured case",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_construction",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist construction projects with cost estimates, schedules, site inspections and progress reports, for a person to review.",
+      "failure_mode": "cost overruns and missed site safety issues",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_consultant",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist consultants with situation assessments, strategic options, deliverables and reviews, for a person to review.",
+      "failure_mode": "recommendations not grounded in the client's situation",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_creative_media",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist writers and designers with concepts, drafts, content audits and audience analysis, for a person to review.",
+      "failure_mode": "off-brand or unreviewed content going out",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "job_cybersecurity",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist defensive security work with threat and vulnerability assessment, incident notes and audits, for a person to review.",
+      "failure_mode": "threats and vulnerabilities left unassessed",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_education",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist teachers with lesson plans, adapted curricula, explanations, exercises and progress checks, for a person to review.",
+      "failure_mode": "teaching that does not match the learner's level",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_energy",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist energy operations with demand forecasts, consumption and efficiency analysis and emissions audits, for a person to review.",
+      "failure_mode": "demand and efficiency decisions made on poor data",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_engineer",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist engineers with system design, requirements, code review, debugging and effort estimates, for a person to review.",
+      "failure_mode": "designs and code changes made without review",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_entertainment",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist producers and programmers with events, content curation, schedules and audience engagement, for a person to review.",
+      "failure_mode": "events and schedules that clash or miss the audience",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "job_entrepreneurship",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist founders with idea validation, MVP scope, pitches, runway and market sizing, for a person to review.",
+      "failure_mode": "startups building before validating the idea",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_finance",
+      "family": "jobs",
+      "package": "g6.jobs.job_finance",
+      "summary": "Lets an agent assist finance teams with portfolio and risk analysis, forecasts, compliance audits and reports, for a person to review.",
+      "failure_mode": "financial risk and compliance gaps left unchecked",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_framework",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Provides the shared base for G6's job agents: common inputs and outputs, safety profiles for each sector, storage, rate limits and review flags.",
+      "failure_mode": "job agents with inconsistent safety and review rules",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "job_hospitality",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist hotels and venues with bookings, guest requests, staff rosters and occupancy analysis, for a person to review.",
+      "failure_mode": "booking clashes and unhandled guest requests",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_it",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist IT operations with deployments, monitoring, incident triage, access reviews and log analysis, for a person to review.",
+      "failure_mode": "outages and access problems found too late",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_labourer",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist frontline workers with task and time logs, safety procedures, hazard reports and equipment requests.",
+      "failure_mode": "unreported hazards and missing time records",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_lawyer",
+      "family": "jobs",
+      "package": "g6.jobs.job_lawyer",
+      "summary": "Lets an agent help with legal work, such as a contract's clause checklist and the legislation a question turns on, with every point for a lawyer in your jurisdiction to review.",
+      "failure_mode": "legal judgements given without a lawyer's review",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_logistics",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist logistics with route planning, shipment tracking, inventory, warehouse audits and on-time analysis, for a person to review.",
+      "failure_mode": "late deliveries and inventory mismatches",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_machinery_operator",
+      "family": "jobs",
+      "package": "g6.jobs.job_machinery_operator",
+      "summary": "Lets an agent assist plant operators with equipment logs, maintenance schedules, fault reports and pre-start safety checks.",
+      "failure_mode": "skipped safety checks and missed maintenance",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_manager",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist managers with objectives, resource allocation, team reviews and stakeholder reports, for a person to review.",
+      "failure_mode": "misallocated resources and unclear objectives",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_manufacturing",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist manufacturing with production schedules, quality inspections, throughput and defect analysis, for a person to review.",
+      "failure_mode": "quality defects and production bottlenecks",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_marketing",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist marketers with campaigns, market and competitor analysis, audience segments, copy and spend review.",
+      "failure_mode": "campaigns run without audience or spend analysis",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_medical_surgical",
+      "family": "jobs",
+      "package": "g6.jobs.job_medical_surgical",
+      "summary": "Lets an agent assist clinicians with symptom analysis, procedure planning and case notes, always flagged for clinician review.",
+      "failure_mode": "unreviewed clinical suggestions reaching patients",
+      "needs": [],
+      "vetting": [
+        "clinical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_mining",
+      "family": "jobs",
+      "package": "g6.jobs.job_mining",
+      "summary": "Lets an agent assist mining teams with site surveys, extraction plans, safety monitoring, yield analysis and permit reports.",
+      "failure_mode": "safety and permit issues missed on site",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_pharmaceutical",
+      "family": "jobs",
+      "package": "g6.jobs.job_pharmaceutical",
+      "summary": "Lets an agent assist pharmaceutical work with compound analysis, trial data review, drug interactions and dosing checks, for expert review.",
+      "failure_mode": "missed drug interactions or dosing errors",
+      "needs": [],
+      "vetting": [
+        "clinical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_political",
+      "family": "jobs",
+      "package": "g6.jobs.job_political",
+      "summary": "Lets an agent assist policy staff with policy drafts, legislation analysis, briefings, statements and polling analysis, for a person to review.",
+      "failure_mode": "policy drafts that misread legislation or polling",
+      "needs": [],
+      "vetting": [
+        "political"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_psychologist",
+      "family": "jobs",
+      "package": "g6.jobs.job_psychologist",
+      "summary": "Lets an agent assist psychologists with assessments, treatment plans, session notes and outcome reviews, always for clinician review.",
+      "failure_mode": "unreviewed clinical judgements about clients",
+      "needs": [],
+      "vetting": [
+        "mental_health"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_public_relations",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist communications teams with press releases, media monitoring, sentiment analysis and briefings, for a person to review.",
+      "failure_mode": "messages released without checking coverage or tone",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_researcher",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist researchers with literature search, synthesis across sources, data extraction and draft sections, for a person to review.",
+      "failure_mode": "conclusions drawn from an incomplete literature",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_sales",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist sales teams with lead qualification, proposals, pipeline forecasts and funnel analysis, for a person to review.",
+      "failure_mode": "unqualified leads and unreliable pipeline forecasts",
+      "needs": [],
+      "vetting": [
+        "finance"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_scientist",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist scientists with experiment design, statistical analysis, literature review and hypothesis testing, for a person to review.",
+      "failure_mode": "experiments without controls or proper statistics",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_services",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist customer and field service with requests, complaints, appointments, follow-ups and service-level checks.",
+      "failure_mode": "unresolved complaints and missed service levels",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_tax",
+      "family": "jobs",
+      "package": "g6.jobs.job_tax",
+      "summary": "Lets an agent check GST and super guarantee arithmetic against a dated table of Australian rates, and refuse what the table does not cover, for a registered tax agent to review.",
+      "failure_mode": "a tax rate or rule applied for the wrong year or jurisdiction",
+      "needs": [],
+      "vetting": [
+        "finance",
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_tourism",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets an agent assist travel professionals with itineraries, bookings, destination research and travel guides, for a person to review.",
+      "failure_mode": "itineraries with booking or timing errors",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_trades",
+      "family": "jobs",
+      "package": "g6.jobs.job_trades",
+      "summary": "Lets an agent assist tradespeople with fault diagnosis, repair plans, materials and workmanship inspections, for a person to review.",
+      "failure_mode": "misdiagnosed faults and substandard workmanship",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "job_validation_suite",
+      "family": "jobs",
+      "package": "g6.jobs.job_framework",
+      "summary": "Lets a team test job agents on reviewed gold cases, scoring answer quality, abstention, sources and action safety.",
+      "failure_mode": "job agents judged without reviewed test cases",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "knowledge_chunker",
+      "family": "knowledge",
+      "package": "g6.knowledge.knowledge_chunker",
+      "summary": "Lets an agent split text into overlapping passages with stable ids for indexing and citation.",
+      "failure_mode": "citations that cannot be traced to a passage",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "knowledge_converter",
+      "family": "knowledge",
+      "package": "g6.knowledge.knowledge_converter",
+      "summary": "Lets an agent convert documents, web pages, images, audio and video into Markdown text, with transcripts where needed.",
+      "failure_mode": "source material in formats an agent cannot read",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "knowledge_fetcher",
+      "family": "knowledge",
+      "package": "g6.knowledge.knowledge_fetcher",
+      "summary": "Gives an agent a catalogue of knowledge sources by domain and priority, and says clearly why a fetch failed.",
+      "failure_mode": "blocked or failed fetches mistaken for empty results",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "knowledge_indexer",
+      "family": "knowledge",
+      "package": "g6.knowledge.knowledge_indexer",
+      "summary": "Lets an agent build and size search indexes over a knowledge corpus within a storage budget.",
+      "failure_mode": "indexes that outgrow their storage budget",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "knowledge_manifest",
+      "family": "knowledge",
+      "package": "g6.knowledge.knowledge_manifest",
+      "summary": "Lets an agent hash passages and check that a passage still matches the source it is cited from.",
+      "failure_mode": "citations to text that has since changed",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "knowledge_quality",
+      "family": "core",
+      "package": "g6.grounding",
+      "summary": "Lets an agent judge how reliable retrieved knowledge is, spotting coverage gaps and weak sources.",
+      "failure_mode": "answers built on thin or weak sources",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "lean_prover",
+      "family": "core",
+      "package": "g6.lean.search",
+      "summary": "Lets an agent prove theorems in Lean by sketching an informal proof, searching tactics and keeping sessions and theories.",
+      "failure_mode": "maths claims accepted without a machine-checked proof",
+      "needs": [
+        "Lean"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "learning_layer",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent learn hints from its own failures and keep a hint only when paired runs with and without it show that it helps.",
+      "failure_mode": "self-training that rewards changes which do not help",
+      "needs": [
+        "a language model or coding agent"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "llm_extension",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets a team turn a request to make a model reliably do something into a versioned, tested harness that is released in stages.",
+      "failure_mode": "prompt tweaks shipped without tests or a staged rollout",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "llm_router",
+      "family": "integrations",
+      "package": "g6.llm_router",
+      "summary": "Lets an agent pick a language model for a kind of task from a committed table of models, hand-assigned task scores and dated prices, local first, with an ordered fallback chain and cost estimates.",
+      "failure_mode": "a task sent to a paid or unsuitable model nobody chose, or a cost quoted from a price that is unknown or out of date; a task or request sent to a tool or agent that is a poor fit for it",
+      "needs": [
+        "Ollama, for the local models it routes to by default",
+        "a key, read by g6.core.llm, only for a paid provider you allow (OpenRouter, Anthropic or OpenAI)"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "mastery_advisor",
+      "family": null,
+      "package": null,
+      "summary": "Offers the human operator coaching on their own practice and plateaus, read-only and never fed back into the agent's decisions.",
+      "failure_mode": "operators losing skill or motivation as AI does more",
+      "needs": [],
+      "vetting": [],
+      "hidden": "held by the owner"
+    },
+    {
+      "name": "mesh3d",
+      "family": "embodied",
+      "package": "g6.embodied.mesh3d",
+      "summary": "Lets an agent process 3D meshes and point clouds, slice models for 3D printing, and generate and check toolpaths.",
+      "failure_mode": "unprintable models or invalid machine toolpaths",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "meta_programming",
+      "family": "code",
+      "package": "g6.code.meta_programming",
+      "summary": "Lets an agent analyse, transform and generate Python code through its syntax tree, for example to rename or extract functions.",
+      "failure_mode": "fragile text edits to code",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "middleware",
+      "family": null,
+      "package": null,
+      "summary": "Gives G6's network servers shared request handling: caller authentication, rate limits and usage accounting.",
+      "failure_mode": "servers handling callers and limits inconsistently",
+      "needs": [
+        "Redis (optional)"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: hosted service only"
+    },
+    {
+      "name": "motor_control",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system run an agent's software actions through a staged safety check before simulated execution.",
+      "failure_mode": "actions executed without a safety check",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the library"
+    },
+    {
+      "name": "multimodal",
+      "family": "media",
+      "package": "g6.media",
+      "summary": "Lets an agent route a request between text, image, audio, video, 3D and animation tools through one shared format.",
+      "failure_mode": "media requests sent to the wrong tool",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "navigator",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent find the right tool among many, read a card describing each operation, and check a planned sequence of calls before running it.",
+      "failure_mode": "agents calling the wrong tool or an invalid sequence",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "observability",
+      "family": "deploy",
+      "package": "g6.deploy.observability",
+      "summary": "Lets a developer profile code, record local metrics, export them to monitoring dashboards and get alerts when values drift.",
+      "failure_mode": "slowdowns and drift going unnoticed",
+      "needs": [
+        "Prometheus or Grafana (optional)"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "opt_cost",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets a team find the expensive steps in a workflow trace, such as repeated calls or oversized models, and get conservative savings advice.",
+      "failure_mode": "workflows spending more on model calls than they need",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "opt_meta",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets a team weigh speed, cost and quality advice together, pick the best trade-offs, and apply changes only through a safety check.",
+      "failure_mode": "optimising one goal while quietly hurting another",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "opt_quality",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets a team find the weak steps in a workflow trace and get advice such as adding checks, grounding, retries or a stronger model.",
+      "failure_mode": "low-quality steps dragging down a workflow's output",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "opt_shared",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Provides the shared types for G6's workflow optimisers: workflow graphs, bottlenecks, interventions and their history.",
+      "failure_mode": "optimisers disagreeing on what a workflow looks like",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "opt_speed",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets a team find the slow steps in a workflow trace and get advice such as running steps in parallel, caching or batching.",
+      "failure_mode": "workflows slower than they need to be",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "physics_prediction",
+      "family": "embodied",
+      "package": "g6.embodied.physics_prediction",
+      "summary": "Lets an agent predict how simple physical systems will move, using the Genesis simulator when installed and a simple model otherwise.",
+      "failure_mode": "plans based on wrong physical expectations",
+      "needs": [
+        "Genesis (optional)"
+      ],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "plan_critic",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent have a plan critiqued before it runs, with a deterministic check first and an optional model reviewer that can only add concerns.",
+      "failure_mode": "flawed plans executed without review",
+      "needs": [
+        "a language model (optional)"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "poka_yoke",
+      "family": "core",
+      "package": "g6.action_gating.safeguards",
+      "summary": "Lets a system mistake-proof agent actions with a catalogue of common slips and checks that stop them at the point of action.",
+      "failure_mode": "predictable, repeated slips by agents",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "polyglot",
+      "family": "provers",
+      "package": "g6.provers.polyglot",
+      "summary": "Lets an agent translate code between languages such as Python, JavaScript, Rust and Go through a common intermediate form, and compare behaviour.",
+      "failure_mode": "translated code that behaves differently",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "professional_standards",
+      "family": "domains",
+      "package": "g6.domains.professional_standards",
+      "summary": "Lets an agent check a job agent's output against the regulatory and professional standards of its field.",
+      "failure_mode": "outputs that miss a field's mandatory requirements",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "reasoning_harness",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent run multi-call reasoning under a hard budget, compare it fairly against a single call, and vote across answers.",
+      "failure_mode": "costly reasoning schemes that do no better than one call",
+      "needs": [
+        "a language model"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "regulated_ai",
+      "family": "domains",
+      "package": "g6.domains.regulated_ai",
+      "summary": "Lets a team keep AI-assisted decisions in regulated fields inside guardrails, with gates that can only block or downgrade.",
+      "failure_mode": "AI decisions in regulated fields escaping review",
+      "needs": [],
+      "vetting": [
+        "legal_regulatory"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "reliability",
+      "family": null,
+      "package": null,
+      "summary": "Lets a team track component reliability, see which code a change touches, and measure whether a change made results better or worse.",
+      "failure_mode": "changes that quietly make results worse",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "reliability_ledger",
+      "family": "core",
+      "package": "g6.harness",
+      "summary": "Lets a team analyse a log of reliability events to see which components and paths fail most often.",
+      "failure_mode": "recurring failures that nobody has counted",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "reliability_pipeline",
+      "family": null,
+      "package": null,
+      "summary": "Takes a task through intake, execution, evaluation and completion, and returns an honest completion label backed by the checks that ran.",
+      "failure_mode": "a task reported done when its checks did not pass",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "safety_engine",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system set hard limits for a run, such as steps, cost and time, check each action against them and stop everything with a kill switch.",
+      "failure_mode": "runaway agents exceeding their limits",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "science_harness",
+      "family": "ml",
+      "package": "g6.ml.science_harness",
+      "summary": "Lets an agent run a scientific discovery loop under fixed contracts for hypotheses, experiments and evidence.",
+      "failure_mode": "automated science that over-reads its own results",
+      "needs": [],
+      "vetting": [
+        "scientific_statistical"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "self_observation",
+      "family": "core",
+      "package": "g6.metaharness",
+      "summary": "Lets a system emit and classify events about its own behaviour, such as a sudden collapse in disagreement between models.",
+      "failure_mode": "early warnings in a system's own behaviour going unseen",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "self_training",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system change its own harness only through a promotion gate that checks each proposed change before it is adopted.",
+      "failure_mode": "self-modification that weakens checks or protected code",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "sensory_fusion",
+      "family": "embodied",
+      "package": "g6.embodied.sensory_fusion",
+      "summary": "Lets an agent combine readings from several simulated sensors, filter out noise and decide where to look next.",
+      "failure_mode": "decisions based on one noisy sensor",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "shared_workspace",
+      "family": "workspace",
+      "package": "g6.workspace.shared_workspace",
+      "summary": "Lets several agents working in one workspace detect conflicting edits and settle them by a stated rule.",
+      "failure_mode": "agents overwriting each other's work",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "solver",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent run a goal through a fixed sequence of problem-solving steps, with step-level traces, limits and checkpoints.",
+      "failure_mode": "problem-solving that skips steps or loses track",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "solver_accuracy",
+      "family": "core",
+      "package": "g6.solver",
+      "summary": "Lets a team record how well each problem-solving run did and follow the trend over time.",
+      "failure_mode": "a decline in solver quality going unnoticed",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "swe_diagnostics",
+      "family": "code",
+      "package": "g6.code.swe_diagnostics",
+      "summary": "Lets a coding agent scan a repository, analyse its tests, detect its build setup, summarise code and check that a patch applies.",
+      "failure_mode": "a coding agent working blind in an unfamiliar repository",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "system_doctor",
+      "family": null,
+      "package": null,
+      "summary": "Lets a system classify an error and decide whether a bounded automatic fix may be tried or a person should look.",
+      "failure_mode": "automatic fixes attempted on errors that need a person",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "tactile_fusion",
+      "family": "embodied",
+      "package": "g6.embodied.tactile_fusion",
+      "summary": "Lets an agent detect contact, judge grip stability and classify surfaces from simulated touch sensors.",
+      "failure_mode": "dropped or crushed objects when grasping",
+      "needs": [],
+      "vetting": [
+        "physical_safety"
+      ],
+      "hidden": null
+    },
+    {
+      "name": "task_tracker",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent track tasks with dependencies, progress, cost, schedules and human review steps, following a strict lifecycle.",
+      "failure_mode": "lost tasks, circular dependencies and skipped reviews",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "template_synthesis",
+      "family": "core",
+      "package": "g6.cegis",
+      "summary": "Lets an agent find a small program that fits given input and output examples by matching them against a library of typed templates.",
+      "failure_mode": "hand-writing simple functions that examples already define",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "tier_manager",
+      "family": null,
+      "package": null,
+      "summary": "Lets a user see and choose which adaptation level is active across G6, advancing it only when they say so.",
+      "failure_mode": "adaptation switching on without the user knowing",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: hosted service only"
+    },
+    {
+      "name": "token_budget",
+      "family": null,
+      "package": null,
+      "summary": "Lets an agent track token spend across model backends, compress context near its limits and route requests by the budget left.",
+      "failure_mode": "model spending running past its budget",
+      "needs": [
+        "a language model backend"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: hosted service only"
+    },
+    {
+      "name": "tools",
+      "family": null,
+      "package": null,
+      "summary": "Lets a team generate reliability scorecards and release-gate reports from their own event rows.",
+      "failure_mode": "release decisions made without a reliability summary",
+      "needs": [],
+      "vetting": [],
+      "hidden": "not in the extension tracker: archive tooling"
+    },
+    {
+      "name": "training_mode",
+      "family": "domains",
+      "package": "g6.domains.training_mode",
+      "summary": "Lets an agent tutor a learner with spaced repetition, guiding questions and grounded explanations, and check what they really know.",
+      "failure_mode": "learners who feel they know more than they do",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "tutorial_pipeline",
+      "family": null,
+      "package": null,
+      "summary": "Lets a team run scripted scenarios, collect training data from the results and produce tutorial video plans.",
+      "failure_mode": "tutorials and training data drifting from real behaviour",
+      "needs": [
+        "ffmpeg",
+        "Playwright browsers",
+        "npm"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: archive tooling"
+    },
+    {
+      "name": "user_intent",
+      "family": "core",
+      "package": "g6.intent_engine",
+      "summary": "Lets an agent interpret what a user is asking for, including stated preferences and what they most likely mean.",
+      "failure_mode": "literal readings that miss what the user meant",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "value_completion",
+      "family": "core",
+      "package": "g6.harness",
+      "summary": "Lets an agent find the weakest part of a deliverable, the bottleneck that limits its value, and what is left to finish.",
+      "failure_mode": "one weak part spoiling an otherwise finished deliverable",
+      "needs": [],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "venture",
+      "family": null,
+      "package": null,
+      "summary": "Lets a person run a small business process as a budgeted loop of agent tasks, with every outward action held for their approval.",
+      "failure_mode": "an agent spending money or acting publicly without approval",
+      "needs": [
+        "a coding agent or language model"
+      ],
+      "vetting": [],
+      "hidden": "not in the extension tracker: already in the core harness"
+    },
+    {
+      "name": "work_loop",
+      "family": "core",
+      "package": "g6.operator",
+      "summary": "Lets an agent break business goals into proposed tasks, rank them by expected value for the effort, and pick the next one to run.",
+      "failure_mode": "effort spent on low-value tasks first",
+      "needs": [
+        "a coding agent or local model"
+      ],
+      "vetting": [],
+      "hidden": null
+    },
+    {
+      "name": "workspace_manager",
+      "family": "workspace",
+      "package": "g6.workspace.workspace_manager",
+      "summary": "Gives each agent task its own sandbox folder and lets any component check that a write stays inside it before touching files.",
+      "failure_mode": "an agent writing files outside its workspace",
+      "needs": [
+        "Git (optional)"
+      ],
+      "vetting": [],
+      "hidden": null
+    }
+  ]
+}

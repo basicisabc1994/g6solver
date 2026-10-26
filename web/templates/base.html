@@ -1,0 +1,84 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}G6{% endblock %} — the open-source harness that engineers itself</title>
+
+    {% block meta %}
+    <meta name="description" content="{% block meta_description %}G6 is an open-source harness for AI agents that tunes itself to your work: it proposes changes to how it runs, tests them on held-out tasks you trust, explains what failed, and changes nothing until a person approves.{% endblock %}">
+    <meta property="og:title" content="{% block og_title %}G6{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}The open-source harness for AI agents that engineers itself, with a person approving every change.{% endblock %}">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="{{ SITE_URL }}{{ request.path }}">
+    <meta property="og:image" content="{{ SITE_URL }}{% static 'images/og-image.png' %}">
+    <meta property="og:site_name" content="G6">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{% block twitter_title %}G6{% endblock %}">
+    <meta name="twitter:description" content="{% block twitter_description %}The open-source harness for AI agents that engineers itself, with a person approving every change.{% endblock %}">
+    {% endblock %}
+
+    {% comment %}
+    Canonical URL. Uses request.path, NOT get_full_path: query strings must not fork the canonical.
+    NB: this is a block comment; Django's single-brace-hash comment is single-line only and a multi-line one renders
+    verbatim (tests/site/test_pages.py checks no page leaks template syntax).
+    {% endcomment %}
+    <link rel="canonical" href="{{ SITE_URL }}{{ request.path }}">
+
+    <meta name="theme-color" content="#E8ECE9" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <link rel="icon" href="{% static 'images/favicon.ico' %}" type="image/x-icon">
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'images/apple-touch-icon.png' %}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{% static 'images/favicon-32x32.png' %}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{% static 'images/favicon-16x16.png' %}">
+    <link rel="manifest" href="{% static 'site.webmanifest' %}">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    {# The old pages' Tailwind classes, then the design (g6.css maps their colours onto its tokens) #}
+    <link rel="stylesheet" href="{% static 'css/main.css' %}">
+    <link rel="stylesheet" href="{% static 'css/g6.css' %}">
+    <link rel="stylesheet" href="{% static 'css/content.css' %}">
+    <link rel="stylesheet" href="{% static 'css/gelly.css' %}">
+    {% if KINETIC %}<link rel="stylesheet" href="{% static 'css/kinetic.css' %}">{% endif %}
+    {% if BAUHAUS %}<link rel="stylesheet" href="{% static 'css/bauhaus.css' %}">{% endif %}
+    {% block extra_css %}{% endblock %}
+
+    {% block jsonld %}
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "SoftwareSourceCode",
+        "name": "G6",
+        "url": "{{ SITE_URL }}",
+        "description": "An open-source harness for AI agents that engineers itself: it proposes changes, tests them on held-out tasks, explains failures, and a person approves every change.",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "programmingLanguage": "Python"
+    }
+    </script>
+    {% endblock %}
+</head>
+<body class="g6 {% block body_class %}{% endblock %}"{% if KINETIC %} data-kinetic{% endif %}>
+    <a href="#main-content" class="skip">Skip to content</a>
+    {% if BAUHAUS %}<div class="bh" aria-hidden="true"><i class="bh-half"></i><i class="bh-square"></i><i class="bh-ring"><i class="bh-dot"></i></i><span class="bh-acc"><i class="bh-disc"></i><i class="bh-arc"></i><i class="bh-bar"></i></span></div>{% endif %}
+
+    {% include "components/navbar.html" %}
+
+    <main id="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    {% include "components/footer.html" %}
+    {% include "components/gelly.html" %}
+
+    <script type="module" src="{% static 'js/mermaid-init.js' %}"></script>
+    <script defer src="{% static 'js/site.js' %}"></script>
+    <script defer src="{% static 'js/gelly.js' %}"></script>
+    {% if KINETIC %}<script defer src="{% static 'js/kinetic.js' %}"></script>{% endif %}
+    {% if BAUHAUS %}<script defer src="{% static 'js/bauhaus.js' %}"></script>{% endif %}
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

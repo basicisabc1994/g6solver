@@ -1,0 +1,7 @@
+text,category
+synthetic test query 0,card_arrival
+synthetic test query 1,card_delivery_estimate
+synthetic test query 2,contactless_not_working
+synthetic test query 3,transfer_not_received_by_recipient
+synthetic test query 4,edit_personal_details
+synthetic test query 5,compromised_card

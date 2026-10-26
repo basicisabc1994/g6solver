@@ -1,0 +1,55 @@
+{
+  "SPDX-License-Identifier": "Apache-2.0",
+  "producer": "the embodied family build (Codex)",
+  "known_author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
+  "route_author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
+  "adapter": "g6/embodied/adapt_physical_ai/certificate/adapter.py",
+  "falsification": {
+    "seeds": [17, 31],
+    "count": 8,
+    "precision": 6,
+    "bounds": "2D/3D coordinates and lengths up to 1e6; stationary and tangent segments, small obstacles and support endpoints; 1..12 links, straight/folded chains; non-increasing times; finite Euler and constant acceleration; bounded grids and seeded RRT obstacles, direct paths and iteration/seed endpoints. Near-tangent point segments up to 1e6 m long; arm segments that sweep through an obstacle or keep clear by the source's sufficient condition, 1..12 links.",
+    "boundaries": {
+      "distance": [
+        {"p": [1000000, 1000000], "a": [-1000000, -1000000], "b": [-1000000, -1000000]}
+      ],
+      "swept_point": [
+        {"a": [0, 0], "b": [1, 0], "centre": [0, 0], "reach": 1},
+        {"a": [-1, 0], "b": [1, 0], "centre": [0, 1], "reach": 1},
+        {"a": [2, 0], "b": [2, 0], "centre": [0, 0], "reach": 1},
+        {"a": [-2, 0], "b": [2, 0], "centre": [0, 0], "reach": "0.000001"},
+        {"a": [-1000000, "0.99999"], "b": [1000000, "0.99999"], "centre": [0, 0], "reach": 1}
+      ],
+      "swept_arm": [
+        {"base": [0, 0], "lengths": [1], "qa": [0], "qb": [0], "centre": [3, 0], "radius": 1},
+        {"base": [0, 0], "lengths": [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10], "qa": ["-0.2", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "qb": ["0.2", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "centre": [108, 0], "radius": 6}
+      ],
+      "chain": [
+        {"base": [0, 0], "lengths": [1, 1, 1], "turns": [0, "0.25", "0.25"], "view": "direction"},
+        {"base": [0, 0], "lengths": [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10], "turns": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]},
+        {"base": [0, 0], "lengths": [1000000], "turns": ["318309.8861837907"]}
+      ],
+      "average_speed": [
+        {"a": [0, 0], "b": [0, 0], "dt": 1},
+        {"a": [0, 0], "b": [1, 0], "dt": 0},
+        {"a": [0, 0], "b": [1, 0], "dt": -1}
+      ],
+      "a_star": [
+        {"world": {"lower": [0, 0], "upper": [8, 8], "obstacles": []}, "start": ["1.5", "1.5"], "goal": ["1.5", "1.5"], "cell": 1},
+        {"world": {"lower": [0, 0], "upper": [8, 8], "obstacles": [{"centre": ["1.5", "1.5"], "radius": "0.2"}]}, "start": ["1.5", "1.5"], "goal": ["6.5", "6.5"], "cell": 1}
+      ],
+      "rrt": [
+        {"world": {"lower": [0, 0], "upper": [8, 8], "obstacles": [{"centre": [4, 4], "radius": 1}]}, "start": [1, 4], "goal": [7, 4], "step": "0.5", "seed": 31, "iterations": 128, "bias": "0.1"},
+        {"world": {"lower": [0, 0], "upper": [8, 8], "obstacles": []}, "start": [1, 1], "goal": [7, 7], "step": 1, "seed": 4294967295, "iterations": 5000, "bias": 0}
+      ],
+      "euler": [
+        {"position": [1, 0], "velocity": [0, 1], "acceleration": [1, 0], "dt": 0},
+        {"position": [0, 0], "velocity": [1, 1], "acceleration": [1, 1], "dt": "0.001"}
+      ],
+      "closed_form": [
+        {"position": [1, 0], "velocity": [0, 1], "acceleration": [1, 0], "dt": 0},
+        {"position": [0, 0], "velocity": [1, 1], "acceleration": [1, 1], "dt": "0.001"}
+      ]
+    }
+  }
+}

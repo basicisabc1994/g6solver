@@ -1,0 +1,8 @@
+license_status: Apache-2.0
+owner: reliability-platform
+docs_path: docs/product_global_specs/expert_grounding_g6_system_design/G6_Epistemic_Integrity_Spec.md
+related_components: [core, grounding, action_gating, adapt_memory]
+external_links: []
+risk_level: high
+allowed_autonomy: none
+rollback_method: stateless

@@ -1,0 +1,54 @@
+{
+  "entry_id": "stats.welch_t",
+  "known_author": "Claude case author (calc step 3a, 2026-10-23)",
+  "cases": [
+    {
+      "citation": {
+        "author": "Timothy C. Urdan",
+        "title": "Statistics in Plain English",
+        "edition": "3rd edition",
+        "publisher": "Routledge, Taylor & Francis",
+        "published": "2010",
+        "locator": "Chapter 9, Table 9.4 (page 101): the unequal-variances row of the independent samples t test comparing boys' and girls' sixth-grade grade point averages"
+      },
+      "inputs": {
+        "n1": {
+          "value": "361"
+        },
+        "mean1": {
+          "value": "6.5783"
+        },
+        "sd1": {
+          "value": "2.837"
+        },
+        "n2": {
+          "value": "349"
+        },
+        "mean2": {
+          "value": "8.1387"
+        },
+        "sd2": {
+          "value": "2.744"
+        }
+      },
+      "expected": {
+        "t": {
+          "value": "–7.45",
+          "printed_digits": 2
+        },
+        "df": {
+          "value": "708.00",
+          "printed_digits": 2
+        },
+        "se_diff": {
+          "value": ".209",
+          "printed_digits": 3
+        },
+        "mean_difference": {
+          "value": "–1.5604",
+          "printed_digits": 4
+        }
+      }
+    }
+  ]
+}

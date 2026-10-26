@@ -1,0 +1,108 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Gelly and her cat: poses are which drawings show (by data-state), motion is a few small keyframes.
+ * static/js/gelly.js moves them.
+ */
+.gelly, .gcat {
+    position: fixed; left: 0; bottom: 10px; z-index: 30; padding: 0; margin: 0; border: 0; background: none;
+    cursor: pointer; will-change: transform; -webkit-tap-highlight-color: transparent;
+}
+.gelly { width: 64px; height: 83px; transform: translate3d(calc(100vw - 100px), 0, 0); }
+.gcat { width: 40px; height: 30px; bottom: 14px; z-index: 29; transform: translate3d(calc(100vw - 150px), 0, 0); }
+.gelly[hidden], .gcat[hidden] { display: none; }
+.gelly:focus-visible, .gcat:focus-visible { outline: 3px solid var(--teal, #10A493); outline-offset: 4px; border-radius: 50%; }
+.gelly__art, .gcat__art { display: block; width: 100%; height: 100%; overflow: visible; filter: var(--mascot-edge, none); }
+.gelly.is-left .gelly__art, .gcat.is-left .gcat__art { transform: scaleX(-1); }
+@media (max-width: 640px) { .gelly { width: 50px; height: 65px; } .gcat { width: 32px; height: 24px; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --mascot-edge: drop-shadow(0 0 1px #E8ECE9); } }
+:root[data-theme="dark"] { --mascot-edge: drop-shadow(0 0 1px #E8ECE9); }
+
+.gelly g, .gcat g { transform-box: view-box; }
+.gl-sit, .gl-arms-up, .gl-shut, .gl-happy, .gl-brows, .gl-laugh, .gl-pout, .gl-hand, .gl-puff, .gl-z { display: none; }
+.gl-arm--l { transform-origin: 41px 79px; }
+.gl-arm--r { transform-origin: 59px 79px; }
+.gl-head { transform-origin: 50px 76px; }
+.gelly .gl-cheeks { opacity: .55; transition: opacity .3s; }
+
+/* sitting with her knees hugged: nap and huff */
+.gelly[data-state="nap"] .gl-stand, .gelly[data-state="huff"] .gl-stand { display: none; }
+.gelly[data-state="nap"] .gl-sit, .gelly[data-state="huff"] .gl-sit { display: inline; }
+.gelly[data-state="nap"] .gl-head, .gelly[data-state="huff"] .gl-head { transform: translateY(11px); }
+
+/* walk: legs step, arms swing, a little bob */
+.gelly[data-state="walk"] .gl-leg--l, .gelly[data-state="leaving"] .gl-leg--l { animation: gl-step .4s ease-in-out infinite alternate; }
+.gelly[data-state="walk"] .gl-leg--r, .gelly[data-state="leaving"] .gl-leg--r { animation: gl-step .4s ease-in-out infinite alternate-reverse; }
+.gelly[data-state="walk"] .gl-arm--l, .gelly[data-state="leaving"] .gl-arm--l { animation: gl-swing .4s ease-in-out infinite alternate; }
+.gelly[data-state="walk"] .gl-arm--r, .gelly[data-state="leaving"] .gl-arm--r { animation: gl-swing .4s ease-in-out infinite alternate-reverse; }
+.gelly[data-state="walk"] .gl-head { animation: gl-bob .4s ease-in-out infinite alternate; }
+.gelly[data-state="leaving"] .gl-leg--l, .gelly[data-state="leaving"] .gl-leg--r,
+.gelly[data-state="leaving"] .gl-arm--l, .gelly[data-state="leaving"] .gl-arm--r { animation-duration: .2s; }
+@keyframes gl-step { from { transform: translateY(0); } to { transform: translateY(-4px); } }
+@keyframes gl-swing { from { transform: rotate(-16deg); } to { transform: rotate(16deg); } }
+@keyframes gl-bob { from { transform: translateY(0) rotate(-2deg); } to { transform: translateY(-1.5px) rotate(2deg); } }
+
+/* idle: a slow sway of the head */
+.gelly[data-state="idle"] .gl-head { animation: gl-sway 3.4s ease-in-out infinite; }
+@keyframes gl-sway { 50% { transform: rotate(-3deg); } }
+
+/* nap: eyes shut, head drooped, floating z */
+.gelly[data-state="nap"] .gl-eyes { display: none; }
+.gelly[data-state="nap"] .gl-shut, .gelly[data-state="nap"] .gl-z { display: inline; }
+.gelly[data-state="nap"] .gl-head { transform: translateY(13px) rotate(-9deg); }
+.gelly[data-state="nap"] .gl-z text { animation: gl-z 2.4s ease-in-out infinite; opacity: 0; }
+.gelly[data-state="nap"] .gl-z text:nth-child(2) { animation-delay: .8s; }
+.gelly[data-state="nap"] .gl-z text:nth-child(3) { animation-delay: 1.6s; }
+@keyframes gl-z { 0% { opacity: 0; transform: translate(0, 4px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(4px, -8px); } }
+
+/* giggle and cheer (arms up) */
+.gelly[data-state="giggle"] .gl-eyes, .gelly[data-state="giggle"] .gl-mouth,
+.gelly[data-state="cheer"] .gl-eyes, .gelly[data-state="cheer"] .gl-mouth { display: none; }
+.gelly[data-state="giggle"] .gl-happy, .gelly[data-state="giggle"] .gl-laugh,
+.gelly[data-state="cheer"] .gl-happy, .gelly[data-state="cheer"] .gl-laugh { display: inline; }
+.gelly[data-state="giggle"] .gl-cheeks, .gelly[data-state="cheer"] .gl-cheeks { opacity: .9; }
+.gelly[data-state="giggle"] .gelly__art { animation: gl-wiggle .14s ease-in-out 6 alternate; }
+.gelly[data-state="giggle"] .gl-arm--l { transform: rotate(40deg); }
+.gelly[data-state="giggle"] .gl-arm--r { transform: rotate(-40deg); }
+.gelly[data-state="cheer"] .gelly__art { animation: gl-jump .5s cubic-bezier(.3, .7, .4, 1) 2; }
+.gelly[data-state="cheer"] .gl-arm { display: none; }
+.gelly[data-state="cheer"] .gl-arms-up { display: inline; }
+@keyframes gl-wiggle { from { transform: rotate(-6deg); } to { transform: rotate(6deg); } }
+@keyframes gl-jump { 50% { transform: translateY(-16px); } }
+
+/* huff: a pout, puffed cheeks and a little "hmph" cloud, then she marches off */
+.gelly[data-state="huff"] .gl-mouth, .gelly[data-state="leaving"] .gl-mouth { display: none; }
+.gelly[data-state="huff"] .gl-pout, .gelly[data-state="huff"] .gl-brows, .gelly[data-state="huff"] .gl-puff,
+.gelly[data-state="leaving"] .gl-pout, .gelly[data-state="leaving"] .gl-brows { display: inline; }
+.gelly[data-state="huff"] .gl-cheeks, .gelly[data-state="leaving"] .gl-cheeks { opacity: 1; }
+.gelly[data-state="huff"] .gl-cheeks ellipse { transform: scale(1.25); transform-box: fill-box; transform-origin: center; }
+.gelly[data-state="huff"] .gl-puff { animation: gl-puff 1s ease-out infinite; }
+@keyframes gl-puff { from { opacity: 1; transform: translate(0, 0); } to { opacity: 0; transform: translate(6px, -6px); } }
+
+/* peek: only her head and one hand, then a duck back */
+.gelly[data-state="peek"], .gelly[data-state="duck"] { transition: transform .45s cubic-bezier(.3, .7, .3, 1); }
+.gelly[data-state="peek"] .gl-hand, .gelly[data-state="duck"] .gl-hand { display: inline; }
+.gelly[data-state="peek"] .gl-eyes { animation: gl-look 2.2s ease-in-out infinite; }
+@keyframes gl-look { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-3px); } 65% { transform: translateX(3px); } }
+.gelly[data-state="away"], .gcat[data-state="away"] { visibility: hidden; }
+
+/* the cat: up (walk, sit, happy) or curled up asleep */
+.gc-loaf, .gc-happy, .gc-heart { display: none; }
+.gcat[data-state="sleep"] .gc-up { display: none; }
+.gcat[data-state="sleep"] .gc-loaf { display: inline; }
+.gc-tail { transform-origin: 18px 31px; }
+.gcat[data-state="sit"] .gc-tail { animation: gc-swish 2.6s ease-in-out infinite; }
+.gcat[data-state="walk"] .gc-legs--a { animation: gc-step .3s ease-in-out infinite alternate; }
+.gcat[data-state="walk"] .gc-legs--b { animation: gc-step .3s ease-in-out infinite alternate-reverse; }
+.gcat[data-state="walk"] .gc-tail { transform: rotate(8deg); }
+.gcat[data-state="happy"] .gc-eyes { display: none; }
+.gcat[data-state="happy"] .gc-happy, .gcat[data-state="happy"] .gc-heart { display: inline; }
+.gcat[data-state="happy"] .gc-heart { animation: gc-heart 1.1s ease-out; transform-box: fill-box; transform-origin: center; }
+.gcat[data-state="happy"] .gcat__art { animation: gc-hop .35s ease-out 2; }
+@keyframes gc-swish { 50% { transform: rotate(-12deg); } }
+@keyframes gc-step { from { transform: translateY(0); } to { transform: translateY(-2.5px); } }
+@keyframes gc-heart { from { opacity: 0; transform: translateY(4px) scale(.6); } 40% { opacity: 1; } to { opacity: 0; transform: translateY(-8px) scale(1.1); } }
+@keyframes gc-hop { 50% { transform: translateY(-6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+    .gelly *, .gelly .gelly__art, .gcat *, .gcat .gcat__art { animation: none !important; }
+    .gelly[data-state="nap"] .gl-z text { opacity: 1; }
+}

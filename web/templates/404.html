@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}404{% endblock %}
+
+{% block content %}
+<section class="min-h-[70vh] flex items-center">
+    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <p class="text-g6-indigo font-mono text-sm tracking-wider uppercase mb-4">Error 404</p>
+        <h1 class="text-6xl font-bold text-white mb-4">Page not found</h1>
+        <p class="text-xl text-gray-400 mb-8">The page you're looking for doesn't exist or has been moved.</p>
+        <a href="{% url 'pages:landing' %}" class="inline-flex items-center justify-center px-8 py-4 bg-gradient-to-r from-g6-indigo to-g6-violet text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-g6-indigo/25 transition-all duration-300">
+            Back to Home
+        </a>
+    </div>
+</section>
+{% endblock %}

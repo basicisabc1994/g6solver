@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Components{% endblock %}
+{% block meta_description %}G6's library of AI primitives for failure engineering: the core harness and its extensions, each one closing a specific way AI systems fail.{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/components.css' %}">{% endblock %}
+{% block content %}
+{% comment %}The core list is read from the registry (pages/catalogue.py), the extensions from data/component_catalogue.json
+(pages/extensions.py), which was made once from the extension tracker. An extension is "In the library" only when the
+registry finds its package, and is then described from that package; no component is described in this template. Copy
+is a draft for the owner (DECISIONS #36). Owner, 2026-10-23: only what is in the library is shown; every planned row
+and every word about extensions to come sits inside an "if show_planned" block (pages/extensions.py SHOW_PLANNED), and
+pages/extensions.rows() leaves planned rows out while it is off.{% endcomment %}
+<header class="wrap page-hero">
+    <h1 class="display">Components</h1>
+    <p class="lede why">AI agents fail in the same few ways, again and again. Some 250 million tokens of their reasoning
+    and failure traces were reviewed by hand to find the primitives that close those failures: a periodic table of
+    intelligence{% if show_planned %}, filled in one element at a time{% endif %}.</p>
+    <p class="lede">The components are one of G6's two parts: a prebuilt library of AI primitives for capability
+    extension and failure engineering. Each extends what a model can do or closes one way it fails, and they stack like
+    slices of Swiss cheese: where one slice has a hole, the next one catches the failure. The other part, the
+    <a class="link" href="{% url 'pages:metaharness' %}">meta-harness</a>, learns which of them your work needs, so the
+    system you already run debugs, corrects and improves itself.</p>
+    <dl class="cmp-counts">
+        <div><dt>Core harness</dt><dd>{{ core|length }}</dd></div>
+        <div><dt>Extensions</dt><dd>{{ extension_count }}</dd></div>
+        <div><dt>Failure modes in every premortem</dt><dd>{{ premortem_modes|length }}</dd></div>
+    </dl>
+</header>
+
+<section class="band" id="ways" aria-labelledby="ways-h">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="ways-h">Three ways to use them</h2>
+                <p class="lede quiet">All three work today, on your own computer.</p>
+            </div>
+        </div>
+        <div class="ways">
+            <div class="way">
+                <h3 class="h3">As built</h3>
+                <p>The core harness as shipped. Connect it to your agent over MCP and every result comes back
+                labelled with what its evidence supports.</p>
+            </div>
+            <div class="way">
+                <h3 class="h3">Compose</h3>
+                <p>Your agent finds the components a task needs and combines them: <code>g6_find</code>,
+                <code>g6_describe</code> and <code>g6_invoke</code> over MCP, or plain imports in Python.</p>
+            </div>
+            <div class="way">
+                <h3 class="h3">Full source</h3>
+                <p>Every line is open. Read it, change it, and build your own components on it.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="band" id="modes" aria-labelledby="modes-h">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="modes-h">Three modes of work</h2>
+                <p class="lede quiet">How G6 runs a job: once, continuously, or before anything starts.</p>
+            </div>
+        </div>
+        <div class="ways">
+            <div class="way">
+                <h3 class="h3">Mission</h3>
+                <p>One piece of work against a frozen standard of done. A person confirms the standard, G6 runs the
+                checks, and the certificate states exactly what the evidence supports.</p>
+                <p class="small quiet"><code>g6.workforce</code></p>
+            </div>
+            <div class="way">
+                <h3 class="h3">Venture</h3>
+                <p>An ongoing operation, run in budgeted ticks. Every outward action is drafted, gated and queued for a
+                person to approve.</p>
+                <p class="small quiet"><code>g6.operator</code></p>
+            </div>
+            <div class="way">
+                <h3 class="h3">Premortem</h3>
+                <p>Before work starts, assume it has already failed and name how. Each of the
+                {{ premortem_modes|length }} failure modes comes with the guard that catches it.</p>
+                <p class="small quiet"><code>g6.reliability_pipeline</code></p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="band" id="capabilities" aria-labelledby="capabilities-h">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="capabilities-h">A capability extension harness</h2>
+                <p class="lede quiet">A language model predicts text. Extensions give the model you already run senses,
+                memory, tools and a body, so it can do more of a job on its own, and each new ability arrives with
+                checks for the ways it fails.</p>
+            </div>
+            <div class="band__body">
+                <p>The model stays yours: a free local model through Ollama, or Anthropic, OpenAI or OpenRouter, through
+                <code>g6.core.llm</code>. The <a href="#ext-llm_router"><code>llm_router</code></a> extension picks a
+                model for each kind of task, local first, and falls back only along a chain you set. What changes is
+                what it can reach. Each group below says what a model cannot
+                do alone, what you can achieve once it can, and which parts of G6 do the work.</p>
+            </div>
+        </div>
+        <div class="caps">
+            {% for cap in capabilities %}{% if show_planned or cap.library or cap.rows %}
+            <article class="cap" id="cap-{{ cap.key }}">
+                <h3 class="h3">{{ cap.title }}</h3>
+                <p class="cap__gap">{{ cap.gap }}</p>
+                <p class="cap__achieve">{{ cap.achieve }}</p>
+                {% if cap.library %}<p class="cap__meta">In the library now: {% for name in cap.library %}{% if name in core_names %}<a href="#core-{{ name }}"><code>g6.{{ name }}</code></a>{% else %}<code>g6.{{ name }}</code>{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+                {% if cap.rows %}<p class="cap__meta">Extensions: {% for ext in cap.rows %}<a href="#ext-{{ ext.name }}"{% if not ext.merged %} title="{{ ext.summary }}"{% endif %}><code>{{ ext.name }}</code></a>{% if ext.merged %} (merged into <code>{{ ext.package }}</code>){% elif not ext.own %} (joins <code>{{ ext.package }}</code>){% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+            </article>
+            {% endif %}{% endfor %}
+        </div>
+        {% if show_planned %}
+        <p class="small cap-status">{% if capability_status.ready %}{{ capability_status.ready }} of the {{ capability_status.total }}{% else %}None of the {{ capability_status.total }}{% endif %}
+        extensions named here {% if capability_status.ready == 1 %}is{% else %}are{% endif %} in the open-source library
+        yet: they join it one at a time, each with its tests, its failure checks and an MCP block. Every one is listed,
+        with the failure it guards against or is planned to, under <a href="#extensions">Extensions</a>.</p>
+        {% else %}
+        <p class="small cap-status">{% if capability_status.ready == capability_status.total %}Every extension named here is{% else %}{{ capability_status.ready }} of the {{ capability_status.total }} extensions named here are{% endif %}
+        in the open-source library{% if capability_status.ready != capability_status.total %}; the others are built and
+        wait for their certificate{% endif %}. Each is listed, with the failure it guards against, under
+        <a href="#extensions">Extensions</a>.</p>
+        {% endif %}
+    </div>
+</section>
+
+<section class="band" id="core" aria-labelledby="core-h">
+    <div class="wrap cols">
+        <div class="band__head">
+            <h2 class="h2" id="core-h">The core harness</h2>
+            <p class="lede quiet">The components that check, gate, ground and tune an agent's work, the meta-harness among
+            them. Each runs on its own, from Python or over MCP. To see how they fit together in the code, explore the
+            <a href="{% url 'pages:graph' %}">repository graph</a>; to see which failures each one guards against,
+            and which nothing guards yet, see the <a href="{% url 'pages:failure_modes' %}">failure map</a>.</p>
+        </div>
+        <div class="band__body">
+            {% for group in core_groups %}
+            <div class="cmp-group" id="{{ group.key }}">
+                <h3 class="h3 cmp-group__title">{{ group.title }}</h3>
+                <p class="cmp-group__lede">{{ group.lede }}</p>
+                <ul class="cmp-list">
+                    {% for c in group.items %}
+                    <li class="cmp" id="core-{{ c.name }}">
+                        <h4 class="cmp__title">{{ c.title }}</h4>
+                        <p class="cmp__what">{{ c.plain }}.</p>
+                        <p class="cmp__meta">Guards against: {{ c.guards }}. <code>g6.{{ c.name }}</code>{% if c.mcp %}, callable over MCP{% endif %}</p>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="band" id="extensions" aria-labelledby="extensions-h">
+    <div class="wrap cols">
+        <div class="band__head">
+            <h2 class="h2" id="extensions-h">Extensions</h2>
+            {% if show_planned %}
+            <p class="lede quiet">{{ extension_counts.extensions }} extensions, in {{ families|length }} families, that
+            extend what a model can do. Each names the failure it guards against or the gap it closes, and joins the
+            library with its tests, callable over MCP. {% if extension_counts.in_library %}So far
+            {{ extension_counts.in_library }} {% if extension_counts.in_library == 1 %}is{% else %}are{% endif %} in the
+            library; the rest are planned.{% else %}None is in the library yet.{% endif %} Another {{ extension_counts.joining }} planned pieces
+            join one of them, a family's shared code or the core harness, and each is listed under what it joins.</p>
+            {% else %}
+            <p class="lede quiet">{{ extension_counts.extensions }} extensions, in {{ families|length }} families, that
+            extend what a model can do. Each names the failure it guards against or the gap it closes, and is in the
+            library with its tests{% if extension_counts.awaiting %}, except {{ extension_counts.awaiting }} built in
+            vetted areas that wait for their certificate{% endif %}.{% if extension_counts.merged %} Another
+            {{ extension_counts.merged }} pieces were merged into one of them or into the core harness, and each is listed
+            under the package it joined.{% endif %}</p>
+            {% endif %}
+        </div>
+        <div class="band__body">
+            {% for family in families %}
+            <details class="cmp-family"{% if forloop.first %} open{% endif %}>
+                <summary><span class="cmp-family__name">{{ family.label }}</span>
+                <span class="cmp-family__n">{{ family.items|length }}</span></summary>
+                <ul class="cmp-list">
+                    {% for ext in family.items %}{% include "pages/_extension.html" with ext=ext own=True %}{% endfor %}
+                </ul>
+                {% if show_planned and family.shared %}
+                <p class="cmp__meta cmp-shared">Planned into the family's shared code, <code>{{ family.package }}</code>:</p>
+                <ul class="cmp-list">
+                    {% for ext in family.shared %}{% include "pages/_extension.html" with ext=ext own=False %}{% endfor %}
+                </ul>
+                {% endif %}
+            </details>
+            {% endfor %}
+            {% if into_core %}
+            <details class="cmp-family" id="into-core">
+                <summary><span class="cmp-family__name">{% if show_planned %}Joining the core harness{% else %}Merged into the core harness{% endif %}</span>
+                <span class="cmp-family__n">{{ extension_counts.into_core }}</span></summary>
+                <ul class="cmp-list">
+                    {% for target in into_core %}
+                    <li class="cmp" id="into-{{ target.name }}">
+                        <code class="cmp__name">{% if target.name in core_names %}<a href="#core-{{ target.name }}">{{ target.package }}</a>{% else %}{{ target.package }}{% endif %}</code>
+                        <div class="cmp-joined">
+                            <ul class="cmp-list">
+                                {% for ext in target.items %}{% include "pages/_extension.html" with ext=ext own=False %}{% endfor %}
+                            </ul>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </details>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}

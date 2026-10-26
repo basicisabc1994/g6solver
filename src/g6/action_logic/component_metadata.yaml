@@ -1,0 +1,8 @@
+license_status: Apache-2.0
+owner: reliability-platform
+docs_path: docs/product_global_specs/expert_grounding_g6_system_design/G6_Action_Logic.md
+related_components: [action_gating, reliability_pipeline, epistemic_integrity, core]
+external_links: []
+risk_level: high
+allowed_autonomy: none
+rollback_method: stateless

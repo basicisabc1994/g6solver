@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "protocol": "hic05-dev-v1",
+  "source_base": "f4c87e0ada9144b8da39e98c80ce1c19cf4a2ede",
+  "population": "one authored/unblinded development task; no native agent or held-out evaluation",
+  "frozen_before_intervention": true,
+  "files": {
+    "task.json": "7a76e556ff2b59ae32302b84dc4f0ddbc2f86016dcb22c1f1f2548cd91e80630",
+    "inventory.py": "14914e837a56d7ff7b004cddee6871024d0796cdf59ff9e1e41243e37182996f",
+    "tests/test_inventory.py": "76d3b57552d0f2c788589fcbee41e73ef564e12905734bd3767e68121bd6d76b"
+  }
+}

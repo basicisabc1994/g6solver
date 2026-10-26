@@ -1,0 +1,4 @@
+{
+  "SPDX-License-Identifier": "Apache-2.0",
+  "inherits": {"path": "g6/ml/adapt_sklearn/certificate", "sha256": "f8def665b3ad4904f08daf9a066d70ff419e871b8673779972620bce0a80047d"}
+}

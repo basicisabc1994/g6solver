@@ -1,0 +1,14 @@
+{
+  "name": "gatekeeper",
+  "purpose": "Record a person's decision on a gate (approve or reject, with their reason) as the gate's one attempt; decides nothing itself and calls no component.",
+  "rung": "human",
+  "read_only": true,
+  "allowed": [["owner", "decide"]],
+  "policy": {
+    "max_steps": 1,
+    "max_tool_calls": 0,
+    "max_retries": 0,
+    "max_runtime_seconds": 60,
+    "max_privilege_level": 0
+  }
+}

@@ -1,0 +1,237 @@
+{
+  "mission_id": "synthetic-engineering-001",
+  "domain": "engineering_design_study",
+  "high_stakes": true,
+  "inputs": {
+    "specifications": "specification",
+    "units_policy": "units",
+    "jurisdiction": "jurisdiction"
+  },
+  "standard": {
+    "standard_id": "std-engineering-001",
+    "standard_sha256": "be3b87a0c5668d2957c479e1623bc8e48862a861cbe38429019c4ede24cf8bc4",
+    "predicates": [
+      "units_consistent",
+      "design_load_declared",
+      "applicable_standard_identified",
+      "calculation_reproduced",
+      "geometry_status_disclosed",
+      "human_engineer_review_if_required"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "scope",
+      "role": "task_standard",
+      "source_operation": "intent_engine.elicit",
+      "declared_effect": "read",
+      "requires": {
+        "specifications": "specification",
+        "jurisdiction": "jurisdiction"
+      },
+      "provides": {
+        "design_brief": "brief"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "scope_check",
+      "role": "scope_review",
+      "source_operation": "align_evals.evaluate",
+      "declared_effect": "read",
+      "requires": {
+        "design_brief": "brief"
+      },
+      "provides": {
+        "scope_ok": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "scope"
+    },
+    {
+      "id": "standards_approval",
+      "role": "approval",
+      "gate": true,
+      "source_operation": "",
+      "declared_effect": "read",
+      "requires": {
+        "design_brief": "brief"
+      },
+      "provides": {
+        "standards_search_approved": "approval"
+      },
+      "data_class": "public",
+      "egress": "none",
+      "budget_cents": 0
+    },
+    {
+      "id": "standards",
+      "role": "grounding",
+      "source_operation": "ctx_search.search",
+      "declared_effect": "external",
+      "requires": {
+        "design_brief": "brief",
+        "standards_search_approved": "approval"
+      },
+      "provides": {
+        "standards_register": "source_list"
+      },
+      "data_class": "public",
+      "egress": "declared",
+      "budget_cents": null
+    },
+    {
+      "id": "standards_check",
+      "role": "grounding_review",
+      "source_operation": "ctx_rag.rag_evaluate_retrieval",
+      "declared_effect": "read",
+      "requires": {
+        "standards_register": "source_list"
+      },
+      "provides": {
+        "standards_ok": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "standards"
+    },
+    {
+      "id": "calculations",
+      "role": "mathematics",
+      "source_operation": "job_engineer.design_system",
+      "declared_effect": "read",
+      "requires": {
+        "standards_register": "source_list",
+        "design_brief": "brief",
+        "design_load": "load",
+        "units_policy": "units"
+      },
+      "provides": {
+        "calculation_record": "calculation"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "calculation_check",
+      "role": "independent_check",
+      "source_operation": "formal_methods.solve",
+      "declared_effect": "read",
+      "requires": {
+        "calculation_record": "calculation"
+      },
+      "provides": {
+        "limited_check_evidence": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "calculations"
+    },
+    {
+      "id": "geometry",
+      "role": "visual_geometry",
+      "source_operation": "adapt_blender.create_primitive",
+      "declared_effect": "local_write",
+      "requires": {
+        "design_brief": "brief"
+      },
+      "provides": {
+        "draft_geometry": "geometry"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "geometry_check",
+      "role": "geometry_review",
+      "source_operation": "mesh3d.analyze_mesh",
+      "declared_effect": "read",
+      "requires": {
+        "draft_geometry": "geometry"
+      },
+      "provides": {
+        "geometry_status": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "geometry"
+    },
+    {
+      "id": "supply",
+      "role": "advisory",
+      "source_operation": "job_logistics.optimize_route",
+      "declared_effect": "read",
+      "requires": {
+        "draft_geometry": "geometry",
+        "design_brief": "brief"
+      },
+      "provides": {
+        "provisional_plan": "plan"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "supply_check",
+      "role": "advisory_review",
+      "source_operation": "job_labourer.evaluate_safety",
+      "declared_effect": "local_write",
+      "requires": {
+        "provisional_plan": "plan"
+      },
+      "provides": {
+        "supply_review": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "supply"
+    },
+    {
+      "id": "engineer_review",
+      "role": "human_review",
+      "gate": true,
+      "source_operation": "",
+      "declared_effect": "read",
+      "requires": {
+        "limited_check_evidence": "check_result",
+        "geometry_status": "check_result",
+        "supply_review": "check_result",
+        "standards_ok": "check_result",
+        "scope_ok": "check_result"
+      },
+      "provides": {
+        "engineer_signoff": "approval"
+      },
+      "data_class": "public",
+      "egress": "none",
+      "budget_cents": 0
+    }
+  ],
+  "budget_cents": 500,
+  "charged": false,
+  "approvals": [
+    {
+      "node": "standards",
+      "scope": "egress"
+    }
+  ],
+  "required_roles": [
+    "task_standard",
+    "grounding",
+    "mathematics",
+    "visual_geometry",
+    "independent_check",
+    "human_review"
+  ]
+}

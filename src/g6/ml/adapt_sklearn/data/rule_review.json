@@ -1,0 +1,208 @@
+{
+  "kind": "review",
+  "scope": "every tiered rule of g6.ml._sources.RULES that g6.ml.adapt_sklearn's certificate covers (21 rules, including the new grouped_hold_out), re-read at fix/certs-v2a fc554b1b79: grouped, grouped_hold_out, preprocessing_in_pipeline, baseline, leakage_probes, too_good, overfit_gap, bounds and r2 were re-read because their rule text, implementation or register note changed; the rest were checked for an unchanged source hash",
+  "reviewer": "Claude Sonnet 5.5, a read-only independent reader (not the author of the code, the register or the cases)",
+  "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
+  "date": "2026-10-23",
+  "method": "hashed each held page's raw bytes myself (cross_validation, common_pitfalls and model_evaluation, all 1.9) and compared them with the register; extracted each page's visible text and read every cited section; checked each printed case's quote against that text and its numbers against the page and by hand arithmetic; read the implementing function and the code it calls for every rule; ran issue_certificate.py --precheck with all eleven source files (exit 0, no named gap) and --reviewed; second pass on fc554b1b79: diffed the register, rule table, shared code and certificate inputs against 4a3b4e211d, re-read each changed rule, ran folds() on the printed GroupKFold example at seeds 0, 1, 2 and 3, and re-ran --reviewed and --precheck; third pass on land/certs-issue-2 107af94c1a: read the diff of component_process, confine, errors, process_tree and sandbox since fc554b1b79 (OS isolation); no rule's computation changed, only reviewed.artifact_sha256 was replaced; fourth pass on land/certs-issue-2 cba6e4eece: read the diff of ml/_sources.py and core/vetting.py since 107af94c1a (docstring, a vetting import and the cited() review string only); no rule, clause, threshold or computation changed, only reviewed.artifact_sha256 and rules_sha256 were replaced",
+  "label_effect": "none: a review is evidence of kind review; it raises no label",
+  "rules": [
+    {
+      "rule": "held_out",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "78d7587fa92ba3b3e480c9d841b50fedc14ac29d571ccb319d4068235154f0e2",
+      "finding": "Section 3.1 says part of the data is held out as a test set and shows 150 iris rows split 40% out into 90 and 60 (quote found in the page bytes); make_split holds out whole groups of identical rows from an RNG seeded with the rows' hash and gives 60 and 90 at those inputs. The source's split is random and takes a seed; G6's hash-driven choice is disclosed in the rule and is G6's, not the source's. Two new cases (60 held-out groups of 150 distinct rows; 3 rows with half held out giving 1 and 2, the last group always kept) match make_split."
+    },
+    {
+      "rule": "stratified",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "78d7587fa92ba3b3e480c9d841b50fedc14ac29d571ccb319d4068235154f0e2",
+      "finding": "The source says class frequencies are approximately preserved (StratifiedKFold, StratifiedShuffleSplit); make_split takes max(1, round(class rows x fraction)) per class in whole identical-row groups, which preserves them approximately, as the rule's wording needs. The printed case (50 rows, 45/5, fold of a third: train [30 3], test [15 2]) is found in the page and matches round(45/3)=15 and round(5/3)=2, but it is the first of three folds (the third prints [15 1]), so it checks one fold's share, not a hold-out the source printed. Two new cases (90/10 with a quarter held out giving 22 and 2; 40/2 with a fifth giving 8 and the minimum of one row) are the case author's arithmetic, marked not printed; they match make_split's round-half-even and max(1, ...)."
+    },
+    {
+      "rule": "grouped",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "78d7587fa92ba3b3e480c9d841b50fedc14ac29d571ccb319d4068235154f0e2",
+      "finding": "The source states the mechanism (no group in both a validation fold and its training fold) for groups of dependent samples; G6 takes identical-feature rows as its groups, which the rule text discloses. folds() uses StratifiedGroupKFold or GroupKFold with shuffle=True and the seed. The printed GroupKFold example (test folds [6 7 8 9], [3 4 5], [0 1 2]) is in the page; I ran folds() on it and the folds come out in the printed order at seed 0 and in other orders at seeds 1 and 3, so the new order case (seed 0) is true to the rule's 'order the seed shuffles' and the sorted case holds at any seed. The hold-out half of the old rule is now grouped_hold_out."
+    },
+    {
+      "rule": "grouped_hold_out",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "78d7587fa92ba3b3e480c9d841b50fedc14ac29d571ccb319d4068235154f0e2",
+      "tier_justified": true,
+      "tier_reason": "3.1.2.4 prints only GroupKFold test-fold indices, which test the folds (rule grouped), never a hold-out split; the hold-out is chosen from the rows' own hash by make_split, which the page cannot print, so no printed value exists that make_split can be run on.",
+      "finding": "The clause says every validation sample must come from groups absent from the paired training fold; the rule applies the same keeping-together to the hold-out split, using G6's own grouping (identical features), which it discloses. This is an extension of the clause from folds to the hold-out, fair in spirit and said in the rule. make_split groups rows by spec.key, shuffles whole groups, holds out groups until the wanted count is reached and always keeps the last group of a class in training; duplicates_across (in prepare) then refuses any held-out row repeating a training row. The new cases (20 rows in identical pairs, a quarter held out: none repeats, 6 rows held out, 3 groups; 3 pairs with half held out: 4 rows) match the code by hand."
+    },
+    {
+      "rule": "cv_training_part",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "78d7587fa92ba3b3e480c9d841b50fedc14ac29d571ccb319d4068235154f0e2",
+      "tier_justified": true,
+      "tier_reason": "Section 3.1 prints cross_val_score values only for the iris data loaded from scikit-learn (the data itself is not printed) with its own splits, so no printed value can be reproduced by running G6's cross_validate on printed inputs; the rule is a procedure (fit on k-1 folds of the training part, score the remaining one, the held-out rows never read), and the held-out rows reach the child only as unlabelled features used after the choice.",
+      "finding": "cross_validate fits a fresh pipeline on each fold's training rows of the training part only and scores the other fold with G6's metric; _rank picks the best mean fold score and only then calls fit_predict; the parent scores the held-out rows once. This is what the clause says (k-1 folds train, one validates, mean over folds, a test set still held out)."
+    },
+    {
+      "rule": "preprocessing_in_pipeline",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "21fac11c181ab35624dcf8673f0475d403d4f6ecf0f9bead01a573d7642b515c",
+      "tier_justified": true,
+      "tier_reason": "The only printed values in 12.2 (0.76, 0.5, 0.43) come from SelectKBest and HistGradientBoostingClassifier on seeded random data split by train_test_split; G6's pipeline has no feature-selection step, imputes, scales and one-hot encodes, and splits by row hash, so no printed value is something G6's _pipeline can be run to reproduce or contradict.",
+      "finding": "_pipeline builds one scikit-learn Pipeline (median imputation with a missing indicator, StandardScaler only where the estimator's entry sets scale, constant-category imputation and OneHotEncoder with max_categories=50), and every fit, each fold's included, is on training rows only. The rule now says scaling is only for flagged estimators and the 50-category cap is G6's own, and carries own_choice=True: the two gaps I found are closed. The new unscaled case matches the code (scale is read from the estimator's spec)."
+    },
+    {
+      "rule": "seed",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "21fac11c181ab35624dcf8673f0475d403d4f6ecf0f9bead01a573d7642b515c",
+      "tier_justified": true,
+      "tier_reason": "The one printed value (0.84 in 12.3.3.1) comes from make_classification and train_test_split sharing one RandomState instance across calls; G6 passes an integer to each object and splits by hash, so no printed value is something G6's _estimator can be run to reproduce.",
+      "finding": "_estimator sets random_state to the seed whenever the class has that parameter, folds() seeds the splitter and compare() seeds the resamples; prepare() refuses a random_state among the parameters. The source recommends passing an rng and allows an integer; the clause's 'one fixed seed' is the allowed integer form (the page adds that an integer can make CV less robust). The catalogue has no nested or ensemble estimator wrappers (I searched for Voting, Bagging and Stacking), so setting the top-level random_state reaches every object."
+    },
+    {
+      "rule": "baseline",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "7e740e140ba75771bb1c7de132babfd958c277b5529d187e7ba744e69729120c",
+      "tier_justified": true,
+      "tier_reason": "3.4.8 prints 0.63, 0.579 and 0.94 for iris with labels changed in code and a split from train_test_split(random_state=0); neither the labels nor the split are printed, so G6's baseline cannot be run on printed inputs.",
+      "finding": "baseline() predicts the most frequent training class or the mean (fsum) of the training targets, n times, which is what most_frequent and DummyRegressor's mean do. The rule now says a tie goes to the first label in text order and is G6's own (the source is silent on ties), which is what max over the text-sorted classes does."
+    },
+    {
+      "rule": "accuracy",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "7e740e140ba75771bb1c7de132babfd958c277b5529d187e7ba744e69729120c",
+      "finding": "accuracy() is the share of positions where prediction equals truth, as the formula states; the printed example (y_pred [0,2,1,3] against y_true [0,1,2,3] gives 0.5) is in the page and the case reproduces it exactly."
+    },
+    {
+      "rule": "balanced_accuracy",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "7e740e140ba75771bb1c7de132babfd958c277b5529d187e7ba744e69729120c",
+      "tier_justified": true,
+      "tier_reason": "I read all of 3.4.4.4 in the held page: it prints a formula, the 1/n_classes limit and references, and no numerical example, so no printed value exists to run G6's balanced_accuracy on.",
+      "finding": "balanced_accuracy() is the mean over the classes present in the truth of each class's recall, the macro-average the source defines; it equals accuracy when classes are balanced. The case (truth [0,0,0,1], all predicted 0, giving 0.5) is the case author's computation of the stated 1/n_classes behaviour, correctly marked not printed. A new case (recalls 1/2 and 2/3 giving 7/12 = 0.583333) is by hand and matches."
+    },
+    {
+      "rule": "r2",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "7e740e140ba75771bb1c7de132babfd958c277b5529d187e7ba744e69729120c",
+      "finding": "r2() is 1 minus the residual over total sum of squares about the mean, and returns undefined (None) when the true values are all equal, which is the source's 'original definition, not finite' (NaN or -Inf), rather than its forced 1.0 or 0.0. Printed cases 0.948, 0.965 and 0.908 are in the page and I recomputed 0.94861, 0.96543 and 0.90816 by hand, so the truncation declared in the register holds for 0.948 (rounding would print 0.949). The register no longer claims the ELLIPSIS explanation I could not find in the page bytes. The new perfect-prediction case (0, 1 against 0, 1 gives 1) follows from the formula."
+    },
+    {
+      "rule": "mae",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "7e740e140ba75771bb1c7de132babfd958c277b5529d187e7ba744e69729120c",
+      "finding": "mae() is the mean absolute difference (fsum over n); the printed example (3, -0.5, 2, 7 against 2.5, 0.0, 2, 8 gives 0.5) is in the page and checks by hand (2/4)."
+    },
+    {
+      "rule": "rmse",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "7e740e140ba75771bb1c7de132babfd958c277b5529d187e7ba744e69729120c",
+      "finding": "rmse() is sqrt of the mean squared difference. The page prints no RMSE value, only MSE 0.375 for the example and the statement that RMSE is its square root in the target's units; the case's location now says so and squares rmse() to meet 0.375 (quote found, 1.5/4 checks)."
+    },
+    {
+      "rule": "headline_imbalance",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "7e740e140ba75771bb1c7de132babfd958c277b5529d187e7ba744e69729120c",
+      "tier_justified": true,
+      "tier_reason": "3.4.4.4 prints no number about when to prefer balanced accuracy and no example; the 10% threshold is G6's own and no printed value exists that G6's class_balance can be run on.",
+      "finding": "The source supports using balanced accuracy on imbalanced data but sets no threshold; class_balance() counts the training rows only and calls the set imbalanced when the smallest class share is under 0.10, and headline_metric() then picks balanced accuracy, as the rule says. The rule correctly carries own_choice=True. New edge cases (10 of 100 is not under a tenth; 1 of 3 gives a share of 0.333333) match class_balance's strict less-than."
+    },
+    {
+      "rule": "held_out_from_rows",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "_caution is a pure string builder: it reads the count and returns text, saying 'optimistic' once the count is 1 or more; it writes nothing and gates nothing. The recording of each scoring (held_out_use, a small SQLite write under G6_HOME) is in another function the certificate's cases do not run; it is declared in the rule and its docstring says it is never a gate.",
+      "finding": "The threshold of one earlier scoring is G6's own (the source, section 3.1, warns that tuning on a test set leaks knowledge but sets no count), correctly cited as g6; the code says 'so a result kept after several tries on them is optimistic' from one earlier scoring, as the rule states, and says the count could not be made when it is unknown."
+    },
+    {
+      "rule": "leakage_probes",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "_leakage_findings only builds a list of findings (copy, correlation, single-feature); prepare() turns a non-empty list into the LEAKAGE refusal. It changes no row, feature or score.",
+      "finding": "Thresholds 0.99 (Pearson or Spearman on the training rows; leave-one-out accuracy or R squared above a baseline on every row) are G6's own and cited g6; no source sets them. The rule now states what I had noted: the correlation probe also covers a two-class numeric classification target, and the probes need at least 5 rows (10 for the one-feature probe); both match _leakage_findings (MIN_PROBE_ROWS, and 2 x MIN_PROBE_ROWS)."
+    },
+    {
+      "rule": "too_good",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "_too_good returns nothing or raises the LEAKAGE MLError carrying the evidence; it computes nothing and changes no value.",
+      "finding": "Refuses when the reported held-out headline (already rounded to six places) is 0.99 or more and higher is better; 0.99 is the shared constant LEAK_SINGLE_FEATURE, G6's own and cited g6. The rule now says 'once rounded to 6 places as it is reported', which matches the code."
+    },
+    {
+      "rule": "min_held_out",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "prepare() only refuses (seed, bounds, columns, class thinness, held-out size, class on both sides, duplicates, leakage) or returns the split, evidence and class balance; the refusals not named in this rule (seed, columns, duplicates across the split) are separate refusals, none lowers or changes a result.",
+      "finding": "The 10 independent held-out rows (identical rows count once), a class missing from either side and a class with fewer than 2 distinct rows are all refused as the rule says, using MIN_HELD_OUT = 10, G6's own and cited g6. The named function is a many-purpose orchestrator, so a mutant of it exercises refusals other than this rule's."
+    },
+    {
+      "rule": "interval",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "compare() sets clearly_better true only when the lift's lower end is above zero and adds a note when the score is undefined or too few resamples are defined; the red card for 'does not clearly beat' is chosen by said(), not here. compare() also computes the headline numbers (held_out, baseline, lift, gap), which are not part of this rule and rest on the metric rules.",
+      "finding": "1,000 seeded resamples of whole identical-row groups, capped at 5,000,000 divided by the held-out rows (with the lowered count said in the interval), a 95% percentile interval, and clearly_better = lift_low > 0, as the rule says. The 95% level, the 1,000 resamples and the cap are G6's own, cited g6."
+    },
+    {
+      "rule": "overfit_gap",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "_gap_note is a pure function: it returns an extra sentence when the gap is 0.10 or more and the headline is higher-is-better, and an empty string otherwise; it refuses, scores and picks nothing. The refusal (_too_good) and the card now stay in said(), outside the checked function.",
+      "finding": "A gap of 0.10 or more (the gap is rounded to six places first, in compare()) adds 'fits its training rows far better than new ones'; 0.10 is G6's own, cited g6. The rule now implements _gap_note and says 'rounded to 6 places', which matches: the earlier worry that the checked function also refused and chose the card is gone."
+    },
+    {
+      "rule": "bounds",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "_bounds only raises INPUT_INVALID or TOO_LARGE through bounded() and a class count; it changes nothing.",
+      "finding": "An undeclared column, a text cell over 10,000 characters, text over 5,000,000 characters in all (accumulated per row) and more than 100 classes are refused, with the limits G6's own and cited g6. _bounds now also bounds the rows to predict (a second call to bounded() inside the function), which closes the gap I noted; the new fires/holds cases at 10,001 and 10,000 characters in a row to predict reach it."
+    }
+  ],
+  "reviewed": {
+    "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+    "artifact_sha256": "1369e0639b83dcee96d276ca28d72087a7c2c901a0c86ab229db36099f6d7776",
+    "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+    "refusals": [
+      "MLError"
+    ],
+    "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
+    "sources_sha256": {
+      "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
+      "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
+      "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
+      "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
+      "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
+      "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
+      "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
+      "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
+      "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd",
+      "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+      "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98"
+    }
+  }
+}

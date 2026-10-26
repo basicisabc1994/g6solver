@@ -1,0 +1,9 @@
+*.egg-info/
+__pycache__/
+.pytest_cache/
+dist/
+build/
+
+# The website's CSS build tools (oss/web/tailwind); only the compiled main.css is committed
+web/tailwind/node_modules/
+web/build/

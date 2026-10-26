@@ -1,0 +1,59 @@
+{% load static %}<footer class="foot">
+    <div class="wrap">
+        <div class="foot__grid">
+            <div>
+                <a href="{% url 'pages:landing' %}" class="brand" aria-label="G6, home"><img src="{% static 'images/android-chrome-192x192.png' %}" width="36" height="36" alt=""><span class="wordmark">G6</span></a>
+                <p class="quiet" style="max-width:24em;margin:14px 0 0;">An open-source harness for AI agents that tunes itself to your work. A person approves every change.</p>
+            </div>
+            <div>
+                <h2>Use G6</h2>
+                <ul>
+                    <li><a href="{% url 'pages:get_started' %}">Get started</a></li>
+                    <li><a href="{% url 'pages:metaharness' %}">Meta-harness</a></li>
+                    <li><a href="{% url 'pages:components' %}">Components</a></li>
+                    <li><a href="{% url 'pages:bundles' %}">Bundles</a></li>
+                    <li><a href="{% url 'pages:graph' %}">Repository graph</a></li>
+                    <li><a href="{% url 'docs_hub:landing' %}">Docs</a></li>
+                </ul>
+            </div>
+            <div>
+                <h2>Read</h2>
+                <ul>
+                    <li><a href="{% url 'pages:research' %}">Research, failures included</a></li>
+                    <li><a href="{% url 'pages:guide' %}">Guide</a></li>
+                    <li><a href="{% url 'blog:index' %}">Essays</a></li>
+                    <li><a href="{% url 'pages:principles' %}">Principles</a></li>
+                    <li><a href="{% url 'pages:faq' %}">FAQ</a></li>
+                </ul>
+            </div>
+            <div>
+                <h2>Project</h2>
+                <ul>
+                    <li><a href="https://github.com/basicisabc1994/g6solver">Source on GitHub</a></li>
+                    <li><a href="{% url 'pages:contribute' %}">Contribute</a></li>
+                    <li><a href="{% url 'pages:security' %}">Security</a></li>
+                    <li><a href="{% url 'pages:about' %}">About</a></li>
+                    <li hidden><button type="button" class="foot__contact" data-contact>Contact</button></li>
+                    <li><a href="{% url 'pages:license' %}">Licence</a></li>
+                    <li><a href="{% url 'pages:privacy' %}">Privacy</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="foot__base small">
+            <span>Apache License 2.0, {{ current_year }}. This site sets no cookies and counts no visitors.</span>
+            <button type="button" id="gelly-toggle" class="btn btn--small" aria-pressed="false">Hide Gelly</button>
+        </div>
+    </div>
+</footer>
+<dialog id="contact" class="contact" aria-labelledby="contact-title">
+    <div class="contact__body">
+        <h2 id="contact-title" class="h3">Contact</h2>
+        <p>Write to <a id="contact-address" class="link" data-user="hello" data-domain="g6solver.com"></a>.</p>
+        <p class="quiet">Every email is reviewed by the founder, and we endeavour to respond within 48 hours. Thank you
+            for your correspondence.</p>
+        <div class="contact__actions">
+            <button type="button" class="btn btn--small" data-copy="#contact-address" autofocus>Copy address</button>
+            <button type="button" class="btn btn--small btn--solid" data-close>Close</button>
+        </div>
+    </div>
+</dialog>

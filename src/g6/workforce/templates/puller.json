@@ -1,0 +1,18 @@
+{
+  "name": "puller",
+  "purpose": "Hand one unit the plan gave no code call to the owner's chat session (the stronger model) and record what it submits, as a draft until it is judged; calls no component.",
+  "rung": "pull",
+  "read_only": false,
+  "may_delegate": true,
+  "allowed": [["owner_chat", "submit"]],
+  "policy": {
+    "max_steps": 1,
+    "max_tool_calls": 0,
+    "max_shell_commands": 0,
+    "max_files_modified": 0,
+    "max_lines_changed": 0,
+    "max_retries": 0,
+    "max_runtime_seconds": 60,
+    "max_privilege_level": 0
+  }
+}

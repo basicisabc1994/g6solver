@@ -1,0 +1,32 @@
+{
+  "SPDX-License-Identifier": "Apache-2.0",
+  "producer": "the duty_of_care build (Claude Opus 5.5, builder agent)",
+  "known_author": "Claude Opus 5.5, duty_of_care certificate author (a separate agent from the code's builder)",
+  "route_author": "Claude Opus 5.5, duty_of_care certificate author (a separate agent from the code's builder)",
+  "adapter": "g6/jobs/duty_of_care/certificate/adapter.py",
+  "refusals": [],
+  "falsification": {
+    "seeds": [11, 29, 47],
+    "count": 40,
+    "precision": 0,
+    "bounds": "Answer lists for the PHQ-9 (nine items) and the GAD-7 (seven items): every item 0 to 3, the PHQ-9's item 9 mostly 0 and otherwise any value of the scale; one item with no answer, or one answer short; one answer off the scale (4, 5, 7 or -1); one answer too many; three inputs in four also raise one answered item by one. Boundary inputs: an off-scale item 9, a raise that takes item 9 from 0 to 1, a raise past 3, nine answers for the GAD-7 and ten for the PHQ-9, and no answers at all.",
+    "boundaries": {
+      "phq9_total": [
+        {"answers": [0, 0, 0, 0, 0, 0, 0, 0, 4]},
+        {"answers": [3, 3, 3, 3, 3, 3, 3, 3, 0], "raise": 8},
+        {"answers": [2, 3, 3, 3, 3, 3, 3, 3, 0], "raise": 0},
+        {"answers": [3, 3, 3, 3, 3, 3, 3, 3, 0], "raise": 0},
+        {"answers": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+        {"answers": [0, 0, 0, 0, 0, 0, 0, 0, null]},
+        {"answers": []}
+      ],
+      "gad7_total": [
+        {"answers": [3, 3, 3, 3, 3, 3, 2], "raise": 6},
+        {"answers": [3, 3, 3, 3, 3, 3, 3], "raise": 0},
+        {"answers": [0, 0, 0, 0, 0, 0, 0, 0, 0]},
+        {"answers": [0, 0, 0, 0, 0, 0, -1]},
+        {"answers": []}
+      ]
+    }
+  }
+}

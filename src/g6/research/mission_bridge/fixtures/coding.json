@@ -1,0 +1,145 @@
+{
+  "mission_id": "synthetic-coding-001",
+  "domain": "coding_change_verification",
+  "high_stakes": false,
+  "inputs": {
+    "task": "task_text",
+    "repository": "repository",
+    "patch": "patch"
+  },
+  "standard": {
+    "standard_id": "std-coding-001",
+    "standard_sha256": "1893015551095f7838d35c522085cb78fb35704e520615e9c88d4c72d10dc9d7",
+    "predicates": [
+      "baseline_tests_green_or_declared",
+      "change_tests_pass",
+      "no_test_weakened",
+      "independent_verification"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "intake",
+      "role": "task_standard",
+      "source_operation": "intent_engine.elicit",
+      "declared_effect": "read",
+      "requires": {
+        "task": "task_text"
+      },
+      "provides": {
+        "objective": "objective"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "intake_check",
+      "role": "scope_review",
+      "source_operation": "align_evals.evaluate",
+      "declared_effect": "read",
+      "requires": {
+        "objective": "objective"
+      },
+      "provides": {
+        "intake_ok": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "intake"
+    },
+    {
+      "id": "baseline",
+      "role": "regression",
+      "source_operation": "workforce.run_tests",
+      "declared_effect": "read",
+      "requires": {
+        "objective": "objective",
+        "repository": "repository"
+      },
+      "provides": {
+        "baseline_result": "test_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "baseline_check",
+      "role": "verification",
+      "source_operation": "coding_agent_gate.verify_answer",
+      "declared_effect": "read",
+      "requires": {
+        "baseline_result": "test_result"
+      },
+      "provides": {
+        "baseline_ok": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "baseline"
+    },
+    {
+      "id": "integrity",
+      "role": "independent_check",
+      "source_operation": "venture.weakened_tests",
+      "declared_effect": "read",
+      "requires": {
+        "patch": "patch",
+        "repository": "repository"
+      },
+      "provides": {
+        "weakening_report": "report"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null
+    },
+    {
+      "id": "integrity_check",
+      "role": "verification",
+      "source_operation": "workforce.run_tests_in_place",
+      "declared_effect": "read",
+      "requires": {
+        "weakening_report": "report"
+      },
+      "provides": {
+        "integrity_ok": "check_result"
+      },
+      "data_class": "synthetic",
+      "egress": "none",
+      "budget_cents": null,
+      "verifies": "integrity"
+    },
+    {
+      "id": "merge_approval",
+      "role": "human_review",
+      "gate": true,
+      "source_operation": "",
+      "declared_effect": "read",
+      "requires": {
+        "baseline_ok": "check_result",
+        "integrity_ok": "check_result",
+        "intake_ok": "check_result"
+      },
+      "provides": {
+        "merge_approved": "approval"
+      },
+      "data_class": "public",
+      "egress": "none",
+      "budget_cents": 0
+    }
+  ],
+  "budget_cents": 100,
+  "charged": false,
+  "approvals": [],
+  "required_roles": [
+    "task_standard",
+    "regression",
+    "verification",
+    "independent_check",
+    "human_review"
+  ]
+}

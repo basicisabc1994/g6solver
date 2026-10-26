@@ -1,0 +1,60 @@
+{
+  "entry_id": "stats.t",
+  "known_author": "Claude case author (calc step 3a, 2026-10-23)",
+  "cases": [
+    {
+      "citation": {
+        "author": "Erwin Kreyszig",
+        "title": "Advanced Engineering Mathematics",
+        "edition": "10th edition",
+        "publisher": "John Wiley & Sons",
+        "published": "2011",
+        "locator": "Section 25.3, Example 3 (a 99% confidence interval for the mean of five flash-point measurements), step 2, read from Appendix 5, Table A9"
+      },
+      "inputs": {
+        "p": {
+          "value": "0.995"
+        },
+        "df": {
+          "value": "4"
+        }
+      },
+      "expected": {
+        "t": {
+          "value": "4.60",
+          "printed_digits": 2
+        }
+      }
+    },
+    {
+      "citation": {
+        "author": "National Institute of Standards and Technology and SEMATECH",
+        "title": "NIST/SEMATECH e-Handbook of Statistical Methods",
+        "edition": "online edition, retrieved 2026-10-23",
+        "publisher": "National Institute of Standards and Technology (United States government, public domain)",
+        "published": "undated page",
+        "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda353.htm",
+        "locator": "Section 1.3.5.3, the two-sample t-test example (AUTO83B data), the paragraph after the output: the two-tailed and one-tailed critical values"
+      },
+      "inputs": {
+        "alpha": {
+          "value": "0.05"
+        },
+        "df": {
+          "value": "326"
+        }
+      },
+      "expected": {
+        "t_1_minus_alpha_over_2": {
+          "value": "1.9673",
+          "printed_digits": 4
+        },
+        "t_1_minus_alpha": {
+          "value": "1.6495",
+          "printed_digits": 4
+        }
+      },
+      "quote": "For our two-tailed t-test, the critical value is t1-α/2,ν = 1.9673, where α = 0.05 and ν = 326. If we were to perform an upper, one-tailed test, the critical value would be t1-α,ν = 1.6495."
+    }
+  ]
+}

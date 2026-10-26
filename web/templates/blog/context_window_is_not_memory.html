@@ -1,0 +1,255 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}The Context Window Is Not Memory{% endblock %}
+{% block meta_description %}Context windows have grown from 4K to 1M+ tokens, but a buffer is not memory. Real memory requires architecture — structured stores, retrieval mechanisms, and consolidation processes.{% endblock %}
+{% block post_headline %}The Context Window Is Not Memory{% endblock %}
+{% block post_date %}2025-04-05{% endblock %}
+{% block post_description %}Context windows have grown from 4K to 1M+ tokens, but a buffer is not memory. Real memory requires architecture — structured stores, retrieval mechanisms, and consolidation processes.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Research</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">The Context Window Is Not Memory</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Context windows appear to solve memory
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">Two years ago, language models operated within a four-thousand-token context window &mdash; roughly three thousand words, barely enough for a long email thread. Today, production models routinely handle 128K tokens, and research previews have pushed past one million. Google&rsquo;s Gemini 1.5 Pro processes up to ten million tokens in experimental settings.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup> The trajectory is unmistakable: context windows are growing exponentially, and with each expansion, the range of tasks a model can address in a single pass widens correspondingly.</p>
+
+            <p class="gsap-reveal">This expansion has real consequences. With a million-token window, a developer can paste an entire codebase into a prompt. A lawyer can feed in a full deposition transcript alongside the relevant case law. A researcher can supply dozens of papers and ask for a synthesis that would have taken weeks to produce manually. These are not hypothetical scenarios &mdash; they are happening now, daily, across industries. The practical utility is genuine.</p>
+
+            <p class="gsap-reveal">And so a seductive narrative has taken hold: the memory problem is being solved through scale. If models can already process book-length inputs, then surely the next generation &mdash; with ten-million-token windows and beyond &mdash; will simply remember everything they need. The context window, in this telling, is converging on something functionally equivalent to memory. You just keep making it bigger, and the limitations disappear.</p>
+
+            <p class="gsap-reveal">This narrative is wrong. Not because the capability gains are illusory &mdash; they are real &mdash; but because it confuses two fundamentally different things. A context window is a buffer. Memory is an architecture. The distinction matters enormously, and getting it wrong leads to systems that fail in ways their designers did not anticipate.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: A buffer is not memory
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Fundamental Category Error</h2>
+
+            <p class="gsap-reveal">To understand why a context window is not memory, it helps to examine what memory actually does in biological cognitive systems. The dominant framework in cognitive science, first articulated by Atkinson and Shiffrin in 1968, distinguishes between sensory registers, short-term stores, and long-term memory &mdash; each with different capacities, durations, and encoding mechanisms.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> This multi-store model has been refined considerably over five decades, but its core insight remains: memory is not a single monolithic buffer. It is a system of interacting components, each specialised for different functions.</p>
+
+            <p class="gsap-reveal">Baddeley&rsquo;s model of working memory extended this further, proposing a central executive that coordinates information from a phonological loop and visuospatial sketchpad &mdash; a system with active management, not passive storage.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> Tulving&rsquo;s distinction between episodic memory (specific events in context) and semantic memory (general knowledge abstracted from experience) revealed that even long-term storage is not homogeneous &mdash; different types of information are encoded, stored, and retrieved through fundamentally different mechanisms.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">A context window has none of these properties. It is a flat, undifferentiated sequence of tokens. There is no mechanism for prioritisation &mdash; the model does not know which parts of the context are important and which are noise. There is no consolidation process &mdash; nothing analogous to the hippocampal replay that transfers short-term experiences into durable long-term representations during sleep.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> There is no forgetting curve &mdash; no graceful degradation where less-accessed information fades while frequently-used knowledge strengthens. And there is no retrieval by relevance &mdash; the entire context is presented to the attention mechanism at once, with the model left to sort out what matters through statistical correlation rather than structured lookup.</p>
+
+            <p class="gsap-reveal">The consequences of this architectural absence are not theoretical. Liu et al.&rsquo;s &ldquo;Lost in the Middle&rdquo; research demonstrated empirically that language models do not attend to context uniformly.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> When relevant information is placed in the middle of a long context &mdash; rather than at the beginning or end &mdash; model performance degrades significantly. This is a direct consequence of the flat-buffer architecture: without a retrieval mechanism that can locate relevant information by content rather than position, the model falls back on positional biases baked into its attention patterns. Making the buffer longer does not fix this problem. It makes it worse.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">What Gets Lost When Everything Is Present</h2>
+
+            <p class="gsap-reveal">There is a deeper irony in the scaling approach to memory. Human memory is powerful precisely because it forgets. The ability to discard irrelevant detail, to abstract patterns from specific instances, to compress episodic experiences into semantic knowledge &mdash; these are not limitations of biological memory. They are its most important features.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> A physician who remembered every patient interaction with perfect fidelity but could not extract the general pattern that connects a constellation of symptoms to a diagnosis would be useless. Forgetting is the mechanism by which raw experience becomes knowledge.</p>
+
+            <p class="gsap-reveal">Context windows cannot forget. They hold everything with equal weight until they overflow, at which point they lose everything that does not fit &mdash; a catastrophic cliff rather than a graceful curve. This is the opposite of how useful memory systems work. It means that a model processing a hundred-thousand-token input is spending attention on irrelevant boilerplate, outdated information, and noise with the same computational budget it allocates to the critical facts that actually matter for the task at hand.</p>
+
+            <p class="gsap-reveal">Zhang et al.&rsquo;s comprehensive survey of memory mechanisms in LLM-based agents catalogues these limitations systematically.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> The survey identifies a fundamental tension: as context grows, the signal-to-noise ratio within the window can actually decrease, because there is no mechanism to curate what enters the buffer or to organise what is already there. More context is not always better context. Sometimes it is just more noise.</p>
+
+            <!-- ── Diagram 1: Flat Buffer vs Hierarchical Memory ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 320" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram comparing flat context window buffer versus hierarchical memory architecture">
+                    <!-- Left side: Flat Context Window -->
+                    <text x="190" y="24" text-anchor="middle" fill="#d1d5db" font-size="14" font-weight="600">Context Window</text>
+
+                    <!-- Flat buffer representation -->
+                    <rect x="40" y="40" width="300" height="240" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+
+                    <!-- Token rows - all same style, undifferentiated -->
+                    <rect x="56" y="56" width="268" height="22" rx="4" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="190" y="72" text-anchor="middle" fill="#9ca3af" font-size="10">Token 1 &hellip; Token 847</text>
+
+                    <rect x="56" y="84" width="268" height="22" rx="4" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="190" y="100" text-anchor="middle" fill="#9ca3af" font-size="10">Token 848 &hellip; Token 1,694</text>
+
+                    <rect x="56" y="112" width="268" height="22" rx="4" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="190" y="128" text-anchor="middle" fill="#9ca3af" font-size="10">Token 1,695 &hellip; Token 2,541</text>
+
+                    <rect x="56" y="140" width="268" height="22" rx="4" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="190" y="156" text-anchor="middle" fill="#6b7280" font-size="10">. . . (no priority, no structure)</text>
+
+                    <rect x="56" y="168" width="268" height="22" rx="4" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="190" y="184" text-anchor="middle" fill="#9ca3af" font-size="10">Token 125,000 &hellip; Token 125,846</text>
+
+                    <rect x="56" y="196" width="268" height="22" rx="4" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+                    <text x="190" y="212" text-anchor="middle" fill="#9ca3af" font-size="10">Token 125,847 &hellip; Token 126,693</text>
+
+                    <!-- Overflow indicator -->
+                    <rect x="56" y="232" width="268" height="36" rx="4" fill="rgba(239,68,68,0.06)" stroke="rgba(239,68,68,0.3)" stroke-width="1" stroke-dasharray="4,3"/>
+                    <text x="190" y="254" text-anchor="middle" fill="#ef4444" font-size="10" font-weight="600">OVERFLOW &rarr; catastrophic loss</text>
+
+                    <!-- Right side: Hierarchical Memory -->
+                    <text x="610" y="24" text-anchor="middle" fill="#d1d5db" font-size="14" font-weight="600">Hierarchical Memory</text>
+
+                    <!-- Working Memory (top, highlighted) -->
+                    <rect x="460" y="40" width="300" height="60" rx="10" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <rect x="460" y="40" width="300" height="60" rx="10" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#glow-3)"/>
+                    <text x="610" y="64" text-anchor="middle" fill="#6366f1" font-size="12" font-weight="700">Working Memory</text>
+                    <text x="610" y="82" text-anchor="middle" fill="#a5b4fc" font-size="10">Active context &bull; Prioritised &bull; Managed</text>
+
+                    <!-- Arrow down -->
+                    <line x1="610" y1="105" x2="610" y2="125" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="4,3"/>
+                    <polygon points="605,123 610,133 615,123" fill="#6b7280"/>
+
+                    <!-- Episodic Store -->
+                    <rect x="460" y="138" width="300" height="60" rx="10" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="610" y="162" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Episodic Store</text>
+                    <text x="610" y="180" text-anchor="middle" fill="#9ca3af" font-size="10">Events &bull; Temporal context &bull; Retrieval cues</text>
+
+                    <!-- Arrow down -->
+                    <line x1="610" y1="203" x2="610" y2="223" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="4,3"/>
+                    <polygon points="605,221 610,231 615,221" fill="#6b7280"/>
+
+                    <!-- Semantic Store -->
+                    <rect x="460" y="236" width="300" height="60" rx="10" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="610" y="260" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Semantic Store</text>
+                    <text x="610" y="278" text-anchor="middle" fill="#9ca3af" font-size="10">Consolidated knowledge &bull; Abstracted patterns</text>
+
+                    <!-- Bidirectional retrieval arrows on right side -->
+                    <line x1="770" y1="168" x2="770" y2="70" stroke="#6366f1" stroke-width="1" stroke-dasharray="4,3"/>
+                    <polygon points="765,72 770,62 775,72" fill="#6366f1"/>
+                    <text x="784" y="120" fill="#6366f1" font-size="9" transform="rotate(90, 784, 120)" text-anchor="middle">retrieval</text>
+
+                    <line x1="770" y1="266" x2="770" y2="180" stroke="#6366f1" stroke-width="1" stroke-dasharray="4,3"/>
+                    <polygon points="765,182 770,172 775,182" fill="#6366f1"/>
+
+                    <!-- VS divider -->
+                    <text x="400" y="165" text-anchor="middle" fill="#4b5563" font-size="16" font-weight="700">vs</text>
+
+                    <defs>
+                        <filter id="glow-3" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; A flat token buffer (left) versus a hierarchical memory architecture with retrieval and consolidation (right)</p>
+            </div>
+
+            <p class="gsap-reveal">The positional attention problem compounds with scale in ways that are counterintuitive. Hsieh et al. found that simply placing the same information at different positions within a long context produced dramatically different model outputs, even when the semantic content was identical.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup> This is not a minor calibration issue. It means the model&rsquo;s effective &ldquo;memory&rdquo; of information depends on where that information happens to sit in the token sequence &mdash; a property that no useful memory system should have. A physician who could remember a patient&rsquo;s allergy only if it appeared on the first page of the chart, but not the fifth, would not be considered to have a functioning memory.</p>
+
+            <p class="gsap-reveal">Furthermore, the computational cost of attention scales quadratically with context length in standard transformer architectures. Efficient attention mechanisms like FlashAttention reduce the constant factor, but they do not change the fundamental scaling relationship.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup> This means that doubling the context window roughly quadruples the computational cost of each forward pass &mdash; an increasingly expensive way to approximate what a proper memory system could accomplish through targeted retrieval.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Real memory requires architecture
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Blueprint Is Already Written</h2>
+
+            <p class="gsap-reveal">The resolution to this tension is not to stop expanding context windows &mdash; larger buffers are genuinely useful for many tasks. It is to recognise that the buffer is a <em>component</em> of memory, not memory itself. The cognitive science of human memory, developed over more than a century of rigorous research, provides a remarkably detailed blueprint for what a complete memory architecture looks like.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup><sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">A functional memory system for AI agents needs at minimum three interacting subsystems. First, a <strong class="text-gray-200">working memory</strong> that manages the currently active context &mdash; not by holding everything, but by maintaining the most relevant information and knowing where to find the rest. This corresponds to Baddeley&rsquo;s central executive: a management layer, not just a storage buffer.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">Second, an <strong class="text-gray-200">episodic store</strong> that preserves specific interactions and reasoning chains in their temporal context &mdash; not as raw token sequences, but as structured records that can be retrieved by content, by time, or by association. Tulving&rsquo;s work demonstrated that episodic memory is defined not by what it stores but by how it encodes and retrieves: always with reference to the self, to time, and to subjective experience.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup> For an AI system, the analogue is preserving not just what was said but the reasoning state, the confidence levels, and the decision context that surrounded each interaction.</p>
+
+            <p class="gsap-reveal">Third, a <strong class="text-gray-200">semantic store</strong> that consolidates patterns across episodes into durable, abstracted knowledge. This is the mechanism by which a system moves from &ldquo;I saw this specific error in this specific codebase&rdquo; to &ldquo;this class of errors tends to arise from this category of architectural decisions.&rdquo; Without consolidation, every interaction starts from scratch. With it, the system accumulates genuine expertise over time.</p>
+
+            <!-- ── Diagram 2: Architecture Stack ── -->
+            <div class="gsap-reveal my-12 max-w-md mx-auto">
+                <div class="space-y-0">
+                    <!-- Top layer -->
+                    <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Active Context</p>
+                        <p class="text-white font-semibold">Working Memory</p>
+                        <p class="text-xs text-gray-500 mt-1">Prioritised, managed, capacity-bounded</p>
+                    </div>
+                    <!-- Middle layer (highlighted) -->
+                    <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Cognitive Layer</p>
+                        <p class="text-white font-bold text-lg relative">Episodic Store</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Events &bull; Temporal context &bull; Retrieval cues</p>
+                    </div>
+                    <!-- Bottom layer -->
+                    <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Foundation</p>
+                        <p class="text-white font-semibold">Semantic Store</p>
+                        <p class="text-xs text-gray-500 mt-1">Consolidated knowledge &bull; Abstracted patterns &bull; Durable</p>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; A cognitive memory architecture: working memory manages active context, the episodic store preserves interactions, and the semantic store consolidates knowledge</p>
+            </div>
+
+            <p class="gsap-reveal">The retrieval mechanisms matter as much as the stores themselves. Human memory is <em>reconstructive</em> &mdash; we do not replay stored recordings but actively rebuild memories from fragments, guided by cues and current context.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> This is both a feature and a bug: it enables flexible, context-sensitive recall at the cost of occasional distortion. For AI memory systems, the equivalent is retrieval-augmented generation &mdash; but done properly, with structured indices, relevance scoring, and the ability to synthesise across multiple retrieved fragments rather than simply pasting them into a prompt.</p>
+
+            <p class="gsap-reveal">Lewis et al.&rsquo;s work on retrieval-augmented generation demonstrated that even relatively simple retrieval mechanisms dramatically improve factual accuracy and reduce hallucination compared to relying on parametric knowledge alone.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup> But most current RAG implementations are crude: they chunk documents, embed them, retrieve the top-k nearest neighbours, and stuff them into the context window. There is no consolidation, no abstraction, no management of what enters the retrieval index or how it is organised. The retrieval is flat in the same way the context window is flat &mdash; just one step removed.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Consolidation: The Missing Process</h2>
+
+            <p class="gsap-reveal">Perhaps the most critical absent mechanism is consolidation. In biological memory, consolidation is the process by which labile short-term memories are transformed into stable long-term representations.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> It does not happen instantaneously &mdash; it unfolds over hours, days, and even years, during which memories are not merely preserved but actively reorganised. Specific details are lost while structural patterns are strengthened. The result is that long-term memory is not a degraded copy of short-term memory but a qualitatively different representation &mdash; more abstract, more connected, more useful for generalisation.</p>
+
+            <p class="gsap-reveal">No current AI system performs genuine consolidation. The closest analogues are fine-tuning and reinforcement learning from human feedback, both of which update model parameters based on new data. But these are offline, batch processes that require significant computational resources and careful curation. They do not happen continuously during operation. An AI agent that processes a thousand customer support tickets does not gradually develop expertise in the way a human support specialist does &mdash; each ticket is handled independently, with no accumulation of structured knowledge from the aggregate experience.</p>
+
+            <p class="gsap-reveal">The implications for agent reliability are significant. Zhang et al. document that without structured memory, agents exhibit what they term &ldquo;context fragmentation&rdquo; &mdash; the inability to maintain coherent reasoning across interactions that exceed the context window.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> Increasing the window size delays the onset of fragmentation but does not prevent it. The fragmentation is not a capacity problem but a <em>structure</em> problem: without mechanisms to organise, prioritise, and retrieve information by relevance rather than position, more capacity simply means more unstructured information to attend to.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">From Buffer to Architecture</h2>
+
+            <p class="gsap-reveal">The path forward is architectural, not parametric. Expanding context windows is necessary but not sufficient &mdash; it provides a larger working buffer, which is useful in the same way that more RAM is useful in a computer, but RAM without a file system, without a database, without a caching layer, is not a storage solution. It is a volatile scratch space. The same applies here.</p>
+
+            <p class="gsap-reveal">Park et al.&rsquo;s work on generative agents demonstrated that even rudimentary memory architectures &mdash; a simple reflection mechanism that periodically summarises and organises accumulated observations &mdash; produce dramatically more coherent and believable agent behaviour than raw context alone.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> Their agents maintained consistent personalities, remembered past interactions, and formed plans that referenced prior experience. The memory mechanism was primitive by cognitive science standards, but the improvement over no-memory baselines was striking.</p>
+
+            <p class="gsap-reveal">What would a complete memory architecture look like? The cognitive science literature provides clear desiderata. It would need <strong class="text-gray-200">encoding selectivity</strong> &mdash; the ability to determine what is worth remembering and what can be discarded, based on relevance, novelty, and predicted future utility. It would need <strong class="text-gray-200">multiple storage tiers</strong> with different retention characteristics and access patterns. It would need <strong class="text-gray-200">content-addressable retrieval</strong> that can find relevant information based on semantic similarity, temporal proximity, or causal connection &mdash; not just vector distance. It would need <strong class="text-gray-200">active consolidation</strong> that continuously reorganises stored knowledge, extracting patterns and strengthening useful abstractions. And it would need <strong class="text-gray-200">graceful forgetting</strong> &mdash; the ability to let go of information that is no longer relevant, reducing noise and keeping the system focused.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup></p>
+
+            <p class="gsap-reveal">None of these capabilities emerge from making a context window larger. They require deliberate engineering &mdash; the kind of cognitive infrastructure that sits between the raw language model and the tasks it is asked to perform. The foundation models provide the computational substrate: the ability to process language, reason over relationships, and generate coherent responses. But the memory architecture that makes those capabilities <em>accumulative</em> &mdash; that allows the system to grow more capable with experience rather than starting fresh each time &mdash; is a separate engineering challenge that must be solved at the systems level.</p>
+
+            <p class="gsap-reveal">The context window gave us a scratch pad. What we need is a mind &mdash; with all the structure, selectivity, and organisation that implies. The blueprint exists in a century of cognitive science. The engineering challenge is to build it.</p>
+
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Reid, M., Savinov, N., Teber, D., et al. (2024). <a href="https://arxiv.org/abs/2403.05530" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context</em></a>. arXiv. &mdash; Demonstrates near-perfect recall at 10M tokens but with diminishing marginal utility as context length increases.
+                </li>
+                <li id="ref-2">
+                    Atkinson, R. C., &amp; Shiffrin, R. M. (1968). <a href="https://doi.org/10.1016/S0079-7421(08)60422-3" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Human memory: A proposed system and its control processes</em></a>. In K. W. Spence &amp; J. T. Spence (Eds.), <em>The Psychology of Learning and Motivation</em> (Vol. 2, pp. 89&ndash;195). Academic Press. &mdash; The foundational multi-store model of human memory.
+                </li>
+                <li id="ref-3">
+                    Baddeley, A. D. (1992). <a href="https://doi.org/10.1126/science.1736359" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Working memory</em></a>. <em>Science</em>, 255(5044), 556&ndash;559. &mdash; The multi-component model of working memory with central executive, phonological loop, and visuospatial sketchpad.
+                </li>
+                <li id="ref-4">
+                    Tulving, E. (1972). <a href="https://doi.org/10.1016/B978-0-12-549480-7.50010-2" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Episodic and semantic memory</em></a>. In E. Tulving &amp; W. Donaldson (Eds.), <em>Organisation of Memory</em> (pp. 381&ndash;403). Academic Press. &mdash; The distinction between memory for specific events and memory for general knowledge.
+                </li>
+                <li id="ref-5">
+                    Squire, L. R., &amp; Alvarez, P. (1995). <a href="https://doi.org/10.1016/0959-4388(95)80023-9" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Retrograde amnesia and memory consolidation: A neurobiological perspective</em></a>. <em>Current Opinion in Neurobiology</em>, 5(2), 169&ndash;177. &mdash; On hippocampal-neocortical consolidation and the transformation of memory over time.
+                </li>
+                <li id="ref-6">
+                    Liu, N. F., Lin, K., Hewitt, J., Paranjape, A., Bevilacqua, M., Petroni, F., &amp; Liang, P. (2024). <a href="https://arxiv.org/abs/2307.03172" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Lost in the middle: How language models use long contexts</em></a>. <em>Transactions of the Association for Computational Linguistics</em>, 12, 157&ndash;173. &mdash; Demonstrates that models struggle to attend to information in the middle of long contexts.
+                </li>
+                <li id="ref-7">
+                    Schacter, D. L. (2001). <a href="https://doi.org/10.1037/10309-000" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The Seven Sins of Memory: How the Mind Forgets and Remembers</em></a>. Houghton Mifflin. &mdash; Memory as a reconstructive process; forgetting as adaptive feature rather than failure.
+                </li>
+                <li id="ref-8">
+                    Zhang, Z., Bo, X., Ma, C., Li, R., Chen, X., Dai, Q., Zhu, J., Dong, Z., &amp; Wen, J.-R. (2024). <a href="https://arxiv.org/abs/2404.13501" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>A survey on the memory mechanism of large language model based agents</em></a>. <em>ACM Transactions on Information Systems</em>. &mdash; Comprehensive taxonomy of memory mechanisms for LLM agents.
+                </li>
+                <li id="ref-9">
+                    Hsieh, C.-Y., Li, C.-L., Yeh, C.-K., Nakhost, H., Fujii, Y., Ratner, A., Krishna, R., Lee, C.-Y., &amp; Pfister, T. (2024). <a href="https://arxiv.org/abs/2404.06654" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>RULER: What&rsquo;s the real context size of your long-context language models?</em></a>. arXiv. &mdash; Reveals that effective context utilisation is substantially shorter than the advertised window size.
+                </li>
+                <li id="ref-10">
+                    Dao, T., Fu, D. Y., Ermon, S., Rudra, A., &amp; R&eacute;, C. (2022). <a href="https://arxiv.org/abs/2205.14135" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>FlashAttention: Fast and memory-efficient exact attention with IO-awareness</em></a>. <em>Advances in Neural Information Processing Systems</em>, 35. &mdash; Addresses the constant factor but not the fundamental quadratic scaling of attention.
+                </li>
+                <li id="ref-11">
+                    Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., K&uuml;ttler, H., Lewis, M., Yih, W., Rockt&auml;schel, T., Riedel, S., &amp; Kiela, D. (2020). <a href="https://arxiv.org/abs/2005.11401" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Retrieval-augmented generation for knowledge-intensive NLP tasks</em></a>. <em>Advances in Neural Information Processing Systems</em>, 33. &mdash; Foundational work on combining retrieval mechanisms with generative models.
+                </li>
+                <li id="ref-12">
+                    Park, J. S., O&rsquo;Brien, J. C., Cai, C. J., Morris, M. R., Liang, P., &amp; Bernstein, M. S. (2023). <a href="https://arxiv.org/abs/2304.03442" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Generative agents: Interactive simulacra of human behavior</em></a>. <em>Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology</em>. &mdash; Memory architecture with reflection and retrieval produces coherent long-term agent behaviour.
+                </li>
+                <li id="ref-13">
+                    Summerfield, C., Luyckx, F., &amp; Sheahan, H. (2020). <a href="https://doi.org/10.1016/j.tics.2019.12.006" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Structure learning and the posterior parietal cortex</em></a>. <em>Trends in Cognitive Sciences</em>, 24(10), 751&ndash;770. &mdash; On how the brain extracts structural patterns from experience, abstracting away specifics.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

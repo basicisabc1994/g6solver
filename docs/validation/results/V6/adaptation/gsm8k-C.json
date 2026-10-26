@@ -1,0 +1,13 @@
+{
+ "code": "G6_E_META_PROPOSED",
+ "dev_success": 7,
+ "hints": [
+  "th_89269745c0b7"
+ ],
+ "theories": {
+  "th_89269745c0b7": {
+   "failure_code": "WRONG_FORMAT",
+   "instruction": "Check the expected output format and structure before answering."
+  }
+ }
+}

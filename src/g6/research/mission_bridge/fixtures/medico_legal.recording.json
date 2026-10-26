@@ -1,0 +1,38 @@
+{
+  "note": "Synthetic placeholders for replay. No operation was run and no value here is a result.",
+  "inputs": {
+    "case_data": "synthetic:case_data",
+    "jurisdiction": "synthetic:jurisdiction"
+  },
+  "decisions": [
+    "search_approval",
+    "image_permission",
+    "expert_signoff"
+  ],
+  "outputs": {
+    "scope": {
+      "scope": "synthetic:scope"
+    },
+    "scope_check": {
+      "scope_ok": "synthetic:scope_ok"
+    },
+    "context": {
+      "primary_sources": "synthetic:primary_sources"
+    },
+    "context_check": {
+      "retrieval_ok": "synthetic:retrieval_ok"
+    },
+    "legal_analysis": {
+      "legal_issues": "synthetic:legal_issues"
+    },
+    "challenge": {
+      "counterarguments": "synthetic:counterarguments"
+    },
+    "image_assessment": {
+      "image_findings": "synthetic:image_findings"
+    },
+    "image_check": {
+      "image_review": "synthetic:image_review"
+    }
+  }
+}

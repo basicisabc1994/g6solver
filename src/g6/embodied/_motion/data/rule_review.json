@@ -1,0 +1,153 @@
+{
+  "kind": "review",
+  "reviewer": "Claude Sonnet 5.5, an independent reader (certificate v2a, pass after withheld quotes), not the code's author or the case author",
+  "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
+  "date": "2026-10-25 (read at fix/withheld-quotes 880e890098)",
+  "scope": "every rule of g6.embodied.adapt_physical_ai that carries a tier (14: eight property rules, two computes rules and four guards), each read against its source's held bytes and against the function it names; the caller rules are not covered by this certificate",
+  "method": "hashed every held source from its bytes and compared with the register; read each LaValle page as held (equations from the page's own MATH comments and image alt text) and each OpenStax passage in the corpus file; confirmed the one withheld quote the register's chain case hashes (found by its SHA-256 in the private quotes file) occurs in the held page's bytes and carries the case's numbers; read the implementing functions and the code around the friction, tolerance, work-bound and force guards. The withheld clauses are the register's own words, judged against the page, not against any quotation.",
+  "label_effect": "none: a review raises no label",
+  "reviewed": {
+    "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+    "artifact_sha256": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
+    "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+    "refusals": [],
+    "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+    "sources_sha256": {
+      "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
+      "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+      "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
+      "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
+      "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
+      "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
+      "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+      "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+      "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
+    }
+  },
+  "rules": [
+    {
+      "rule": "distance",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "b5a801e474509bec0621b5438fb53ce8add0803f123c5f555adb6fc84042d181",
+      "finding": "The register's clause states the page's definition: the distance of two sets is the smallest Euclidean separation over pairs of their points, and it is zero when the sets meet (both visible in the page's own markup). The clause leaves out that the page defines this for closed, bounded sets, which loses nothing here. closest_on_segment returns the clamped projection fraction; segment_distance and _arm_gap subtract the obstacle radius, link radius and clearance from the centre-to-segment distance, which is the sphere-to-capsule gap.",
+      "tier_justified": true,
+      "tier_reason": "The page prints no worked number: its distance equation is a definition, so every case is the case author's arithmetic and there is no printed value to run the function on."
+    },
+    {
+      "rule": "swept_point",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "6039b0e4f9cd6ac6ae6c8b9ce917676e44c68e8cbf3fcfa6c64a3c8e7fb89cd5",
+      "finding": "The clause matches the page: a path cannot be certified by testing configurations one at a time, and a clearance d at the start plus no point travelling farther than d gives a free segment. segment_entry solves the quadratic in closed form (I re-derived disc = length2 * (limit^2 - |perpendicular|^2) from half_b^2 - length2*c), returns the smaller root only if it lies in [0, 1], and returns 0 when the start is already inside the inflated reach. The closed form is G6's own algebra, as the rule says. One wording nit in the rule text: it says the source 'requires' a whole-segment check, whereas the page says point-by-point testing cannot guarantee freedom and offers sound methods beside the sampling it describes; the register clause itself is accurate.",
+      "tier_justified": true,
+      "tier_reason": "The page prints no numerical value a function could be run on for a point segment; its only printed numbers belong to a long-chain example."
+    },
+    {
+      "rule": "swept_arm",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "6039b0e4f9cd6ac6ae6c8b9ce917676e44c68e8cbf3fcfa6c64a3c8e7fb89cd5",
+      "finding": "The page's per-parameter displacement bound (5.33) and its summed form (5.34), with the sufficient clearance condition, are readable in the markup and the clause states them as the page does. _arm_segment steps by gap / bound, bound being the sum over joints of |dq_i| times the length of chain outward of joint i. Turning joint i moves every outward point by at most that length times |dq_i|, and the gap is on the centre line with radii subtracted, so a step cannot cross an obstacle or wall; a gap below TOLERANCE is a violation, and exhausting the work budget is cannot-assess. Choosing c_i as the outward length is G6's derivation, as the rule says.",
+      "tier_justified": true,
+      "tier_reason": "The page prints no numerical value a function could be run on for the arm bound: (5.33) and (5.34) are inequalities with symbolic constants, and the page's one number concerns the position of a straight chain's end, not the bound."
+    },
+    {
+      "rule": "chain",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "6039b0e4f9cd6ac6ae6c8b9ce917676e44c68e8cbf3fcfa6c64a3c8e7fb89cd5",
+      "finding": "The register's clause for the long-chain example (50 links of length 10, every joint angle zero, last point at (500, 0)) states what the page says in its markup, with nothing added. The printed case cites the withheld source by quote_sha256; the private quote with that exact SHA-256 is a stretch of the page's raw markup, it occurs in the held bytes (whitespace-normalised), and it carries 50, 10, 0 and 500, which are the case's numbers (50 links of 10, 50 zero turns, expected (500, 0)). The base at the origin is implied by the page's own setting rather than stated in that passage. chain_points accumulates heading and advances each link by its length, so zero angles end at (sum of lengths, 0). The second case (two unit links, two quarter turns, ending at (-1, 1)) is the case author's arithmetic and is right."
+    },
+    {
+      "rule": "average_speed",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "ce7ea626c317c5e62e71b4204db3c80967c083a28b391c639eaaea6761d5b742",
+      "finding": "Equation (14.15) in the markup approximates the rate by the change over a short interval divided by its length, and the page says the approximation's error depends on how fast the state varies and on the interval length. _speed_limits computes distance / dt for a point body and |dq| / dt per joint for an arm, reports a non-increasing time as a timing violation, and compares with the caller's limit; the rule says plainly that speed inside a segment is not checked.",
+      "tier_justified": true,
+      "tier_reason": "The page prints no numerical value a function could be run on: equations (14.14) to (14.16) are symbolic and there is no worked number."
+    },
+    {
+      "rule": "a_star",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "dfde3fd45190201e119c24f9ddc8f8c30514f10f3df11d8427aed0b67ac3b66c",
+      "finding": "The clause matches the page: A* is Dijkstra's method with the queue ordered by cost-to-come plus an underestimate of cost-to-go, optimal when the estimate never exceeds the true cost-to-go, and an all-zero estimate gives Dijkstra's method. plan_astar uses the straight-line distance between cell middles as the estimate and costs moves by the same distance (consistent, so never an overestimate on that grid graph), skips stale queue entries, and stops when the goal cell is popped. Optimality holds on the grid graph, not for the continuous path, and the rule claims no more. Cell blocking tests the nearest point of each cell to the obstacle centre against reach and the workspace test shrinks the box by the radius, as the rule says.",
+      "tier_justified": true,
+      "tier_reason": "The page prints no numerical value a function could be run on: its underestimate for the labyrinth example is a formula and the figure prints no cost."
+    },
+    {
+      "rule": "rrt",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "dc56b8330f1beb45cb264ce6feecbc3e0a8014d6d3a27b9c120a45ce49349615",
+      "finding": "The clause states the page's algorithm: each sample is joined to the closest point of the tree (splitting an edge if that point is inside one), and with obstacles the new edge is collision-checked and stops at the last free configuration, adding nothing if no progress is possible. plan_rrt takes the nearest vertex (not the nearest edge point), moves at most one step toward the sample, and drops an edge point_segment_clear rejects instead of stopping at the boundary. The rule names those two simplifications and both shortcuts (a first straight start-to-goal attempt, and a final edge to the goal from each new vertex within one step), which is what the code does; every edge is checked whole and the finished plan goes through check_plan.",
+      "tier_justified": true,
+      "tier_reason": "The page prints no numerical value a function could be run on: its figure names a setup but no sampled coordinates, and the random sequence is the caller's seed."
+    },
+    {
+      "rule": "euler",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "ce7ea626c317c5e62e71b4204db3c80967c083a28b391c639eaaea6761d5b742",
+      "finding": "Equations (14.15) and (14.16) in the markup give x(dt) as approximately x(0) plus dt times the rate at the start. The clause says the error 'grows with' the interval length, where the page says it depends on it; the page's remark that a simulator may subdivide the interval for higher accuracy supports the stronger reading, so I count it fair. euler_step advances position by dt times velocity and velocity by dt times acceleration, which is that step for the state (position, velocity).",
+      "tier_justified": true,
+      "tier_reason": "The page prints formulas and no worked number, so there is no printed value to run the function on."
+    },
+    {
+      "rule": "closed_form",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "b14c17319b0f9dd088244547d3bdeb255b49efbbedc133833e3b6211a414e69e",
+      "finding": "The page says a chain of integrators has a polynomial closed form and works one scalar case, second derivative = u, zero initial position and rate, constant u = 1, giving t^2/2; the clause states exactly that. constant_acceleration computes p + v t + a t^2/2 and v + a t per axis. The general form with nonzero p and v is not printed; it is the exact double integral of the stated chain, so the rule goes one step past the printed case but is correct.",
+      "tier_justified": true,
+      "tier_reason": "The page prints a formula, t^2/2, not a numerical value; the case at t = 1 (0.5) is the case author's evaluation of it. This is a borderline reading: a stricter one would count t^2/2 from rest as a printed function the code can be run on, and the owner may prefer a computes rule with that formula."
+    },
+    {
+      "rule": "friction",
+      "clause_fair": "by context only",
+      "code_matches": true,
+      "source_sha256": "f0ee2f4cb4f566f3032c4b0ae2b2d1bf43c9bbf3a9182a6cc144d81a8d7244be",
+      "finding": "The held conversion blanks Equation 6.1, its symbols and the worked example's weight and product, so the bytes do not contain the product of coefficient and normal force. They do say in prose that the coefficient of static friction and the normal force enter, that static friction has a maximum, and that the object moves once the applied force exceeds it; the worked example prints a coefficient of 0.700, a 20.0-kg crate and a maximum of 137 N, and 0.700 x 20.0 x 9.80 = 137.2 N agrees given the book's printed 9.80 N weight of 1.00 kg (section 5.4, also in the bytes). The register's quoted limits and usual-range sentences, and the published quote of the printed case, occur in the bytes; the case's numbers (0.700, 20.0, 137) are in that quote, and 137 is 137.2 to its three figures. contact_margins computes mu times the normal force and a margin that is that less the tangential load, in N and unrounded. The slip boundary (margin at or below FORCE_TOLERANCE with a load above zero, stricter than the source), the no-load exemption and the above-1.0 naming sit in grasp_findings and coefficient_findings, not in the named function; I read them and they match the rule, and the stricter boundary is disclosed.",
+      "context_attested": true,
+      "reason": "Equation 6.1 and the example's weight and product are blanked in the held conversion, so the maximum being coefficient times normal force is read from the surrounding prose and from 137 N agreeing with 0.700 x 20.0 x 9.80, not from the equation itself. Re-reading the book's PDF would settle it."
+    },
+    {
+      "rule": "tolerance",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "finding": "TOLERANCE = 1e-9 m is G6's own constant. segment_entry adds it to the reach so a segment passing within reach + 1e-9 counts as touching; the same constant makes point_first_exit, _arm_segment and the A* cell test strict in the same direction.",
+      "effect_only": true,
+      "effect_reason": "Every use of TOLERANCE enlarges what counts as reaching an obstacle or wall (reach + TOLERANCE, gap < TOLERANCE, cell distance < r + TOLERANCE, inner box shrunk by it), so it can turn a pass into a violation and never a violation into a pass; the function returns a fraction or None and does nothing else."
+    },
+    {
+      "rule": "work_bound",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "finding": "WORK_BOUND = 2,000,000 is G6's own limit. _arm_segment subtracts each gap evaluation's cost from a budget shared by the workspace and collision checks and returns 'cannot' when it goes below zero, so exactly the bound is allowed and one more is not. The collision cost counts obstacles times links per evaluation and the workspace cost counts joint points, which is slightly different but also work.",
+      "effect_only": true,
+      "effect_reason": "Past the bound the only effect is that the check answers cannot-assess for the rest of the plan (check_plan turns that into blocked-escalated, and any violation already found still wins); it never lets a plan through and changes no other result."
+    },
+    {
+      "rule": "force_tolerance",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "finding": "FORCE_TOLERANCE = 1e-9 N is G6's own constant. grasp_findings flags a slip when the load is above zero and the margin is at or below the tolerance, and a crush or gripper violation when the normal force is at or above the limit less the tolerance.",
+      "effect_only": true,
+      "effect_reason": "Each comparison is widened toward a violation (margin <= tol instead of < 0, normal >= limit - tol instead of > limit), so it can only turn a pass into a violation; the code also lists at most the room allowed and counts the rest, which changes no verdict."
+    },
+    {
+      "rule": "bounds",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "finding": "MAX_EXTENT = 1e6 is G6's own range. range_problems names every length, coordinate or angle field whose absolute value is strictly above it (so exactly 1,000,000 holds), including obstacle radii, clearance, the goal tolerance and waypoint entries; check_plan and both planners refuse with cannot-assess when it returns any.",
+      "effect_only": true,
+      "effect_reason": "range_problems only collects field names; its callers answer cannot-assess and stop, so it never lets a plan through and changes no value. Forces are not range-checked here but by geo.finite in the grasp code, which also fails closed."
+    }
+  ]
+}

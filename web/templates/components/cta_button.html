@@ -1,0 +1,10 @@
+{% comment %}
+CTA button with gradient hover glow.
+Variables: url, text, size (sm/md/lg)
+{% endcomment %}
+<a href="{{ url }}" class="inline-flex items-center justify-center px-{{ size|default:'6' }} py-3 bg-gradient-to-r from-g6-indigo to-g6-violet text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-g6-indigo/25 transition-all duration-300 text-{{ size|default:'base' }}">
+    {{ text }}
+    <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+    </svg>
+</a>

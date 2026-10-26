@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ mode.title|capfirst }}{% endblock %}
+{% block meta_description %}{{ mode.description }}{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/components.css' %}">{% endblock %}
+{% block content %}
+{% comment %}One failure mode, read from catalog/failure_modes.json (pages/failure_map.py), which
+tools/gen_failure_map.py writes from the registry and each component's own declarations. The packages planned to guard
+it are shown only while show_planned (pages/extensions.py SHOW_PLANNED) is on; a component built and awaiting its
+certificate is shown either way.{% endcomment %}
+<header class="wrap page-hero">
+    <p class="small"><a class="link" href="/failure-modes/">Failure modes</a></p>
+    <h1 class="display">{{ mode.title|capfirst }}</h1>
+    {% if mode.description != mode.title %}<p class="lede">{{ mode.description }}</p>{% endif %}
+    <p class="cmp__meta">Code <code>{{ mode.code }}</code>{% if mode.aliases %}, also known as {% for a in mode.aliases %}<code>{{ a }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}. Severity: {{ mode.severity }}{% if mode.requires_human_review %}; a person must review it{% endif %}.</p>
+</header>
+
+<section class="band" id="guarded" aria-labelledby="guarded-h">
+    <div class="wrap cols">
+        <div class="band__head"><h2 class="h2" id="guarded-h">Guarded today by</h2></div>
+        <div class="band__body">
+            {% if mode.guards %}<ul class="cmp-list">{% for g in mode.guards %}
+                <li class="cmp"><a href="{{ g.href }}"><code>{{ g.name }}</code></a></li>{% endfor %}
+            </ul>{% else %}<p>Nothing in the library guards against this yet.</p>{% endif %}
+        </div>
+    </div>
+</section>
+
+{% if show_planned %}
+<section class="band" id="planned" aria-labelledby="planned-h">
+    <div class="wrap cols">
+        <div class="band__head"><h2 class="h2" id="planned-h">Planned in</h2></div>
+        <div class="band__body">
+            {% if mode.planned %}<p>These packages are planned to guard against it. Until each is in the library and
+            declares the mode itself, it guards nothing.</p>
+            <ul class="cmp-list">{% for p in mode.planned %}
+                <li class="cmp"><code>{{ p }}</code></li>{% endfor %}
+            </ul>{% else %}<p>No package is planned to guard against it.</p>{% endif %}
+        </div>
+    </div>
+</section>
+{% endif %}
+{% if mode.awaiting %}
+<section class="band" id="awaiting" aria-labelledby="awaiting-h">
+    <div class="wrap cols">
+        <div class="band__head"><h2 class="h2" id="awaiting-h">Built, awaiting its certificate</h2></div>
+        <div class="band__body">
+            <p>These components are built to guard against it, in a vetted area. Each guards nothing until its
+            certificate is current. No qualified person has reviewed them.</p>
+            <ul class="cmp-list">{% for a in mode.awaiting %}
+                <li class="cmp"><a href="{{ a.href }}"><code>{{ a.name }}</code></a></li>{% endfor %}
+            </ul>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="band" id="caused" aria-labelledby="caused-h">
+    <div class="wrap cols">
+        <div class="band__head"><h2 class="h2" id="caused-h">Can be caused by</h2></div>
+        <div class="band__body">
+            {% if mode.causes %}<p>Using these components can cause this failure, so a run that uses them needs one of
+            the guards above.</p>
+            <ul class="cmp-list">{% for c in mode.causes %}
+                <li class="cmp"><a href="{{ c.href }}"><code>{{ c.name }}</code></a></li>{% endfor %}
+            </ul>{% else %}<p>No component declares that its own use can cause it.</p>{% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}

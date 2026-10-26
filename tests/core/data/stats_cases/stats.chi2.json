@@ -1,0 +1,54 @@
+{
+  "entry_id": "stats.chi2",
+  "known_author": "Claude case author (calc step 3a, 2026-10-23)",
+  "cases": [
+    {
+      "citation": {
+        "author": "Erwin Kreyszig",
+        "title": "Advanced Engineering Mathematics",
+        "edition": "10th edition",
+        "publisher": "John Wiley & Sons",
+        "published": "2011",
+        "locator": "Appendix 5, Table A10 (page A104): the example in its heading, 3 degrees of freedom at F(z) = 0.99"
+      },
+      "inputs": {
+        "p": {
+          "value": "0.99"
+        },
+        "df": {
+          "value": "3"
+        }
+      },
+      "expected": {
+        "x": {
+          "value": "11.34",
+          "printed_digits": 2
+        }
+      }
+    },
+    {
+      "citation": {
+        "author": "Erwin Kreyszig",
+        "title": "Advanced Engineering Mathematics",
+        "edition": "10th edition",
+        "publisher": "John Wiley & Sons",
+        "published": "2011",
+        "locator": "Appendix 5, Table A10 (page A104): the row F(z) = 0.05, the column for 10 degrees of freedom"
+      },
+      "inputs": {
+        "p": {
+          "value": "0.05"
+        },
+        "df": {
+          "value": "10"
+        }
+      },
+      "expected": {
+        "x": {
+          "value": "3.94",
+          "printed_digits": 2
+        }
+      }
+    }
+  ]
+}

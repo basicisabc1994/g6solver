@@ -1,0 +1,796 @@
+{
+ "adapt_code": "G6_E_META_READY",
+ "cycles": [
+  {
+   "cycle": 1,
+   "evaluations": [
+    {
+     "candidate_digest": "98b7c3c484255e8c0ce7342f94cbd84a3a0d2f09016e0038d030db161b23e826",
+     "strategy": "random",
+     "proposer": "v6-random-search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Think about edge cases in a sentence or two, then give the complete function in one Python code block."
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 2,
+       "losses": 5,
+       "ties": 33,
+       "discordant": 7,
+       "p_one_sided": 0.9375
+      },
+      "false_accepts": {
+       "base": 9,
+       "candidate": 12
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.75,
+        "candidate_mean": 0.675,
+        "diff_mean": -0.075,
+        "diff_upper_95": 0.033401,
+        "candidate_upper_95": 0.798368
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 2.369775,
+        "candidate_mean": 2.450375,
+        "diff_mean": 0.0806,
+        "diff_upper_95": 0.1209,
+        "candidate_upper_95": 2.513857
+       }
+      },
+      "negative_control": {
+       "wins": 30,
+       "losses": 0,
+       "ties": 10,
+       "discordant": 30,
+       "p_one_sided": 0.0,
+       "base_success": 30,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0183,
+       "gain_0.10": 0.0907,
+       "gain_0.20": 0.7141
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 80,
+      "reuse_index": 1,
+      "notes": [],
+      "base_success": 30,
+      "candidate_success": 27,
+      "digest": "581ff17a15708cafd523ca7e0097190d9c92d0ad7a6095d9dea0cd2f4321e13d"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 2, losses 5, p 0.9375 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "ffdbb110c0fd9bacf787a1aadc2ae971f8ba6d7c8ad842db618f1d3a2194af40"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": []
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 1
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 30,
+         "losses": 0,
+         "ties": 10,
+         "discordant": 30,
+         "p_one_sided": 0.0,
+         "base_success": 30,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 7
+        }
+       }
+      ]
+     }
+    },
+    {
+     "candidate_digest": "9e439940bbe3ac6ae22ac7202bb3ef272036cd72252437373c600323c265203b",
+     "strategy": "random",
+     "proposer": "v6-random-search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Reply with one Python code block that contains the complete function and any imports it needs. No explanation."
+      },
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "imports-cleanly"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 2,
+       "losses": 6,
+       "ties": 32,
+       "discordant": 8,
+       "p_one_sided": 0.964844
+      },
+      "false_accepts": {
+       "base": 10,
+       "candidate": 13
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.75,
+        "candidate_mean": 0.65,
+        "diff_mean": -0.1,
+        "diff_upper_95": 0.014811,
+        "candidate_upper_95": 0.775631
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.0,
+        "diff_mean": 0.0,
+        "diff_upper_95": 0.0,
+        "candidate_upper_95": 1.0
+       },
+       "wall_clock_s": {
+        "base_mean": 2.423375,
+        "candidate_mean": 2.4398,
+        "diff_mean": 0.016425,
+        "diff_upper_95": 0.067052,
+        "candidate_upper_95": 2.478803
+       }
+      },
+      "negative_control": {
+       "wins": 30,
+       "losses": 0,
+       "ties": 10,
+       "discordant": 30,
+       "p_one_sided": 0.0,
+       "base_success": 30,
+       "null_success": 0
+      },
+      "control": null,
+      "power": {
+       "gain_0.05": 0.0182,
+       "gain_0.10": 0.0819,
+       "gain_0.20": 0.7141
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 80,
+      "reuse_index": 2,
+      "notes": [],
+      "base_success": 30,
+      "candidate_success": 26,
+      "digest": "7a6f8da988575468986781e2ec75c741c0e585f9db5a1cf34d16deb54f47b009"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 2, losses 6, p 0.964844 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "ffdbb110c0fd9bacf787a1aadc2ae971f8ba6d7c8ad842db618f1d3a2194af40"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "imports-cleanly"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 2
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 30,
+         "losses": 0,
+         "ties": 10,
+         "discordant": 30,
+         "p_one_sided": 0.0,
+         "base_success": 30,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 8
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 2,
+   "evaluations": [
+    {
+     "candidate_digest": "5e9539837b82fc37ec9fc6d04bf5b34577d5205ad7509d99df14b7a312356e90",
+     "strategy": "random",
+     "proposer": "v6-random-search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Think about edge cases in a sentence or two, then give the complete function in one Python code block."
+      },
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "imports-cleanly"
+       ]
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "self_review"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 3,
+       "losses": 2,
+       "ties": 35,
+       "discordant": 5,
+       "p_one_sided": 0.5
+      },
+      "false_accepts": {
+       "base": 11,
+       "candidate": 11
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.7,
+        "candidate_mean": 0.725,
+        "diff_mean": 0.025,
+        "diff_upper_95": 0.117891,
+        "candidate_upper_95": 0.84261
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 2.0,
+        "diff_mean": 1.0,
+        "diff_upper_95": 1.0,
+        "candidate_upper_95": 2.0
+       },
+       "wall_clock_s": {
+        "base_mean": 2.395375,
+        "candidate_mean": 4.957475,
+        "diff_mean": 2.5621,
+        "diff_upper_95": 2.624833,
+        "candidate_upper_95": 5.056722
+       }
+      },
+      "negative_control": {
+       "wins": 28,
+       "losses": 0,
+       "ties": 12,
+       "discordant": 28,
+       "p_one_sided": 0.0,
+       "base_success": 28,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 5,
+       "losses": 2,
+       "ties": 33,
+       "discordant": 7,
+       "p_one_sided": 0.226562,
+       "control_success": 26,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0152,
+       "gain_0.10": 0.1027,
+       "gain_0.20": 0.7141
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 200,
+      "reuse_index": 3,
+      "notes": [],
+      "base_success": 28,
+      "candidate_success": 29,
+      "digest": "b36529e465f50d95f3895340dda3de235892b6f8319f9148ae48463760044938"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 3, losses 2, p 0.5 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "ffdbb110c0fd9bacf787a1aadc2ae971f8ba6d7c8ad842db618f1d3a2194af40"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "imports-cleanly"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 3
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 28,
+         "losses": 0,
+         "ties": 12,
+         "discordant": 28,
+         "p_one_sided": 0.0,
+         "base_success": 28,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 5
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  },
+  {
+   "cycle": 3,
+   "evaluations": [
+    {
+     "candidate_digest": "a19206318a307db2333ab31df033bee2e84129b629a96e16686ce6e49dbd2141",
+     "strategy": "random",
+     "proposer": "v6-random-search",
+     "diff": {
+      "prompt": {
+       "from": "",
+       "to": "Reply with one Python code block that contains the complete function and any imports it needs. No explanation."
+      },
+      "extra_checks": {
+       "from": [],
+       "to": [
+        "imports-cleanly"
+       ]
+      },
+      "pipeline": {
+       "from": [],
+       "to": [
+        "example_repair"
+       ]
+      }
+     },
+     "evaluate_code": "G6_E_META_EVALUATED",
+     "report": {
+      "n": 40,
+      "success": {
+       "wins": 4,
+       "losses": 2,
+       "ties": 34,
+       "discordant": 6,
+       "p_one_sided": 0.34375
+      },
+      "false_accepts": {
+       "base": 14,
+       "candidate": 12
+      },
+      "estimates": {
+       "success": {
+        "base_mean": 0.65,
+        "candidate_mean": 0.7,
+        "diff_mean": 0.05,
+        "diff_upper_95": 0.151159,
+        "candidate_upper_95": 0.820703
+       },
+       "model_calls": {
+        "base_mean": 1.0,
+        "candidate_mean": 1.3,
+        "diff_mean": 0.3,
+        "diff_upper_95": 0.420703,
+        "candidate_upper_95": 1.420703
+       },
+       "wall_clock_s": {
+        "base_mean": 2.367625,
+        "candidate_mean": 3.309725,
+        "diff_mean": 0.9421,
+        "diff_upper_95": 1.246206,
+        "candidate_upper_95": 3.621046
+       }
+      },
+      "negative_control": {
+       "wins": 26,
+       "losses": 0,
+       "ties": 14,
+       "discordant": 26,
+       "p_one_sided": 0.0,
+       "base_success": 26,
+       "null_success": 0
+      },
+      "control": {
+       "repeat": 2,
+       "wins": 6,
+       "losses": 3,
+       "ties": 31,
+       "discordant": 9,
+       "p_one_sided": 0.253906,
+       "control_success": 25,
+       "control_calls_mean": 2.0
+      },
+      "power": {
+       "gain_0.05": 0.0174,
+       "gain_0.10": 0.0986,
+       "gain_0.20": 0.7141
+      },
+      "partial": false,
+      "stopped": "",
+      "model_calls_used": 172,
+      "reuse_index": 4,
+      "notes": [],
+      "base_success": 26,
+      "candidate_success": 28,
+      "digest": "80e23043ba552142e8a013920b9041b14fb1cf914392628231e0448c21d63676"
+     },
+     "decision": {
+      "verdict": "refuse",
+      "code": "G6_E_META_NO_GAIN",
+      "reasons": [
+       "wins 4, losses 2, p 0.34375 (needs p <= 0.00833333)"
+      ],
+      "checks": [
+       {
+        "step": "stop",
+        "result": "pass",
+        "detail": ""
+       },
+       {
+        "step": "workflow and judging code unchanged",
+        "result": "pass",
+        "detail": "ffdbb110c0fd9bacf787a1aadc2ae971f8ba6d7c8ad842db618f1d3a2194af40"
+       },
+       {
+        "step": "schema; checks only added",
+        "result": "pass",
+        "detail": [
+         "imports-cleanly"
+        ]
+       },
+       {
+        "step": "held-out split",
+        "result": "pass",
+        "detail": {
+         "reuse_index": 4
+        }
+       },
+       {
+        "step": "negative control",
+        "result": "pass",
+        "detail": {
+         "wins": 26,
+         "losses": 0,
+         "ties": 14,
+         "discordant": 26,
+         "p_one_sided": 0.0,
+         "base_success": 26,
+         "null_success": 0
+        }
+       },
+       {
+        "step": "evidence size",
+        "result": "pass",
+        "detail": {
+         "n": 40,
+         "discordant": 6
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "head_version": 0,
+   "head_profile": {
+    "routing": {
+     "answer": "local"
+    },
+    "budgets": {
+     "max_model_calls": 8,
+     "max_wall_clock_s": 120.0,
+     "max_output_chars": 400000
+    },
+    "prompt": "",
+    "hints": [],
+    "context_budget_chars": 0,
+    "extra_checks": [],
+    "pipeline": [],
+    "retries": 0,
+    "prompt_layout": "default",
+    "distillates": {},
+    "code": {},
+    "adapter": null
+   },
+   "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+  }
+ ],
+ "per_cycle": [
+  2,
+  1,
+  1
+ ],
+ "report": {
+  "completion_state": "qualified-draft",
+  "reliability_label": "qualified-draft",
+  "warning_card": {
+   "code": "G6_E_META_REPORT",
+   "message": "what this meta-harness has shown",
+   "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+   "severity": "amber",
+   "why": "what this meta-harness has shown",
+   "risks": [],
+   "verified": false,
+   "next_step": "Inspect the degraded invocation envelope before trusting the result."
+  },
+  "evidence": [],
+  "egress_notice": [],
+  "request_id": "35509b639724",
+  "task_id": "",
+  "run_id": "d5ed7061077f4466817380ac546e2e8e",
+  "degraded": true,
+  "degradation_reason": "",
+  "known_limitations": [
+   "Qualified draft: this output has not been independently verified."
+  ],
+  "missing_checks": [
+   "Independent verification was not completed for this output."
+  ],
+  "recommended_next_steps": [
+   "Review the warning card and verify this output before relying on it."
+  ],
+  "risk_level": "medium",
+  "confidence": null,
+  "block_reason": "",
+  "required_human_decision": "",
+  "evidence_collected": [],
+  "safe_next_action": "",
+  "rollback_or_containment": "",
+  "code": "G6_E_META_REPORT",
+  "message": "what this meta-harness has shown",
+  "next_action": "",
+  "checked": [
+   {
+    "claim": "the store's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "the ledger's hash chain verifies",
+    "holds": true
+   },
+   {
+    "claim": "every activation names a person and a decision",
+    "holds": true
+   },
+   {
+    "claim": "every live run used the profile of the version it names",
+    "holds": true
+   },
+   {
+    "claim": "online tuning is off",
+    "holds": true
+   },
+   {
+    "claim": "audited share of live runs: at least 0.1",
+    "holds": true
+   }
+  ],
+  "measured": [
+   {
+    "claim": "the last held-out evaluation",
+    "value": {
+     "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+     "candidate_digest": "a19206318a307db2333ab31df033bee2e84129b629a96e16686ce6e49dbd2141",
+     "model_calls_used": 172,
+     "n": 40,
+     "partial": false,
+     "purpose": "evaluation",
+     "run_ids": [
+      "dc1265625f5243ccb646511dc1fd97fd",
+      "b9af5e61b2254aa090ac671eec86b8f0",
+      "18572f5e036a4df2af12c188990348b2",
+      "4c01bf0aaa8544f485a57ce806a4bb48",
+      "2c71286255af470883ca7861bbd4d36e",
+      "ef042548f20d43e89462c9cf42e62ef7",
+      "046152a85e194253b675a5a9f250aee9",
+      "9fd22ad7d4a64c748a5d7f0495c1d97c",
+      "eae6d14f39bd44bb8580303b06bb28ff",
+      "1327ebdcfcf84d479e45015a2ef58549",
+      "bee737fd5a0741a0b639853ce4712903",
+      "81b5b2c9312b4776bfa2c58369b9b408",
+      "7d1ab0c8661844838b90ac2e52a62efc",
+      "bc18f0e6a98b428b9895b02e7b01545a",
+      "5179cb5b282348758c89cb3905bbb882",
+      "1b38263dfa1542a79364489b1587b981",
+      "503a5cdf27e745adab3ea9db6addf1fe",
+      "49d9b088ccc54aa7a9b78d3db53263f9",
+      "f9a1b872fdc14caa932d5e728c1f1b6a",
+      "e5bcc545209748e39e1a29963012b196",
+      "5a89650b91284a26bdfd5346b5ff8692",
+      "d1082eb02fc848c9a8f3734d9a26cabe",
+      "16d2c279474d4ae78cbfa76b33dadcd3",
+      "34a00a0436f240c982a955920714841e",
+      "f35afb5bdef3466f8e48bbcee8b3ee35",
+      "20aef7ae52ed43d5b69bd3824484bf7a",
+      "2d6a573eaf9a44ddb7790bdc41e2ddab",
+      "43111c56aec74dab86e85968b1830daf",
+      "4e44cf13a265493d98584c0ef80fe865",
+      "9d653f5b8aa54b7bbb31c1a06724c21a",
+      "7ad5d7fa63414612a11187fe72eed822",
+      "47c17be499b94793ac634d908f66996d",
+      "de768df0f2f0471b9b7892ec67488217",
+      "cf348bb99d0f482cb40dad6fc8289066",
+      "4daddf9dfc8c47efbc81edc6147aa7e6",
+      "aa8420913daa4ec5b722f1c6d0c34c22",
+      "47a16bbd038f47e69d9a9930ecc3e989",
+      "6239a604fc1f466a871cd65c18a5c2ca",
+      "b091fa271d714969a4a69c3e23b26a50",
+      "dee76a0cfc0d4b2989f5d9c08eaaab3d"
+     ],
+     "split": "held_out",
+     "split_digest": "75d399c1dff814d5a22b90f75b9a7fde9423a2801abedeaa8c036abf27712a6a",
+     "success": {
+      "discordant": 6,
+      "losses": 2,
+      "p_one_sided": 0.34375,
+      "ties": 34,
+      "wins": 4
+     },
+     "workflow_digest": "ffdbb110c0fd9bacf787a1aadc2ae971f8ba6d7c8ad842db618f1d3a2194af40",
+     "_id": "80e23043ba552142e8a013920b9041b14fb1cf914392628231e0448c21d63676",
+     "_kind": "evaluation"
+    }
+   }
+  ],
+  "assumed": [
+   "live tasks resemble the suite (stationarity, KS A1)",
+   "the held-out answers are right, and the oracle reads them correctly",
+   "accepted_by names the person who accepted (recorded as given)",
+   "the held-out split is independent-authored"
+  ]
+ },
+ "inspect_versions": [
+  {
+   "accepted_by": "v6-scripted-approval (study script, not a person)",
+   "at": "2026-10-18T21:30:05+00:00",
+   "decision_digest": "",
+   "identity": "accepted_by is recorded as given; G6 cannot prove a person gave it",
+   "kind": "initial",
+   "ledger_head": "",
+   "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+   "proposer": "",
+   "reason": "",
+   "snapshot": "",
+   "version": 0
+  }
+ ],
+ "restarts": 0
+}

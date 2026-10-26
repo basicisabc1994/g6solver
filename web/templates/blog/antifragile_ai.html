@@ -1,0 +1,235 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}Antifragility in AI: Systems That Improve Under Stress{% endblock %}
+{% block meta_description %}Most AI systems are fragile — they break under stress. The best are robust — they tolerate it. What we need are antifragile systems that get better because of it.{% endblock %}
+{% block post_headline %}Antifragility in AI: Systems That Improve Under Stress{% endblock %}
+{% block post_date %}2025-07-26{% endblock %}
+{% block post_description %}Most AI systems are fragile — they break under stress. The best are robust — they tolerate it. What we need are antifragile systems that get better because of it.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Philosophy</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">Antifragility in AI: Systems That Improve Under Stress</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Robustness is the current goal
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">The engineering ambition for modern AI systems is robustness. We want systems that handle edge cases without crashing, tolerate adversarial inputs without producing dangerous outputs, and maintain performance under distribution shifts without catastrophic degradation. This is a reasonable goal, and the field has made genuine progress toward it. Adversarial training hardens models against perturbation attacks. Domain randomisation helps sim-to-real transfer in robotics. Ensemble methods and uncertainty estimation provide defence-in-depth against overconfident predictions in unfamiliar territory.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">The robustness programme is motivated by an understandable anxiety: AI systems deployed in the real world encounter conditions their designers did not anticipate. A self-driving car meets a road configuration absent from its training set. A medical diagnostic system encounters a patient population with a different demographic profile than its development cohort. A language model is asked a question that probes the edge of its training distribution. In each case, the robust system absorbs the shock without failing. It may not perform optimally, but it degrades gracefully rather than catastrophically.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup></p>
+
+            <p class="gsap-reveal">This is good engineering, and it matters. Safety-critical systems cannot afford brittleness. The costs of unexpected failure &mdash; in healthcare, finance, infrastructure, transportation &mdash; are measured in human lives and institutional trust. The investment in robust AI is justified by these stakes, and the techniques developed under this banner represent genuine advances in our ability to deploy AI responsibly.</p>
+
+            <p class="gsap-reveal">But robustness, for all its virtue, has a ceiling. And understanding that ceiling is the first step toward something more ambitious.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: Robustness is necessary but insufficient
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Limits of Not Breaking</h2>
+
+            <p class="gsap-reveal">Nassim Nicholas Taleb introduced the concept of antifragility in 2012 to name a property that had no word: the characteristic of systems that gain from disorder, stress, and volatility.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> Taleb's key insight was that the opposite of fragile is not robust. Fragile things break under stress. Robust things resist stress. But antifragile things <em>improve</em> under stress. They occupy a fundamentally different position on the spectrum of responses to volatility.</p>
+
+            <p class="gsap-reveal">The examples are drawn from biology and economics. The human immune system does not merely tolerate pathogens &mdash; it uses exposure to them to build stronger defences. Bones subjected to mechanical stress do not merely resist fracture &mdash; they increase in density. Evolution does not merely survive environmental change &mdash; it produces organisms better adapted to new conditions. Free markets do not merely weather economic shocks &mdash; the creative destruction of recessions clears inefficient firms and reallocates resources to more productive uses.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">Current AI systems exhibit none of these properties. They are, at best, robust &mdash; and frequently fragile. A model trained on one distribution and deployed in another does not learn from the mismatch. It degrades. An agent that encounters an error does not use the error to improve its strategy. It retries, or it fails, or it hallucinates around the obstacle. A system that receives adversarial inputs does not develop better defences in real time. It either withstands the attack (if hardened in training) or succumbs to it.</p>
+
+            <p class="gsap-reveal">This is a striking gap when you consider the aspirations of the field. We are building systems intended to operate in open-ended, unpredictable environments &mdash; environments that are, by definition, volatile and full of surprises. We are deploying these systems with the implicit promise that they will improve over time, that they will learn from experience, that they will get better at the things we need them to do. But the architectures we deploy are fundamentally static. The model weights are fixed at deployment. The strategies are determined at training time. The system's response to novelty is, at best, graceful degradation. It never converts the stress of unexpected conditions into improved capability.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">Holland's work on complex adaptive systems provides a theoretical lens for understanding this deficiency. In biological and economic systems, adaptation emerges from the interplay of variation, selection, and retention &mdash; new strategies are generated, tested against environmental pressure, and preserved when they prove effective.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> Current AI systems lack this loop. They are products of an adaptive process (training), but they are not themselves adaptive. Once deployed, they are frozen snapshots of a learning process that has stopped.</p>
+
+            <!-- ── Diagram 1: Fragile/Robust/Antifragile Response Curves ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 340" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing fragile, robust, and antifragile response curves to increasing stress">
+                    <defs>
+                        <filter id="glow-19" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Axes -->
+                    <line x1="100" y1="280" x2="740" y2="280" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <line x1="100" y1="280" x2="100" y2="40" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+
+                    <!-- Axis labels -->
+                    <text x="420" y="320" text-anchor="middle" fill="#6b7280" font-size="12">Stress / Volatility / Disorder &rarr;</text>
+                    <text x="40" y="160" text-anchor="middle" fill="#6b7280" font-size="12" transform="rotate(-90 40 160)">Capability &rarr;</text>
+
+                    <!-- Baseline -->
+                    <line x1="100" y1="180" x2="740" y2="180" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="6,4"/>
+                    <text x="755" y="184" fill="#4b5563" font-size="9">baseline</text>
+
+                    <!-- Fragile curve (drops sharply) -->
+                    <path d="M 120 175 C 200 170, 300 178, 380 200 C 460 230, 540 260, 700 275" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"/>
+                    <circle cx="700" cy="275" r="4" fill="#f87171"/>
+                    <text x="715" y="275" fill="#f87171" font-size="11" font-weight="600">Fragile</text>
+
+                    <!-- Robust curve (stays flat then slowly dips) -->
+                    <path d="M 120 175 C 200 175, 350 178, 450 180 C 550 183, 620 188, 700 195" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round"/>
+                    <circle cx="700" cy="195" r="4" fill="#fbbf24"/>
+                    <text x="715" y="199" fill="#fbbf24" font-size="11" font-weight="600">Robust</text>
+
+                    <!-- Antifragile curve (rises with stress) — highlighted -->
+                    <path d="M 120 175 C 200 168, 300 155, 400 135 C 500 115, 600 95, 700 75" fill="none" stroke="#6366f1" stroke-width="3" stroke-linecap="round" filter="url(#glow-19)"/>
+                    <circle cx="700" cy="75" r="5" fill="#6366f1"/>
+                    <text x="715" y="80" fill="#a5b4fc" font-size="11" font-weight="700">Antifragile</text>
+
+                    <!-- Stress event markers -->
+                    <line x1="250" y1="280" x2="250" y2="290" stroke="#6b7280" stroke-width="1"/>
+                    <text x="250" y="302" text-anchor="middle" fill="#4b5563" font-size="9">mild stress</text>
+                    <line x1="450" y1="280" x2="450" y2="290" stroke="#6b7280" stroke-width="1"/>
+                    <text x="450" y="302" text-anchor="middle" fill="#4b5563" font-size="9">moderate stress</text>
+                    <line x1="650" y1="280" x2="650" y2="290" stroke="#6b7280" stroke-width="1"/>
+                    <text x="650" y="302" text-anchor="middle" fill="#4b5563" font-size="9">severe stress</text>
+
+                    <!-- Annotation box -->
+                    <rect x="450" y="50" width="200" height="55" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="550" y="70" text-anchor="middle" fill="#a5b4fc" font-size="10" font-weight="600">Antifragile systems</text>
+                    <text x="550" y="85" text-anchor="middle" fill="#9ca3af" font-size="9">convert stress into</text>
+                    <text x="550" y="98" text-anchor="middle" fill="#9ca3af" font-size="9">improved capability</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; Three response profiles to stress: fragile systems degrade, robust systems endure, antifragile systems improve</p>
+            </div>
+
+            <p class="gsap-reveal">Nikolic's theory of practopoiesis offers a biological framework for understanding how antifragility emerges in natural systems. The key mechanism is hierarchically organised adaptive loops operating on different time scales &mdash; fast loops handle immediate perturbations, while slower loops adjust the parameters of the fast loops based on accumulated experience.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> Each level of the hierarchy learns from the stress experienced by the level below it, creating a system that becomes more capable precisely because it encounters difficulty. This is structurally absent from current AI architectures, where the training loop and the deployment loop are disconnected.</p>
+
+            <p class="gsap-reveal">Ashby's law of requisite variety compounds the problem. For a system to effectively regulate another system, it must have at least as much internal variety as the system it is regulating.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> An AI system deployed in a complex, changing environment faces an effectively infinite variety of possible situations. A static model has fixed variety. The mismatch guarantees that novel situations will eventually overwhelm the system's repertoire. Only a system that generates new internal variety in response to new external variety &mdash; a system that is antifragile &mdash; can maintain effective regulation over time.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Engineering antifragility
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Engineering Antifragile AI</h2>
+
+            <p class="gsap-reveal">If antifragility is the goal, the architecture must be designed around a specific principle: every failure, error, edge case, and correction must be systematically converted into improved capability. This is not aspirational language. It is an engineering specification that implies concrete architectural commitments.</p>
+
+            <p class="gsap-reveal">The first commitment is to <strong class="text-gray-200">error as training signal</strong>. In current systems, errors are logged, debugged, and patched. In an antifragile system, errors are automatically captured, analysed, and fed back into the system's learning loop. Every failure becomes a data point that refines the system's model of its own competence boundaries. Every hallucination triggers a verification check that generates a labelled example of the kind of reasoning that should be trusted and the kind that should not. The error is not waste to be discarded &mdash; it is information to be harvested.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup></p>
+
+            <p class="gsap-reveal">The second commitment is to <strong class="text-gray-200">edge cases as learning opportunities</strong>. When a system encounters an input outside its training distribution, the robust response is to flag uncertainty and degrade gracefully. The antifragile response is to do that <em>and</em> to capture the novel input as a seed for expanding the system's competence. This requires online or continual learning mechanisms that update the system's capabilities without catastrophically forgetting what it already knows &mdash; a challenge that continual learning research has made significant progress on, though it remains unsolved in its general form.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal">The third commitment is to <strong class="text-gray-200">corrections as algorithm synthesis triggers</strong>. When a human expert corrects a system's output, that correction should not merely fix the immediate error. It should trigger a process that identifies the general class of reasoning that led to the error and synthesises a new strategy &mdash; a revised algorithm, heuristic, or decision rule &mdash; that prevents the entire class from recurring. This is the mechanism by which biological immune systems work: a single encounter with a pathogen produces generalised defences against an entire family of related threats.</p>
+
+            <p class="gsap-reveal">These three commitments together define a learning loop that converts stress into strength. But they raise an immediate concern: unconstrained self-improvement is precisely what AI safety researchers worry about most. A system that gets better every time it encounters difficulty sounds like either the most useful or the most dangerous thing imaginable, depending on the constraints it operates under.</p>
+
+            <!-- ── Diagram 2: Architecture Stack ── -->
+            <div class="gsap-reveal my-12 max-w-md mx-auto">
+                <div class="space-y-0">
+                    <!-- Top layer -->
+                    <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Output</p>
+                        <p class="text-white font-semibold">Improved Capability</p>
+                        <p class="text-xs text-gray-500 mt-1">Stronger performance after each stress event</p>
+                    </div>
+                    <!-- Safety bounds layer -->
+                    <div class="border border-white/10 bg-white/[0.03] p-4 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Constraint</p>
+                        <p class="text-white font-semibold text-sm">Safety Bounds</p>
+                        <p class="text-xs text-gray-500 mt-1">Rate limits &bull; Scope constraints &bull; Human oversight</p>
+                    </div>
+                    <!-- Middle layer (highlighted) -->
+                    <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Antifragile Core</p>
+                        <p class="text-white font-bold text-lg relative">Learning Loop</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Error Harvesting &bull; Edge Expansion &bull; Strategy Synthesis</p>
+                    </div>
+                    <!-- Bottom layer -->
+                    <div class="border border-white/10 bg-white/[0.03] p-4 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Input</p>
+                        <p class="text-white font-semibold text-sm">Error Detection</p>
+                        <p class="text-xs text-gray-500 mt-1">Failures &bull; Edge cases &bull; Corrections &bull; Adversarial probes</p>
+                    </div>
+                    <!-- Foundation -->
+                    <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Foundation</p>
+                        <p class="text-white font-semibold">Base Model</p>
+                        <p class="text-xs text-gray-500 mt-1">Static weights, fixed training distribution</p>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; Antifragile architecture: errors flow upward through a bounded learning loop that converts stress into capability</p>
+            </div>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Safety as the Precondition for Antifragility</h2>
+
+            <p class="gsap-reveal">This is where the relationship between antifragility and safety becomes not just important but definitional. An antifragile system without safety bounds is an optimiser that improves without constraint &mdash; which is, in the technical alignment literature, the canonical formulation of an existential risk. The solution is not to abandon antifragility but to recognise that safety bounds are not external constraints on the system's learning &mdash; they are the <em>structure</em> that makes the learning safe.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
+
+            <p class="gsap-reveal">Taleb himself emphasises that antifragility in natural systems is bounded. The immune system gets stronger from pathogen exposure, but not from exposure to every pathogen &mdash; some kill the organism outright. Bones get stronger from stress, but not from stress that exceeds their fracture threshold. The antifragile response operates within a range. Below the range, stress is insufficient to trigger adaptation. Above the range, stress overwhelms the system. The productive zone lies in between: challenging enough to drive improvement, bounded enough to prevent destruction.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">Translating this to AI systems yields a concrete design principle. The learning loop must have explicit rate limits on how quickly the system can modify itself, scope constraints on what aspects of its behaviour can be changed, and mandatory human oversight for modifications that exceed predefined significance thresholds. These are not limitations on the system's capability &mdash; they are the conditions under which capability growth can be trusted. Amodei and colleagues have argued that scaling safety mechanisms alongside capability is not optional but necessary for maintaining alignment as systems become more powerful.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <p class="gsap-reveal">Meadows' work on leverage points in complex systems is instructive here. She identifies the rules of a system &mdash; the constraints governing how it can change &mdash; as among the highest-leverage intervention points for influencing system behaviour.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> In an antifragile AI system, the safety bounds are precisely these leverage points. They determine not what the system does but what it is <em>allowed to become</em>. Getting them right is the difference between an antifragile system that grows more capable and more trustworthy over time and a self-improving system that drifts out of alignment with human values.</p>
+
+            <p class="gsap-reveal">The practical implementation involves what we might call <strong class="text-gray-200">bounded self-modification</strong>. The system can update its strategies, expand its competence boundaries, and synthesise new algorithms &mdash; but each modification is tested against a formal safety specification before deployment. The modification is applied provisionally, monitored for a defined observation period, and rolled back automatically if it violates any safety invariant. This creates a ratchet mechanism: improvements are retained, regressions are rejected, and the system's capability grows monotonically within its safety envelope.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 CODA: Beyond robustness
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Beyond Not Breaking</h2>
+
+            <p class="gsap-reveal">The robustness paradigm has served AI engineering well, and it will continue to be necessary. Systems that break under stress are unacceptable in safety-critical domains. But robustness is a defensive posture. It asks: how do we prevent failure? The antifragility programme asks a different question: how do we make failure productive?</p>
+
+            <p class="gsap-reveal">The distinction matters because the environments in which AI systems operate are not static. They change, shift, evolve, and occasionally transform in ways that no fixed model can anticipate. A robust system will tolerate these changes for a while, degrading slowly as the gap between its training distribution and the current environment widens. An antifragile system will use these changes as fuel for adaptation, growing more capable precisely because it encounters difficulty.</p>
+
+            <p class="gsap-reveal">This is not an unrealistic aspiration. Biology proves it is possible. Economics demonstrates it at scale. The engineering challenge is to instantiate the same structural pattern &mdash; stress converted to adaptation through bounded learning loops &mdash; in artificial systems with the formal safety guarantees that biological systems lack. The immune system does not have a rollback mechanism. We can build one.</p>
+
+            <p class="gsap-reveal font-semibold text-white">The goal is not systems that survive the world's complexity. It is systems that thrive on it &mdash; growing stronger, more capable, and more trustworthy with every challenge they face, within bounds that ensure the growth serves human purposes. That is the engineering programme that antifragility demands.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Goodfellow, I. J., Shlens, J., &amp; Szegedy, C. (2015). <a href="https://arxiv.org/abs/1412.6572" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Explaining and harnessing adversarial examples</em></a>. <em>Proceedings of the 3rd ICLR</em>. &mdash; The foundational work on adversarial training as a robustness mechanism for neural networks.
+                </li>
+                <li id="ref-2">
+                    Amodei, D., Olah, C., Steinhardt, J., Christiano, P., Schulman, J., &amp; Man&eacute;, D. (2016). <a href="https://arxiv.org/abs/1606.06565" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Concrete problems in AI safety</em></a>. arXiv preprint arXiv:1606.06565. &mdash; Identifies robustness to distributional shift as a core safety challenge for deployed AI systems.
+                </li>
+                <li id="ref-3">
+                    Taleb, N. N. (2012). <a href="https://www.penguinrandomhouse.com/books/176227/antifragile-by-nassim-nicholas-taleb/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Antifragile: Things That Gain from Disorder</em></a>. Random House. &mdash; The definitive formulation of antifragility: a property of systems that benefit from volatility, stress, and disorder.
+                </li>
+                <li id="ref-4">
+                    Hendrycks, D., &amp; Dietterich, T. (2019). <a href="https://arxiv.org/abs/1903.12261" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Benchmarking neural network robustness to common corruptions and perturbations</em></a>. <em>Proceedings of the 7th ICLR</em>. &mdash; Demonstrates the brittleness of neural networks to common distribution shifts in image classification.
+                </li>
+                <li id="ref-5">
+                    Holland, J. H. (1992). <a href="https://doi.org/10.7551/mitpress/1090.001.0001" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Adaptation in Natural and Artificial Systems</em></a> (2nd ed.). MIT Press. &mdash; The theory of complex adaptive systems: variation, selection, and retention as the mechanisms of adaptation.
+                </li>
+                <li id="ref-6">
+                    Nikoli&cacute;, D. (2015). <a href="https://doi.org/10.1016/j.biosystems.2014.07.005" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Practopoiesis: Or how life fosters a mind</em></a>. <em>Journal of Theoretical Biology</em>, 373, 40&ndash;61. &mdash; Hierarchically organised adaptive loops operating at multiple time scales as the mechanism underlying biological antifragility.
+                </li>
+                <li id="ref-7">
+                    Ashby, W. R. (1956). <a href="https://archive.org/details/introductiontocy00ashb" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>An Introduction to Cybernetics</em></a>. Chapman &amp; Hall. &mdash; The law of requisite variety: a controller must have at least as much variety as the system it regulates.
+                </li>
+                <li id="ref-8">
+                    Sutton, R. S., &amp; Barto, A. G. (2018). <a href="http://incompleteideas.net/book/the-book-2nd.html" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Reinforcement Learning: An Introduction</em></a> (2nd ed.). MIT Press. &mdash; The theoretical framework for learning from error signals, reward, and temporal difference.
+                </li>
+                <li id="ref-9">
+                    Parisi, G. I., Kemker, R., Part, J. L., Kanan, C., &amp; Wermter, S. (2019). <a href="https://doi.org/10.1016/j.neunet.2019.01.012" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Continual lifelong learning with neural networks: A review</em></a>. <em>Neural Networks</em>, 113, 54&ndash;71. &mdash; Survey of continual learning methods addressing catastrophic forgetting during incremental adaptation.
+                </li>
+                <li id="ref-10">
+                    Russell, S. (2019). <a href="https://www.penguinrandomhouse.com/books/566677/human-compatible-by-stuart-russell/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Human Compatible: Artificial Intelligence and the Problem of Control</em></a>. Viking. &mdash; On the necessity of designing AI systems whose objectives remain aligned with human values during self-improvement.
+                </li>
+                <li id="ref-11">
+                    Amodei, D. (2023). <a href="https://www.anthropic.com/research/core-views-on-ai-safety" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Core views on AI safety</em></a>. Anthropic. &mdash; Argues that safety mechanisms must scale alongside capabilities to maintain alignment.
+                </li>
+                <li id="ref-12">
+                    Meadows, D. H. (1999). <a href="https://donellameadows.org/archives/leverage-points-places-to-intervene-in-a-system/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Leverage points: Places to intervene in a system</em></a>. The Sustainability Institute. &mdash; Identifies system rules and self-organisation as high-leverage intervention points in complex systems.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

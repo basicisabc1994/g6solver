@@ -1,0 +1,213 @@
+{
+  "arm": "F",
+  "canary_blind": 0,
+  "canary_hits": [],
+  "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+  "head_profile": {
+    "adapter": null,
+    "budgets": {
+      "max_model_calls": 8,
+      "max_output_chars": 400000,
+      "max_wall_clock_s": 120.0
+    },
+    "code": {},
+    "context_budget_chars": 0,
+    "distillates": {},
+    "exemplars": 0,
+    "extra_checks": [],
+    "hints": [],
+    "pipeline": [],
+    "prompt": "",
+    "prompt_layout": "default",
+    "retries": 0,
+    "routing": {
+      "answer": "local"
+    }
+  },
+  "method": {
+    "candidates_per_cycle": 4,
+    "cycles": 3,
+    "merge_every": 3,
+    "propose_budget": 200,
+    "race_block": 10,
+    "race_keep": 0.5,
+    "reflect_calls": 3,
+    "select_budget": 2000,
+    "use_edits": true,
+    "use_recovery": false,
+    "use_reflection": false
+  },
+  "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+  "minutes": 7.6,
+  "reflector_calls": 0,
+  "run": {
+    "activated": null,
+    "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+    "champion": "d4a1930d4b3cd271e50ddec961d3a5fcbfba54614ffa35f5baa86ae1555f1223",
+    "confirmation": {
+      "false_accepts": {
+        "base": 31,
+        "candidate": 9
+      },
+      "level": 0.005367,
+      "model_calls_used": 80,
+      "n": 40,
+      "partial": false,
+      "report_digest": "0f2e0e42a67a8f1fcc8c3e8249428852acac0c5411f2f63383e454a2b62db4b3",
+      "success": {
+        "boundary": 0.005367,
+        "discordant": 26,
+        "look": 2,
+        "looks": 4,
+        "losses": 2,
+        "p_one_sided": 5e-06,
+        "ties": 14,
+        "wins": 24
+      }
+    },
+    "cycles": [
+      {
+        "cycle": 1,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 0,
+            "n": 60,
+            "wins": 29
+          },
+          {
+            "candidate_digest": "ca8a7045e2af65c4abc147a1cfce62112470251f5bf030622e6f7a9eef8b2be5",
+            "dropped_at_block": 2,
+            "fields": 1,
+            "losses": 1,
+            "n": 20,
+            "wins": 2
+          },
+          {
+            "candidate_digest": "b26dd79c8f303244fc754b85595c3807ed6e2f65546396c4fa7d9867b34a7f05",
+            "dropped_at_block": 1,
+            "fields": 2,
+            "losses": 1,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 150,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 3,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 0,
+            "proposed": 3
+          }
+        },
+        "winner": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81"
+      },
+      {
+        "cycle": 2,
+        "new_champion": false,
+        "raced": [
+          {
+            "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 1,
+            "n": 60,
+            "wins": 29
+          },
+          {
+            "candidate_digest": "c059670a428dbac14fc75e0b6321d7d9b3c04198fabe6bbbd81655f590b59b58",
+            "dropped_at_block": 1,
+            "fields": 3,
+            "losses": 1,
+            "n": 10,
+            "wins": 1
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 130,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 6,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 1,
+            "proposed": 1
+          }
+        },
+        "winner": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81"
+      },
+      {
+        "cycle": 3,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "d4a1930d4b3cd271e50ddec961d3a5fcbfba54614ffa35f5baa86ae1555f1223",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 1,
+            "n": 60,
+            "wins": 29
+          },
+          {
+            "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+            "dropped_at_block": 1,
+            "fields": 2,
+            "losses": 1,
+            "n": 10,
+            "wins": 5
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 130,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 9,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 2,
+            "proposed": 1
+          }
+        },
+        "winner": "d4a1930d4b3cd271e50ddec961d3a5fcbfba54614ffa35f5baa86ae1555f1223"
+      }
+    ],
+    "decision": {
+      "code": "G6_E_META_PROTECTED",
+      "reasons": [
+        "the code that judges a change differs from the code confirmed"
+      ],
+      "verdict": "block"
+    },
+    "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+    "notes": [],
+    "outcome": "refused",
+    "recovery": {
+      "causes": [
+        {
+          "cases": 0,
+          "code": "needs_a_person",
+          "examples": [],
+          "what": "the code that judges a change differs from the code confirmed"
+        }
+      ],
+      "next_action": "A person resolves this before anything else can be measured: the code that judges a change differs from the code confirmed",
+      "remedies": [
+        {
+          "action": "A person resolves this before anything else can be measured: the code that judges a change differs from the code confirmed",
+          "addresses": "needs_a_person",
+          "component": "",
+          "how": "",
+          "who": "person"
+        }
+      ],
+      "summary": "not recommended (G6_E_META_PROTECTED): the code that judges a change differs from the code confirmed"
+    },
+    "workflow_digest": "c89af11092537138d5751df1767aa507d63cc96d9c61ea761e38ddfa2d9a58ea"
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "reviewer": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25); the records of the other rules are kept from the earlier readers",
+  "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
+  "rules": [
+    {
+      "rule": "beta",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "b3f8db1852becc0fa0da3fc75012c885f0b2f2500555ca9406c0ed5a3b7d1924",
+      "finding": "The register's clause states the conjugate beta update (add successes to a, failures to b) in its own words, which is what the book's chapter 8 summary and Example 14 say, and nothing more. _beta_posterior returns alpha plus the total of the counts and beta plus trials-per-count times the number of counts minus that total, which is the same rule for one binomial count and its sum for several. The printed case (Example 28 in chapter 16: prior 14.4 and 9.6, 100 voters, 25 in favour, posterior 39.4 and 84.6) is in the source bytes; I found the private quote by its hash and every number of the case is in it."
+    },
+    {
+      "rule": "moments",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The clause states the update and the beta mean and variance (the mean and variance formulas numbered 8.3 and, separately, 8.5). It says nothing of a mode or a standard deviation, and nothing of gamma or normal posteriors. I read the book's summary section: it gives the beta mode, defines the standard deviation as the root of the variance, and Table 8.2 prints the means and spreads used in the cases. The gamma mean, mode and spread are in chapter 10 and the normal ones in chapter 11, outside this entry.",
+      "code_matches": true,
+      "source_sha256": "b3f8db1852becc0fa0da3fc75012c885f0b2f2500555ca9406c0ed5a3b7d1924",
+      "finding": "summary() gives the beta mean and variance by the formulas numbered 8.3 and, separately, 8.5, the gamma and normal moments in their standard forms, the standard deviation as the root of the variance, and the beta mode (a-1)/(a+b-2). It returns no mode for a beta with a shape of 1 or less, a G6 choice the book's bare formula does not make. The printed cases are the Anna and Bart means and spreads of Table 8.2; the garbled table has no column labels, so I checked the pairing by computing them (0.2484, 0.2647; 0.0386, 0.0435). The shared private quote is in the source bytes and holds both parameter sets and all four printed values. Coverage of gamma and normal rests on the second route and transcribed cases, not on a value printed under this entry."
+    },
+    {
+      "rule": "credible_interval",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The clause states only the update and the beta mean and variance. The rule is the median and the equal-tail credible interval. I read section 8.6 (the interval from the lower and upper tail percentiles of the posterior, chosen for convenience over the shortest interval) and the percentile and median definitions in section 8.4; Table 8.2 prints the medians used in the cases.",
+      "code_matches": true,
+      "source_sha256": "b3f8db1852becc0fa0da3fc75012c885f0b2f2500555ca9406c0ed5a3b7d1924",
+      "finding": "quantile() inverts the CDF by bisection (beta, gamma) or uses the normal inverse CDF, and summary() takes the interval from the quantiles at (1-mass)/2 and 1-(1-mass)/2, which is the equal-tail interval of section 8.6. The printed cases are the two Table 8.2 medians (0.247 and 0.263), found in the shared private quote and confirmed by computing them (0.2470, 0.2632). Only the median is printed as a case; the interval end points rest on the second route."
+    },
+    {
+      "rule": "gamma",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The clause states the positive-uniform case only (shape equal to the total plus one, rate equal to the count, and Example 17's gamma(27,8)). The code also applies the update for a general gamma prior (add the total to the shape, the count to the rate), which the book gives a page later in the same chapter and adds that the same step also covers the flat positive prior; I read it. The clause omits it.",
+      "code_matches": true,
+      "source_sha256": "b3f8db1852becc0fa0da3fc75012c885f0b2f2500555ca9406c0ed5a3b7d1924",
+      "finding": "_gamma_posterior treats the positive uniform prior as shape 1, rate 0 and adds the total and the count, giving shape 27 and rate 8 for Example 17's eight weekly counts, and for a given gamma prior it adds the same quantities. The printed case's private quote is in the source bytes and holds the eight counts and gamma(27,8). One oddity in the source, not in the code: Example 17's prose shows Chase's posterior rate a quarter unit off the stated rule (prior rate 2.5 plus 8 weeks is 10.5), while Table 10.2 shows ten and a half. The certificate's case for that update expects 10.5, which follows the rule."
+    },
+    {
+      "rule": "normal",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "b3f8db1852becc0fa0da3fc75012c885f0b2f2500555ca9406c0ed5a3b7d1924",
+      "finding": "The clause is a fair statement of the known-variance rules of chapter 11 (sample mean variance sigma^2/n; posterior precision is prior precision plus n/sigma^2; posterior mean is the precision-weighted average). In the held conversion equations 11.5-11.6 are damaged, but the three plain-language rules on the interval page say the same, and Example 20 (prior 30 and variance 16, sigma 2, 12 observations of mean 32) gives variance 0.3265 and mean 31.96, which the code reproduces. _normal_posterior computes exactly that precision form. The printed case (Example 29 in chapter 16: prior 8.5 and 0.7, variance 1, five measurements averaging 5.45, posterior mean 6.334) is in the source bytes via its hashed private quote; I recomputed 6.33406 and an sd of 0.3769."
+    },
+    {
+      "rule": "beta_cdf",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "f9ee282306f1333057b0e17a96a264092bfe675e7acada0d17de394458d4a232",
+      "tier_justified": true,
+      "tier_reason": "The DLMF page defines the continued fraction and its coefficients and prints no worked numerical value of the function, so no printed value is available to check this rule. The one printed value G6 can be run on is in Barber, and the separate barber_example rule carries it.",
+      "finding": "I read 8.17.22 and 8.17.23 and the paragraph after them in the held page (SHA-256 equal to the register's), taking the formulas from the page's own TeX attributes. The register's own-words clause gives the same front factor, the same continued fraction and both coefficient formulas, and says the fraction is fast for x below (a+1)/(a+b+2) and that elsewhere the symmetric argument is used through 8.17.4. The page words the second case as x above that bound or 1-x below (b+1)/(a+b+2); those are one inequality, so 'elsewhere' loses nothing, although at exact equality the page is silent and the code swaps. beta_cdf evaluates the front factor times the fraction over a, with the coefficients in the page's order, and switches at x >= (a+1)/(a+b+2). I compared it with mpmath at nine points (shapes from 0.1 to 2000, and 3 and 9 at one half, which gives 1981/2048 to 1e-16) and found at most 1.1e-14 absolute difference, at x = .999, a = 50, b = .3. The rule's '10,000 terms' counts loop passes, each applying two coefficients."
+    },
+    {
+      "rule": "gamma_cdf",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The register's own-words clause for page 8.9 gives the continued fraction 8.9.2 for the upper incomplete gamma function with its phase condition, and says outright that the series 8.7.1 for the lower function is on a page not held. I confirmed 8.9.2 against the page's TeX, term by term as far as the page prints it. The rule also names the power series for the lower function, which I could not read in the held bytes; I rely on its being the standard series and on the numerical agreement with mpmath.",
+      "code_matches": true,
+      "source_sha256": "4d172f268b6a6e09f7aede4b3cbd9a0559a31ad4d2b10d6c14cb166308a10594",
+      "tier_justified": true,
+      "tier_reason": "The held page gives the fraction and no numerical value to run the function on, and the series page is not held, so no printed value checks this rule.",
+      "finding": "gamma_cdf uses the series for x below a+1 and otherwise an even contraction of the 8.9.2 fraction, returned as one minus the upper tail; the contraction is equivalent to the printed form, not the same, as the register says, and the switch point is G6's choice. I checked x = 2, a = 1 against 1-exp(-2) and x = 200, a = 150 against mpmath, and eight points in all on both sides of the switch (differences up to 1.2e-15)."
+    },
+    {
+      "rule": "barber_example",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "60593a73d74c093826346904989eb88a96cebcde2aa637ed3d82735ae9402f5d",
+      "finding": "The clause states the beta-binomial conjugate update for the coin (equations 9.1.24-9.1.26), the probability that theta is below one half as the regularised incomplete beta at those updated parameters (9.1.28-9.1.30), and the flat-prior value for two heads and eight tails, as the book does. The rule's implementation, beta_cdf, computes that function; at (3, 9) it returns 0.967285, equal to 1981/2048. The printed case's private quote is in the source bytes and holds the counts and 0.9673; the case's x of 0.5 with heads 2 and tails 8 maps to a=3, b=9 as the source does (counts plus one)."
+    },
+    {
+      "rule": "evidence",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "60593a73d74c093826346904989eb88a96cebcde2aa637ed3d82735ae9402f5d",
+      "tier_justified": true,
+      "tier_reason": "Example 12.2 prints the evidence for 5 heads and 2 tails and for 50 heads and 20 tails, but the fair-coin prior parameters appear in the text about 3,200 characters earlier, with equations and a figure between them, so no single quote of at most 1,500 characters holds the inputs and the printed value together. The cases are transcribed with printed set to false.",
+      "finding": "The clause fairly states equations 12.2.5-12.2.7 (the integral of prior times likelihood is a ratio of beta functions) and Example 12.2's use of a Beta(50,50) prior. _beta_evidence computes log B(a',b') - log B(a,b), plus a sum of log binomial coefficients. For single tosses (trials 1) the coefficient term is zero and the result is the source's formula; I got 0.007879 and 9.436e-21, matching the printed 0.0079 and 9.4 x 10^-21. For trials above 1 the code adds the binomial coefficient of each count, which the source (a sequence likelihood) does not state; that is the standard beta-binomial form and the rule names it, but it is G6's extension and I could not check it against a printed value."
+    },
+    {
+      "rule": "mh",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "The clause states the general Metropolis-Hastings ratio, the accept-if-at-least-one and compare-with-a-uniform steps of Algorithm 27.3, and the acceptance function of equation 27.4.7. The rule is the symmetric random-walk case, which the source reaches in the next paragraphs (a Gaussian proposal with equal forward and reverse densities makes the ratio p*(x')/p*(x), equations 27.4.11-27.4.12). The clause does not state that reduction; I read it.",
+      "code_matches": true,
+      "source_sha256": "60593a73d74c093826346904989eb88a96cebcde2aa637ed3d82735ae9402f5d",
+      "tier_justified": true,
+      "tier_reason": "Algorithm 27.3 and its text print no numerical output that G6's seeded sampler could be run on; its examples are plots of random draws. Only identities (a unit ratio accepts) can be checked, and those are printed: false.",
+      "finding": "mh draws a Gaussian step, forms the log density difference and accepts when the log of a uniform draw is below it, otherwise keeps the state. Because the uniform is below one, a ratio of one or more always accepts, and a candidate outside the support (log density minus infinity) is always rejected, as the algorithm says. The only departure is a floor of 1e-300 on the uniform draw, which could differ from the source only with probability about 1e-300."
+    },
+    {
+      "rule": "convergence",
+      "clause_fair": "by context only",
+      "context_attested": true,
+      "reason": "Judged on the new wording: the register's clause now says the authors propose an R-hat on rank-normalized, folded draws (their section 4) and recommend using the sample only when it is below 1.01, with four or more chains as the default; that they recommend requiring the rank-normalized ESS to exceed 400; and that their software bounds the ESS estimate by S log10(S). I checked each against pages 4, 5 and 8 of the held paper (SHA-256 equal to the register's): it now says what the paper says, with the recommending tone and the modified R-hat, so the earlier tone and R-hat objections are gone and clause_fair would be true for what the clause states. It stays 'by context only' because the rule names more than the clause carries: splitting, the pooled ranks transform, folding, and the bulk and tail ESS definitions (sections 3.1, 3.2 and 4.1 to 4.3), and a 400 line for tail-ESS, which the running text does not give; its support is the captions of the figures from page 13 on, which mark 400 as the recommended line on plots that include tail-ESS.",
+      "code_matches": true,
+      "source_sha256": "d67a38f7644d7fc77dff8f727c873372f1c43fbb2a507ee146cdc139ae15a24e",
+      "tier_justified": true,
+      "tier_reason": "The paper's examples are plots of simulated chains whose draws are not printed, and it has no table of diagnostic values from published data. It does print a few values for an eight-schools run (page 25), but they come from a sampler's draws that the paper does not print, so G6's functions cannot be run on them and no printed value checks this rule.",
+      "finding": "Read fresh against the held paper (SHA-256 equal to the register's). The code matches it step by step: split into halves; pooled average ranks with the (r-3/8)/(S+1/4) transform; folding about the pooled median and the larger of the two R-hats; autocovariances with divisor N; the combined autocorrelation of equation 10 with each chain weighted by its variance (autocovariance times N/(N-1)); Geyer's initial positive sequence with the first pair always kept and made monotone; the average of the sum cut at the odd lag and the sum cut at the next even lag (the odd-lag sum plus the next even-lag autocorrelation, zero if none); the S log10(S) cap, written as a floor of 1/log10(S) on tau; tail-ESS as the smaller of the 5 and 95 percent indicator ESS; thresholds R-hat below 1.01 and bulk and tail ESS above 400. I also wrote a fresh numpy version from the paper's text (direct autocovariances, scipy ranks) and ran it against assess on four chains of 500 draws at AR(1) coefficients -0.9, -0.5, 0, 0.5 and 0.9: R-hat, bulk-ESS and tail-ESS agree to a relative difference near 6e-15 (at -0.9 the bulk ESS sits exactly on the cap). It shares my reading with the code, so it checks the implementation, not the reading. Points where the code differs from or goes past the paper without changing the diagnostic materially: (1) the paper does not define the per-chain autocorrelation behind equation 10, and G6 divides lag-t by lag-0 autocovariance (the N/(N-1) factor); another reading differs by about 1/N. (2) The paper rank-normalises the indicator for tail-ESS and the code passes the 0/1 indicator straight to ess; I ran both on AR(1) chains at 5 and 95 percent and they agree to 3e-15. (3) The 5 and 95 percent cut points use linear interpolation of the sorted draws; the paper says empirical quantile. (4) With an odd draw count the middle draw is dropped before splitting; the paper is silent. (5) The paper recommends at least four chains, but the interface takes two to eight and nothing enforces four, so the restated clause's 'four or more chains as the default' is not enforced. (6) The paper's page-8 condition for relying on R-hat is an average ESS of at least 50 per split chain; the code asks for bulk ESS above 400 whatever the chain count, which is stricter than that for up to eight split chains and weaker beyond (sixteen split chains would call for 800). (7) 400 on tail-ESS rests only on figure captions. (8) The register's section field puts 4.1 to 4.3 on pages 9 and 10, but section 4.1 begins at the foot of page 8."
+    },
+    {
+      "rule": "prediction",
+      "clause_fair": true,
+      "code_matches": true,
+      "source_sha256": "60593a73d74c093826346904989eb88a96cebcde2aa637ed3d82735ae9402f5d",
+      "tier_justified": true,
+      "tier_reason": "Equation 18.1.45 is a general weighting principle for a regression predictor with hyperparameters and prints no numerical example, so no printed value can be run on G6's posterior-predictive replication.",
+      "finding": "The clause fairly states the equation: the mean prediction averages the predictor over the joint posterior, i.e. each fixed-hyperparameter mean weighted by the hyperparameter's posterior probability. replicated() applies the same weighting by drawing one parameter from the exact posterior per replicate and then a full dataset conditional on it (beta then binomial, gamma then Poisson by exponential arrivals, normal then normal), never substituting a posterior mean. That extension of the principle to sampled datasets and to these three likelihoods is G6's, not the book's; the source supports only the mixture idea."
+    },
+    {
+      "rule": "prior_shift",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "prior_shift only subtracts two posterior means, divides by the baseline sd and sets a boolean flag; it changes no posterior, label or draw. The flag is the 'note' effect.",
+      "finding": "G6's own threshold (no source): large_shift is true when the absolute difference of the posterior means is strictly more than the baseline posterior sd, as the rule says; exactly one sd does not fire. Posterior sd is always positive for the allowed inputs, so the division cannot fail."
+    },
+    {
+      "rule": "misfit",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "check() computes the predictive interval and returns descriptive numbers beside the misfit flag; it changes no posterior and no label, and its only other effects are the refusals the rule lists plus a refusal for a non-finite replicated statistic and the Poisson arrival cap. I take the flag and the refusals to be its whole effect.",
+      "finding": "G6's own rule: misfit is true when the observed statistic is strictly below the lower or strictly above the upper end of the empirical equal-tailed predictive interval, so a value exactly at either end holds. The refusals match the rule text: an unregistered statistic, more than 2,000,000 replicated values (replicates times observations), a variance of fewer than two observations, and a non-finite observed statistic. It also refuses a non-finite replicated statistic, which the rule text does not list."
+    },
+    {
+      "rule": "numerics",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "bisect_quantile returns the midpoint once the CDF residual is at most 1e-12 and otherwise raises NotConverged after 200 bisections; it has no other effect. Refusal is its effect.",
+      "finding": "G6's own bound: the loop runs at most 200 bisections, accepts when the CDF at the midpoint is within 1e-12 of q, and raises otherwise, so a quantile is never answered approximately. gamma_quantile doubles its upper bracket at most 127 times before refusing, as the rule says. A probability outside (0,1) is also refused."
+    },
+    {
+      "rule": "bounds",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "observations() either returns the observations as floats or raises an MLError; it does not alter values. The shared row check likewise only raises.",
+      "finding": "G6's own limits: 1 to 20,000 observations, magnitude at most 1,000,000 (strictly more is refused), counts that are whole numbers in the model's support (and at most the trials for the binomial) with a total of at most 1,000,000, exactly one of observations and dataset, and, via bounded(), undeclared columns, cells over 10,000 characters and text over 5,000,000 characters in all. All match the rule text; it also refuses boolean values, which the rule does not list."
+    },
+    {
+      "rule": "sampler_metadata",
+      "clause_fair": null,
+      "code_matches": true,
+      "source_sha256": null,
+      "effect_only": true,
+      "effect_reason": "checked() raises MLError for the faults the rule lists. When nothing is wrong it also computes the draws' mean, variance, sd and an empirical equal-tailed interval and returns them with the diagnostics; that summary is the sampler's descriptive output and changes no draw or label. I take refusal as its guarding effect, and that the summary changes nothing rests on my reading.",
+      "finding": "Re-read after the second pass: only the Vehtari clause wording and derivation note changed, and the thresholds it states (R-hat below 1.01, ESS above 400, S log10(S)) are the same, so this record stands. G6's own rule; its R-hat and ESS thresholds are those of rule convergence, so it inherits that rule's open points (two chains are accepted though the paper recommends four, and 400 on tail-ESS rests on figure captions). Read fresh: checked() refuses missing or ragged chains, boolean, non-finite or non-numeric draws, beta draws outside (0,1), gamma draws that are not positive, a pymc result whose divergences are not an integer zero, any two identical complete chains, and a result that assess() does not call converged (R-hat undefined or not below 1.01, or bulk or tail ESS not above 400). Those match the rule text. Two small extras the rule text does not list: booleans are refused, and a nonzero 'divergences' value is refused for any backend (line 62), though only the pymc path reports one. The assess it calls includes the even-lag average, which I confirmed."
+    }
+  ],
+  "reviewed": {
+    "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+    "artifact_sha256": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+    "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+    "refusals": [
+      "MLError",
+      "NotConverged"
+    ],
+    "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+    "sources_sha256": {
+      "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+      "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+      "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+      "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+      "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+      "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+      "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+      "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+      "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7",
+      "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+<figure class="rs-group">
+    <figcaption>{{ group.label }}{% if group.better == "lower" %} <span class="rs-better">lower is better</span>{% endif %}</figcaption>
+    {% for bar, width in group.rows %}
+    <div class="rs-bar{% if bar.highlight %} is-g6{% endif %}{% if bar == group.best %} is-best{% endif %}">
+        <span class="rs-label">{{ bar.label }}</span>
+        <span class="rs-track"><span class="rs-fill" style="--v: {{ width }}"></span></span>
+        <span class="rs-value">{{ bar.value }}{% if bar.n %} of {{ bar.n }}{% endif %}</span>
+    </div>
+    {% endfor %}
+</figure>

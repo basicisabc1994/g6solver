@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Security{% endblock %}
+{% block meta_description %}G6 runs on your own computer: what it does to keep your work safe, what it is not, and how to report a vulnerability.{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/content.css' %}">{% endblock %}
+{% block content %}
+{% comment %}DRAFT for the owner's review (site fix pass, 2026-10-19). It replaces an earlier page, which
+described servers, accounts and stored keys that no longer exist. Every sentence below was checked against oss/src:
+g6/mcp/__init__.py (stdio; sensitive ops refused unless G6_MCP_SENSITIVE lists them) and g6/bundles/server.py (127.0.0.1, Host/Origin checks, per-start
+token, settings.json written 0o600). Owner to confirm: the contact address (DECISIONS #12), and whether to promise a
+response time.{% endcomment %}
+<article class="g6-prose max-w-3xl mx-auto px-4 sm:px-6 py-16">
+    <h1>Security</h1>
+    <p class="why">An AI agent that can run commands, change files or spend money can do real harm, and an AI system
+    that improves itself must never be able to switch off the checks on it. G6 is built around both risks.</p>
+    <p><strong>G6 runs on your own computer.</strong> It is a library and an MCP server you install yourself. There is
+    no G6 service, account or server of ours behind it, so nothing you do with G6 reaches us.</p>
+
+    <h2>What G6 does to protect you</h2>
+    <ul>
+        <li><strong>The MCP server opens no network port.</strong> It talks to your agent over standard input and
+        output on your computer. An operation a component marks as sensitive, because it runs a program on your
+        computer, reaches the network or changes your machine, is refused over MCP unless the person who runs the server
+        lists it in <code>G6_MCP_SENSITIVE</code>.</li>
+        <li><strong>The meta-harness changes nothing on its own.</strong> It proposes a change, tests it on held-out
+        tasks, and waits for a person to approve it.</li>
+        <li><strong>A bundle's page is served only to your computer</strong> (127.0.0.1). It refuses requests from
+        other websites, and its controls need a random token made fresh each time the bundle starts.</li>
+        <li><strong>A model provider's key stays on your computer.</strong> G6 reads a key only from your key file,
+        <code>~/.g6/.env</code>: a plain text file, not encrypted, that you write yourself. A bundle's page never takes
+        a key, and G6 sends a key only to its provider. Delete its line to remove it.</li>
+    </ul>
+
+    <h2>What G6 is not</h2>
+    <p>G6 is not a security boundary on its own: do not use it as the only check in front of something that acts in
+    the real world (see the <a href="{% url 'pages:faq' %}">FAQ</a>). On Windows, once you have run the one-time access
+    grant that <code>g6 doctor</code> prints, the code it runs for you runs in an AppContainer: no network, and only its
+    own run folder writable. Where no operating-system backend confines it (Linux and macOS today, and Windows before the
+    one-time access grant), untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has
+    your own rights: it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python
+    only. You are responsible for what you run. G6 is open-source software provided "as is", without warranty, under the
+    <a href="{% url 'pages:license' %}">Apache License 2.0</a>.</p>
+
+    <h2>This website</h2>
+    <p>The site is a set of static pages: no accounts, no forms, no cookies and no analytics, served with a strict
+    content security policy. See <a href="{% url 'pages:privacy' %}">Privacy</a>.</p>
+
+    <h2>Reporting a vulnerability</h2>
+    {% comment %}The footer's contact dialog (components/footer.html, static/js/site.js): the script puts the address
+    together when the dialog opens and shows this button only where the dialog can open.{% endcomment %}
+    <p>Write to us privately, not in a public issue, with what you found and how to reproduce it<span hidden>, using
+    <button type="button" class="link link--button" data-contact>Contact</button></span>, and please give us a chance to
+    fix it before you publish. There is no bug bounty.</p>
+</article>
+{% endblock %}

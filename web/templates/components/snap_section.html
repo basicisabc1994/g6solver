@@ -1,0 +1,14 @@
+{% comment %}
+Snap-scroll section component. Usage:
+{% include "components/snap_section.html" with bg="bg-g6-black" id="hero" %}
+Content goes in the block, not here — use this as a wrapper pattern reference.
+{% endcomment %}
+<section
+    id="{{ id|default:'section' }}"
+    class="min-h-screen flex items-center {{ bg|default:'bg-g6-black' }} relative overflow-hidden"
+   
+>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full py-24">
+        {{ content }}
+    </div>
+</section>

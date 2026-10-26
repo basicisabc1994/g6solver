@@ -1,0 +1,319 @@
+{
+  "data": {
+    "arc": "CC BY-SA 4.0",
+    "banking77": "CC BY 4.0",
+    "gsm8k": "MIT",
+    "massive": "CC BY 4.0",
+    "mbpp": "CC BY 4.0",
+    "scifact": "claims CC BY 4.0; corpus ODC-By 1.0"
+  },
+  "label": "Development, not a validation",
+  "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+  "model": "llama3.1:8b",
+  "model_digest": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+  "pooled": {
+    "A": {
+      "n": 600,
+      "success": 357
+    },
+    "B": {
+      "n": 600,
+      "success": 357
+    },
+    "D": {
+      "n": 600,
+      "success": 456
+    },
+    "F": {
+      "n": 600,
+      "success": 456
+    },
+    "H": {
+      "n": 600,
+      "success": 407
+    }
+  },
+  "reflector": "gpt-oss:20b",
+  "reflector_digest": "9ba9cc2b4e02463b933096090530aef679d534dd91ecc9afadfb2dbfdc59f3c5",
+  "round": 1,
+  "tuning": {
+    "arc-D": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 2.6,
+      "outcome": "refused"
+    },
+    "arc-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 0.2,
+      "outcome": "no_winner"
+    },
+    "banking77-D": {
+      "canary_hits": 0,
+      "head_digest": "bc2b6925478071e259aff3ac292e24bd5ae73d11ae95494646f1b1485454f29a",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 4.9,
+      "outcome": "activated"
+    },
+    "banking77-F": {
+      "canary_hits": 0,
+      "head_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 0.8,
+      "outcome": "activated"
+    },
+    "gsm8k-D": {
+      "canary_hits": 0,
+      "head_digest": "0468d9f8206cf249d159aaea3be916373973ada445017982999138c536682c5c",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 6.3,
+      "outcome": "activated"
+    },
+    "gsm8k-F": {
+      "canary_hits": 0,
+      "head_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 4.2,
+      "outcome": "activated"
+    },
+    "massive-D": {
+      "canary_hits": 3,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 1.6,
+      "outcome": "no_winner"
+    },
+    "massive-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 0.4,
+      "outcome": "no_winner"
+    },
+    "mbpp-D": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 6.5,
+      "outcome": "no_winner"
+    },
+    "mbpp-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 2.0,
+      "outcome": "no_winner"
+    },
+    "scifact-D": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "c82a805a01e3e65730ba050022f2e4a015aea708bb91a6855432ad76e3ca77ec",
+      "minutes": 3.2,
+      "outcome": "refused"
+    },
+    "scifact-F": {
+      "canary_hits": 0,
+      "head_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+      "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+      "minutes": 0.8,
+      "outcome": "refused"
+    }
+  },
+  "workflows": {
+    "arc": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 86
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 86
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 86
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 86
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 85
+      }
+    },
+    "banking77": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 48
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 48
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 82
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 83
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 56
+      }
+    },
+    "gsm8k": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 24
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 23
+      },
+      "D": {
+        "mean_calls": 2.0,
+        "n": 100,
+        "released": 100,
+        "success": 83
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 85
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 78
+      }
+    },
+    "massive": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 66
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 66
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 70
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 70
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 58
+      }
+    },
+    "mbpp": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 62
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 98,
+        "success": 61
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 98,
+        "success": 60
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 61
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 99,
+        "success": 57
+      }
+    },
+    "scifact": {
+      "A": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 71
+      },
+      "B": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 73
+      },
+      "D": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 75
+      },
+      "F": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 71
+      },
+      "H": {
+        "mean_calls": 1.0,
+        "n": 100,
+        "released": 100,
+        "success": 73
+      }
+    }
+  }
+}

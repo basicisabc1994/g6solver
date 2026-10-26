@@ -1,0 +1,27 @@
+{
+  "protocol": "hic05-dev-v1",
+  "population": "one public authored/unblinded development task; not held-out",
+  "objective": "Make this Python inventory event handler apply each stable event ID at most once, even when another event arrives between identical retries. Preserve ordinary quantity updates, the input state, and existing tests.",
+  "module": "inventory.py",
+  "function": "apply_event",
+  "scope": "Pure in-memory function receiving state and one event; identical payloads for repeated IDs. No live stock system, payment, credentials, concurrency or process restart claim.",
+  "predicate_id": "inventory.unique-event-effect.v1",
+  "oracle_basis": "Accepted identical-retry requirement implies fold([a,b,a]) == fold([a,b]); this is a metamorphic relation, not a model-provided expected answer.",
+  "initial_state": {"quantity": 10, "seen_ids": []},
+  "events": [{"id": "evt-a", "delta": 4}, {"id": "evt-b", "delta": -2}],
+  "artifact_scope": ["inventory.py"],
+  "prohibitions": ["test edits", "network", "external effects", "acceptance changes"],
+  "controls": {
+    "B0_native_agent": "not executed; normal capable-agent workflow still required for that claim",
+    "B0_existing_checks": "additional pure-checking control, all original tests retained",
+    "B1_static": "existing G6 fixed controls with new predicate recorded as uncovered; no dishonest certification",
+    "B2_constructed": "same task, original tests, standard and candidate; added task-derived check only",
+    "positive": "membership across all seen IDs, not only the latest; all original checks remain",
+    "negative": "adjacent-only candidate plus no-op candidate to test nonvacuity",
+    "B3_learned": "not authorized or required"
+  },
+  "claim_ceiling": "One static construction mechanism if demonstrated; no independence, adaptive uplift, commercial moat or population superiority.",
+  "model_calls": 0,
+  "max_check_seconds": 30,
+  "max_external_spend_aud": 0
+}

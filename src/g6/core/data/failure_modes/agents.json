@@ -1,0 +1,17 @@
+{
+  "family": "agents",
+  "codes": [
+    {"code": "unbounded_agent_workflow", "title": "multi-agent workflows run without limits"},
+    {"code": "unguarded_tool_use", "title": "an agent using tools with no guard on what they do", "severity": "high"},
+    {"code": "overprivileged_agent", "title": "a coding agent run with more access than it needs", "severity": "high"},
+    {"code": "unresumable_workflow", "title": "a long workflow that cannot resume after a failure"},
+    {"code": "lost_agent_message", "title": "messages between agents lost or mixed up"},
+    {"code": "unhandled_agent_failure", "title": "each agent handling failure differently, or not at all"},
+    {"code": "unbounded_code_execution", "title": "an agent running generated code without limits", "severity": "high"},
+    {"code": "unearned_autonomy", "title": "an agent running with more autonomy than its record supports",
+     "severity": "high"}
+  ],
+  "planned": {
+    "g6.agents.autonomy_governor": ["unearned_autonomy"]
+  }
+}

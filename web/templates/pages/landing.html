@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}G6: make AI agents check their own work{% endblock %}
+{% block meta_description %}For developers using Claude Code, Codex and other coding agents: G6 is a free, open-source framework that checks for made-up facts, unfinished work and risky actions before your agent says it's done.{% endblock %}
+{% block content %}
+{% comment %}
+The home page (site design, docs/superpowers/specs/2026-10-19-g6-site-design.md §1b-1c). The lattice is G6's components
+as the registry lists them (pages/catalogue.py); the results are read from the committed study files
+(pages/evidence.py); the limits are pages/narrative.py. Owner, 2026-10-20: the why comes first, then what G6 is, how
+it works, what it gives you and what it has done, told for someone who is not technical, succinct, with the lattice
+carried down the page (each limit lights the components that answer it) and the site's kinetic headings below it.
+Owner, 2026-10-23 (feedback; "use the Gaddie pitch"): the hero says what you can now do, the subheading names who G6 is
+for (developers who build with coding agents) and what it is, then the problem it answers and what is already built.
+Copy is a draft for the owner's review in the live preview.
+{% endcomment %}
+{{ lattice|json_script:"lattice-data" }}
+
+<section class="stage" aria-labelledby="hero-title">
+    <div class="stage__scene" aria-hidden="true">
+        <canvas id="lattice-canvas"></canvas>
+        <div class="lattice-labels" id="lattice-labels"></div>
+        <div class="lattice-tip" id="lattice-tip" hidden></div>
+        <p class="lattice-legend">Each point is one of G6's {{ lattice.nodes|length }} core components.<br>Point at one to see what it does.</p>
+    </div>
+    <div class="stage__copy wrap">
+        <header class="hero">
+            <h1 class="display display--why" id="hero-title">Now you can<br>make AI agents<br>check their<br>own work.</h1>
+            <p class="lede strong why">For developers using Claude Code, Codex and other coding agents: a free,
+            open-source framework that checks for made-up facts, unfinished work and risky actions before your agent
+            says it's done.</p>
+            <div class="actions">
+                <a href="{% url 'pages:get_started' %}" class="btn cta">Get started</a>
+                <a href="#loop" class="btn">See how it works</a>
+            </div>
+            <p class="visually-hidden">Beside this text, G6's components are drawn as a lattice with the meta-harness at its
+            centre. As you scroll, it acts out the four steps of G6's loop, then lights the components that answer each
+            limit.</p>
+        </header>
+
+        <div class="answer">
+            <h2 class="display">G6<br>engineers<br>itself.</h2>
+            <p class="lede">A harness is everything around a model: what it sees, how its answers are checked, what it
+            may do. G6's harness learns, in four steps.</p>
+        </div>
+
+        <ol class="steps" id="loop">
+            <li class="step">
+                <span class="step__n">1</span>
+                <h2 class="h2">Propose</h2>
+                <p class="lede">G6 finds where your task goes wrong and drafts fixes: a sharper prompt, an extra check, a
+                repair step.</p>
+            </li>
+            <li class="step">
+                <span class="step__n">2</span>
+                <h2 class="h2">Test</h2>
+                <p class="lede">Each fix runs on held-out tasks no draft has seen. When one loses, G6 says why.</p>
+            </li>
+            <li class="step">
+                <span class="step__n">3</span>
+                <h2 class="h2">Gate</h2>
+                <p class="lede">A statistical gate keeps a fix only when it clearly beats what runs now.</p>
+            </li>
+            <li class="step">
+                <span class="step__n">4</span>
+                <h2 class="h2">Approve</h2>
+                <p class="lede">Nothing changes until you say yes. Every change is recorded, and can be rolled back.</p>
+            </li>
+        </ol>
+
+        <div class="limits-head" id="limits">
+            <h2 class="h2">Every limit, answered in the harness</h2>
+            <p class="lede">Each one comes from how models are built. G6 answers it around the model<span class="limits-hint">,
+            and the lattice lights the components that do it</span>.</p>
+        </div>
+        <ol class="limits">
+            {% for limit in limits %}
+            <li class="limit" id="limit-{{ limit.key }}" data-parts="{{ limit.parts|join:' ' }}" tabindex="-1">
+                <h3 class="limit__title">{{ limit.title }}</h3>
+                <p class="limit__cause">{{ limit.cause }}</p>
+                <p class="limit__answer">{{ limit.answer }}</p>
+                <p class="limit__parts">{% for part, title in limit.named %}<a href="{% url 'pages:components' %}#core-{{ part }}">{{ title }}</a>{% endfor %}{% if limit.essay %}<a class="link limit__essay" href="{{ limit.essay }}">Read the essay</a>{% endif %}</p>
+            </li>
+            {% endfor %}
+        </ol>
+    </div>
+</section>
+
+<section class="band" id="two-parts" aria-labelledby="two-parts-h">
+    <div class="wrap">
+        <h2 class="h2 band__title" id="two-parts-h">Two parts, batteries included</h2>
+        <div class="pair">
+            <div class="pair__item">
+                <h3 class="statement">The meta-harness learns.</h3>
+                <p>It tests changes to how it runs on cases it has never seen, keeps what wins once you approve, and can
+                never touch the checks that judge it.</p>
+                <a class="link" href="{% url 'pages:metaharness' %}">How the meta-harness works</a>
+            </div>
+            <div class="pair__item">
+                <h3 class="statement">The components know how AI fails.</h3>
+                <p>A prebuilt library of AI primitives, each extending what a model can do or closing one way it fails.
+                Built from some 250 million tokens of hand-reviewed failure traces, towards a complete set: a periodic
+                table of intelligence.</p>
+                <a class="link" href="{% url 'pages:components' %}">See the components</a>
+            </div>
+        </div>
+        <div class="ptable" role="group" aria-label="G6's {{ lattice.nodes|length }} core components, by what they are for">
+            {% for column, elements in table %}
+            <div class="ptable__col">
+                <p class="ptable__head">{{ column }}</p>
+                <ul>
+                    {% for el in elements %}<li><a class="ptable__el{% if el.name == lattice.centre %} is-centre{% endif %}" href="{% url 'pages:components' %}#core-{{ el.name }}" title="{{ el.plain }}">{{ el.short }}</a></li>{% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<section class="band" id="learning" aria-labelledby="learning-h">
+    <div class="wrap">
+        <h2 class="h2 band__title" id="learning-h">A different kind of learning</h2>
+        <div class="contrast">
+            <figure class="contrast__side">
+                <pre class="weights" aria-hidden="true">{{ weights }}</pre>
+                <figcaption><b>A model learns implicitly.</b> Training shifts millions of numbers like these, and no one
+                can read what changed. <span class="quiet">Illustration.</span></figcaption>
+            </figure>
+            {% if change %}
+            <figure class="contrast__side">
+                <dl class="record">
+                    <div><dt>Task</dt><dd>{{ change.dataset }}, in the last development run</dd></div>
+                    <div><dt>Before</dt><dd class="record__was">{% if change.before %}<s>{{ change.before }}</s>{% else %}No prompt at all{% endif %}</dd></div>
+                    <div><dt>After</dt><dd class="record__now">{{ change.after }}</dd></div>
+                    <div><dt>Held-out test</dt><dd>won {{ change.wins }}, lost {{ change.losses }}, of {{ change.held_out }} tasks</dd></div>
+                    <div><dt>Found and kept in</dt><dd>{{ change.minutes }} minutes</dd></div>
+                </dl>
+                <figcaption><b>G6 learns explicitly, through the harness.</b> This is a change G6 made to itself: one line
+                you can read, tested on tasks it had never seen, and reversible.</figcaption>
+            </figure>
+            {% endif %}
+        </div>
+        <dl class="trio">
+            <div><dt>From its own experiments</dt><dd>run on cases held out from it.</dd></div>
+            <div><dt>From plain words</dt><dd>passed on by your coding agent.</dd></div>
+            <div><dt>With a model of itself</dt><dd>every part and setting written down.</dd></div>
+        </dl>
+        <p class="learning__reach">Give it a task you can check and enough examples, and nothing in its design caps how far
+        it can go on that task, up to training a model of its own.
+        <a class="link" href="{% url 'pages:research' %}#theory">The working theory</a></p>
+    </div>
+</section>
+
+<section class="band" id="gives" aria-labelledby="gives-h">
+    <div class="wrap">
+        <h2 class="h2 band__title" id="gives-h">What that gives you</h2>
+        <ul class="gives">
+            <li><h3 class="statement">Work that checks itself.</h3>
+                <p>Every result carries one of three labels, and says why:
+                <span class="state is-verified">verified</span> <span class="state">qualified-draft</span>
+                <span class="state is-blocked">blocked-escalated</span></p></li>
+            <li><h3 class="statement">Agents you can deploy safely.</h3>
+                <p>Every action gated, a stop switch, and no change without your approval.</p></li>
+            <li><h3 class="statement">A specialist, without training a model.</h3>
+                <p>Your agent, your data, your examples. Your model's weights never change.</p></li>
+            <li><h3 class="statement">Frontier judgement at local cost.</h3>
+                <p>A frontier model engineers the harness once; a small model on your computer runs it, with no fee per
+                call.</p></li>
+        </ul>
+    </div>
+</section>
+
+<section class="band" aria-labelledby="tests">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="tests">A worked example: G6 engineering itself, on a local model</h2>
+            </div>
+            <div class="band__body">
+                <p class="lede quiet">Not a benchmark: {{ facts.model }}, an 8-billion-parameter model on one computer,
+                before and after G6 engineered its harness, on {{ facts.per_dataset }} fresh tasks per task set. On your
+                work, results will vary with the task and the data you have.</p>
+            </div>
+        </div>
+        <div class="ev" data-count>
+            {% for group in headline_groups %}
+            <div class="ev__wf">
+                <h3>{{ group.label }}</h3>
+                <p class="ev__big" aria-label="{{ group.by_arm.A.value }} by the model alone, {{ group.best.value }} by G6's winning option ({{ group.best.label }}), of {{ group.best.n }}"><span class="ev__from">{{ group.by_arm.A.value }}</span><span class="ev__arrow" aria-hidden="true">to</span><span class="ev__to" data-from="{{ group.by_arm.A.value }}">{{ group.best.value }}</span></p>
+                <p class="ev__winner">Winning option: {{ group.best.label }}</p>
+                {% for bar, width in group.rows %}
+                <div class="ev__row{% if bar.highlight %} is-g6{% endif %}{% if bar == group.best %} is-best{% endif %}">
+                    <span>{{ bar.label }}</span><span>{{ bar.value }} of {{ bar.n }}</span>
+                    <span class="ev__track"><span class="ev__fill" style="width:{{ width }}"></span></span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <p class="ev__note">Grey is the model alone; black is G6. With its winning option for each task set, G6 solved
+        {{ facts.best_total }} of {{ facts.n }} tasks the model alone solved {{ facts.total.A }} of: a larger model's
+        judgement, distilled into a small model's harness, with no weights changed.
+        {% if speed.changes %}In the last development run, G6 found, tested and approved its own changes on
+        {% for c in speed.changes %}{{ c.dataset }} in {{ c.minutes }} minutes ({{ c.alone }} to {{ c.tuned }} of {{ c.n }}{% if c.from_components %}, starting from every component on{% endif %}){% if not forloop.last %}{% if forloop.revcounter == 2 %} and {% else %}, {% endif %}{% endif %}{% endfor %}.{% endif %}
+        <a class="link" href="{% url 'pages:research' %}#reading">How to read these results</a></p>
+        <details class="ev__more">
+            <summary>What else it found</summary>
+            {% if facts.components_where_untuned %}<p><strong>A finding: two ways to engineer, and both matter.</strong>
+            In the registered study, G6's prebuilt components, switched on together, beat the model alone on {% if facts.every_component_beats_alone|length == facts.datasets %}all {{ facts.datasets }} task sets ({{ facts.total.G }} of {{ facts.n }}){% else %}{{ facts.every_component_beats_alone|join:", " }}{% endif %},
+            including {% for name, alone, components in facts.components_where_untuned %}{{ name }} ({{ alone }} to {{ components }}){% if not forloop.last %} and {% endif %}{% endfor %},
+            where self-tuning's gate could not yet confirm its changes. The two are alternatives, not a stack: in
+            the last development run, self-tuning that started from every component had no change approved,
+            and on {{ both.worst.dataset }} every component on did worse than the model alone ({{ both.worst.components }}
+            against {{ both.worst.alone }}). <a class="link" href="{% url 'pages:research' %}#winning-approach">Which approach won where</a></p>{% endif %}
+            <p>Each component on its own helps some tasks and hurts others: from {{ best.shown }} of 100 ({{ best.short }},
+            on {{ best.workflow }}) to {{ worst.shown }} ({{ worst.short }}, on {{ worst.workflow }}). G6 keeps only what
+            wins on your own held-out cases. <a class="link" href="{% url 'pages:research' %}#components">What each component does, on six datasets</a></p>
+        </details>
+    </div>
+</section>
+
+<section class="band band--start" aria-labelledby="start">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="start">Start in two commands</h2>
+                <p class="lede quiet">No account and no hosted service: G6 runs on your computer.</p>
+            </div>
+            <div class="band__body">
+                <div class="cmd"><code id="cmd-start">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
+pip install ".[mcp]" &amp;&amp; claude mcp add g6 -- g6-mcp</code><button type="button" class="btn btn--small copy" data-copy="#cmd-start">Copy</button></div>
+                <ul class="ways-line">
+                    <li><a href="{% url 'pages:get_started' %}"><b>From your agent</b> over MCP, in Claude Code, Codex or any client</a></li>
+                    <li><a href="{% url 'pages:metaharness' %}"><b>In your code</b> as a Python library</a></li>
+                    <li><a href="{% url 'pages:bundles' %}"><b>As an app</b>, a bundle for one job</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="cols modes-row">
+            <div class="band__head">
+                <h3 class="h3" id="modes">You decide how deep it goes</h3>
+                <p class="small quiet">Three levels of access, all open now. Every change still needs your approval.</p>
+            </div>
+            <div class="band__body" data-modes>
+                <div class="modes__switch" role="group" aria-label="Level of access">
+                    <button type="button" data-mode="as_built" aria-pressed="true" aria-controls="mode-as-built">As built</button>
+                    <button type="button" data-mode="compose" aria-pressed="false" aria-controls="mode-compose">Compose</button>
+                    <button type="button" data-mode="source" aria-pressed="false" aria-controls="mode-source">Full source</button>
+                </div>
+                <p class="mode" id="mode-as-built">The core harness as shipped: G6 tunes prompts, checks, steps and examples
+                for your task. For anyone; the fastest start.</p>
+                <p class="mode" id="mode-compose" hidden>Every component, core and extensions: your agent finds the ones a
+                task needs and combines them. For builders who want more control.</p>
+                <p class="mode" id="mode-source" hidden>The whole source, yours to read, change and extend with your own
+                components. For engineers: it is your copy.</p>
+                <div class="actions">
+                    <a href="{% url 'pages:get_started' %}" class="btn btn--solid">Get started</a>
+                    <a href="{% url 'docs_hub:landing' %}" class="btn">Read the docs</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+{% block extra_js %}<script type="module" src="{% static 'js/lattice.js' %}"></script>
+<script defer src="{% static 'js/count.js' %}"></script>{% endblock %}

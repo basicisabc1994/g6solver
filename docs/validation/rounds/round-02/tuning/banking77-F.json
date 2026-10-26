@@ -1,0 +1,203 @@
+{
+  "arm": "F",
+  "canary_blind": 0,
+  "canary_hits": [],
+  "head_digest": "770c24202543a36018162728346c2c655379848f7aa254b0f3ab7d08b5bf970a",
+  "head_profile": {
+    "adapter": null,
+    "budgets": {
+      "max_model_calls": 8,
+      "max_output_chars": 400000,
+      "max_wall_clock_s": 120.0
+    },
+    "code": {},
+    "context_budget_chars": 0,
+    "distillates": {},
+    "exemplars": 8,
+    "extra_checks": [
+      "label-only"
+    ],
+    "hints": [],
+    "pipeline": [],
+    "prompt": "",
+    "prompt_layout": "default",
+    "retries": 0,
+    "routing": {
+      "answer": "local"
+    }
+  },
+  "method": {
+    "candidates_per_cycle": 4,
+    "cycles": 3,
+    "merge_every": 3,
+    "propose_budget": 200,
+    "race_block": 10,
+    "race_keep": 0.5,
+    "reflect_calls": 3,
+    "select_budget": 2000,
+    "use_edits": true,
+    "use_recovery": false,
+    "use_reflection": false
+  },
+  "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+  "minutes": 2.3,
+  "reflector_calls": 0,
+  "run": {
+    "activated": 1,
+    "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+    "champion": "770c24202543a36018162728346c2c655379848f7aa254b0f3ab7d08b5bf970a",
+    "confirmation": {
+      "false_accepts": {
+        "base": 23,
+        "candidate": 10
+      },
+      "level": 0.021286,
+      "model_calls_used": 120,
+      "n": 60,
+      "partial": false,
+      "report_digest": "16b70ca5a9df15b376fb9bc27c3b17e96943b91526cbebadfb365f5458982086",
+      "success": {
+        "boundary": 0.021286,
+        "discordant": 23,
+        "look": 3,
+        "looks": 4,
+        "losses": 5,
+        "p_one_sided": 0.005311,
+        "ties": 37,
+        "wins": 18
+      }
+    },
+    "cycles": [
+      {
+        "cycle": 1,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a",
+            "dropped_at_block": null,
+            "fields": 1,
+            "losses": 1,
+            "n": 60,
+            "wins": 22
+          },
+          {
+            "candidate_digest": "bc2b6925478071e259aff3ac292e24bd5ae73d11ae95494646f1b1485454f29a",
+            "dropped_at_block": 2,
+            "fields": 2,
+            "losses": 1,
+            "n": 20,
+            "wins": 7
+          },
+          {
+            "candidate_digest": "1f07f4ac519030c58d0f7add60b214fc5ff6798a2da47cd0b7285dc03f790143",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 150,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 3,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 0,
+            "proposed": 3
+          }
+        },
+        "winner": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a"
+      },
+      {
+        "cycle": 2,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "9de479dc75c56619494007f404e2e1cb365434c6e406bd24b6fbe66174605c00",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 1,
+            "n": 60,
+            "wins": 22
+          },
+          {
+            "candidate_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 4
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 130,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 6,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 2,
+            "proposed": 1
+          }
+        },
+        "winner": "9de479dc75c56619494007f404e2e1cb365434c6e406bd24b6fbe66174605c00"
+      },
+      {
+        "cycle": 3,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "770c24202543a36018162728346c2c655379848f7aa254b0f3ab7d08b5bf970a",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 1,
+            "n": 60,
+            "wins": 22
+          },
+          {
+            "candidate_digest": "9de479dc75c56619494007f404e2e1cb365434c6e406bd24b6fbe66174605c00",
+            "dropped_at_block": 2,
+            "fields": 2,
+            "losses": 0,
+            "n": 20,
+            "wins": 7
+          },
+          {
+            "candidate_digest": "2dd6ed6e8d2d032f6d5669cc090af1e562f8be0e4d92e6c4b0bf275f90da2ff2",
+            "dropped_at_block": 1,
+            "fields": 2,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 160,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 9,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 3,
+            "proposed": 2
+          }
+        },
+        "winner": "770c24202543a36018162728346c2c655379848f7aa254b0f3ab7d08b5bf970a"
+      }
+    ],
+    "decision": {
+      "code": "G6_E_META_RECOMMENDED",
+      "reasons": [
+        "the candidate beat the base on the held-out split under every rule; a person must approve it before it is used"
+      ],
+      "verdict": "recommend"
+    },
+    "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+    "notes": [],
+    "outcome": "activated",
+    "recovery": null,
+    "workflow_digest": "604509975f86ea5f071295d851aad15c5b9fb816cd57476f5f08831df8184979"
+  }
+}

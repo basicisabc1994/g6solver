@@ -1,0 +1,9 @@
+{
+  "family": "provers",
+  "codes": [
+    {"code": "translation_changes_behaviour", "title": "translated code that behaves differently from the original"}
+  ],
+  "planned": {
+    "g6.provers.polyglot": ["translation_changes_behaviour"]
+  }
+}

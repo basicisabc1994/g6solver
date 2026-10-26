@@ -1,0 +1,29 @@
+{% comment %}One listed row of the extension catalogue (pages/extensions.py). An entry in the library is described from its
+own package; one built in a vetted area waits for its certificate; one merged into a package in the library is shown as
+part of it, with none of the catalogue's words; any other is planned, guards nothing yet, and is listed only while
+show_planned is on (rows() leaves it out otherwise). "own" is an extension of its own; anything else joins the package
+it names. A vetted entry says that no qualified person has reviewed it (DECISIONS #39).{% endcomment %}
+{% if ext.merged %}<li class="cmp" id="ext-{{ ext.name }}">
+    <code class="cmp__name">{{ ext.name }}</code>
+    <p class="cmp__meta">Merged into <code>{{ ext.package }}</code>, which is in the library.</p>
+</li>{% else %}<li class="cmp" id="ext-{{ ext.name }}">
+    <code class="cmp__name">{{ ext.name }}</code>
+    <p class="cmp__what">{{ ext.summary }}</p>
+    <p class="cmp__meta">{% if ext.failure_mode %}{% if ext.in_library %}Guards against{% elif ext.awaiting_review %}Built to guard against{% else %}Planned to guard against{% endif %}: {{ ext.failure_mode }}. {% endif %}{% if ext.needs %}Needs {{ ext.needs|join:", " }}. {% endif %}{% if ext.in_library %}In the library: <code>{{ ext.package }}</code>{% if ext.mcp %}, callable over MCP{% endif %}{% if ext.vetted %}. {{ no_qualified_review }}{% endif %}{% elif ext.awaiting_review %}Built as <code>{{ ext.package }}</code>; awaiting {{ ext.awaiting_review }}. No qualified person has reviewed this component.{% elif own %}Planned as <code>{{ ext.package }}</code>{% else %}Planned to join <code>{{ ext.package }}</code>{% endif %}</p>
+    {% if ext.merged_in %}
+    <div class="cmp-joined">
+        <p class="cmp__meta">Merged into it:</p>
+        <ul class="cmp-list">
+            {% for item in ext.merged_in %}{% include "pages/_extension.html" with ext=item own=False %}{% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+    {% if show_planned and ext.joined %}
+    <div class="cmp-joined">
+        <p class="cmp__meta">Planned to join it:</p>
+        <ul class="cmp-list">
+            {% for item in ext.joined %}{% include "pages/_extension.html" with ext=item own=False %}{% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</li>{% endif %}

@@ -1,0 +1,45 @@
+{
+  "id": "phq9",
+  "name": "Patient Health Questionnaire-9 (PHQ-9)",
+  "source": "phq9-form",
+  "licence": {
+    "state": "settled",
+    "terms": "No permission required to reproduce, translate, display or distribute.",
+    "where": "the footer of the form: \"Developed by Drs. Robert L. Spitzer, Janet B.W. Williams, Kurt Kroenke and colleagues, with an educational grant from Pfizer Inc. No permission required to reproduce, translate, display or distribute.\"",
+    "sha256": "e3fb5b8853e3530c9025c822b99fd4f4bc17da49eefda5ed689c49238c132a46"
+  },
+  "stem": "Over the last 2 weeks, how often have you been bothered by any of the following problems?",
+  "options": [
+    {"value": 0, "label": "Not at all"},
+    {"value": 1, "label": "Several days"},
+    {"value": 2, "label": "More than half the days"},
+    {"value": 3, "label": "Nearly every day"}
+  ],
+  "items": [
+    {"number": 1, "text": "Little interest or pleasure in doing things"},
+    {"number": 2, "text": "Feeling down, depressed, or hopeless"},
+    {"number": 3, "text": "Trouble falling or staying asleep, or sleeping too much"},
+    {"number": 4, "text": "Feeling tired or having little energy"},
+    {"number": 5, "text": "Poor appetite or overeating"},
+    {"number": 6, "text": "Feeling bad about yourself — or that you are a failure or have let yourself or your family down"},
+    {"number": 7, "text": "Trouble concentrating on things, such as reading the newspaper or watching television"},
+    {"number": 8, "text": "Moving or speaking so slowly that other people could have noticed? Or the opposite — being so fidgety or restless that you have been moving around a lot more than usual"},
+    {"number": 9, "text": "Thoughts that you would be better off dead or of hurting yourself in some way"}
+  ],
+  "scoring": {
+    "rule": "sum",
+    "clause": "FOR OFFICE CODING 0 + ______ + ______ + ______ =Total Score: ______",
+    "minimum": 0,
+    "maximum": 27,
+    "note": "The total is the sum of the nine item scores, as the form's office-coding line adds its columns. The form prints no worked example, and the form prints no severity bands: G6 reports the score computed and nothing more."
+  },
+  "to_a_person": [
+    {"item": 9, "when": "any answer other than 0",
+     "why": "G6's own rule: the item asks about thoughts of being better off dead or of self-harm, so any answer other than 0 goes to a person with the crisis response and the directory, whatever the total."}
+  ],
+  "unscored": [
+    {"text": "If you checked off any problems, how difficult have these problems made it for you to do your work, take care of things at home, or get along with other people?",
+     "options": ["Not difficult at all", "Somewhat difficult", "Very difficult", "Extremely difficult"],
+     "note": "The form prints no score for this question; it is not part of the total and is not taken as an input."}
+  ]
+}

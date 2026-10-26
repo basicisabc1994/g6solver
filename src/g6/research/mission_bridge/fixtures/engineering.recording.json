@@ -1,0 +1,45 @@
+{
+  "note": "Synthetic placeholders for replay. No operation was run and no value here is a result.",
+  "inputs": {
+    "specifications": "synthetic:specifications",
+    "units_policy": "synthetic:units",
+    "jurisdiction": "synthetic:jurisdiction",
+    "design_load": "synthetic:design_load"
+  },
+  "decisions": [
+    "standards_approval",
+    "engineer_review"
+  ],
+  "outputs": {
+    "scope": {
+      "design_brief": "synthetic:design_brief"
+    },
+    "scope_check": {
+      "scope_ok": "synthetic:scope_ok"
+    },
+    "standards": {
+      "standards_register": "synthetic:standards_register"
+    },
+    "standards_check": {
+      "standards_ok": "synthetic:standards_ok"
+    },
+    "calculations": {
+      "calculation_record": "synthetic:calculation_record"
+    },
+    "calculation_check": {
+      "limited_check_evidence": "synthetic:limited_check_evidence"
+    },
+    "geometry": {
+      "draft_geometry": "synthetic:draft_geometry"
+    },
+    "geometry_check": {
+      "geometry_status": "synthetic:geometry_status"
+    },
+    "supply": {
+      "provisional_plan": "synthetic:provisional_plan"
+    },
+    "supply_check": {
+      "supply_review": "synthetic:supply_review"
+    }
+  }
+}

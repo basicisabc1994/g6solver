@@ -1,0 +1,466 @@
+{
+ "label": "Development, not a validation",
+ "what": "every single-field change from G6 as built (llama3.1:8b, temperature 0, seed fixed), each split measured from a freshly loaded model; successes on round 1 dev (20) and dev_eval (100)",
+ "workflows": {
+  "arc": [
+   {
+    "dev": 19,
+    "dev_eval": 86,
+    "diff": {},
+    "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 86,
+    "diff": {
+     "extra_checks": [
+      "letter-only"
+     ]
+    },
+    "profile_digest": "506960c4051f3deab787b4712e7a186cf3d3c40c08ef039f078f3c0635ee9b74"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 86,
+    "diff": {
+     "pipeline": [
+      "second_look_b"
+     ]
+    },
+    "profile_digest": "2f1347b9aae9458ab8c7d61c9610e1393176f2d9b1ad41204f9d5e7fcea5508d"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 86,
+    "diff": {
+     "pipeline": [
+      "second_look_d"
+     ]
+    },
+    "profile_digest": "eec70fcc03d7dd99cdc7697e7685c1b233e2e3f80677a93dbb2b392874d72344"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 86,
+    "diff": {
+     "retries": 1
+    },
+    "profile_digest": "f509d78a042c80e8934cc8d5db7cf7245f9f427eb651b60f081f8b1f72513b1b"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 85,
+    "diff": {
+     "pipeline": [
+      "second_look_c"
+     ]
+    },
+    "profile_digest": "cd476b4394ff4389afd783f59b3c1dbd026514f27a9876c45910206ac148c5bf"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 84,
+    "diff": {
+     "pipeline": [
+      "second_look_a"
+     ]
+    },
+    "profile_digest": "197029f1f2f8915f6ab5e63fb0448c77bba5027be06c67940b958964d6cdb7e2"
+   },
+   {
+    "dev": 18,
+    "dev_eval": 84,
+    "diff": {
+     "prompt": "Reply with the letter of the correct option only."
+    },
+    "profile_digest": "b3cebc8b105666f125d036d027dfcaaf8af1074fe73d18dafe4983db183b0908"
+   },
+   {
+    "dev": 15,
+    "dev_eval": 81,
+    "diff": {
+     "exemplars": 8
+    },
+    "profile_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 80,
+    "diff": {
+     "prompt": "Think step by step about the science involved, then write the final li"
+    },
+    "profile_digest": "badbc260b03e4c75139b3d02a0537d1b686d7a5b5ce6c6e86903d7ca124233dd"
+   },
+   {
+    "dev": 14,
+    "dev_eval": 77,
+    "diff": {
+     "pipeline": [
+      "self_review"
+     ]
+    },
+    "profile_digest": "46f57e32bba752b1d6c405888da28276409ec80d46fc60044a55e5623fac48e0"
+   }
+  ],
+  "banking77": [
+   {
+    "dev": 16,
+    "dev_eval": 47,
+    "diff": {},
+    "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+   },
+   {
+    "dev": 18,
+    "dev_eval": 83,
+    "diff": {
+     "exemplars": 8
+    },
+    "profile_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 51,
+    "diff": {
+     "prompt": "Choose the single intent that best matches what the customer wants. Re"
+    },
+    "profile_digest": "beeed8fc3c9aa9ec0bdad117b6b9ecf4fd22791202d5626fc73b4a19719e876a"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 49,
+    "diff": {
+     "pipeline": [
+      "self_review"
+     ]
+    },
+    "profile_digest": "46f57e32bba752b1d6c405888da28276409ec80d46fc60044a55e5623fac48e0"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 49,
+    "diff": {
+     "prompt": "Think briefly about what the customer wants, then write the final line"
+    },
+    "profile_digest": "4dcdfea15a0abf0f821acae983d0463328f489523f85f55908806e03e3929fa0"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 47,
+    "diff": {
+     "extra_checks": [
+      "label-only"
+     ]
+    },
+    "profile_digest": "1f07f4ac519030c58d0f7add60b214fc5ff6798a2da47cd0b7285dc03f790143"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 47,
+    "diff": {
+     "retries": 1
+    },
+    "profile_digest": "f509d78a042c80e8934cc8d5db7cf7245f9f427eb651b60f081f8b1f72513b1b"
+   }
+  ],
+  "gsm8k": [
+   {
+    "dev": 3,
+    "dev_eval": 24,
+    "diff": {},
+    "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+   },
+   {
+    "dev": 17,
+    "dev_eval": 88,
+    "diff": {
+     "prompt": "Work through the problem step by step. Then write the final answer on "
+    },
+    "profile_digest": "6e59ecedf79e17f01c07b084636dd5d3b563c1c4db1754591ce3832a11be573c"
+   },
+   {
+    "dev": 10,
+    "dev_eval": 47,
+    "diff": {
+     "pipeline": [
+      "self_review"
+     ]
+    },
+    "profile_digest": "46f57e32bba752b1d6c405888da28276409ec80d46fc60044a55e5623fac48e0"
+   },
+   {
+    "dev": 2,
+    "dev_eval": 27,
+    "diff": {
+     "exemplars": 8
+    },
+    "profile_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a"
+   },
+   {
+    "dev": 3,
+    "dev_eval": 24,
+    "diff": {
+     "extra_checks": [
+      "whole-number"
+     ]
+    },
+    "profile_digest": "ca8a7045e2af65c4abc147a1cfce62112470251f5bf030622e6f7a9eef8b2be5"
+   },
+   {
+    "dev": 3,
+    "dev_eval": 24,
+    "diff": {
+     "retries": 1
+    },
+    "profile_digest": "f509d78a042c80e8934cc8d5db7cf7245f9f427eb651b60f081f8b1f72513b1b"
+   },
+   {
+    "dev": 0,
+    "dev_eval": 7,
+    "diff": {
+     "prompt": "Give only the final number: no units, no words, no working."
+    },
+    "profile_digest": "d9fe63586c692aeef4e627f61837b79f036c38e57628f6bef0dddd065f2fdd32"
+   }
+  ],
+  "massive": [
+   {
+    "dev": 18,
+    "dev_eval": 68,
+    "diff": {},
+    "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+   },
+   {
+    "dev": 19,
+    "dev_eval": 79,
+    "diff": {
+     "exemplars": 8
+    },
+    "profile_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a"
+   },
+   {
+    "dev": 17,
+    "dev_eval": 70,
+    "diff": {
+     "prompt": "Choose the single intent that best matches what the user wants. Reply "
+    },
+    "profile_digest": "6839d47f17b4ef79fa832df2959bdd48a13861a78cec9d3882dd6396552e0256"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 69,
+    "diff": {
+     "prompt": "Think briefly about what the user wants, then write the final line as "
+    },
+    "profile_digest": "d243d12f8d9d78934c84bec18b6b77e51a0e8c97b1d6713d433665984a45d4ad"
+   },
+   {
+    "dev": 18,
+    "dev_eval": 68,
+    "diff": {
+     "extra_checks": [
+      "label-only"
+     ]
+    },
+    "profile_digest": "1f07f4ac519030c58d0f7add60b214fc5ff6798a2da47cd0b7285dc03f790143"
+   },
+   {
+    "dev": 17,
+    "dev_eval": 68,
+    "diff": {
+     "pipeline": [
+      "self_review"
+     ]
+    },
+    "profile_digest": "46f57e32bba752b1d6c405888da28276409ec80d46fc60044a55e5623fac48e0"
+   },
+   {
+    "dev": 18,
+    "dev_eval": 68,
+    "diff": {
+     "retries": 1
+    },
+    "profile_digest": "f509d78a042c80e8934cc8d5db7cf7245f9f427eb651b60f081f8b1f72513b1b"
+   }
+  ],
+  "mbpp": [
+   {
+    "dev": 8,
+    "dev_eval": 60,
+    "diff": {},
+    "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+   },
+   {
+    "dev": 8,
+    "dev_eval": 66,
+    "diff": {
+     "pipeline": [
+      "repair_with_tests"
+     ]
+    },
+    "profile_digest": "5851675dadfcfb8658c46ab99fc5d83b68bd0f79add2da0d6378c76441d9def8"
+   },
+   {
+    "dev": 8,
+    "dev_eval": 66,
+    "diff": {
+     "pipeline": [
+      "repair1"
+     ]
+    },
+    "profile_digest": "d0daa69cd10b605675c3cf9cfeacd1254e4db7a5805ce3cd9a397a940348c1e9"
+   },
+   {
+    "dev": 9,
+    "dev_eval": 63,
+    "diff": {
+     "prompt": "Reply with one Python code block that contains the complete function a"
+    },
+    "profile_digest": "04db489f58301b21f18b4bcba69bac6575eddf70f162ce6613345bb18d1c5e38"
+   },
+   {
+    "dev": 8,
+    "dev_eval": 60,
+    "diff": {
+     "extra_checks": [
+      "imports-cleanly"
+     ]
+    },
+    "profile_digest": "56480529fd744e7c1884945a28968cbae8381affef5d80fed5f5d3f644ecc79b"
+   },
+   {
+    "dev": 8,
+    "dev_eval": 60,
+    "diff": {
+     "retries": 1
+    },
+    "profile_digest": "f509d78a042c80e8934cc8d5db7cf7245f9f427eb651b60f081f8b1f72513b1b"
+   },
+   {
+    "dev": 9,
+    "dev_eval": 59,
+    "diff": {
+     "exemplars": 8
+    },
+    "profile_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a"
+   },
+   {
+    "dev": 8,
+    "dev_eval": 59,
+    "diff": {
+     "prompt": "Think about edge cases in a sentence or two, then give the complete fu"
+    },
+    "profile_digest": "98b7c3c484255e8c0ce7342f94cbd84a3a0d2f09016e0038d030db161b23e826"
+   },
+   {
+    "dev": 7,
+    "dev_eval": 58,
+    "diff": {
+     "pipeline": [
+      "self_review"
+     ]
+    },
+    "profile_digest": "46f57e32bba752b1d6c405888da28276409ec80d46fc60044a55e5623fac48e0"
+   }
+  ],
+  "scifact": [
+   {
+    "dev": 16,
+    "dev_eval": 71,
+    "diff": {},
+    "profile_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61"
+   },
+   {
+    "dev": 15,
+    "dev_eval": 73,
+    "diff": {
+     "pipeline": [
+      "second_look_not_enough_info"
+     ]
+    },
+    "profile_digest": "9c4632cb8e6d4818955795833d8f00b576a072d9a5e1d4be6cf6f74c30e57a95"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 72,
+    "diff": {
+     "pipeline": [
+      "second_look_support"
+     ]
+    },
+    "profile_digest": "449071eaa1397e74c0ba6ac9287af7eb6fc6270eae1be053954c70343bd2c774"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 71,
+    "diff": {
+     "extra_checks": [
+      "label-only"
+     ]
+    },
+    "profile_digest": "1f07f4ac519030c58d0f7add60b214fc5ff6798a2da47cd0b7285dc03f790143"
+   },
+   {
+    "dev": 14,
+    "dev_eval": 71,
+    "diff": {
+     "prompt": "Use only the abstract, not outside knowledge. If the abstract does not"
+    },
+    "profile_digest": "bd3b843a23d5adf9b0c66d8268a0a7c77b5b18e573aa1a9e2456ceef142970a0"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 71,
+    "diff": {
+     "prompt": "Reason briefly about what the abstract says, then write the final line"
+    },
+    "profile_digest": "a002d633703479522837b7ea214eec67809d90aa25fc88ae453b33624b90f689"
+   },
+   {
+    "dev": 16,
+    "dev_eval": 71,
+    "diff": {
+     "retries": 1
+    },
+    "profile_digest": "f509d78a042c80e8934cc8d5db7cf7245f9f427eb651b60f081f8b1f72513b1b"
+   },
+   {
+    "dev": 13,
+    "dev_eval": 69,
+    "diff": {
+     "exemplars": 8
+    },
+    "profile_digest": "80d96a3d6de6337eac12f60c56a4b116ac008911c4e50afdc98075402a83042a"
+   },
+   {
+    "dev": 15,
+    "dev_eval": 68,
+    "diff": {
+     "pipeline": [
+      "second_look_contradict"
+     ]
+    },
+    "profile_digest": "318d01b0d3202015a21ce20b260701f575463451cd74e7a61f015359d8be0a87"
+   },
+   {
+    "dev": 15,
+    "dev_eval": 67,
+    "diff": {
+     "pipeline": [
+      "self_review"
+     ]
+    },
+    "profile_digest": "46f57e32bba752b1d6c405888da28276409ec80d46fc60044a55e5623fac48e0"
+   },
+   {
+    "dev": 10,
+    "dev_eval": 38,
+    "diff": {
+     "pipeline": [
+      "ground"
+     ]
+    },
+    "profile_digest": "10216d43f61c5fa4a79a37e9a3467490a0407d5aaf508fcdd7cb78a53b73fbc3"
+   }
+  ]
+ }
+}

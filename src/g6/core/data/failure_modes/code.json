@@ -1,0 +1,17 @@
+{
+  "family": "code",
+  "codes": [
+    {"code": "handwritten_boilerplate", "title": "boilerplate web code written by hand, inconsistently"},
+    {"code": "unfaithful_method_code", "title": "code from a published method that does not do what the method says"},
+    {"code": "broken_responsive_layout", "title": "a hand-built page that breaks on some screens"},
+    {"code": "incomplete_component", "title": "a new component missing its tests or standard parts"},
+    {"code": "fragile_text_edit", "title": "code changed by text edits that break its structure"},
+    {"code": "careless_auto_fix", "title": "an automatic fix applied without checking what it changes"},
+    {"code": "blind_repo_change", "title": "a coding agent changing an unfamiliar repository without first learning how it works"},
+    {"code": "unmanaged_complexity", "title": "code growing more complex than anyone can safely change"},
+    {"code": "ineffective_fix", "title": "a fix that does not fix the failure"}
+  ],
+  "planned": {
+    "g6.code.app_repair": ["broke_existing_functionality", "ineffective_fix"]
+  }
+}

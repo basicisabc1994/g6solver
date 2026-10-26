@@ -1,0 +1,446 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * G6's site design: ink on a drafting table.
+ *
+ * One family (Archivo, whose width axis is part of the design), one accent (teal: it means "approved" or "Gelly",
+ * nothing else), one signal (ochre, the Bauhaus disc's colour: the Get started call to action and nothing else), a
+ * 12-column grid set flush left. Round shapes are things you can press (buttons, nodes, Gelly and
+ * her cat); information sits in square blocks. Colours are tokens, so dark mode is the same design inverted.
+ */
+:root {
+    --paper: #E8ECE9;
+    --paper-2: #DCE2DE;
+    --ink: #000000;
+    --graphite: #4A5451;
+    --rule: #B9C2BE;
+    --teal: #10A493;
+    --teal-ink: #006A5F;
+    --teal-glass: #7FE6D8;
+    --ochre: #C4953A;            /* the call to action, in both themes: black text on it is 7.7:1 */
+    --bad: #A3231B;              /* a study verdict: unsafe or regressive */
+    --warn: #7A5200;             /* a study verdict: contaminated, or a result corrected */
+    --font: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    --gutter: clamp(16px, 4vw, 64px);
+    --gap: 24px;
+    --max: 1440px;
+    --nav-h: 64px;
+    color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --paper: #000000;
+        --paper-2: #0E1413;
+        --ink: #E8ECE9;
+        --graphite: #98A39F;
+        --rule: #2A3230;
+        --teal: #1FC2AE;
+        --teal-ink: #4AD6C4;
+        --bad: #FF8A80;
+        --warn: #F2C14E;
+        color-scheme: dark;
+    }
+}
+
+/* --- Base ---------------------------------------------------------------------------------------------------- */
+[hidden] { display: none !important; }            /* a class's display never un-hides an element */
+html { background: var(--paper); scroll-behavior: auto; }
+body.g6 {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--font); font-size: 1.125rem; line-height: 1.55; font-weight: 400;
+    font-variation-settings: "wdth" 100; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+:where(body.g6) a { color: inherit; }            /* no specificity: a button's own colour always wins */
+body.g6 :focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; border-radius: 2px; }
+body.g6 ::selection { background: var(--teal-glass); color: #000; }
+.skip { position: absolute; left: -9999px; top: 8px; z-index: 100; background: var(--ink); color: var(--paper);
+        padding: 8px 16px; border-radius: 999px; }
+.skip:focus { left: 8px; }
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
+                   white-space: nowrap; }
+
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 var(--gutter); }
+.cols { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--gap); }
+
+/* Type scale: 15 / 18 / 22 / 30 / 48 / display */
+.display {
+    font-size: clamp(64px, 10.4vw, 176px); line-height: .86; letter-spacing: -.012em; margin: 0;
+    font-weight: 820; font-variation-settings: "wdth" 68;
+}
+/* The page's one orchestrated moment: the headline sets itself, wide and light to condensed and heavy, while the
+   lattice assembles. Plain CSS, so it needs no script. */
+.hero .display { animation: g6-set 1.6s cubic-bezier(.2, .7, 0, 1) .15s both; }
+@keyframes g6-set { from { font-weight: 250; font-variation-settings: "wdth" 125; } }
+.h2 { font-size: clamp(30px, 3.6vw, 48px); line-height: 1.02; font-weight: 760; font-variation-settings: "wdth" 78;
+      letter-spacing: -.005em; margin: 0 0 .5em; }
+.h3 { font-size: 22px; line-height: 1.2; font-weight: 650; font-variation-settings: "wdth" 92; margin: 0 0 .4em; }
+.lede { font-size: clamp(19px, 1.6vw, 22px); line-height: 1.45; max-width: 34em; margin: 0; }
+.quiet { color: var(--graphite); }
+.small { font-size: 15px; line-height: 1.5; }
+.link { color: var(--teal-ink); text-decoration: underline; text-decoration-thickness: 1px;
+        text-underline-offset: .2em; }
+.link:hover { text-decoration-thickness: 2px; }
+.link--button { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }   /* a button read as a link */
+
+/* --- Buttons (round: you can press them) ------------------------------------------------------------------------ */
+.btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: .5em; min-height: 48px;
+    padding: 0 1.4em; border-radius: 999px; border: 1.5px solid var(--ink); background: transparent; color: var(--ink);
+    font: 600 1rem/1 var(--font); font-variation-settings: "wdth" 92; text-decoration: none; cursor: pointer;
+    transition: background-color .15s, color .15s;
+}
+.btn:hover { background: var(--ink); color: var(--paper); }
+.btn--solid { background: var(--ink); color: var(--paper); }
+.btn--solid:hover { background: var(--teal-ink); border-color: var(--teal-ink); color: var(--paper); }
+.btn--small { min-height: 34px; padding: 0 .9em; font-size: 14px; border-width: 1px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+
+/* The call to action: Get started in the title bar, the phone menu and the hero (owner, 2026-10-23: "a flashing visually
+   attractive call to action so people can see and click on this straight away"), the one warm colour in the title bar
+   and the hero. It calls out three slow times as the page opens, then a flat band of light crosses it once every ten
+   seconds: nothing blinks, and under reduced motion it is still and still the brightest thing there. site.js adds the
+   confetti. */
+.cta { position: relative; isolation: isolate; overflow: hidden; background: var(--ochre); border-color: #000;
+       color: #000; font-weight: 700; white-space: nowrap;
+       animation: cta-pulse 1.6s cubic-bezier(.3, .6, .4, 1) .8s 3 backwards; }
+.cta::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; z-index: -1; width: 30%;
+              background: rgb(255 255 255 / .5); transform: translateX(-130%) skewX(-20deg); pointer-events: none;
+              animation: cta-sheen 10s ease-in-out 6s infinite; }
+.cta:hover { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+body.g6 .cta:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; border-radius: 999px; }   /* stays round */
+.btn--small.cta { min-height: 40px; padding: 0 1.15em; font-size: 15px; border-width: 1.5px; }
+.hero .cta { min-height: 56px; padding: 0 1.8em; font-size: 1.125rem; }
+/* The confetti library leaves its full-window canvas on the page (and Back can bring the page back): clicks go through */
+#confetti canvas { pointer-events: none !important; }
+@keyframes cta-pulse {
+    from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ochre) 75%, transparent); }
+    to { box-shadow: 0 0 0 .85em color-mix(in srgb, var(--ochre) 0%, transparent); }
+}
+@keyframes cta-sheen {
+    from { transform: translateX(-130%) skewX(-20deg); }
+    12%, to { transform: translateX(420%) skewX(-20deg); }
+}
+
+/* --- Commands ------------------------------------------------------------------------------------------------------ */
+.cmd { display: flex; align-items: stretch; gap: 0; margin: 16px 0 0; background: var(--paper-2);
+       border-left: 2px solid var(--ink); }
+.cmd code { flex: 1; padding: 12px 14px; font: 400 15px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.cmd .copy { align-self: center; margin: 0 8px; }
+
+/* --- Navigation ---------------------------------------------------------------------------------------------- */
+.nav { position: sticky; top: 0; z-index: 40; background: var(--paper); border-bottom: 1px solid var(--rule); }
+.nav__bar { height: var(--nav-h); display: flex; align-items: center; gap: 28px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.brand img { display: block; width: 36px; height: 36px; }       /* the original g6solver.com mark, in its own colours */
+.wordmark { font-weight: 860; font-variation-settings: "wdth" 66; font-size: 30px; letter-spacing: -.02em;
+            line-height: 1; text-decoration: none; }
+.nav__links { display: flex; gap: 22px; margin: 0; padding: 0; list-style: none; }
+.nav__links a, .nav__end a:not(.btn) { font-size: 15px; color: var(--graphite); text-decoration: none; }
+.nav__links a:hover, .nav__end a:not(.btn):hover, .nav__links a[aria-current] { color: var(--ink); }
+.nav__links a[aria-current] { text-decoration: underline; text-underline-offset: .45em; text-decoration-thickness: 2px; }
+.nav__end { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+.nav__menu { display: none; margin-left: auto; }
+.nav__drawer { display: none; border-top: 1px solid var(--rule); padding: 8px var(--gutter) 20px; }   /* .wrap's gutter */
+.nav__drawer a { display: block; padding: 10px 0; font-size: 18px; text-decoration: none; }
+.nav__drawer.open { display: block; }
+.nav__drawer .cta { display: inline-flex; margin-top: 14px; padding: 0 1.6em; font-size: 17px; }
+@media (max-width: 960px) {
+    .nav__links, .nav__end > :not(.cta) { display: none; }    /* on a phone the title bar keeps Get started */
+    .nav__bar { gap: 12px; }
+    .nav__menu { display: inline-flex; margin-left: 0; }
+}
+
+/* --- The stage: the lattice, sticky, while the hero and the loop's steps scroll past ---------------------------- */
+.stage { position: relative; }
+.stage__scene { position: sticky; top: var(--nav-h); height: calc(100vh - var(--nav-h)); height: calc(100svh - var(--nav-h));
+                margin-left: 40%; z-index: 0; }
+.stage__scene canvas { display: block; width: 100%; height: 100%; }
+.stage__copy { position: relative; z-index: 1; margin-top: calc(-100vh + var(--nav-h));
+               margin-top: calc(-100svh + var(--nav-h)); pointer-events: none; }
+.stage__copy .hero > *, .stage__copy .step > * { pointer-events: auto; }   /* empty space reaches the lattice */
+.hero { min-height: calc(100vh - var(--nav-h)); min-height: calc(100svh - var(--nav-h)); display: flex;
+        flex-direction: column; justify-content: center; padding: 48px 0 72px var(--gutter); overflow: hidden;
+        margin-left: calc(-1 * var(--gutter)); }   /* into the gutter, text in place: the call to action's pulse shows whole */
+.hero .lede { margin-top: 36px; max-width: 25em; }
+.hero .lede.strong { margin-top: 18px; }
+/* The why is a sentence, not a name: the same setting, sized so its longest word fits beside the lattice. */
+.display--why { font-size: clamp(52px, 7.2vw, 120px); line-height: .9; }
+/* What G6 is, between the why and the loop: laid out like a step, but not one, so the lattice still acts out four. */
+.answer { min-height: 88vh; display: flex; flex-direction: column; justify-content: center; max-width: 30em; }
+.stage__copy .answer > * { pointer-events: auto; }
+.answer .lede { margin-top: 28px; }
+.steps { list-style: none; margin: 0; padding: 0 0 20vh; }
+.step { min-height: 88vh; display: flex; flex-direction: column; justify-content: center; max-width: 30em;
+        transition: opacity .45s ease; }
+.stage.is-live .step { opacity: .22; }            /* dimmed only while the lattice is acting the steps out */
+.stage.is-live .step.is-active { opacity: 1; }
+.step__n { font-size: 15px; font-weight: 600; color: var(--graphite); margin-bottom: 10px; display: block; }
+.step__n::after { content: " of 4"; font-weight: 400; }
+.step p { margin: 0; }
+.step .h2 { font-size: clamp(44px, 5.4vw, 80px); font-variation-settings: "wdth" 70; }
+.lattice-tip { position: absolute; z-index: 2; pointer-events: none; max-width: 300px; padding: 10px 12px;
+               background: var(--paper); border: 1px solid var(--ink); font-size: 14px; line-height: 1.4; }
+.lattice-tip b { display: block; font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+.lattice-tip__guard { display: block; margin-top: 6px; font-size: 13px; color: var(--graphite); }
+.lattice-legend { position: absolute; right: var(--gutter); top: 20px; font-size: 13px; color: var(--graphite); margin: 0;
+                  text-align: right; }
+/* A lit component's plain name, placed beside its point by lattice.js (it sets the transform). */
+.lattice-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.lattice-label { position: absolute; left: 0; top: 0; margin: -12px 0 0 16px; padding: 3px 8px; background: var(--paper);
+                 border: 1px solid var(--ink); font-size: 13px; font-weight: 600; line-height: 1.25; white-space: nowrap;
+                 will-change: transform, opacity; }
+
+/* The limits, still on the stage: each one, as it reaches the reading line, lights the components that answer it. */
+.limits-head { padding: 16vh 0 5vh; max-width: 30em; }
+.limits-head .lede { margin-top: 18px; }
+.limits-hint { display: none; }
+.stage.is-live .limits-hint { display: inline; }        /* only when there is a lattice to light */
+.limits { list-style: none; margin: 0; padding: 0 0 38vh; max-width: 31em; }
+.limit { padding: 20px 0 22px; border-top: 1px solid var(--rule); transition: opacity .35s ease, box-shadow .35s ease; }
+.limit:focus { outline: none; }
+.limit__title { font-size: clamp(26px, 2.4vw, 36px); line-height: 1.02; font-weight: 780; font-variation-settings: "wdth" 72;
+                letter-spacing: -.005em; margin: 0 0 8px; }
+.limit__cause { margin: 0 0 6px; color: var(--graphite); font-size: 15px; }
+.limit__answer { margin: 0 0 12px; }
+.limit__parts { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.limit__parts a:not(.link) { padding: 2px 8px; border: 1px solid var(--ink); font-weight: 600; text-decoration: none; }
+.limit__parts a:not(.link):hover { background: var(--ink); color: var(--paper); }
+.limit__essay { margin-left: 6px; font-size: 14px; }
+.stage__copy .limits-head > *, .stage__copy .limit { pointer-events: auto; }
+.stage.is-live .limit { opacity: .26; }
+.stage.is-live .limit.is-active, .stage.is-live .limit:hover, .stage.is-live .limit:focus-within { opacity: 1; }
+.stage.is-live .limit.is-active { box-shadow: inset 0 2px 0 var(--ink); }
+
+@media (max-width: 900px) {
+    .stage__scene { margin-left: 0; height: 56vh; height: 56svh; }
+    .stage__copy { margin-top: -56vh; margin-top: -56svh; }
+    .hero { min-height: auto; padding-top: 58vh; padding-top: 58svh; }
+    .hero .display { font-size: clamp(56px, 17vw, 120px); }
+    .hero .display--why { font-size: clamp(40px, 11.5vw, 88px); }
+    .step, .answer, .limits-head { min-height: 70vh; padding-top: 52vh; justify-content: flex-start; }
+    .step > *, .answer > *, .limits-head > * { background: var(--paper); }
+    .lattice-legend { display: none; }
+    /* Below the lattice the reading line sits lower, and the limits it has passed fade almost away over it. */
+    .limits { padding-bottom: 46vh; }
+    .stage.is-live .limit { opacity: .06; }
+    .stage.is-live .limit.is-active { background: var(--paper); }
+    .lattice-label { font-size: 11px; padding: 2px 6px; margin: -10px 0 0 10px; }
+}
+
+/* --- Sections ---------------------------------------------------------------------------------------------------- */
+.band { padding: clamp(72px, 10vw, 144px) 0; border-top: 1px solid var(--rule); }
+.band__head { grid-column: 1 / span 5; }
+.band__body { grid-column: 6 / -1; }
+@media (max-width: 900px) { .band__head, .band__body { grid-column: 1 / -1; } }
+
+.ways { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 48px; }
+.way { padding: 0 var(--gap); border-left: 1px solid var(--rule); display: flex; flex-direction: column; }
+.way:first-child { padding-left: 0; border-left: 0; }
+.way p { margin: 0; }
+.way .more { margin-top: auto; padding-top: 20px; font-size: 15px; }
+@media (max-width: 900px) {
+    .ways { grid-template-columns: 1fr; }
+    .way { border-left: 0; border-top: 1px solid var(--rule); padding: 28px 0; }
+    .way:first-child { border-top: 0; padding-top: 0; }
+}
+
+/* The home page below the stage: statements set large, in ruled pairs; each says one thing. */
+.band__title { max-width: 16em; margin-bottom: clamp(32px, 4vw, 56px); }
+.statement { font-size: clamp(28px, 3vw, 44px); line-height: 1.02; font-weight: 780; font-variation-settings: "wdth" 72;
+             letter-spacing: -.005em; margin: 0 0 14px; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(32px, 5vw, 80px); }
+.pair__item { border-top: 2px solid var(--ink); padding: 20px 0 8px; }
+.pair__item p { margin: 0 0 16px; max-width: 32em; }
+
+/* The components as a periodic table: one column per job, one square element per component, the meta-harness (the
+   lattice's centre) in ink. Ragged columns, like the chemist's table. */
+.ptable { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 28px 10px; margin-top: 48px;
+          align-items: start; }
+.ptable__head { margin: 0 0 8px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); font-size: 15px;
+                font-weight: 700; font-variation-settings: "wdth" 86; }
+.ptable ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ptable__el { display: flex; align-items: flex-end; min-height: 58px; padding: 8px 10px 9px; border: 1px solid var(--ink);
+              font-size: 14px; font-weight: 650; line-height: 1.15; font-variation-settings: "wdth" 88;
+              text-decoration: none; transition: background-color .15s, color .15s; }
+.ptable__el:hover, .ptable__el:focus-visible, .ptable__el.is-centre { background: var(--ink); color: var(--paper); }
+@media (max-width: 1100px) { .ptable { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .ptable { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Learning, side by side: what a model's change looks like (an illustration), and a change G6 made (its record). */
+.contrast { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap) clamp(32px, 5vw, 80px);
+            align-items: start; }
+.contrast__side { margin: 0; min-width: 0; }                 /* the weights never widen the grid on a phone */
+.contrast__side figcaption { margin-top: 16px; max-width: 32em; }
+.weights { margin: 0; padding: 18px 20px; background: var(--paper-2); color: var(--graphite); overflow: hidden;
+           font: 400 13px/1.75 var(--mono); white-space: pre;
+           -webkit-mask-image: linear-gradient(90deg, #000 72%, transparent);
+           mask-image: linear-gradient(90deg, #000 72%, transparent); }
+.record { margin: 0; padding: 18px 20px; border: 2px solid var(--ink); display: grid; gap: 12px; }
+.record div { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 2px 16px; }
+.record dt { color: var(--graphite); font-size: 14px; padding-top: 2px; }
+.record dd { margin: 0; }
+.record__was { color: var(--graphite); }
+.record__was s { text-decoration-thickness: 1px; }
+/* the kept change: teal, the one colour that means "approved" */
+.record__now { font: 500 14px/1.55 var(--mono); padding-left: 12px; border-left: 4px solid var(--teal); }
+.trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); margin: 48px 0 0; }
+.trio div { border-top: 1px solid var(--rule); padding-top: 14px; }
+.trio dt { font-size: 22px; line-height: 1.2; font-weight: 700; font-variation-settings: "wdth" 80; }
+.trio dd { margin: 4px 0 0; color: var(--graphite); }
+.learning__reach { margin: 32px 0 0; max-width: 46em; }
+.ways-line { list-style: none; margin: 28px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+.ways-line a { display: block; padding: 14px 0; border-bottom: 1px solid var(--rule); color: var(--graphite);
+               text-decoration: none; }
+.ways-line b { color: var(--ink); font-weight: 650; }
+.ways-line a:hover b { text-decoration: underline; text-underline-offset: .2em; }
+.modes-row { margin-top: clamp(56px, 7vw, 96px); }
+
+/* What it gives you: four lines of large type, each with its one-line proof beside it. */
+.gives { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--ink); }
+.gives li { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 8px var(--gap); align-items: baseline;
+            padding: 22px 0 24px; border-top: 1px solid var(--ink); }
+.gives .statement { font-size: clamp(32px, 4.2vw, 64px); margin: 0; }
+.gives p { margin: 0; color: var(--graphite); max-width: 30em; }
+.state { display: inline-block; margin: 6px 4px 0 0; padding: 1px 8px; border: 1px solid var(--ink); color: var(--ink);
+         font-size: 13px; font-weight: 650; }
+.state.is-verified { background: var(--teal); border-color: var(--teal); color: #000; }
+.state.is-blocked { background: var(--ink); color: var(--paper); }
+@media (max-width: 900px) {
+    .pair, .trio, .contrast, .gives li { grid-template-columns: 1fr; }
+    .record div { grid-template-columns: 1fr; }
+}
+
+/* A page's why: the first thing it says, before any section starts. */
+.g6-prose .why { font-size: clamp(19px, 1.6vw, 22px); line-height: 1.45; }
+
+.modes__switch { display: inline-flex; padding: 4px; border: 1.5px solid var(--ink); border-radius: 999px; gap: 4px;
+                 margin: 8px 0 32px; flex-wrap: wrap; }
+.modes__switch button { min-height: 42px; padding: 0 18px; border: 0; border-radius: 999px; background: transparent;
+                        color: var(--ink); font: 600 15px/1 var(--font); font-variation-settings: "wdth" 92; cursor: pointer; }
+.modes__switch button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.mode { margin: 0; max-width: 34em; }
+
+.ev { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px var(--gap); margin-top: 48px; }
+.ev__wf { border-top: 2px solid var(--ink); padding-top: 14px; }
+.ev__wf h3 { margin: 0 0 4px; font-size: 18px; font-weight: 650; }
+.ev__big { display: flex; align-items: baseline; gap: .12em; font-size: clamp(56px, 6vw, 96px); font-weight: 800;
+           font-variation-settings: "wdth" 66; line-height: 1; margin: 10px 0 16px; letter-spacing: -.01em; }
+.ev__from { color: var(--graphite); font-weight: 300; }
+.ev__arrow { font-size: .26em; font-weight: 500; color: var(--graphite); letter-spacing: 0; }
+.ev__to { font-variant-numeric: tabular-nums; }
+/* count.js plays the bars in from nothing as the numbers count up; without it they are simply drawn. */
+.ev.is-armed .ev__fill { transform: scaleX(0); transform-origin: left; }
+.ev.is-armed.is-counted .ev__fill { transform: scaleX(1); transition: transform 1.4s cubic-bezier(.2, .7, 0, 1); }
+.ev__row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; font-size: 14px; margin-top: 10px; }
+.ev__track { grid-column: 1 / -1; height: 6px; background: var(--paper-2); }
+.ev__fill { display: block; height: 100%; background: var(--graphite); }
+.ev__row.is-g6 .ev__fill { background: var(--ink); }
+.ev__row.is-best > span:not(.ev__track) { font-weight: 700; color: var(--ink); }
+.ev__winner { margin: 6px 0 4px; font-size: 14px; font-weight: 600; }
+.ev__note { margin-top: 40px; max-width: 46em; }
+.ev__more { margin-top: 24px; max-width: 50em; border-top: 1px solid var(--rule); padding-top: 14px; }
+.ev__more summary { cursor: pointer; font-weight: 650; }
+.ev__more p { margin: 12px 0 0; }
+@media (max-width: 1100px) { .ev { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .ev { grid-template-columns: 1fr; } }
+
+/* --- Inner pages: a hero, bands of prose, a long-form article ----------------------------------------------------- */
+.page-hero { padding: clamp(64px, 9vw, 136px) var(--gutter) clamp(48px, 6vw, 88px); }
+.page-hero .display { font-size: clamp(52px, 7.6vw, 128px); max-width: 11em; }
+.page-hero .lede { margin-top: 28px; max-width: 32em; }
+.lede.strong { font-weight: 650; margin-top: 18px; }
+.label { font-size: 15px; font-weight: 600; color: var(--graphite); margin: 0 0 12px; }
+.prose-body p { margin: 0 0 1.1em; max-width: 36em; }
+.prose-body p:last-child { margin-bottom: 0; }
+.prose-body strong { font-weight: 650; }
+.systems { list-style: none; counter-reset: sys; margin: 0; padding: 0; }
+.systems li { counter-increment: sys; display: grid; grid-template-columns: 3.2em 1fr; padding: 18px 0;
+              border-top: 1px solid var(--rule); }
+.systems li::before { content: counter(sys); font-weight: 800; font-variation-settings: "wdth" 70; font-size: 30px;
+                      line-height: 1; }
+.systems li > * { grid-column: 2; }
+.systems p { margin: 0; color: var(--graphite); max-width: 36em; }
+.index { list-style: none; margin: 0 0 clamp(72px, 10vw, 144px); padding: 0; border-top: 2px solid var(--ink); }
+.index a { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 6px var(--gap); padding: 22px 0;
+           border-bottom: 1px solid var(--rule); text-decoration: none; }
+.index a .h3 { margin: 0; }
+.index a span:last-child { color: var(--graphite); max-width: 36em; }
+.index a:hover .h3 { text-decoration: underline; text-underline-offset: .2em; text-decoration-thickness: 2px; }
+@media (max-width: 760px) { .index a { grid-template-columns: 1fr; } }
+.steps-list { list-style: none; counter-reset: st; margin: 0; padding: 0; }
+.steps-list > li { counter-increment: st; position: relative; padding: 0 0 40px 3.2em; }
+.steps-list > li::before { content: counter(st); position: absolute; left: 0; top: -4px; font-weight: 800;
+                           font-variation-settings: "wdth" 70; font-size: 30px; line-height: 1; }
+.steps-list p { max-width: 36em; margin: 0 0 10px; }
+.steps-list code, .g6-prose code { font-family: var(--mono); font-size: .88em; }
+.tabs__list { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 18px; }
+.tabs__list [role="tab"] { min-height: 36px; padding: 0 14px; border: 1.5px solid var(--ink); border-radius: 999px;
+                           background: transparent; color: var(--ink); font: 600 14px/1 var(--font); cursor: pointer; }
+.tabs__list [role="tab"][aria-selected="true"] { background: var(--ink); color: var(--paper); }
+.tabs:not(.is-tabbed) .tabs__list { display: none; }        /* without JavaScript every panel shows, so no tab row */
+.tabs__panel { padding: 4px 0 8px; }
+.tabs__panel .cmd + p { margin-top: 16px; }
+.tabs:not(.is-tabbed) .tabs__panel { border-top: 1px solid var(--rule); padding-top: 14px; }
+.article { padding: clamp(64px, 9vw, 136px) var(--gutter) 96px; }
+.article .g6-prose { max-width: 44em; }
+.article .g6-prose h1 { max-width: 12em; }
+.article .intro { font-size: clamp(19px, 1.6vw, 22px); line-height: 1.45; color: var(--graphite); }
+
+/* --- Footer ------------------------------------------------------------------------------------------------- */
+.foot { border-top: 1px solid var(--ink); padding: 48px 0 40px; margin-top: 0; font-size: 15px; }
+.foot__grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 32px var(--gap); }
+.foot ul { list-style: none; margin: 0; padding: 0; }
+.foot li + li { margin-top: 8px; }
+.foot a { text-decoration: none; color: var(--graphite); }
+.foot a:hover { color: var(--ink); text-decoration: underline; }
+.foot h2 { font-size: 15px; font-weight: 650; margin: 0 0 12px; }
+.foot__base { margin-top: 48px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center;
+              justify-content: space-between; color: var(--graphite); }
+@media (max-width: 760px) { .foot__grid { grid-template-columns: 1fr 1fr; } .foot__grid > :first-child { grid-column: 1 / -1; } }
+.foot__contact { font: inherit; color: var(--graphite); background: none; border: 0; padding: 0; cursor: pointer; }
+.foot__contact:hover { color: var(--ink); text-decoration: underline; }
+
+/* --- Contact: the footer's dialog, a square block like any information; its buttons are round ------------------ */
+.contact { width: min(30em, calc(100vw - 32px)); padding: 0; border: 1px solid var(--ink); border-radius: 0;
+           background: var(--paper); color: var(--ink); font-size: 1rem; line-height: 1.55; }
+.contact::backdrop { background: rgb(0 0 0 / .5); }
+.contact__body { padding: clamp(20px, 4vw, 32px); }
+.contact__body p { margin: 0 0 12px; overflow-wrap: anywhere; }
+.contact__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+
+@media (prefers-reduced-motion: reduce) {
+    .step, .btn { transition: none !important; }
+    .hero .display { animation: none; }
+    .cta, .cta::after { animation: none !important; }
+}
+
+/* --- Bridge -----------------------------------------------------------------------------------------------------------
+ * The pages not yet redrawn in this design were written for the old dark site in Tailwind classes. These rules map the
+ * colour classes they use onto the tokens above, so every page reads in the new palette now; each page's rules go when
+ * that page is redrawn.
+ */
+.text-white, .hover\:text-white:hover, .focus\:text-white:focus, .text-gray-200, .text-gray-300 { color: var(--ink) !important; }
+.text-gray-400, .text-gray-500, .text-gray-600 { color: var(--graphite) !important; }
+.text-white\/10 { color: var(--rule) !important; }
+.text-g6-green, .text-green-400, .text-green-500, .text-g6-indigo, .text-g6-indigo\/70, .text-indigo-300,
+.text-indigo-400, .text-g6-violet, .hover\:text-g6-violet:hover, .hover\:text-g6-indigo:hover,
+.group:hover .group-hover\:text-g6-indigo, .group:hover .group-hover\:text-g6-violet { color: var(--teal-ink) !important; }
+.text-amber-400, .text-amber-500 { color: var(--ink) !important; }
+.bg-black, .bg-g6-dark, .bg-g6-black, .bg-black\/30, .bg-g6-black\/80, .bg-g6-black\/95 { background-color: var(--paper) !important; }
+.bg-white\/5, .bg-white\/\[0\.03\], .bg-white\/\[0\.02\], .hover\:bg-white\/5:hover, .hover\:bg-white\/\[0\.02\]:hover,
+.bg-g6-indigo\/5, .bg-g6-indigo\/10, .bg-g6-indigo\/20, .bg-g6-violet\/5, .bg-g6-violet\/10, .bg-g6-violet\/15,
+.bg-pink-500\/10, .bg-g6-green\/\[0\.02\], .bg-g6-indigo\/\[0\.02\], .bg-g6-indigo\/\[0\.03\], .bg-g6-indigo\/\[0\.04\],
+.bg-gray-600 { background-color: var(--paper-2) !important; }
+.bg-g6-indigo, .focus\:bg-g6-indigo:focus { background-color: var(--ink) !important; color: var(--paper) !important; }
+.border-white\/5, .border-white\/10, .border-white\/20, .hover\:border-white\/20:hover, .border-gray-700,
+.border-g6-indigo\/10, .border-g6-indigo\/20, .border-g6-indigo\/30, .border-g6-indigo\/50, .border-g6-violet\/30,
+.border-g6-violet\/40, .border-g6-green\/20 { border-color: var(--rule) !important; }
+.border-g6-indigo, .hover\:border-g6-indigo\/30:hover, .hover\:border-g6-indigo\/40:hover, .hover\:border-g6-indigo\/60:hover,
+.hover\:border-g6-indigo\/70:hover, .hover\:border-g6-indigo\/80:hover, .hover\:border-g6-violet\/40:hover,
+.hover\:border-g6-violet\/60:hover, .hover\:border-g6-pink\/40:hover, .hover\:border-pink-500\/40:hover { border-color: var(--ink) !important; }
+.bg-clip-text.text-transparent { background: none !important; -webkit-text-fill-color: currentColor; color: var(--ink) !important; }
+.bg-gradient-to-r, .bg-gradient-to-br, .bg-gradient-to-b { background-image: none !important; }
+.hover\:shadow-g6-indigo\/25:hover { box-shadow: none !important; }
+.glass, .section-typo-inner { background: var(--paper-2) !important; border-color: var(--rule) !important;
+                              box-shadow: none !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+[class*="blur-["] { display: none !important; }
+body.g6 .font-mono { font-family: var(--mono); }

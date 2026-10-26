@@ -1,0 +1,342 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}The Periodic Table of Intelligence{% endblock %}
+{% block meta_description %}Intelligence is not a single substance but a composition of discrete cognitive primitives — each with known properties, strengths, and failure modes. Building general intelligence means cataloguing and composing them.{% endblock %}
+{% block post_headline %}The Periodic Table of Intelligence{% endblock %}
+{% block post_date %}2025-08-02{% endblock %}
+{% block post_description %}Intelligence is not a single substance but a composition of discrete cognitive primitives — each with known properties, strengths, and failure modes. Building general intelligence means cataloguing and composing them.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Philosophy</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">The Periodic Table of Intelligence</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Intelligence as monolith
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">The dominant framing in artificial intelligence research treats intelligence as a single, unified capability. We speak of &ldquo;general intelligence&rdquo; as though it were a substance &mdash; something a system either has or lacks, possesses in greater or lesser degree, approaches asymptotically as parameters increase and training data expands. The implicit model is a spectrum: narrow AI at one end, artificial general intelligence at the other, and the research programme is to move along that spectrum by building systems that are progressively more general.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">This framing has deep roots. The Turing test treats intelligence as a single property that can be assessed through unrestricted conversation. The concept of IQ reduces cognitive capability to a single number. The pursuit of AGI inherits these assumptions: build a model capable enough, train it on data comprehensive enough, and general intelligence will emerge as a natural consequence of sufficient scale.</p>
+
+            <p class="gsap-reveal">There is evidence for this view. Scaling laws suggest that larger models develop capabilities that smaller models lack &mdash; not gradually, but through apparent phase transitions where qualitatively new behaviours emerge at specific parameter counts.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> GPT-4 can do things GPT-3 cannot. Claude 3.5 handles reasoning tasks that defeated Claude 2. The trajectory is real, and the monolithic framing explains it simply: more parameters, more intelligence, eventually enough intelligence to be general.</p>
+
+            <p class="gsap-reveal">The attraction of this framing is its elegance. A single dimension of variation. A single metric to optimise. A single research programme: make the model bigger, the data better, the training longer. If intelligence is truly a unified capability, then scaling is the strategy and patience is the only requirement.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: Intelligence as composite
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Chemical Revolution in Cognitive Science</h2>
+
+            <p class="gsap-reveal">Before Mendeleev, chemistry faced a similar conceptual problem. Matter was understood in terms of broad categories &mdash; earth, water, air, fire in the ancient scheme, or increasingly refined but still monolithic notions of &ldquo;substances&rdquo; and &ldquo;compounds.&rdquo; The breakthrough came not from studying matter harder but from recognising that it was composed of discrete elements with individual, cataloguable properties. The periodic table did not just organise knowledge &mdash; it transformed chemistry from a descriptive enterprise into a predictive one. Gaps in the table predicted elements that had not yet been discovered. The properties of known elements predicted the behaviour of their compounds.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">The history of intelligence research suggests a parallel pattern. Howard Gardner's theory of multiple intelligences proposed that what we call &ldquo;intelligence&rdquo; is actually a collection of distinct cognitive capabilities: linguistic, logical-mathematical, spatial, musical, bodily-kinaesthetic, interpersonal, intrapersonal, and naturalistic.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup> While Gardner's specific taxonomy has been debated, his core insight &mdash; that intelligence is not a single substance but a composition of distinguishable components &mdash; has proven durable and productive.</p>
+
+            <p class="gsap-reveal">Sternberg's triarchic theory reinforced this decomposition from a different angle, distinguishing analytical, creative, and practical intelligence as fundamentally different cognitive operations with different neural substrates, developmental trajectories, and failure modes.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> A person can be analytically brilliant and practically incompetent, or creatively gifted and analytically mediocre. These are not different amounts of the same thing &mdash; they are different things entirely.</p>
+
+            <p class="gsap-reveal">Legg and Hutter attempted a formal unification, defining universal intelligence as an agent's ability to achieve goals across a wide range of environments, weighted by environment complexity.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> But even their formalisation implicitly acknowledges the composite nature of intelligence: achieving goals in diverse environments requires different cognitive strategies for different environmental structures. The universality comes not from a single general-purpose mechanism but from the ability to deploy the right mechanism for the right situation.</p>
+
+            <p class="gsap-reveal">Hern&aacute;ndez-Orallo's comprehensive treatment of intelligence measurement makes this explicit. He argues that any meaningful evaluation of intelligence must assess multiple dimensions independently, because performance on one dimension does not reliably predict performance on others.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> An LLM that excels at linguistic tasks may fail at spatial reasoning. A system optimised for logical deduction may lack creative synthesis. A model that performs well on pattern recognition may be unable to construct causal explanations. These are not weaknesses to be trained away &mdash; they are structural consequences of the fact that different cognitive tasks require different computational primitives.</p>
+
+            <p class="gsap-reveal">This reframing has profound implications for how we build AI systems. If intelligence is a single substance, then the optimal strategy is to build the biggest, most general model possible and let intelligence emerge from scale. If intelligence is a composition of discrete primitives, then the optimal strategy is fundamentally different: catalogue the primitives, understand their individual properties, and build systems that compose them appropriately for the task at hand.</p>
+
+            <!-- ── Diagram 1: Periodic Table Grid ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 440" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A periodic-table-style grid showing cognitive elements with element-style cards">
+                    <defs>
+                        <filter id="glow-20" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <text x="400" y="28" text-anchor="middle" fill="#6b7280" font-size="13" font-weight="600" letter-spacing="2">PERIODIC TABLE OF COGNITIVE ELEMENTS</text>
+
+                    <!-- Row 1 -->
+                    <!-- Element 1: Logical Reasoning -->
+                    <rect x="20" y="50" width="175" height="90" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="32" y="68" fill="#6366f1" font-size="10" font-weight="700">Lr</text>
+                    <text x="183" y="68" text-anchor="end" fill="#4b5563" font-size="9">01</text>
+                    <text x="107" y="90" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Logical</text>
+                    <text x="107" y="105" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Reasoning</text>
+                    <text x="107" y="128" text-anchor="middle" fill="#6b7280" font-size="8">Deduction &bull; Proof &bull; Validity</text>
+
+                    <!-- Element 2: Pattern Recognition -->
+                    <rect x="215" y="50" width="175" height="90" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="227" y="68" fill="#6366f1" font-size="10" font-weight="700">Pr</text>
+                    <text x="378" y="68" text-anchor="end" fill="#4b5563" font-size="9">02</text>
+                    <text x="302" y="90" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Pattern</text>
+                    <text x="302" y="105" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Recognition</text>
+                    <text x="302" y="128" text-anchor="middle" fill="#6b7280" font-size="8">Regularity &bull; Similarity &bull; Clusters</text>
+
+                    <!-- Element 3: Causal Inference -->
+                    <rect x="410" y="50" width="175" height="90" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="422" y="68" fill="#9ca3af" font-size="10" font-weight="700">Ci</text>
+                    <text x="573" y="68" text-anchor="end" fill="#4b5563" font-size="9">03</text>
+                    <text x="497" y="90" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Causal</text>
+                    <text x="497" y="105" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Inference</text>
+                    <text x="497" y="128" text-anchor="middle" fill="#6b7280" font-size="8">Intervention &bull; Counterfactual</text>
+
+                    <!-- Element 4: Spatial Navigation -->
+                    <rect x="605" y="50" width="175" height="90" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="617" y="68" fill="#9ca3af" font-size="10" font-weight="700">Sn</text>
+                    <text x="768" y="68" text-anchor="end" fill="#4b5563" font-size="9">04</text>
+                    <text x="692" y="90" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Spatial</text>
+                    <text x="692" y="105" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Navigation</text>
+                    <text x="692" y="128" text-anchor="middle" fill="#6b7280" font-size="8">Geometry &bull; Topology &bull; Maps</text>
+
+                    <!-- Row 2 -->
+                    <!-- Element 5: Social Modelling -->
+                    <rect x="20" y="160" width="175" height="90" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="32" y="178" fill="#9ca3af" font-size="10" font-weight="700">Sm</text>
+                    <text x="183" y="178" text-anchor="end" fill="#4b5563" font-size="9">05</text>
+                    <text x="107" y="200" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Social</text>
+                    <text x="107" y="215" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Modelling</text>
+                    <text x="107" y="238" text-anchor="middle" fill="#6b7280" font-size="8">Theory of Mind &bull; Empathy</text>
+
+                    <!-- Element 6: Creative Synthesis -->
+                    <rect x="215" y="160" width="175" height="90" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="227" y="178" fill="#6366f1" font-size="10" font-weight="700">Cs</text>
+                    <text x="378" y="178" text-anchor="end" fill="#4b5563" font-size="9">06</text>
+                    <text x="302" y="200" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Creative</text>
+                    <text x="302" y="215" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Synthesis</text>
+                    <text x="302" y="238" text-anchor="middle" fill="#6b7280" font-size="8">Novelty &bull; Analogy &bull; Metaphor</text>
+
+                    <!-- Element 7: Memory Retrieval -->
+                    <rect x="410" y="160" width="175" height="90" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="422" y="178" fill="#9ca3af" font-size="10" font-weight="700">Mr</text>
+                    <text x="573" y="178" text-anchor="end" fill="#4b5563" font-size="9">07</text>
+                    <text x="497" y="200" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Memory</text>
+                    <text x="497" y="215" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Retrieval</text>
+                    <text x="497" y="238" text-anchor="middle" fill="#6b7280" font-size="8">Encoding &bull; Recall &bull; Association</text>
+
+                    <!-- Element 8: Metacognition -->
+                    <rect x="605" y="160" width="175" height="90" rx="8" fill="rgba(236,72,153,0.10)" stroke="#ec4899" stroke-width="1.5" filter="url(#glow-20)"/>
+                    <text x="617" y="178" fill="#ec4899" font-size="10" font-weight="700">Mc</text>
+                    <text x="768" y="178" text-anchor="end" fill="#4b5563" font-size="9">08</text>
+                    <text x="692" y="200" text-anchor="middle" fill="#fbcfe8" font-size="12" font-weight="600">Meta-</text>
+                    <text x="692" y="215" text-anchor="middle" fill="#fbcfe8" font-size="12" font-weight="600">cognition</text>
+                    <text x="692" y="238" text-anchor="middle" fill="#6b7280" font-size="8">Self-Monitor &bull; Calibration</text>
+
+                    <!-- Row 3 -->
+                    <!-- Element 9: Temporal Reasoning -->
+                    <rect x="20" y="270" width="175" height="90" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="32" y="288" fill="#9ca3af" font-size="10" font-weight="700">Tr</text>
+                    <text x="183" y="288" text-anchor="end" fill="#4b5563" font-size="9">09</text>
+                    <text x="107" y="310" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Temporal</text>
+                    <text x="107" y="325" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Reasoning</text>
+                    <text x="107" y="348" text-anchor="middle" fill="#6b7280" font-size="8">Sequence &bull; Duration &bull; Planning</text>
+
+                    <!-- Element 10: Abstraction -->
+                    <rect x="215" y="270" width="175" height="90" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="227" y="288" fill="#9ca3af" font-size="10" font-weight="700">Ab</text>
+                    <text x="378" y="288" text-anchor="end" fill="#4b5563" font-size="9">10</text>
+                    <text x="302" y="310" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Abstraction</text>
+                    <text x="302" y="348" text-anchor="middle" fill="#6b7280" font-size="8">Generalise &bull; Categorise &bull; Compress</text>
+
+                    <!-- Element 11: Motor Planning -->
+                    <rect x="410" y="270" width="175" height="90" rx="8" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="422" y="288" fill="#9ca3af" font-size="10" font-weight="700">Mp</text>
+                    <text x="573" y="288" text-anchor="end" fill="#4b5563" font-size="9">11</text>
+                    <text x="497" y="310" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Motor</text>
+                    <text x="497" y="325" text-anchor="middle" fill="#d1d5db" font-size="12" font-weight="600">Planning</text>
+                    <text x="497" y="348" text-anchor="middle" fill="#6b7280" font-size="8">Action &bull; Coordination &bull; Reflex</text>
+
+                    <!-- Element 12: Linguistic Processing -->
+                    <rect x="605" y="270" width="175" height="90" rx="8" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="617" y="288" fill="#6366f1" font-size="10" font-weight="700">Lp</text>
+                    <text x="768" y="288" text-anchor="end" fill="#4b5563" font-size="9">12</text>
+                    <text x="692" y="310" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Linguistic</text>
+                    <text x="692" y="325" text-anchor="middle" fill="#e0e7ff" font-size="12" font-weight="600">Processing</text>
+                    <text x="692" y="348" text-anchor="middle" fill="#6b7280" font-size="8">Syntax &bull; Semantics &bull; Pragmatics</text>
+
+                    <!-- Legend -->
+                    <rect x="20" y="390" width="16" height="16" rx="3" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="44" y="403" fill="#9ca3af" font-size="10">Strong in current LLMs</text>
+                    <rect x="220" y="390" width="16" height="16" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="244" y="403" fill="#9ca3af" font-size="10">Weak or absent in current LLMs</text>
+                    <rect x="500" y="390" width="16" height="16" rx="3" fill="rgba(236,72,153,0.10)" stroke="#ec4899" stroke-width="1" filter="url(#glow-20)"/>
+                    <text x="524" y="403" fill="#9ca3af" font-size="10">Critical missing primitive</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; Cognitive elements catalogued by type, with current LLM strengths and gaps highlighted</p>
+            </div>
+
+            <p class="gsap-reveal">The analogy to chemistry is not merely decorative. Before the periodic table, chemists knew that substances combined in specific proportions and produced predictable reactions, but they lacked a systematic framework for predicting new combinations. The periodic table provided that framework. Similarly, we know that cognitive tasks require different capabilities in different proportions, but we lack a systematic framework for predicting which capabilities are needed for which tasks and how they interact when combined.</p>
+
+            <p class="gsap-reveal">Chollet's work on measuring intelligence through the Abstraction and Reasoning Corpus (ARC) provides empirical support for the compositional view. ARC tasks are designed to test core cognitive primitives &mdash; object recognition, counting, symmetry detection, spatial transformation &mdash; independently and in combination.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> The striking finding is that systems that excel at some primitives fail entirely at others, and performance on compound tasks depends on mastery of the specific primitives involved, not on some general intelligence factor. This is exactly what you would expect if intelligence is compositional: compound capabilities are built from elemental ones, and weakness in any element limits the compound.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Composition as the path to generality
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">General Intelligence Through Composition</h2>
+
+            <p class="gsap-reveal">The synthesis resolves an apparent contradiction. The monolithic view says general intelligence requires a system that does everything. The compositional view says general intelligence requires a system that can do <em>anything</em> &mdash; not by possessing a single universal capability but by composing the right mixture of specific capabilities for each problem. These are fundamentally different engineering targets. The first demands a single, increasingly powerful model. The second demands a catalogue of well-characterised cognitive primitives and an architecture for composing them on the fly.</p>
+
+            <p class="gsap-reveal">Consider how this works in practice. A medical diagnosis task requires pattern recognition (matching symptoms to conditions), causal inference (distinguishing correlation from causation in patient histories), memory retrieval (accessing relevant medical knowledge), metacognition (assessing confidence and recognising uncertainty), and social modelling (understanding patient communication patterns). A legal analysis task requires linguistic processing (parsing complex statutory language), logical reasoning (applying rules to facts), temporal reasoning (understanding precedent and procedural sequences), and abstraction (identifying the general principle behind specific rulings). Different tasks, different compositions, drawn from the same catalogue of primitives.</p>
+
+            <p class="gsap-reveal">Kahneman's dual-process theory offers a useful lens for understanding how these compositions might be orchestrated. System 1 (fast, automatic, pattern-based) and System 2 (slow, deliberate, rule-based) are not competing mechanisms but complementary ones that are recruited in different proportions depending on the task.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup> A periodic table of intelligence suggests a richer version of this idea: not two systems but many, each with known properties and known interactions, composed dynamically as the task demands.</p>
+
+            <p class="gsap-reveal">The engineering implications are concrete. Instead of building one model and hoping it develops all necessary capabilities through scale, we build specialised modules for each cognitive primitive and invest in the composition layer that selects and combines them. The logical reasoning module is optimised for logical reasoning &mdash; formal verification, proof search, constraint satisfaction. The pattern recognition module is optimised for statistical regularity detection &mdash; distributional analysis, similarity metrics, cluster identification. The causal inference module is optimised for causal reasoning &mdash; interventional queries, counterfactual analysis, causal graph discovery. Each module has known strengths, known limitations, known failure modes, and known interaction effects with other modules.</p>
+
+            <p class="gsap-reveal">This is not a new idea in computer science. The Unix philosophy of small, composable tools that each do one thing well has been the foundation of productive software engineering for half a century.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup> What is new is applying this philosophy to cognitive capabilities rather than software utilities. The periodic table provides the conceptual framework; the composition architecture provides the engineering mechanism.</p>
+
+            <p class="gsap-reveal">Composition quality itself improves across the <a href="/#thesis" class="text-g6-green hover:text-white transition-colors">T0&ndash;T3 adaptive levels</a>. At T0, compositions are fixed at design time &mdash; the system always applies the same pipeline. At T1, the harness selects better compositions through prompt and tool optimisation. At T2, the system learns which compositions work for which problem classes, refining its catalogue from validated experience. At T3, the system discovers new composition rules entirely &mdash; not just choosing from known primitives but learning the principles that govern how primitives should be combined.</p>
+
+            <!-- ── Diagram 2: Composition Flow SVG ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 220" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing cognitive elements being selected and composed for a specific task">
+
+                    <!-- Phase 1: Element Catalogue -->
+                    <rect x="20" y="30" width="200" height="160" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="120" y="25" text-anchor="middle" fill="#9ca3af" font-size="11" font-weight="600">1. CATALOGUE</text>
+
+                    <!-- Mini element cards -->
+                    <rect x="35" y="50" width="50" height="30" rx="4" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="60" y="69" text-anchor="middle" fill="#a5b4fc" font-size="8" font-weight="600">Lr</text>
+                    <rect x="95" y="50" width="50" height="30" rx="4" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="120" y="69" text-anchor="middle" fill="#a5b4fc" font-size="8" font-weight="600">Pr</text>
+                    <rect x="155" y="50" width="50" height="30" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="180" y="69" text-anchor="middle" fill="#9ca3af" font-size="8" font-weight="600">Ci</text>
+                    <rect x="35" y="90" width="50" height="30" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="60" y="109" text-anchor="middle" fill="#9ca3af" font-size="8" font-weight="600">Sm</text>
+                    <rect x="95" y="90" width="50" height="30" rx="4" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="120" y="109" text-anchor="middle" fill="#a5b4fc" font-size="8" font-weight="600">Cs</text>
+                    <rect x="155" y="90" width="50" height="30" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="180" y="109" text-anchor="middle" fill="#9ca3af" font-size="8" font-weight="600">Mr</text>
+                    <rect x="35" y="130" width="50" height="30" rx="4" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="1"/>
+                    <text x="60" y="149" text-anchor="middle" fill="#a5b4fc" font-size="8" font-weight="600">Mc</text>
+                    <rect x="95" y="130" width="50" height="30" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="120" y="149" text-anchor="middle" fill="#9ca3af" font-size="8" font-weight="600">Tr</text>
+                    <rect x="155" y="130" width="50" height="30" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                    <text x="180" y="149" text-anchor="middle" fill="#9ca3af" font-size="8" font-weight="600">Ab</text>
+
+                    <!-- Arrow 1 -->
+                    <line x1="230" y1="110" x2="280" y2="110" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="6,4"/>
+                    <polygon points="278,105 290,110 278,115" fill="#6b7280"/>
+
+                    <!-- Phase 2: Composition (highlighted) -->
+                    <rect x="295" y="30" width="210" height="160" rx="14" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <rect x="295" y="30" width="210" height="160" rx="14" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#glow-20)"/>
+                    <text x="400" y="25" text-anchor="middle" fill="#6366f1" font-size="11" font-weight="600">2. COMPOSE</text>
+
+                    <!-- Selected elements flowing together -->
+                    <rect x="315" y="55" width="45" height="28" rx="4" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="337" y="73" text-anchor="middle" fill="#c7d2fe" font-size="9" font-weight="700">Lr</text>
+                    <rect x="370" y="55" width="45" height="28" rx="4" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="392" y="73" text-anchor="middle" fill="#c7d2fe" font-size="9" font-weight="700">Ci</text>
+                    <rect x="425" y="55" width="45" height="28" rx="4" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="447" y="73" text-anchor="middle" fill="#c7d2fe" font-size="9" font-weight="700">Mc</text>
+
+                    <!-- Merge lines -->
+                    <line x1="337" y1="83" x2="400" y2="110" stroke="#6366f1" stroke-width="1" opacity="0.5"/>
+                    <line x1="392" y1="83" x2="400" y2="110" stroke="#6366f1" stroke-width="1" opacity="0.5"/>
+                    <line x1="447" y1="83" x2="400" y2="110" stroke="#6366f1" stroke-width="1" opacity="0.5"/>
+
+                    <!-- Composed result -->
+                    <circle cx="400" cy="120" r="18" fill="rgba(99,102,241,0.2)" stroke="#6366f1" stroke-width="1.5"/>
+                    <text x="400" y="124" text-anchor="middle" fill="#e0e7ff" font-size="9" font-weight="700">Lr+Ci+Mc</text>
+                    <text x="400" y="160" text-anchor="middle" fill="#a5b4fc" font-size="9">Task-specific</text>
+                    <text x="400" y="173" text-anchor="middle" fill="#a5b4fc" font-size="9">composition</text>
+
+                    <!-- Arrow 2 -->
+                    <line x1="515" y1="110" x2="565" y2="110" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="6,4"/>
+                    <polygon points="563,105 575,110 563,115" fill="#6b7280"/>
+
+                    <!-- Phase 3: Execution -->
+                    <rect x="580" y="30" width="200" height="160" rx="12" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <text x="680" y="25" text-anchor="middle" fill="#9ca3af" font-size="11" font-weight="600">3. EXECUTE</text>
+
+                    <text x="680" y="75" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">Solving the</text>
+                    <text x="680" y="95" text-anchor="middle" fill="#d1d5db" font-size="13" font-weight="600">actual problem</text>
+                    <text x="680" y="125" text-anchor="middle" fill="#6b7280" font-size="9">Right primitives</text>
+                    <text x="680" y="140" text-anchor="middle" fill="#6b7280" font-size="9">Right proportions</text>
+                    <text x="680" y="155" text-anchor="middle" fill="#6b7280" font-size="9">Right orchestration</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 2 &mdash; Intelligence through composition: select the relevant cognitive elements, compose them for the specific task, execute</p>
+            </div>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Predicting the Missing Elements</h2>
+
+            <p class="gsap-reveal">The most powerful feature of Mendeleev's periodic table was its predictive power. The gaps in the table &mdash; elements that should exist based on the periodic pattern but had not yet been observed &mdash; predicted the properties of undiscovered elements with remarkable accuracy. Mendeleev predicted the existence and properties of germanium, gallium, and scandium before they were found, vindicating the compositional framework.</p>
+
+            <p class="gsap-reveal">A periodic table of intelligence would have the same predictive power. If we catalogue the cognitive primitives that current AI systems possess &mdash; pattern recognition, linguistic processing, certain forms of logical reasoning &mdash; the gaps become immediately visible. Causal inference is weak or absent. Metacognition is rudimentary at best. Spatial reasoning is limited. Temporal planning over long horizons is fragile. Creative synthesis beyond recombination of training data is undemonstrated. These are not random weaknesses &mdash; they are systematic gaps in the table, each pointing to a specific engineering challenge.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <p class="gsap-reveal">Moreover, the compositional framework predicts interaction effects. Just as chemical elements combine in specific ways &mdash; some reactions are exothermic, others endothermic, some combinations are stable, others explosive &mdash; cognitive primitives have interaction properties. Logical reasoning combined with metacognition produces self-correcting inference. Pattern recognition combined with causal inference produces explanation rather than mere correlation. Creative synthesis combined with formal verification produces innovative solutions that are also correct. Understanding these interaction effects is as important as understanding the primitives themselves.</p>
+
+            <p class="gsap-reveal">Goertzel's integrative approach to artificial general intelligence resonates with this framework. He argues that AGI requires the integration of multiple cognitive processes &mdash; perception, action, reasoning, learning, memory &mdash; through a common representational substrate.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> The periodic table adds structure to this intuition: not just multiple processes, but a systematic catalogue of what those processes are, what each contributes, and how they combine.</p>
+
+            <p class="gsap-reveal">Marcus has argued consistently that current deep learning, for all its achievements, fails at systematic compositionality &mdash; the ability to combine known elements in novel ways according to general rules.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup> This is precisely the capability that a compositional architecture is designed to provide. The individual modules handle their specific cognitive primitives. The composition layer handles the systematic combination of those primitives into novel compound capabilities. The system is general not because any single component is general but because the composition is unconstrained.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 CODA: A new research programme
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Research Programme</h2>
+
+            <p class="gsap-reveal">The periodic table of intelligence is, at this stage, a conceptual framework rather than a finished artefact. The exact catalogue of cognitive primitives is not yet established. The interaction effects are not yet fully characterised. The composition mechanisms are still being engineered. But the framework itself is powerful because it reframes the fundamental question of AGI from &ldquo;how do we build a system that is intelligent?&rdquo; to &ldquo;how do we catalogue, characterise, and compose the elements of intelligence?&rdquo;</p>
+
+            <p class="gsap-reveal">This reframing changes the nature of the work. Instead of chasing a single monolithic target, we pursue a distributed research programme: identify the primitives, characterise their properties, engineer their implementations, understand their interactions, and build the composition machinery that assembles them into task-specific configurations. Each step is a concrete engineering challenge with measurable outcomes. Each step produces artefacts that are useful independently. And the aggregate produces something that deserves to be called general intelligence &mdash; not because it does everything at once, but because it can do anything by composition.</p>
+
+            <p class="gsap-reveal font-semibold text-white">Chemistry did not advance by searching for a universal substance. It advanced by cataloguing elements and learning to compose them. Intelligence may follow the same path &mdash; not a single breakthrough but a systematic programme of decomposition, characterisation, and composition that yields generality from specificity.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Russell, S., &amp; Norvig, P. (2021). <a href="https://aima.cs.berkeley.edu/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Artificial Intelligence: A Modern Approach</em></a> (4th ed.). Pearson. &mdash; The standard reference for the monolithic framing of AI as a progression toward general intelligence.
+                </li>
+                <li id="ref-2">
+                    Wei, J., Tay, Y., Bommasani, R., Raffel, C., Zoph, B., Borgeaud, S., &hellip; &amp; Fedus, W. (2022). <a href="https://arxiv.org/abs/2206.07682" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Emergent abilities of large language models</em></a>. <em>Transactions on Machine Learning Research</em>. &mdash; Documents phase transitions in model capability as parameters scale, supporting the monolithic view.
+                </li>
+                <li id="ref-3">
+                    Scerri, E. R. (2007). <a href="https://doi.org/10.1093/oso/9780195305739.001.0001" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The Periodic Table: Its Story and Its Significance</em></a>. Oxford University Press. &mdash; The history of how cataloguing discrete elements transformed chemistry from description to prediction.
+                </li>
+                <li id="ref-4">
+                    Gardner, H. (1983). <a href="https://www.hachettebookgroup.com/titles/howard-e-gardner/frames-of-mind/9780465024339/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Frames of Mind: The Theory of Multiple Intelligences</em></a>. Basic Books. &mdash; The foundational argument that intelligence is not a single capability but a collection of distinct cognitive modules.
+                </li>
+                <li id="ref-5">
+                    Sternberg, R. J. (1985). <a href="https://doi.org/10.1017/CBO9780511615252" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Beyond IQ: A Triarchic Theory of Human Intelligence</em></a>. Cambridge University Press. &mdash; Distinguishes analytical, creative, and practical intelligence as fundamentally different cognitive operations.
+                </li>
+                <li id="ref-6">
+                    Legg, S., &amp; Hutter, M. (2007). <a href="https://arxiv.org/abs/0712.3329" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Universal intelligence: A definition of machine intelligence</em></a>. <em>Minds and Machines</em>, 17(4), 391&ndash;444. &mdash; A formal definition of intelligence as goal-achievement across weighted environments.
+                </li>
+                <li id="ref-7">
+                    Hern&aacute;ndez-Orallo, J. (2017). <a href="https://doi.org/10.1017/9781316594179" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The Measure of All Minds: Evaluating Natural and Artificial Intelligence</em></a>. Cambridge University Press. &mdash; Argues that intelligence evaluation must assess multiple dimensions independently.
+                </li>
+                <li id="ref-8">
+                    Chollet, F. (2019). <a href="https://arxiv.org/abs/1911.01547" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>On the measure of intelligence</em></a>. arXiv preprint arXiv:1911.01547. &mdash; Proposes the Abstraction and Reasoning Corpus as a benchmark testing core cognitive primitives independently.
+                </li>
+                <li id="ref-9">
+                    Kahneman, D. (2011). <a href="https://us.macmillan.com/books/9780374533557/thinkingfastandslow" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Thinking, Fast and Slow</em></a>. Farrar, Straus and Giroux. &mdash; Dual-process theory: System 1 and System 2 as complementary cognitive mechanisms recruited in different proportions.
+                </li>
+                <li id="ref-10">
+                    Raymond, E. S. (2003). <a href="http://www.catb.org/esr/writings/taoup/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The Art of Unix Programming</em></a>. Addison-Wesley. &mdash; The philosophy of small, composable tools that each do one thing well &mdash; applied here to cognitive capabilities.
+                </li>
+                <li id="ref-11">
+                    Mitchell, M. (2019). <a href="https://us.macmillan.com/books/9780374257835/artificialintelligence" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Artificial Intelligence: A Guide for Thinking Humans</em></a>. Farrar, Straus and Giroux. &mdash; On the systematic gaps between current AI capabilities and genuine understanding.
+                </li>
+                <li id="ref-12">
+                    Goertzel, B. (2014). <a href="https://doi.org/10.2991/agi.2014.1" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Artificial general intelligence: Concept, state of the art, and future prospects</em></a>. <em>Journal of Artificial General Intelligence</em>, 5(1), 1&ndash;46. &mdash; Argues for integrative multi-process approaches to AGI over monolithic scaling.
+                </li>
+                <li id="ref-13">
+                    Marcus, G. (2020). <a href="https://arxiv.org/abs/2002.06177" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>The next decade in AI: Four steps towards robust artificial intelligence</em></a>. arXiv preprint arXiv:2002.06177. &mdash; On the failure of deep learning at systematic compositionality and the need for hybrid architectures.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

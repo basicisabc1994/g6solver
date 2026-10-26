@@ -1,0 +1,116 @@
+{
+  "rules": "g6.jobs crisis trigger",
+  "note": "G6's own recall sets: each term is matched as whole words after the text is normalised (g6.guards' folding, Unicode NFKC, format characters such as zero-width spaces removed, every character that is not a letter or digit made a space, runs of spaces made one, lower case); the terms are normalised the same way. The terms name ideation, intent and disclosure only; none names a method. Terms marked added_for_review were added after the first review. Each term carries a near miss: a sentence that shares its words and is not a crisis, with whether the trigger fires on it. One that fires is a known false positive, kept because missing a person in crisis costs more than a false alarm. An exception is its own rule: it covers only its own words, so any trigger phrase beside it still fires. No qualified person has reviewed any term or exception.",
+  "review": "not reviewed by a qualified person",
+  "categories": {
+    "suicidal_ideation": {
+      "title": "thoughts of ending one's own life",
+      "terms": [
+        {"term": "suicide", "near_miss": "We watched Suicide Squad again last night.", "near_miss_fires": true},
+        {"term": "suicidal", "near_miss": "That back pass was suicidal, said the coach.", "near_miss_fires": true},
+        {"term": "kill myself", "near_miss": "I want to upskill myself this year.", "near_miss_fires": false},
+        {"term": "killing myself", "near_miss": "I was killing myself laughing at that show.", "near_miss_fires": false},
+        {"term": "end my life", "near_miss": "This is the end of my life's work, she joked.", "near_miss_fires": false},
+        {"term": "ending my life", "near_miss": "I keep spending my life savings on train fares.", "near_miss_fires": false},
+        {"term": "take my own life", "near_miss": "I take my own lunch to work.", "near_miss_fires": false},
+        {"term": "taking my own life", "near_miss": "I'm taking my own life story to a publisher.", "near_miss_fires": true},
+        {"term": "want to die", "near_miss": "I want to diet before summer.", "near_miss_fires": false},
+        {"term": "wanna die", "near_miss": "I'm dying to see that film, I wanna diet first though.", "near_miss_fires": false},
+        {"term": "better off dead", "near_miss": "You're better off deadheading the roses now.", "near_miss_fires": false},
+        {"term": "no reason to live", "near_miss": "There is no reason to live in the city centre.", "near_miss_fires": true},
+        {"term": "don't want to live", "near_miss": "I don't want to live in Sydney.", "near_miss_fires": true},
+        {"term": "do not want to live", "near_miss": "We do not want to live with my parents.", "near_miss_fires": true},
+        {"term": "don't want to be alive", "near_miss": "I don't want to be a live act.", "near_miss_fires": false},
+        {"term": "end it all", "near_miss": "The weekend it all went wrong.", "near_miss_fires": false},
+        {"term": "dont want to live", "near_miss": "I dont want to liven up the room.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "dont want to be alive", "near_miss": "I dont want to be a live act.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "kill my self", "near_miss": "I need to upskill my self-belief.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "wish i was dead", "near_miss": "I wish I was deadlifting more.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "wish i were dead", "near_miss": "I wish I were deadly at darts.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "unalive myself", "near_miss": "That is an unalive myth.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "kms", "near_miss": "I checked the kmsg log.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"}
+      ]
+    },
+    "self_harm": {
+      "title": "harming oneself",
+      "terms": [
+        {"term": "self-harm", "near_miss": "A self-harmonising synth patch.", "near_miss_fires": false},
+        {"term": "self harm", "near_miss": "They practise self harmony through yoga.", "near_miss_fires": false},
+        {"term": "self-harming", "near_miss": "A lecture on self-harming behaviour in teenagers.", "near_miss_fires": true},
+        {"term": "self harming", "near_miss": "Research into self harming in schools.", "near_miss_fires": true},
+        {"term": "hurt myself", "near_miss": "I hurt myself at the gym yesterday.", "near_miss_fires": true},
+        {"term": "hurting myself", "near_miss": "I keep hurting myself on that table corner.", "near_miss_fires": true},
+        {"term": "harm myself", "near_miss": "Too much screen time could harm my self-esteem.", "near_miss_fires": false},
+        {"term": "harming myself", "near_miss": "I was charming myself out of a parking ticket.", "near_miss_fires": false},
+        {"term": "injure myself", "near_miss": "I might injure myself skiing.", "near_miss_fires": true},
+        {"term": "self-injury", "near_miss": "A lecture on self-injury research.", "near_miss_fires": true}
+      ]
+    },
+    "harm_to_others": {
+      "title": "intent to harm another person",
+      "terms": [
+        {"term": "kill him", "near_miss": "We need to upskill him before June.", "near_miss_fires": false},
+        {"term": "kill her", "near_miss": "That killer app saved my week.", "near_miss_fires": false},
+        {"term": "kill them", "near_miss": "Just kill them with kindness.", "near_miss_fires": false},
+        {"term": "kill someone", "near_miss": "I could kill someone for a coffee right now.", "near_miss_fires": true},
+        {"term": "kill somebody", "near_miss": "The killer somebody hired was never caught.", "near_miss_fires": false},
+        {"term": "hurt someone", "near_miss": "I didn't mean to hurt someone's feelings.", "near_miss_fires": true},
+        {"term": "hurt somebody", "near_miss": "That joke hurt somebody's pride.", "near_miss_fires": true},
+        {"term": "harm someone", "near_miss": "She can charm someone in seconds.", "near_miss_fires": false},
+        {"term": "harm others", "near_miss": "Do no harm to others.", "near_miss_fires": false},
+        {"term": "want to kill", "near_miss": "I want to kill time before the train.", "near_miss_fires": true},
+        {"term": "going to kill", "near_miss": "This heat is going to kill my tomatoes.", "near_miss_fires": true},
+        {"term": "gonna kill", "near_miss": "My boss is gonna kill me if I'm late.", "near_miss_fires": true}
+      ]
+    },
+    "child_danger": {
+      "title": "a child in immediate danger",
+      "terms": [
+        {"term": "hurt my child", "near_miss": "Did I hurt my childhood friend's feelings?", "near_miss_fires": false},
+        {"term": "hurt my baby", "near_miss": "I stubbed and hurt my baby toe.", "near_miss_fires": true},
+        {"term": "hurt my kids", "near_miss": "Late nights hurt my kids' grades.", "near_miss_fires": true},
+        {"term": "harm my child", "near_miss": "It might harm my childhood memories of the place.", "near_miss_fires": false},
+        {"term": "kill my child", "near_miss": "Exams kill my childhood hobbies.", "near_miss_fires": false},
+        {"term": "kill my baby", "near_miss": "Frost will kill my baby spinach.", "near_miss_fires": true},
+        {"term": "child is in danger", "near_miss": "No child is in danger of missing the bus.", "near_miss_fires": true},
+        {"term": "baby is in danger", "near_miss": "The baby is in dangerously cute pyjamas.", "near_miss_fires": false},
+        {"term": "child is not safe", "near_miss": "No child is not safe here, the guide insisted.", "near_miss_fires": true},
+        {"term": "child is being abused", "near_miss": "No child is being abused in this story.", "near_miss_fires": true},
+        {"term": "child is being hurt", "near_miss": "No child is being hurt in this film.", "near_miss_fires": true},
+        {"term": "child abuse", "near_miss": "It is child abuse prevention week.", "near_miss_fires": true}
+      ]
+    },
+    "harmed_by_someone": {
+      "title": "someone saying they are being harmed by another person",
+      "terms": [
+        {"term": "hits me", "near_miss": "It hits me that summer is over.", "near_miss_fires": true,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "is hitting me", "near_miss": "The heat is hitting me hard today.", "near_miss_fires": true,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "hurts me", "near_miss": "It hurts me to say goodbye.", "near_miss_fires": true,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "is hurting me", "near_miss": "My back is hurting me.", "near_miss_fires": true,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "abuses me", "near_miss": "She disabuses me of that notion.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"},
+        {"term": "is abusing me", "near_miss": "The app is abusing memory.", "near_miss_fires": false,
+         "added_for_review": true, "review": "added after the first review; not reviewed by a qualified person"}
+      ]
+    }
+  },
+  "exceptions": [
+    {"id": "idiom-killing-myself-laughing", "category": "suicidal_ideation", "phrase": "killing myself laughing",
+     "why": "An idiom for laughing hard. It covers only these three words in this order; a trigger phrase anywhere else in the text still fires.",
+     "review": "not reviewed by a qualified person"},
+    {"id": "idiom-kill-them-with-kindness", "category": "harm_to_others", "phrase": "kill them with kindness",
+     "why": "An idiom for being kind to someone difficult. It covers only these four words in this order; a trigger phrase anywhere else in the text still fires.",
+     "review": "not reviewed by a qualified person"}
+  ]
+}

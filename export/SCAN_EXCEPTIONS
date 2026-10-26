@@ -1,0 +1,10 @@
+# Reviewed scan waivers: "path sha256 rule" per line, path relative to the export root (owner-approved, R-08).
+# A waiver covers one PII rule in one file with exactly this content (sha256 with CRLF read as LF); any edit brings
+# the findings back. Secret rules and denied files can never be waived: tools/export_public.py refuses them.
+#
+# AgentDojo v1.2.1 (MIT) tool calls used by study V2. The addresses are the benchmark's fictional users.
+docs/validation/results/V2/calls.agentdojo-MIT.jsonl 6688b7e304e3362edc1f7b8f5ec416f1882c7c99f23b1e6b4ea29ffa70bdf079 personal-email
+#
+# superpowers 7.0.0 (MIT), vendored unmodified (owner-approved 2026-10-20, DECISIONS #37): line 46 is a comment about
+# how Git Bash spells a Windows home folder, not anyone's real path.
+src/g6/skills/vendor/superpowers/subagent-driven-development/scripts/sdd-workspace 4fd9770e7a49b6bde488c0e92bac1b3bd01fcbdaf8f06b6c4efbe3a1abd99f86 windows-user-path

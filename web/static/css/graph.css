@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* The repository graph page: the machine-generated notice, the embedded viewer and the layers table. */
+.graph { padding-bottom: 72px; }
+.graph__notice { max-width: 46em; margin: 0 0 20px; padding: 14px 18px; border-left: 4px solid var(--ink);
+                 background: var(--paper-2); font-size: 16px; line-height: 1.5; }
+.graph__notice code { font-family: var(--mono); font-size: .9em; }
+.graph__frame { display: block; width: 100%; height: min(82vh, 860px); min-height: 480px; border: 1px solid var(--rule);
+                background: var(--paper-2); }
+.graph__credit { margin: 12px 0 0; font-size: 15px; color: var(--graphite); }
+.graph__credit a { color: var(--teal-ink); text-decoration: underline; text-underline-offset: .2em; }
+.graph-layers { padding-bottom: 104px; }
+.graph-layers h2 { font-size: 30px; font-weight: 740; font-variation-settings: "wdth" 80; margin: 0 0 18px; }
+.graph-layers__table { overflow-x: auto; }
+.graph-layers table { width: 100%; border-collapse: collapse; font-size: 16px; line-height: 1.5; }
+.graph-layers th, .graph-layers td { text-align: left; vertical-align: top; padding: 10px 18px 10px 0;
+                                     border-bottom: 1px solid var(--rule); }
+.graph-layers thead th { border-bottom: 2px solid var(--ink); font-weight: 650; }
+.graph-layers tbody th { font-weight: 650; min-width: 12em; }
+.graph-layers td:nth-child(2) { font-variant-numeric: tabular-nums; }
+.graph-layers td:last-child { max-width: 44em; }
+@media (max-width: 640px) { .graph__frame { height: 72vh; min-height: 360px; } }

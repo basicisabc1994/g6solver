@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Licence{% endblock %}
+{% block meta_description %}G6 is free and open source under the Apache License 2.0: use it, change it and share it, including in commercial products.{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/content.css' %}">{% endblock %}
+{% block content %}
+{% comment %}DRAFT for the owner's review (site fix pass, 2026-10-19). It replaces an earlier page about
+paid access expiring. The licence is DECISIONS #1; the copyright holder's name stays in NOTICE until the owner rules
+on #23, so this page does not name it. /terms/ redirects here.{% endcomment %}
+<article class="g6-prose max-w-3xl mx-auto px-4 sm:px-6 py-16">
+    <h1>Licence</h1>
+    <p class="why">An AI system you rely on should be one you can read, check and change, and one no one can take away
+    from you. So all of G6 is open source.</p>
+    <p><strong>G6 is free and open source</strong>, under the
+    <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License, Version 2.0</a>.</p>
+    <ul>
+        <li><strong>Use it, change it and share it</strong>, for any purpose, including in commercial products.</li>
+        <li><strong>When you share it</strong>, include the licence and the <code>NOTICE</code> file, and say which
+        files you changed.</li>
+        <li><strong>Patents:</strong> each contributor grants you a licence to any of their patents the code uses. It
+        ends for anyone who sues claiming G6 infringes a patent.</li>
+        <li><strong>No warranty:</strong> G6 is provided "as is". You decide whether it is fit for your use.</li>
+        <li><strong>Nothing expires.</strong> There are no paid plans, licence keys or licence checks. Your files and
+        everything G6 stores stay yours, in your own folders.</li>
+    </ul>
+    <p>The <code>LICENSE</code> and <code>NOTICE</code> files in the code are the binding text; this page is a plain
+    summary of them. Material from other projects keeps its own licence, listed in <code>NOTICE</code>.</p>
+    <h2>Third-party skills</h2>
+    <p>G6 ships 14 skills from <a href="https://github.com/obra/superpowers">superpowers</a>, by Jesse Vincent, so
+    a coding agent can follow a full software lifecycle with G6. They are unchanged, under the MIT License
+    (Copyright (c) 2025 Jesse Vincent), whose text travels with them. <code>g6 skills install --with-superpowers</code>
+    copies them into your agent's skills folder.</p>
+    <h2>Optional extras</h2>
+    <p>An extra you install from your copy of G6, such as <code>pip install ".[image]"</code>, brings other projects'
+    packages under their own licences. One kind differs: on Linux, the extras that need PyTorch install it with NVIDIA's
+    CUDA libraries, so it can use your graphics card. They are the <code>lora</code> extra (training a small model on
+    your own computer), the <code>torch</code> extra (training a small neural network on your rows), the
+    <code>colbert</code> extra and the <code>embeddings</code> extra (ranking passages by meaning), and the
+    <code>nli</code> extra (a local model that reads whether a passage supports a claim, for the source check). Those
+    libraries come
+    under NVIDIA's own licence, not an open-source one. G6 does not need them otherwise, and no other extra installs
+    them.</p>
+</article>
+{% endblock %}

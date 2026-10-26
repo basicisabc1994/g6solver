@@ -1,0 +1,23 @@
+{
+  "family": "domains",
+  "codes": [
+    {"code": "deskilling", "title": "AI help that leaves people less capable than before"},
+    {"code": "illusion_of_competence", "title": "learners who feel they know more than they do"},
+    {"code": "insecure_code_shipped", "title": "insecure code shipped", "severity": "high"},
+    {"code": "leaked_secret", "title": "a secret leaked in code, logs or output", "severity": "high"},
+    {"code": "false_expert_review", "title": "output presented as expert-reviewed when it was not", "severity": "high"},
+    {"code": "missed_risk_signs", "title": "an AI missing signs that a vulnerable person is at risk", "severity": "high",
+     "requires_human_review": true,
+     "description": "An AI working with a person misses that they are at risk of suicide or self-harm, of harming someone else, or that a child is in danger. duty_of_care is only a tripwire for it: it matches a fixed list of English crisis phrases, and a paraphrase or another language passes."},
+    {"code": "missed_mandatory_requirement", "title": "output that misses a field's mandatory requirements",
+     "severity": "high"},
+    {"code": "unreviewed_regulated_decision", "title": "an AI decision in a regulated field escaping review",
+     "severity": "high", "requires_human_review": true}
+  ],
+  "planned": {
+    "g6.domains.training_mode": ["deskilling", "illusion_of_competence"],
+    "g6.domains.cybersecurity": ["insecure_code_shipped", "leaked_secret"],
+    "g6.domains.professional_standards": ["missed_mandatory_requirement", "false_expert_review"],
+    "g6.domains.regulated_ai": ["unreviewed_regulated_decision"]
+  }
+}

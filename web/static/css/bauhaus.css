@@ -1,0 +1,52 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Bauhaus forms behind the kinetic pages (owner, 2026-10-19: "bauhaus inspired minor background animatory elements").
+ * base.html draws them where <body data-kinetic>; bauhaus.js moves them. They sit under the content and over the paper,
+ * on the right of the viewport, in the site's tokens:
+ *
+ * - quiet forms, which may pass behind text: a half-disc hanging from the nav and a square, both paper-2, and a ring
+ *   in the rule grey that turns once every four minutes, an ink dot riding on it;
+ * - one cluster of coloured forms (.bh-acc), shown only where bauhaus.js finds the right of the viewport clear of text:
+ *   an ochre disc (the one Bauhaus primary), a quarter arc in ink that turns a quarter for each section passed, and an
+ *   ink bar.
+ *
+ * Only transform and opacity move. Nothing moves under reduced motion; on a phone only the ring and half-disc remain.
+ */
+body[data-kinetic] { isolation: isolate; }        /* so the forms paint over the body's paper and under its content */
+:root { --bh-ochre: #C4953A; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bh-ochre: #A8853D; } }
+:root[data-theme="dark"] { --bh-ochre: #A8853D; }
+
+.bh { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.bh i, .bh span { position: absolute; display: block; }
+.bh-half { top: var(--nav-h); right: 10vmin; width: 30vmin; height: 15vmin; border-radius: 0 0 15vmin 15vmin;
+           background: var(--paper-2); transform: translateY(calc(var(--p, 0) * -32px)); }
+.bh-square { top: calc(var(--nav-h) + 9vmin); right: 33vmin; width: 15vmin; height: 15vmin; background: var(--paper-2);
+             transform: translateY(calc(var(--p, 0) * 40px)) rotate(calc(12deg + var(--p, 0) * 9deg)); }
+.bh-ring { top: calc(var(--nav-h) + 17vmin); right: -13vmin; width: 58vmin; height: 58vmin; border: 1px solid var(--rule);
+           border-radius: 50%; animation: bh-turn 240s linear infinite; }
+.bh-dot { top: -.7vmin; left: calc(50% - .7vmin); width: 1.4vmin; height: 1.4vmin; border-radius: 50%; background: var(--rule); }
+.bh.has-room .bh-dot { background: var(--ink); }         /* ink only where it cannot pass behind a word */
+.bh-acc { top: calc(var(--nav-h) + 40vmin); right: 13vmin; width: 32vmin; height: 36vmin; opacity: 0;
+          transition: opacity .8s ease; }
+.bh.has-room .bh-acc { opacity: 1; }
+.bh-disc { left: 4vmin; top: 4vmin; width: 14vmin; height: 14vmin; border-radius: 50%; background: var(--bh-ochre); }
+.bh-arc { left: 1vmin; top: 1vmin; width: 20vmin; height: 20vmin; border-radius: 50%; border: 3px solid transparent;
+          border-top-color: var(--ink); transform: rotate(calc(var(--k, 0) * 90deg));
+          transition: transform 1.6s cubic-bezier(.2, .7, 0, 1); }
+.bh-bar { left: 0; top: 29vmin; width: 32vmin; height: max(4px, .55vmin); background: var(--ink);
+          transform: translateX(calc(var(--p, 0) * -28px)); }
+.bh.is-paused .bh-ring { animation-play-state: paused; }
+@keyframes bh-turn { to { transform: rotate(1turn); } }
+
+@media (max-width: 1100px) { .bh .bh-square { display: none; } }
+@media (max-width: 700px) {
+    .bh .bh-ring { top: calc(var(--nav-h) + 3vmin); right: -22vmin; width: 48vmin; height: 48vmin; }
+    .bh .bh-half { right: 4vmin; width: 22vmin; height: 11vmin; }
+    .bh .bh-acc { display: none; }
+}
+@media print { .bh { display: none; } }
+
+/* Static forms: no turning, no drift, no arc stepping. */
+@media (prefers-reduced-motion: reduce) {
+    .bh, .bh * { animation: none !important; transition: none !important; }
+}

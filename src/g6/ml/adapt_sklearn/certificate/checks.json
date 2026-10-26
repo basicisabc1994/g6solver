@@ -1,0 +1,45 @@
+{
+  "SPDX-License-Identifier": "Apache-2.0",
+  "producer": "the ml family build (Codex)",
+  "known_author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
+  "route_author": "Codex (certificate step 2) and Claude Opus 5.5 (certificate v2a builder)",
+  "adapter": "g6/ml/adapt_sklearn/certificate/adapter.py",
+  "refusals": ["MLError"],
+  "falsification": {
+    "seeds": [17, 31],
+    "count": 8,
+    "precision": 6,
+    "bounds": "Splits 10..20000 distinct rows, hold-out .1...5; imbalanced classes and minorities on both sides of the 10% headline threshold, with held-out rows after the training rows; 2..5 unequal groups, one per fold; seed endpoints; missing/constant numeric columns and extreme held-out rows; finite metrics, undefined R2 and constant non-integer R2 targets.",
+    "boundaries": {
+      "search_training_part": [
+        {"train": [0, 1, 2, 3, 4, 5], "y": [0, 1, 2, 3, 4, 5], "test": [1000], "folds": 3, "seed": 0, "view": "leakage"},
+        {"train": [0, 1, 2, 3, 4, 5], "y": [0, 1, 2, 3, 4, 5], "test": [1000], "folds": 3, "seed": 0}
+      ],
+      "preprocessing_in_pipeline": [
+        {"train": [1, 1, 1], "test": [1, 2], "seed": 0}
+      ],
+      "seed": [
+        {"seed": 4294967295},
+        {"seed": 42}
+      ],
+      "balanced_accuracy": [
+        {"truth": [0, 1], "pred": [1, 0]},
+        {"truth": [0, 1], "pred": [0, 1]}
+      ],
+      "headline_imbalance": [
+        {"counts": [[0, 91], [1, 9]], "train": 100},
+        {"counts": [[0, 90], [1, 10]], "train": 100},
+        {"counts": [[0, 45], [1, 5], [1, 40]], "train": 50}
+      ],
+      "accuracy": [
+        {"truth": [0, 1], "pred": [1, 0]},
+        {"truth": [0, 1], "pred": [0, 1]}
+      ],
+      "r2": [
+        {"truth": [-2, -2, -2], "pred": [0, 0, 0]},
+        {"truth": ["0.1", "0.1", "0.1"], "pred": ["0.1", "0.1", "0.1"]},
+        {"truth": ["0.1", "0.1", "0.1"], "pred": ["0.2", "0.2", "0.2"]}
+      ]
+    }
+  }
+}

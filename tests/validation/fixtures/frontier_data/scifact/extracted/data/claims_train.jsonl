@@ -1,0 +1,5 @@
+{"id": 10, "claim": "Synthetic claim 0 holds.", "cited_doc_ids": [500], "evidence": {"500": [{"sentences": [0], "label": "SUPPORT"}]}}
+{"id": 11, "claim": "Synthetic claim 1 holds.", "cited_doc_ids": [501], "evidence": {"501": [{"sentences": [0], "label": "CONTRADICT"}]}}
+{"id": 12, "claim": "Synthetic claim 2 holds.", "cited_doc_ids": [502], "evidence": {}}
+{"id": 13, "claim": "Synthetic claim 3 holds.", "cited_doc_ids": [503], "evidence": {"503": [{"sentences": [0], "label": "SUPPORT"}]}}
+{"id": 30, "claim": "A claim citing nothing.", "cited_doc_ids": [], "evidence": {}}

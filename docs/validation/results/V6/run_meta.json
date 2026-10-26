@@ -1,0 +1,44 @@
+{
+ "starts": [
+  {
+   "at": "2026-10-19T01:51:16",
+   "model": "llama3.1:8b",
+   "model_digest": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+   "frozen": {
+    "PROTOCOL.md": "e1151edd68075734fd33c1a750d802ca51ef55415779577bca0dcb63a6aeb167",
+    "workflows.py": "9fbae7c43db2727c2076b1cebd9de4cfc10bb7e9ae7615701a19290c1263eb22",
+    "run.py": "0ef4dd6d1c864694ced411c88f661aff9728ccb27b9222861b18e23bef2ab435",
+    "analyze.py": "26ef4cc5f992b0acb67693d43499843d8cc02da90de33c47a18e12d9ebdd8b3a"
+   },
+   "g6_manifest_sha256": "41fcf10f53cf539a7a618970c704e8d2caf42eb9e8aa8b253931f73bf0aa4832",
+   "data": {
+    "gsm8k/test.jsonl": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+    "mbpp/sanitized-mbpp.json": "ca95deaa9a01ef0a6f439f88bcf0dd3db3563d22f22aad6cae04ebb9a8d8c8e9",
+    "massive/amazon-massive-dataset-1.1.tar.gz": "4cba5faa11c71437928e17cb1b9b3d8b8e727e7ea363a3a9a8045e19c0491577",
+    "massive/extracted/1.1/data/en-US.jsonl": "c70f75c6a543a26e249ec383df67733ad9b1066f6c0406c2e04a3f03356e407e",
+    "scifact/data.tar.gz": "11c621288d41ac144d29b13b0f8503b3820b7d6e8b1f6ff24dff335c196d76be",
+    "scifact/extracted/data/claims_train.jsonl": "f4c8fa82d8bd0653a9cc8d61a6ea48c25eacea64e90af5dbf390ebb1b74372f0",
+    "scifact/extracted/data/corpus.jsonl": "b8d6c89624cb2ed74dee8938effc4f5d8bd2086887880af8110d64be4ceade62"
+   },
+   "workflows": "gsm8k,massive,scifact,mbpp",
+   "ended": "2026-10-19T08:09:13",
+   "model_digest_end": "46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e",
+   "frozen_end": {
+    "PROTOCOL.md": "e1151edd68075734fd33c1a750d802ca51ef55415779577bca0dcb63a6aeb167",
+    "workflows.py": "9fbae7c43db2727c2076b1cebd9de4cfc10bb7e9ae7615701a19290c1263eb22",
+    "run.py": "0ef4dd6d1c864694ced411c88f661aff9728ccb27b9222861b18e23bef2ab435",
+    "analyze.py": "26ef4cc5f992b0acb67693d43499843d8cc02da90de33c47a18e12d9ebdd8b3a"
+   },
+   "g6_manifest_sha256_end": "41fcf10f53cf539a7a618970c704e8d2caf42eb9e8aa8b253931f73bf0aa4832",
+   "data_end": {
+    "gsm8k/test.jsonl": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+    "mbpp/sanitized-mbpp.json": "ca95deaa9a01ef0a6f439f88bcf0dd3db3563d22f22aad6cae04ebb9a8d8c8e9",
+    "massive/amazon-massive-dataset-1.1.tar.gz": "4cba5faa11c71437928e17cb1b9b3d8b8e727e7ea363a3a9a8045e19c0491577",
+    "massive/extracted/1.1/data/en-US.jsonl": "c70f75c6a543a26e249ec383df67733ad9b1066f6c0406c2e04a3f03356e407e",
+    "scifact/data.tar.gz": "11c621288d41ac144d29b13b0f8503b3820b7d6e8b1f6ff24dff335c196d76be",
+    "scifact/extracted/data/claims_train.jsonl": "f4c8fa82d8bd0653a9cc8d61a6ea48c25eacea64e90af5dbf390ebb1b74372f0",
+    "scifact/extracted/data/corpus.jsonl": "b8d6c89624cb2ed74dee8938effc4f5d8bd2086887880af8110d64be4ceade62"
+   }
+  }
+ ]
+}

@@ -1,0 +1,5 @@
+# Component certificates bind exact bytes: source/data/checks must check out identically on every platform.
+src/g6/** text=auto eol=lf
+
+# Vendored third-party files keep their upstream bytes: git never rewrites their line endings.
+src/g6/skills/vendor/** -text

@@ -1,0 +1,12 @@
+{
+  "family": "cogarch",
+  "codes": [
+    {"code": "unmodelled_recall", "title": "a model of human recall that ignores how memory fades and interferes"},
+    {"code": "untested_agent_design", "title": "an agent design judged by argument instead of by a test"},
+    {"code": "unlearned_reward_model", "title": "a planning agent acting on a model that has not learned the environment's rewards"},
+    {"code": "no_plan_to_goal", "title": "an agent acting step by step with no plan that reaches the goal"},
+    {"code": "unchecked_plan", "title": "a plan from an agent or a model followed without checking each step against what its actions need"},
+    {"code": "ad_hoc_choice", "title": "ad hoc, unrepeatable choices about what to try next"}
+  ],
+  "planned": {}
+}

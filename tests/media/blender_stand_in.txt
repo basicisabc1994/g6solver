@@ -1,0 +1,117 @@
+# A stand-in for Blender in tests/media/test_blender.py: it answers --version, reads the op G6 sends (the JSON after
+# "--"), keeps the scene as JSON where a .blend would be, writes PNG renders and OBJ, STL, GLB and FBX exports, and
+# reports what the scene holds, as G6's script inside Blender does. mode.json beside it bends it: blank, wrong_size,
+# no_output, drift, fail.
+import json, math, struct, sys, zlib
+from pathlib import Path
+
+here = Path(__file__).parent
+args = sys.argv[1:]
+if args == ["--version"]:
+    print("Blender 4.2.0 (stand-in)")
+    sys.exit(0)
+mode = json.loads((here / "mode.json").read_text()) if (here / "mode.json").exists() else {}
+script = args[args.index("--python") + 1]
+job = json.loads(Path(args[args.index("--") + 1]).read_text(encoding="utf-8"))
+with open(here / "calls.jsonl", "a", encoding="utf-8") as log:
+    log.write(json.dumps({"args": args, "job": job, "script": script}) + "\n")
+if mode.get("fail"):
+    sys.stderr.write("Error: Python: Traceback (most recent call last): RuntimeError: stand-in failure\n")
+    sys.exit(1)
+op, p = job["op"], job.get("params", {})
+scene = json.loads(Path(job["blend"]).read_text()) if job.get("blend") else {"objects": {}, "camera": None}
+drift = 0.5 if mode.get("drift") else 0.0
+
+
+def mesh(name, kind, t, colour=None, parent=None):
+    counts = {"cube": (8, 6), "sphere": (482, 512), "plane": (4, 1), "cylinder": (64, 34), "cone": (33, 33),
+              "torus": (576, 576)}[kind]
+    scene["objects"][name] = {"type": "MESH", "kind": kind, "location": [v + drift for v in t.get("location", [0, 0, 0])],
+                              "rotation_euler": t.get("rotation_euler", [0, 0, 0]), "scale": t.get("scale", [1, 1, 1]),
+                              "vertices": counts[0], "faces": counts[1], "colour": colour, "parent": parent}
+
+
+def png(path, w, h, blank):
+    rows = b"".join(b"\x00" + bytes((0 if blank else (x * 7 + y * 3) % 256) for x in range(w) for _ in range(3))
+                    for y in range(h))
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                           + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+out = {"ok": True, "op": op, "warnings": []}
+if op == "create_primitive":
+    mesh(p["object"], p["primitive"], p["transform"], p.get("colour"))
+elif op == "transform_object":
+    o = scene["objects"][p["object"]]
+    for k in ("location", "rotation_euler", "scale"):
+        if p["transform"].get(k) is not None:
+            o[k] = [v + (drift if k == "location" else 0) for v in p["transform"][k]]
+elif op == "delete_object":
+    scene["objects"].pop(p["object"], None)
+elif op == "set_material":
+    scene["objects"][p["object"]]["colour"] = [c + drift for c in p["colour"]]
+elif op == "set_camera":
+    scene["camera"] = {"location": p["location"], "look_at": p["look_at"], "lens": p["lens_mm"]}
+elif op == "add_light":
+    scene["objects"][p["object"]] = {"type": "LIGHT", "location": p["location"], "rotation_euler": [0, 0, 0],
+                                     "scale": [1, 1, 1], "light": {"kind": p["kind"].upper(), "energy": p["energy"],
+                                                                   "colour": p["colour"]}, "parent": None}
+elif op == "build_scene":
+    spec = p["scene"]
+    scene = {"objects": {}, "camera": None}
+    for o in spec.get("objects", []):
+        mesh(o["name"], o.get("primitive") or "cube", o.get("transform", {}), o.get("colour"), o.get("parent"))
+    if spec.get("camera"):
+        scene["camera"] = {"location": spec["camera"]["location"], "look_at": spec["camera"]["look_at"],
+                           "lens": spec["camera"]["lens_mm"]}
+    for light in spec.get("lights", []):
+        scene["objects"][light["name"]] = {"type": "LIGHT", "location": light["location"], "rotation_euler": [0, 0, 0],
+                                           "scale": [1, 1, 1], "light": {"kind": light["kind"].upper(),
+                                                                         "energy": light["energy"],
+                                                                         "colour": light["colour"]}, "parent": None}
+elif op == "import_file":
+    mesh(Path(p["path"]).stem.replace("-", "_")[:60] or "imported", "cube", {})
+    out["imported"] = [Path(p["path"]).stem.replace("-", "_")[:60] or "imported"]
+elif op in ("render", "viewport_preview"):
+    if scene["camera"] is None:
+        out["camera_placed"] = True
+    if not mode.get("no_output"):
+        w, h = p["width"], p["height"]
+        if mode.get("wrong_size"):
+            w, h = w // 2, h // 2
+        png(job["out"], w, h, mode.get("blank"))
+elif op == "export":
+    meshes = [o for o in scene["objects"].values() if o["type"] == "MESH"]
+    if not mode.get("no_output"):
+        fmt = p["format"]
+        if fmt == "obj":
+            lines = []
+            for i, _ in enumerate(meshes):
+                b = 8 * i
+                lines += [f"v {x} {y} {z}" for x in (0, 1) for y in (0, 1) for z in (0, 1)]
+                lines += [f"f {b + 1} {b + 2} {b + 4} {b + 3}", f"f {b + 5} {b + 6} {b + 8} {b + 7}"]
+            Path(job["out"]).write_text("\n".join(lines) + "\n")
+        elif fmt == "stl":
+            tris = [((0, 0, 0), (1, 0, 0), (0, 1, 1))] * max(1, 2 * len(meshes))
+            body = b"".join(struct.pack("<12fH", 0, 0, 1, *a, *b, *c, 0) for a, b, c in tris)
+            Path(job["out"]).write_bytes(b"\0" * 80 + struct.pack("<I", len(tris)) + body)
+        elif fmt == "glb":
+            gltf = {"asset": {"version": "2.0"}, "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+                    "accessors": [{"count": 8, "type": "VEC3", "componentType": 5126, "min": [0, 0, 0],
+                                   "max": [1, 1, 1]}]}
+            data = json.dumps(gltf).encode()
+            data += b" " * (-len(data) % 4)
+            Path(job["out"]).write_bytes(b"glTF" + struct.pack("<II", 2, 20 + len(data)) + struct.pack("<I", len(data))
+                                         + b"JSON" + data)
+        else:
+            Path(job["out"]).write_bytes(b"Kaydara FBX Binary  \x00\x1a\x00" + struct.pack("<I", 7400) + b"\0" * 200)
+elif op == "capabilities":
+    out["engines"] = ["BLENDER_EEVEE_NEXT", "BLENDER_WORKBENCH", "CYCLES"]
+    out["exporters"] = ["obj", "stl", "glb", "fbx"]
+objects = [{"name": n, **o} for n, o in scene["objects"].items()]
+out["scene"] = {"objects": objects, "camera": scene["camera"], "blender": "4.2.0 (stand-in)"}
+if job.get("save"):
+    Path(job["save"]).write_text(json.dumps(scene))
+Path(job["result"]).write_text(json.dumps(out))

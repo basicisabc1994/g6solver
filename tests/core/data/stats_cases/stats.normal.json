@@ -1,0 +1,52 @@
+{
+  "entry_id": "stats.normal",
+  "known_author": "Claude case author (calc step 3a, 2026-10-23)",
+  "cases": [
+    {
+      "citation": {
+        "author": "Erwin Kreyszig",
+        "title": "Advanced Engineering Mathematics",
+        "edition": "10th edition",
+        "publisher": "John Wiley & Sons",
+        "published": "2011",
+        "locator": "Section 24.8, Example 1 (reading entries from Table A7), its second line"
+      },
+      "inputs": {
+        "z": {
+          "value": "1.16"
+        }
+      },
+      "expected": {
+        "cdf": {
+          "value": "0.8770",
+          "printed_digits": 4
+        },
+        "cdf_at_minus_z": {
+          "value": "0.1230",
+          "printed_digits": 4
+        }
+      }
+    },
+    {
+      "citation": {
+        "author": "Erwin Kreyszig",
+        "title": "Advanced Engineering Mathematics",
+        "edition": "10th edition",
+        "publisher": "John Wiley & Sons",
+        "published": "2011",
+        "locator": "Section 24.8, Example 3 (unknown values c for given probabilities, Table A8), its third line"
+      },
+      "inputs": {
+        "p": {
+          "value": "99%"
+        }
+      },
+      "expected": {
+        "z": {
+          "value": "2.326",
+          "printed_digits": 3
+        }
+      }
+    }
+  ]
+}

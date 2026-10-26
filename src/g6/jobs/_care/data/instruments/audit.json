@@ -1,0 +1,9 @@
+{
+  "id": "audit",
+  "name": "AUDIT",
+  "what": "a screening test for alcohol use",
+  "licence": {
+    "state": "unsettled",
+    "reason": "Its licence entry is not settled: G6 has not established the terms on which its items may be reproduced, displayed or scored, so no item text ships and it is not scored until a licence entry settles them."
+  }
+}

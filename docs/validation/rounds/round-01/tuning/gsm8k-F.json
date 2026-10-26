@@ -1,0 +1,170 @@
+{
+  "arm": "F",
+  "canary_hits": [],
+  "head_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+  "head_profile": {
+    "adapter": null,
+    "budgets": {
+      "max_model_calls": 8,
+      "max_output_chars": 400000,
+      "max_wall_clock_s": 120.0
+    },
+    "code": {},
+    "context_budget_chars": 0,
+    "distillates": {},
+    "exemplars": 0,
+    "extra_checks": [
+      "whole-number"
+    ],
+    "hints": [],
+    "pipeline": [],
+    "prompt": "Work through the problem step by step. Then write the final answer on its own last line as 'Answer: <number>'.",
+    "prompt_layout": "default",
+    "retries": 0,
+    "routing": {
+      "answer": "local"
+    }
+  },
+  "method": {
+    "candidates_per_cycle": 4,
+    "cycles": 3,
+    "merge_every": 3,
+    "propose_budget": 200,
+    "race_block": 10,
+    "race_keep": 0.5,
+    "reflect_calls": 3,
+    "select_budget": 2000,
+    "use_edits": true,
+    "use_recovery": false,
+    "use_reflection": false
+  },
+  "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+  "minutes": 4.2,
+  "reflector_calls": 0,
+  "run": {
+    "activated": 1,
+    "base_digest": "e42a1b69da686b03f0116ea118fcf029a336b241bab8f7944401ff9b1b007e61",
+    "champion": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+    "confirmation": {
+      "false_accepts": {
+        "base": 29,
+        "candidate": 4
+      },
+      "level": 0.005367,
+      "model_calls_used": 80,
+      "n": 40,
+      "partial": false,
+      "report_digest": "eb6de3cb22947a44ac492f00bb1c13de4492819271a188641baa3314b501db7b",
+      "success": {
+        "boundary": 0.005367,
+        "discordant": 24,
+        "look": 2,
+        "looks": 4,
+        "losses": 0,
+        "p_one_sided": 0.0,
+        "ties": 16,
+        "wins": 24
+      }
+    },
+    "cycles": [
+      {
+        "cycle": 1,
+        "new_champion": true,
+        "raced": [
+          {
+            "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 0,
+            "n": 10,
+            "wins": 9
+          },
+          {
+            "candidate_digest": "ca8a7045e2af65c4abc147a1cfce62112470251f5bf030622e6f7a9eef8b2be5",
+            "dropped_at_block": 1,
+            "fields": 1,
+            "losses": 0,
+            "n": 10,
+            "wins": 0
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 30,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 3,
+            "code": "G6_E_META_PROPOSED",
+            "duplicates": 0,
+            "proposed": 2
+          }
+        },
+        "winner": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81"
+      },
+      {
+        "cycle": 2,
+        "new_champion": false,
+        "raced": [
+          {
+            "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 0,
+            "n": 10,
+            "wins": 9
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 20,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 6,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 1,
+            "proposed": 0
+          }
+        },
+        "winner": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81"
+      },
+      {
+        "cycle": 3,
+        "new_champion": false,
+        "raced": [
+          {
+            "candidate_digest": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81",
+            "dropped_at_block": null,
+            "fields": 2,
+            "losses": 0,
+            "n": 10,
+            "wins": 9
+          }
+        ],
+        "select_code": "G6_E_META_SELECTED",
+        "selection_calls": 20,
+        "stopped": "",
+        "strategies": {
+          "edit": {
+            "attempts": 9,
+            "code": "G6_E_META_NO_NEW_CANDIDATE",
+            "duplicates": 2,
+            "proposed": 0
+          }
+        },
+        "winner": "0d511740f9264b1fbcd95fe8b4dd7501d3e4817ed864b7d77afd20b8b4ed4a81"
+      }
+    ],
+    "decision": {
+      "code": "G6_E_META_RECOMMENDED",
+      "reasons": [
+        "the candidate beat the base on the held-out split under every rule; a person must approve it before it is used"
+      ],
+      "verdict": "recommend"
+    },
+    "method_digest": "e2b90140417c8b4d87d77a999096a23a181247f5cde6b8754ac44a9ae8035a3a",
+    "notes": [],
+    "outcome": "activated",
+    "recovery": null,
+    "workflow_digest": "f725f55c4ba7822a6b5c8c0d807a9d8a0aef259d54cb50b5e43166ef4ef18d01"
+  }
+}

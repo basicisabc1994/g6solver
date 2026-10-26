@@ -1,0 +1,42 @@
+{
+  "dev_successes": {
+    "arc": {
+      "A": 19,
+      "B:current": 19,
+      "B:do-the-task": 15,
+      "B:final-line": 6
+    },
+    "banking77": {
+      "A": 16,
+      "B:current": 16,
+      "B:do-the-task": 16,
+      "B:final-line": 16
+    },
+    "gsm8k": {
+      "A": 3,
+      "B:current": 3,
+      "B:do-the-task": 19,
+      "B:final-line": 18
+    },
+    "massive": {
+      "A": 17,
+      "B:current": 17,
+      "B:do-the-task": 18,
+      "B:final-line": 18
+    },
+    "mbpp": {
+      "A": 8,
+      "B:current": 8,
+      "B:do-the-task": 8,
+      "B:final-line": 8
+    },
+    "scifact": {
+      "A": 15,
+      "B:current": 15,
+      "B:do-the-task": 14,
+      "B:final-line": 14
+    }
+  },
+  "label": "Development, not a validation",
+  "model": "llama3.1:8b"
+}

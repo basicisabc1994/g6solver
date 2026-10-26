@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Research{% endblock %}
+{% block meta_description %}G6 engineers its own gains: every study run, on the core harness and on its extensions, shown as the same model without G6 and with it.{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/research.css' %}">{% endblock %}
+{% block content %}
+{% comment %}Every number on this page is read from oss/docs/validation (pages/evidence.py) or the earlier studies' audited
+results (data/archive_benchmarks.json) at render time. One thesis (owner, 2026-10-19): adaptation, performance gained by
+the harness engineering itself.{% endcomment %}
+<div class="rs" data-research>
+<section class="rs-hero">
+    <h1>G6 engineers its own gains.</h1>
+    <p class="rs-lede why">AI is usually judged by public benchmarks, and a high score there often fails to carry over to
+    real work. So G6 never takes a score on trust: every change it makes is tested on tasks held out from it.</p>
+    <p class="rs-lede">Every study here asks one question: when G6 engineers the harness around a model for a task, how
+    much better does the same model do? It counts every study run, the earliest included, and says which part of G6
+    did the work. Together they are a worked example, built to show what the system can do; on your own work,
+    results will vary with the task and the data you have. <a class="link" href="#reading">How to read them</a></p>
+    <dl class="rs-counts" id="counts">
+        {% for label, value in counts %}<div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+    </dl>
+</section>
+
+<section class="rs-section" id="the-meta-harness">
+    <h2>Bootstrapping a small model through its harness</h2>
+    <p class="rs-lede">{{ facts.model }}, an 8-billion-parameter model running on one computer with Ollama, on
+    {{ facts.per_dataset }} fresh held-out tasks per dataset, in a study registered before it ran. Larger models
+    engineer the harness: Claude Code built G6's components and its diagnosis of failures, and in the development
+    rounds a 20-billion-parameter model reflects on the small model's mistakes to propose changes. The small model then
+    runs inside that harness alone, with no weights changed. That is G6's core idea: a larger model's judgement,
+    distilled into a smaller model's harness.</p>
+    <p class="rs-meta">Grey is the model alone; black is G6. Each large number is G6's winning option for that task
+    set, named beneath it, chosen after the fact from the options measured; in use, G6 chooses between options on your
+    own held-out examples.</p>
+    <div class="rs-groups">
+        {% for group in headline_groups %}
+        <div class="rs-headline">
+            <p class="rs-big" aria-label="{{ group.label }}: {{ group.by_arm.A.value }} by the model alone, {{ group.best.value }} by G6's winning option ({{ group.best.label }}), of {{ group.best.n }}"><span class="rs-from">{{ group.by_arm.A.value }}</span><span class="rs-arrow" aria-hidden="true">&rarr;</span><span class="rs-to">{{ group.best.value }}</span></p>
+            <p class="rs-winner">Winning option: {{ group.best.label }}</p>
+            {% include "pages/_bars.html" %}
+        </div>
+        {% endfor %}
+    </div>
+    <ul class="rs-points">
+        <li>With its winning option for each task set, G6 solved <strong>{{ facts.best_total }} of {{ facts.n }}</strong>
+        tasks the model alone solved {{ facts.total.A }} of, and every winning option beat the model alone task by task
+        (the table below).</li>
+        <li>The gain is the harness, not more compute: spending the same tokens on voting took GSM8K from
+        {{ facts.voting.alone }} to {{ facts.voting.voting }}; the harness G6 engineered took it to {{ facts.voting.tuned }},
+        at {% if facts.tuned_calls == 1.0 %}one model call per task, like the model alone{% else %}up to {{ facts.tuned_calls }} model calls per task{% endif %}.</li>
+        {% if facts.every_component_beats_alone|length == facts.datasets %}<li>With every component switched on, G6 beat
+        the model alone on all {{ facts.datasets }} datasets ({{ facts.total.G }} of {{ facts.n }}).</li>{% endif %}
+    </ul>
+    <div class="rs-finding" id="winning-approach">
+        <p><strong>The winning approach follows the task's structure.</strong></p>
+        <table class="rs-winners">
+            <thead><tr><th scope="col">Task set</th><th scope="col">The task</th><th scope="col">Winning approach</th>
+                <th scope="col">Model alone &rarr; G6</th><th scope="col">Tasks gained, lost</th></tr></thead>
+            <tbody>
+            {% for w in winners %}
+                <tr><th scope="row">{{ w.dataset }}</th><td>{{ w.shape }}</td>
+                    <td><strong>{{ w.approach }}:</strong> {{ w.change }}</td>
+                    <td>{{ w.alone }} &rarr; <strong>{{ w.value }}</strong> of {{ w.n }}</td>
+                    <td>{{ w.wins }} gained, {{ w.losses }} lost</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p>Where one instruction fixes the main failure, self-tuning finds it, and its gate confirms the gain quickly:
+        on GSM8K, asking for the working step by step, with the answer on its own last line, was enough. Where the gain
+        comes from structure,
+        examples of sixty similar labels or a loop that runs the code against tests, it is spread across more tasks, and
+        the gate needs more evidence: self-tuning did propose labelled examples for MASSIVE and test-and-repair for
+        MBPP, but with 70 held-out tasks its gate could not yet confirm them. G6's prebuilt components are those layers
+        ready-made. Switched on together, they beat self-tuning task by task on
+        {% for name, wins, losses in facts.components_vs_tuning %}{{ name }} ({{ wins }} gained, {{ losses }} lost){% if not forloop.last %} and {% endif %}{% endfor %}.</p>
+        <p>This supports the Swiss cheese design G6 is built on: each prebuilt component is a layer against one kind of
+        failure, several are needed where one alone is not enough, and the structure of the task decides which layers
+        matter.
+        It is why G6 offers both modes, and why it tests both on your own examples.</p>
+        <p>Development round {{ both.round }} measured the two modes together, and they did not stack: self-tuning that
+        started from every prebuilt component had {% if both.approved_from_components %}{{ both.approved_from_components }} change{{ both.approved_from_components|pluralize }} approved{% else %}no change approved on any of its {{ both.datasets }} task sets{% endif %},
+        and on {{ both.worst.dataset }} every component on did worse than the model alone ({{ both.worst.components }}
+        against {{ both.worst.alone }} of {{ both.worst.n }}; {{ both.worst.lost }} tasks lost, {{ both.worst.gained }}
+        gained). There a check asks every answer a second time with its own fixed question, so no instruction upstream
+        could change the final label: one layer can mask another. The modes are alternatives, chosen per task on held-out
+        evidence, not layers to switch on all at once.</p>
+    </div>
+</section>
+
+<section class="rs-section" id="reading">
+    <h2>How to read these results</h2>
+    <p class="rs-lede">A worked example: these studies show the power of G6's self-engineering on public tasks. They
+    are not a forecast for yours.</p>
+    <table class="rs-reading">
+        <tbody>
+            <tr><th scope="row">What they are</th>
+                <td>Claude Code working with G6 on one 8-billion-parameter local model ({{ facts.model }}) and public
+                task sets. Every score is on fresh tasks that no tuning step saw, against the same model alone. One
+                adaptation study was registered before it ran; the development rounds were not, and the method was
+                improved between them. Each task set's winning option is picked after the fact from the options
+                measured.</td></tr>
+            <tr><th scope="row">What they show</th>
+                <td><ul>
+                    <li>Where a model fails in a systematic way, G6 can engineer a large gain in minutes, on the same
+                    model: {{ facts.largest.0 }} went from {{ facts.largest.1 }} to {{ facts.largest.2 }} of
+                    {{ facts.per_dataset }} in the registered study.</li>
+                    <li>The gate decides on evidence, whoever proposes a change: random changes put through it were
+                    approved when they won on held-out tasks and refused when they did not. G6's own reflective tuning
+                    found more than random search overall ({{ facts.total.D }} against {{ facts.total.F }} of
+                    {{ facts.n }} tasks in the registered study), but not on every task set.</li>
+                    <li>The winning approach follows the task's structure: one instruction where a single change fixes
+                    the main failure, prebuilt components where the gain needs layers such as labelled examples or
+                    test-and-repair. The registered study supports G6's Swiss cheese design of prebuilt failure
+                    layers.</li>
+                    <li>The two modes are alternatives, not a stack: in development round {{ both.round }}, self-tuning
+                    that started from every prebuilt component had no change approved, and on {{ both.worst.dataset }}
+                    every component on did worse than the model alone. Which mode wins depends on the task.</li>
+                    <li>A small model can be bootstrapped through its harness: larger models engineer it, and the
+                    small model runs inside it alone, with no weights changed.</li>
+                </ul></td></tr>
+            <tr><th scope="row">What they do not show</th>
+                <td>How G6 does with other models, on your tasks, or with independent coding agents, or that a
+                harness tuned for one task set helps another. Nor do they show that a harness adds knowledge a model
+                lacks: much of each gain is the model doing what it can already do, once it is asked the right way.
+                With 100 tasks per set, a difference of a few tasks can be chance; the large gains are not. The earlier
+                benchmark studies were audited, not run again.</td></tr>
+            <tr><th scope="row">Why results vary</th>
+                <td>G6 can only engineer what your checks and examples can measure: it needs about 30 or more held-out
+                examples with known answers before it will approve a change. Gains are largest where errors are
+                systematic and a harness change addresses them, and smallest where the model is already near its
+                ceiling or lacks the knowledge a task needs.</td></tr>
+            <tr><th scope="row">Status</th>
+                <td>The experiments are complete: the programme closed with development round 3, and the numbers
+                here are final.</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<section class="rs-section" id="components">
+    <h2>What each component does on its own</h2>
+    <p class="rs-lede">Every single change to G6 as built that we measured, on six public datasets: tasks solved out of
+    100, against G6 as built. Most changes help one kind of task and hurt another. That is why G6 tests every change on
+    your own held-out cases and keeps only what wins on yours.</p>
+    <div class="rs-matrix-wrap" tabindex="0" role="region" aria-labelledby="matrix-caption">
+        <table class="rs-matrix">
+            <caption id="matrix-caption">Change in tasks solved, of 100, against G6 as built. Development measurement:
+            {{ matrix.about }}.</caption>
+            <thead><tr><th scope="col">Change</th>{% for wf in matrix.workflows %}<th scope="col">{{ wf }}</th>{% endfor %}</tr></thead>
+            <tbody>
+                <tr class="rs-matrix-base"><th scope="row">G6 as built</th>{% for b in matrix.base %}<td>{{ b }}</td>{% endfor %}</tr>
+                {% for row in matrix.rows %}
+                <tr><th scope="row">{{ row.label }}</th>{% for shown, tone in row.shown %}<td{% if tone %} class="is-{{ tone }}"{% endif %}>{{ shown }}</td>{% endfor %}</tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="rs-section" id="studies">
+    <h2>Every study run</h2>
+    <p class="rs-lede">The registered studies, the development work, and G6's earlier benchmark studies with the figures
+    their audits settled on. Each compares the same model without G6 and with it. A study of
+    fewer than about a hundred tasks can rarely rule out chance on its own; each study's own page gives its test.</p>
+    {% for label, entries in ledger %}
+    <div class="rs-scope">
+        <h3 class="rs-scope-title">{{ label }} <span class="rs-scope-n">{{ entries|length }}</span></h3>
+        <ol class="rs-ledger">
+            {% for row in entries %}
+            <li class="rs-entry is-{{ row.outcome|slugify }}">
+                <div class="rs-entry-head">
+                    <h4>{{ row.name }}</h4>
+                    <span class="rs-tag">{% if row.source == "registered" %}Registered{% elif row.source == "development" %}Worked example{% else %}Earlier study, audited{% endif %}</span>
+                    <span class="rs-outcome">{% if row.outcome == "gain" %}Gain{% elif row.outcome == "specialised" %}Specialised{% elif row.outcome == "no difference" %}No difference{% elif row.outcome == "lower" %}Lower{% else %}No paired baseline{% endif %}</span>
+                </div>
+                <p class="rs-did">{{ row.did }}</p>
+                <p class="rs-vs"><span class="rs-vs-without">{{ row.baseline }}: <b>{{ row.without }}</b></span>
+                <span class="rs-arrow" aria-hidden="true">&rarr;</span>
+                <span class="rs-vs-with">G6: <b>{{ row.with_g6 }}</b></span></p>
+                {% if row.bars %}<div class="rs-pair" aria-hidden="true">{% for name, width, g6 in row.bars %}<span class="rs-track{% if g6 %} is-g6{% endif %}"><span class="rs-fill" style="--v: {{ width }}"></span></span>{% endfor %}</div>{% endif %}
+                <p class="rs-meta">{{ row.measure }}{% if row.better == "lower" %} (lower is better){% endif %} · {{ row.model }}</p>
+                <p class="rs-note">{{ row.note }}</p>
+                {% if row.url %}<a class="rs-link" href="{{ row.url }}">The study, its test and raw data &rarr;</a>{% endif %}
+            </li>
+            {% endfor %}
+        </ol>
+    </div>
+    {% endfor %}
+</section>
+
+<section class="rs-section" id="development">
+    <p class="rs-eyebrow">A worked example</p>
+    <h2>The G6 meta-harness engineering itself</h2>
+    <p class="rs-lede">After the registered study, Claude Code ran G6's meta-harness in three rounds, each on fresh tasks
+    and each published whatever it found. The method was improved after the first round, so they show what G6 can do,
+    not a validated rate. Every task set is shown, including those where G6 changed nothing: pooled, the gain is close
+    to the registered study's. The programme closed with round 3.</p>
+    <div class="rs-wall">
+        {% for round in rounds %}
+        <article class="rs-tile is-development" id="{{ round.id }}">
+            <button class="rs-tile-head" type="button" aria-expanded="true" aria-controls="{{ round.id }}-body">
+                <span class="rs-title">{{ round.title }}</span>
+                <span class="rs-badge is-development">{{ round.status }}</span>
+            </button>
+            <div class="rs-tile-body" id="{{ round.id }}-body">
+                <p class="rs-question">{{ round.question }}</p>
+                <p class="rs-meta">{{ round.datasets }}</p>
+                <p class="rs-note">{{ round.note }}</p>
+                <div class="rs-groups">{% for group in round.groups %}{% include "pages/_bars.html" %}{% endfor %}</div>
+                <a class="rs-link" href="{{ round.results_url }}">Root causes and raw data &rarr;</a>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="rs-section" id="theory">
+    <h2>The working theory, in full</h2>
+    <p class="rs-lede">What G6's harness engineering rests on: models fitted to its benchmark runs, the arguments for
+    learning safely when answers cannot always be checked, and the specifications built from them.</p>
+    <div class="rs-matrix-wrap" tabindex="0" role="region" aria-label="The theory documents">
+        <table class="rs-theory">
+            <thead><tr><th scope="col">Document</th><th scope="col">Key points</th><th scope="col">Rests on</th></tr></thead>
+            <tbody>
+                {% for doc in theory %}
+                <tr>
+                    <th scope="row"><a href="{{ theory_repo }}{{ doc.file }}">{{ doc.title }}</a>
+                    <p>{{ doc.what }}</p></th>
+                    <td><ul>{% for point in doc.points %}<li>{{ point }}</li>{% endfor %}</ul></td>
+                    <td>{{ doc.basis }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <h3>How every component meets the four hard problems of self-improvement</h3>
+    <div class="rs-matrix-wrap" tabindex="0" role="region" aria-label="The four problems and what every component does">
+        <table class="rs-problems">
+            <thead><tr><th scope="col">Problem</th><th scope="col">What every component does about it</th></tr></thead>
+            <tbody>
+                <tr><th scope="row">Turning weak or partial evidence into reliable learning signals</th><td>Every
+                failure it catches is written to the run ledger as a labelled incident with its evidence and its failure
+                mode: the input the meta-harness and the theory loop learn from.</td></tr>
+                <tr><th scope="row">Evaluators the adapting system cannot influence</th><td>Its checks are its own code,
+                pinned by digest, or an outside tool (tests, a prover, a renderer), never written or tuned by the model
+                being checked.</td></tr>
+                <tr><th scope="row">Transfer of learned safeguards to unseen task families</th><td>A safeguard is bound to
+                a failure mode, not to a task, so it applies wherever that mode can occur; its catch rate is measured on
+                task families it was not built on.</td></tr>
+                <tr><th scope="row">Enough held-out examples to tell a real improvement from noise</th><td>Its catch rate
+                and false-alarm rate are judged by G6's sequential test, which says how many more cases it needs instead
+                of guessing.</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="rs-meta">The papers are design rationale: their proofs are not machine-checked, and none is cited as
+    evidence.</p>
+</section>
+</div>
+{% endblock %}
+{% block extra_js %}<script defer src="{% static 'js/research.js' %}"></script>{% endblock %}

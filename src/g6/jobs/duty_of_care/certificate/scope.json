@@ -1,0 +1,28 @@
+{
+  "SPDX-License-Identifier": "Apache-2.0",
+  "not_checked": [
+    "No signed clinical or mental-health review is supplied: no qualified person has reviewed the listed terms, the exceptions, the response's words or which line fits which category.",
+    "The crisis trigger finds only its listed terms, as whole words after folding. Paraphrase, slang, other languages, misspellings beyond what folding undoes, look-alike letters Unicode NFKC does not fold, meaning without the listed words, and a self-harm act stated without the listed words are missed (the skill's 'Still missed' line). Finding no listed words is never evidence that a person is all right.",
+    "harmed_by_someone's terms fire on four known false positives ('hits me', 'is hitting me', 'hurts me' and 'is hurting me' in everyday sentences), kept on purpose; the other categories' known false positives are listed in crisis_rules.json and are not checked here.",
+    "Which line fits which category (Kids Helpline for a child in danger, 1800RESPECT for someone harmed by another person) rests on each line's own clause; no qualified person has checked that fit, and no other fit is checked.",
+    "The directory's numbers are checked against the held pages as of their retrieval dates (22 and 23 October 2026) only, not against the services as they are now. The NHS page was already past its own review date (3 February 2026) when it was retrieved, so every United Kingdom response carries the line saying the numbers may have changed.",
+    "No online support service is held for the United Kingdom (the register's missing entry), so its response names none.",
+    "A score is 'score computed', the sum of the item scores and nothing more: no severity band, risk level or diagnosis is given or checked.",
+    "An instrument whose licence entry is not settled (PCL-5, AUDIT, DASS-21, K10, MUST and the Barthel Index) stays refused; the terms of those licences are not checked here.",
+    "Each guard's cases check only whether it fired (effect_only): what else its code does rests on the independent reader's word.",
+    "crisis_lock, emergency_first, online_service, category_fit, licence_settled and the ten response checks hold no comparison or number for G6 to seed a boundary defect into, so each is checked by its cases and G6's removal of it only, and the record names it as the gap no_threshold.",
+    "The block's raw item-9 pre-check (block.py's _item_9_is_zero, run before typed validation) is a second path to the crisis result that to_a_person does not cover; no case here reaches it.",
+    "no_sensational_language and no_method are proxies. The first reads only an exclamation mark and the words 'suicide' and 'suicidal' as whole words in the response's own words (so a plural such as 'suicides' is not read by it; method_location's closed vocabulary is what keeps such a word out of a composed response). The second reads only the trigger's listed terms and the category names.",
+    "The response checks read what a composed response holds; this grounding cannot catch an omission. A response that named no service for a region the directory covers would pass where_and_how (no service line to fault) and seek_help_message (which reads its sentence, not its numbers).",
+    "The response checks' cases change the response the code composes as each case's edit says (lines swapped, moved or dropped, a sentence dropped, a service line's hours or ways to reach it taken off, words added); responses composed some other way are not checked. method_location and minimise_harm are one function, outside_words, and their cases check it twice.",
+    "The crisis lock's cases engage locks directly; the block's own bookkeeping of runs and subjects (its in-memory locks, which ids it accepts, the order of its doors) is not checked here.",
+    "emergency_first's cases arrange the directory's own entries (the emergency number held second, the entries reversed, the emergency number left out) and read the order lookup gives; the response's first line is checked under help_first.",
+    "numbers_checked's threshold cases use dates before retrieval (3 and 4 February 2026), the one place where only the NHS page's own review date moves.",
+    "The PHQ-9 and GAD-7 totals are property-checked: the forms print no worked total, so the known cases are the case author's arithmetic. The highest PHQ-9 total given is 24, because an item 9 answer other than 0 gives the crisis result instead; an item 9 answer off the scale is read as the crisis result before any refusal (the case author's ruling). -1 and -2 are this certificate's encoding of a refusal and the crisis result.",
+    "The trigger also reads each field's name and a phrase split across two fields; no case here checks either.",
+    "The guidance on writing about suicide is written for media; G6 applies it to a one-to-one reply, and no case checks that reading.",
+    "The crisis lock is held in memory for each run and subject id the caller supplies, so a restart, or another process, clears it.",
+    "where_and_how and seek_help_message cannot fault the response for a region the directory does not cover: that response names no service and says only to contact a local crisis line.",
+    "no_method and no_sensational_language are weak proxies: they pass words such as 'suicides' or a stated method. They are acceptable only because the response is G6's fixed text, checked against a closed vocabulary (outside_words)."
+  ]
+}

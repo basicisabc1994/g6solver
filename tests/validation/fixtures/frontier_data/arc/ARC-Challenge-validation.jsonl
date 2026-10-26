@@ -1,0 +1,2 @@
+{"id": "Synthetic_validation_0", "question": "Which synthetic option 0 is right?", "choices": {"text": ["first", "second", "third", "fourth"], "label": ["A", "B", "C", "D"]}, "answerKey": "B"}
+{"id": "Synthetic_validation_1", "question": "Which synthetic option 1 is right?", "choices": {"text": ["first", "second", "third", "fourth"], "label": ["A", "B", "C", "D"]}, "answerKey": "C"}

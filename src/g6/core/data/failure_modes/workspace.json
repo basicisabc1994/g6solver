@@ -1,0 +1,8 @@
+{
+  "family": "workspace",
+  "codes": [
+    {"code": "untracked_prompt_version", "title": "losing track of which prompt or spec version produced a result"},
+    {"code": "write_outside_workspace", "title": "an agent writing files outside its workspace", "severity": "high"}
+  ],
+  "planned": {}
+}

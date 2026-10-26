@@ -1,0 +1,25 @@
+# Weekly: re-resolve each extra's dependency closure and read each pinned package's licence from PyPI. It fails only
+# when an extra's requirements in pyproject.toml are not the ones tools/data/extra_closures.json was generated from, or
+# when a package of today's resolution has a licence the conformance kit does not allow or cannot place; versions that
+# moved are printed as information. The kit checks the committed file offline on every push; this job is what notices
+# the world moving.
+name: closures
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  closures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.23"
+      - name: Requirements unchanged and every licence allowed (version drift is reported)
+        run: python tools/gen_extra_closures.py --check

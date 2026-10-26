@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Repository graph{% endblock %}
+{% block meta_description %}A map of G6's code: every file, class and function and how they connect, in {{ layers|length }} layers, with a guided tour.{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/graph.css' %}">{% endblock %}
+{% block content %}
+{% comment %}The graph and its facts are read from static/graph/ (views._graph); the viewer is built by
+tools/build_graph_viewer.py. Both are regenerated from the public code before each release.{% endcomment %}
+<header class="wrap page-hero">
+    <h1 class="display">The code, as a map.</h1>
+    <p class="lede why">A system you trust with your work should be one you can inspect, down to the last line.</p>
+    <p class="lede">Every file, class and function in G6 and how they connect: {{ nodes }} parts in {{ layers|length }} layers,
+    with a {{ tour }}-step tour. Pan, search, and click any part to read what it does.</p>
+    <div class="actions">
+        <a class="btn btn--solid" href="{% static 'graph/app/index.html' %}">Open full screen</a>
+        <a class="btn" href="{% url 'pages:components' %}">The components</a>
+    </div>
+</header>
+
+<section class="wrap graph" aria-label="The repository graph viewer">
+    <p class="graph__notice" role="note"><strong>Machine-generated, not reviewed.</strong> An AI model read the code at
+    commit <code>{{ commit }}</code> ({{ analysed }}, {{ files }} files) and wrote every description here and in the
+    viewer. The code is the authority; the map is regenerated before each release.</p>
+    <iframe class="graph__frame" src="{% static 'graph/app/index.html' %}" title="The repository graph viewer"
+            loading="lazy"></iframe>
+    <p class="graph__credit">The viewer is the dashboard of
+    <a href="https://github.com/Lum1104/Understand-Anything">Understand-Anything</a>, built unchanged, under the
+    <a href="{% static 'graph/app/LICENSE.txt' %}">MIT License</a>.</p>
+</section>
+
+<section class="wrap graph-layers">
+    <h2>The {{ layers|length }} layers</h2>
+    <div class="graph-layers__table">
+        <table>
+            <thead><tr><th scope="col">Layer</th><th scope="col">Files</th><th scope="col">What it holds</th></tr></thead>
+            <tbody>
+            {% for layer in layers %}
+                <tr><th scope="row">{{ layer.name }}</th><td>{{ layer.files }}</td><td>{{ layer.description }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

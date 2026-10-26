@@ -1,0 +1,233 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}The Alignment Problem Is an Engineering Problem{% endblock %}
+{% block meta_description %}AI alignment becomes tractable when treated as systems engineering: explicit specs, formal verification, bounded operation, and continuous monitoring.{% endblock %}
+{% block post_headline %}The Alignment Problem Is an Engineering Problem{% endblock %}
+{% block post_date %}2025-05-24{% endblock %}
+{% block post_description %}AI alignment becomes tractable when treated as systems engineering: explicit specs, formal verification, bounded operation, and continuous monitoring.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">AI Safety</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">The Alignment Problem Is an Engineering Problem</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: Alignment is one of the hardest open problems
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">AI alignment &mdash; the problem of ensuring that artificial intelligence systems do what we actually want them to do &mdash; has become one of the defining intellectual challenges of our era. The difficulty is genuine. We are building systems of extraordinary capability whose internal representations we cannot fully interpret, whose behaviour in novel situations we cannot reliably predict, and whose objectives we cannot specify with the precision that correctness requires. The gap between what we <em>mean</em> and what we can <em>formally state</em> is vast, and every deployed AI system lives in that gap.</p>
+
+            <p class="gsap-reveal">The research community has documented the challenge exhaustively. Amodei and colleagues catalogued the concrete failure modes: reward hacking, where systems find unintended shortcuts to satisfy their objective functions; distributional shift, where systems trained on one environment behave unpredictably in another; negative side effects, where systems accomplish their stated goal while causing collateral damage that was never specified as something to avoid.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup> Russell framed the deeper problem: even perfectly rational agents can be catastrophically misaligned if their utility function does not capture the full complexity of human values &mdash; and human values are notoriously resistant to formal specification.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup></p>
+
+            <p class="gsap-reveal">These are real problems, and they deserve the serious attention they are receiving. The question is not whether alignment is difficult. It is. The question is what follows from that difficulty.</p>
+
+            <p class="gsap-reveal">For a growing community of researchers and commentators, what follows is something close to despair. Alignment is framed as a problem so deep, so philosophically tangled, so resistant to tractable formulation, that it may be fundamentally unsolvable &mdash; or at least unsolvable before the systems that need to be aligned become too powerful to control. This framing has real consequences. It leads to policy positions that prioritise slowing down AI development over making it safer, on the grounds that safety is impossible at sufficient capability levels. It leads to research agendas focused on proving impossibility results rather than building practical safeguards. And it leads to a pervasive fatalism that, ironically, makes the alignment problem harder to solve by discouraging the engineering talent that could solve it.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: The philosophical framing is an excuse for inaction
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Safety Engineering Has Solved Hard Problems Before</h2>
+
+            <p class="gsap-reveal">Here is what the despair narrative misses: we have been here before. Not with AI specifically, but with every complex, high-stakes technology that humanity has deployed at scale. And the pattern is remarkably consistent.</p>
+
+            <p class="gsap-reveal">In the early days of commercial aviation, flight was dangerous. Engines failed. Instruments were unreliable. Weather forecasting was primitive. The combination of mechanical complexity, environmental unpredictability, and catastrophic failure consequences made aviation safety look, to the engineering culture of the 1930s, like an impossibly hard problem. Some argued that safe flight was fundamentally incompatible with the speeds and altitudes that commercial viability required.</p>
+
+            <p class="gsap-reveal">They were wrong. Not because the problems were easy, but because a discipline emerged &mdash; safety engineering &mdash; that transformed intractable-seeming challenges into systematic, solvable ones. Nancy Leveson&rsquo;s landmark work on systems-theoretic accident analysis showed that safety is not a property of individual components but of the system as a whole: the interactions, the interfaces, the feedback loops, the human operators.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> Aviation did not become safe by making perfect engines. It became safe by building redundancy, monitoring, procedural discipline, and systematic learning from failure into every layer of the system.</p>
+
+            <p class="gsap-reveal">Nuclear power followed the same trajectory. The physics of nuclear fission is inherently dangerous &mdash; the failure modes are catastrophic and irreversible. Yet the nuclear industry developed defence-in-depth architectures, probabilistic risk assessment, and regulatory frameworks that have made commercial nuclear power one of the safest forms of energy generation per unit of output. The key was not eliminating danger but <em>engineering</em> it into a manageable form.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">Medical devices tell the same story. A pacemaker that malfunctions can kill its user. The consequences are irreversible and the operating environment &mdash; the human body &mdash; is complex and variable. Yet pacemakers work, reliably, for millions of people, because the medical device industry developed rigorous verification and validation processes, formal specification methods, and continuous post-market surveillance.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
+
+            <p class="gsap-reveal">The common thread is instructive. In every case, the problem was initially framed as impossibly hard. In every case, the solution came not from a philosophical breakthrough but from systematic engineering: explicit specifications, layered defences, formal verification, continuous monitoring, and institutionalised learning from failure. The problems did not become easy. They became <em>tractable</em> &mdash; and tractability is all you need.</p>
+
+            <!-- ── Diagram 1: Three-column grid ── -->
+            <div class="gsap-reveal my-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <!-- Column 1: Philosophy -->
+                <div class="rounded-xl glass p-6 text-center hover:border-white/20 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/>
+                            <line x1="12" y1="17" x2="12.01" y2="17"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Philosophy</h3>
+                    <p class="text-xs text-gray-400 font-medium mb-2">Necessary but insufficient</p>
+                    <p class="text-xs text-gray-500 leading-relaxed">Defines the problem. What do we mean by &ldquo;aligned&rdquo;? What are human values? Essential framing &mdash; but framing alone does not ship safe systems.</p>
+                </div>
+                <!-- Column 2: Engineering (highlighted) -->
+                <div class="rounded-xl border-2 border-g6-indigo bg-[rgba(99,102,241,0.04)] p-6 text-center relative overflow-hidden">
+                    <div class="absolute inset-0 bg-gradient-to-b from-[rgba(99,102,241,0.06)] to-transparent"></div>
+                    <div class="w-12 h-12 rounded-xl bg-g6-indigo/10 flex items-center justify-center mx-auto mb-4 relative">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2 relative">Engineering</h3>
+                    <p class="text-xs text-g6-indigo font-medium mb-2 relative">The bridge</p>
+                    <p class="text-xs text-indigo-300 leading-relaxed relative">Translates philosophical requirements into specs, tests, verification pipelines, and monitoring. Where alignment becomes tractable.</p>
+                </div>
+                <!-- Column 3: Deployment -->
+                <div class="rounded-xl glass p-6 text-center hover:border-white/20 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+                            <polyline points="22 4 12 14.01 9 11.01"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Deployment</h3>
+                    <p class="text-xs text-gray-400 font-medium mb-2">Verified systems</p>
+                    <p class="text-xs text-gray-500 leading-relaxed">Systems in production with formal guarantees, continuous monitoring, and demonstrated safety properties. The end goal.</p>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Alignment as systems engineering
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">From Philosophy to Specification</h2>
+
+            <p class="gsap-reveal">The first step in treating alignment as engineering is the most difficult: translating vague philosophical requirements into explicit, testable specifications. This is hard, but it is a kind of hard that engineers deal with routinely. A medical device engineer cannot formally specify &ldquo;do not harm the patient&rdquo; &mdash; the concept is too broad, too context-dependent. Instead, they specify concrete, measurable properties: the device must not deliver more than <em>N</em> milliamperes under any input condition; the software must respond within <em>T</em> milliseconds; the failover mechanism must activate within <em>K</em> heartbeats of detecting an anomaly.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
+
+            <p class="gsap-reveal">The same decomposition applies to AI alignment. You cannot formally specify &ldquo;be helpful and harmless.&rdquo; But you can specify concrete properties: the system must not execute actions outside its defined action space; it must not exceed its resource bounds; it must escalate to a human operator when its confidence falls below a threshold; it must preserve stated invariants across all modifications to its own reasoning; it must log every decision with sufficient context for post-hoc audit. None of these are philosophically complete specifications of alignment. All of them are engineering specifications that can be formally verified, tested, and monitored.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup></p>
+
+            <p class="gsap-reveal">The NIST AI Risk Management Framework takes exactly this approach. Rather than attempting a universal definition of &ldquo;safe AI,&rdquo; it decomposes the problem into manageable categories &mdash; validity, reliability, safety, fairness, explainability, privacy, security &mdash; each with concrete, measurable criteria and governance processes.<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> This is not a philosophical framework. It is an engineering one. And it works for the same reason that engineering frameworks work in aviation and nuclear power: it transforms an unbounded problem into a collection of bounded ones.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Defence in Depth</h2>
+
+            <p class="gsap-reveal">No single safety mechanism is sufficient. This is the central lesson of every mature safety engineering discipline, and it applies to AI alignment with full force. The solution is defence in depth: multiple independent layers of protection, each capable of preventing harm even if the others fail.</p>
+
+            <p class="gsap-reveal">In an aligned AI system, defence in depth looks like this. The innermost layer is the formal specification: the set of properties that the system is mathematically proven to satisfy. The next layer is runtime monitoring: continuous observation of the system&rsquo;s behaviour to detect deviations from expected patterns, even those not captured by formal specifications. Beyond that is human oversight: structured checkpoints where human operators review the system&rsquo;s decisions, especially in high-stakes or novel situations. And the outermost layer is institutional: governance structures, audit processes, incident response protocols, and regulatory compliance.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup></p>
+
+            <p class="gsap-reveal">Each layer catches different kinds of failures. Formal verification catches specification violations. Runtime monitoring catches distributional shift and emergent behaviours. Human oversight catches misalignment that is obvious to humans but invisible to automated checks. Institutional governance catches systemic risks that individual system-level protections cannot address. No layer is perfect. Together, they provide a level of assurance that no single mechanism could achieve.</p>
+
+            <!-- ── Diagram 2: Safety Engineering Layers Stack ── -->
+            <div class="gsap-reveal my-12 max-w-md mx-auto">
+                <div class="space-y-0">
+                    <!-- Top layer: Institutional Governance -->
+                    <div class="rounded-t-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Layer 4</p>
+                        <p class="text-white font-semibold">Institutional Governance</p>
+                        <p class="text-xs text-gray-500 mt-1">Audit &bull; Regulation &bull; Incident response</p>
+                    </div>
+                    <!-- Layer 3: Human Oversight -->
+                    <div class="border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Layer 3</p>
+                        <p class="text-white font-semibold">Human Oversight</p>
+                        <p class="text-xs text-gray-500 mt-1">Structured checkpoints &bull; Escalation &bull; Review</p>
+                    </div>
+                    <!-- Layer 2: Runtime Monitoring (highlighted) -->
+                    <div class="border-2 border-g6-indigo bg-[rgba(99,102,241,0.06)] p-5 text-center relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-r from-transparent via-[rgba(99,102,241,0.08)] to-transparent"></div>
+                        <p class="text-xs font-mono text-g6-indigo uppercase tracking-wider mb-1 relative">Layer 2</p>
+                        <p class="text-white font-bold text-lg relative">Runtime Monitoring</p>
+                        <p class="text-xs text-indigo-300 mt-1 relative">Continuous observation &bull; Anomaly detection &bull; Drift alerts</p>
+                    </div>
+                    <!-- Layer 1: Formal Verification -->
+                    <div class="rounded-b-xl border border-white/10 bg-white/[0.03] p-5 text-center">
+                        <p class="text-xs font-mono text-gray-500 uppercase tracking-wider mb-1">Layer 1</p>
+                        <p class="text-white font-semibold">Formal Verification</p>
+                        <p class="text-xs text-gray-500 mt-1">Mathematical proofs &bull; Specification checking &bull; Invariants</p>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-gray-600 mt-3">Fig. 2 &mdash; Defence in depth: four independent layers, each catching failures the others miss</p>
+            </div>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Bounded Operation as a Design Principle</h2>
+
+            <p class="gsap-reveal">One of the most powerful tools in the safety engineering toolkit is bounded operation: defining hard limits on what a system can do, regardless of what it is trying to do. In nuclear engineering, this takes the form of physical constraints &mdash; control rods that cannot be fully withdrawn, containment vessels that limit blast radius. In AI alignment, bounded operation means architectural constraints on the system&rsquo;s action space, resource consumption, and scope of influence.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup></p>
+
+            <p class="gsap-reveal">A bounded AI system operates within a defined envelope. It can take actions from a whitelist, not a blacklist &mdash; meaning everything not explicitly permitted is forbidden. It has hard resource limits: maximum tokens per request, maximum API calls per minute, maximum computational budget per task. It has scope limits: defined access to specific data sources and tools, with everything else architecturally inaccessible. And it has temporal limits: maximum task duration, mandatory checkpoints, automatic rollback on timeout.</p>
+
+            <p class="gsap-reveal">These bounds are not ad hoc restrictions bolted onto an unconstrained system. They are architectural properties &mdash; built into the system&rsquo;s infrastructure in ways that cannot be circumvented by the system&rsquo;s own reasoning. The system does not choose to respect its bounds; it is incapable of violating them. This is the same principle that makes hardware memory protection work in operating systems: the constraint is below the level of the software, which means the software cannot reason its way around it.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Continuous Monitoring and Learning from Failure</h2>
+
+            <p class="gsap-reveal">Safety is not a property you prove once and forget about. It is a property you maintain continuously, through monitoring, testing, and systematic learning from failure. Aviation did not achieve its remarkable safety record by building perfect aircraft. It achieved it by building a culture and infrastructure for investigating every incident, identifying systemic causes, and propagating fixes across the entire industry.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">AI alignment needs the same infrastructure. Every deployed AI system should be continuously monitored for behaviour that deviates from its specification. Every deviation should be logged, investigated, and classified. Near-misses &mdash; cases where the system almost violated a safety property but was caught by a secondary mechanism &mdash; are particularly valuable, because they reveal weaknesses in the primary protection layer before those weaknesses cause harm.</p>
+
+            <p class="gsap-reveal">Anthropic&rsquo;s Responsible Scaling Policy offers a model for this kind of continuous safety discipline. It defines capability thresholds that trigger additional safety requirements, creating a dynamic relationship between capability and safeguards that evolves as systems become more powerful.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup> This is not a philosophical position. It is an engineering protocol &mdash; concrete, measurable, auditable.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Objection from Philosophical Depth</h2>
+
+            <p class="gsap-reveal">The obvious objection to the engineering framing is that it misses the hard part. Engineering can handle specification, verification, and monitoring &mdash; but what about the fundamental philosophical problem of specifying human values in the first place? If we cannot define what we want, how can we verify that a system provides it?</p>
+
+            <p class="gsap-reveal">This objection is valid but less devastating than it appears. First, perfect value specification is not required for safe deployment. Medical devices are not aligned with a perfect specification of human health &mdash; they are aligned with concrete, testable properties that are good enough for safe operation. AI systems can follow the same approach: align with testable properties first, philosophical completeness later.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <p class="gsap-reveal">Second, the philosophical and engineering approaches are complementary, not competing. Philosophy defines the problem space. Engineering makes it tractable. You need both, but treating alignment as <em>purely</em> philosophical has produced decades of important thinking and very few deployable safety mechanisms. Treating it as <em>also</em> an engineering problem opens the door to the kind of incremental, verifiable progress that has made every other dangerous technology safe enough to deploy.</p>
+
+            <p class="gsap-reveal">The 2025 International AI Safety Report, synthesising input from over a hundred experts, reached a conclusion that supports this synthesis: alignment is a multi-disciplinary challenge that requires both philosophical rigour and engineering practice, and the gap between the two communities is one of the most significant obstacles to progress.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup> Bridging that gap is not optional. It is the critical path.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 CODA
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">What This Means for the Field</h2>
+
+            <p class="gsap-reveal">Framing alignment as an engineering problem does not make it easy. It makes it tractable. There is a difference. Tractable means we know what kind of work needs to be done, even if the work itself is hard. Tractable means we can measure progress, identify bottlenecks, and allocate resources rationally. Tractable means we can build, test, deploy, monitor, learn, and iterate &mdash; the engineering loop that has tamed every complex technology before this one.</p>
+
+            <p class="gsap-reveal">The alternative &mdash; treating alignment as a philosophical mystery that must be solved in the abstract before any AI system can be safely deployed &mdash; is not just impractical. It is actively harmful. It delays the development of the engineering discipline that alignment actually requires. It discourages the engineers and systems architects whose skills are most needed. And it cedes the deployment landscape to organisations that treat safety as a marketing problem rather than an engineering one.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup></p>
+
+            <p class="gsap-reveal font-semibold text-white">Alignment is hard. It is not impossible. It is an engineering problem &mdash; and engineering problems are the kind we know how to solve.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    Amodei, D., Olah, C., Steinhardt, J., Christiano, P., Schulman, J., &amp; Man&eacute;, D. (2016). <a href="https://arxiv.org/abs/1606.06565" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Concrete problems in AI safety</em></a>. arXiv. &mdash; The foundational taxonomy of alignment failure modes: reward hacking, side effects, distributional shift, scalable oversight.
+                </li>
+                <li id="ref-2">
+                    Russell, S. (2019). <a href="https://people.eecs.berkeley.edu/~russell/hci.html" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Human compatible: Artificial intelligence and the problem of control</em></a>. Viking. &mdash; On the impossibility of perfect value specification and the case for cooperative inverse reinforcement learning.
+                </li>
+                <li id="ref-3">
+                    Leveson, N. G. (2011). <a href="https://mitpress.mit.edu/books/engineering-a-safer-world" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Engineering a safer world: Systems thinking applied to safety</em></a>. MIT Press. &mdash; Safety as an emergent system property; STAMP/STPA methodology for hazard analysis across complex systems.
+                </li>
+                <li id="ref-4">
+                    U.S. Nuclear Regulatory Commission. (2016). <a href="https://www.nrc.gov/reading-rm/basic-ref/glossary/defense-in-depth.html" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Defense-in-depth</em></a>. NRC Glossary. &mdash; The layered safety philosophy that underpins nuclear reactor design and operation.
+                </li>
+                <li id="ref-5">
+                    U.S. Food and Drug Administration. (2023). <a href="https://www.fda.gov/regulatory-information/search-fda-guidance-documents/software-medical-device-samd-and-artificial-intelligencemachine-learning-aiml-action-plan" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Artificial intelligence and machine learning (AI/ML)-enabled medical devices</em></a>. FDA. &mdash; Regulatory framework for AI in medical devices: pre-market verification, post-market surveillance.
+                </li>
+                <li id="ref-6">
+                    Seshia, S. A., Sadigh, D., &amp; Sastry, S. S. (2022). <a href="https://doi.org/10.1007/s10817-021-09614-y" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Toward verified artificial intelligence</em></a>. <em>Communications of the ACM</em>, 65(7), 46&ndash;55. &mdash; Formal methods applied to AI: specification, verification, and the path to provably safe systems.
+                </li>
+                <li id="ref-7">
+                    National Institute of Standards and Technology. (2023). <a href="https://www.nist.gov/artificial-intelligence/ai-risk-management-framework" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>AI Risk Management Framework (AI RMF 1.0)</em></a>. NIST. &mdash; Decomposing AI risk into governable categories: validity, reliability, safety, fairness, explainability, privacy, security.
+                </li>
+                <li id="ref-8">
+                    Hendrycks, D., Mazeika, M., &amp; Woodside, T. (2023). <a href="https://arxiv.org/abs/2306.12001" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>An overview of catastrophic AI risks</em></a>. arXiv. &mdash; Comprehensive survey of AI risk categories and the case for systematic, multi-layered mitigation.
+                </li>
+                <li id="ref-9">
+                    Yampolskiy, R. V., &amp; Fox, J. (2013). <a href="https://doi.org/10.1007/s11245-012-9128-9" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Safety engineering for artificial general intelligence</em></a>. <em>Topoi</em>, 32, 217&ndash;226. &mdash; Bounded operation and AI confinement as engineering requirements for safe AGI.
+                </li>
+                <li id="ref-10">
+                    Anthropic. (2023). <a href="https://www.anthropic.com/index/anthropics-responsible-scaling-policy" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Anthropic&rsquo;s Responsible Scaling Policy</em></a>. &mdash; Capability-triggered safety requirements: ASL levels, evaluation protocols, and commitment mechanisms.
+                </li>
+                <li id="ref-11">
+                    Gabriel, I. (2020). <a href="https://doi.org/10.1007/s11023-020-09539-2" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Artificial intelligence, values, and alignment</em></a>. <em>Minds and Machines</em>, 30, 411&ndash;437. &mdash; Philosophical analysis of alignment targets: instructions, preferences, intentions, and values.
+                </li>
+                <li id="ref-12">
+                    International AI Safety Report. (2025, January). <a href="https://www.internationalaisafetyreport.org/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>International AI Safety Report 2025</em></a>. &mdash; Cross-national expert consensus on integrating philosophical rigour with engineering practice for alignment.
+                </li>
+                <li id="ref-13">
+                    IEEE. (2021). <a href="https://standards.ieee.org/ieee/7000/6781/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>IEEE 7000-2021: Model process for addressing ethical concerns during system design</em></a>. IEEE Standards Association. &mdash; Engineering standard for translating ethical requirements into system design specifications.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

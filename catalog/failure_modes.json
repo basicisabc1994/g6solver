@@ -1,0 +1,3415 @@
+[
+  {
+    "code": "ad_hoc_choice",
+    "title": "ad hoc, unrepeatable choices about what to try next",
+    "description": "ad hoc, unrepeatable choices about what to try next",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "decision_making"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "admin_record_error",
+    "title": "admin errors in records, filings or correspondence",
+    "description": "admin errors in records, filings or correspondence",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "answered_from_memory",
+    "title": "a factual question answered from the model's memory instead of a source",
+    "description": "a factual question answered from the model's memory instead of a source",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "australian_legal_corpus",
+      "ctx_geo"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "attempted_too_much_in_one_patch",
+    "title": "attempted too much in one patch",
+    "description": "attempted too much in one patch",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "audio_check_failed",
+    "title": "audio output that is silent, clipped or corrupt, reported as done",
+    "description": "audio check failed",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_audio",
+      "adapt_ffmpeg",
+      "adapt_synth",
+      "adapt_voice"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "authority_conflict",
+    "title": "conflicting claims about who may decide or act",
+    "description": "authority conflict",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "hat_orchestrator"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "beyond_review_scope",
+    "title": "a workflow used beyond what its review covers",
+    "description": "a workflow used beyond what its review covers",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [
+      "action_gating"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "blind_repo_change",
+    "title": "a coding agent changing an unfamiliar repository without first learning how it works",
+    "description": "a coding agent changing an unfamiliar repository without first learning how it works",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "swe_diagnostics"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "blind_trial_and_error",
+    "title": "spending a budget on blind trial and error",
+    "description": "Trying candidate after candidate with no model of the problem, so the budget runs out before the search learns anything.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "abstraction"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "booking_clash",
+    "title": "bookings, schedules or itineraries that clash or are wrong",
+    "description": "bookings, schedules or itineraries that clash or are wrong",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "brittle_shortcut",
+    "title": "a shortcut that breaks on cases it has not seen",
+    "description": "A cheaper replacement, such as a distilled prompt, rule or model, matches the original on the cases it was built from and fails on new ones.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "distillation"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "broke_existing_functionality",
+    "title": "a change that breaks something that worked",
+    "description": "broke existing functionality",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "self_training"
+    ],
+    "introduced_by": [
+      "adapt_django",
+      "adapt_library_synthesizer",
+      "adapt_webpage"
+    ],
+    "planned": [
+      "g6.code.app_repair"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "broken_generated_code",
+    "title": "generated code that does not run or does not work",
+    "description": "generated code that does not run or does not work",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "broken_responsive_layout",
+    "title": "a hand-built page that breaks on some screens",
+    "description": "a hand-built page that breaks on some screens",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_webpage"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "budget_overrun",
+    "title": "a task overrunning its token, cost or time budget",
+    "description": "The work spends more than it was given, because no budget was set or nothing enforced it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "goal_engine",
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "buried_observation",
+    "title": "a relevant observation buried under old ones",
+    "description": "a relevant observation buried under old ones",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_ace"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "caller_oracle",
+    "title": "tests written by the caller taken as independent proof",
+    "description": "Caller-authored tests cannot independently establish correctness.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "cannot_self_repair",
+    "title": "a recoverable error that stops the whole workflow",
+    "description": "cannot self repair",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_healing"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "careless_auto_fix",
+    "title": "an automatic fix applied without checking what it changes",
+    "description": "an automatic fix applied without checking what it changes",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_healing"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "compaction_added_unsourced_claim",
+    "title": "compaction added unsourced claim",
+    "description": "compaction added unsourced claim",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "compaction_lost_decision",
+    "title": "a decision lost when earlier turns are summarised to save room",
+    "description": "compaction lost decision",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "context"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "component_metadata_missing",
+    "title": "component metadata missing",
+    "description": "component metadata missing",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "confident_reasoning_error",
+    "title": "a reasoning slip stated with confidence",
+    "description": "A logical or arithmetic step goes wrong, and the answer is given as if it were sound.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "formal"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "confounded_gain",
+    "title": "a claimed gain that extra compute or luck explains",
+    "description": "An improvement is credited to a method when more samples, more compute or chance account for it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reasoning"
+    ],
+    "introduced_by": [],
+    "planned": [
+      "g6.ml.experiment_search"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "context_budget_overflow",
+    "title": "context overflowing the model's window or its budget",
+    "description": "context budget overflow",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "context"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "context_loss",
+    "title": "facts or decisions lost between the steps of one task",
+    "description": "context loss",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [
+      "missing_context"
+    ],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [
+      "g6.memory.adapt_memory"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "contradictory_rules",
+    "title": "rules that contradict each other without anyone noticing",
+    "description": "Two rules in the same set cannot both hold, and conclusions are drawn from them anyway.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "graph_reasoning"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "correlation_as_cause",
+    "title": "taking a correlation for a cause",
+    "description": "Two things move together and the answer says one causes the other, with no causal model or test behind it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "causal"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "data_handling_error",
+    "title": "data mistakes from ad hoc table handling",
+    "description": "data mistakes from ad hoc table handling",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_pandas"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "decision_on_unchecked_data",
+    "title": "a decision or insight drawn from data nobody checked",
+    "description": "a decision or insight drawn from data nobody checked",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "delivery_inventory_mismatch",
+    "title": "late deliveries and inventory mismatches",
+    "description": "late deliveries and inventory mismatches",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "dependency_breakage",
+    "title": "dependency breakage",
+    "description": "dependency breakage",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "design_quality_failed",
+    "title": "an interface with inconsistent styling or poor contrast",
+    "description": "design quality failed",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_webpage"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "deskilling",
+    "title": "AI help that leaves people less capable than before",
+    "description": "AI help that leaves people less capable than before",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.domains.training_mode"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "docs_not_updated",
+    "title": "docs not updated",
+    "description": "docs not updated",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "drug_interaction_missed",
+    "title": "a missed drug interaction or dosing error",
+    "description": "a missed drug interaction or dosing error",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_pharmaceutical"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "end_to_end_failure",
+    "title": "end to end failure",
+    "description": "end to end failure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "epistemic_indifference",
+    "title": "a claim made with no regard for whether the evidence supports it",
+    "description": "A conclusion is stated with the same confidence whatever the strength of its evidence.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "epistemic_integrity"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "excessive_token_use",
+    "title": "spending more on model calls than the work needs",
+    "description": "excessive token use",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness"
+    ],
+    "introduced_by": [
+      "debate"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "fabricated_fact",
+    "title": "made-up facts and quotes",
+    "description": "An answer states a fact, figure or quotation that no source supports.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "grounding"
+    ],
+    "introduced_by": [
+      "ctx_cognee"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "fail_open_check",
+    "title": "a safety check that passes when its parts are missing",
+    "description": "a safety check that passes when its parts are missing",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "action_gating"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "failure_read_as_empty",
+    "title": "a failed or blocked search taken to mean there are no results",
+    "description": "a failed or blocked search taken to mean there are no results",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_search",
+      "knowledge_fetcher"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "false_analogy",
+    "title": "a false analogy between fields that differ in structure",
+    "description": "a false analogy between fields that differ in structure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reasoning"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "false_confidence",
+    "title": "an uncertain or evasive answer passed off as confident",
+    "description": "an uncertain or evasive answer passed off as confident",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "epistemic_integrity"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "false_expert_review",
+    "title": "output presented as expert-reviewed when it was not",
+    "description": "output presented as expert-reviewed when it was not",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.domains.professional_standards"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "fragile_text_edit",
+    "title": "code changed by text edits that break its structure",
+    "description": "code changed by text edits that break its structure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "meta_programming"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "goal_drift",
+    "title": "a long task drifting from its goal",
+    "description": "Over many steps the work moves away from what was asked, and nothing brings it back.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "goal_engine"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "grasp_failure",
+    "title": "an object dropped or crushed when grasped",
+    "description": "an object dropped or crushed when grasped",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_physical_ai"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "hallucinated_failure",
+    "title": "hallucinated failure",
+    "description": "hallucinated failure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "hallucinated_success",
+    "title": "an agent reporting work as done that the evidence does not back up",
+    "description": "hallucinated success",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "coding_agent_gate"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "handoff_gap",
+    "title": "a result handed over without saying how far to rely on it",
+    "description": "The person receiving the result is not told what was checked, what was not, and what to watch for.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "handwritten_boilerplate",
+    "title": "boilerplate web code written by hand, inconsistently",
+    "description": "boilerplate web code written by hand, inconsistently",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_django"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "harmful_request_followed",
+    "title": "acting on a risky or privacy-violating request",
+    "description": "acting on a risky or privacy-violating request",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "guards"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "hidden_assumption",
+    "title": "an unstated assumption that would change the answer if false",
+    "description": "The work rests on an assumption nobody wrote down, so nobody checks it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "hidden_state_or_workspace_conflict",
+    "title": "agents overwriting each other's work",
+    "description": "hidden state or workspace conflict",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "shared_workspace"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "hidden_tradeoff",
+    "title": "optimising one goal while quietly hurting another",
+    "description": "optimising one goal while quietly hurting another",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "hidden_uncertainty",
+    "title": "a point estimate that hides its uncertainty",
+    "description": "a point estimate that hides its uncertainty",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_bayesian"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "ignored_warning",
+    "title": "a warning ignored on the way to an action",
+    "description": "A check raised a warning, and the agent went ahead as if it had not.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "action_logic"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "ill_suited_model",
+    "title": "a model ill-suited to the data it is used on",
+    "description": "a model ill-suited to the data it is used on",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_sklearn"
+    ],
+    "introduced_by": [],
+    "planned": [
+      "g6.ml.adapt_algo_selector"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "illusion_of_competence",
+    "title": "learners who feel they know more than they do",
+    "description": "learners who feel they know more than they do",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.domains.training_mode"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "impression_not_measurement",
+    "title": "quality judged by impression instead of measurement",
+    "description": "quality judged by impression instead of measurement",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reasoning"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "improvised_risky_behaviour",
+    "title": "an agent improvising in a known risky situation",
+    "description": "an agent improvising in a known risky situation",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "incompatible_interfaces",
+    "title": "custom glue code between incompatible components",
+    "description": "custom glue code between incompatible components",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.embodied"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "incomplete_component",
+    "title": "a new component missing its tests or standard parts",
+    "description": "a new component missing its tests or standard parts",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "component_creator"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "incomplete_literature",
+    "title": "conclusions drawn from an incomplete search of the literature",
+    "description": "conclusions drawn from an incomplete search of the literature",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "knowledge_fetcher"
+    ],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "inconsistent_review_rules",
+    "title": "job agents with inconsistent safety and review rules",
+    "description": "job agents with inconsistent safety and review rules",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "inconsistent_rule_use",
+    "title": "rules applied inconsistently across a long task",
+    "description": "rules applied inconsistently across a long task",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "datalog"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "inconsistent_workflow_model",
+    "title": "optimisers disagreeing on what a workflow looks like",
+    "description": "optimisers disagreeing on what a workflow looks like",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "ineffective_fix",
+    "title": "a fix that does not fix the failure",
+    "description": "a fix that does not fix the failure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.code.app_repair"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "infeasible_motion_plan",
+    "title": "a motion plan that collides, or asks a body for what it cannot do",
+    "description": "a motion plan that collides, or asks a body for what it cannot do",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_physical_ai"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "insecure_code_shipped",
+    "title": "insecure code shipped",
+    "description": "insecure code shipped",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.domains.cybersecurity"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "interagent_coordination_failure",
+    "title": "interagent coordination failure",
+    "description": "interagent coordination failure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "irrelevant_exemplar",
+    "title": "irrelevant exemplar",
+    "description": "irrelevant exemplar",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "late_outage_detection",
+    "title": "outages and access problems found too late",
+    "description": "outages and access problems found too late",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "leaked_secret",
+    "title": "a secret leaked in code, logs or output",
+    "description": "a secret leaked in code, logs or output",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "agent_claude",
+      "agent_codex"
+    ],
+    "planned": [
+      "g6.domains.cybersecurity"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "leaky_error_report",
+    "title": "an error report that leaks code or personal data",
+    "description": "an error report that leaks code or personal data",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "context"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "learning_gap",
+    "title": "a failure never recorded, so nothing learns from it",
+    "description": "A failure is fixed or ignored without being written down, so it cannot be counted or learned from.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "level_mismatch",
+    "title": "teaching that does not match the learner's level",
+    "description": "teaching that does not match the learner's level",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "license_or_copyright_risk",
+    "title": "license or copyright risk",
+    "description": "license or copyright risk",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "live_working_tree",
+    "title": "tests run in a repository that can change during the run",
+    "description": "The tests run in the repository itself, so a change made there during the run can reach them.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "workforce"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "long_context_degradation",
+    "title": "a model lost in too much context",
+    "description": "long context degradation",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [
+      "context_window_degradation"
+    ],
+    "guarded_by": [
+      "context"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "lost_agent_message",
+    "title": "messages between agents lost or mixed up",
+    "description": "messages between agents lost or mixed up",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "agent_nanoclaw"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "low_value_first",
+    "title": "effort spent on low-value tasks first",
+    "description": "effort spent on low-value tasks first",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "malformed_model_output",
+    "title": "model output that does not match the expected structure",
+    "description": "model output that does not match the expected structure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "grounding"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "manual_deploy_error",
+    "title": "a manual deployment step done wrong, or impossible to repeat",
+    "description": "a manual deployment step done wrong, or impossible to repeat",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.deploy.deploy_aws",
+      "g6.deploy.deploy_baremetal",
+      "g6.deploy.deploy_gcp"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "memory_poisoning",
+    "title": "a wrong or planted entry in stored memory, used as if true",
+    "description": "memory poisoning",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_ace"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "misallocated_resources",
+    "title": "misallocated resources and unclear objectives",
+    "description": "misallocated resources and unclear objectives",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "misapplied_tax_rule",
+    "title": "a tax rate or rule applied for the wrong year, jurisdiction or kind of supply",
+    "description": "a tax rate or rule applied for the wrong year, jurisdiction or kind of supply",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_tax"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "misdiagnosed_fault",
+    "title": "a misdiagnosed fault or substandard workmanship",
+    "description": "a misdiagnosed fault or substandard workmanship",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_trades"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "misleading_chart",
+    "title": "a chart that misstates or hides what the data shows",
+    "description": "a chart that misstates or hides what the data shows",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_visualisation"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "misread_image",
+    "title": "an image's content misread, or not read at all",
+    "description": "an image's content misread, or not read at all",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_vision"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "misread_legislation",
+    "title": "a policy draft that misreads legislation or polling",
+    "description": "a policy draft that misreads legislation or polling",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_lawyer",
+      "g6.jobs.job_political"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "missed_implication",
+    "title": "a consequence the rules imply that goes unnoticed",
+    "description": "The rules and facts entail a conclusion that matters, and nobody derives it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "datalog",
+      "prolog"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "missed_key_fact",
+    "title": "key facts lost past a cut-off in long text, or given values the text does not hold",
+    "description": "key facts lost past a cut-off in long text, or given values the text does not hold",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_langextract"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "missed_mandatory_requirement",
+    "title": "output that misses a field's mandatory requirements",
+    "description": "output that misses a field's mandatory requirements",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.domains.professional_standards"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "missed_risk_signs",
+    "title": "an AI missing signs that a vulnerable person is at risk",
+    "description": "An AI working with a person misses that they are at risk of suicide or self-harm, of harming someone else, or that a child is in danger. duty_of_care is only a tripwire for it: it matches a fixed list of English crisis phrases, and a paraphrase or another language passes.",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [
+      "duty_of_care"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "missed_service_level",
+    "title": "unresolved complaints and missed service levels",
+    "description": "unresolved complaints and missed service levels",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "missed_site_safety_issue",
+    "title": "safety or permit issues missed on a site",
+    "description": "safety or permit issues missed on a site",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework",
+      "g6.jobs.job_mining"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "missing_domain_standard",
+    "title": "work in a specialist field started without that field's evidence standard",
+    "description": "The same evidence bar is applied to every field, so work that a field holds to a higher standard is judged by a lower one.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "missing_user_constraint",
+    "title": "a constraint the person stated, forgotten between the request and the result",
+    "description": "missing user constraint",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "intent_engine"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "misstated_theorem",
+    "title": "a proof of a different statement from the one you meant",
+    "description": "The formal statement that was proved does not say what the claim in words says.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "lean"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "model_reality_gap",
+    "title": "a safety analysis of a model that differs from the real system",
+    "description": "a safety analysis of a model that differs from the real system",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "csf"
+    ],
+    "introduced_by": [
+      "adapt_physical_ai"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "moved_goalposts",
+    "title": "moving the goalposts after the work is done",
+    "description": "The test of success is changed after the work, so the work passes a test it was never set.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "workforce"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "no_finding_read_as_safe",
+    "title": "a screen that found no crisis words read as a sign the person is all right",
+    "description": "a screen that found no crisis words read as a sign the person is all right",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "duty_of_care"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "no_plan_to_goal",
+    "title": "an agent acting step by step with no plan that reaches the goal",
+    "description": "an agent acting step by step with no plan that reaches the goal",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "cog_arch_gps"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "no_simulation_test",
+    "title": "an agent's behaviour never tried in a simulated world first",
+    "description": "an agent's behaviour never tried in a simulated world first",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "off_brand_content",
+    "title": "off-brand or unreviewed content going out",
+    "description": "off-brand or unreviewed content going out",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "opaque_container_failure",
+    "title": "container steps failing without clear errors",
+    "description": "container steps failing without clear errors",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.deploy.deploy_docker"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "output_contract_missing",
+    "title": "output contract missing",
+    "description": "output contract missing",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "outside_scope",
+    "title": "a change that alters behaviour outside the part it was meant to touch",
+    "description": "A proposal may change behaviour outside the intended function.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "meta_programming"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "overbroad_retrieval",
+    "title": "overbroad retrieval",
+    "description": "overbroad retrieval",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "overfit_to_examples",
+    "title": "generated code that only works on the examples it was shown",
+    "description": "Synthesised code passes the examples it was written from and fails on inputs nobody showed it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "cegis"
+    ],
+    "introduced_by": [
+      "adapt_healing"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "overprivileged_agent",
+    "title": "a coding agent run with more access than it needs",
+    "description": "a coding agent run with more access than it needs",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "agent_claude",
+      "agent_codex"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "overprivileged_container",
+    "title": "containers that need root or a daemon to run",
+    "description": "containers that need root or a daemon to run",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.deploy.deploy_docker"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "overstated_certainty",
+    "title": "a conclusion stated with more certainty than the facts give",
+    "description": "The answer is right in direction but claims a confidence its evidence does not carry.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "graph_reasoning"
+    ],
+    "introduced_by": [
+      "adapt_bayesian"
+    ],
+    "planned": [
+      "g6.ml.science_harness"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "overstated_verification",
+    "title": "work called verified when the evidence does not support it",
+    "description": "A result is labelled checked or verified beyond what its evidence shows.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "action_gating",
+      "evidence",
+      "invariants"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "plan_fails_midway",
+    "title": "a plan that fails halfway through",
+    "description": "A multi-step plan starts work that a later step cannot finish, because its inputs or permissions will not be there.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "navigator"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "poor_fit_route",
+    "title": "a task or request sent to a tool or agent that is a poor fit for it",
+    "description": "a task or request sent to a tool or agent that is a poor fit for it",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "llm_router"
+    ],
+    "introduced_by": [],
+    "planned": [
+      "g6.media"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "prompt_altitude_mismatch",
+    "title": "prompt altitude mismatch",
+    "description": "prompt altitude mismatch",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "prompt_injection",
+    "title": "obeying instructions hidden in text it should only read",
+    "description": "Content an agent reads, such as a web page, a file or a tool result, carries instructions, and the agent follows them as if the person had given them. The guards package is only a tripwire for it: it flags a fixed list of English phrasings, and a paraphrase, another language or an encoding passes.",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "context",
+      "guards"
+    ],
+    "introduced_by": [
+      "adapt_rq",
+      "agent_autogen",
+      "agent_claude",
+      "agent_codex",
+      "agent_langgraph",
+      "agent_nanoclaw",
+      "agent_smolagents",
+      "align_prompt_library",
+      "australian_legal_corpus",
+      "ctx_contexthub",
+      "ctx_elastic",
+      "ctx_geo",
+      "ctx_git",
+      "ctx_langextract",
+      "ctx_library_mapper",
+      "ctx_search",
+      "ctx_vision",
+      "database",
+      "hat_orchestrator",
+      "knowledge_converter",
+      "knowledge_fetcher",
+      "shared_workspace",
+      "swe_diagnostics",
+      "workspace_manager"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "provenance_missing",
+    "title": "a claim or citation that cannot be traced to the passage it came from",
+    "description": "provenance missing",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "knowledge_chunker"
+    ],
+    "introduced_by": [
+      "ctx_cognee"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "provider_specific_glue",
+    "title": "model calls wired separately for each provider",
+    "description": "model calls wired separately for each provider",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.core.llm"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "quality_defect_missed",
+    "title": "quality defects and production bottlenecks found too late",
+    "description": "quality defects and production bottlenecks found too late",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "rare_interleaving",
+    "title": "a design that fails only in a rare order of events nobody tried",
+    "description": "Concurrent or distributed steps can happen in an order that breaks the design, and no test ever ran them in that order.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "model_checking"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "reinvented_method",
+    "title": "reimplementing a method that already exists",
+    "description": "reimplementing a method that already exists",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_library_mapper"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "repeated_mistake",
+    "title": "repeating the same mistake",
+    "description": "A failure that has happened before happens again, because nothing was learned from it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "action_gating",
+      "learning",
+      "metaharness"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "repetition_as_corroboration",
+    "title": "the same claim repeated, counted as more evidence",
+    "description": "A claim found in several places that all share one origin is treated as if independent sources confirmed it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "epistemic_integrity"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "repository_dumping",
+    "title": "repository dumping",
+    "description": "repository dumping",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "risk_management_failure",
+    "title": "risk management failure",
+    "description": "risk management failure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "rollback_missing",
+    "title": "a broken change left running with no way back",
+    "description": "rollback missing",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.deploy.deploy_k8s"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "rule_breaking_plan",
+    "title": "a plan that breaks one of your rules",
+    "description": "A schedule, allocation or plan violates a hard constraint the person stated.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "optimisation"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "runaway_run",
+    "title": "a run that keeps going past its limits",
+    "description": "An agent loop keeps spending time, tokens or money after it should have stopped.",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "safety_engine"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "runner_in_process",
+    "title": "code under test running with the owner's permissions",
+    "description": "The code under test runs inside the test process with the owner's permissions; this is not an operating-system sandbox.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "self_training",
+      "workforce"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "safeguard_tampering",
+    "title": "tampering with the safeguards themselves",
+    "description": "An agent edits, disables or routes around the checks meant to stop it.",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [
+      "guards"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "safety_policy_failure",
+    "title": "safety policy failure",
+    "description": "safety policy failure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "silent_behaviour_change",
+    "title": "workflow behaviour changing silently between releases",
+    "description": "workflow behaviour changing silently between releases",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "silent_fallback",
+    "title": "a tool silently missing or replaced, with the result reported as if it ran",
+    "description": "An optional tool is not installed or not working, and a substitute or a guess is returned without saying so.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_automl"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "single_sensor_decision",
+    "title": "a decision based on one noisy sensor",
+    "description": "a decision based on one noisy sensor",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.embodied.sensory_fusion"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "skipped_safety_check",
+    "title": "skipped safety checks and missed maintenance",
+    "description": "skipped safety checks and missed maintenance",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_machinery_operator"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "slow_workflow",
+    "title": "a workflow slower than it needs to be",
+    "description": "a workflow slower than it needs to be",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "source_gap",
+    "title": "claims that need sources and have none",
+    "description": "Statements that need a citation or source evidence are made without one.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "source_visualisation_stale",
+    "title": "source visualisation stale",
+    "description": "source visualisation stale",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "stale_citation",
+    "title": "a citation to text that has since changed",
+    "description": "a citation to text that has since changed",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "knowledge_manifest"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "stale_context_used",
+    "title": "outdated or unofficial material used as if it were current",
+    "description": "stale context used",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "australian_legal_corpus",
+      "ctx_ace",
+      "ctx_contexthub"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "stale_file_handle",
+    "title": "stale file handle",
+    "description": "stale file handle",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "stale_price",
+    "title": "a cost quoted from a price that is unknown or out of date",
+    "description": "A cost estimate uses a price that was never confirmed, or that has changed since it was read.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "llm_router"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "stale_test_result_used",
+    "title": "stale test result used",
+    "description": "stale test result used",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "subagent_context_leakage",
+    "title": "subagent context leakage",
+    "description": "subagent context leakage",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "subagent_result_overmerge",
+    "title": "subagent result overmerge",
+    "description": "subagent result overmerge",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "tampered_audit_record",
+    "title": "a safety decision altered or lost after the fact",
+    "description": "a safety decision altered or lost after the fact",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [
+      "action_gating"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "test_suite_missing_or_weak",
+    "title": "test suite missing or weak",
+    "description": "test suite missing or weak",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "test_weakening",
+    "title": "an agent weakening tests to make them pass",
+    "description": "An agent edits, skips or loosens tests so that its change appears to pass them.",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "safety_engine"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "tool_context_missing",
+    "title": "tool context missing",
+    "description": "tool context missing",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "train_test_leakage",
+    "title": "a model scored on data it was trained on, or on a leaky split",
+    "description": "a model scored on data it was trained on, or on a leaky split",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_automl",
+      "adapt_sklearn"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "training_loop_bug",
+    "title": "setup or training-loop bugs in hand-written model code",
+    "description": "setup or training-loop bugs in hand-written model code",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_pytorch"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "translation_changes_behaviour",
+    "title": "translated code that behaves differently from the original",
+    "description": "translated code that behaves differently from the original",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.provers.polyglot"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unanalysed_campaign",
+    "title": "a campaign run without audience or spend analysis",
+    "description": "a campaign run without audience or spend analysis",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unanalysed_hazard",
+    "title": "unsafe outcomes nobody worked out in advance",
+    "description": "A system can reach a harmful state that nobody identified before it ran, so nothing was built to stop it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "csf"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unapproved_protected_change",
+    "title": "an agent changing protected code or rules without approval",
+    "description": "an agent changing protected code or rules without approval",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [
+      "coding_agent_gate"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unassessed_threat",
+    "title": "threats and vulnerabilities left unassessed",
+    "description": "threats and vulnerabilities left unassessed",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unavailable_tool",
+    "title": "a plan that relies on a tool that is not there",
+    "description": "A step needs a tool, program or harness that is not installed or not reachable.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unbounded_agent_workflow",
+    "title": "multi-agent workflows run without limits",
+    "description": "multi-agent workflows run without limits",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "agent_autogen"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unbounded_code_execution",
+    "title": "an agent running generated code without limits",
+    "description": "an agent running generated code without limits",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "agent_smolagents"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unbounded_index",
+    "title": "an index that outgrows its storage budget",
+    "description": "an index that outgrows its storage budget",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "knowledge_indexer"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unbounded_risky_operation",
+    "title": "a risky operation run without a safety bound",
+    "description": "a risky operation run without a safety bound",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "action_gating"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unbuildable_geometry",
+    "title": "an unprintable model or an invalid machine toolpath",
+    "description": "an unprintable model or an invalid machine toolpath",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.embodied.mesh3d"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchallenged_answer",
+    "title": "taking one model's first answer unchallenged",
+    "description": "A single answer is accepted without any other view or critique being sought.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "debate"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_answer",
+    "title": "an answer with skipped steps that nobody checked",
+    "description": "A worked answer skips steps, and its result is never checked against the problem.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "solver"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_big_step",
+    "title": "a big move made without checking it first",
+    "description": "An agent takes a large or hard-to-undo step without first checking its preconditions or its likely effect.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "action_logic"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_financial_risk",
+    "title": "financial risk and compliance gaps left unchecked",
+    "description": "financial risk and compliance gaps left unchecked",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_finance"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_maths_claim",
+    "title": "a maths claim accepted without a machine-checked proof",
+    "description": "a maths claim accepted without a machine-checked proof",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "lean"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_message_release",
+    "title": "a message released without checking its coverage or tone",
+    "description": "a message released without checking its coverage or tone",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_plan",
+    "title": "a plan from an agent or a model followed without checking each step against what its actions need",
+    "description": "a plan from an agent or a model followed without checking each step against what its actions need",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "cog_arch_gps"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_self_change",
+    "title": "a self-change that slips past its own checks",
+    "description": "A system changes its own prompts, settings or code, and the change is adopted without the checks it should have faced.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness",
+      "self_training"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchecked_step",
+    "title": "a multi-step workflow failing in a step nobody checked",
+    "description": "a multi-step workflow failing in a step nobody checked",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchosen_model",
+    "title": "a task sent to a paid or unsuitable model nobody chose",
+    "description": "A router picks a model the person did not choose, including one that costs money or cannot do the task.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "llm_router"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unchosen_paid_service",
+    "title": "a paid outside service used without the person choosing it",
+    "description": "a paid outside service used without the person choosing it",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_image",
+      "adapt_voice"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unclear_authority",
+    "title": "unclear authority in mixed human and AI teams",
+    "description": "unclear authority in mixed human and AI teams",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "hat_orchestrator"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unclear_success",
+    "title": "work started with no measurable test of success",
+    "description": "Nobody can say what result would count as done, so any result can be called done.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "uncontrolled_experiment",
+    "title": "an experiment without controls or proper statistics",
+    "description": "an experiment without controls or proper statistics",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "under_retrieval",
+    "title": "relevant passages that retrieval never finds",
+    "description": "under retrieval",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_colbert",
+      "ctx_elastic"
+    ],
+    "introduced_by": [
+      "cog_arch_actr",
+      "ctx_ace"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unearned_autonomy",
+    "title": "an agent running with more autonomy than its record supports",
+    "description": "an agent running with more autonomy than its record supports",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.agents.autonomy_governor"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unevaluated_model_shipped",
+    "title": "a model shipped without evaluation, drift or fairness checks",
+    "description": "a model shipped without evaluation, drift or fairness checks",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [
+      "adapt_automl",
+      "adapt_pytorch",
+      "adapt_sklearn"
+    ],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unfaithful_method_code",
+    "title": "code from a published method that does not do what the method says",
+    "description": "code from a published method that does not do what the method says",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_library_synthesizer"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unfinished_proof",
+    "title": "a proof that only looks finished",
+    "description": "A proof that still has a gap, such as an admitted step or an axiom added to make it go through, is presented as complete.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "lean"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "ungrounded_answer",
+    "title": "an answer not grounded in the person's own documents",
+    "description": "an answer not grounded in the person's own documents",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "grounding"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "ungrounded_exemplar_use",
+    "title": "ungrounded exemplar use",
+    "description": "ungrounded exemplar use",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [
+      "irrelevant_exemplar_unsourced"
+    ],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "ungrounded_recommendation",
+    "title": "a recommendation not grounded in the client's situation",
+    "description": "a recommendation not grounded in the client's situation",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unguarded_tool_use",
+    "title": "an agent using tools with no guard on what they do",
+    "description": "an agent using tools with no guard on what they do",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "agent_claude"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unhandled_agent_failure",
+    "title": "each agent handling failure differently, or not at all",
+    "description": "each agent handling failure differently, or not at all",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "agent_runtime"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unhelpful_lesson",
+    "title": "a lesson that sounds right and does not help",
+    "description": "A rule or note learned from past work is applied and makes no measurable difference, or makes things worse.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "learning"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unlearned_reward_model",
+    "title": "a planning agent acting on a model that has not learned the environment's rewards",
+    "description": "a planning agent acting on a model that has not learned the environment's rewards",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "cog_arch_aixi"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unlinked_facts",
+    "title": "facts spread across text with no links between them",
+    "description": "facts spread across text with no links between them",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_cognee"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unmanaged_complexity",
+    "title": "code growing more complex than anyone can safely change",
+    "description": "code growing more complex than anyone can safely change",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "design_governance"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unmodelled_recall",
+    "title": "a model of human recall that ignores how memory fades and interferes",
+    "description": "a model of human recall that ignores how memory fades and interferes",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "cog_arch_actr"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unnoticed_drift",
+    "title": "a slow decline in quality or speed that nobody notices",
+    "description": "a slow decline in quality or speed that nobody notices",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "solver"
+    ],
+    "introduced_by": [],
+    "planned": [
+      "g6.deploy.observability"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unproven_optimum",
+    "title": "a plan called the best when nobody proved it",
+    "description": "A solution is called optimal with no bound or proof that a better one does not exist.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "optimisation"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unranked_heuristics",
+    "title": "useful heuristics forgotten or never ranked",
+    "description": "useful heuristics forgotten or never ranked",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "learning"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreadable_source",
+    "title": "source material skipped or garbled because its format could not be read",
+    "description": "source material skipped or garbled because its format could not be read",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "knowledge_converter",
+      "knowledge_fetcher"
+    ],
+    "introduced_by": [],
+    "planned": [
+      "g6.knowledge"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unready_deploy",
+    "title": "a deployment sent without a readiness check",
+    "description": "a deployment sent without a readiness check",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.deploy.deploy_core"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreconciled_books",
+    "title": "books reported as reconciled or balanced when they are not",
+    "description": "books reported as reconciled or balanced when they are not",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_accountant"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreliable_forecast",
+    "title": "unqualified leads and unreliable pipeline forecasts",
+    "description": "unqualified leads and unreliable pipeline forecasts",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreported_hazard",
+    "title": "unreported hazards and missing time records",
+    "description": "unreported hazards and missing time records",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreproduced_failure",
+    "title": "a fix made for a failure nobody reproduced",
+    "description": "The reported failure may not reproduce on the frozen baseline, so a fix cannot be shown to remove it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "workforce"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unresumable_workflow",
+    "title": "a long workflow that cannot resume after a failure",
+    "description": "a long workflow that cannot resume after a failure",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "agent_langgraph"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unretried_model_call",
+    "title": "flaky model calls with no retry or fallback",
+    "description": "flaky model calls with no retry or fallback",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.core.llm"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreviewed_clinical_output",
+    "title": "clinical notes, plans or judgements reaching people without a clinician's review",
+    "description": "clinical notes, plans or judgements reaching people without a clinician's review",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_allied_health",
+      "g6.jobs.job_medical_surgical",
+      "g6.jobs.job_psychologist"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreviewed_design_change",
+    "title": "a design or code change made without review",
+    "description": "a design or code change made without review",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreviewed_legal_output",
+    "title": "legal judgements reaching people without a lawyer's review",
+    "description": "legal judgements reaching people without a lawyer's review",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_lawyer"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreviewed_regulated_decision",
+    "title": "an AI decision in a regulated field escaping review",
+    "description": "an AI decision in a regulated field escaping review",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.domains.regulated_ai"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unreviewed_test_cases",
+    "title": "job agents judged without reviewed test cases",
+    "description": "job agents judged without reviewed test cases",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unsafe_autonomous_action",
+    "title": "an agent taking a harmful or irreversible action nobody approved",
+    "description": "unsafe autonomous action",
+    "severity": "high",
+    "requires_human_review": true,
+    "aliases": [
+      "unsafe_action"
+    ],
+    "guarded_by": [
+      "action_gating",
+      "reliability_pipeline"
+    ],
+    "introduced_by": [
+      "adapt_rq"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unsafe_db_access",
+    "title": "unsafe or inconsistent database access",
+    "description": "unsafe or inconsistent database access",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "database"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unseen_early_warning",
+    "title": "early warnings in a system's own behaviour going unseen",
+    "description": "early warnings in a system's own behaviour going unseen",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unseen_job_failure",
+    "title": "a long job blocking an agent or failing unseen",
+    "description": "a long job blocking an agent or failing unseen",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_rq"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unstructured_business_case",
+    "title": "a business decision made without a structured case",
+    "description": "a business decision made without a structured case",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unsupported_citation",
+    "title": "a document citing sources that do not support it",
+    "description": "a document citing sources that do not support it",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "grounding"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unsupported_conclusion",
+    "title": "a conclusion the rules and facts do not support",
+    "description": "An answer asserts something that does not follow from the stated rules and facts.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "datalog",
+      "prolog"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unsystematic_tuning",
+    "title": "models tuned by hand without a systematic search",
+    "description": "models tuned by hand without a systematic search",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_automl"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "untested_agent_design",
+    "title": "an agent design judged by argument instead of by a test",
+    "description": "an agent design judged by argument instead of by a test",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "cog_arch_aixi"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "untested_prompt_change",
+    "title": "a prompt change adopted without testing whether it helps",
+    "description": "a prompt change adopted without testing whether it helps",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "untested_workflow",
+    "title": "a clever prompt mistaken for a tested workflow",
+    "description": "a clever prompt mistaken for a tested workflow",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "untracked_prompt_version",
+    "title": "losing track of which prompt or spec version produced a result",
+    "description": "losing track of which prompt or spec version produced a result",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "align_prompt_library"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "untracked_repo_change",
+    "title": "repository changes an agent made that nobody tracked",
+    "description": "repository changes an agent made that nobody tracked",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "ctx_git"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "unvalidated_idea",
+    "title": "a startup building before it validates the idea",
+    "description": "a startup building before it validates the idea",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.jobs.job_framework"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "unverified_reliability",
+    "title": "completion claimed with nothing named that would prove it",
+    "description": "The work is reported complete without the tests or evidence that would show it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "vacuous_proof",
+    "title": "a vacuous or missing property passing as a real proof",
+    "description": "a vacuous or missing property passing as a real proof",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "formal"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "verification_gap",
+    "title": "output that no independent check looks at",
+    "description": "Nothing outside the step that produced a result checks it.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "visual_check_failed",
+    "title": "an image, video or 3D output that is blank, corrupt or wrong, reported as done",
+    "description": "visual check failed",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_blender",
+      "adapt_comfyui",
+      "adapt_diagrams",
+      "adapt_ffmpeg",
+      "adapt_generative_art",
+      "adapt_image",
+      "adapt_visualisation"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "weak_link",
+    "title": "one weak step spoiling an otherwise good result",
+    "description": "one weak step spoiling an otherwise good result",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "metaharness"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "weak_sources",
+    "title": "answers built on thin or weak sources",
+    "description": "answers built on thin or weak sources",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "grounding"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "write_outside_workspace",
+    "title": "an agent writing files outside its workspace",
+    "description": "an agent writing files outside its workspace",
+    "severity": "high",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "workspace_manager"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_adjustment",
+    "title": "controlling for the wrong variables",
+    "description": "An estimate adjusts for a variable it should leave alone, or leaves out one it needs, so the effect it reports is biased.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "causal"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_jurisdiction",
+    "title": "a law or ruling from another jurisdiction given as the one asked about",
+    "description": "a law or ruling from another jurisdiction given as the one asked about",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "australian_legal_corpus"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_optimiser",
+    "title": "a poor solution from the wrong optimisation method",
+    "description": "a poor solution from the wrong optimisation method",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "optimisation"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_physics_expectation",
+    "title": "a plan based on wrong physical expectations",
+    "description": "a plan based on wrong physical expectations",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [],
+    "introduced_by": [],
+    "planned": [
+      "g6.embodied.physics_prediction"
+    ],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_problem",
+    "title": "solving the wrong problem",
+    "description": "The work answers a reading of the request that is not what the person meant.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "intent_engine"
+    ],
+    "introduced_by": [
+      "adapt_library_synthesizer",
+      "component_creator"
+    ],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_risk_tier",
+    "title": "harm or irreversibility underestimated",
+    "description": "A task is routed as low risk when a mistake would be harmful or hard to undo.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "reliability_pipeline"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_symbolic_result",
+    "title": "a wrong formula, root or integral stated with confidence",
+    "description": "A model states the result of a symbolic calculation that a computer algebra check would refuse.",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "algebra"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  },
+  {
+    "code": "wrong_transcript",
+    "title": "a transcript too empty or too long for the speech it came from",
+    "description": "a transcript too empty or too long for the speech it came from",
+    "severity": "medium",
+    "requires_human_review": false,
+    "aliases": [],
+    "guarded_by": [
+      "adapt_voice"
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
+  }
+]

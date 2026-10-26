@@ -1,0 +1,9 @@
+{
+  "id": "barthel",
+  "name": "Barthel Index",
+  "what": "an index of independence in activities of daily living",
+  "licence": {
+    "state": "unsettled",
+    "reason": "Its licence entry is not settled: G6 has not established the terms on which its items may be reproduced, displayed or scored, so no item text ships and it is not scored until a licence entry settles them."
+  }
+}

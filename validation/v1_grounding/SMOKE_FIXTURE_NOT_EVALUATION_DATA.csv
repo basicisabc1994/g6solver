@@ -1,0 +1,6 @@
+pair_id,stratum,claim,source,label
+s1,quoted,Refunds are issued within 14 days,Refunds are issued within 14 days of a return.,supported
+s2,paraphrased,A refund arrives inside two weeks,Refunds are issued within 14 days of a return.,supported
+s3,negated,Store credit expires,Store credit never expires.,unsupported
+s4,wrong_figure,Orders over $80 ship free,Orders over $50 ship free.,unsupported
+s5,near_topic,Refunds require a receipt,Refunds are issued within 14 days of a return.,unsupported

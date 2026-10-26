@@ -1,0 +1,246 @@
+{% extends "blog/base_post.html" %}
+
+{% block title %}Why Benchmarks Lie{% endblock %}
+{% block meta_description %}AI benchmarks measure pattern recall under controlled conditions, not real-world capability. Goodhart's Law predicts the problem; process-oriented evaluation offers a way forward.{% endblock %}
+{% block post_headline %}Why Benchmarks Lie{% endblock %}
+{% block post_date %}2025-03-29{% endblock %}
+{% block post_description %}AI benchmarks measure pattern recall under controlled conditions, not real-world capability. Goodhart's Law predicts the problem; process-oriented evaluation offers a way forward.{% endblock %}
+
+{% block content %}
+<article class="py-24">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <header class="mb-12">
+            <p class="text-g6-indigo font-mono text-sm mb-4 gsap-reveal">Research</p>
+            <h1 class="text-4xl sm:text-5xl font-bold text-white mb-4 gsap-reveal">Why Benchmarks Lie</h1>
+            <p class="text-gray-500 gsap-reveal">G6Solver Research Team</p>
+        </header>
+
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+
+            <!-- ═══════════════════════════════════════════
+                 THESIS: The benchmark triumph narrative
+                 ═══════════════════════════════════════════ -->
+
+            <p class="gsap-reveal">The numbers are extraordinary. Large language models now pass the Uniform Bar Examination, score in the top percentiles on medical licensing tests, solve competition-level mathematics problems, and achieve human-level performance on graduate-level science questions. Each new model release brings a fresh cascade of benchmark scores, each one higher than the last, each one accompanied by the implicit narrative: AI is getting smarter. We are on an exponential curve. General intelligence is within reach.<sup><a href="#ref-1" class="text-g6-green hover:text-white transition-colors no-underline">[1]</a></sup></p>
+
+            <p class="gsap-reveal">The benchmarks are not fabricated. The performance is real. When a model achieves a 90th-percentile score on the bar exam, it has genuinely produced responses that professional examiners would score at that level. When it solves mathematical olympiad problems, the proofs check out. When it passes the United States Medical Licensing Examination, its diagnostic reasoning is often clinically sound.<sup><a href="#ref-2" class="text-g6-green hover:text-white transition-colors no-underline">[2]</a></sup> These are not tricks or statistical artefacts. They represent a genuine and remarkable expansion of what automated systems can do.</p>
+
+            <p class="gsap-reveal">The policy implications seem to follow naturally. If AI can pass the bar, it can assist with legal work. If it can pass medical boards, it can support clinical decision-making. If it can solve graduate-level science problems, it can accelerate research. The benchmarks serve as a shared legibility layer &mdash; a way for researchers, investors, policymakers, and the public to track progress along a seemingly clear trajectory from narrow capability to general intelligence.</p>
+
+            <p class="gsap-reveal">This narrative is compelling, internally consistent, and almost entirely misleading.</p>
+
+            <!-- ═══════════════════════════════════════════
+                 ANTITHESIS: What benchmarks actually measure
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Map Is Not the Territory</h2>
+
+            <p class="gsap-reveal">The problem begins with a question that is almost never asked: what, exactly, does a benchmark score measure? The assumption is that it measures intelligence, or capability, or competence &mdash; some general property that transfers from the test to the real world. But this assumption is doing a great deal of work, and it collapses under scrutiny.</p>
+
+            <p class="gsap-reveal">A benchmark is a standardised evaluation conducted under controlled conditions. The questions are drawn from a fixed distribution. The format is constrained &mdash; typically multiple choice or short-form response. The context is complete and self-contained; the test-taker is not required to gather additional information, manage ambiguity, or navigate the social and institutional complexities that surround real-world decision-making. These constraints are not incidental. They are what make benchmarks tractable, reproducible, and comparable. But they are also what make benchmarks <em>easy</em> in a way that reality is not.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">Fran&ccedil;ois Chollet articulated this distinction with characteristic precision. In &ldquo;On the Measure of Intelligence,&rdquo; he argued that most AI benchmarks confuse <em>skill</em> with <em>intelligence</em>.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup> Skill is performance on a specific task distribution. Intelligence is the efficiency with which an agent acquires new skills when confronted with novel tasks &mdash; tasks it has not been optimised for. A model that memorises the bar exam corpus and achieves a high score has demonstrated skill. Whether it has demonstrated intelligence depends on whether it can transfer that capability to genuinely novel legal reasoning under conditions that differ from the exam format.</p>
+
+            <p class="gsap-reveal">The evidence suggests that transfer is far more limited than benchmark scores imply. Models that excel on standardised tests often struggle with slight reformulations of the same problems &mdash; changes in wording, novel framings, or problems that require integrating information across domains in ways the training data did not exemplify.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup> This is the signature of sophisticated pattern matching, not general reasoning. A medical student who passes board exams but cannot diagnose an unusual presentation would be considered undertrained. We hold AI to a different standard, and the benchmarks enable this double standard.</p>
+
+            <!-- ── Diagram 1: Benchmark Window vs. Real-World Complexity ── -->
+            <div class="gsap-reveal my-12">
+                <svg viewBox="0 0 800 220" class="w-full" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagram showing benchmarks as a narrow window onto a vast space of real-world complexity">
+                    <defs>
+                        <filter id="bench-glow-1" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="6" result="blur"/>
+                            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                        </filter>
+                    </defs>
+
+                    <!-- Large ellipse: Real-World Complexity -->
+                    <ellipse cx="400" cy="115" rx="360" ry="95" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.10)" stroke-width="1.5" stroke-dasharray="6,4"/>
+                    <text x="400" y="205" text-anchor="middle" fill="#6b7280" font-size="12" font-style="italic">Real-World Task Space</text>
+
+                    <!-- Ambiguity region -->
+                    <text x="100" y="75" text-anchor="middle" fill="#4b5563" font-size="10">Ambiguity</text>
+                    <text x="100" y="90" text-anchor="middle" fill="#4b5563" font-size="10">Incomplete info</text>
+
+                    <!-- Novel combinations region -->
+                    <text x="680" y="75" text-anchor="middle" fill="#4b5563" font-size="10">Novel combinations</text>
+                    <text x="680" y="90" text-anchor="middle" fill="#4b5563" font-size="10">Cross-domain transfer</text>
+
+                    <!-- Adversarial region -->
+                    <text x="160" y="165" text-anchor="middle" fill="#4b5563" font-size="10">Adversarial inputs</text>
+
+                    <!-- Dynamic context -->
+                    <text x="640" y="160" text-anchor="middle" fill="#4b5563" font-size="10">Dynamic context</text>
+                    <text x="640" y="175" text-anchor="middle" fill="#4b5563" font-size="10">Shifting requirements</text>
+
+                    <!-- Social reasoning -->
+                    <text x="300" y="175" text-anchor="middle" fill="#4b5563" font-size="10">Social reasoning</text>
+
+                    <!-- Common sense -->
+                    <text x="500" y="175" text-anchor="middle" fill="#4b5563" font-size="10">Embodied common sense</text>
+
+                    <!-- Small highlighted box: Benchmark Window -->
+                    <rect x="320" y="75" width="160" height="70" rx="10" fill="rgba(99,102,241,0.08)" stroke="#6366f1" stroke-width="2"/>
+                    <rect x="320" y="75" width="160" height="70" rx="10" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.3" filter="url(#bench-glow-1)"/>
+                    <text x="400" y="100" text-anchor="middle" fill="#6366f1" font-size="12" font-weight="700">Benchmark</text>
+                    <text x="400" y="116" text-anchor="middle" fill="#6366f1" font-size="12" font-weight="700">Window</text>
+                    <text x="400" y="134" text-anchor="middle" fill="#a5b4fc" font-size="9">Fixed distribution</text>
+
+                    <!-- Label -->
+                    <text x="400" y="25" text-anchor="middle" fill="#9ca3af" font-size="11">Benchmarks measure a narrow, controlled slice of the full capability space</text>
+                </svg>
+                <p class="text-center text-xs text-gray-600 mt-2">Fig. 1 &mdash; AI benchmarks evaluate performance within a small, well-defined region of the vast real-world task space</p>
+            </div>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">When the Measure Becomes the Target</h2>
+
+            <p class="gsap-reveal">The British economist Charles Goodhart observed in 1975 that &ldquo;any observed statistical regularity will tend to collapse once pressure is placed upon it for control purposes.&rdquo;<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup> Marilyn Strathern later generalised this: &ldquo;When a measure becomes a target, it ceases to be a good measure.&rdquo;<sup><a href="#ref-7" class="text-g6-green hover:text-white transition-colors no-underline">[7]</a></sup> This principle, known as Goodhart's Law, is one of the most robust findings in social science, and it applies to AI benchmarks with particular force.</p>
+
+            <p class="gsap-reveal">The AI industry optimises for benchmarks. This is not conspiratorial &mdash; it is structural. Researchers are evaluated on benchmark improvements. Companies market their models based on benchmark scores. Funding decisions are influenced by benchmark performance. The entire ecosystem is calibrated to the signal that benchmarks provide. And Goodhart's Law predicts exactly what happens next: the benchmarks become the target, and the correlation between benchmark performance and real-world capability degrades.<sup><a href="#ref-6" class="text-g6-green hover:text-white transition-colors no-underline">[6]</a></sup></p>
+
+            <p class="gsap-reveal">The mechanisms are well-documented. Training data contamination &mdash; where benchmark questions or closely related material appear in the training corpus &mdash; is increasingly difficult to prevent as models are trained on ever-larger slices of the internet.<sup><a href="#ref-8" class="text-g6-green hover:text-white transition-colors no-underline">[8]</a></sup> Benchmark overfitting, where architectural and hyperparameter choices are tuned to specific benchmarks rather than general capability, is pervasive. And there is a subtler effect: the benchmarks themselves shape what capabilities are developed. Problems that are easy to benchmark get attention and resources. Problems that are hard to benchmark &mdash; common-sense reasoning, creativity, robustness to distribution shift, ethical judgement &mdash; are systematically under-invested.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">Raji et al. named this phenomenon directly in their analysis of AI evaluation practices, arguing that the field suffers from a &ldquo;benchmark culture&rdquo; that privileges quantitative comparisons over meaningful assessment of system behaviour.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup> Their paper, with its deliberately provocative title referencing &ldquo;the everything in the whole wide world benchmark,&rdquo; makes the case that the proliferation of benchmarks has not improved our ability to evaluate AI systems &mdash; it has given us a false sense of precision about questions that remain fundamentally open.</p>
+
+            <p class="gsap-reveal">The ARC-AGI benchmark represents a deliberate attempt to break this pattern.<sup><a href="#ref-9" class="text-g6-green hover:text-white transition-colors no-underline">[9]</a></sup> Designed by Chollet to test novel abstraction rather than memorised patterns, it generates tasks that are trivially easy for humans but remain challenging for large language models. The benchmark explicitly targets the gap between pattern recall and genuine generalisation. The persistent difficulty that state-of-the-art models face on ARC-AGI tasks &mdash; despite their dominance on conventional benchmarks &mdash; is perhaps the clearest evidence that benchmark success and cognitive capability are measuring different things.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Deeper Problem: What We Fail to Measure</h2>
+
+            <p class="gsap-reveal">The limitations of benchmarks become starkest when you consider what they do not measure at all. Intelligence &mdash; whether human or artificial &mdash; is not a single scalar quantity. It encompasses perception, reasoning, planning, learning, social cognition, emotional regulation, metacognition, and the ability to operate effectively under uncertainty and resource constraints. Benchmarks, by their nature, isolate individual capabilities and test them in sterile conditions. They cannot capture the <em>integration</em> of capabilities that characterises intelligent behaviour in complex environments.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">Consider metacognition &mdash; the capacity to monitor one's own reasoning processes, recognise uncertainty, and adjust strategy accordingly. A human expert, when confronted with a problem at the edge of their competence, typically knows they are uncertain. They slow down, seek additional information, consult colleagues, or explicitly flag their uncertainty. This metacognitive awareness is not a luxury; it is what makes expertise safe. A confident expert who cannot recognise the limits of their knowledge is more dangerous than a cautious one who can.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
+
+            <p class="gsap-reveal">No current benchmark measures this. Models are evaluated on the correctness of their outputs, not on the quality of their uncertainty estimation. A model that answers every question with supreme confidence &mdash; right or wrong &mdash; scores exactly the same as a model that correctly identifies when it is uncertain, as long as their accuracy rates are equal. The benchmark is blind to a dimension of capability that may matter more than raw accuracy in real-world deployment.</p>
+
+            <p class="gsap-reveal">Similarly, benchmarks do not measure robustness to adversarial or out-of-distribution inputs. They do not measure the ability to ask clarifying questions when a problem is underspecified. They do not measure the ability to explain reasoning in a way that allows human oversight. They do not measure the ability to integrate new information that contradicts prior beliefs. They do not measure the ability to operate safely under resource constraints. Each of these capabilities is essential for trustworthy AI deployment, and none of them appears on any leaderboard.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <!-- ── Diagram 2: Three-column grid — dimensions benchmarks miss ── -->
+            <div class="gsap-reveal my-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <!-- Column 1: Metacognition -->
+                <div class="rounded-xl glass p-6 text-center hover:border-g6-indigo/40 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-g6-indigo/10 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="9"/>
+                            <circle cx="12" cy="12" r="4"/>
+                            <circle cx="12" cy="12" r="1"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Metacognition</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed">Knowing what you don't know. Calibrated uncertainty. Recognising the boundary of competence and signalling it honestly.</p>
+                </div>
+                <!-- Column 2: Robustness -->
+                <div class="rounded-xl glass p-6 text-center hover:border-g6-violet/40 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-g6-violet/10 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2L3 7v7c0 5 4 8.5 9 9.5 5-1 9-4.5 9-9.5V7l-9-5z"/>
+                            <path d="M9 12l2 2 4-4"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Robustness</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed">Graceful degradation under adversarial inputs, distribution shift, and novel combinations unseen in training data.</p>
+                </div>
+                <!-- Column 3: Process Quality -->
+                <div class="rounded-xl glass p-6 text-center hover:border-g6-pink/40 transition-colors duration-300">
+                    <div class="w-12 h-12 rounded-xl bg-pink-500/10 flex items-center justify-center mx-auto mb-4">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 6h16M4 12h16M4 18h10"/>
+                            <path d="M20 15l-3 3 3 3" opacity="0.6"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-sm font-semibold text-white mb-2">Process Quality</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed">Transparent reasoning chains that can be audited, challenged, and independently verified by human overseers.</p>
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════════
+                 SYNTHESIS: Process-oriented evaluation
+                 ═══════════════════════════════════════════ -->
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Evaluating the Process, Not Just the Output</h2>
+
+            <p class="gsap-reveal">If benchmarks measure the wrong thing, what would measuring the right thing look like? The answer points toward a fundamental shift in evaluation philosophy: from output-oriented assessment to process-oriented assessment.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">In human education, we already understand this distinction. A mathematics exam that only checks final answers tells you whether the student got the right number. A mathematics exam that requires showing work tells you whether the student understands the underlying principles. The second form of evaluation is harder to administer, harder to grade, and far more informative. It distinguishes between a student who understands calculus and a student who memorised the answer key.</p>
+
+            <p class="gsap-reveal">The analogy to AI evaluation is direct. Current benchmarks check the &ldquo;final answer&rdquo; &mdash; did the model produce the correct output? Process-oriented evaluation would examine the reasoning chain: Did the model identify the relevant information? Did it consider alternative hypotheses? Did it flag its uncertainties? Did it reach its conclusion through logically valid steps? Are those steps independently verifiable?<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
+
+            <p class="gsap-reveal">This shift requires systems that can <em>externalise</em> their reasoning in a form that admits verification. Chain-of-thought prompting is a step in this direction, but it is a weak one &mdash; the model generates a reasoning trace, but that trace is itself generated by the same probabilistic process and may be a post-hoc rationalisation rather than a faithful record of the computational steps that produced the output.<sup><a href="#ref-13" class="text-g6-green hover:text-white transition-colors no-underline">[13]</a></sup> What is needed is not a model that can explain its reasoning, but a system architecture where the reasoning steps are <em>first-class objects</em> that can be inspected, validated, and challenged.</p>
+
+            <p class="gsap-reveal">Imagine a system where every claim in a generated response is linked to a reasoning step, every reasoning step is linked to evidence, and every evidential link can be independently checked. The evaluation of such a system would not ask &ldquo;Did it get the right answer?&rdquo; but &ldquo;Is every step in its reasoning chain valid, and does the chain support the conclusion?&rdquo; This is a much harder criterion to satisfy, and a much more meaningful one.</p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">Toward Honest Measurement</h2>
+
+            <p class="gsap-reveal">The practical implications extend beyond evaluation methodology. If we take seriously the claim that benchmarks are unreliable proxies for real-world capability, then the entire framework for assessing AI readiness needs to change. Deployment decisions based on benchmark scores are, at best, weakly informed. At worst, they create a false sense of security that leads organisations to deploy systems in high-stakes contexts where the gap between benchmark performance and real-world robustness causes genuine harm.<sup><a href="#ref-5" class="text-g6-green hover:text-white transition-colors no-underline">[5]</a></sup></p>
+
+            <p class="gsap-reveal">What would better evaluation look like in practice? Several principles suggest themselves. First, evaluation should be <em>adversarial</em> by default &mdash; not just testing whether the system can answer standard questions correctly, but actively probing for failure modes, edge cases, and brittle behaviours. Red-teaming, which subjects systems to deliberate attack, is more informative than passive benchmarking.<sup><a href="#ref-11" class="text-g6-green hover:text-white transition-colors no-underline">[11]</a></sup></p>
+
+            <p class="gsap-reveal">Second, evaluation should measure <em>calibration</em> &mdash; the correspondence between the system's expressed confidence and its actual accuracy. A system that says &ldquo;I am 90% sure&rdquo; and is right 90% of the time is well-calibrated. A system that says &ldquo;I am 90% sure&rdquo; and is right 60% of the time is dangerously overconfident. Current benchmarks do not measure calibration, which means they cannot distinguish between a knowledgeable system and a confidently wrong one.<sup><a href="#ref-10" class="text-g6-green hover:text-white transition-colors no-underline">[10]</a></sup></p>
+
+            <p class="gsap-reveal">Third, evaluation should be <em>longitudinal</em> &mdash; testing not just point-in-time performance but consistency over extended interactions, resistance to drift, and the ability to maintain coherent reasoning across complex, multi-step tasks. A system that performs brilliantly on isolated queries but degrades over a thirty-step reasoning chain is not ready for the real world, no matter what its benchmark scores say.</p>
+
+            <p class="gsap-reveal">Fourth, and perhaps most importantly, evaluation should be <em>process-transparent</em>. Systems should be required to expose their reasoning chains in a format that admits independent verification. Not as a nice-to-have feature, but as a precondition for deployment in any context where errors have consequences. If you cannot audit the reasoning, you cannot trust the conclusion.<sup><a href="#ref-12" class="text-g6-green hover:text-white transition-colors no-underline">[12]</a></sup></p>
+
+            <h2 class="text-2xl font-bold text-white mt-12 mb-4 gsap-reveal">The Score Is Not the Capability</h2>
+
+            <p class="gsap-reveal">None of this is to say that benchmarks are useless. They serve a real purpose as coarse-grained indicators of progress, as debugging tools for identifying capability regressions, and as shared reference points for research communication. The problem is not that benchmarks exist but that they are treated as definitive measures of intelligence rather than partial, imperfect, gameable proxies for specific capabilities under specific conditions.<sup><a href="#ref-3" class="text-g6-green hover:text-white transition-colors no-underline">[3]</a></sup></p>
+
+            <p class="gsap-reveal">The history of psychometrics offers a cautionary parallel. IQ tests, when first developed, were treated as objective measures of general intelligence. Decades of research revealed them to be culturally biased, narrowly focused, and weakly predictive of real-world outcomes beyond academic performance. The tests themselves were not worthless &mdash; they measured something real &mdash; but the claims made on the basis of those measurements far exceeded what the data could support. AI benchmarks are in a similar position today: real measurements, inflated interpretations.<sup><a href="#ref-4" class="text-g6-green hover:text-white transition-colors no-underline">[4]</a></sup></p>
+
+            <p class="gsap-reveal">The path forward requires intellectual honesty. When a model achieves a high benchmark score, the correct interpretation is not &ldquo;this model is intelligent&rdquo; but &ldquo;this model performs well on this specific evaluation under these specific conditions.&rdquo; The gap between those two statements is where most of the interesting &mdash; and most of the dangerous &mdash; questions live.</p>
+
+            <p class="gsap-reveal">What would it mean to build AI systems that could survive genuinely rigorous evaluation? Systems whose reasoning chains are transparent and independently verifiable. Systems that know what they do not know and say so. Systems that perform consistently under adversarial conditions, not just friendly ones. Systems that can be audited, challenged, and held accountable.</p>
+
+            <p class="gsap-reveal font-semibold text-white">The benchmarks will continue to rise. The scores will continue to impress. The question that matters is whether we have the discipline to look past the numbers and ask what they actually mean &mdash; and the honesty to build evaluation systems worthy of the capabilities we claim to measure.</p>
+        </div>
+
+        <!-- ── References ── -->
+        <section id="references" class="mt-16 pt-8 border-t border-white/10 gsap-reveal">
+            <h3 class="text-lg font-semibold text-white mb-6">References &amp; Further Reading</h3>
+            <ol class="space-y-3 text-sm text-gray-500 leading-relaxed list-decimal pl-5">
+                <li id="ref-1">
+                    OpenAI. (2023). <a href="https://arxiv.org/abs/2303.08774" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>GPT-4 technical report</em></a>. arXiv. &mdash; Documents GPT-4's performance on professional and academic benchmarks including the bar exam and USMLE.
+                </li>
+                <li id="ref-2">
+                    Singhal, K., Azizi, S., Tu, T., Mahdavi, S. S., Wei, J., Chung, H. W., Scales, N., Tanwani, A., Cole-Lewis, H., Pfohl, S., Payne, P., Seneviratne, M., Gamber, P., Kelly, C., Babiker, A., Sch&auml;rli, N., Chowdhery, A., Mansfield, P., Demner-Fushman, D., &hellip; Natarajan, V. (2023). <a href="https://arxiv.org/abs/2212.13138" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Large language models encode clinical knowledge</em></a>. <em>Nature</em>, 620, 172&ndash;180. &mdash; Demonstrates LLM performance on medical benchmarks and the gap between benchmark accuracy and clinical reasoning.
+                </li>
+                <li id="ref-3">
+                    Raji, I. D., Bender, E. M., Paullada, A., Denton, E., &amp; Hanna, A. (2021). <a href="https://doi.org/10.1145/3442188.3445922" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>AI and the everything in the whole wide world benchmark</em></a>. <em>Proceedings of the Conference on Neural Information Processing Systems (NeurIPS)</em>. &mdash; Critical examination of benchmark culture and the gap between evaluation scores and meaningful capability assessment.
+                </li>
+                <li id="ref-4">
+                    Chollet, F. (2019). <a href="https://arxiv.org/abs/1911.01547" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>On the measure of intelligence</em></a>. arXiv. &mdash; Proposes that intelligence should be measured by skill-acquisition efficiency over novel tasks, not task-specific performance.
+                </li>
+                <li id="ref-5">
+                    Srivastava, A., Rastogi, A., Rao, A., Shoeb, A. A. M., Abid, A., Fisch, A., Brown, A. R., Santoro, A., Gupta, A., Garber-Barron, A., &hellip; Wu, Z. (2023). <a href="https://arxiv.org/abs/2206.04615" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Beyond the imitation game: Quantifying and extrapolating the capabilities of language models</em></a>. <em>Transactions on Machine Learning Research</em>. &mdash; BIG-Bench: documents capability brittleness and the gap between average-case and adversarial-case performance.
+                </li>
+                <li id="ref-6">
+                    Goodhart, C. A. E. (1984). <a href="https://link.springer.com/chapter/10.1007/978-1-349-17295-5_4" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Problems of monetary management: The U.K. experience</em></a>. In C. A. E. Goodhart (Ed.), <em>Monetary theory and practice</em> (pp. 91&ndash;121). Macmillan. &mdash; The original statement of Goodhart's Law on the collapse of statistical regularities under optimisation pressure.
+                </li>
+                <li id="ref-7">
+                    Strathern, M. (1997). <a href="https://doi.org/10.1002/(SICI)1234-981X(199707)5:3%3C305::AID-EURO184%3E3.0.CO;2-E" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>&lsquo;Improving ratings&rsquo;: Audit in the British university system</em></a>. <em>European Review</em>, 5(3), 305&ndash;321. &mdash; Generalises Goodhart's Law: &ldquo;When a measure becomes a target, it ceases to be a good measure.&rdquo;
+                </li>
+                <li id="ref-8">
+                    Magar, I., &amp; Schwartz, R. (2022). <a href="https://arxiv.org/abs/2202.07646" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Data contamination: From memorization to exploitation</em></a>. <em>Proceedings of ACL</em>. &mdash; Documents how training data contamination inflates benchmark scores and undermines evaluation validity.
+                </li>
+                <li id="ref-9">
+                    Chollet, F. (2024). <a href="https://arcprize.org/" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>ARC-AGI: Abstraction and Reasoning Corpus for Artificial General Intelligence</em></a>. ARC Prize Foundation. &mdash; A benchmark designed to test novel abstraction, resisting memorisation-based shortcuts.
+                </li>
+                <li id="ref-10">
+                    Guo, C., Pleiss, G., Sun, Y., &amp; Weinberger, K. Q. (2017). <a href="https://arxiv.org/abs/1706.04599" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>On calibration of modern neural networks</em></a>. <em>Proceedings of ICML</em>. &mdash; Demonstrates that modern deep networks are poorly calibrated, with confidence scores that do not reflect true accuracy.
+                </li>
+                <li id="ref-11">
+                    Ganguli, D., Lovitt, L., Kernion, J., Askell, A., Bai, Y., Kadavath, S., Mann, B., Perez, E., Schiefer, N., Ndousse, K., Jones, A., Bowman, S., Chen, A., Conerly, T., DasSarma, N., Drain, D., Elhage, N., El-Showk, S., Fort, S., &hellip; Clark, J. (2022). <a href="https://arxiv.org/abs/2209.07858" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Red teaming language models to reduce harms: Methods, scaling behaviors, and lessons learned</em></a>. arXiv. &mdash; On adversarial evaluation as a more informative alternative to passive benchmarking.
+                </li>
+                <li id="ref-12">
+                    Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike, J., Schulman, J., Sutskever, I., &amp; Cobbe, K. (2024). <a href="https://arxiv.org/abs/2305.20050" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Let's verify step by step</em></a>. <em>Proceedings of ICLR</em>. &mdash; Demonstrates that process-based evaluation (verifying each reasoning step) outperforms outcome-based evaluation for mathematical reasoning.
+                </li>
+                <li id="ref-13">
+                    Turpin, M., Michael, J., Perez, E., &amp; Bowman, S. R. (2024). <a href="https://arxiv.org/abs/2305.04388" target="_blank" rel="noopener" class="text-gray-400 hover:text-white transition-colors"><em>Language models don't always say what they think: Unfaithful explanations in chain-of-thought prompting</em></a>. <em>Proceedings of NeurIPS</em>. &mdash; Shows that chain-of-thought traces can be post-hoc rationalisations rather than faithful records of the model's actual computation.
+                </li>
+            </ol>
+        </section>
+
+        <footer class="mt-16 pt-8 border-t border-white/10">
+            <a href="{% url 'blog:index' %}" class="text-g6-indigo hover:text-g6-violet transition-colors">&larr; Back to essays</a>
+        </footer>
+    </div>
+</article>
+{% endblock %}

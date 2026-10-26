@@ -1,0 +1,39 @@
+{
+  "version": "e2d-1",
+  "tiers": [
+    {"name": "T0_REUSE", "strategy_types": ["cache"], "reliability_class": "verified_before", "binds_budget": false,
+     "chosen_automatically": false,
+     "covers": "a result an independent check verified, reused within its validity (E2b); the plan names it"},
+    {"name": "T1_DETERMINISTIC", "strategy_types": ["deterministic"], "reliability_class": "objective",
+     "binds_budget": true, "chosen_automatically": false,
+     "covers": "an op whose reviewed contract declares it model-free: the same inputs give the same answer"},
+    {"name": "T2_LOW_COST", "strategy_types": ["capability", "retrieval"], "reliability_class": "unmeasured",
+     "binds_budget": true, "chosen_automatically": false,
+     "covers": "an op that may reach a model, whose contract declares a per-call cost at or under low_cost_ceiling"},
+    {"name": "T3_STANDARD", "strategy_types": ["capability", "retrieval"], "reliability_class": "unmeasured",
+     "binds_budget": true, "chosen_automatically": false,
+     "covers": "any other op that may reach a model, its cost declared above low_cost_ceiling or not declared"},
+    {"name": "T4_HIGH_REASONING", "strategy_types": ["worker"], "reliability_class": "draft_until_checked",
+     "binds_budget": false, "chosen_automatically": true,
+     "covers": "the owner's own chat writes the step: a draft until its check judges it, at a cost G6 is not told"},
+    {"name": "T5_MULTI_WORKER", "strategy_types": ["worker_plus_verifier", "ensemble"],
+     "reliability_class": "draft_until_checked", "binds_budget": false, "chosen_automatically": false,
+     "covers": "a step the owner's chat delegates to children (V4a); the scheduler forms none by itself"},
+    {"name": "T6_SPECIALIST", "strategy_types": ["worker"], "reliability_class": "unmeasured", "binds_budget": true,
+     "chosen_automatically": false, "covers": "a specialist worker: none is formed automatically yet"},
+    {"name": "T7_HUMAN", "strategy_types": ["human"], "reliability_class": "person", "binds_budget": false,
+     "chosen_automatically": true,
+     "covers": "a person decides, approves or corrects; never above a mode's ceiling, being the approval itself"}
+  ],
+  "low_cost_ceiling": {"amount_minor_units": 5, "currency": "AUD"},
+  "modes": {
+    "fast": {"escalate_up_to": "T3_STANDARD", "max_attempts_per_work_unit": 2, "adds_verification": [],
+             "soft_limit_percent": 50},
+    "balanced": {"escalate_up_to": "T4_HIGH_REASONING", "max_attempts_per_work_unit": null, "adds_verification": [],
+                 "soft_limit_percent": null},
+    "thorough": {"escalate_up_to": "T5_MULTI_WORKER", "max_attempts_per_work_unit": null,
+                 "adds_verification": ["independent_check"], "soft_limit_percent": null},
+    "critical": {"escalate_up_to": "T7_HUMAN", "max_attempts_per_work_unit": null,
+                 "adds_verification": ["objective_check", "person_approved"], "soft_limit_percent": null}
+  }
+}
