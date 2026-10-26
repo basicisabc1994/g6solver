@@ -97,7 +97,7 @@ def held_copy(value: Any, state: str, *, _depth: int = 0) -> Any:
     return value
 
 
-def _corrected(value: Any, state: str) -> Any:
+def corrected_result(value: Any, state: str) -> Any:
     """The result copy a door hands on: its top-level state fields say no more than ``state`` (``claimed_completion_
     state`` keeps what it said when that was stronger), and nothing inside it reads as ``verified`` unless the door
     kept a ``verified``."""
@@ -201,8 +201,8 @@ def door_reply(component: str, op: str, outcome: Any, *, caller: Mapping[str, An
     producer = producer_of(component, registry) if said == "verified" else None
     envelope = door_envelope(said, who=who, producer=producer, value=value, caller=caller, evidence=evidence,
                              warning_card=found, request_id=request_id, run_id=run_id)
-    return {"ok": True, "result": _corrected(value, envelope["completion_state"]), **envelope}
+    return {"ok": True, "result": corrected_result(value, envelope["completion_state"]), **envelope}
 
 
-__all__ = ["HELD_NEXT_STEP", "THREAT_STATEMENT", "blocked_reply", "card", "door_envelope", "door_reply", "held_copy",
-           "producer_of", "said_state", "state_of"]
+__all__ = ["HELD_NEXT_STEP", "THREAT_STATEMENT", "blocked_reply", "card", "corrected_result", "door_envelope", "door_reply",
+           "held_copy", "producer_of", "said_state", "state_of"]
