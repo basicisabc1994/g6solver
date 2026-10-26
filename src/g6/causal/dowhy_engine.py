@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The second engine: DoWhy (``pip install 'g6[causal]'``), imported only when an op runs.
+"""The second engine: DoWhy (``pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'``), imported only when an op runs.
 
 G6 hands DoWhy a networkx graph it builds itself and a DataFrame it builds from the caller's rows, never text: DoWhy
 reads a string graph as a file path or through pydot, and neither is used. Every DoWhy call runs inside

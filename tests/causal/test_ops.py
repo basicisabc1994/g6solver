@@ -25,7 +25,7 @@ from g6.causal.envelope import (
 from g6.causal.ops import MAX_TIME_LIMIT_S, adjustment_sets, backdoor_paths, d_separated, identify, instruments
 
 HAS_DOWHY = importlib.util.find_spec("dowhy") is not None
-needs_dowhy = pytest.mark.skipif(not HAS_DOWHY, reason="DoWhy is not installed (pip install 'g6[causal]')")
+needs_dowhy = pytest.mark.skipif(not HAS_DOWHY, reason="DoWhy is not installed (pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver')")
 
 CONFOUNDER = {"nodes": ["Z", "T", "Y"], "edges": [["Z", "T"], ["Z", "Y"], ["T", "Y"]]}
 M_GRAPH = "digraph { A -> T; A -> M; B -> M; B -> Y; T -> Y }"
@@ -119,14 +119,14 @@ def test_without_dowhy_every_graph_op_answers_and_says_one_engine_ran(op: str, n
     assert r.completion_state == "qualified-draft" and r.engines == ["pure_python"], (r.code, r.reason)
     card = r.warning_card
     assert card["code"] == ONE_ENGINE and "DoWhy is not installed here" in card["message"]
-    assert "pip install 'g6[causal]'" in card["suggested_action"]
+    assert "pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'" in card["suggested_action"]
 
 
 @pytest.mark.parametrize("op", list(CALLS))
 def test_without_dowhy_asking_for_it_is_refused(op: str, no_dowhy) -> None:
     r = CALLS[op](engine="dowhy")
     assert r.completion_state == "blocked-escalated" and r.code == ENGINE_UNAVAILABLE
-    assert "pip install 'g6[causal]'" in r.warning_card["suggested_action"] and r.answer == {}
+    assert "pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'" in r.warning_card["suggested_action"] and r.answer == {}
 
 
 @pytest.mark.parametrize(("call", "code", "says"), [

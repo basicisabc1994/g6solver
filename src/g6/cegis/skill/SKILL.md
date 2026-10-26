@@ -110,10 +110,10 @@ Rank-deficient samples refuse. Near-duplicates and repeated tuning against the s
 
 ## What it needs
 
-- `pip install "g6[optim]"` for numeric fitting: NumPy and SciPy (BSD-3-Clause), loaded at call time.
+- `pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"` for numeric fitting: NumPy and SciPy (BSD-3-Clause), loaded at call time.
   Without either, fitting returns `G6_E_CEGIS_TEMPLATE_EXTRA`. The existing integer-hole loop needs neither.
 
-- `pip install "g6[formal]"` for Z3, used only by `Z3Verifier`; without it every verifier check is
+- `pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` for Z3, used only by `Z3Verifier`; without it every verifier check is
   `inconclusive` (`z3_unavailable`). The loop itself runs on Python alone.
 - No outside program: candidates run in a child Python process that G6 starts itself.
 

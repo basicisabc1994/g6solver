@@ -18,7 +18,7 @@ from g6.invariants import check_envelope
 from g6.mcp import invoke_reply
 
 HAS_Z3 = importlib.util.find_spec("z3") is not None
-needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal]')")
+needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 STATES = {"qualified-draft", "blocked-escalated"}
 
 Z3_CALLS = {

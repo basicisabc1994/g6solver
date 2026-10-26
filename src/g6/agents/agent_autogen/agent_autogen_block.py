@@ -42,7 +42,7 @@ _OPS: dict[str, str] = {
                   "what the gate does with each tool; nothing is run",
 }
 _ACTIONS = {
-    NOT_INSTALLED: "Install the extra: pip install 'g6[agents-autogen]'.",
+    NOT_INSTALLED: "Install the extra: pip install 'g6[agents-autogen] @ git+https://github.com/basicisabc1994/g6solver'.",
     CHECKED: "Run it with run_team, from Python or where the server's owner allows it; start with dry_run true.",
     TEAM_REQUIRED: "Give the team (its pattern and agents) and the task.",
     "G6_E_AGENT_AUTOGEN_NO_MODEL": "Configure a model for G6 (G6_LLM_PROVIDER, with its key in your key file), or run "

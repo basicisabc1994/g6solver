@@ -94,7 +94,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[causal]"` for DoWhy, imported only when an op runs. Without it the graph ops still answer in pure
+- `pip install "g6[causal] @ git+https://github.com/basicisabc1994/g6solver"` for DoWhy, imported only when an op runs. Without it the graph ops still answer in pure
   Python (`G6_E_CAUSAL_ONE_ENGINE`), and `estimate_effect` is `blocked-escalated` with
   `G6_E_CAUSAL_ENGINE_UNAVAILABLE` and the install line.
 - No outside program. No op runs code, reads a file or reaches the network, so none is sensitive.

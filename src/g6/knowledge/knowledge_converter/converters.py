@@ -220,7 +220,7 @@ class PdfConverter:
     name, media_types, extra = "pypdf", ("application/pdf",), "docs"
 
     def available(self) -> str:
-        return "" if _pypdf() is not None else "pypdf is not installed: pip install 'g6[docs]'"
+        return "" if _pypdf() is not None else "pypdf is not installed: pip install 'g6[docs] @ git+https://github.com/basicisabc1994/g6solver'"
 
     def convert(self, data: bytes, source: Source, media_type: str, charset: str) -> Converted:
         if _pypdf() is None:

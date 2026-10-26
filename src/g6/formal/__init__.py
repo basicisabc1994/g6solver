@@ -17,7 +17,7 @@ Capability label: ``implemented``.
 What it is, all in process:
 
 * Z3 on SMT-LIB terms over symbols you declare (``Int``, ``Real``, ``Bool``, ``String``, ``(_ BitVec n)``,
-  ``(Array S T)``; nothing is declared for you), when z3-solver is installed (``pip install 'g6[formal]'``; imported
+  ``(Array S T)``; nothing is declared for you), when z3-solver is installed (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``; imported
   only when a check runs): ``check_sat``, ``check_validity``, ``check_entailment``, ``find_counterexample``, and from
   the archive's ``z3_mcp``, ``optimise`` (lexicographic, with bounds), ``unsat_core`` (minimal), ``simplify``,
   ``eliminate_quantifiers``, ``count_models`` (exact, or a lower bound when the cap is hit) and

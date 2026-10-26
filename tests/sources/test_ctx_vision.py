@@ -230,7 +230,7 @@ def test_too_many_pixels_is_refused_before_decoding(monkeypatch: pytest.MonkeyPa
 def test_without_pillow_the_reply_says_the_extra_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(images, "pillow", lambda: None)
     out = run(FakeLLM(), op="describe")
-    assert out["code"] == "G6_E_VISION_EXTRA_MISSING" and "pip install 'g6[image]'" in out["reason"]
+    assert out["code"] == "G6_E_VISION_EXTRA_MISSING" and "pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'" in out["reason"]
 
 
 # --- the ops ----------------------------------------------------------------------------------------------------------

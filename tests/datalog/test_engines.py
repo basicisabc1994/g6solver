@@ -17,7 +17,7 @@ from g6.datalog.envelope import SOLVER_UNAVAILABLE, TIME_LIMIT, TOO_MANY_TUPLES,
 from g6.datalog.language import parse_program
 
 HAS_Z3 = importlib.util.find_spec("z3") is not None
-needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal]')")
+needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 ENGINES = [pytest.param("pure_python", id="pure_python"), pytest.param("z3", id="z3", marks=needs_z3)]
 
 EDGES = [("a", "b"), ("b", "c"), ("c", "a"), ("c", "d"), ("d", "e"), ("f", "g"), ("g", "g"), ("h", "a")]
@@ -192,7 +192,7 @@ def test_without_z3_the_z3_engine_is_unavailable_and_says_what_to_install(monkey
     assert z3_engine.available() is False and z3_engine.version() == ""
     with pytest.raises(Refusal) as caught:
         z3_engine.solve(parse_program(TC))
-    assert caught.value.code == SOLVER_UNAVAILABLE and "pip install 'g6[formal]'" in caught.value.reason
+    assert caught.value.code == SOLVER_UNAVAILABLE and "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'" in caught.value.reason
 
 
 # --- the two engines agree on random programs -----------------------------------------------------------------------

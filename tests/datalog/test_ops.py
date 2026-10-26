@@ -34,7 +34,7 @@ from g6.datalog.seminaive import Justification, Model
 from g6.invariants import check_envelope
 
 HAS_Z3 = importlib.util.find_spec("z3") is not None
-needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal]')")
+needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 
 FAMILY = """
 parent(alice, bob).
@@ -96,13 +96,13 @@ def test_without_z3_the_pure_python_engine_runs_alone_and_the_card_says_how_to_a
     assert result.engines == ["pure_python"] and result.relations == {"ancestor": ANCESTORS}
     card = result.warning_card
     assert card["code"] == ONE_ENGINE and "Only the pure-Python engine ran" in card["message"]
-    assert "Z3 is not installed here" in card["message"] and "pip install 'g6[formal]'" in card["suggested_action"]
+    assert "Z3 is not installed here" in card["message"] and "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'" in card["suggested_action"]
     assert result.check["passed"] is True and result.evidence[0]["z3_ran"] is False
 
 
 def test_asking_for_z3_without_it_is_refused(no_z3) -> None:
     data = _blocked(ops.evaluate(FAMILY, engine="z3"), SOLVER_UNAVAILABLE)
-    assert "pip install 'g6[formal]'" in data["reason"] and data["evidence"][0]["kind"] == "datalog_refusal"
+    assert "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'" in data["reason"] and data["evidence"][0]["kind"] == "datalog_refusal"
 
 
 def test_asking_for_the_pure_python_engine_alone_says_so() -> None:

@@ -207,7 +207,7 @@ def _make(d: ChartInput) -> MediaResult:
         return refuse(d.op, INPUT_INVALID, "no rows were given to chart", **ids)
     if d.format == "png" and pillow() is None:
         return refuse(d.op, EXTRA_MISSING, "Pillow is not installed, so a PNG can be neither drawn nor inspected: "
-                                           "pip install 'g6[image]' (or ask for svg or html, which need nothing)",
+                                           "pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver' (or ask for svg or html, which need nothing)",
                       **ids)
     try:
         records, coverage = data.take(d.rows, _roles(d))

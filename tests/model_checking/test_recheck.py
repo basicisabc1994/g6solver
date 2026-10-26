@@ -24,7 +24,7 @@ from g6.model_checking.envelope import CERTIFICATE_REFUTED
 from g6.model_checking.symbolic import Outcome
 
 pytestmark = pytest.mark.skipif(importlib.util.find_spec("z3") is None,
-                                reason="z3-solver is not installed (pip install 'g6[formal]')")
+                                reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 
 COUNTER = {"variables": {"x": "Int"}, "init": "(= x 0)", "transition": "(= next_x (+ x 1))",
            "invariants": {"small": "(<= x 3)"}}

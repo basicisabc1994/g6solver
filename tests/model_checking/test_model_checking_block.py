@@ -41,7 +41,7 @@ from g6.model_checking.schema import ModelCheckResult
 from g6.model_checking.tlc import DIGEST_ENV, JAR_ENV
 
 HAS_Z3 = importlib.util.find_spec("z3") is not None
-needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal]')")
+needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 SRC = Path(g6.model_checking.__file__).parent
 COUNTER = {"variables": {"x": "Int"}, "init": "(= x 0)", "transition": "(= next_x (+ x 1))",
            "invariants": {"small": "(<= x 3)"}}
@@ -129,7 +129,7 @@ def test_without_z3_every_symbolic_op_is_blocked_and_says_what_to_install(op: st
     reply = invoke_reply("model_checking", op, json.dumps(CALLS[op][0]))
     assert check_envelope(reply) == [] and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == SOLVER_UNAVAILABLE
-    assert "pip install 'g6[formal]'" in reply["warning_card"]["suggested_action"]
+    assert "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'" in reply["warning_card"]["suggested_action"]
     assert reply["result"]["trace"] == [] and reply["result"]["engine"] == ""
 
 

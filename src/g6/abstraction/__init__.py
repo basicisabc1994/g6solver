@@ -14,11 +14,11 @@ advice (``g6.abstraction.pruning``), the Lift functor, and bounded self-diagnosi
 
 Not established (audit 001): safe pruning on unseen configurations, calibrated confidence, or a
 benefit over standard optimisers. The optional MCP server is ``g6.abstraction.server``
-(``pip install g6[abstraction,mcp]``).
+(``pip install "g6[abstraction,mcp] @ git+https://github.com/basicisabc1994/g6solver"``).
 
 The public names are imported on first use (PEP 562), so ``import g6.abstraction`` works with only the core
 installed and discovery answers; without numpy or Hypothesis a name raises an ``ImportError`` that says to
-``pip install "g6[abstraction]"``.
+``pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"``.
 """
 from importlib import import_module
 from typing import Any

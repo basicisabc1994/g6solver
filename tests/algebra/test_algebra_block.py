@@ -28,7 +28,7 @@ from g6.invariants import check_envelope
 from g6.mcp import invoke_reply
 
 SRC = Path(g6.algebra.__file__).parent
-needs_sympy = pytest.mark.skipif(not ops.sympy_installed(), reason="SymPy is not installed (pip install 'g6[cas]')")
+needs_sympy = pytest.mark.skipif(not ops.sympy_installed(), reason="SymPy is not installed (pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver')")
 SENSITIVE_WORDS = "sensitive: runs from Python, or over MCP only when the person running the server lists it in " \
                   "G6_MCP_SENSITIVE"
 NOTHING_ALLOWED: frozenset[str] = frozenset()

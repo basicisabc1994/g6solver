@@ -20,7 +20,7 @@ What it does, in process:
 * answers graph questions with exact algorithms in pure Python (:mod:`g6.causal.criteria`), needing no extra:
   ``d_separated``, ``backdoor_paths``, ``adjustment_sets`` (every minimal set to control for), ``instruments`` and
   ``identify`` (backdoor, frontdoor or instrumental variable, the estimand written out, or why the effect is not
-  identifiable). With DoWhy installed (``pip install 'g6[causal]'``, imported only when an op runs) DoWhy answers too,
+  identifiable). With DoWhy installed (``pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'``, imported only when an op runs) DoWhy answers too,
   and the two must agree (:mod:`g6.causal.checks`), or the answer is refused with ``G6_E_CAUSAL_ENGINES_DISAGREE``:
   DoWhy 0.14 names an unobserved parent of the treatment an instrument, and that is refused. Without DoWhy the card says
   only the pure-Python check ran;

@@ -7,7 +7,7 @@ result. Training runs out of process under ``g6.core.sandbox`` (a time and memor
 model must already be on disk; it is never downloaded). The adapter is a folder the meta-harness stores by digest; a
 profile that names it is a candidate like any other: the same held-out gate, at equal compute, then a person.
 
-The training stack (``torch``, ``transformers``, ``peft``) is the optional ``lora`` extra (``pip install g6[lora]``).
+The training stack (``torch``, ``transformers``, ``peft``) is the optional ``lora`` extra (``pip install "g6[lora] @ git+https://github.com/basicisabc1994/g6solver"``).
 Without it nothing here imports it: ``missing()`` names what is absent and ``train`` says so. ``adapter_loader``
 runs a base model with an adapter in this process, for a ``Model(adapter_loader=...)``.
 """
@@ -127,7 +127,7 @@ def train(spec: LoraSpec, rows: Sequence[tuple[str, str]], *,
           trainer: Callable[[LoraSpec, Sequence[tuple[str, str]], Path], dict[str, Any]] | None = None) -> TrainResult:
     if trainer is None and missing():
         return TrainResult(False, code=UNAVAILABLE, message=f"LoRA training needs {missing()}",
-                           next_action="pip install 'g6[lora]' (torch, transformers, peft), then train again")
+                           next_action="pip install 'g6[lora] @ git+https://github.com/basicisabc1994/g6solver' (torch, transformers, peft), then train again")
     problems = spec.problems()
     if problems or not rows:
         return TrainResult(False, code=TRAINING_FAILED, message="; ".join(problems) or "no training examples")

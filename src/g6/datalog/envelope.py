@@ -41,7 +41,7 @@ ENGINES_DISAGREE = "G6_E_DATALOG_ENGINES_DISAGREE"
 CERTIFICATE_REFUTED = "G6_E_DATALOG_CERTIFICATE_REFUTED"
 NOT_CHECKED = "G6_E_DATALOG_NOT_CHECKED"
 
-INSTALL_Z3 = "pip install 'g6[formal]'"
+INSTALL_Z3 = "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'"
 _ACTIONS = {
     PARSE_ERROR: "Correct the program at the line and column given. Facts end with '.', rules are head :- body., "
                  "queries end with '?', variables start upper-case or with '_', and strings use double quotes.",

@@ -54,7 +54,7 @@ FRAME_UNFIT = "G6_E_FORMAL_FRAME_UNFIT"
 _ACTIONS = {
     BACKEND_REFUSED: "Use backend 'z3', 'propositional' or 'four_valued'. Code-executing solvers (Prolog, Lean, TLA+, "
                      "run_code) are not part of g6.formal.",
-    SOLVER_UNAVAILABLE: "Install z3-solver (pip install 'g6[formal]'), or use solver='propositional' for Boolean "
+    SOLVER_UNAVAILABLE: "Install z3-solver (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'), or use solver='propositional' for Boolean "
                         "formulas.",
     PARSE_ERROR: "Write each formula, premise and conclusion as one SMT-LIB term; declare every symbol with its sort.",
     UNKNOWN_SORT: "Give each symbol the sort Int, Real, Bool, String, (_ BitVec n) or (Array S T).",

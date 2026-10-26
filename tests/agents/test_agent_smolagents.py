@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("smolagents", reason="smolagents is not installed (pip install 'g6[agents-smolagents]')")
+pytest.importorskip("smolagents", reason="smolagents is not installed (pip install 'g6[agents-smolagents] @ git+https://github.com/basicisabc1994/g6solver')")
 
 import g6.agents.agent_smolagents as agent_smolagents_pkg  # noqa: E402
 from g6.action_gating.audit import ActionGateAuditLogger  # noqa: E402

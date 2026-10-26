@@ -112,7 +112,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[ml]"` (scikit-learn, BSD-3-Clause, with NumPy and SciPy). Without it `fit_eval` and `rank` are
+- `pip install "g6[ml] @ git+https://github.com/basicisabc1994/g6solver"` (scikit-learn, BSD-3-Clause, with NumPy and SciPy). Without it `fit_eval` and `rank` are
   refused with `G6_E_ML_BACKEND_NOT_INSTALLED` and the install line; the checks before a fit still run and
   `estimators` still answers.
 - No model, no network access, no outside program; the fit runs in a child of G6's own Python, and the fit's
@@ -156,7 +156,7 @@ print(fit["warning_card"]["message"])
 if fit["completion_state"] == "qualified-draft":
     assert fit["headline"]["metric"] == "r2" and fit["headline"]["held_out_rows"] >= 10
 else:
-    assert fit["code"] == "G6_E_ML_BACKEND_NOT_INSTALLED"   # pip install "g6[ml]"
+    assert fit["code"] == "G6_E_ML_BACKEND_NOT_INSTALLED"
 ```
 
 ## The four open problems

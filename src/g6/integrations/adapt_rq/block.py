@@ -90,7 +90,7 @@ class AdaptRQBlock(AIBlock[RQInput, dict, dict]):
             try:
                 self.modules = dependencies()
             except (ImportError, OSError, ValueError):
-                raise Refusal("G6_E_RQ_NOT_INSTALLED", "Install the rq extra: pip install 'g6[rq]'. "
+                raise Refusal("G6_E_RQ_NOT_INSTALLED", "Install the rq extra: pip install 'g6[rq] @ git+https://github.com/basicisabc1994/g6solver'. "
                               "The separate rq worker is POSIX-only.") from None
             if data.dry_run:
                 return reply(self.name, data, code="G6_E_RQ_DRY_RUN", message="Plan only; no Redis connection or job run.",

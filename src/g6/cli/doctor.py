@@ -32,10 +32,10 @@ from pathlib import Path
 from typing import Any
 
 EXTRAS = {
-    "mcp": (("fastmcp", "mcp"), "the g6-mcp server for coding agents", 'pip install "g6[mcp]"'),
-    "anthropic": (("anthropic",), "Claude as the AI model", 'pip install "g6[anthropic]"'),
+    "mcp": (("fastmcp", "mcp"), "the g6-mcp server for coding agents", 'pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"'),
+    "anthropic": (("anthropic",), "Claude as the AI model", 'pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"'),
     "abstraction": (("hypothesis", "numpy"), "the abstraction component's property checks",
-                    'pip install "g6[abstraction]"'),
+                    'pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"'),
 }
 @dataclass(frozen=True)
 class Check:
@@ -148,7 +148,7 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
         has = bool(keys.get(key))
         if provider == "anthropic" and importlib.util.find_spec("anthropic") is None:
             return Check("AI model", "fail", "anthropic selected but the SDK is missing",
-                         'pip install "g6[anthropic]"')
+                         'pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"')
         unused = (f"; {key} is set in the environment, which G6 does not use"
                   if not has and env.get(key) else "")
         return Check("AI model", "ok" if has else "fail",

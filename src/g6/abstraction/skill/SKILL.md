@@ -110,9 +110,9 @@ equal evaluation budgets.
 
 ## What it needs
 
-`pip install "g6[abstraction]"` for Hypothesis and NumPy; without them `import g6.abstraction` still works, and each
+`pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"` for Hypothesis and NumPy; without them `import g6.abstraction` still works, and each
 public name raises an `ImportError` that says what to install. The separate stdio server also needs the MCP extra
-(`pip install "g6[abstraction,mcp]"`); with `ABSTRACTION_MCP_STATE` set to a file inside `ABSTRACTION_MCP_DIR` it
+(`pip install "g6[abstraction,mcp] @ git+https://github.com/basicisabc1994/g6solver"`); with `ABSTRACTION_MCP_STATE` set to a file inside `ABSTRACTION_MCP_DIR` it
 loads its state from that file at start and saves to it as its tools change the state, and it will not start when
 that file is outside the directory. Nothing else: no outside program, no model.
 

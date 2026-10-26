@@ -48,7 +48,7 @@ ENGINES_DISAGREE = "G6_E_CAUSAL_ENGINES_DISAGREE"
 REFUTED = "G6_E_CAUSAL_REFUTED"
 CERTIFICATE_REFUTED = "G6_E_CAUSAL_CERTIFICATE_REFUTED"
 
-INSTALL = "pip install 'g6[causal]'"
+INSTALL = "pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'"
 _ACTIONS = {
     GRAPH_INVALID: "Give the graph as JSON ({\"nodes\": [...], \"edges\": [[\"A\", \"B\"], ...], \"unobserved\": "
                    "[...]}) or as DOT (digraph { A -> B; U [observed=no]; }), correcting what the reason names.",

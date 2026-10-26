@@ -90,7 +90,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[formal]"` for Z3, which the symbolic ops use. Without it they are `blocked-escalated` with
+- `pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` for Z3, which the symbolic ops use. Without it they are `blocked-escalated` with
   `G6_E_MODEL_CHECK_SOLVER_UNAVAILABLE`.
 - Java, only for `tlc_check` and `sany_parse`: Java 11 or later on PATH, or `G6_JAVA` naming the java program. Then
   download `tla2tools.jar` yourself from the TLA+ project's releases (G6 is tested on v1.7.4), check it, set

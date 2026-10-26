@@ -134,7 +134,7 @@ def test_missing_django_is_not_a_pass(monkeypatch):
     assert len(out["checks_run"]) == 2 and not out["checks_not_run"]
     assert all(c["passed"] is False and c["code"] == CHECKER_NOT_INSTALLED for c in out["checks_run"])
     assert "not installed" in out["warning_card"]["message"]
-    assert 'pip install "g6[django]"' in out["warning_card"]["message"]
+    assert 'pip install "g6[django] @ git+https://github.com/basicisabc1994/g6solver"' in out["warning_card"]["message"]
 # Removal: raise CheckerUnavailable(CHECKER_NOT_INSTALLED, ...) in Django's import failure branch.
 
 def test_sensitive_registry_refuses_checks():

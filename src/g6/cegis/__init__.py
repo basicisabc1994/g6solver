@@ -18,7 +18,7 @@ builtins table, a wall-clock allowance and a whole-tree kill; a memory cap (POSI
 macOS, which refuses the address-space limit), and on POSIX also CPU and file-size limits.
 
 An optional ``verifier`` (the ``Verifier`` protocol) checks a candidate the sampled check passed. ``Z3Verifier(spec)``
-asks Z3, through ``g6.formal`` (``pip install 'g6[formal]'``; imported only when a check runs), for an input of the
+asks Z3, through ``g6.formal`` (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``; imported only when a check runs), for an input of the
 whole domain on which the candidate breaks ``spec``, an SMT-LIB term over the arguments and ``result``. It answers
 ``Counterexample`` (fed back only after the candidate, run out of process, disagrees with the oracle there),
 ``NoCounterexample`` (a solver decision on your spec, so ``qualified-draft`` at most) or ``Inconclusive``: degraded,

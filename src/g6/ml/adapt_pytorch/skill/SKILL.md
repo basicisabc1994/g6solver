@@ -109,7 +109,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[torch]"` (PyTorch 2.6 or later: before 2.6, `torch.load(weights_only=True)`, which reads a kept
+- `pip install "g6[torch] @ git+https://github.com/basicisabc1994/g6solver"` (PyTorch 2.6 or later: before 2.6, `torch.load(weights_only=True)`, which reads a kept
   model back, could be made to run code). Without it `train_eval` and `predict` are refused with
   `G6_E_ML_BACKEND_NOT_INSTALLED` and the install line; the checks before training, `layers` and `models` still
   answer. On Linux PyTorch's wheels bring triton (MIT) and NVIDIA's CUDA libraries, under NVIDIA's own licence.
@@ -149,7 +149,7 @@ ask = {"rows": rows, "target": "price", "features": ["size"], "task": "regressio
        "layers": [{"type": "dense", "units": 64, "activation": "linear"}] * 3}
 broken = reg.invoke("adapt_pytorch", "train_eval", {**ask, "optimiser": "sgd", "learning_rate": 1.0}).unwrap()
 print(broken["warning_card"]["message"])
-assert broken["code"] in ("G6_E_ML_NON_FINITE_LOSS", "G6_E_ML_BACKEND_NOT_INSTALLED")   # pip install "g6[torch]"
+assert broken["code"] in ("G6_E_ML_NON_FINITE_LOSS", "G6_E_ML_BACKEND_NOT_INSTALLED")   # pip install "g6[torch] @ git+https://github.com/basicisabc1994/g6solver"
 
 # keep a small network, then forget it: from Python, or over MCP when the server allows forget
 small = {**ask, "layers": [{"type": "dense", "units": 8, "activation": "relu"}], "learning_rate": 0.01, "keep": True}

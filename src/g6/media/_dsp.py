@@ -49,7 +49,7 @@ def numpy(doing: str = "process the sound") -> Any:
     try:
         import numpy as np
     except ImportError:
-        raise MediaError(EXTRA_MISSING, f"NumPy is not installed, so G6 cannot {doing}: pip install 'g6[audio]'") from None
+        raise MediaError(EXTRA_MISSING, f"NumPy is not installed, so G6 cannot {doing}: pip install 'g6[audio] @ git+https://github.com/basicisabc1994/g6solver'") from None
     return np
 
 

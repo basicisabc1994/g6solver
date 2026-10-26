@@ -89,7 +89,7 @@ _ACTIONS = {
     FORMAT_MISMATCH: "The file is not in the format that was asked for; ask for a format the backend writes.",
     SIZE_MISMATCH: "The file is not the size that was asked for; do not use it as if it were.",
     BLANK: "The output is blank, uniform or degenerate; change the parameters (or the seed) and try again.",
-    EXTRA_MISSING: "Install the extra the reason names (pip install 'g6[...]') and try again.",
+    EXTRA_MISSING: "Install the extra the reason names (pip install 'g6[...] @ git+https://github.com/basicisabc1994/g6solver') and try again.",
     BACKEND_UNAVAILABLE: "Use a backend that is registered and ready, or install what the reason names.",
     BACKEND_FAILED: "The backend failed; read the reason, correct the request and try again.",
     BAD_NAME: "Name the file with letters, digits, '.', '_' or '-' only: G6 chooses the folder, you choose the name.",

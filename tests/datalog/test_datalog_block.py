@@ -95,7 +95,7 @@ def test_without_z3_every_op_still_answers_and_says_one_engine_ran(op: str, no_z
     reply = invoke_reply("datalog", op, json.dumps(CALLS[op]))
     assert check_envelope(reply) == [] and reply["completion_state"] == "qualified-draft"
     card = reply["warning_card"]
-    assert card["code"] == ONE_ENGINE and "pip install 'g6[formal]'" in card["suggested_action"]
+    assert card["code"] == ONE_ENGINE and "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'" in card["suggested_action"]
     assert reply["result"]["engines"] == ["pure_python"] and reply["result"]["check"]["passed"] is True
 
 
@@ -104,7 +104,7 @@ def test_without_z3_asking_for_it_is_refused(op: str, no_z3) -> None:
     reply = invoke_reply("datalog", op, json.dumps({**CALLS[op], "engine": "z3"}))
     assert check_envelope(reply) == [] and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == SOLVER_UNAVAILABLE
-    assert "pip install 'g6[formal]'" in reply["warning_card"]["suggested_action"]
+    assert "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'" in reply["warning_card"]["suggested_action"]
 
 
 @pytest.mark.parametrize("op", ["ops", "help"])
@@ -204,7 +204,7 @@ def test_importing_the_package_loads_no_z3_and_raises_no_deprecation(tmp_path) -
     subprocess.run([sys.executable, "-c", without], cwd=tmp_path, check=True)
 
 
-@pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal]')")
+@pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 def test_both_engines_run_with_deprecation_warnings_as_errors(tmp_path) -> None:
     script = ("import g6.datalog as d\n"
               f"r = d.query({FAMILY!r}, 'ancestor(alice, X)')\n"

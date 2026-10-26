@@ -54,7 +54,7 @@ class DuckDBBackend:
             import duckdb
         except ImportError:
             raise BackendError(NOT_INSTALLED, "DuckDB is not installed here. It comes with the db extra: "
-                                              "pip install 'g6[db]'") from None
+                                              "pip install 'g6[db] @ git+https://github.com/basicisabc1994/g6solver'") from None
         self.duckdb, self.connection, self.settings = duckdb, connection, settings
         self.path = settings.location()
         self.data_dir = settings.data_directory()

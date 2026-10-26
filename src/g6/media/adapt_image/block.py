@@ -182,7 +182,7 @@ def _edit(d: AdaptImageInput) -> MediaResult:
     ids = _ids(d)
     if pillow() is None:
         return refuse(d.op, EXTRA_MISSING, "Pillow is not installed, so no picture can be read or made: "
-                                           "pip install 'g6[image]'", **ids)
+                                           "pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'", **ids)
     try:
         data = _bytes(d.source, d.image_base64, "source")
         if d.op == "get_image_info":

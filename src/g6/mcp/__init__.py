@@ -6,7 +6,7 @@ meta-harness tools (``metaharness_inspect``, ``_propose``, ``_evaluate``, ``_dec
 ``_rollback``) for the workflows declared in the file ``G6_METAHARNESS`` names, where approval and rollback ask the
 person through the client and never come from the session that proposed, and a failed attempt carries its recovery
 (``g6.metaharness.surface``). Install
-with ``pip install "g6[mcp]"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
+with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
 
 An op that needs a model uses the one the person set in their key file (``G6_LLM_PROVIDER`` in ``~/.g6/.env``, for
@@ -156,7 +156,7 @@ def build_server(surface: Any = None) -> Any:
     try:
         from fastmcp import Context, FastMCP
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp]'") from exc
+        raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
 
     from g6.core import discovery
     from g6.core.registry import get_registry

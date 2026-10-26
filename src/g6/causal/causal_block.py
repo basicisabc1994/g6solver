@@ -44,7 +44,7 @@ _OPS: dict[str, str] = {
                        "backdoor.propensity_score_weighting|iv.instrumental_variable|frontdoor.two_stage_regression, "
                        "refute=true, simulations (at most 100), seed, time_limit): the effect with DoWhy and its 95% "
                        "confidence interval, recomputed by G6 for linear regression and tried by DoWhy's placebo, "
-                       "random-common-cause and data-subset refuters; needs pip install 'g6[causal]'",
+                       "random-common-cause and data-subset refuters; needs pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'",
 }
 Method = Literal["backdoor.linear_regression", "backdoor.propensity_score_stratification",
                  "backdoor.propensity_score_weighting", "iv.instrumental_variable", "frontdoor.two_stage_regression"]

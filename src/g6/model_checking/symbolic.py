@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """The four symbolic ops of g6.model_checking, each returning one labelled
-:class:`~g6.model_checking.schema.ModelCheckResult`. Z3 in process (``pip install 'g6[formal]'``, imported when an op
+:class:`~g6.model_checking.schema.ModelCheckResult`. Z3 in process (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``, imported when an op
 runs); the model is read by :mod:`g6.model_checking.encoding`.
 
 * :func:`check_invariant`: bounded model checking to ``depth`` steps. A state breaking an invariant comes back with

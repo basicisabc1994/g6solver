@@ -73,7 +73,7 @@ only, so a reviewer string or approval flag cannot release the hold. A review mu
 
 ## Alone and composed
 
-Alone, over MCP (the `g6-mcp` server: `pip install "g6[mcp]"`, then `claude mcp add g6 -- g6-mcp`):
+Alone, over MCP (the `g6-mcp` server: `pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`, then `claude mcp add g6 -- g6-mcp`):
 `g6_invoke("coding_agent_gate", "verify_answer", params_json)`; `g6_describe("coding_agent_gate")` returns its ops
 and this skill. From Python:
 `from g6.coding_agent_gate import preflight, verify_answer, Evidence, VerifierResult`; `scan_diff(diff)` and

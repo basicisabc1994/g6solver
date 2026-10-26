@@ -48,7 +48,7 @@ _OPS: dict[str, str] = {
              "with each tool; nothing is run",
 }
 _ACTIONS = {
-    NOT_INSTALLED: "Install the extra: pip install 'g6[agents-smolagents]'.",
+    NOT_INSTALLED: "Install the extra: pip install 'g6[agents-smolagents] @ git+https://github.com/basicisabc1994/g6solver'.",
     CHECKED: "Run it with run, from Python or where the server's owner allows it.",
     AGENT_REQUIRED: "Give the agent (its kind, tools and limits) and the task.",
     "G6_E_AGENT_SMOLAGENTS_NO_MODEL": "Configure a model for G6 (G6_LLM_PROVIDER, with its key in your key file), or "

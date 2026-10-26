@@ -87,7 +87,7 @@ adds that model's reading of a prompt to the evidence when `use_model` is given.
 
 ## What it needs
 
-- `pip install "g6[audio]"` for NumPy (BSD-3-Clause). Without it every op that makes sound refuses with
+- `pip install "g6[audio] @ git+https://github.com/basicisabc1994/g6solver"` for NumPy (BSD-3-Clause). Without it every op that makes sound refuses with
   `G6_E_MEDIA_EXTRA_MISSING` and that line; `prompt_to_params`, `ops` and `help` still answer.
 
 ## Examples

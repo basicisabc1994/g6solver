@@ -26,7 +26,7 @@ from g6.optimisation.optimisation_block import OptimisationBlock
 from g6.optimisation.schema import OptimResult
 
 HAS_ORTOOLS = importlib.util.find_spec("ortools") is not None
-needs_ortools = pytest.mark.skipif(not HAS_ORTOOLS, reason="OR-Tools is not installed (pip install 'g6[optim]')")
+needs_ortools = pytest.mark.skipif(not HAS_ORTOOLS, reason="OR-Tools is not installed (pip install 'g6[optim] @ git+https://github.com/basicisabc1994/g6solver')")
 SRC = Path(g6.optimisation.__file__).parent
 
 DISTANCES = [[0, 2, 9, 10, 7], [2, 0, 6, 4, 3], [9, 6, 0, 8, 5], [10, 4, 8, 0, 6], [7, 3, 5, 6, 0]]
@@ -107,7 +107,7 @@ def test_without_ortools_every_solving_op_is_blocked_and_says_what_to_install(op
     reply = invoke_reply("optimisation", op, json.dumps(CALLS[op]))
     assert check_envelope(reply) == [] and reply["completion_state"] == "blocked-escalated"
     card = reply["warning_card"]
-    assert card["code"] == SOLVER_UNAVAILABLE and "pip install 'g6[optim]'" in card["suggested_action"]
+    assert card["code"] == SOLVER_UNAVAILABLE and "pip install 'g6[optim] @ git+https://github.com/basicisabc1994/g6solver'" in card["suggested_action"]
     result = reply["result"]
     assert result["code"] == SOLVER_UNAVAILABLE and result["objective"] is None and result["solution"] == {}
     assert result["evidence"][0]["external_solver_ran"] is False and check_envelope(result) == []

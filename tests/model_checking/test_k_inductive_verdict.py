@@ -16,7 +16,7 @@ COUNTER = {"variables": {"x": "Int"}, "init": "(= x 0)", "transition": "(= next_
            "invariants": {"natural": "(>= x 0)"}}
 
 
-@pytest.mark.skipif(importlib.util.find_spec("z3") is None, reason="z3-solver is not installed (pip install 'g6[formal]')")
+@pytest.mark.skipif(importlib.util.find_spec("z3") is None, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 def test_an_inductive_invariant_is_reported_k_inductive_with_its_k() -> None:
     result = prove_invariant(COUNTER)
     assert result.verdict == "k_inductive" and result.k == 1 and result.completion_state == "qualified-draft"

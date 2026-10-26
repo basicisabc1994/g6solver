@@ -2,7 +2,7 @@
 """g6.media.adapt_generative_art — make procedural pictures, vector drawings and heightmap meshes from seeded techniques.
 
 An extension in the media family, and the family's ``procedural`` image backend: it needs no model, no network and
-no outside program, only NumPy and Pillow (``pip install 'g6[procedural]'``).
+no outside program, only NumPy and Pillow (``pip install 'g6[procedural] @ git+https://github.com/basicisabc1994/g6solver'``).
 
     from g6.core.registry import get_registry
     out = get_registry().invoke("adapt_generative_art", "generate",

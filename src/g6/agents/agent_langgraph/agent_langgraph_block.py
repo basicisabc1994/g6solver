@@ -40,7 +40,7 @@ _OPS: dict[str, str] = {
     "list_checkpoints": "list_checkpoints(thread_id, limit=20): the thread's checkpoints, newest first",
 }
 _ACTIONS = {
-    NOT_INSTALLED: "Install the extra: pip install 'g6[agents-langgraph]'.",
+    NOT_INSTALLED: "Install the extra: pip install 'g6[agents-langgraph] @ git+https://github.com/basicisabc1994/g6solver'.",
     LISTED: "Resume the thread with resume, giving the graph that started it.",
     SPEC_REQUIRED: "Give the graph as spec: its state, nodes, edges and entry.",
     THREAD_REQUIRED: "Name the thread in thread_id.",

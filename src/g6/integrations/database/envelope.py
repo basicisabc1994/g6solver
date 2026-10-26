@@ -49,7 +49,7 @@ _ACTIONS = {
     FILE_REFUSED: "Read files only from the data directory the person who runs the server declared.",
     UNKNOWN_TABLE: "Use a name from list_tables.",
     GATE_HELD: "Nothing was committed. Show the person the dry run and the gate's message; they decide.",
-    NOT_INSTALLED: "Install the db extra: pip install 'g6[db]'.",
+    NOT_INSTALLED: "Install the db extra: pip install 'g6[db] @ git+https://github.com/basicisabc1994/g6solver'.",
     CONNECT_FAILED: "Ask the person who runs the server to check the connection's settings and the database's login.",
     OUTSIDE_PROGRAM_MISSING: "Ask the person who runs the server to start the database server, or correct its "
                              "address in the configuration.",

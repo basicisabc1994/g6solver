@@ -98,7 +98,7 @@ def css_script(root, evidence):
     try:
         import tinycss2
     except ImportError:
-        raise CheckerUnavailable(CHECKER_NOT_INSTALLED, 'tinycss2 is not installed; pip install "g6[web]".')
+        raise CheckerUnavailable(CHECKER_NOT_INSTALLED, 'tinycss2 is not installed; pip install "g6[web] @ git+https://github.com/basicisabc1994/g6solver".')
     def walk(nodes):
         for node in nodes:
             if node.type == "error":
@@ -140,7 +140,7 @@ def render_script(root, evidence, breakpoints):
     from urllib.parse import unquote, urlsplit
     import mimetypes
     program = OutsideProgram(name="Playwright Chromium", purpose="measure horizontal overflow",
-                             install='pip install "g6[render]", then python -m playwright install chromium yourself.',
+                             install='pip install "g6[render] @ git+https://github.com/basicisabc1994/g6solver", then python -m playwright install chromium yourself.',
                              licence="BSD-3-Clause and Chromium third-party notices; Playwright driver Apache-2.0",
                              command="chromium")
     try:

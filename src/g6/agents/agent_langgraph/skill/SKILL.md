@@ -91,7 +91,7 @@ Composed:
 
 ## What it needs
 
-LangGraph, behind the extra: `pip install 'g6[agents-langgraph]'` (LangGraph and its checkpoint package, MIT, with
+LangGraph, behind the extra: `pip install 'g6[agents-langgraph] @ git+https://github.com/basicisabc1994/g6solver'` (LangGraph and its checkpoint package, MIT, with
 their own permissive dependencies). Without it every op says so. From the library it uses `action_gating` and
 `safety_engine`, through the family's runtime. A model only for llm nodes, passed in from Python as a `g6.core.llm`
 caller. No outside program.

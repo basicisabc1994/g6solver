@@ -65,7 +65,7 @@ ENGINE_ERROR = _P + "ENGINE_ERROR"
 PARSER_CODES = (PARSE_ERROR, CONSTRUCT_REFUSED, UNKNOWN_FUNCTION, UNKNOWN_SYMBOL, WRONG_ARGUMENTS, SYMBOL_INVALID,
                 EXPONENT_TOO_LARGE, FACTORIAL_TOO_LARGE, NUMBER_TOO_LARGE, INPUT_INVALID, INPUT_TOO_LARGE)
 
-INSTALL_CAS = "pip install 'g6[cas]'"
+INSTALL_CAS = "pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver'"
 #: Where SageMath comes from: ``G6_SAGE`` names the ``sage`` program, or ``sage`` is found on PATH.
 SAGE_ENV = "G6_SAGE"
 INSTALL_SAGE = (f"SageMath is a separate program under the GPL, so G6 never installs, bundles or imports it. Install it "

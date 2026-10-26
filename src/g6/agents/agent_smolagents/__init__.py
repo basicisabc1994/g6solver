@@ -14,7 +14,7 @@ Capability label: ``implemented``.
     runtime = SmolagentsRuntime(spec, task="What is the mean of 3, 5 and 10?", llm=my_g6_llm_caller)
     outcome = run_agent(runtime, runtime.task())     # "qualified-draft"; detail["steps"] holds each code step
 
-smolagents (Apache-2.0) is an extra: ``pip install 'g6[agents-smolagents]'``; without it a run says so. G6 builds the
+smolagents (Apache-2.0) is an extra: ``pip install 'g6[agents-smolagents] @ git+https://github.com/basicisabc1994/g6solver'``; without it a run says so. G6 builds the
 agent from a typed spec (:mod:`~g6.agents.agent_smolagents.spec`): a tool-calling agent whose every tool is decided
 by the runtime's gate, or a code agent with no tools whose every step is held to a restricted syntax and run in
 ``g6.core.sandbox`` (:mod:`~g6.agents.agent_smolagents.sandbox`: another process with a clean environment, a time

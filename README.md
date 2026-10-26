@@ -14,11 +14,15 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
 
 ## Why you can rely on what it says
 
-- **Labels never rise.** `verified` needs independent evidence: a check the producer did not write, frozen before the
-  work, that G6 has seen fail a planted wrong answer. A check you or your agent wrote is not independent, so its result
-  is `qualified-draft` at best. When results are combined, the overall label is the weakest one.
-- **Checks are frozen first.** In the harness, each check's code is hashed before the work runs, so success cannot
-  be redefined afterwards.
+- **The rule for labels.** `verified` should need independent evidence: a check the producer did not write, frozen
+  before the work, that G6 has seen fail a planted wrong answer. A check you or your agent wrote is not independent,
+  so its result is `qualified-draft` at best, and a combined result takes the weakest label. Not every entry point
+  enforces this yet: the MCP server and `g6 invoke` pass on a component's own `verified` when it attaches any
+  evidence, and a pipeline of two steps that each say `verified` reports `verified`. Until that is fixed, read a
+  `verified` that comes through them as the component's own claim.
+- **Checks are hashed first.** In the harness, each check's source text is hashed before the work runs, so editing a
+  check afterwards is caught. The hash covers the source only, not values the check reads from outside it, and the
+  check runs in the same process as the work: it catches mistakes, not code written to defeat it.
 - **Results are published, misses included,** on the [Research](site/docs/research.md) page, as a worked example.
 - **Local-first and open.** No telemetry and no server of ours. Data goes only to the model you choose.
 - **Small parts.** 34 components in the core harness, each usable on its own, extensions that join the library one at

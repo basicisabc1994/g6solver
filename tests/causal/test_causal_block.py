@@ -78,7 +78,7 @@ def test_g6_find_ranks_causal_first_for_a_causal_question() -> None:
 @pytest.mark.parametrize("op", list(CALLS))
 def test_every_op_answers_through_g6_invoke_inside_the_envelope(op: str) -> None:
     if op == "estimate_effect" and not HAS_DOWHY:
-        pytest.skip("DoWhy is not installed (pip install 'g6[causal]')")
+        pytest.skip("DoWhy is not installed (pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver')")
     reply = invoke_reply("causal", op, json.dumps({**CALLS[op], "request_id": "req-1", "run_id": "run-1"}))
     assert check_envelope(reply) == [] and reply["ok"] is True, reply.get("error")
     result = reply["result"]
@@ -104,7 +104,7 @@ def test_the_answers_over_mcp_are_the_graphs() -> None:
 def test_without_dowhy_every_graph_op_still_answers_over_mcp(op: str, no_dowhy) -> None:
     reply = invoke_reply("causal", op, json.dumps(CALLS[op]))
     assert check_envelope(reply) == [] and reply["completion_state"] == "qualified-draft"
-    assert reply["warning_card"]["code"] == ONE_ENGINE and "pip install 'g6[causal]'" in reply["warning_card"][
+    assert reply["warning_card"]["code"] == ONE_ENGINE and "pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'" in reply["warning_card"][
         "suggested_action"]
 
 
@@ -112,7 +112,7 @@ def test_without_dowhy_estimation_is_blocked_over_mcp_and_says_what_to_install(n
     reply = invoke_reply("causal", "estimate_effect", json.dumps(CALLS["estimate_effect"]))
     assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == ENGINE_UNAVAILABLE
-    assert "pip install 'g6[causal]'" in reply["warning_card"]["suggested_action"]
+    assert "pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'" in reply["warning_card"]["suggested_action"]
     assert reply["result"]["estimate"] is None and check_envelope(reply["result"]) == []
 
 
@@ -236,7 +236,7 @@ def test_importing_the_package_loads_no_dowhy_pandas_or_networkx_and_raises_no_d
     subprocess.run([sys.executable, "-c", without], cwd=tmp_path, check=True)
 
 
-@pytest.mark.skipif(not HAS_DOWHY, reason="DoWhy is not installed (pip install 'g6[causal]')")
+@pytest.mark.skipif(not HAS_DOWHY, reason="DoWhy is not installed (pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver')")
 def test_graph_ops_with_dowhy_run_with_deprecation_warnings_as_errors(tmp_path) -> None:
     script = ("import g6.causal as c\n"
               "r = c.identify('digraph { U [observed=no]; W -> T; U -> T; U -> Y; T -> Y }', 'T', 'Y')\n"

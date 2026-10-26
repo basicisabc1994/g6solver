@@ -234,5 +234,5 @@ def test_pdf_missing_pypdf_blocks_with_family_install_code(monkeypatch):
     assert out["completion_state"] == "blocked-escalated"
     assert out["code"] == CHECKER_NOT_INSTALLED == "G6_E_CODE_CHECKER_NOT_INSTALLED"
     assert "pypdf is not installed" in out["warning_card"]["message"]
-    assert 'pip install "g6[docs]"' in out["warning_card"]["message"]
+    assert 'pip install "g6[docs] @ git+https://github.com/basicisabc1994/g6solver"' in out["warning_card"]["message"]
 # Removal: raise CodeRefused(CHECKER_NOT_INSTALLED, ...) in pdf_text's missing.txt branch.

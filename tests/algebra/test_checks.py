@@ -9,7 +9,7 @@ from fractions import Fraction
 
 import pytest
 
-sympy = pytest.importorskip("sympy", reason="SymPy is not installed (pip install 'g6[cas]')")
+sympy = pytest.importorskip("sympy", reason="SymPy is not installed (pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver')")
 mpmath = pytest.importorskip("mpmath")
 
 from g6.algebra import build, checks, numeric  # noqa: E402

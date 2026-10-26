@@ -18,7 +18,7 @@ Capability label: ``implemented``.
     outcome = run_agent(runtime, runtime.task())               # "qualified-draft"; detail["final_state"]
     LangGraphRuntime(spec, thread_id="t1", resume=True)          # after a stop or a crash: carries on from the checkpoint
 
-LangGraph (MIT) is an extra: ``pip install 'g6[agents-langgraph]'``; without it every op says so. The graph is a typed
+LangGraph (MIT) is an extra: ``pip install 'g6[agents-langgraph] @ git+https://github.com/basicisabc1994/g6solver'``; without it every op says so. The graph is a typed
 spec (:mod:`~g6.agents.agent_langgraph.spec`) or a ``StateGraph`` of your own (``LangGraphRuntime.from_builder``). It
 is compiled with G6's checkpoint store (:mod:`~g6.agents.agent_langgraph.checkpoints`: SQLite under G6's state
 folder, read back without pickle and rebuilding only the types LangGraph lists as safe and those you allow) and run

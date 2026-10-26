@@ -22,7 +22,7 @@ attributes, brackets, keywords, unknown names) is refused with its code, the lin
 refuse an expression that would make SymPy compute without end (``2^(10^10)``, ``factorial(10^6)``). The SymPy objects
 are built from G6's parse tree through SymPy's constructors (:mod:`g6.algebra.build`).
 
-What it does (``pip install 'g6[cas]'``; SymPy is imported only in G6's worker): ``simplify``, ``expand``, ``factor``,
+What it does (``pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver'``; SymPy is imported only in G6's worker): ``simplify``, ``expand``, ``factor``,
 ``differentiate``, ``integrate`` (indefinite, or definite with bounds that may be ``oo``), ``solve`` (one equation, or
 a small system), ``limit``, ``series``, ``determinant``, ``inverse``, ``eigenvalues``, ``factor_integer``,
 ``is_prime`` and ``gcd``. Answers come back as text in SymPy's canonical form and as LaTeX.
