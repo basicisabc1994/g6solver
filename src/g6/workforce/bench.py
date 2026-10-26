@@ -36,9 +36,10 @@ Residual (Codex review of V1). Where ``g6.core.confine`` has a backend (a Window
 read the interpreter), each test process runs confined: it reads the interpreter's folders and the copy (and what
 Windows lets every AppContainer read: the system folders, Program Files), writes only the copy, its own run folder and
 its run's container folder (deleted after it), and reaches no network, this machine included; the copy holds no link
-or junction. Otherwise it runs with the owner's permissions,
-the result's ``isolation`` says so (``{"backend": null, "why": ...}``), and its pass can refute a change but never
-verify it (``rungs.run_verify``); ``G6_REQUIRE_ISOLATION=1`` refuses such a run instead (``G6_E_ISOLATION_UNAVAILABLE``).
+or junction. Otherwise such a run is refused (``G6_E_ISOLATION_UNAVAILABLE``) unless the person allowed it
+(``confine.allowed_by``; ``G6_REQUIRE_ISOLATION=1`` refuses it whatever was allowed); an allowed run uses the owner's
+permissions, the result's ``isolation`` says so (``{"backend": null, "why": ..., "allowed_by": ...}``), and its pass can
+refute a change but never verify it (``rungs.run_verify``).
 Either way the runner and the environment are isolated and a change to the original is detected, and the code under
 test runs in the same process as pytest and G6's record of it: a patch that prints a pass and exits, or makes pytest
 pass what fails, is caught by the record and its positive control, but code aimed at that record itself, from inside
@@ -189,7 +190,7 @@ def run(op: str, params: dict, *, venture: str | None = None) -> dict:
             for nodeid in tests:
                 truth.LAST_RUN.clear()
                 results[nodeid] = truth.run_isolated(nodeid, copy)
-                if truth.LAST_RUN.get("refused"):  # G6_REQUIRE_ISOLATION and no backend: nothing ran
+                if truth.LAST_RUN.get("refused"):  # no backend, and unconfined runs not allowed: nothing ran
                     return _refused(truth.LAST_RUN["refused"])
                 kind, why = _attributed(nodeid)
                 if kind == "failed":  # completed local timeout: an executed failure

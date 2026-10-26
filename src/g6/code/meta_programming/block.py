@@ -144,8 +144,9 @@ def run_tests_op(d: MetaProgrammingInput) -> dict[str, Any]:
     fields = {k: ran[k] for k in ("collected", "results", "status", "stderr")}
     failed = [r for r in ran["results"] if r["outcome"] != "passed"]
     if not ran["collected"] or not ran["results"] or ran["status"] in ("timeout", "refused"):
-        why = ran["error"] or ("the run timed out" if ran["status"] == "timeout" else "the run did not report any "
-                               "test" if ran["collected"] in (None, 0) else ran["stderr"][-200:] or ran["status"])
+        why = ran["error"] or ("the run timed out" if ran["status"] == "timeout" else ran["stderr"][:600]
+                               if ran["status"] == "refused" else "the run did not report any test"
+                               if ran["collected"] in (None, 0) else ran["stderr"][-200:] or ran["status"])
         return refuse(COMPONENT, "run_tests", TESTS_DID_NOT_RUN, f"No test outcome to report: {why}.",
                       action=_ACTIONS[TESTS_DID_NOT_RUN], evidence=evidence, **_ids(d), **fields)
     if any(r["outcome"] == "unsupported" for r in ran["results"]):

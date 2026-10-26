@@ -164,7 +164,7 @@ def _predictions(inputs: dict[str, str], train_text: str, test_header: list[str]
             "check": "predictions", "result": "problem", "detail": "no predictions and no script were given",
             "what to do": "Paste the model's predictions, or a script that makes them. " + _SCRIPT_HELP,
             "label": "blocked-escalated"})
-    from g6.core.sandbox import run_script
+    from g6.core.sandbox import isolation_refused, run_script
 
     features = io.StringIO()
     writer = csv.DictWriter(features, [c for c in test_header if c != target], extrasaction="ignore")
@@ -173,6 +173,11 @@ def _predictions(inputs: dict[str, str], train_text: str, test_header: list[str]
     run = run_script(script, {"train.csv": train_text, "test_features.csv": features.getvalue()},
                      timeout_s=120, mem_mb=2048)
     made = run.outputs.get("predictions.csv")
+    if isolation_refused(run):   # it never ran: say why and what the person can do, never "the script failed"
+        return None, {"check": "script", "result": "not run", "detail": run.stderr[:600],
+                      "what to do": "Paste the predictions instead, or allow scripts to run on this computer without a "
+                                    "boundary: answer the question at the top of this page (asked on first run), or "
+                                    "run g6 setup.", "label": "blocked-escalated"}
     if run.status != "ok" or made is None:
         why = run.stderr.strip().splitlines()[-1:] or [run.status]
         return None, {"check": "script", "result": "problem",
@@ -289,4 +294,5 @@ BUNDLE = Bundle(
         Field("claims", "Scores you were told (optional)", kind="text", placeholder="accuracy 0.93, F1 0.90"),
     ),
     run=run,
+    runs_untrusted_code=True,
 )

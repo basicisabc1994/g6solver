@@ -22,6 +22,7 @@ from g6.workforce import repo_tests
 
 def _off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 def _probe(path: Path) -> str:

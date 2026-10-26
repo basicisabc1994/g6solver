@@ -163,6 +163,17 @@ def test_a_posix_virtual_environment_names_the_base_installation_not_its_bin_fol
     assert confine._home(cfg, posix=False) == ["/opt/hostedtoolcache/Python/3.12.7/x64/bin"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a POSIX installation's layout: bin beside lib")
+def test_a_posix_interpreter_outside_a_virtual_environment_names_its_installation(tmp_path) -> None:
+    exe = tmp_path / "opt" / "python3.12" / "bin" / "python3"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    exe.chmod(0o755)
+    # fails if only bin is named for a python on PATH (a frozen app's, a G6_PYTHON one): its standard library is in
+    # lib beside it, so its child could not start inside bubblewrap
+    assert confine.interpreter_paths(str(exe)) == (str(exe.parent.parent.resolve()),)
+
+
 def test_bubblewrap_is_linuxs_backend_and_says_how_to_install_it_where_it_is_missing(monkeypatch) -> None:
     import g6.core.outside
 

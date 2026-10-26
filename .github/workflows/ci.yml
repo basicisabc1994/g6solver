@@ -31,6 +31,13 @@ jobs:
       # G6_EXPECT_BACKEND=bubblewrap the bwrap tests fail rather than skip when it cannot confine a run.
       - if: runner.os == 'Linux'
         run: bash tools/ci_bubblewrap.sh
+      # macOS has no operating-system boundary, and the Windows runner's interpreter is not granted to the
+      # AppContainer, so G6 would refuse every run of untrusted code there: these jobs take the person's opt-in. They
+      # prove the refusal logic (its tests clear the variable) and the opt-in path, never a boundary; Linux's job, with
+      # bubblewrap and no opt-in, is the boundary's evidence.
+      - if: runner.os != 'Linux'
+        shell: bash
+        run: echo "G6_ALLOW_UNCONFINED=1" >> "$GITHUB_ENV"
       # SWI-Prolog on one job, so tests/prolog runs its swipl tests instead of skipping them (swipl is then on PATH).
       - if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: sudo apt-get update && sudo apt-get install -y swi-prolog-nox

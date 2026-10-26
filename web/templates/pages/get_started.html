@@ -23,12 +23,14 @@ section is content/install.md.{% endcomment %}
                 <p>Until the first release, install from a copy of the code.</p>
                 <div class="cmd"><code id="cmd-install">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
 pip install ".[mcp]"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-install">Copy</button></div>
-                {% comment %}CORE_SANDBOX-01 (owner ruling, 2026-10-23: warn, never restrict): g6.core.confine's
-                UNCONFINED_WARNING, word for word, as the README, g6 doctor and the sensitive-op help say it.{% endcomment %}
-                <p class="small">Where no operating-system backend confines it (Linux and macOS today, and Windows
-                before the one-time access grant), untrusted code that G6 runs for you (a patch, a generated script, a
-                repository's tests) has your own rights: it can read your key file ~/.g6/.env and your other files, and
-                its network guard works inside Python only. You are responsible for what you run. <code>g6 doctor</code>
+                {% comment %}CORE_SANDBOX-01 (owner ruling, 2026-10-27: refused without a boundary unless the person
+                allows it once): g6.core.confine's UNCONFINED_WARNING, word for word, as the README, g6 doctor and the
+                sensitive-op help say it.{% endcomment %}
+                <p class="small">Where no operating-system boundary can confine it (macOS, Linux without bubblewrap,
+                and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
+                generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then
+                has your own rights: it can read your key file ~/.g6/.env and your other files, and its network guard
+                works inside Python only. You are responsible for what you run. <code>g6 doctor</code>
                 says whether that code runs confined on your computer and, on Windows, prints the one-time commands that
                 grant the access.</p>
             </li>

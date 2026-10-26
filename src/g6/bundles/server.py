@@ -10,7 +10,11 @@
 * ``Origin``, when sent, must be this server too (blocks other sites posting to it);
 * model settings (provider and model, never a key) live in ``$G6_HOME/bundles/settings.json`` with owner-only
   permissions; keys come only from the person's key file (:mod:`g6.core.keys`), which the page never takes, writes
-  or shows.
+  or shows;
+* a bundle that runs code the person gives it (``Bundle.runs_untrusted_code``) asks on its page, where no
+  operating-system boundary can confine that code and nothing has been chosen, whether it may run without one
+  (:func:`isolation_state`); the person's click is kept as their choice for this computer (``g6.core.choices``, made
+  on the "bundle first-run page"), through the same token-protected requests. Reading the question records nothing.
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ import html
 import json
 import os
 import secrets
+import sys
 import threading
 import uuid
 import webbrowser
@@ -83,6 +88,19 @@ def caller_from_settings(s: dict[str, str]):
     return provider_from_env(env)
 
 
+def isolation_state(bundle: Bundle) -> dict[str, Any]:
+    """What the page's first-run question needs: whether to ask (an app that runs the person's code, where no
+    operating-system boundary can confine it, and no choice is recorded or set), the boundary or why there is none, and
+    the choice. Reading it records nothing."""
+    from g6.core import choices, confine, sandbox
+
+    name, why = confine.backend(sandbox.interpreter() or sys.executable)
+    kept = choices.choice(choices.UNCONFINED)
+    allowed = confine.allowed_by()
+    return {"asks": bundle.runs_untrusted_code and name is None and kept is None and not allowed,
+            "boundary": name, "why": why, "choice": kept["value"] if kept else None, "allowed_by": allowed}
+
+
 def run_bundle(bundle: Bundle, inputs: dict[str, str], llm: Any = None) -> dict[str, Any]:
     """Run once and always return a labelled result; failures are ``blocked-escalated``, never raised."""
     if llm is None and bundle.needs_model:
@@ -116,6 +134,14 @@ page: add a line such as <code>OPENROUTER_API_KEY=your-key</code> to it yourself
 <button type="button" id="save">Save</button> <span id="saved"></span></details>"""
     disclaimer = f'<p class="disclaimer">{e(bundle.disclaimer)}</p>' if bundle.disclaimer else ""
     held = f'<p class="disclaimer"><strong>{e(AWAITING_NOTE)}</strong></p>' if awaiting_certificate(bundle) else ""
+    question = "" if not bundle.runs_untrusted_code else """
+<section id="isolation" class="disclaimer" hidden><h2>Before this app runs your code</h2>
+<p id="isolation-why"></p>
+<p>Without an operating-system boundary, G6 does not run the code you give this app. If you allow it on this computer,
+that code runs with your own rights: it can read your files, G6's key file ~/.g6/.env among them, and the programs it
+starts can reach the network. You can change this later with g6 setup.</p>
+<button type="button" id="isolation-allow">Allow on this computer</button>
+<button type="button" id="isolation-refuse">Do not allow</button> <span id="isolation-said"></span></section>"""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(bundle.title)} · G6</title>
 <style>
@@ -128,7 +154,7 @@ td,th{{border:1px solid #ccc;padding:.3rem .5rem;text-align:left;vertical-align:
 .disclaimer{{border-left:4px solid #c90;padding-left:.6rem}}
 @media (prefers-color-scheme:dark){{body{{background:#16161a;color:#eee}} small{{color:#aaa}} .label{{color:#111}}}}
 </style></head><body>
-<h1>{e(bundle.title)}</h1>{held}<p>{e(bundle.summary)}</p>{disclaimer}{settings}
+<h1>{e(bundle.title)}</h1>{held}<p>{e(bundle.summary)}</p>{disclaimer}{question}{settings}
 <form id="form">{fields}<button type="submit">Run</button></form>
 <section id="out" aria-live="polite"></section>
 <p><small>Runs only on this computer. Open source — G6 harness engineering.</small></p>
@@ -146,13 +172,22 @@ document.getElementById("form").onsubmit=async ev=>{{ev.preventDefault();
  let h='<h2>Result <span class="label '+esc(r.completion_state)+'">'+esc(r.completion_state)+'</span></h2><p>'+esc(r.summary)+'</p>';
  if(r.rows.length){{const cols=Object.keys(r.rows[0]);h+='<div class="wrap"><table><tr>'+cols.map(c=>"<th>"+esc(c)+"</th>").join("")+"</tr>"+
   r.rows.map(row=>"<tr>"+cols.map(c=>"<td>"+esc(row[c]??"")+"</td>").join("")+"</tr>").join("")+"</table></div>";}}
- if(r.notes.length)h+="<ul>"+r.notes.map(n=>"<li>"+esc(n)+"</li>").join("")+"</ul>";out.innerHTML=h;}};
+ if(r.notes.length)h+="<ul>"+r.notes.map(n=>"<li>"+esc(n)+"</li>").join("")+"</ul>";out.innerHTML=h;
+ const isoq=document.getElementById("isolation");
+ if(isoq&&JSON.stringify(r).includes("G6_E_ISOLATION_UNAVAILABLE")){{document.getElementById("isolation-why").textContent=
+  "G6 did not run your code: no operating-system boundary can confine it here.";isoq.hidden=false;}}}};
 const save=document.getElementById("save");
 function keyNote(s){{keynote.textContent=!s.key_name?"":s.key_name+(s.has_key?" is in ":" is not yet in ")+
  "your key file, "+s.key_file+".";}}
 if(save&&TOKEN){{api("/api/settings").then(s=>{{provider.value=s.provider;model.value=s.model;keyNote(s);}});
  save.onclick=async()=>{{const s=await api("/api/settings",{{provider:provider.value,model:model.value}});
   if(!s.error)keyNote(s);saved.textContent=s.error||"Saved.";}};}}
+const iso=document.getElementById("isolation");
+if(iso&&TOKEN){{api("/api/isolation").then(s=>{{if(s.asks){{document.getElementById("isolation-why").textContent=
+ "This computer has no boundary G6 can use: "+s.why;iso.hidden=false;}}}});
+ for(const choice of ["allow","refuse"])document.getElementById("isolation-"+choice).onclick=async()=>{{
+  const s=await api("/api/isolation",{{choice}});document.getElementById("isolation-said").textContent=s.error||
+  (choice==="allow"?"Allowed on this computer. Run it again.":"Not allowed: G6 will not run your code here.");}};}}
 </script></body></html>"""
 
 
@@ -200,6 +235,10 @@ def make_handler(bundle: Bundle, token: str, llm: Any = None) -> type[BaseHTTPRe
                 if not self._trusted(api=True):
                     return self._json(403, {"error": "forbidden"})
                 return self._json(200, public_settings(load_settings()))
+            if self.path == "/api/isolation":
+                if not self._trusted(api=True):
+                    return self._json(403, {"error": "forbidden"})
+                return self._json(200, isolation_state(bundle))
             self._send(404, b"not found", "text/plain")
 
         def _discard_body(self) -> None:
@@ -213,7 +252,7 @@ def make_handler(bundle: Bundle, token: str, llm: Any = None) -> type[BaseHTTPRe
                 self.rfile.read(length)
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path not in ("/api/run", "/api/settings"):
+            if self.path not in ("/api/run", "/api/settings", "/api/isolation"):
                 self._discard_body()
                 return self._send(404, b"not found", "text/plain")
             if not self._trusted(api=True):
@@ -228,6 +267,15 @@ def make_handler(bundle: Bundle, token: str, llm: Any = None) -> type[BaseHTTPRe
                     raise ValueError("body must be a JSON object")
             except ValueError as exc:
                 return self._json(400, {"error": f"bad request: {exc}"})
+            if self.path == "/api/isolation":   # the person's click on the first-run question, and nothing else
+                if not bundle.runs_untrusted_code:
+                    return self._json(404, {"error": "this app runs no code of yours, so it has nothing to ask"})
+                from g6.core import choices
+
+                if body.get("choice") not in (choices.ALLOW, choices.REFUSE):
+                    return self._json(400, {"error": "choice is allow or refuse"})
+                choices.record(choices.UNCONFINED, body["choice"], choices.BUNDLE_PAGE)
+                return self._json(200, isolation_state(bundle))
             if self.path == "/api/settings":
                 if "api_key" in body:
                     from g6.core import keys

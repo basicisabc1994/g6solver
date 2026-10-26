@@ -24,6 +24,7 @@ OFF = "unavailable: switched off by this test"
 def started(monkeypatch) -> list[dict[str, Any]]:
     """No backend, and every start the runners ask for recorded (the program is never really started: exit 0)."""
     monkeypatch.setattr(confine, "_select", lambda: (None, OFF))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     calls: list[dict[str, Any]] = []
 
     def run_process(argv: list[str], **options: Any) -> int:
@@ -110,10 +111,15 @@ def test_tlc_runs_through_a_plan_with_javas_folders_and_the_jdk(started, tmp_pat
 SPEC = "---- MODULE Spec ----\nVARIABLE x\n====\n"
 
 
+@pytest.mark.parametrize("why", ["not allowed", "required"])
 @pytest.mark.parametrize("which", ["prolog", "lean", "tlc", "sage"])
-def test_with_isolation_required_and_no_backend_each_is_refused_before_it_starts(which, started, tmp_path,
-                                                                                monkeypatch) -> None:
-    monkeypatch.setenv("G6_REQUIRE_ISOLATION", "1")
+def test_with_no_backend_each_is_refused_before_it_starts_unless_allowed(which, why, started, tmp_path,
+                                                                         monkeypatch) -> None:
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6-home"))   # no choice recorded
+    if why == "not allowed":
+        monkeypatch.delenv(confine.ALLOW, raising=False)
+    else:
+        monkeypatch.setenv(confine.REQUIRE, "1")               # whatever was allowed
     if which == "prolog":
         from g6.prolog import query
 

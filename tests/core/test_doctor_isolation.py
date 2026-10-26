@@ -71,6 +71,22 @@ def test_on_linux_with_bubblewrap_the_doctors_own_test_run_starts_and_says_ok(bw
     assert check.status == "ok" and check.detail.startswith("started: ") and "inside bubblewrap" in check.detail
 
 
+def test_where_no_boundary_is_the_doctor_says_g6_refuses_until_the_person_allows_it(monkeypatch, tmp_path) -> None:
+    from g6.core import choices
+
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6-home"))
+    monkeypatch.delenv(confine.ALLOW, raising=False)
+    monkeypatch.delenv(confine.REQUIRE, raising=False)
+    _backend(monkeypatch, "darwin", (None, confine.NO_MACOS))
+    refused = doctor._isolation()
+    # fails if the doctor still says untrusted code runs with the person's permissions where G6 now refuses it, or
+    # stops naming the one choice that allows it
+    assert refused.status == "warn" and "so G6 refuses to run it" in refused.detail and "g6 setup" in refused.fix
+    choices.record(choices.UNCONFINED, choices.ALLOW, choices.SETUP)
+    allowed = doctor._isolation()
+    assert "g6 setup allowed it, so it runs with your permissions" in allowed.detail
+
+
 def test_on_windows_the_doctor_still_reads_only_the_access_lists(monkeypatch) -> None:
     probes = _backend(monkeypatch, "win32", ("appcontainer", ""))
     check = doctor._isolation()

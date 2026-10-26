@@ -175,8 +175,9 @@ def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: flo
         if DRIVER_FILE in arguments:   # the caller's program and goal: untrusted, so planned (a version run is not)
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=confine.program_paths(swipl)))
             record["isolation"] = confined.record()
-            if confined.backend is None and confine.required():
-                raise Refusal(ISOLATION_UNAVAILABLE, confine.refusal(confined))
+            said = confine.refused(confined)
+            if said:
+                raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:
             return _execute(argv, work, _environment(root), seconds, cap, memory_mb, record, end, confined)
         finally:

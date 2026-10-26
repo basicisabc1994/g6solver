@@ -127,8 +127,9 @@ def run(lean: str, arguments: list[str], *, file_text: str | None, seconds: floa
             reads = confine.program_paths(lean, env.get("ELAN_HOME", ""))
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
             record["isolation"] = confined.record()
-            if confined.backend is None and confine.required():
-                raise Refusal(ISOLATION_UNAVAILABLE, confine.refusal(confined))
+            said = confine.refused(confined)
+            if said:
+                raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:
             return _execute(argv, root / "work", env, seconds, cap, memory_mb, record, confined)
         finally:

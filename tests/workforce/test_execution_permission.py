@@ -37,6 +37,7 @@ def rig(tmp_path, monkeypatch):
     # refused, and the marker could no longer show whether the repository's code ran. These tests are about the
     # permission, not the operating system's refusal (test_workforce_isolation).
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     wf = api.bind()
     marker = tmp_path / "conftest-ran.txt"  # outside the repository: what a hostile conftest could write
     repo = api.repository_dir(wf) / "sample"

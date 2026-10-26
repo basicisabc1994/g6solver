@@ -86,6 +86,7 @@ def test_d1_model_written_code_runs_in_another_process_never_in_g6s(monkeypatch)
 
 def test_d1_a_runs_record_says_how_its_code_steps_ran_and_an_unconfined_run_stays_a_draft(monkeypatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     llm = FakeLLM(steps(code("x = 6 * 7"), code("final_answer(x)")))
     outcome = run(SmolagentsRuntime(spec(), task="What is six times seven?", llm=llm), dry_run=False)
     sandbox = outcome.detail["sandbox"]

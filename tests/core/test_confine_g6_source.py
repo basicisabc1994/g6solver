@@ -77,6 +77,7 @@ def test_a_confined_child_that_cannot_import_g6_says_why(tmp_path, monkeypatch) 
 def test_an_unconfined_child_s_error_is_left_as_it_is(monkeypatch) -> None:
     # Fails if the named reason is added to a run that was not confined (its import failure is not the container's).
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     failed = SimpleNamespace(returncode=1, stdout=b"", stderr=b"ModuleNotFoundError: No module named 'g6'\n")
     monkeypatch.setattr(component_process, "run_contained", lambda *args, **kwargs: failed)
     run = sandbox.run_script("import g6", timeout_s=30)

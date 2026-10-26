@@ -23,6 +23,7 @@ OFF = "unavailable: switched off by this test"
 
 def _off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, OFF))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 def test_a_candidates_run_is_planned_by_confine_and_the_result_says_how_it_ran(monkeypatch) -> None:
@@ -35,9 +36,14 @@ def test_a_candidates_run_is_planned_by_confine_and_the_result_says_how_it_ran(m
     assert result.to_envelope()["evidence"][0]["isolation"]["why"] == OFF
 
 
-def test_with_isolation_required_and_no_backend_cegis_is_refused_and_no_candidate_runs(monkeypatch) -> None:
+@pytest.mark.parametrize("why", ["not allowed", "required"])
+def test_with_no_backend_cegis_is_refused_unless_allowed_and_no_candidate_runs(monkeypatch, tmp_path, why) -> None:
     _off(monkeypatch)
-    monkeypatch.setenv("G6_REQUIRE_ISOLATION", "1")
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6-home"))   # no choice recorded
+    if why == "not allowed":
+        monkeypatch.delenv(confine.ALLOW, raising=False)
+    else:
+        monkeypatch.setenv(confine.REQUIRE, "1")               # whatever was allowed
     started: list[Any] = []
     monkeypatch.setattr(component_process, "run_contained", lambda *a, **k: started.append(a))
     result = cegis(Sketch.from_src(LINEAR), lambda x: 3 * x + 1, domain=X)

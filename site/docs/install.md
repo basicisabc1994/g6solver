@@ -16,10 +16,10 @@ or Linux (`…-linux-x86_64.zip`). On macOS and Linux, double-click the `.zip` t
 Double-click the file. A small window opens (keep it open while you work) and your web browser opens a
 private G6 page. It runs only on your computer. Close the small window to stop the bundle.
 
-Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time access grant),
-untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own rights: it can
-read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are
-responsible for what you run.
+Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the one-time
+access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a repository's tests) unless you
+allow it once with g6 setup. Code you allow then has your own rights: it can read your key file ~/.g6/.env and your
+other files, and its network guard works inside Python only. You are responsible for what you run.
 
 ??? question "The browser did not open"
     The small window shows an address like `http://127.0.0.1:52817/`. Copy it into your browser.

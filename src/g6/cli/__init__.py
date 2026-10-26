@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The ``g6`` command line: ``init``, ``components``, ``find``, ``describe``, ``invoke``, ``home``, ``bundle``, ``doctor``,
-``skills``."""
+"""The ``g6`` command line: ``init``, ``setup``, ``components``, ``find``, ``describe``, ``invoke``, ``home``, ``bundle``,
+``doctor``, ``skills``."""
 from __future__ import annotations
 
 import argparse
@@ -129,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="g6", description="Open-source harness engineering for AI agents.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init", help="create the local state folder ($G6_HOME, default ~/.g6)")
+    from g6.cli import setup
+
+    setup.add_arguments(sub.add_parser("setup", help="your choices for this computer, asked once (run it yourself; "
+                                                     "an agent should not)"))
     sub.add_parser("home", help="print the state folder")
     sub.add_parser("components", help="list installed components")
     f = sub.add_parser("find", help="rank components for a task description")
@@ -175,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     si.add_argument("--force", action="store_true", help="replace a skill folder that is already there")
     args = ap.parse_args(argv)
 
+    if args.cmd == "setup":
+        return setup.main(args)
     if args.cmd == "bundle":
         return _bundle(args)
     if args.cmd == "skills":

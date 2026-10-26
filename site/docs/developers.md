@@ -11,10 +11,10 @@ pip install ".[all]"        # optional extras: MCP server, Anthropic SDK, abstra
 g6 doctor                   # read-only check of the installation
 ```
 
-Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time access grant),
-untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own rights: it can
-read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are
-responsible for what you run. `g6 doctor` says whether that code runs confined on your computer and, on Windows,
+Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the one-time
+access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a repository's tests) unless you
+allow it once with g6 setup. Code you allow then has your own rights: it can read your key file ~/.g6/.env and your
+other files, and its network guard works inside Python only. You are responsible for what you run. `g6 doctor` says whether that code runs confined on your computer and, on Windows,
 prints the one-time commands that grant the access.
 
 ## Run a task through the harness

@@ -97,8 +97,9 @@ class SubprocessRunner:
         with confine.run_folder(prefix="g6_cegis_") as cwd:
             confined = confine.plan(confine.Confinement(read_write=(cwd,), read_only=confine.interpreter_paths(python)),
                                     python)
-            if confined.backend is None and confine.required():
-                raise RunnerRefused(confine.refusal(confined))
+            said = confine.refused(confined)
+            if said:
+                raise RunnerRefused(said)
             try:
                 with component_process.window(self.timeout_s):
                     done = component_process.run_contained(argv, env=env, cwd=cwd,

@@ -36,15 +36,17 @@ How it runs (``run``), and what that does and does not protect:
   (``_judge``: the archive coder's verdict rule, restated here) and against the number of tests it collected, never
   text the tests print.
 
-Where ``g6.core.confine`` has a backend (a Windows AppContainer), the tests run confined: they read the interpreter's
-folders and the repository (and what Windows lets every AppContainer read: the system folders, Program Files), write
-only the run's own folders (HOME and the temp folders; the report) and the run's container folder (deleted after it),
-so a test that writes into the repository fails and the result says so, and reach no network, this machine included,
-so a test that starts a local server fails too. G6 never changes the access of the caller's folders: until the owner
-grants the container read on the repository and its interpreter (the reason names the command, and never names the
-home folder or a folder holding G6's own), the tests run with the caller's permissions, in the caller's repository,
-not in an operating-system sandbox. The result's ``isolation`` says which (``{"backend": null, "why": ...}``), and
-``G6_REQUIRE_ISOLATION=1`` refuses an unconfined run (``G6_E_ISOLATION_UNAVAILABLE``). Either way the code under test
+Where ``g6.core.confine`` has a backend (bubblewrap on Linux, a Windows AppContainer), the tests run confined: they
+read the interpreter's folders and the repository (and, on Windows, what every AppContainer may read: the system
+folders, Program Files), write only the run's own folders (HOME and the temp folders; the report) and, on Windows, the
+run's container folder (deleted after it), so a test that writes into the repository fails and the result says so,
+and reach no network, this machine included, so a test that starts a local server fails too. G6's own git calls run
+here, in the parent. G6 never changes the access of the caller's folders: until the owner grants the container read on
+the repository and its interpreter (the reason names the command, and never names the home folder or a folder holding
+G6's own), no backend can confine the run, and it is refused (``G6_E_ISOLATION_UNAVAILABLE``) unless the person
+allowed such runs (``confine.allowed_by``); ``G6_REQUIRE_ISOLATION=1`` refuses it whatever was allowed. An allowed run
+uses the caller's permissions, in the caller's repository, not an operating-system sandbox. The result's
+``isolation`` says which (``{"backend": null, "why": ..., "allowed_by": ...}``). Either way the code under test
 shares its process with pytest and its report. Shares the process control (``g6.core.component_process``) and ``g6.workforce.verify``; no coder or model router is
 invoked here.
 """
@@ -920,8 +922,9 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             read_only=(*confine.interpreter_paths(python), *([] if mine else [str(repo)]), top), network=network),
             python)
         isolation = confined.record()
-        if confined.backend is None and confine.required():
-            raise RepoRefused(ISOLATION_UNAVAILABLE, confine.refusal(confined))
+        said = confine.refused(confined)
+        if said:
+            raise RepoRefused(ISOLATION_UNAVAILABLE, said)
         try:
             if deadline is not None:
                 bound = min(bound, _copy_remaining(deadline))

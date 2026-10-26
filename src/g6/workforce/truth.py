@@ -327,10 +327,11 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
     or exit code alone. Where ``g6.core.confine`` has a backend, the test process runs confined: it reads the
     interpreter's folders and ``repo``, writes only its own run folder (where the record goes), its container's own
     folder and, when G6 made it (the bench's copy), ``repo``, and reaches no network;
-    ``LAST_RUN["isolation"]`` says whether it was. Without one, the code under test runs in the test process with the
-    owner's permissions: this isolates the runner and the environment, not the host. Either way the code under test
-    shares the process with the recorder, so code aimed at the recorder itself is not excluded. With
-    ``G6_REQUIRE_ISOLATION`` set and no backend, nothing runs: False, with the refusal in ``LAST_RUN["refused"]``.
+    ``LAST_RUN["isolation"]`` says whether it was. Without one, nothing runs (False, with the refusal in
+    ``LAST_RUN["refused"]``) unless the person allowed such runs (``confine.allowed_by``; ``G6_REQUIRE_ISOLATION``
+    refuses it whatever was allowed); an allowed run puts the code under test in the test process with the owner's
+    permissions: this isolates the runner and the environment, not the host. Either way the code under test shares the
+    process with the recorder, so code aimed at the recorder itself is not excluded.
     ``timeout``: a shorter limit than ``TIMEOUT_S`` (a learning round's replay of one probe, R3 review C1)."""
     LAST_RUN.clear()
     # as the operating system names it, so --rootdir and --confcutdir name the folder the child starts in (macOS reaches
@@ -348,8 +349,8 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
         config.write_text("[pytest]\n", encoding="utf-8")
         confined = _confined(config_dir, repo, python)
         LAST_RUN["isolation"] = confined.record()
-        if confined.backend is None and confine.required():
-            said = confine.refusal(confined)
+        said = confine.refused(confined)
+        if said:
             LAST_RUN.update(nodeid=nodeid, rc=None, started=False, timed_out=False, tally=None, stdout="", stderr=said,
                             refused=said)
             return False
@@ -404,8 +405,8 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
     skipped | xfailed | xpassed}, "collect_errors": [file node ids], "seconds"}``. Collection errors do not stop the other
     files. ``ran`` is false, with the reason, when the runner never started, did not finish, found no tests or ended
     without reporting; a caller then knows nothing about the suite and must not read the empty outcomes as a result.
-    ``isolation`` says how the tests ran (``run_isolated``'s confinement); with ``G6_REQUIRE_ISOLATION`` set and no
-    backend, nothing runs and ``why`` is the refusal."""
+    ``isolation`` says how the tests ran (``run_isolated``'s confinement); with no backend and unconfined runs not
+    allowed (or ``G6_REQUIRE_ISOLATION`` set), nothing runs and ``why`` is the refusal."""
     found = {"ran": False, "started": False, "why": "", "outcomes": {}, "collect_errors": [], "collect_skipped": [],
              "seconds": 0.0}
     repo = Path(repo).resolve()   # as run_isolated names it
@@ -422,8 +423,9 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
         config.write_text("[pytest]\n", encoding="utf-8")
         confined = _confined(scratch, Path(repo), python)
         found["isolation"] = confined.record()
-        if confined.backend is None and confine.required():
-            found["why"] = confine.refusal(confined)
+        said = confine.refused(confined)
+        if said:
+            found["why"] = said
             return found
         if confined.backend is not None:
             env["TMPDIR"] = _own_temp(scratch)

@@ -11,6 +11,7 @@ def test_nested_artefact_crosses_sandbox_as_one_plain_archive(monkeypatch):
     # Unconfined, so the run's label is known on every machine: this is about the archive crossing into the child,
     # not the operating system's confinement (tests/core's isolation tests).
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     artefact = _build.Artefact(files={"pkg/value.txt": b"eight"}, provenance=_build.Provenance(kind="caller"))
     checks = _build.run_checks(artefact, [_build.Check("nested", "assert (root / 'pkg/value.txt').read_text() == 'eight'")])
     assert checks[0].passed is True

@@ -163,7 +163,8 @@ def _isolation() -> Check:
     """Whether untrusted code (patches, generated scripts, a repository's tests) runs confined by the operating system
     (``g6.core.confine``). On Windows it is read from the access lists alone: nothing is started or created. On Linux
     bubblewrap's test run starts, in temporary folders removed after it, since its settings alone cannot say whether
-    it works. ``fail`` only where the boundary leaked; otherwise ``warn``, with the fix for this system."""
+    it works. ``fail`` only where the boundary leaked; otherwise ``warn``, with the fix for this system and whether G6
+    refuses such code here or the person allowed it (``confine.allowed_by``)."""
     from g6.core import confine
 
     linux = sys.platform.startswith("linux")
@@ -171,12 +172,16 @@ def _isolation() -> Check:
     for python in pythons:
         name, why = confine.backend(python, probe=linux)
         if name is None:
-            # CORE_SANDBOX-01: a warning with what the person can do, never a refusal (owner ruling, 2026-10-23)
+            # CORE_SANDBOX-01 (owner ruling, 2026-10-27): with no boundary G6 refuses untrusted code unless the person
+            # allowed it once; either way the person reads what this computer needs
+            allowed = "" if confine.required() else confine.allowed_by()
+            here = (f"Here no boundary can confine untrusted code run with {python}, and {allowed} allowed it, so it "
+                    "runs with your permissions" if allowed else
+                    f"Here no boundary can confine untrusted code run with {python}, so G6 refuses to run it")
             return Check("isolation", "fail" if confine.BWRAP_LEAKED in why else "warn",
-                         f"{confine.UNCONFINED_WARNING} Here, untrusted code run with {python} runs with your "
-                         f"permissions: {why}",
-                         confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or set "
-                                                 "G6_REQUIRE_ISOLATION=1 to have G6 refuse a run it cannot confine.")
+                         f"{confine.UNCONFINED_WARNING} {here}: {why}",
+                         confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or, to run "
+                                                 "such code without a boundary, choose it once with g6 setup.")
     said = "started" if all(confine.started(python) for python in pythons) else "access list ok; not started"
     where = ("inside bubblewrap (a private loopback and no other network, only its run folder writable; G6 "
              "test-starts each interpreter there before its first confined run)" if name == confine.BUBBLEWRAP else

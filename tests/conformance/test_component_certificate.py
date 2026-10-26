@@ -181,6 +181,7 @@ def confined(confined_python, monkeypatch):
 def test_a_check_whose_runs_were_not_confined_never_supports_verified(component, monkeypatch):
     # Removing issue's confinement condition on independence would verify a component whose checks ran unconfined.
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     body = issue(component)
     assert body["issuer"]["state"] == "qualified-draft"
     assert {c["kind"] for c in body["issuer"]["checks"]} == {"partial_falsifier"}
@@ -194,6 +195,7 @@ def test_an_unconfined_issuance_records_no_folder_of_the_issuing_machine(compone
     why = (f'unavailable: the Windows AppContainer cannot read {folder}, so untrusted code would run with your '
            f'permissions; run once: icacls "{folder}" /grant "*S-1-15-2-1:(OI)(CI)(RX)", then /home/someone/code/oss/src')
     monkeypatch.setattr(confine, "_select", lambda: (None, why))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     body = issue(component)
     assert "someone" not in records.canonical(body).decode("utf-8")
     assert body["isolation"]["why"].startswith("unavailable: the Windows AppContainer cannot read <folder>, so ")
@@ -203,8 +205,10 @@ def test_a_certificate_verifies_on_a_machine_whose_confinement_differs_from_the_
     # Removing the rerun's use of the record's isolation fails every certificate on any machine but the issuer's kind
     # (an export issued unconfined on Windows, checked on Linux, whose reason differs).
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: the issuer's reason"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     body = issue(component)
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: another machine's reason"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     assert certificates.verify(certificates.load(PACKAGE), body, today=TODAY) == []
     # The record's isolation is the issuer's statement, so one of another shape is not taken from it
     forged = {**body, "isolation": "confined"}
@@ -219,6 +223,7 @@ def test_a_confined_certificate_verifies_where_nothing_can_be_confined(component
     body = issue(component)
     assert body["isolation"]["backend"] and body["issuer"]["state"] == "verified"
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     assert certificates.verify(certificates.load(PACKAGE), body, today=TODAY) == []
 
 

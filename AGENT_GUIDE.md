@@ -35,10 +35,15 @@ as the component's claim. Or import the component directly.
   `require_human_review` or `block`, do not run the action.
 - **Sensitive ops are refused over MCP** unless the person who runs the server lists them in `G6_MCP_SENSITIVE`.
   Never change that setting yourself, and do not look for another route to them. Before your user lists one, tell
-  them: Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time access
-  grant), untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own rights:
-  it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are
-  responsible for what you run.
+  them: Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the
+  one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a repository's tests)
+  unless you allow it once with g6 setup. Code you allow then has your own rights: it can read your key file
+  ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for what you
+  run.
+- **Untrusted code runs only inside an operating-system boundary.** A run refused with `G6_E_ISOLATION_UNAVAILABLE`
+  ran nothing: it is no answer, so never report it as a failed test or a wrong result. Tell your user what the refusal
+  says; `g6 doctor` names what their computer needs for a boundary. Only they choose to run such code without one, in
+  `g6 setup`: never run `g6 setup` or set `G6_ALLOW_UNCONFINED` yourself.
 - **State lives in `$G6_HOME`** (default `~/.g6`). Do not write there yourself.
 
 ## Useful starting points

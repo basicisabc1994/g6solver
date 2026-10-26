@@ -50,14 +50,18 @@ bubblewrap, what ``/usr`` and the listed ``/etc`` paths hold, and the kernel its
 namespace does); and the processor and memory the child uses within the Job Object's (on Linux, the child's own
 limits') and the deadline's bounds.
 
-With no backend the run goes ahead as before, as the owner, and its result says so: ``isolation: {"backend": null,
-"why": ..., "warning": ...}``. ``G6_REQUIRE_ISOLATION=1`` refuses such a run instead (:func:`refusal`,
-``G6_E_ISOLATION_UNAVAILABLE``). The warning (:data:`UNCONFINED_WARNING`, the same words wherever G6 says it):
+With no backend a run is refused before anything of it starts (:func:`refused`, ``G6_E_ISOLATION_UNAVAILABLE``), unless
+the person allowed such runs on this computer (:func:`allowed_by`): once, with ``g6 setup`` or on an app's first-run
+page (``g6.core.choices``), or with ``G6_ALLOW_UNCONFINED=1`` where G6 is started, which overrides what is recorded.
+``G6_REQUIRE_ISOLATION=1`` refuses it whatever was allowed. An allowed run goes ahead as the owner, and its result says
+so, and who allowed it: ``isolation: {"backend": null, "why": ..., "warning": ..., "allowed_by": ...}`` (owner ruling,
+2026-10-27, DECISIONS #40, rulings 2 and 10; it replaces the 2026-10-23 ruling that missing isolation was a warning,
+never a restriction). The warning (:data:`UNCONFINED_WARNING`, the same words wherever G6 says it):
 
-Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time access grant),
-untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own rights: it can
-read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are
-responsible for what you run.
+Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the one-time
+access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a repository's tests) unless you
+allow it once with g6 setup. Code you allow then has your own rights: it can read your key file ~/.g6/.env and your
+other files, and its network guard works inside Python only. You are responsible for what you run.
 
 A child of this interpreter also reads the folder that holds the imported ``g6`` package when it lies outside the
 interpreter's own folders (an editable install), so that folder is one the access check covers (:func:`interpreter_paths`).
@@ -80,15 +84,20 @@ from typing import Any
 
 from g6.core.errors import ISOLATION_UNAVAILABLE
 
-#: The setting that refuses a run no backend can confine.
+#: The setting that refuses a run no backend can confine, whatever the person allowed.
 REQUIRE = "G6_REQUIRE_ISOLATION"
-#: What G6 tells the person wherever untrusted code may run unconfined (CORE_SANDBOX-01). Owner ruling, 2026-10-23: a
-#: warning, never a restriction; nothing refuses a run because of it. Every place that says it uses these words.
+#: The override, where G6 is started, that lets such a run go ahead (the person's own choice is kept by g6 setup).
+ALLOW = "G6_ALLOW_UNCONFINED"
+#: What G6 tells the person wherever untrusted code may run unconfined (CORE_SANDBOX-01). Owner ruling, 2026-10-27
+#: (DECISIONS #40, rulings 2 and 10): untrusted code runs only inside an operating-system boundary unless the person
+#: allows otherwise, once per computer; it replaces the 2026-10-23 ruling (a warning, never a restriction). Every place
+#: that says it uses these words.
 UNCONFINED_WARNING = (
-    "Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time access "
-    "grant), untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own "
-    "rights: it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python "
-    "only. You are responsible for what you run.")
+    "Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the "
+    "one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a repository's "
+    "tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read your key file "
+    "~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for what "
+    "you run.")
 APPCONTAINER = "appcontainer"
 #: The group every AppContainer reads through; the owner's one-time grant names it.
 ALL_APPLICATION_PACKAGES = "S-1-15-2-1"
@@ -166,13 +175,16 @@ class Plan:
 
     def record(self) -> dict[str, Any]:
         """What a result carries as its ``isolation``: the backend (or None and why), whether the network was allowed,
-        and the run's container (its SID and profile name); an unconfined run also carries :data:`UNCONFINED_WARNING`."""
+        and the run's container (its SID and profile name); an unconfined run also carries :data:`UNCONFINED_WARNING`
+        and, when it may go ahead, who allowed it (``allowed_by``, :func:`allowed_by`)."""
         identity = self.identity
         record = {"backend": self.backend, "why": self.why,
                   "network": bool(self.confinement is not None and self.confinement.network),
                   "container": getattr(identity, "sid_text", None), "profile": getattr(identity, "name", None)}
         if self.backend is None:
             record["warning"] = UNCONFINED_WARNING
+            if not required():
+                record["allowed_by"] = allowed_by()
         return record
 
     def release(self) -> str:
@@ -180,9 +192,37 @@ class Plan:
         return self.identity.close() if self.identity is not None else ""
 
 
+def _set(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def allowed_by() -> str:
+    """Who allowed untrusted code to run here where no operating-system backend can confine it: ``G6_ALLOW_UNCONFINED``
+    (the variable, set where G6 was started: an override), ``"g6 setup"`` or ``"bundle first-run page"`` (the
+    person's choice, kept by ``g6.core.choices``), or ``""``: nobody, so such a run is refused."""
+    if _set(ALLOW):
+        return ALLOW
+    from g6.core import choices
+
+    kept = choices.choice(choices.UNCONFINED)
+    return kept["how"] if kept is not None and kept["value"] == choices.ALLOW else ""
+
+
+def allow_unconfined() -> bool:
+    """Whether the person allowed untrusted code to run without an operating-system boundary (:func:`allowed_by`)."""
+    return bool(allowed_by())
+
+
 def required() -> bool:
-    """Whether ``G6_REQUIRE_ISOLATION`` asks that a run no backend can confine be refused."""
-    return os.environ.get(REQUIRE, "").strip().lower() in {"1", "true", "yes", "on"}
+    """Whether a run no backend can confine is refused: always where ``G6_REQUIRE_ISOLATION`` is set, whatever was
+    allowed; otherwise unless the person allowed such runs (:func:`allow_unconfined`)."""
+    return _set(REQUIRE) or not allow_unconfined()
+
+
+def refused(plan: Plan) -> str:
+    """"" when ``plan``'s run may go ahead (a backend confines it, or none can and the person allowed it); otherwise the
+    refusal (:func:`refusal`), and the caller starts nothing."""
+    return "" if plan.backend is not None or not required() else refusal(plan)
 
 
 def not_started(record: dict[str, Any], exc: BaseException) -> dict[str, Any]:
@@ -230,9 +270,15 @@ def import_failure(stderr: str) -> str:
 
 
 def refusal(plan: Plan) -> str:
-    """The refusal of a run that isolation was required for and no backend can give (its code first)."""
-    return (f"[{ISOLATION_UNAVAILABLE}] {REQUIRE} is set and no operating-system isolation can confine this run, so the "
-            f"untrusted code was not run: {plan.why}")
+    """The refusal of a run no backend can confine (its code first): what happened, why, and what the person can do."""
+    if _set(REQUIRE):
+        return (f"[{ISOLATION_UNAVAILABLE}] G6 runs untrusted code only inside an operating-system boundary, and "
+                f"{REQUIRE} is set, so never without one; none can confine this run here ({plan.why}), so it was not "
+                "run. Run g6 doctor: it says what this computer needs for a boundary.")
+    return (f"[{ISOLATION_UNAVAILABLE}] G6 runs untrusted code only inside an operating-system boundary, and none can "
+            f"confine this run here ({plan.why}), so it was not run. Run g6 doctor: it says what this computer needs "
+            "for a boundary. To run such code without one, with your own rights, choose it once with g6 setup, or "
+            f"set {ALLOW}=1 where you start G6.")
 
 
 # --- the folders G6 made, and the folders G6 never asks the owner to open ----------------------------------------------
@@ -306,7 +352,8 @@ def interpreter_paths(python: str) -> tuple[str, ...]:
             found.append(source)
     else:
         folder = Path(exe).parent
-        found = [str(folder)]
+        # on POSIX an installation keeps its interpreter in bin and its standard library beside it, in lib
+        found = [str(folder.parent if os.name == "posix" and folder.name == "bin" else folder)]
         for cfg in (folder / "pyvenv.cfg", folder.parent / "pyvenv.cfg"):
             if cfg.is_file():
                 found = [*_home(cfg), str(cfg.parent)]
@@ -1139,7 +1186,8 @@ def bwrap_reason(facts: Mapping[str, Any]) -> str:
     if facts.get("container") and said:
         return ("unavailable: G6 is running inside a container whose own security settings stop bubblewrap from "
                 f"making namespaces ({said}); start the container with --security-opt seccomp=unconfined "
-                "--security-opt apparmor=unconfined, or treat the container itself as the boundary")
+                "--security-opt apparmor=unconfined, or treat the container itself as the boundary and allow such runs "
+                "once with g6 setup")
     return f"unavailable: bubblewrap could not start a confined child here: {said}" if said else ""
 
 
@@ -1336,10 +1384,10 @@ class _Bubblewrap:
                                 start_new_session=True, **options)
 
 
-__all__ = ["APPCONTAINER", "BUBBLEWRAP", "BWRAP_ETC", "BWRAP_ETC_NETWORK", "BWRAP_LEAKED", "BWRAP_NEEDS", "BWRAP_TOP",
+__all__ = ["ALLOW", "APPCONTAINER", "BUBBLEWRAP", "BWRAP_ETC", "BWRAP_ETC_NETWORK", "BWRAP_LEAKED", "BWRAP_NEEDS", "BWRAP_TOP",
            "Confinement", "FIX_LEADS", "INSTALL_BWRAP", "IsolationRefused", "NotStarted", "Plan", "REQUIRE",
-           "UNCONFINED_WARNING", "backend",
+           "UNCONFINED_WARNING", "allow_unconfined", "allowed_by", "backend",
            "bwrap_arguments", "bwrap_features", "bwrap_reason", "fix_for", "import_failure", "interpreter_paths",
            "not_started",
-           "owned", "plan", "popen", "program_paths", "recording", "refusal", "required", "run_folder", "started",
+           "owned", "plan", "popen", "program_paths", "recording", "refusal", "refused", "required", "run_folder", "started",
            "summary"]

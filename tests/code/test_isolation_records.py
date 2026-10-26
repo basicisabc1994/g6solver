@@ -19,6 +19,7 @@ TESTS = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 @pytest.fixture(autouse=True)
 def _off(monkeypatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, OFF))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 def test_meta_programmings_test_run_keeps_its_isolation() -> None:

@@ -163,8 +163,9 @@ def run_sage(sage: str, arguments: list[str], *, file_name: str = "", file_text:
             reads = confine.program_paths(sage, *(env.get(key, "") for key in ("SAGE_ROOT", "SAGE_LOCAL", "SAGE_VENV")))
             confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
             record["isolation"] = confined.record()
-            if confined.backend is None and confine.required():
-                raise Refusal(ISOLATION_UNAVAILABLE, confine.refusal(confined))
+            said = confine.refused(confined)
+            if said:
+                raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:
             return _execute(argv, root / "work", env, seconds, cap, memory_mb, record, merge=True, confined=confined)
         finally:

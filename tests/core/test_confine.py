@@ -27,6 +27,7 @@ windows_only = pytest.mark.skipif(not WINDOWS, reason="the AppContainer backend 
 
 def _off(monkeypatch: pytest.MonkeyPatch, why: str = "unavailable: switched off by this test") -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, why))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 # --- with no backend: the run proceeds as before and says so ------------------------------------------------------------

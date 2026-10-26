@@ -298,10 +298,11 @@ the evaluators, the safety rules) is blocked.
 ### Is G6 a sandbox?
 Not one to rely on alone. It runs tests and candidate code in bounded child processes. On Windows, once you have run
 the one-time access grant that `g6 doctor` prints, that code runs in an AppContainer: no network, and only its own run
-folder writable. Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time
-access grant), untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own
-rights: it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You
-are responsible for what you run. Do not use G6 as the only security boundary in front of a real executor.
+folder writable. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows
+before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a
+repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read your
+key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for what
+you run. Do not use G6 as the only security boundary in front of a real executor.
 
 ## The meta-harness
 

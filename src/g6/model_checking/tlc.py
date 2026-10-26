@@ -292,8 +292,9 @@ def _run_tool(state: dict[str, Any], *, engine: str, spec: str, module: str, con
         reads = confine.program_paths(java, os.environ.get("JAVA_HOME", ""))
         confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
         record["isolation"] = confined.record()
-        if confined.backend is None and confine.required():
-            raise Refusal(ISOLATION_UNAVAILABLE, confine.refusal(confined))
+        said = confine.refused(confined)
+        if said:
+            raise Refusal(ISOLATION_UNAVAILABLE, said)
         try:
             return _execute(argv, root / "spec", env, seconds, cap, heap_mb, record, confined)
         finally:

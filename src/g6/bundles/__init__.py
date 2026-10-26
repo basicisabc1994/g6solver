@@ -70,6 +70,9 @@ class Bundle:
     run: Callable[[dict[str, str], Any], BundleResult]
     needs_model: bool = False
     disclaimer: str = ""
+    #: It runs code the person gives it (a repository's tests, a script): its page asks, where no operating-system
+    #: boundary can confine that code and nothing was chosen, whether it may run without one (``g6.bundles.server``).
+    runs_untrusted_code: bool = False
 
 
 def catalog() -> dict[str, Bundle]:

@@ -39,6 +39,7 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
 git clone https://github.com/basicisabc1994/g6solver && cd g6solver
 pip install ".[all]"        # Python 3.12 or 3.13
 g6 doctor                   # read-only installation check
+g6 setup                    # your choices for this computer, asked once (run it yourself, not your agent)
 ```
 
 Not a programmer? Ready-made **bundles** (double-click apps) come with the first release; see the
@@ -56,10 +57,14 @@ codex mcp add g6 -- g6-mcp      # Codex
 The agent gets five discovery tools (`g6_help`, `g6_components`, `g6_find`, `g6_describe` and `g6_invoke`) and seven
 `metaharness_*` tools for tuning. [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent itself.
 
-Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time access grant),
-untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own rights: it can
-read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are
-responsible for what you run.
+G6 runs untrusted code for you only inside an operating-system boundary: bubblewrap on Linux (install the `bubblewrap`
+package), an AppContainer on Windows (after the one-time access grant `g6 doctor` prints). `g6 doctor` says which you
+have. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows
+before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a
+repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read your
+key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for
+what you run. `G6_ALLOW_UNCONFINED=1`, set where you start G6, does the same as allowing it; `G6_REQUIRE_ISOLATION=1`
+refuses such code whatever you allowed.
 
 Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, which only you
 write: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code sign-in), `G6_LLM_PROVIDER=codex`

@@ -19,10 +19,11 @@ this surface unless the person who runs the server lists them in ``G6_MCP_SENSIT
 component names (``lean``) or single ops (``lean.check_proof``), set where the server is registered, for example
 ``claude mcp add g6 -e G6_MCP_SENSITIVE=lean -- g6-mcp``. There is no wildcard, and the agent cannot set it: the
 server reads it from its own environment. ``g6_describe`` says which sensitive ops this server allows. Before you list
-one, know this (the refusal says it too): Where no operating-system backend confines it (Linux and macOS today, and
-Windows before the one-time access grant), untrusted code that G6 runs for you (a patch, a generated script, a
-repository's tests) has your own rights: it can read your key file ~/.g6/.env and your other files, and its network
-guard works inside Python only. You are responsible for what you run.
+one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
+bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
+generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
+rights: it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You
+are responsible for what you run.
 
 Every ``g6_invoke`` reply carries the library envelope (``completion_state``, ``warning_card``,
 ``evidence``, ``request_id``, ``run_id``) beside ``ok`` and ``result`` / ``error`` (``g6.core.door``). The door

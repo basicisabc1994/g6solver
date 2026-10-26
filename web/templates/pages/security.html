@@ -35,10 +35,11 @@ response time.{% endcomment %}
     <p>G6 is not a security boundary on its own: do not use it as the only check in front of something that acts in
     the real world (see the <a href="{% url 'pages:faq' %}">FAQ</a>). On Windows, once you have run the one-time access
     grant that <code>g6 doctor</code> prints, the code it runs for you runs in an AppContainer: no network, and only its
-    own run folder writable. Where no operating-system backend confines it (Linux and macOS today, and Windows before the
-    one-time access grant), untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has
-    your own rights: it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python
-    only. You are responsible for what you run. G6 is open-source software provided "as is", without warranty, under the
+    own run folder writable. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and
+    Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script,
+    a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read
+    your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible
+    for what you run. G6 is open-source software provided "as is", without warranty, under the
     <a href="{% url 'pages:license' %}">Apache License 2.0</a>.</p>
 
     <h2>This website</h2>

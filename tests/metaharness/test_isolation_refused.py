@@ -32,6 +32,7 @@ FIXED = 'import re\ndef solve(task):\n    a, b = map(int, re.search(r"(\\d+)\\+(
 
 def _off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, OFF))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 def _code_harness(tmp_path: Path):
