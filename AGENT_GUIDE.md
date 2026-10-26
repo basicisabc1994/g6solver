@@ -14,13 +14,15 @@ It does not think for you, and it never makes your result more certain than the 
    error (`[..._ERROR] op: field: message`), which you fix and retry. Never retry unchanged. Every reply
    carries `completion_state` and a `warning_card` (with a `G6_E_*` code) beside `result` or `error`:
    a result whose component reported no state is a `qualified-draft`, and a component's own `verified`
-   stands only when G6's own code re-runs a check at the door and reproduces it. Any other is held at
-   `qualified-draft` with a `G6_E_PROMOTION_LAW` card and `claimed_completion_state`, and `result` says the
-   same. G6 re-checks artifacts with its own code; it does not defend against malicious code in its own
-   process.
+   stands only when G6's own code re-runs a check at the door, against what you gave it, and reproduces it.
+   Any other is held at `qualified-draft` with a `G6_E_PROMOTION_LAW` card and `claimed_completion_state`
+   (a re-check that finds a mismatch blocks), and `result` says the same. No component you can reach
+   through a door has such a re-check yet, so nothing that comes through them is `verified` today. G6 re-checks artifacts with
+   its own code; it does not defend against malicious code in its own process.
 
-From Python, the same flow is `g6.core.discovery.find / describe` and
-`g6.core.registry.get_registry().invoke(...)`; or import the component directly.
+From Python, `g6.core.discovery.find / describe` work the same way. `g6.core.registry.get_registry().invoke(...)`
+is the raw library call beneath the doors: it returns the component's own answer, unchecked, so read its state
+as the component's claim. Or import the component directly.
 
 ## Rules
 

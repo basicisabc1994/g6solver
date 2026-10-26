@@ -469,3 +469,19 @@ def test_the_threat_statement_is_where_the_rule_is_read() -> None:
         assert THREAT in _flat(text or ""), name
     assert "Not every entry point enforces this yet" not in _flat(readme)
     assert "nothing is `verified` without `evidence`" not in _flat(guide)
+
+
+def test_the_docs_say_no_door_gives_verified_today_and_what_the_raw_call_is() -> None:
+    """Plan A1 review: under the door rule no component reachable through a door has a re-check of its own, which the
+    README, AGENT_GUIDE and g6_help say plainly; and get_registry().invoke is the raw library call, not a door."""
+    from g6.core import discovery
+
+    readme = (SRC.parents[1] / "README.md").read_text(encoding="utf-8")
+    guide = (SRC.parents[1] / "AGENT_GUIDE.md").read_text(encoding="utf-8")
+    for name, text in (("README.md", readme), ("AGENT_GUIDE.md", guide), ("g6_help", discovery.HELP)):
+        plain = _flat(text).replace("`", "")
+        assert "nothing that comes through them is verified" in plain, name
+        assert "raw library call beneath the doors" in plain, name
+    assert "the same flow is" not in _flat(guide)
+    for door in ("an agent's tool calls", "a navigator plan's steps"):
+        assert door in _flat(readme).replace("`", ""), door
