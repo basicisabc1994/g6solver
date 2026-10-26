@@ -156,7 +156,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
       "rule": "moments"
     }
   ],
-  "digest": "adfe96b384d5c8458435cae1f893006e865e218f35e00bb18994a4729a5641ef",
+  "digest": "4e0e7f519b2eb3e88618eeb0ead6814567676a5348e2535066cd66cc6e9ac178",
   "falsification": {
     "barber_example": {
       "bounds": "Conjugate parameters .01..10000; normal means and observations +/-1e6; binomial trials 1..10000 and total <=1e6. CDF support endpoints and algorithm switch; short tied, constant and shifted chains. MH scales 1e-12..100. Predictive route covers the normal likelihood only.",
@@ -6618,7 +6618,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
     ],
     "reviewed": {
       "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
-      "artifact_sha256": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+      "artifact_sha256": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
       "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
       "refusals": [
         "MLError",
@@ -6639,10 +6639,10 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
       }
     },
     "reviewer": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25); the records of the other rules are kept from the earlier readers",
-    "sha256": "e9a4d5293e5f4d1e8418c4d74ffd94db8ba41243415eea60719e7788403daca0"
+    "sha256": "664d95fea8d8a15a0503523a6c42280f23fa8f05c36f5afb7ad363fbce2b5cbd"
   },
   "inherits": null,
-  "inputs_sha256": "8b56976c73c1e63f73d3ea9687bc07a9d95aa483363a9963d1a52836ef74ce20",
+  "inputs_sha256": "0dbe2c573abe46fd1ab83bc6cdbe914be70ea71950bd81edcbd6e145a9a380cc",
   "isolation": {
     "backend": null,
     "network": false,
@@ -6650,7 +6650,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
   },
   "issuer": {
     "artifact_seq": 1,
-    "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+    "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
     "catalogue_sha": "",
     "checks": [
       {
@@ -9806,7 +9806,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
     ],
     "cost_cents": null,
     "decisions": [],
-    "digest": "19d10f6c720a18b3157ea7b54f3b9d7d027123f70b41f83996540b8929ad279a",
+    "digest": "60d8c52e5b10b555ef59a7cb5702c7e4274c3a3a6b146979e9c2f32764f78ff1",
     "formal": [],
     "gaps": [
       [
@@ -10053,7 +10053,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
     "producer": "the ml family build (Codex); the ESS estimator's equation 10 weights and page-8 average (Claude Opus 5.5)",
     "receipts": [
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "barber_example:known",
         "check_sha": "64904ef3012acd963af6d12ccc7a5d7bca372211db79771c0b16dbf115eb26c1",
         "receipt_id": "barber_example:known:receipt",
@@ -10061,7 +10061,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 4
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "barber_example:second_route",
         "check_sha": "4a8432b80c2411e8bc912c107ce2ef3f53c38d5739f208a2423acbe77d2a2382",
         "receipt_id": "barber_example:second_route:receipt",
@@ -10069,7 +10069,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 4
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "beta:known",
         "check_sha": "3a16b4a528ca5698b37f2c1f7c9f8f4bd89544a8f95a4f8e36343480f50abe6f",
         "receipt_id": "beta:known:receipt",
@@ -10077,7 +10077,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 7
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "beta:second_route",
         "check_sha": "98d3be73ad64f9ebe52ef461834e323af4870fc065d42f0ca5f41fdc14805977",
         "receipt_id": "beta:second_route:receipt",
@@ -10085,7 +10085,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 7
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "beta_cdf:known",
         "check_sha": "1b8ac325c3db5e82ddeee2fd8636968d1bc962dcdb4331eece469ea2d977272d",
         "receipt_id": "beta_cdf:known:receipt",
@@ -10093,7 +10093,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 10
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "beta_cdf:second_route",
         "check_sha": "3828b39254cb8f02adf753fddc922254f8ac5b4e6aecfa8d26bc9114c9880860",
         "receipt_id": "beta_cdf:second_route:receipt",
@@ -10101,7 +10101,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 10
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "bounds:known",
         "check_sha": "25aadf18632203792b6e2ea7886c3fb214b26422c6d67f76112f375ef8793a1e",
         "receipt_id": "bounds:known:receipt",
@@ -10109,7 +10109,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 13
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "convergence:known",
         "check_sha": "45a5de671bfbbbd2842cba1c3f7cb2d70775199bd931447602cfe87d919d8731",
         "receipt_id": "convergence:known:receipt",
@@ -10117,7 +10117,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 16
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "convergence:second_route",
         "check_sha": "8e1ae0f12da176288d45fdbd94435df8f3e028d2a7782add38b2bbb5bd0d752f",
         "receipt_id": "convergence:second_route:receipt",
@@ -10125,7 +10125,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 16
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "credible_interval:known",
         "check_sha": "adc2eca1b0bf4df7c79a8a84933e49a7aa9cba02ee72f81ed37374b307470b39",
         "receipt_id": "credible_interval:known:receipt",
@@ -10133,7 +10133,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 19
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "credible_interval:second_route",
         "check_sha": "cb547cfc108a498e088bbe53c65bd8bded19cda423df7ee1b5bf7b180dae4cbb",
         "receipt_id": "credible_interval:second_route:receipt",
@@ -10141,7 +10141,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 19
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "evidence:known",
         "check_sha": "a091cf611eea70be90e9c1ae87e066276176f5871a5816750a9e4b9a0c704e82",
         "receipt_id": "evidence:known:receipt",
@@ -10149,7 +10149,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 22
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "evidence:second_route",
         "check_sha": "f59292770b649a92df00a864ff811b863cee4551b4ac6aad01c1cea2bf29b91b",
         "receipt_id": "evidence:second_route:receipt",
@@ -10157,7 +10157,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 22
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "gamma:known",
         "check_sha": "271b0b381ec100183b8259c382f3341aaf823684a5fb55ec9da2d1c1c35628bd",
         "receipt_id": "gamma:known:receipt",
@@ -10165,7 +10165,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 25
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "gamma:second_route",
         "check_sha": "ddcad30b865c6144f56e94270c967cc2680ef4784baa23c69dde354257348439",
         "receipt_id": "gamma:second_route:receipt",
@@ -10173,7 +10173,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 25
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "gamma_cdf:known",
         "check_sha": "5a08c506f17b31500015eb623c3a22c9e254dd543c2cfa6565aeeff523b0cde4",
         "receipt_id": "gamma_cdf:known:receipt",
@@ -10181,7 +10181,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 28
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "gamma_cdf:second_route",
         "check_sha": "d1bc72dc6714b63583bc72986e843b48a4b577c9eb64cb0a7aa6a88dc4946ec1",
         "receipt_id": "gamma_cdf:second_route:receipt",
@@ -10189,7 +10189,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 28
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "mh:known",
         "check_sha": "07c11e928133e6ee8adf26e8ebe93aea9dbfa2fda17e2808b5794eefd5fc0774",
         "receipt_id": "mh:known:receipt",
@@ -10197,7 +10197,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 31
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "mh:second_route",
         "check_sha": "a76b9c32342c2de1ec26f11022f06c31462a3d355c1b4e8c02163c6e1f88608e",
         "receipt_id": "mh:second_route:receipt",
@@ -10205,7 +10205,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 31
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "misfit:known",
         "check_sha": "2ab7fd21424b988bbbf1c40af769e96afeca06d33c739e9d148897a7b254394a",
         "receipt_id": "misfit:known:receipt",
@@ -10213,7 +10213,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 34
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "moments:known",
         "check_sha": "3c74562a337f872eed353e59be450cd6f02458da50ec6824c484c0cb8af7ca78",
         "receipt_id": "moments:known:receipt",
@@ -10221,7 +10221,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 37
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "moments:second_route",
         "check_sha": "154f034b93d31498cb559849422b4d4f377e1a66ceebefd978058b80341ba361",
         "receipt_id": "moments:second_route:receipt",
@@ -10229,7 +10229,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 37
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "normal:known",
         "check_sha": "b4d1539d309451caa2e089b4de4bf632c505745753b8e7c09e66b838a472576d",
         "receipt_id": "normal:known:receipt",
@@ -10237,7 +10237,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 40
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "normal:second_route",
         "check_sha": "c08c6aeaaf9fd132a2dc17cfc590715682748f959ef4effeb5353424a40ecec4",
         "receipt_id": "normal:second_route:receipt",
@@ -10245,7 +10245,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 40
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "numerics:known",
         "check_sha": "b9a9e5f705f0412e2200540a63af973c2ada6daf1dd8df6af81c528b6126b328",
         "receipt_id": "numerics:known:receipt",
@@ -10253,7 +10253,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 43
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "prediction:known",
         "check_sha": "0bc6f87ecb9f4d31c6934546951a3377b172ae51576e9de8817e12a2d34312d4",
         "receipt_id": "prediction:known:receipt",
@@ -10261,7 +10261,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 46
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "prediction:second_route",
         "check_sha": "07f5ebd3a66dee3099bf239cdbc22258c709ef9db9ef645871a3efb9cf9c108f",
         "receipt_id": "prediction:second_route:receipt",
@@ -10269,7 +10269,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 46
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "prior_shift:known",
         "check_sha": "af9110f3fccd87b3db01d5eb500643dab3de5634e08c52ae276d194a35bfe188",
         "receipt_id": "prior_shift:known:receipt",
@@ -10277,7 +10277,7 @@ barber-beta, barber-evidence, barber-mh, barber-prediction, bolstad-14, bolstad-
         "seq": 49
       },
       {
-        "artifact_sha": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+        "artifact_sha": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
         "check_id": "sampler_metadata:known",
         "check_sha": "47e34a6adec991996df93dc8f1db9d6c5ac645d58c912397cb8896902ec90f1c",
         "receipt_id": "sampler_metadata:known:receipt",
