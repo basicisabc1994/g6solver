@@ -40,7 +40,6 @@ import pytest
 from g6.core.reliability_envelope import (
     ReliabilityEnvelope,
     envelope_fields,
-    promotion_law_mode,
 )
 
 # The guard is keyed on the VALUE, not on a field-name allowlist.
@@ -98,35 +97,28 @@ def test_bare_envelope_reports_itself_degraded():
     assert ReliabilityEnvelope().degraded is True
 
 
-def test_holds_with_the_promotion_law_OFF():
-    """The shipped prod default is law=off. If this only held under `enforce`
-    the fix would be inert in production -- which was the original defect."""
-    prev = os.environ.pop("G6_KERNEL_PROMOTION_LAW", None)
-    try:
-        assert promotion_law_mode() == "off"
-        assert envelope_fields()["completion_state"] != "verified"
-    finally:
-        if prev is not None:
-            os.environ["G6_KERNEL_PROMOTION_LAW"] = prev
+def test_holds_whatever_the_old_law_switch_says(monkeypatch):
+    """The law used to ship off (G6_KERNEL_PROMOTION_LAW unset). It has no switch
+    now (plan A1): an off-word changes nothing, for a bare envelope or a stated one."""
+    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "off")
+    assert envelope_fields()["completion_state"] != "verified"
+    assert envelope_fields(reliability_label="verified")["completion_state"] == "qualified-draft"
 
 
 # --------------------------------------------------------------------------
 # 2. the change removed the free ride, not the state (discrimination)
 # --------------------------------------------------------------------------
 
-def test_explicitly_named_verified_still_works():
-    """DISCRIMINATION CHECK. If this fails, the fix went too far and simply
-    deleted `verified`, which would make every test above vacuously green."""
-    prev = os.environ.pop("G6_KERNEL_PROMOTION_LAW", None)
-    try:
-        env = ReliabilityEnvelope(
-            completion_state="verified", reliability_label="verified"
-        )
-        assert env.reliability_label == "verified"
-        assert env.degraded is False
-    finally:
-        if prev is not None:
-            os.environ["G6_KERNEL_PROMOTION_LAW"] = prev
+def test_explicitly_named_verified_is_held_without_g6s_recheck():
+    """One outcome (plan A1): naming `verified` is a claim, and with no re-check by
+    G6 it is held at qualified-draft. The DISCRIMINATION CHECK (that `verified` is
+    still reachable, so the tests above are not vacuously green) is
+    tests/core/test_door_promotion.py::test_a_registered_g6_rechecker_promotes."""
+    env = ReliabilityEnvelope(
+        completion_state="verified", reliability_label="verified"
+    )
+    assert env.reliability_label == "qualified-draft"
+    assert env.degraded is True
 
 
 @pytest.mark.parametrize("label", ["qualified-draft", "blocked-escalated"])
@@ -451,7 +443,7 @@ def _allowlist_key(hit: str) -> str:
 #: fails the guard, so the list cannot quietly grow or go stale. (CORE_LABELS-03, 2026-10-23.)
 NOT_A_FREE_DEFAULT: dict[str, tuple[int, str]] = {
     'g6/core/reliability_envelope.py _apply_promotion_law: return "verified"': (
-        3, "demote-only gate, reached only when the producer stated verified: keeps or lowers that state, never "
+        1, "demote-only gate, reached only when the producer stated verified: keeps or lowers that state, never "
            "raises one"),
     'g6/evidence/certificate.py _state: return "verified"': (
         1, "the issuer's rule: only when every predicate is supported by a pass receipt from an independent, frozen, "

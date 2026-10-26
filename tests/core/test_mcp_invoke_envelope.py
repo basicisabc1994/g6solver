@@ -61,9 +61,11 @@ def test_verified_without_evidence_is_held_at_draft() -> None:
     assert found["warning_card"]["code"] == "G6_E_VERIFIED_WITHOUT_EVIDENCE"
 
 
-def test_verified_with_evidence_passes_through() -> None:
+def test_verified_with_evidence_is_held_without_g6s_recheck() -> None:
+    """One outcome (plan A1): evidence a component attaches is its own; with no re-check by G6 its verified is held."""
     found = _reply(Success({"completion_state": "verified", "evidence": [{"kind": "test", "ref": "t1"}]}))
-    assert found["completion_state"] == "verified" and found["evidence"]
+    assert found["completion_state"] == "qualified-draft" and found["evidence"]
+    assert found["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
 
 
 def test_a_blocked_result_keeps_its_own_card() -> None:
@@ -72,10 +74,10 @@ def test_a_blocked_result_keeps_its_own_card() -> None:
     assert found["completion_state"] == "blocked-escalated" and found["warning_card"]["code"] == "G6_E_POLICY_BLOCKED"
 
 
-def test_the_promotion_law_demotion_still_carries_a_card(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "enforce")
+def test_the_promotion_law_demotion_carries_its_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "off")   # no switch turns the law off
     found = _reply(Success({"completion_state": "verified", "evidence": [{"kind": "test"}]}))
-    assert found["completion_state"] in ("verified", "qualified-draft")  # the core decides; the envelope stays whole
+    assert found["completion_state"] == "qualified-draft" and found["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
 
 
 def test_a_real_component_reply_is_a_whole_envelope() -> None:

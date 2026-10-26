@@ -18,12 +18,20 @@ def test_the_labels_are_the_cores() -> None:
     assert RELIABILITY_LABELS == {"verified", "qualified-draft", "blocked-escalated"}
 
 
-def test_well_formed_core_envelopes_pass() -> None:
+def test_well_formed_envelopes_pass() -> None:
     draft = envelope_fields(reliability_label="qualified-draft", warning_card=CARD, request_id="q", run_id="r")
-    verified = envelope_fields(reliability_label="verified", evidence=[{"kind": "test", "ref": "t1"}],
-                               request_id="q", run_id="r")
+    verified = {"completion_state": "verified", "reliability_label": "verified", "degraded": False,
+                "evidence": [{"kind": "test", "ref": "t1"}], "request_id": "q", "run_id": "r"}
     assert check_envelope(draft) == [] and check_envelope(verified) == []
     assert_envelope(draft)
+
+
+def test_a_verified_the_core_holds_is_still_a_whole_envelope() -> None:
+    """The promotion law holds a stated verified that G6 did not re-check (plan A1); the held envelope says why."""
+    held = envelope_fields(reliability_label="verified", evidence=[{"kind": "test", "ref": "t1"}],
+                           request_id="q", run_id="r")
+    assert held["completion_state"] == "qualified-draft" and check_envelope(held) == []
+    assert held["warning_card"]["code"] == "G6_E_PROMOTION_LAW" and held["claimed_completion_state"] == "verified"
 
 
 def test_a_result_that_is_not_verified_needs_a_card_with_a_stable_code() -> None:
@@ -35,7 +43,7 @@ def test_a_result_that_is_not_verified_needs_a_card_with_a_stable_code() -> None
 
 
 def test_verified_needs_evidence() -> None:
-    assert _rules(envelope_fields(reliability_label="verified", request_id="q", run_id="r")) == [
+    assert _rules({"completion_state": "verified", "evidence": [], "request_id": "q", "run_id": "r"}) == [
         "verified_without_evidence"]
 
 

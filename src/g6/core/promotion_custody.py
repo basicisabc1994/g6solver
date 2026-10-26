@@ -29,10 +29,11 @@ Staging (opt-in, fail-closed, non-regressing):
 - ``G6_PROMOTION_EVALUATOR_KEY_PATH`` unset (production + every existing caller
   default): ``custody_configured()`` is False and ``promotion_evaluator`` takes its
   existing in-process branch — byte-identical to before this module existed.
-- Path set: the three promotion seams (the law's ``promotion_witness_faults``, the
-  registry invoker's ``_merge_envelope``, and lean's ``server._run``) route through
-  the child transparently, because they already call ``promotion_evaluator``'s
-  ``evaluator_configured`` / ``verify`` / ``stamp_replayed`` — which delegate here.
+- Path set: ``promotion_evaluator``'s ``evaluator_configured`` / ``verify`` /
+  ``stamp_replayed`` delegate here. The child service is not part of this library,
+  so ``custody_configured`` raises and says so rather than letting every check
+  answer "not signed". The promotion law reads no signature (plan A1), so the path
+  can neither block nor lift a result.
 
 COST NOTE: ``verify`` spawns a subprocess. It is called at a promotion door only
 for an envelope that both proposes ``verified`` AND carries a witness (rare — only
@@ -47,6 +48,7 @@ never loads the key and has no signing interface; the key exists only in the chi
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -81,7 +83,16 @@ def custody_configured() -> bool:
     """
     if os.environ.get(_INPROC_SENTINEL_ENV):
         return False
-    return bool((os.environ.get(_KEY_PATH_ENV) or "").strip())
+    if not (os.environ.get(_KEY_PATH_ENV) or "").strip():
+        return False
+    if importlib.util.find_spec(_SERVICE_MODULE) is None:
+        # The child service was never part of the library: every call would answer "not signed" without saying why.
+        raise RuntimeError(
+            f"{_KEY_PATH_ENV} is set, but this G6 has no evaluator service ({_SERVICE_MODULE}), so nothing could be "
+            f"signed or checked out of process; unset {_KEY_PATH_ENV} and keep G6_PROMOTION_EVALUATOR_KEY in the key "
+            "file instead"
+        )
+    return True
 
 
 def _components_root() -> str:

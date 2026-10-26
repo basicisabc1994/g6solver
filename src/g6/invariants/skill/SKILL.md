@@ -89,7 +89,7 @@ draft = envelope_fields(reliability_label="qualified-draft", request_id="q1", ru
 assert check_envelope(draft) == []
 assert_envelope(draft)
 
-claimed = envelope_fields(reliability_label="verified", request_id="q1", run_id="r1")
+claimed = {"completion_state": "verified", "evidence": [], "request_id": "q1", "run_id": "r1"}
 assert [v.rule for v in check_envelope(claimed)] == ["verified_without_evidence"]
 
 assert nonvacuous_pass([]) is False  # nothing ran

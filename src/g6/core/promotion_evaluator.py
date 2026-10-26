@@ -1,44 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 The G6 authors
 
-"""promotion_evaluator — the evaluator authority for the kernel promotion law.
+"""promotion_evaluator — the independent-replay seam, and an evaluator signing key.
 
-The kernel promotion law (``core.reliability_envelope``) demotes a proposed
-``verified`` unless it carries a valid ``promotion_witness``. The witness's
-*structural* checks (separated ``evaluator`` role, ``independent_evaluation``,
-a witnessed ``execution_id``, a sealed ``content_digest``) mirror the
-science_harness S3 status-authority law — but in a single importable process
-those fields are only *claims*: any component can call
-``build_promotion_witness`` and assert ``role="evaluator"``. The law would then
-catch a *missing* or *malformed* witness, but not a well-formed one **self-minted
-by the generator it is supposed to check**.
+The kernel promotion law (``core.reliability_envelope``) lets a proposed
+``verified`` stand only when one of G6's own re-checkers re-runs the check and
+reproduces it: it calls :func:`replay_reproduces` with that re-checker's replay
+(plan A1, DECISIONS #40). Any component can call ``build_promotion_witness`` and
+assert ``role="evaluator"``, so the law takes no witness field on the producer's
+word, and it reads no signature: a configured key, in process or by path, can
+neither promote nor block a result. G6 re-checks artifacts with its own code; it
+does not defend against malicious code in its own process.
 
-This module closes that hole with an evaluator IDENTITY the generator does not
-hold. A promotable witness must be **signed by the evaluator authority** — an
-HMAC over the witness's sealed core, keyed by the secret
+The signing layers below remain a library for callers that want signed
+statements: an HMAC over a witness's sealed core, keyed by the secret
 ``G6_PROMOTION_EVALUATOR_KEY`` in the person's key file (``g6.core.keys``,
-``~/.g6/.env``; never the environment). ``stamp`` is the ONLY mint path for a signed
-witness; a caller without the key cannot produce a signature ``verify`` accepts.
+``~/.g6/.env``; never the environment).
 
-Staging (opt-in, fail-closed, non-regressing):
+Two layers:
 
-- **No key configured (default):** ``evaluator_configured()`` is False. The law
-  applies its structural checks only — byte-identical to before this module
-  existed. Nothing regresses.
-- **Key configured:** the law additionally requires a valid evaluator signature;
-  a self-minted (unsigned) witness demotes even if structurally perfect.
-
-Two layers close the hole in stages:
-
-1. **Signature/identity** (``sign`` / ``verify`` / ``stamp``): a promotable
-   witness must be HMAC-signed by the evaluator key. Raises the bar from "any
-   component self-certifies" to "a component must hold the evaluator key".
+1. **Signature/identity** (``sign`` / ``verify`` / ``stamp``): a witness
+   HMAC-signed by the evaluator key.
 2. **Independent replay** (``register_oracle`` / ``stamp_replayed``): the
    disciplined mint path RE-RUNS the witness's oracle and refuses to sign a
    result that does not independently reproduce (the science_harness
-   hidden_evaluation model). Holding the key is not enough — you must also
-   produce a result that reproduces. Replay happens ONCE at mint; the law's
-   ``verify`` stays a cheap signature check at every envelope door.
+   hidden_evaluation model).
 
 CUSTODY (slice 5): in the in-process mode above the key lives in the key file, which
 this process reads, so a *determined* in-process component could read it, and could
@@ -49,9 +35,9 @@ the key file) moves the key AND the crypto OUT OF PROCESS: the
 custody client (``core.promotion_custody``) answers ``verify`` / ``stamp_replayed``
 by spawning a child (``core.promotion_evaluator_service``) that loads the key from
 the file, re-runs the replay, and signs — so the generator holds no key and has no
-in-process ``stamp`` to abuse. This module is the in-process foundation those two
-modules reuse; with neither set it is byte-identical to before the seam
-existed. (The custody boundary is process-memory + interface, not an OS ACL against
+in-process ``stamp`` to abuse. That service is not part of this library, so with the
+path set ``promotion_custody.custody_configured`` raises and says so, rather than
+every check quietly answering "not signed". (The custody boundary is process-memory + interface, not an OS ACL against
 the same user — the key file is same-user-readable, as the hidden seed is.)
 
 Determinism: no wall-clock, no randomness — signing is a pure function of the
@@ -122,8 +108,8 @@ def evaluator_configured() -> bool:
     """True when an evaluator signing authority is available.
 
     True for an in-process key (``G6_PROMOTION_EVALUATOR_KEY`` in the key file) OR an
-    out-of-process custody service (``G6_PROMOTION_EVALUATOR_KEY_PATH``, slice 5):
-    either way the law requires a valid signature at every promotion door.
+    out-of-process custody service (``G6_PROMOTION_EVALUATOR_KEY_PATH``, slice 5).
+    The promotion law does not read it.
     """
     return _key_bytes() is not None or _custody().custody_configured()
 
@@ -177,8 +163,7 @@ def verify(witness: Any) -> bool:
 
     False when no authority is configured, when the signature is absent/blank,
     or when it does not match the witness's ``content_digest`` + witnessed
-    ``execution_id`` (constant-time compare). The caller (the law) treats False
-    as a fault only when ``evaluator_configured()`` is True.
+    ``execution_id`` (constant-time compare). The promotion law does not call this.
 
     When an out-of-process custody service is configured (slice 5), the check is
     answered by that service (the key lives only there); otherwise it runs in
@@ -430,19 +415,21 @@ def oracle_registered(name: str) -> bool:
     return name in _ORACLE_REPLAYS
 
 
-def replay_reproduces(witness: Any) -> ReplayOutcome:
+def replay_reproduces(witness: Any, *, replay: _OracleReplay | None = None) -> ReplayOutcome:
     """Independently re-run the witness's oracle; fail-closed on every gap.
 
-    Returns ``reproduced=False`` when the witness is malformed, when the oracle
-    is unregistered, when the replay raises or returns the wrong type, when it
-    does not reproduce, or when the identity it observes does not match the
-    witness's witnessed execution_id. Only a clean, identity-matching
-    reproduction returns ``reproduced=True``.
+    ``replay`` is the re-check to run; by default the one registered for the
+    witness's oracle (the promotion law passes G6's own re-checker, never the open
+    registry). Returns ``reproduced=False`` when the witness is malformed, when no
+    replay is known, when the replay raises or returns the wrong type, when it does
+    not reproduce, or when the identity it observes does not match the witness's
+    witnessed execution_id. Only a clean, identity-matching reproduction returns
+    ``reproduced=True``.
     """
     if not isinstance(witness, Mapping):
         return ReplayOutcome(False, detail="witness is not a mapping")
     oracle = str(witness.get("oracle") or "")
-    replay = _ORACLE_REPLAYS.get(oracle)
+    replay = replay if replay is not None else _ORACLE_REPLAYS.get(oracle)
     if replay is None:
         return ReplayOutcome(
             False, detail=f"no independent replay registered for oracle {oracle!r}"
