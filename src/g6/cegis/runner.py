@@ -2,11 +2,14 @@
 """Running candidate code out of process (audit 027 CG-002, CG-005).
 
 ``SubprocessRunner`` starts ``python -I -m g6.cegis._child`` through :mod:`g6.core.component_process` (a wall-clock
-allowance and a kill of the whole process tree), with an empty working directory and an environment that carries no
+allowance and a kill of the whole process tree), in an empty run folder G6 made and with an environment that carries no
 secret. The child lowers its own memory, CPU and file-size limits on POSIX before any candidate runs (macOS refuses the
 address-space limit, so there its memory is not capped); on Windows the Job Object caps its memory, beside the wall
-clock and the tree kill. It is a resource bound with an AST pre-filter, not
-an operating-system sandbox: the child runs as the same user.
+clock and the tree kill. Like every run of untrusted code it goes through :mod:`g6.core.confine`: where a backend can
+confine it (bubblewrap on Linux, an AppContainer on Windows), it reads only the interpreter's folders, writes only its
+run folder and reaches no network; elsewhere it is a resource bound with an AST pre-filter, and the child runs as the
+same user. Each call's isolation is recorded (``confine.recording``), and a run that isolation is required for and no
+backend can give is refused before anything starts (:class:`RunnerRefused`).
 """
 from __future__ import annotations
 
@@ -15,13 +18,12 @@ import math
 import os
 import signal
 import sys
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from g6.cegis.sketch import Control, Sketch
-from g6.core import component_process
+from g6.core import component_process, confine
 
 #: Environment variables the child may see (the interpreter needs these on Windows); nothing else is passed.
 _ENV_KEEP = ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_ALL")
@@ -33,6 +35,11 @@ class RunnerError(RuntimeError):
 
 class RunnerTimeout(RunnerError):
     """The child's wall-clock allowance ran out; it and every process it started were killed."""
+
+
+class RunnerRefused(RunnerError):
+    """No candidate ran: isolation was required and no operating-system backend could confine the child. The message
+    is ``confine``'s refusal (``G6_E_ISOLATION_UNAVAILABLE`` first)."""
 
 
 @dataclass(frozen=True)
@@ -85,17 +92,24 @@ class SubprocessRunner:
         # the CPU limit sits a second past the wall clock, so the wall clock (a clean kill) normally fires first
         request = {**request, "mem_mb": self.mem_mb, "cpu_s": max(1, math.ceil(self.timeout_s)) + 1}
         env = {k: os.environ[k] for k in _ENV_KEEP if k in os.environ}
-        argv = [sys.executable, "-I", "-m", "g6.cegis._child"]
-        with tempfile.TemporaryDirectory(prefix="g6_cegis_") as cwd:
+        python = sys.executable
+        argv = [python, "-I", "-m", "g6.cegis._child"]
+        with confine.run_folder(prefix="g6_cegis_") as cwd:
+            confined = confine.plan(confine.Confinement(read_write=(cwd,), read_only=confine.interpreter_paths(python)),
+                                    python)
+            if confined.backend is None and confine.required():
+                raise RunnerRefused(confine.refusal(confined))
             try:
                 with component_process.window(self.timeout_s):
                     done = component_process.run_contained(argv, env=env, cwd=cwd,
                                                            input_bytes=json.dumps(request).encode("utf-8"),
-                                                           memory_bytes=self.mem_mb * 1024 * 1024)
+                                                           memory_bytes=self.mem_mb * 1024 * 1024, confined=confined)
             except component_process.ExecutionInterrupted as exc:
                 raise RunnerTimeout(f"the candidate run took longer than {self.timeout_s:g}s and was killed") from exc
             except (OSError, ConnectionResetError) as exc:
                 raise RunnerError(f"the candidate run could not be completed: {exc}") from exc
+            finally:
+                confined.release()
         xcpu = getattr(signal, "SIGXCPU", None)  # POSIX only
         if xcpu is not None and done.returncode == -xcpu:
             raise RunnerTimeout(f"the candidate run used up its {request['cpu_s']}s of CPU and was killed")
@@ -111,4 +125,4 @@ class SubprocessRunner:
         return reply
 
 
-__all__ = ["Runner", "RunnerError", "RunnerTimeout", "SearchResult", "SubprocessRunner"]
+__all__ = ["Runner", "RunnerError", "RunnerRefused", "RunnerTimeout", "SearchResult", "SubprocessRunner"]

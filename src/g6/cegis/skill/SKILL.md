@@ -43,7 +43,8 @@ says exactly which domain it rests on.
 - `Z3Verifier`: an optional second check: Z3 looks for any input of the whole domain on which the candidate breaks an
   SMT-LIB `spec` over the arguments and `result`.
 - `SubprocessRunner`: runs candidates in a child process with a wall-clock allowance (`timeout_s`), a memory cap
-  (`mem_mb`; none on macOS, which refuses it) and a kill of the whole process tree.
+  (`mem_mb`; none on macOS, which refuses it) and a kill of the whole process tree, inside G6's operating-system
+  boundary where one is ready (`boundary["isolation"]` says how they ran).
 - `CegisResult`: `status`, `control`, `program`, `counterexamples`, `boundary`, `trace`, `reason` and
   `completion_state`.
 - `CegisResult.to_envelope`: the result as the library envelope, with a `G6_E_CEGIS_*` warning card.
@@ -69,7 +70,7 @@ fallback, promotion or reuse store is involved.
 - `blocked-escalated`: `counterexample_budget_exhausted` (`G6_E_CEGIS_BUDGET_EXHAUSTED`), `unsat` (no control of the
   sketch fits, said only after an exhaustive search, `G6_E_CEGIS_UNSAT`), `timeout` (`G6_E_CEGIS_TIMEOUT`) and
   `inconclusive` (`G6_E_CEGIS_INCONCLUSIVE`: nothing compared, a search that was not exhaustive, or a verifier with no
-  decision, never read as a pass).
+  decision, never read as a pass), and `refused` (`G6_E_ISOLATION_UNAVAILABLE`: no candidate ran).
 
 ## Alone and composed
 
@@ -98,8 +99,9 @@ Composed:
   default) is checked only on a seeded draw of that many inputs, and `boundary` says so (`exhaustive` false).
 - Your oracle is the standard. If it is wrong, the program agrees with a wrong answer; it runs in your own process.
 - A `TableOracle` compares only the cases it lists: with two cases, `compared` is 2, whatever the domain's size.
-- The child is not an operating-system sandbox: it runs as the same user, behind an AST pre-filter, a time limit, a
-  memory cap (except on macOS) and, on POSIX, CPU and file-size limits.
+- Where no operating-system boundary is ready (bubblewrap on Linux, an AppContainer on Windows), the child runs as
+  the same user, behind an AST pre-filter, a time limit, a memory cap (except on macOS) and, on POSIX, CPU and
+  file-size limits. With isolation required and none ready, no candidate runs: `refused`.
 - `Z3Verifier` reads only one `return` of int and bool arithmetic, comparisons and conditionals; anything else is
   `inconclusive` (`z3_untranslatable`), never approximated.
 - Hole values are bounded (integers from `lo` to `hi`); a constant outside the range cannot be found.

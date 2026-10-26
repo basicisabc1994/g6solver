@@ -303,6 +303,17 @@ def interpreter_paths(python: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(os.path.realpath(path) for path in found))
 
 
+def program_paths(program: str, *extra: str) -> tuple[str, ...]:
+    """The folders an outside program (SWI-Prolog, Lean, Java, SageMath) reads to start, for a plan that names no
+    interpreter: the folder that holds it, its links followed, and, when that folder is a ``bin``, the installation
+    above it (its ``lib`` and ``share``, a toolchain's or a JDK's root); then those of ``extra`` that exist (``ELAN_HOME``,
+    ``SAGE_ROOT`` and the like)."""
+    folder = Path(os.path.realpath(program)).parent
+    found = [str(folder), *([str(folder.parent)] if folder.name.lower() == "bin" else [])]
+    found += [os.path.realpath(path) for path in extra if path and os.path.exists(path)]
+    return tuple(dict.fromkeys(found))
+
+
 def _home(cfg: Path, *, posix: bool = os.name == "posix") -> list[str]:
     """The base installation a virtual environment's ``pyvenv.cfg`` names. On POSIX its ``home`` is the folder that
     holds the base interpreter (``.../bin``), with the standard library beside it (``.../lib/python3.x``), so the
@@ -356,10 +367,11 @@ def started(python: str) -> bool:
     return chosen is not None and chosen.started(python)
 
 
-def plan(confinement: Confinement, python: str) -> Plan:
+def plan(confinement: Confinement, python: str | None = None) -> Plan:
     """How one run of ``python`` is confined, granting the run's own container what ``confinement`` names (the folders
     G6 made only); a ``Plan`` with no backend, and the reason, when none can confine it. Noted for :func:`recording`.
-    The caller calls :meth:`Plan.release` after the run."""
+    The caller calls :meth:`Plan.release` after the run. With no ``python`` the child is an outside program whose
+    folders are among ``confinement.read_only`` (:func:`program_paths`): no interpreter is added or test-started."""
     strays = [path for path in confinement.read_write if not owned(path)]
     if strays:
         raise ValueError("G6 changes the access only of folders it created for the run (confine.run_folder), "
@@ -371,7 +383,7 @@ def plan(confinement: Confinement, python: str) -> Plan:
     return made
 
 
-def _plan(confinement: Confinement, python: str) -> Plan:
+def _plan(confinement: Confinement, python: str | None) -> Plan:
     chosen, why = _select()
     if chosen is None:
         return Plan(None, why, confinement)
@@ -669,15 +681,15 @@ class _AppContainer:
     def readable(self, path: str) -> bool:
         return self._granted(path) & _READ_EXECUTE == _READ_EXECUTE
 
-    def prepare(self, confinement: Confinement, python: str) -> tuple[_Identity | None, str]:
+    def prepare(self, confinement: Confinement, python: str | None) -> tuple[_Identity | None, str]:
         """The run's own container, granted what ``confinement`` names (the folders G6 made only); None and why when
-        it cannot be confined."""
+        it cannot be confined. No ``python``: an outside program, whose folders are among the read paths."""
         reads = [path for path in confinement.read_only if os.path.exists(path)]
-        unread = [path for path in dict.fromkeys([*interpreter_paths(python), *reads])
+        unread = [path for path in dict.fromkeys([*(interpreter_paths(python) if python else ()), *reads])
                   if not owned(path) and not self.readable(path)]
         if unread:
             return None, self.cannot_read(unread)
-        why = self.ready(python)
+        why = self.ready(python) if python else ""
         if why:
             return None, why
         try:
@@ -1241,13 +1253,15 @@ class _Bubblewrap:
         self._disable_userns = disable
         return ""
 
-    def prepare(self, confinement: Confinement, python: str) -> tuple[_BwrapRun | None, str]:
+    def prepare(self, confinement: Confinement, python: str | None) -> tuple[_BwrapRun | None, str]:
         """The run's binds (``bwrap_arguments``); None and why when a path it names is guarded or bubblewrap is not
-        ready."""
+        ready. No ``python``: an outside program, whose folders are among the read paths; bubblewrap's readiness is
+        then that of a child of G6's own interpreter."""
         named = [*confinement.read_write, *confinement.read_only]
         guarded = [path for path in named if _guarded(path)]
+        reads: tuple[str, ...] = ()
         if not guarded:
-            reads = tuple(dict.fromkeys([*interpreter_paths(python),
+            reads = tuple(dict.fromkeys([*(interpreter_paths(python) if python else ()),
                                          *(path for path in confinement.read_only if os.path.exists(path))]))
             guarded = [path for path in reads if _guarded(path)]
         if guarded:
@@ -1256,7 +1270,7 @@ class _Bubblewrap:
             return None, ("unavailable: " + ", ".join(guarded) + " is your home folder, holds it, or holds G6's own "
                           f"folder ({g6_home()}) with your key file, so G6 never binds it into a confined run and this "
                           "run cannot be confined; keep the repository and the interpreter in folders of their own")
-        why = self.ready(python)
+        why = self.ready(python or sys.executable)
         if why:
             return None, why
         kept = Confinement(read_write=confinement.read_write, read_only=(), network=confinement.network)
@@ -1282,4 +1296,5 @@ __all__ = ["APPCONTAINER", "BUBBLEWRAP", "BWRAP_ETC", "BWRAP_ETC_NETWORK", "BWRA
            "Confinement", "FIX_LEADS", "INSTALL_BWRAP", "NotStarted", "Plan", "REQUIRE", "UNCONFINED_WARNING", "backend",
            "bwrap_arguments", "bwrap_features", "bwrap_reason", "fix_for", "import_failure", "interpreter_paths",
            "not_started",
-           "owned", "plan", "popen", "recording", "refusal", "required", "run_folder", "started", "summary"]
+           "owned", "plan", "popen", "program_paths", "recording", "refusal", "required", "run_folder", "started",
+           "summary"]
