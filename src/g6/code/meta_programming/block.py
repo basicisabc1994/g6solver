@@ -138,7 +138,8 @@ def run_tests_op(d: MetaProgrammingInput) -> dict[str, Any]:
     _parses(d.tests)
     ran = run_tests(d.source, d.tests, d.module, timeout_s=d.timeout_s)
     evidence = [{"kind": "test_run", "where": "g6.core.sandbox (a bounded child process, not G6's own)",
-                 "limits": ran["limits"], "status": ran["status"], "seconds": ran["seconds"],
+                 "limits": ran["limits"], "isolation": ran["isolation"], "status": ran["status"],
+                 "seconds": ran["seconds"],
                  "whose": "the caller's tests on the caller's code: a claim, not a check G6 made"}]
     fields = {k: ran[k] for k in ("collected", "results", "status", "stderr")}
     failed = [r for r in ran["results"] if r["outcome"] != "passed"]

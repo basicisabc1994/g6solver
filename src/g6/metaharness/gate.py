@@ -14,8 +14,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from g6.core import stop
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
-from g6.metaharness.evaluate import EvaluationReport
+from g6.metaharness.evaluate import REFUSED_NO_BOUNDARY, EvaluationReport
 from g6.self_training.change_scope import ChangeScope, ScopeVerdict, classify_change_scope
 from g6.self_training.patch_promotion_gate import BLOCK, REJECT, HarnessPatch, PatchEvalReport, govern_patch_promotion
 from g6.metaharness.schema import (
@@ -183,8 +184,9 @@ def decide(report: EvaluationReport, proposal: Proposal, workflow: Workflow, *, 
     # 11 (checked early: a partial evaluation proves nothing). MH-13
     if any(not stage["passed"] for stage in report.stages):
         return out("refuse", "G6_E_META_STAGE_FAILED", "the candidate failed a staged evaluation checkpoint")
-    if report.partial:
-        return out("refuse", BUDGET_EXCEEDED, f"the evaluation did not finish: {report.stopped}")
+    if report.partial:   # a run refused for want of an operating-system boundary says so, never "budget"
+        code = ISOLATION_UNAVAILABLE if report.stopped.startswith(REFUSED_NO_BOUNDARY) else BUDGET_EXCEEDED
+        return out("refuse", code, f"the evaluation did not finish: {report.stopped}")
     # 6. the suite can discriminate
     neg = report.negative_control
     policy = workflow.policy

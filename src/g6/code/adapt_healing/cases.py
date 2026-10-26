@@ -194,7 +194,7 @@ def _run(template: str, code: str, cases: list[str], timeout_s: float) -> dict[s
             except json.JSONDecodeError:
                 report = None
             break
-    limits = {"status": ran.status, "seconds": round(ran.seconds, 3), **ran.limits}
+    limits = {"status": ran.status, "seconds": round(ran.seconds, 3), **ran.limits, "isolation": ran.isolation}
     if not isinstance(report, dict):
         why = "it timed out" if ran.status == "timeout" else "it reported nothing (it may have exited early)"
         return {"loaded": False, "error": why, "results": [], "run": limits}

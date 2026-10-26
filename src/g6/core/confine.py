@@ -131,6 +131,17 @@ class NotStarted(OSError):
     """The confined child could not be started: nothing ran, confined or not."""
 
 
+class IsolationRefused(RuntimeError):
+    """Untrusted code was not run because no operating-system backend could confine it and it was required to be. A
+    caller that scores runs raises this rather than answer "", so a refusal is never scored as an empty or a wrong
+    answer. ``str()`` is :func:`refusal`'s text (``G6_E_ISOLATION_UNAVAILABLE`` first); ``isolation`` the run's
+    record."""
+
+    def __init__(self, refusal: str, isolation: dict[str, Any] | None = None) -> None:
+        super().__init__(refusal)
+        self.isolation = dict(isolation or {})
+
+
 @dataclass(frozen=True)
 class Confinement:
     """What a confined child may touch. ``read_write``: folders G6 made for this run (:func:`run_folder`), which the
@@ -1326,7 +1337,8 @@ class _Bubblewrap:
 
 
 __all__ = ["APPCONTAINER", "BUBBLEWRAP", "BWRAP_ETC", "BWRAP_ETC_NETWORK", "BWRAP_LEAKED", "BWRAP_NEEDS", "BWRAP_TOP",
-           "Confinement", "FIX_LEADS", "INSTALL_BWRAP", "NotStarted", "Plan", "REQUIRE", "UNCONFINED_WARNING", "backend",
+           "Confinement", "FIX_LEADS", "INSTALL_BWRAP", "IsolationRefused", "NotStarted", "Plan", "REQUIRE",
+           "UNCONFINED_WARNING", "backend",
            "bwrap_arguments", "bwrap_features", "bwrap_reason", "fix_for", "import_failure", "interpreter_paths",
            "not_started",
            "owned", "plan", "popen", "program_paths", "recording", "refusal", "required", "run_folder", "started",

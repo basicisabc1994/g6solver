@@ -147,11 +147,14 @@ print(json.dumps({"output": out if isinstance(out, str) else str(out)}))
 
 def code_factory(workflow: Workflow, artifacts: Any, *, timeout_s: float = 30.0, mem_mb: int = 512) -> ExecutorFactory:
     """For a workflow with a ``code_root``: its files, with the profile's code overlay, copied into a fresh directory
-    and run out of process by ``g6.core.sandbox`` (``main.solve(task)``). The user's own folder is never written."""
+    and run out of process by ``g6.core.sandbox`` (``main.solve(task)``). The user's own folder is never written. A run
+    no operating-system boundary could confine, where isolation is required, raises ``confine.IsolationRefused``: it is
+    no answer, so it is never scored as an empty one."""
     import json
     from pathlib import Path
 
-    from g6.core.sandbox import run_script
+    from g6.core.confine import IsolationRefused
+    from g6.core.sandbox import isolation_refused, run_script
 
     root = Path(workflow.code_root)
 
@@ -161,6 +164,8 @@ def code_factory(workflow: Workflow, artifacts: Any, *, timeout_s: float = 30.0,
             files.update({name: artifacts.blob(sha) for name, sha in ctx.profile.code.items()})
             files["_g6_task.txt"] = contract.task
             ran = run_script(CODE_RUNNER, files, timeout_s=timeout_s, mem_mb=mem_mb)
+            if isolation_refused(ran):
+                raise IsolationRefused(ran.stderr, ran.isolation)
             if ran.status != "ok":
                 return ""
             try:

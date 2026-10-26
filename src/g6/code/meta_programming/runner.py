@@ -6,7 +6,8 @@ under ``g6.core.sandbox.run_script`` (``python -I``, a time and memory bound, an
 connections to other machines refused by the interpreter's socket guard). The runner imports the tests and calls each
 ``test*`` function once, and reports each one's outcome on a line marked with a number drawn for this run. The tests
 and the code are yours, and they run in the same process as the runner, so what they report is your tests' claim
-about your code, not a check G6 made; the sandbox bounds the run, it is not an operating-system sandbox.
+about your code, not a check G6 made. The sandbox bounds the run, and confines it where an operating-system boundary
+is ready; the answer's ``isolation`` says which.
 """
 from __future__ import annotations
 
@@ -65,7 +66,7 @@ def run_tests(source: str, tests: str, module: str, *, timeout_s: float) -> dict
     return {"status": ran.status, "returncode": ran.returncode, "collected": report.get("collected")
             if isinstance(report, dict) else None, "error": report.get("error", "") if isinstance(report, dict) else "",
             "results": results, "stderr": ran.stderr[-1500:], "seconds": round(ran.seconds, 3),
-            "limits": ran.limits}
+            "limits": ran.limits, "isolation": ran.isolation}
 
 
 __all__ = ["TESTS_FILE", "run_tests"]

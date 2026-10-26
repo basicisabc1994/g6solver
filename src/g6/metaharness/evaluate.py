@@ -16,6 +16,12 @@ the stop is engaged or its model-call budget is spent: a partial evaluation is n
 With ``policy.looks > 1`` the split is a sequential confirmation (frontier design §4.2): after each look the cumulative
 pairs are tested against that look's boundary (``sequential_boundaries``); a clear win stops early, and so does a
 candidate not ahead after the first look (non-binding futility). Either is a finished evaluation, not a partial one.
+
+An executor that runs code (``executor.code_factory``, the ``repair_with_tests`` step) and was refused because no
+operating-system boundary could confine the run raises ``confine.IsolationRefused``; the evaluation then stops,
+unfinished, with :data:`REFUSED_NO_BOUNDARY` and the refusal, and that case is scored for no arm: a refusal is never an
+empty or a wrong answer. ``isolation`` says how the code the evaluation ran was confined (``confine.summary``; absent
+when it ran none).
 """
 from __future__ import annotations
 
@@ -31,7 +37,8 @@ from dataclasses import asdict, dataclass, field
 from statistics import NormalDist
 from typing import Any
 
-from g6.core import stop
+from g6.core import confine, stop
+from g6.core.confine import IsolationRefused
 from g6.core.ledger import digest
 from g6.harness import Memory, Standard, run
 from g6.learning import TheoryStore
@@ -40,6 +47,8 @@ from g6.metaharness.schema import PatchEvidence, Profile, SuiteCase, Workflow
 from g6.reasoning.compare import sign_test_p
 
 Z_95 = 1.6449  # one-sided 95% normal quantile; the bounds below use the normal approximation, stated in the report
+#: How ``stopped`` begins when a run the evaluation needed was refused for want of an operating-system boundary.
+REFUSED_NO_BOUNDARY = "refused: no boundary"
 
 
 @dataclass(frozen=True)
@@ -121,7 +130,10 @@ class _Meter:
 
 
 def _arm(workflow: Workflow, factory: ExecutorFactory, profile: Profile, case: SuiteCase, arm: str, *,
-         theories: TheoryStore | None, clock: Callable[[], float], repeat: int = 1, artifacts: Any = None) -> RunRecord:
+         theories: TheoryStore | None, clock: Callable[[], float], repeat: int = 1, artifacts: Any = None,
+         refusals: list[IsolationRefused] | None = None) -> RunRecord:
+    """One case under one arm. A run refused for want of an operating-system boundary is added to ``refusals`` (the
+    caller then scores the case for no arm) before the harness reports the executor's failure."""
     contexts: list[ProfileContext] = []
 
     def execute(contract: Any) -> str:
@@ -129,7 +141,12 @@ def _arm(workflow: Workflow, factory: ExecutorFactory, profile: Profile, case: S
         for _ in range(repeat):
             ctx = context_for(workflow, profile, theories=theories, clock=clock, artifacts=artifacts)
             contexts.append(ctx)
-            outputs.append(factory(ctx)(contract))
+            try:
+                outputs.append(factory(ctx)(contract))
+            except IsolationRefused as refused:
+                if refusals is not None:
+                    refusals.append(refused)
+                raise
         return outputs[0] if repeat == 1 else _vote(outputs)
 
     def measured_cost() -> float | None:
@@ -236,13 +253,13 @@ class EvaluationReport:
     notes: list[str] = field(default_factory=list)
     stages: list[dict[str, Any]] = field(default_factory=list)
     patch_evidence: dict[str, Any] = field(default_factory=dict)
+    isolation: dict[str, Any] = field(default_factory=dict)   # how the code it ran was confined; none ran: empty
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
-        if not self.patch_evidence:
-            data.pop("patch_evidence")
-        if not self.stages:
-            data.pop("stages")
+        for name in ("patch_evidence", "stages", "isolation"):
+            if not getattr(self, name):
+                data.pop(name)
         return data
 
     def digest(self) -> str:
@@ -253,7 +270,23 @@ def evaluate(workflow: Workflow, base: Profile, candidate: Profile, factory: Exe
              theories: TheoryStore | None = None, clock: Callable[[], float] = time.monotonic, reuse_index: int = 1,
              budget: int | None = None, artifacts: Any = None) -> EvaluationReport:
     """Run base, candidate and the controls on every case of ``split``; see the module docstring."""
+    with confine.recording() as runs:
+        report = _evaluate(workflow, base, candidate, factory, split=split, theories=theories, clock=clock,
+                           reuse_index=reuse_index, budget=budget, artifacts=artifacts)
+    if runs:
+        report.isolation = confine.summary(runs)
+    return report
+
+
+def _refused(refusals: list[IsolationRefused]) -> str:
+    return f"{REFUSED_NO_BOUNDARY}: {refusals[0]}"
+
+
+def _evaluate(workflow: Workflow, base: Profile, candidate: Profile, factory: ExecutorFactory, *, split: str,
+              theories: TheoryStore | None, clock: Callable[[], float], reuse_index: int, budget: int | None,
+              artifacts: Any) -> EvaluationReport:
     cases = list(getattr(workflow.suite, split))
+    refusals: list[IsolationRefused] = []
     limit = min(budget or workflow.policy.max_eval_model_calls, workflow.policy.max_eval_model_calls)
     meter = _Meter(limit)
     rows: list[tuple[RunRecord, RunRecord, RunRecord]] = []
@@ -275,8 +308,13 @@ def evaluate(workflow: Workflow, base: Profile, candidate: Profile, factory: Exe
         if meter.spent:
             stopped, partial = "the evaluation's model-call budget is spent", True
             break
-        b = _arm(workflow, factory, base, case, "base", theories=theories, clock=clock, artifacts=artifacts)
-        c = _arm(workflow, factory, candidate, case, "candidate", theories=theories, clock=clock, artifacts=artifacts)
+        b = _arm(workflow, factory, base, case, "base", theories=theories, clock=clock, artifacts=artifacts,
+                 refusals=refusals)
+        c = _arm(workflow, factory, candidate, case, "candidate", theories=theories, clock=clock, artifacts=artifacts,
+                 refusals=refusals)
+        if refusals:   # no boundary for the code: this case is no answer for either arm, so it is not scored
+            stopped, partial = _refused(refusals), True
+            break
         z = _arm(workflow, null_factory, base, case, "negative_control", theories=None, clock=clock)
         meter.charge(b.model_calls + c.model_calls)
         rows.append((b, c, z))
@@ -327,8 +365,10 @@ def evaluate(workflow: Workflow, base: Profile, candidate: Profile, factory: Exe
                 partial, stopped = True, stopped or "the control arm could not finish inside the budget or stop"
                 break
             r = _arm(workflow, factory, base, case, "compute_matched_control", theories=theories, clock=clock,
-                     artifacts=artifacts,
-                     repeat=repeat)
+                     artifacts=artifacts, repeat=repeat, refusals=refusals)
+            if refusals:
+                partial, stopped = True, _refused(refusals)
+                break
             meter.charge(r.model_calls)
             ctl_rows.append(r)
         if not partial:

@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core import component_process, confine
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
 
 #: Environment variables the child may see (the interpreter needs these on Windows); nothing else is passed.
@@ -134,6 +135,12 @@ class ScriptRun:
     seconds: float = 0.0
     limits: dict[str, Any] = field(default_factory=dict)
     isolation: dict[str, Any] = field(default_factory=dict)
+
+
+def isolation_refused(run: Any) -> bool:
+    """Whether ``run`` (a :class:`ScriptRun`) was refused because no operating-system boundary could confine it: the
+    script never ran, so its empty output is no answer (``confine.IsolationRefused``)."""
+    return run.status == "refused" and str(run.stderr).startswith(f"[{ISOLATION_UNAVAILABLE}]")
 
 
 def interpreter() -> str | None:
@@ -237,4 +244,5 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
                      isolation)
 
 
-__all__ = ["MEMORY_LIMITS", "NETWORK_GUARD", "ScriptRun", "interpreter", "memory_limit", "run_script"]
+__all__ = ["MEMORY_LIMITS", "NETWORK_GUARD", "ScriptRun", "interpreter", "isolation_refused", "memory_limit",
+           "run_script"]
