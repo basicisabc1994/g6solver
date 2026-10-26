@@ -1061,29 +1061,45 @@ def bwrap_reason(facts: Mapping[str, Any]) -> str:
     program = facts.get("program")
     if not program:
         return ("unavailable: bubblewrap (bwrap) is not installed, so G6 has no operating-system boundary on this "
-                f"Linux computer; install it: {INSTALL_BWRAP}")
+                f"Linux computer; install bubblewrap: {INSTALL_BWRAP}")
     if facts.get("missing"):
         return (f"unavailable: {program} is too old: its help lists no {', '.join(facts['missing'])}; install "
                 f"bubblewrap 0.8 or later: {INSTALL_BWRAP}")
     if facts.get("max_user_namespaces") == "0":
         return ("unavailable: user namespaces are switched off on this computer (user.max_user_namespaces is 0), and "
-                "bubblewrap needs them; switch them on: sudo sysctl -w user.max_user_namespaces=15000")
+                "bubblewrap needs them; switch user namespaces on: sudo sysctl -w user.max_user_namespaces=15000")
     if facts.get("unprivileged_userns_clone") == "0":
         return ("unavailable: user namespaces are switched off on this computer (kernel.unprivileged_userns_clone is "
-                "0), and bubblewrap needs them; switch them on: sudo sysctl -w kernel.unprivileged_userns_clone=1")
+                "0), and bubblewrap needs them; switch user namespaces on: sudo sysctl -w "
+                "kernel.unprivileged_userns_clone=1")
     if facts.get("leaked"):
-        return (f"unavailable: {BWRAP_LEAKED} {facts['leaked']}, so G6 does not use it here; report it with the "
-                "output of bwrap --version")
+        return (f"unavailable: {BWRAP_LEAKED} {facts['leaked']}, so G6 does not use it here; report it, with the "
+                "output of bwrap --version, to G6's issue tracker")
     if facts.get("apparmor_restrict") == "1" and not facts.get("apparmor_profile"):
         return ("unavailable: AppArmor's kernel.apparmor_restrict_unprivileged_userns is 1 (Ubuntu 23.10 and later) "
                 f"and no AppArmor profile lets {program} make user namespaces, so bubblewrap cannot start a confined "
-                f"child; add the profile once: {_apparmor_profile_command(program)}")
+                f"child; add the AppArmor profile once: {_apparmor_profile_command(program)}")
     said = " ".join(str(facts.get("stderr") or "").split())[-400:]
     if facts.get("container") and said:
         return ("unavailable: G6 is running inside a container whose own security settings stop bubblewrap from "
                 f"making namespaces ({said}); start the container with --security-opt seccomp=unconfined "
                 "--security-opt apparmor=unconfined, or treat the container itself as the boundary")
     return f"unavailable: bubblewrap could not start a confined child here: {said}" if said else ""
+
+
+#: How the fix begins in a reason (after its last "; "), so ``g6 doctor`` can give it on its own line.
+FIX_LEADS = ("install bubblewrap", "switch user namespaces on", "report it", "add the AppArmor profile",
+             "start the container", "keep the repository")
+
+
+def fix_for(why: str) -> str:
+    """The fix a reason names, as a sentence of its own ("" when it names none): Windows's one-time grant, or the last
+    clause of a Linux reason (:data:`FIX_LEADS`)."""
+    grant = why.partition("run once in a terminal")[2].partition(": ")[2]
+    if grant:
+        return f"Run once in a terminal: {grant}"
+    last = why.rpartition("; ")[2]
+    return last[0].upper() + last[1:] if last.startswith(FIX_LEADS) else ""
 
 
 def _read_setting(path: str) -> str | None:
@@ -1263,6 +1279,7 @@ class _Bubblewrap:
 
 
 __all__ = ["APPCONTAINER", "BUBBLEWRAP", "BWRAP_ETC", "BWRAP_ETC_NETWORK", "BWRAP_LEAKED", "BWRAP_NEEDS", "BWRAP_TOP",
-           "Confinement", "INSTALL_BWRAP", "NotStarted", "Plan", "REQUIRE", "UNCONFINED_WARNING", "backend",
-           "bwrap_arguments", "bwrap_features", "bwrap_reason", "import_failure", "interpreter_paths", "not_started",
+           "Confinement", "FIX_LEADS", "INSTALL_BWRAP", "NotStarted", "Plan", "REQUIRE", "UNCONFINED_WARNING", "backend",
+           "bwrap_arguments", "bwrap_features", "bwrap_reason", "fix_for", "import_failure", "interpreter_paths",
+           "not_started",
            "owned", "plan", "popen", "recording", "refusal", "required", "run_folder", "started", "summary"]

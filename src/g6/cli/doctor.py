@@ -2,7 +2,8 @@
 """``g6 doctor``: a read-only check of this installation. It writes nothing and calls no network.
 
 Each check is ``ok``, ``warn`` (works, with a limitation) or ``fail`` (something the user must fix),
-with a plain-language fix. Importing components is the only code it runs.
+with a plain-language fix. Importing components is the only code it runs, but for one test run on Linux: the
+isolation check starts bubblewrap's test run, in temporary folders it removes, as every first confined run does.
 
 ``g6 doctor --report <traceback file>`` (merged from the archive's diagnostic collector) builds one local error report
 from a saved Python traceback: the exception's name, each frame's file, line and function, and this installation's
@@ -160,25 +161,28 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
 
 def _isolation() -> Check:
     """Whether untrusted code (patches, generated scripts, a repository's tests) runs confined by the operating system
-    (``g6.core.confine``), read from the access lists alone: nothing is started or created here."""
+    (``g6.core.confine``). On Windows it is read from the access lists alone: nothing is started or created. On Linux
+    bubblewrap's test run starts, in temporary folders removed after it, since its settings alone cannot say whether
+    it works. ``fail`` only where the boundary leaked; otherwise ``warn``, with the fix for this system."""
     from g6.core import confine
 
+    linux = sys.platform.startswith("linux")
     pythons = list(dict.fromkeys([sys.executable, *([os.environ["G6_PYTHON"]] if os.environ.get("G6_PYTHON") else [])]))
     for python in pythons:
-        name, why = confine.backend(python, probe=False)
+        name, why = confine.backend(python, probe=linux)
         if name is None:
             # CORE_SANDBOX-01: a warning with what the person can do, never a refusal (owner ruling, 2026-10-23)
-            fix = why.partition("run once in a terminal")[2].partition(": ")[2]
-            return Check("isolation", "warn",
+            return Check("isolation", "fail" if confine.BWRAP_LEAKED in why else "warn",
                          f"{confine.UNCONFINED_WARNING} Here, untrusted code run with {python} runs with your "
                          f"permissions: {why}",
-                         f"Run once in a terminal: {fix}" if fix else
-                         "Run G6 inside a virtual machine or a container of its own, or set G6_REQUIRE_ISOLATION=1 "
-                         "to have G6 refuse a run it cannot confine.")
+                         confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or set "
+                                                 "G6_REQUIRE_ISOLATION=1 to have G6 refuse a run it cannot confine.")
     said = "started" if all(confine.started(python) for python in pythons) else "access list ok; not started"
-    return Check("isolation", "ok", f"{said}: untrusted code run with {', '.join(pythons)} can run in a Windows {name} "
-                                    "(no network, only its run folder writable; G6 test-starts each interpreter there "
-                                    "before its first confined run)")
+    where = ("inside bubblewrap (a private loopback and no other network, only its run folder writable; G6 "
+             "test-starts each interpreter there before its first confined run)" if name == confine.BUBBLEWRAP else
+             f"in a Windows {name} (no network, only its run folder writable; G6 test-starts each interpreter there "
+             "before its first confined run)")
+    return Check("isolation", "ok", f"{said}: untrusted code run with {', '.join(pythons)} can run {where}")
 
 
 def _components() -> list[Check]:
