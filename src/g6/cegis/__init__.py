@@ -14,8 +14,8 @@ Capability label: ``implemented``.
 What it is: ``??`` / ``??b`` / ``??{"a","b"}`` holes; an exhaustive search (or a seeded hill-climb on large spaces);
 a check of each candidate on an explicit input domain; the loop. Every candidate runs in a child process
 (``SubprocessRunner``) with an AST pre-filter (``g6.core.source_check``, shared with ``g6.distillation``), a small
-builtins table, a wall-clock allowance and a whole-tree kill; a memory cap (POSIX rlimit, a Windows Job Object), and on
-POSIX also CPU and file-size limits.
+builtins table, a wall-clock allowance and a whole-tree kill; a memory cap (POSIX rlimit, a Windows Job Object; none on
+macOS, which refuses the address-space limit), and on POSIX also CPU and file-size limits.
 
 An optional ``verifier`` (the ``Verifier`` protocol) checks a candidate the sampled check passed. ``Z3Verifier(spec)``
 asks Z3, through ``g6.formal`` (``pip install 'g6[formal]'``; imported only when a check runs), for an input of the

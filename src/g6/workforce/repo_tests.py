@@ -407,7 +407,9 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: ``-n0 --dist=no`` come after the repository's own options and win: the tests run in this one process, where the
 #: guard and the hook apply (review I8). A small plugin writes, as the session ends, how many tests were collected and
 #: deselected, and how many started and finished (a setup and a teardown reported), so a run that stops part-way with
-#: exit code 0 is not read as a pass (review I3).
+#: exit code 0 is not read as a pass (review I3). Another turns pytest's "fd" capture, its default, into "sys" before
+#: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
+#: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays.
 _BOOT = r'''
 import json, os, socket, sys
 sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
@@ -504,7 +506,13 @@ class _Counted:
                            "finished": len(self.finished), "failed_ids": self.failed,
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids)}, handle)
-sys.exit(pytest.main(args, plugins=[_Counted()]))
+class _Capture:
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_load_initial_conftests(self, early_config):
+        if getattr(early_config.known_args_namespace, "capture", None) == "fd":
+            early_config.known_args_namespace.capture = "sys"
+        yield
+sys.exit(pytest.main(args, plugins=[_Counted(), _Capture()]))
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
 _BOOT = confine.CHILD_PRELUDE + _BOOT
 
@@ -900,9 +908,12 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         if mutant is not None:
             target, source = str(repo / inside(repo, mutant[0], "module")), str(own / "mutant.py")
             Path(source).write_text(mutant[1], encoding="utf-8")
+        # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
+        # AppContainer may be refused; one the repository names could not be written into a repository in place
         cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
-               target, source, str(counted), *ids, "-q", "-p", "no:cacheprovider", f"--junitxml={report}",
-               *_config_args(repo, ids, own)]
+               target, source, str(counted), *ids, "-q", "-p", "no:cacheprovider",
+               f"--junitxml={report}", *_config_args(repo, ids, own), f"--log-file={own / 'pytest.log'}",
+               "--log-file-level=100"]
         mine = confine.owned(repo)
         confined = confine.plan(confine.Confinement(
             read_write=(str(work), str(own), *([str(repo)] if mine else [])),

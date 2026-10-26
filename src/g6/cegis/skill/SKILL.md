@@ -43,7 +43,7 @@ says exactly which domain it rests on.
 - `Z3Verifier`: an optional second check: Z3 looks for any input of the whole domain on which the candidate breaks an
   SMT-LIB `spec` over the arguments and `result`.
 - `SubprocessRunner`: runs candidates in a child process with a wall-clock allowance (`timeout_s`), a memory cap
-  (`mem_mb`) and a kill of the whole process tree.
+  (`mem_mb`; none on macOS, which refuses it) and a kill of the whole process tree.
 - `CegisResult`: `status`, `control`, `program`, `counterexamples`, `boundary`, `trace`, `reason` and
   `completion_state`.
 - `CegisResult.to_envelope`: the result as the library envelope, with a `G6_E_CEGIS_*` warning card.
@@ -99,7 +99,7 @@ Composed:
 - Your oracle is the standard. If it is wrong, the program agrees with a wrong answer; it runs in your own process.
 - A `TableOracle` compares only the cases it lists: with two cases, `compared` is 2, whatever the domain's size.
 - The child is not an operating-system sandbox: it runs as the same user, behind an AST pre-filter, a time limit, a
-  memory cap and, on POSIX, CPU and file-size limits.
+  memory cap (except on macOS) and, on POSIX, CPU and file-size limits.
 - `Z3Verifier` reads only one `return` of int and bool arithmetic, comparisons and conditionals; anything else is
   `inconclusive` (`z3_untranslatable`), never approximated.
 - Hole values are bounded (integers from `lo` to `hi`); a constant outside the range cannot be found.

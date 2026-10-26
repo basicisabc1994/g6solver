@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,10 @@ DEFAULT_TIME_LIMIT_S = 60.0
 MAX_TIME_LIMIT_S = 600.0
 #: Added to the op's time limit for the process: SWI-Prolog's start-up and the driver's own reading and writing.
 STARTUP_ALLOWANCE_S = 10.0
+#: How long SWI-Prolog may take to exit once the driver's last record is written before G6 stops it and reads the run
+#: (POSIX). SWI-Prolog 9.0.4 on Linux sometimes never returns from ``halt``: its time library deadlocks in its cleanup,
+#: about one run in 300, after the run's work and records are complete.
+HALT_GRACE_S = 2.0
 DEFAULT_MEMORY_MB, MIN_MEMORY_MB, MAX_MEMORY_MB = 2048, 256, 32768
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 OUTPUT_CAP_LIMIT = component_process.MAX_MESSAGE_BYTES
@@ -86,23 +91,44 @@ def _environment(root: Path) -> dict[str, str]:
 
 
 def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, cap: int, memory_mb: int,
-             record: dict[str, Any]) -> tuple[int, str]:
-    """Run ``argv`` under a time limit, an output cap and a memory cap, the process tree killed when one is passed."""
+             record: dict[str, Any], end: bytes | None = None) -> tuple[int, str]:
+    """Run ``argv`` under a time limit, an output cap and a memory cap, the process tree killed when one is passed.
+    ``end``: the driver's last record; once it has stood :data:`HALT_GRACE_S` at the end of the output without the
+    process exiting, the process is stopped and the run read as finished (POSIX only: the output is read in place with
+    ``os.pread``, which leaves the offset SWI-Prolog writes at alone)."""
     with tempfile.TemporaryFile() as out:
         def too_much() -> bool:
             return os.fstat(out.fileno()).st_size > cap
 
+        ended_at: list[float] = []
+
+        def ended() -> bool:
+            if end is None or not hasattr(os, "pread"):
+                return False
+            if not ended_at:
+                size = os.fstat(out.fileno()).st_size
+                tail = os.pread(out.fileno(), len(end) + 8, max(0, size - len(end) - 8))
+                if end not in tail:
+                    return False
+                ended_at.append(time.monotonic())
+            return time.monotonic() - ended_at[0] >= HALT_GRACE_S
+
         window = None
+        halted = False
         try:
-            with component_process.window(seconds, too_much) as window:
+            with component_process.window(seconds, lambda: too_much() or ended()) as window:
                 code = component_process.run_process(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
                                                      stderr=subprocess.STDOUT, memory_bytes=memory_mb * 1024 * 1024)
         except component_process.ExecutionInterrupted as exc:
             if exc.stopped and too_much():
                 raise Refusal(OUTPUT_TOO_LARGE, f"SWI-Prolog's output passed its cap of {cap} bytes, so the run was "
                                                 "stopped and its process tree killed") from None
-            raise Refusal(TIME_LIMIT, f"SWI-Prolog did not finish within {seconds:g} s, so it was stopped and its "
-                                      "process tree killed") from None
+            if not (exc.stopped and ended_at):
+                raise Refusal(TIME_LIMIT, f"SWI-Prolog did not finish within {seconds:g} s, so it was stopped and its "
+                                          "process tree killed") from None
+            code, halted = 0, True
+            record["halt"] = (f"SWI-Prolog wrote the driver's last record but did not exit within {HALT_GRACE_S:g} s, "
+                              "so G6 stopped it and read the run as finished")
         except (OSError, ProcessTreeError) as exc:
             raise Refusal(RUN_FAILED, f"SWI-Prolog could not be run to the end: {exc}"[:500]) from None
         finally:
@@ -114,15 +140,17 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
     if len(raw) > cap:
         raise Refusal(OUTPUT_TOO_LARGE, f"SWI-Prolog's output passed its cap of {cap} bytes")
     text = raw.decode("utf-8", "replace")
-    record |= {"exit_code": code, "output_bytes": len(raw), "output_tail": text[-_TAIL:]}
+    record |= {"exit_code": None if halted else code, "output_bytes": len(raw), "output_tail": text[-_TAIL:]}
     return code, text
 
 
 def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: float, memory_mb: int, cap: int,
-        record: dict[str, Any]) -> tuple[int, str]:
+        record: dict[str, Any], end: bytes | None = None) -> tuple[int, str]:
     """Run ``swipl`` (from :func:`find_swipl`) with ``arguments`` (:func:`driver_arguments`, or ``["--version"]``) in a
     fresh directory holding ``files`` (name to text) and, when the arguments name it, G6's driver; remove the
-    directory. Returns the exit code and the output."""
+    directory. Returns the exit code and the output. ``end``: the driver's last record (``driver.end_record``), so a
+    run that wrote it and then hangs in ``halt`` is stopped after :data:`HALT_GRACE_S` and read (exit code 0; its
+    record's ``exit_code`` is None and ``halt`` says so)."""
     with tempfile.TemporaryDirectory(prefix="g6_prolog_", ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         for sub in ("work", "tmp", "home"):
@@ -135,7 +163,7 @@ def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: flo
             (work / name).write_bytes(text.encode("utf-8"))
         argv = [swipl, *arguments]
         record["argv"] = list(argv)
-        return _execute(argv, work, _environment(root), seconds, cap, memory_mb, record)
+        return _execute(argv, work, _environment(root), seconds, cap, memory_mb, record, end)
 
 
 def version_run(record: dict[str, Any]):  # noqa: ANN201 -- g6.core.outside's Runner

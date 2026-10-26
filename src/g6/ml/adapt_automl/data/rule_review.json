@@ -4,7 +4,7 @@
   "reviewer": "Claude Sonnet 5.5, a read-only independent reader (not the author of the code, the register or the cases)",
   "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
   "date": "2026-10-23",
-  "method": "hashed the held cross_validation page's raw bytes (78d7587f..., equal to the register), read section 3.1 in its extracted text, read search() and the code it calls (_fit.folds, _fit.cross_validate, _fit.fit_predict) and the parent block that scores the held-out rows; ran issue_certificate.py --precheck for adapt_automl with all eleven source files and --reviewed; second pass on fc554b1b79 as for adapt_sklearn; third pass on land/certs-issue-2 107af94c1a: read the diff of component_process, confine, errors, process_tree and sandbox since fc554b1b79 (OS isolation); no rule's computation changed, only reviewed.artifact_sha256 was replaced; fourth pass on land/certs-issue-2 cba6e4eece: read the diff of ml/_sources.py and core/vetting.py since 107af94c1a (docstring, a vetting import and the cited() review string only); no rule, clause, threshold or computation changed, only reviewed.artifact_sha256 and rules_sha256 were replaced",
+  "method": "hashed the held cross_validation page's raw bytes (78d7587f..., equal to the register), read section 3.1 in its extracted text, read search() and the code it calls (_fit.folds, _fit.cross_validate, _fit.fit_predict) and the parent block that scores the held-out rows; ran issue_certificate.py --precheck for adapt_automl with all eleven source files and --reviewed; second pass on fc554b1b79 as for adapt_sklearn; third pass on land/certs-issue-2 107af94c1a: read the diff of component_process, confine, errors, process_tree and sandbox since fc554b1b79 (OS isolation); no rule's computation changed, only reviewed.artifact_sha256 was replaced; fourth pass on land/certs-issue-2 cba6e4eece: read the diff of ml/_sources.py and core/vetting.py since 107af94c1a (docstring, a vetting import and the cited() review string only); no rule, clause, threshold or computation changed, only reviewed.artifact_sha256 and rules_sha256 were replaced; fifth pass on review/macos-sandbox-reader af11efcdb1: read the diff of core/sandbox.py since c7312f47b3 (the only bound file that changed; on macOS the boot sets no memory limit and the run's limits say so, and the boot now lists CPU and file-size before memory); no rule, clause, threshold, case or refusal changed and the limits a Linux or Windows run sets and reports are the same text with the same boot argv order, so only reviewed.artifact_sha256 was replaced; checked the 7306808efb re-bound note: each of the 37 bound files it changed differs only in its first two lines with an identical syntax tree, so it holds",
   "label_effect": "none: a review is evidence of kind review; it raises no label",
   "rules": [
     {
@@ -194,7 +194,7 @@
   ],
   "reviewed": {
     "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
-    "artifact_sha256": "69be13a67e932da5783a693caa0fc867fce9d240df9fa0af32c699424729382f",
+    "artifact_sha256": "634c898e18f97529dee2b60673bf5bfe83cd0f762e9b5870ba9d1267a7dc27a5",
     "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
     "refusals": [
       "MLError"

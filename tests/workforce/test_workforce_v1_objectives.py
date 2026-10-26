@@ -514,7 +514,7 @@ def test_the_fix_tests_result_says_what_was_tested(wf, monkeypatch, confined_ben
     ws.run(wf, mid)
     ws.submit(wf, mid, "patch", {"files": {"calc.py": FIXED}})
     done = ws.run(wf, mid)
-    assert done["completion_state"] == "verified"
+    assert done["completion_state"] == "verified", done["outcome"]
     md = done["result"]["markdown"]
     assert "**✓ Verified**" in md and "- ✓ Tests were run on the result: 2 of 2 passed" in md
     assert "Tests: 2 of 2 passed" in render_trust_report(wview.build(wf, mid))

@@ -95,6 +95,51 @@ def test_a_collection_error_is_reported_and_the_other_files_still_run(tmp_path):
     assert found["collect_errors"] == ["tests/test_bad.py"]
 
 
+def _linked(tmp_path, files: dict[str, str]):
+    """The repository reached through a folder link, as macOS reaches every temp folder (``/var`` is ``/private/var``):
+    the runner's child starts in the real folder, whatever name it was given."""
+    _repo(tmp_path / "real", files)
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(tmp_path / "real", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"this machine cannot make a folder link: {exc}")
+    return link / "repo"
+
+
+def test_a_repository_reached_through_a_link_keeps_its_test_names(tmp_path):
+    """macOS CI (2026-10-26): with ``--rootdir`` naming the link and the tests found under the real folder, pytest named
+    each test from tests/ (``test_one.py::test_ok``), so nothing keyed by the repository's own names matched."""
+    repo = _linked(tmp_path, {"tests/test_one.py": "def test_ok():\n    assert True\n"})
+    assert truth.run_suite(repo)["outcomes"] == {"tests/test_one.py::test_ok": "passed"}
+
+
+def test_a_conftest_above_a_repository_reached_through_a_link_is_never_loaded(tmp_path):
+    """``--confcutdir`` stops pytest at the repository only when it names the folder the tests are found in."""
+    repo = _linked(tmp_path, {"tests/test_one.py": "def test_ok():\n    assert True\n",
+                              "../conftest.py": "raise RuntimeError('a conftest above the repository was loaded')\n"})
+    assert truth.run_isolated("tests/test_one.py::test_ok", repo) is True, truth.LAST_RUN.get("stderr")
+
+
+#: A test that sees whether pytest opened the null device: what it writes straight to file descriptor 1 reaches the run's
+#: output only under "sys" capture ("fd" capture opens the null device for standard input), and no log handler of the
+#: run holds the null device open (pytest's log file when none is named).
+NULL_DEVICE = ("import logging\nimport os\n\n\ndef test_no_null_device():\n    os.write(1, b'WRITTEN-TO-FD-1\\n')\n"
+               "    null = os.path.abspath(os.devnull)\n"
+               "    assert [h for h in logging.getLogger().handlers if getattr(h, 'baseFilename', None) == null] == []\n")
+
+
+def test_the_runners_never_ask_the_child_to_open_the_null_device(tmp_path):
+    """Windows CI (2026-10-26): GitHub's Windows Server 2025 image refuses an AppContainer the null device, and pytest
+    opens it unless told otherwise: its default ("fd") capture for standard input, and its log file when none is named.
+    Every confined run there ended in "Permission denied: 'nul'" before a test ran."""
+    repo = _repo(tmp_path, {"tests/test_one.py": NULL_DEVICE})
+    assert truth.run_isolated("tests/test_one.py::test_no_null_device", repo) is True, truth.LAST_RUN.get("stdout")
+    assert "WRITTEN-TO-FD-1" in truth.LAST_RUN["stdout"], truth.LAST_RUN["stdout"]
+    found = truth.run_suite(repo)
+    assert found["outcomes"] == {"tests/test_one.py::test_no_null_device": "passed"}, found
+
+
 def test_a_suite_that_does_not_finish_says_it_did_not_run(tmp_path):
     repo = _repo(tmp_path, {"tests/test_slow.py": "import time\n\n\ndef test_slow():\n    time.sleep(30)\n"})
     found = truth.run_suite(repo, timeout=2)

@@ -401,9 +401,12 @@ def test_g2_dot_gets_g6s_argument_list_a_clean_environment_and_a_fresh_folder(st
     assert [r["argv"] for r in runs] == [["-Tsvg", "-o", "diagram.svg", "diagram.gv"],
                                          ["-Tpng", "-o", "diagram.png", "diagram.gv"]]
     allowed = {"SYSTEMROOT", "WINDIR", "LANG", "LC_ALL", "FONTCONFIG_FILE", "FONTCONFIG_PATH", "GVBINDIR", "TEMP",
-               "TMP", "TMPDIR", "HOME", "PROMPT", "COMSPEC", "PATHEXT", "PWD", "LC_CTYPE"}  # cmd.exe, which runs the
-    # launcher on Windows, sets PROMPT, COMSPEC and PATHEXT itself; /bin/sh, which runs it elsewhere, sets PWD; and the
-    # stand-in's Python sets LC_CTYPE itself where no locale is set (its locale coercion; python:3.13 images set none)
+               "TMP", "TMPDIR", "HOME", "PROMPT", "COMSPEC", "PATHEXT", "PWD", "LC_CTYPE", "SHLVL",
+               "__CF_USER_TEXT_ENCODING"}
+    # cmd.exe, which runs the launcher on Windows, sets PROMPT, COMSPEC and PATHEXT itself; /bin/sh, which runs it
+    # elsewhere, sets PWD (and SHLVL on macOS, where it is bash); the stand-in's Python sets LC_CTYPE itself where no
+    # locale is set (its locale coercion; python:3.13 images set none); and macOS's CoreFoundation, which that Python
+    # loads there, sets __CF_USER_TEXT_ENCODING itself
     for run in runs:  # the venv launcher on Windows adds __PYVENV_LAUNCHER__ for the interpreter it starts
         assert {k for k in run["env"] if k.upper() not in allowed and not k.startswith("__PYVENV")} == set(), \
             sorted(run["env"])

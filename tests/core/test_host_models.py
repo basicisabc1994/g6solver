@@ -136,10 +136,11 @@ def _assert_clean_environment(seen: dict, home: Path) -> None:
     leaked = sorted(name for name, value in env.items()
                     if "canary" in value or name.upper() in FORBIDDEN or name.upper().startswith(("CLAUDE_CODE_", "G6_")))
     assert leaked == []
-    # PROMPT: cmd.exe, which runs the stand-in's .cmd launcher on Windows, sets it itself; PWD: /bin/sh, which runs it
-    # elsewhere, sets it itself
+    # PROMPT: cmd.exe, which runs the stand-in's .cmd launcher on Windows, sets it itself; PWD (and SHLVL on macOS, where
+    # it is bash): /bin/sh, which runs it elsewhere, sets it itself; __CF_USER_TEXT_ENCODING: macOS's CoreFoundation,
+    # which the stand-in's Python loads there, sets it itself
     allowed = {n.upper() for n in (*host_models.BASE_ENV, "CLAUDE_CONFIG_DIR", "CODEX_HOME", "TEMP", "TMP", "TMPDIR",
-                                   "PROMPT", "PWD")}
+                                   "PROMPT", "PWD", "SHLVL", "__CF_USER_TEXT_ENCODING")}
     assert sorted(n for n in env if n.upper() not in allowed and n in os.environ) == []
     assert Path(env["TEMP"]).resolve().is_relative_to(home.resolve())
 

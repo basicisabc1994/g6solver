@@ -37,6 +37,14 @@ jobs:
         if: always()
         shell: pwsh
         run: if (Test-Path suite-split.log) { Get-Content suite-split.log }
+      # Each group's whole output, tracebacks included, when a group failed: the summaries name the tests, not why.
+      - name: Group outputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-${{ matrix.os }}-${{ matrix.python }}
+          path: suite-split.log*
+          retention-days: 14
       - run: ruff check src tests
       - run: lint-imports
       - run: g6 doctor

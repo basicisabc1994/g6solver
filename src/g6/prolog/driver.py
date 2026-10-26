@@ -29,6 +29,11 @@ def request(mode: str, nonce: str, *, max_solutions: int = 1, time_limit: float 
                        "inference_limit": inference_limit, "answers": list(answers or []), "exhausted": exhausted})
 
 
+def end_record(nonce: str) -> bytes:
+    """The driver's last record for ``nonce``, as it prints it (``g6.prolog.runner`` watches for it)."""
+    return f'{nonce} {{"kind":"end"}}'.encode()
+
+
 def _unrecognised(why: str) -> Refusal:
     return Refusal(OUTPUT_UNRECOGNISED, f"the driver's output is not a run G6 reads: {why}")
 

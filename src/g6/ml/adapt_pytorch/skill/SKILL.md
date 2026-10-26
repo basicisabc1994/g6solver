@@ -6,8 +6,8 @@ description: Use when you need a small neural network trained on rows of data wi
 # G6 adapt_pytorch
 
 `g6.ml.adapt_pytorch` builds a small network from G6's curated layer list, trains it in minibatches in a bounded
-child process (a deadline; a memory cap of 1,536 MB, on the data segment on Linux and macOS so PyTorch's large
-libraries can load while what it allocates stays capped; and a guard that lets Python's sockets reach only this
+child process (a deadline; a memory cap of 1,536 MB, on the data segment on Linux so PyTorch's large libraries can
+load while what it allocates stays capped, and none on macOS, which refuses it; and a guard that lets Python's sockets reach only this
 machine: not an operating-system sandbox), and measures it on rows it held out itself. The child gets the training
 answers, never the held-out ones; G6 scores what comes back against a baseline that ignores the features, on the
 same rows. It is an extension in the ml family, behind the `torch` extra. Its best state is `qualified-draft`.

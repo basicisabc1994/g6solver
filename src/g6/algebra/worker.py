@@ -15,8 +15,9 @@ as the calling process checked them, a seed and its limits), reads the parameter
 * ``{"stage": "done"}``.
 
 So when the time limit stops it during a re-check, the calling process still has the answer, and reports it as not
-re-checked. On POSIX it lowers its own address space, CPU time and file-size limits before importing SymPy; on Windows
-the calling process's Job Object caps its memory.
+re-checked. On POSIX it lowers its own address space, CPU time and file-size limits before importing SymPy (macOS
+refuses the address-space limit, so there its memory is not capped); on Windows the calling process's Job Object caps
+its memory.
 """
 from __future__ import annotations
 

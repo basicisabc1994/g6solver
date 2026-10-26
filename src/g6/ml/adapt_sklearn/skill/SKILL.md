@@ -8,8 +8,8 @@ description: Use when you need to fit a scikit-learn model to rows of data, or c
 `g6.ml.adapt_sklearn` fits a scikit-learn estimator from G6's own list to rows you give and measures it on rows it
 held out itself. Before anything is fitted it checks the data: a seed, columns of one kind, enough held-out rows,
 every class on both sides of the split, no identical rows across it, and no feature that leaks the target. The fit
-runs in a bounded child process (a deadline, a memory cap, and a guard that lets Python's sockets reach only this
-machine), confined by the operating system where G6 can (then no network, and only its own folders writable), else
+runs in a bounded child process (a deadline, a memory cap except on macOS, a guard letting Python's sockets reach
+only this machine), confined by the operating system where G6 can (then no network, and only its own folders writable), else
 running as you, as the result's `limits` say; it is given the training answers, never the held-out ones; G6 scores what
 comes back, against a baseline that ignores the features, on the same rows. It is an extension in the ml
 family, behind the `ml` extra. Its best state is `qualified-draft`. Its rules rest on a committed source register.

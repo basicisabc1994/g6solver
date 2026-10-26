@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
+import sysconfig
 import tomllib
 from pathlib import Path
 
@@ -76,7 +76,9 @@ def test_the_layer_contract_names_every_package_but_mcp_and_the_meta_harness() -
 
 
 def _lint(tree: Path) -> subprocess.CompletedProcess:
-    exe = Path(sys.executable).with_name("lint-imports.exe" if os.name == "nt" else "lint-imports")
+    # The interpreter's scripts folder: beside python in a virtual environment, its Scripts folder in a Windows
+    # installation (CI's setup-python), which is not beside python.exe.
+    exe = Path(sysconfig.get_path("scripts")) / ("lint-imports.exe" if os.name == "nt" else "lint-imports")
     env = {**os.environ, "PYTHONPATH": str(tree / "src"), "PYTHONIOENCODING": "utf-8"}
     return subprocess.run([str(exe), "--config", str(tree / "pyproject.toml"), "--no-cache"], cwd=tree, env=env,
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)

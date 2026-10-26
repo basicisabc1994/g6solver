@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 
-from g6.core.sandbox import NETWORK_OFF, run_script
+from g6.core import sandbox
+from g6.core.sandbox import MEMORY_LIMITS, NETWORK_OFF, memory_limit, run_script
 
 
 def test_a_script_reads_its_inputs_and_its_outputs_come_back() -> None:
@@ -31,6 +36,7 @@ def test_a_connection_off_this_machine_is_refused() -> None:
     assert run.status == "ok" and NETWORK_OFF in run.stdout
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS caps no memory (see the test of memory_limit)")
 def test_memory_beyond_the_cap_fails_the_script() -> None:
     script = "block = bytearray(700 * 1024 * 1024)\nprint('allocated')"
     run = run_script(script, timeout_s=30, mem_mb=256)
@@ -51,7 +57,8 @@ def test_numerical_libraries_run_on_one_thread_so_the_cpu_limit_is_not_reached_b
     assert run.limits["threads"] == 1
 
 
-@pytest.mark.skipif(os.name != "posix", reason="the memory rlimits are POSIX's; on Windows a Job Object caps memory")
+@pytest.mark.skipif(os.name != "posix" or sys.platform == "darwin",
+                    reason="the memory rlimits are Linux's: a Job Object caps memory on Windows, and macOS caps none")
 @pytest.mark.parametrize(("memory", "capped", "left"), [("data", "RLIMIT_DATA", "RLIMIT_AS"),
                                                         (None, "RLIMIT_AS", "RLIMIT_DATA")])
 def test_the_child_caps_its_data_segment_when_asked_and_its_address_space_otherwise(memory, capped, left) -> None:
@@ -67,10 +74,42 @@ def test_the_limits_say_what_the_memory_cap_counts() -> None:
     refused = {"../x": ""}   # refused at once, with the limits it would have run under
     data = run_script("", refused, memory="data").limits["memory_limit"]
     whole = run_script("", refused).limits["memory_limit"]
-    if os.name == "posix":
+    if sys.platform == "darwin":
+        assert "not capped" in data and data == whole
+    elif os.name == "posix":
         assert "RLIMIT_DATA" in data and "shared libraries" in data and "RLIMIT_AS" in whole
     else:
         assert "Job Object" in data and data == whole
+
+
+@pytest.mark.parametrize("memory", ["address", "data"])
+def test_on_macos_no_memory_limit_is_asked_for_and_the_limits_say_the_memory_is_not_capped(memory: str) -> None:
+    """macOS refuses the address-space limit (setrlimit fails with EINVAL, so the boot died before every script) and
+    does not enforce the data segment's for the memory a program maps: there the child asks for neither, and its limits
+    say the memory is not capped rather than name a cap that does not hold."""
+    assert memory_limit(memory, 512, os_name="posix", platform="darwin") == (
+        "", "none", "not capped: macOS refuses the address-space limit and does not enforce the data segment's, so "
+                    "the script's memory is bounded only by the machine; its CPU time and the wall clock still are")
+    assert memory_limit(memory, 512, os_name="posix", platform="linux") == (
+        MEMORY_LIMITS[memory][0], "rlimit", f"512 MB of {MEMORY_LIMITS[memory][1]}")
+    assert memory_limit(memory, 512, os_name="nt", platform="win32")[1:] == (
+        "job object", "512 MB of each process's committed memory (a Windows Job Object)")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the boot lowers POSIX limits; on Windows it imports no resource module")
+def test_a_boot_asked_for_no_memory_limit_still_lowers_the_cpu_and_file_size_limits() -> None:
+    script = ("import json, resource\n"
+              "print(json.dumps({n: resource.getrlimit(getattr(resource, n))[0]"
+              " for n in ('RLIMIT_AS', 'RLIMIT_DATA', 'RLIMIT_CPU', 'RLIMIT_FSIZE')}))\n")
+    with tempfile.TemporaryDirectory() as folder:
+        (Path(folder) / "script.py").write_text(script, encoding="utf-8")
+        done = subprocess.run([sys.executable, "-I", "-c", sandbox._BOOT, str(512 * 1024 * 1024), "7",
+                               str(1024 * 1024), "", "script.py"], cwd=folder, capture_output=True, text=True,
+                              timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    found = json.loads(done.stdout)
+    assert (found["RLIMIT_CPU"], found["RLIMIT_FSIZE"]) == (7, 1024 * 1024)
+    assert 512 * 1024 * 1024 not in (found["RLIMIT_AS"], found["RLIMIT_DATA"])
 
 
 def test_the_limits_say_what_the_network_guard_covers() -> None:

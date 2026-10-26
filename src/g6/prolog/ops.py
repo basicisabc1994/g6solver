@@ -135,7 +135,7 @@ def _run_driver(swipl: str, mode: str, program: str, goal: str | None, limits: d
         files["goal.pl"] = goal
     code, output = runner.run(swipl, runner.driver_arguments(limits["memory_mb"]), files=files,
                               seconds=limits["seconds"] + runner.STARTUP_ALLOWANCE_S, memory_mb=limits["memory_mb"],
-                              cap=limits["cap"], record=record)
+                              cap=limits["cap"], record=record, end=driver.end_record(nonce))
     read = driver.read_output(output, nonce, code)
     record.pop("output_tail", None)
     return read

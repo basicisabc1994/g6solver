@@ -4,8 +4,8 @@ that makes pypdf slow or hungry is bounded by the parent's deadline and memory c
 the PDF's bytes on stdin and writes one JSON reply on stdout, and imports nothing of G6.
 
 Arguments: the most pages, the most bytes of text to return (each page's text as JSON in UTF-8), the seconds it may
-spend reading pages, and the memory it may use in MiB (lowered here on POSIX; on Windows the parent's job object caps
-it). A PDF whose page tree declares more pages than the cap is refused before any page is loaded. Reading stops at the
+spend reading pages, and the memory it may use in MiB (lowered here on POSIX, except on macOS, which refuses the
+limit; on Windows the parent's job object caps it). A PDF whose page tree declares more pages than the cap is refused before any page is loaded. Reading stops at the
 text cap or when its time is up, and every page not read is named.
 
 Reply: ``{"ok": true, "version", "texts": [...], "unread": [...]}`` or ``{"ok": false, "version", "reason"}``.

@@ -289,6 +289,15 @@ SUITE_TIMEOUT_S = 240
 SUITE_DIR = "tests"
 #: All an isolated run inherits from the server's environment (the paid-model block is set on top).
 _ISOLATED_KEEP = ("PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP")
+#: pytest's capture that opens no file: its default ("fd") opens the null device for standard input, which a Windows
+#: AppContainer may be refused (GitHub's Windows Server 2025 image refuses it); "sys" captures each test's output too.
+CAPTURE = "--capture=sys"
+
+
+def no_null_device(folder: str | Path) -> list[str]:
+    """pytest's options that keep a run from opening the null device: ``CAPTURE``, and a log file in the run's own
+    ``folder`` (with none named, pytest's log file is the null device) at a level no record reaches, so it stays empty."""
+    return [CAPTURE, f"--log-file={Path(folder) / 'pytest.log'}", "--log-file-level=100"]
 
 
 def recorded(report: dict | None) -> dict | None:
@@ -324,6 +333,9 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
     ``G6_REQUIRE_ISOLATION`` set and no backend, nothing runs: False, with the refusal in ``LAST_RUN["refused"]``.
     ``timeout``: a shorter limit than ``TIMEOUT_S`` (a learning round's replay of one probe, R3 review C1)."""
     LAST_RUN.clear()
+    # as the operating system names it, so --rootdir and --confcutdir name the folder the child starts in (macOS reaches
+    # every temp folder through a link, /var to /private/var)
+    repo = Path(repo).resolve()
     if "::" not in nodeid or not (repo / nodeid.split("::")[0]).exists():
         return False
     limit = TIMEOUT_S if timeout is None else timeout
@@ -344,8 +356,8 @@ def run_isolated(nodeid: str, repo: Path, timeout: float | None = None) -> bool:
         if confined.backend is not None:
             env["TMPDIR"] = _own_temp(config_dir)
         cmd = [python, "-I", "-c", _ISOLATED_BOOT, str(repo), str(result), nodeid, "-q", "-p",
-               "no:cacheprovider", "--rootdir", str(repo), f"--confcutdir={repo}", "-c", str(config),
-               "--import-mode=prepend"]
+               "no:cacheprovider", *no_null_device(config_dir), "--rootdir", str(repo), f"--confcutdir={repo}", "-c",
+               str(config), "--import-mode=prepend"]
         try:
             proc = _run_owned(cmd, repo, env, limit, confined)
         except component_process.ExecutionInterrupted as exc:
@@ -396,6 +408,7 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
     backend, nothing runs and ``why`` is the refusal."""
     found = {"ran": False, "started": False, "why": "", "outcomes": {}, "collect_errors": [], "collect_skipped": [],
              "seconds": 0.0}
+    repo = Path(repo).resolve()   # as run_isolated names it
     if not (Path(repo) / SUITE_DIR).is_dir():
         found["why"] = f"the repository has no {SUITE_DIR}/ directory"
         return found
@@ -415,8 +428,8 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
         if confined.backend is not None:
             env["TMPDIR"] = _own_temp(scratch)
         cmd = [python, "-I", "-c", _SUITE_BOOT, str(repo), str(result), SUITE_DIR, "-q", "-p", "no:cacheprovider",
-               "--rootdir", str(repo), f"--confcutdir={repo}", "-c", str(config), "--import-mode=prepend",
-               "--continue-on-collection-errors"]
+               *no_null_device(scratch), "--rootdir", str(repo), f"--confcutdir={repo}", "-c", str(config),
+               "--import-mode=prepend", "--continue-on-collection-errors"]
         try:
             proc = _run_owned(cmd, repo, env, limit, confined)
         except component_process.ExecutionInterrupted as exc:

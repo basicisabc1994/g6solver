@@ -2,6 +2,8 @@
 """g6.cegis: synthesis runs candidates out of process and a result says only what its run compared (audit 027)."""
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from g6.cegis import InputDomain, RunnerTimeout, Sketch, SubprocessRunner, TableOracle, cegis
@@ -99,8 +101,9 @@ def test_a_candidate_that_never_returns_is_killed() -> None:
     assert cegis(sketch, lambda x: x, domain=X, runner=runner).status == "timeout"
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS refuses the address-space limit: no memory cap there")
 def test_a_candidate_that_allocates_past_the_cap_does_not_answer() -> None:
-    """CG-002: memory is capped on every platform (POSIX rlimit, Windows Job Object); a control shows the cap did it."""
+    """CG-002: memory is capped (POSIX rlimit, Windows Job Object; not on macOS); a control shows the cap did it."""
     sketch = Sketch.from_src("def f(x):\n    return len('a' * (x * ??))\n")
     big = 700 * 1024 * 1024
     capped = SubprocessRunner(timeout_s=30, mem_mb=256).evaluate(sketch, [{0: 1}], [{"x": big}])

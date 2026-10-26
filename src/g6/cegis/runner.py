@@ -3,8 +3,9 @@
 
 ``SubprocessRunner`` starts ``python -I -m g6.cegis._child`` through :mod:`g6.core.component_process` (a wall-clock
 allowance and a kill of the whole process tree), with an empty working directory and an environment that carries no
-secret. The child lowers its own memory, CPU and file-size limits on POSIX before any candidate runs; on Windows the
-Job Object caps its memory, beside the wall clock and the tree kill. It is a resource bound with an AST pre-filter, not
+secret. The child lowers its own memory, CPU and file-size limits on POSIX before any candidate runs (macOS refuses the
+address-space limit, so there its memory is not capped); on Windows the Job Object caps its memory, beside the wall
+clock and the tree kill. It is a resource bound with an AST pre-filter, not
 an operating-system sandbox: the child runs as the same user.
 """
 from __future__ import annotations
@@ -54,7 +55,7 @@ class Runner(Protocol):
 
 @dataclass(frozen=True)
 class SubprocessRunner:
-    """Each call is one child process, bounded by ``timeout_s`` of wall clock and (POSIX) ``mem_mb`` of memory."""
+    """Each call is one child process, bounded by ``timeout_s`` of wall clock and ``mem_mb`` of memory (none on macOS)."""
 
     timeout_s: float = 30.0
     mem_mb: int = 512

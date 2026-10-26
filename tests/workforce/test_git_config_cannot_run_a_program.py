@@ -31,11 +31,31 @@ def _commit(repo: Path, message: str = "c") -> None:
     _git(repo, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-qm", message)
 
 
+#: The plant's own record of who started it: on Linux, each process above it (up to four), its command line, and
+#: whether it carried G6's git settings (``g6.core.git_env``'s sentinel), so a plant that ran says which git ran it.
+_CALLERS = r'''
+def callers():
+    found, pid = [], os.getppid()
+    for _ in range(4):
+        try:
+            cmd = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")[:200]
+            env, status = open(f"/proc/{pid}/environ", "rb").read(), open(f"/proc/{pid}/status").read()
+        except OSError:
+            break
+        found.append(("with G6's settings: " if b"g6.k1guard" in env else "without G6's settings: ") + cmd.strip())
+        pid = int(next(line.split()[1] for line in status.splitlines() if line.startswith("PPid:")))
+        if pid <= 1:
+            break
+    return found
+'''
+
+
 def _marker_program(tmp_path: Path) -> tuple[Path, list[str]]:
-    """A marker file and the argv of a program that appends its arguments to it (as a filter, it passes stdin on; as
-    anything else it exits at once, so a transport waiting on it never hangs)."""
+    """A marker file and the argv of a program that appends its arguments, and who started it (``_CALLERS``), to it
+    (as a filter, it passes stdin on; as anything else it exits at once, so a transport waiting on it never hangs)."""
     marker, script = tmp_path / "marker", tmp_path / "plant.py"
-    script.write_text(f"import pathlib, sys\npathlib.Path(r'{marker}').open('a').write(' '.join(sys.argv) + '\\n')\n"
+    script.write_text(f"import os, pathlib, sys\n{_CALLERS}\npathlib.Path(r'{marker}').open('a').write("
+                      "' '.join(sys.argv) + ''.join('\\n    ' + c for c in callers()) + '\\n')\n"
                       "if sys.argv[-1] in ('clean', 'smudge'):\n    sys.stdout.write(sys.stdin.read())\n",
                       encoding="utf-8")
     return marker, [Path(sys.executable).as_posix(), script.as_posix()]

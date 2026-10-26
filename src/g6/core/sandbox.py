@@ -5,10 +5,11 @@ bundle; audit 025 HD-010).
 ``run_script(source, files)`` writes ``files`` and the script into a fresh folder G6 makes and runs ``python -I``
 there under :mod:`g6.core.component_process`: a wall-clock allowance, then a kill of the whole process tree. The child's
 environment carries no secret. A boot runs before the script: it refuses network connections to anywhere but this
-machine and, on POSIX, lowers the memory, CPU and file-size limits; on Windows the Job Object caps each process's
-memory. On POSIX the memory cap is on the whole address space unless the caller asks for the data segment
-(``memory="data"``, :data:`MEMORY_LIMITS`), for a child that maps large shared libraries whose address space it never
-uses. The files the script leaves in its directory come back, up to a size limit.
+machine and, on POSIX, lowers the CPU and file-size limits and, on Linux, the memory limit; on Windows the Job Object
+caps each process's memory, and on macOS the memory is not capped (:func:`memory_limit`; the run's limits say so). On
+Linux the memory cap is on the whole address space unless the caller asks for the data segment (``memory="data"``,
+:data:`MEMORY_LIMITS`), for a child that maps large shared libraries whose address space it never uses. The files the
+script leaves in its directory come back, up to a size limit.
 
 Where :mod:`g6.core.confine` has a backend for the interpreter (a Windows AppContainer), the script also runs confined:
 it reads only the interpreter's folders and its own folder (and what Windows lets every AppContainer read: the system
@@ -95,17 +96,22 @@ MEMORY_LIMITS = {
 }
 #: On Windows, whatever is asked.
 _JOB_OBJECT = "each process's committed memory (a Windows Job Object)"
+#: On macOS, whatever is asked: it refuses RLIMIT_AS (EINVAL) and does not enforce RLIMIT_DATA for mapped memory.
+_NOT_CAPPED = ("not capped: macOS refuses the address-space limit and does not enforce the data segment's, so the "
+               "script's memory is bounded only by the machine; its CPU time and the wall clock still are")
 #: What the limits say of the network when the run is confined.
 _CONFINED_NETWORK = ("no network: the operating system refuses every connection, this machine's included (an "
                      "AppContainer with no network capability); Python's socket guard runs as well")
-# argv after ``-c``: memory bytes, CPU seconds, file-size bytes, the memory limit's name, then the script
+# argv after ``-c``: memory bytes, CPU seconds, file-size bytes, the memory limit's name ("" for none), then the script
 _BOOT = (confine.CHILD_PRELUDE +
          "import sys\n"
          "mem, cpu, fsize = (int(v) for v in sys.argv[1:4])\n"
          "try:\n"
          "    import resource\n"
-         "    for limit, value in ((getattr(resource, sys.argv[4]), mem), (resource.RLIMIT_CPU, cpu),\n"
-         "                         (resource.RLIMIT_FSIZE, fsize)):\n"
+         "    caps = [(resource.RLIMIT_CPU, cpu), (resource.RLIMIT_FSIZE, fsize)]\n"
+         "    if sys.argv[4]:\n"
+         "        caps.append((getattr(resource, sys.argv[4]), mem))\n"
+         "    for limit, value in caps:\n"
          "        resource.setrlimit(limit, (value, value))\n"
          "except ImportError:\n"
          "    pass\n"
@@ -139,6 +145,19 @@ def interpreter() -> str | None:
     return find_program("python") or find_program("python3")
 
 
+def memory_limit(memory: str, mem_mb: int, *, os_name: str = os.name,
+                 platform: str = sys.platform) -> tuple[str, str, str]:
+    """For a ``memory`` kind (:data:`MEMORY_LIMITS`): the POSIX limit the boot sets (``""`` for none), the run's
+    ``memory_cap`` and its ``memory_limit``. Linux caps what ``memory`` names, Windows each process's committed memory
+    through the Job Object, and macOS nothing, which the limits say."""
+    rlimit, counts = MEMORY_LIMITS[memory]
+    if os_name != "posix":
+        return rlimit, "job object", f"{mem_mb:,} MB of {_JOB_OBJECT}"
+    if platform == "darwin":
+        return "", "none", _NOT_CAPPED
+    return rlimit, "rlimit", f"{mem_mb:,} MB of {counts}"
+
+
 def _plain_name(name: str) -> bool:
     return bool(name) and name == Path(name).name and name not in (".", "..", SCRIPT, TEMP)
 
@@ -151,13 +170,11 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
     if memory not in MEMORY_LIMITS:
         raise ValueError(f"memory must be one of {', '.join(MEMORY_LIMITS)}, not {memory!r}")
     files = dict(files or {})
-    rlimit, counts = MEMORY_LIMITS[memory]
+    rlimit, cap, capped = memory_limit(memory, mem_mb)
     limits = {"timeout_s": timeout_s, "mem_mb": mem_mb,
               "network": "connections to other machines are refused by Python's socket guard; this machine (loopback) "
                          "is allowed; the guard is in the interpreter, not the operating system",
-              "memory_cap": "rlimit" if os.name == "posix" else "job object",
-              "memory_limit": f"{mem_mb:,} MB of " + (counts if os.name == "posix" else _JOB_OBJECT),
-              "threads": 1, "os_sandbox": False}
+              "memory_cap": cap, "memory_limit": capped, "threads": 1, "os_sandbox": False}
     bad = [name for name in files if not _plain_name(name)]
     python = interpreter()
     if bad or python is None:
@@ -220,4 +237,4 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
                      isolation)
 
 
-__all__ = ["MEMORY_LIMITS", "NETWORK_GUARD", "ScriptRun", "interpreter", "run_script"]
+__all__ = ["MEMORY_LIMITS", "NETWORK_GUARD", "ScriptRun", "interpreter", "memory_limit", "run_script"]

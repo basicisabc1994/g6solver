@@ -344,6 +344,32 @@ TEARDOWN_ERRS = ("import pytest\n\n\n@pytest.fixture\ndef res():\n    yield 1\n 
                  "def test_fails(res):\n    assert res == 2\n")
 
 
+def test_the_run_never_asks_the_child_to_open_the_null_device(repo):
+    """Windows CI (2026-10-26): an AppContainer there may not open the null device, which pytest's default ("fd") capture
+    opens for standard input (test_truth_suite_runner.py says more); the boot turns that default into "sys" capture,
+    which opens nothing. "sys" leaves what is written straight to file descriptor 1 uncaptured, so it reaches the run's
+    output; a repository's own -s stays as it is (I6). pytest's log file, when none is named, is the null device too:
+    the run names one in its own folder."""
+    _write(repo, "tests/test_fd.py", "import logging\nimport os\n\n\ndef test_fd():\n    os.write(1, b'WRITTEN-TO-FD-1\\n')\n"
+                                     "    null = os.path.abspath(os.devnull)\n"
+                                     "    assert [h for h in logging.getLogger().handlers\n"
+                                     "            if getattr(h, 'baseFilename', None) == null] == []\n")
+    found = rt.run(repo, ["tests/test_fd.py"])
+    assert found["verdict"] == rt.PASSED, found["output"]
+    assert "WRITTEN-TO-FD-1" in found["output"], found["output"]
+
+
+def test_a_log_file_the_repository_names_is_never_written_into_it(repo):
+    """The run's log file is always its own: a run in place is read only, so a log file the repository names inside
+    itself could not be opened confined (the run would end before a test ran) and would be written into the repository
+    unconfined. The log file is pytest's side output, so the tests see nothing else change."""
+    _write(repo, "pytest.ini", "[pytest]\nlog_file = own.log\n")
+    _write(repo, "tests/test_log.py", "def test_log():\n    assert True\n")
+    found = rt.run(repo, ["tests/test_log.py"])
+    assert found["verdict"] == rt.PASSED, found["output"]
+    assert not (repo / "own.log").exists()
+
+
 def test_i1_a_failing_test_whose_teardown_also_errors_is_one_failed_test(repo):
     """I1 (probe P1): the report holds one testcase with a failure and an error; it is one test, and it failed."""
     _write(repo, "tests/test_td.py", TEARDOWN_ERRS)

@@ -11,9 +11,10 @@ must be finite before anything is decoded; either is written back as its own ref
 held-out answer.
 Kept weights are read back only with ``torch.load(..., weights_only=True)`` from the file G6 wrote beside the job.
 
-The child is capped on its data segment, not its address space (:data:`MEMORY`, ``g6.core.sandbox.MEMORY_LIMITS``):
-importing PyTorch's CUDA build maps libtorch and cuBLAS, far more address space than the family's cap, though little
-of it is ever used. A torch that still cannot be loaded is written back as a named error, never a crash.
+On Linux the child is capped on its data segment, not its address space (:data:`MEMORY`,
+``g6.core.sandbox.MEMORY_LIMITS``; macOS caps neither, ``g6.core.sandbox.memory_limit``): importing PyTorch's CUDA build
+maps libtorch and cuBLAS, far more address space than the family's cap, though little of it is ever used. A torch that
+still cannot be loaded is written back as a named error, never a crash.
 """
 from __future__ import annotations
 

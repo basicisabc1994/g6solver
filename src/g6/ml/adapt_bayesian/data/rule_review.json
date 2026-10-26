@@ -1,6 +1,7 @@
 {
   "reviewer": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25); the records of the other rules are kept from the earlier readers",
   "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
+  "method": "fifth pass on review/macos-sandbox-reader af11efcdb1: read the diff of core/sandbox.py since c7312f47b3 (the only bound file that changed; on macOS the boot sets no memory limit and the run's limits say so, and the boot now lists CPU and file-size before memory); no rule, clause, threshold, case or refusal changed and the limits a Linux or Windows run sets and reports are the same text with the same boot argv order, so only reviewed.artifact_sha256 was replaced; checked the 7306808efb re-bound note: each of the 37 bound files it changed differs only in its first two lines with an identical syntax tree, so it holds",
   "rules": [
     {
       "rule": "beta",
@@ -158,7 +159,7 @@
   ],
   "reviewed": {
     "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
-    "artifact_sha256": "d5a3b03c4770e3b5ed3df698105bc810a7ed5f682c8aec4019e9a6b4559cceaa",
+    "artifact_sha256": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
     "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
     "refusals": [
       "MLError",

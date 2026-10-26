@@ -151,9 +151,11 @@ def test_d1_codex_gets_no_more_than_the_person_declared(codex: StandIn, workspac
     assert not [a for a in argv if "danger" in a or "bypass" in a or a in ("--approve-for-me", "--add-dir",
                                                                          "--full-auto", "--yolo")], argv
     assert _same(seen["cwd"], workspace)
-    # PROMPT: cmd.exe, which runs the stand-in's .cmd launcher on Windows, sets it itself; PWD: /bin/sh, which runs it
-    # elsewhere, sets it itself
-    allowed = {name.upper() for name in (*BASE_ENV, "CODEX_HOME", "TEMP", "TMP", "TMPDIR", "PROMPT", "PWD")}
+    # PROMPT: cmd.exe, which runs the stand-in's .cmd launcher on Windows, sets it itself; PWD (and SHLVL on macOS, where
+    # it is bash): /bin/sh, which runs it elsewhere, sets it itself; __CF_USER_TEXT_ENCODING: macOS's CoreFoundation,
+    # which the stand-in's Python loads there, sets it itself
+    allowed = {name.upper() for name in (*BASE_ENV, "CODEX_HOME", "TEMP", "TMP", "TMPDIR", "PROMPT", "PWD", "SHLVL",
+                                         "__CF_USER_TEXT_ENCODING")}
     leaked = sorted(k for k, v in seen["env"].items() if "canary" in v or k.upper().startswith("G6_")
                     or (k.upper() not in allowed and k in os.environ))
     assert leaked == []

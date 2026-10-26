@@ -107,7 +107,7 @@ adds PyMC and ArviZ (Apache-2.0), with PyTensor (BSD-3-Clause). Without it `samp
 The outside program is **C compiler for pytensor (g++)**, found on PATH. Install a GCC C/C++ toolchain yourself
 (MinGW-w64 on Windows). GCC is GPL with its runtime-library exception, used only as an outside program and never
 bundled or imported. Compilation stays in the child's scratch cache. The child uses one core and sequential
-chains, a 1536 MB family memory cap and a 32 MB reply cap. The family sandbox's Python socket guard permits
+chains, a 1536 MB family memory cap (none on macOS, which refuses it) and a 32 MB reply cap. The family sandbox's Python socket guard permits
 loopback and is not an operating-system security boundary. No caller code runs there.
 
 ## Examples

@@ -4,6 +4,8 @@ case is never a holdout, a negative control that passes makes the report inconcl
 that cannot tell right from wrong. Real child processes; offline."""
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from g6.distillation import Candidate, HoldoutCase, check_source, evaluate, run_batch, run_sandboxed
@@ -24,6 +26,7 @@ def test_the_pre_filter_refuses_reaching_the_interpreter(source):
     assert check_source(source)
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS caps no memory (g6.core.sandbox.memory_limit)")
 def test_t12_a_huge_allocation_fails_under_the_memory_cap():
     found = run_sandboxed("def solve(x):\n    return len('a' * 10 ** 10)\n", 1, timeout_s=20, memory_mb=128)
     assert not found.ok and found.status in ("error", "timeout"), found

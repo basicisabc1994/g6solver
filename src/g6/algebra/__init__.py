@@ -42,7 +42,8 @@ failed re-check blocks the answer (``G6_E_ALGEBRA_CERTIFICATE_REFUTED``); a re-c
 answer as not re-checked (``G6_E_ALGEBRA_NOT_RECHECKED``), never as passed.
 
 Time limits. Each SymPy op runs in G6's own worker process (``python -I -m g6.algebra.worker``) under
-:mod:`g6.core.component_process`: a time limit (30 seconds by default, at most 120), a memory cap and an output cap,
+:mod:`g6.core.component_process`: a time limit (30 seconds by default, at most 120), a memory cap (none on macOS, which
+refuses it) and an output cap,
 its process tree killed when one is passed (:mod:`g6.algebra.runner`). The worker reports its answer before it
 re-checks, so an answer whose re-check runs out of time is reported as not re-checked. Caller text reaches nothing in
 the worker but G6's parser, so the SymPy ops are not sensitive: they answer over MCP.

@@ -190,10 +190,11 @@ def test_d1_claude_code_gets_no_more_than_the_person_declared(claude: StandIn, w
     assert not [a for a in argv if re.search(r"danger|bypass|acceptEdits|skip-permissions", a)
                 or a in ("--add-dir", "--permission-prompt-tool", "--continue", "--resume")], argv
     assert _same(seen["cwd"], workspace)
-    # PROMPT: cmd.exe, which runs the stand-in's .cmd launcher on Windows, sets it itself; PWD: /bin/sh, which runs it
-    # elsewhere, sets it itself
+    # PROMPT: cmd.exe, which runs the stand-in's .cmd launcher on Windows, sets it itself; PWD (and SHLVL on macOS, where
+    # it is bash): /bin/sh, which runs it elsewhere, sets it itself; __CF_USER_TEXT_ENCODING: macOS's CoreFoundation,
+    # which the stand-in's Python loads there, sets it itself
     allowed = {name.upper() for name in (*BASE_ENV, "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH", "TEMP", "TMP",
-                                         "TMPDIR", "PROMPT", "PWD")}
+                                         "TMPDIR", "PROMPT", "PWD", "SHLVL", "__CF_USER_TEXT_ENCODING")}
     leaked = sorted(k for k, v in seen["env"].items() if "canary" in v or k.upper().startswith(("G6_", "ANTHROPIC"))
                     or (k.upper() not in allowed and k in os.environ))
     assert leaked == []
