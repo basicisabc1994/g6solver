@@ -147,8 +147,7 @@ class Plan:
         identity = self.identity
         record = {"backend": self.backend, "why": self.why,
                   "network": bool(self.confinement is not None and self.confinement.network),
-                  "container": identity.sid_text if identity is not None else None,
-                  "profile": identity.name if identity is not None else None}
+                  "container": getattr(identity, "sid_text", None), "profile": getattr(identity, "name", None)}
         if self.backend is None:
             record["warning"] = UNCONFINED_WARNING
         return record
@@ -305,6 +304,12 @@ def _home(cfg: Path) -> list[str]:
 
 
 # --- the backend --------------------------------------------------------------------------------------------------------
+# A backend has a ``name`` and four methods, and nothing else here reaches past them:
+#   ready(python, *, probe=True) -> "" when a child of ``python`` can be confined here, else why not;
+#   started(python) -> whether a child of ``python`` was test-started in this process, and started;
+#   prepare(confinement, python) -> (the run's identity, "") or (None, why): what one run needs before it starts;
+#   start(argv, identity, *, network, **options) -> the started child (``subprocess.Popen``'s part the process tree uses).
+# An identity has ``close() -> str`` ("" or what could not be released).
 
 def _select() -> tuple[Any, str]:
     """This platform's backend, or None and why."""
@@ -352,28 +357,9 @@ def _plan(confinement: Confinement, python: str) -> Plan:
     chosen, why = _select()
     if chosen is None:
         return Plan(None, why, confinement)
-    reads = [path for path in confinement.read_only if os.path.exists(path)]
-    unread = [path for path in dict.fromkeys([*interpreter_paths(python), *reads])
-              if not owned(path) and not chosen.readable(path)]
-    if unread:
-        return Plan(None, chosen.cannot_read(unread), confinement)
-    why = chosen.ready(python)
-    if why:
+    identity, why = chosen.prepare(confinement, python)
+    if identity is None:
         return Plan(None, why, confinement)
-    try:
-        identity = chosen.identity()
-    except OSError as exc:
-        return Plan(None, f"unavailable: G6 could not make the run's container ({exc})", confinement)
-    try:
-        for path in reads:
-            if owned(path):
-                chosen.grant(path, identity.sid, write=False)
-        for path in confinement.read_write:
-            chosen.grant(path, identity.sid, write=True)
-    except OSError as exc:
-        left = identity.close()
-        return Plan(None, f"unavailable: G6 could not give the container its run folders ({exc})"
-                    + (f"; {left}" if left else ""), confinement)
     return Plan(chosen.name, "", confinement, identity)
 
 
@@ -653,6 +639,33 @@ class _AppContainer:
 
     def readable(self, path: str) -> bool:
         return self._granted(path) & _READ_EXECUTE == _READ_EXECUTE
+
+    def prepare(self, confinement: Confinement, python: str) -> tuple[_Identity | None, str]:
+        """The run's own container, granted what ``confinement`` names (the folders G6 made only); None and why when
+        it cannot be confined."""
+        reads = [path for path in confinement.read_only if os.path.exists(path)]
+        unread = [path for path in dict.fromkeys([*interpreter_paths(python), *reads])
+                  if not owned(path) and not self.readable(path)]
+        if unread:
+            return None, self.cannot_read(unread)
+        why = self.ready(python)
+        if why:
+            return None, why
+        try:
+            identity = self.identity()
+        except OSError as exc:
+            return None, f"unavailable: G6 could not make the run's container ({exc})"
+        try:
+            for path in reads:
+                if owned(path):
+                    self.grant(path, identity.sid, write=False)
+            for path in confinement.read_write:
+                self.grant(path, identity.sid, write=True)
+        except OSError as exc:
+            left = identity.close()
+            return None, (f"unavailable: G6 could not give the container its run folders ({exc})"
+                          + (f"; {left}" if left else ""))
+        return identity, ""
 
     def cannot_read(self, paths: list[str], files: list[str] | None = None) -> str:
         """Why a run cannot be confined when the container cannot read ``paths`` (or, given ``files``, those files

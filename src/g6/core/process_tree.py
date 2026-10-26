@@ -5,7 +5,8 @@
 
 On Windows the child starts suspended inside a Job Object that kills every member when it is closed; on POSIX it leads
 a new session whose process group is killed. This is cleanup, not a sandbox: the children run as the same user, unless
-``spawn`` starts them confined (``g6.core.confine.popen``, still suspended and inside the job).
+``spawn`` starts them confined (``g6.core.confine.popen``: on Windows still suspended and inside the job, on POSIX
+still leading a new session).
 ``memory_bytes`` caps each member's committed memory through the Job Object on Windows; on POSIX the child must lower
 its own limits (``resource.setrlimit``), so the argument is ignored there.
 """
@@ -34,8 +35,6 @@ class _Tree:
         kw = {"stdin": stdin, "stdout": stdout, "stderr": stderr, "text": True,
               "encoding": "utf-8", "env": env, "shell": False, "cwd": cwd}
         self._job = None
-        if spawn is not None and sys.platform != "win32":
-            raise ProcessTreeError("a confined start is built for Windows only")
         if sys.platform == "win32":
             self._job = _WinJob(memory_bytes)
             try:
@@ -51,7 +50,8 @@ class _Tree:
                 self._job.close()
                 raise
         else:
-            self.proc = subprocess.Popen(argv, start_new_session=True, **kw)
+            # Its own session either way, so its process group is killed whole; a confined start too (``spawn``).
+            self.proc = (spawn or subprocess.Popen)(argv, start_new_session=True, **kw)
 
     def kill(self, *, strict: bool = False) -> None:
         if self._job is not None:
