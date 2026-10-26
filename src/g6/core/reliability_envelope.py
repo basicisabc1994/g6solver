@@ -6,15 +6,17 @@ The envelope carries the three canonical reliability states
 surface. A bare envelope is a ``qualified-draft`` (#135).
 
 The promotion law: ``verified`` stands only when G6's own code re-runs a check
-and reproduces it. A proposed ``verified`` keeps its word only when the envelope
-carries a ``promotion_witness`` whose oracle is one of G6's own re-checkers
-(:data:`_G6_RECHECKERS`) and whose re-check, run again every time an envelope is
-built, reproduces the witnessed execution identity. A witness the producer hands
-over is only a pointer to what to re-run: its claims (who evaluated, that the
-evaluation was independent, any signature) are not read. A door builds its own
-witness from the result's content with :func:`door_witness` and never forwards the
-producer's. The law is DOWN-only: a missing or failing re-check demotes a proposed
-``verified`` to ``qualified-draft``; it never upgrades a weaker state.
+at a door and reproduces it. A proposed ``verified`` keeps its word only when the
+envelope carries a ``promotion_witness`` that a G6 door built and sealed
+(:func:`door_witness`), whose oracle is one of G6's own re-checkers
+(:data:`_G6_RECHECKERS`, chosen by where the producing code lives, never by a
+name), whose comparison point came from the caller, whose re-check, run again every
+time an envelope is built, reproduces the witnessed execution identity, and whose
+re-checked artifact is exactly what the envelope's evidence is about. A witness the
+producer builds or hands over never promotes, whatever it claims. The law is
+DOWN-only: a missing or failing re-check holds a proposed ``verified`` at
+``qualified-draft``, a re-check that finds a mismatch blocks it, and it never
+upgrades a weaker state.
 
 The law is always on. There is no switch: in one process any switch is a bypass,
 so the old off and shadow words, the per-surface scope and the subject-binding
@@ -29,8 +31,12 @@ being a declared field, so an envelope without one dumps without the key.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib
 import json
+import os
+import secrets
+import sys
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
@@ -43,22 +49,37 @@ _LABEL_RANK = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
 PROMOTION_LAW = "G6_E_PROMOTION_LAW"
 
 # The witness core is everything except the execution provenance, the digest
-# itself, and an outer signature: a witness whose details were rewritten after it
-# was sealed does not promote. (Signatures are not read by the law; the keys stay
-# excluded so a signed witness seals the same core.)
+# itself, the door's seal and an outer signature: a witness whose details were
+# rewritten after it was sealed does not promote. (Signatures are not read by the
+# law; the keys stay excluded so a signed witness seals the same core.)
 _WITNESS_NON_CORE_KEYS = frozenset(
-    {"execution", "content_digest", "evaluator_signature", "evaluator_key_id"}
+    {"execution", "content_digest", "door_seal", "evaluator_signature", "evaluator_key_id"}
 )
 
-#: G6's own re-checkers, by the component whose results they re-check: ``component -> (module, oracle)``. The module
-#: is G6 code and exposes ``claim(value) -> (execution_id, details) | None`` (what to re-check, taken from the
-#: result's own content) and ``replay(witness) -> promotion_evaluator.ReplayOutcome`` (the re-check itself, which
-#: derives the execution identity from what it re-ran, never from the witness). Only an oracle named here can
-#: promote; ``promotion_evaluator.register_oracle`` is open to any code and is not read by the law.
+#: A key made fresh in each process, used only by G6's own doors to seal the witnesses they build (and by
+#: ``g6.integrity.verify_tree`` to seal the results it makes with its caller's pin). A witness the producer hands to
+#: ``envelope_fields`` or ``ReliabilityEnvelope`` carries no valid seal, so it never promotes. Code that reads this key
+#: is code in G6's own process: G6 re-checks artifacts with its own code; it does not defend against malicious code in
+#: its own process.
+_DOOR_KEY = secrets.token_bytes(32)
+
+#: G6's own re-checkers, by the package whose code produces the results they re-check: ``package -> (module, oracle)``.
+#: A door picks one from where the producing code lives (:func:`g6_module`), never from a name. The module is G6 code
+#: and exposes ``claim(value, caller) -> (execution_id, details) | None`` (what to re-check: the result's own record,
+#: and what it is compared against, from the caller's input; None when the result carries anything the re-check does
+#: not examine) and ``replay(witness) -> promotion_evaluator.ReplayOutcome`` (the re-check itself, which derives the
+#: execution identity from what it re-ran, never from the witness). ``promotion_evaluator.register_oracle`` is open to
+#: any code and is not read by the law.
 _G6_RECHECKERS: dict[str, tuple[str, str]] = {
-    # re-hashes the root, compares the manifest and the pin, and checks that a planted control is caught
-    "integrity": ("g6.integrity.tree", "g6.integrity.tree"),
+    # re-hashes the root, compares the manifest and the caller's pin, and checks that planted controls are caught
+    "g6.integrity": ("g6.integrity.tree", "g6.integrity.tree"),
 }
+
+
+def _door_mac(*parts: Any) -> str:
+    """The door seal over ``parts`` (JSON-encoded), under this process's door key."""
+    payload = json.dumps(list(parts), sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str)
+    return hmac.new(_DOOR_KEY, payload.encode("ascii"), hashlib.sha256).hexdigest()
 
 
 def _witness_content_digest(witness: Mapping[str, Any]) -> str:
@@ -76,6 +97,36 @@ def _witness_content_digest(witness: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
 
+def g6_module(code: Any) -> str:
+    """The G6 module ``code`` (a class or a function) really lives in, or "" when it is not G6's own code.
+
+    Read from where the object is defined, not from a name it carries: the module must be ``g6`` or under it, its
+    file inside G6's own package folder, and the object reachable there under its qualified name (so a class that
+    sets ``__module__`` to a G6 module is not taken for one). A name, a string, or a locally defined object is "".
+    """
+    name, qualname = getattr(code, "__module__", None), getattr(code, "__qualname__", None)
+    if not (isinstance(name, str) and isinstance(qualname, str)) or not (name == "g6" or name.startswith("g6.")):
+        return ""
+    module = sys.modules.get(name)
+    found: Any = module
+    for part in qualname.split("."):
+        found = getattr(found, part, None)
+    if module is None or found is not code:
+        return ""
+    import g6
+
+    package = os.path.dirname(os.path.abspath(g6.__file__))
+    where = os.path.abspath(getattr(module, "__file__", "") or "")
+    return name if where.startswith(package + os.sep) else ""
+
+
+def _rechecker_for(module: str) -> tuple[str, str] | None:
+    for package, entry in _G6_RECHECKERS.items():
+        if module and (module == package or module.startswith(package + ".")):
+            return entry
+    return None
+
+
 def _g6_rechecker(oracle: str) -> Callable[[Mapping[str, Any]], Any] | None:
     """The replay of G6's own re-checker named ``oracle``, or None (unknown oracle, or its module failed to load)."""
     for module_name, name in _G6_RECHECKERS.values():
@@ -88,58 +139,72 @@ def _g6_rechecker(oracle: str) -> Callable[[Mapping[str, Any]], Any] | None:
     return None
 
 
-def door_witness(component: str, value: Any, *, task_id: str = "", run_id: str = "") -> dict[str, Any] | None:
-    """The witness a door builds for ``component``'s result ``value``, or None.
+def recheck_evidence(witness: Mapping[str, Any]) -> dict[str, Any]:
+    """The one evidence entry an envelope promoted by ``witness`` carries: what G6 re-checked. The law requires an
+    envelope's evidence to be exactly this, so a witness never vouches for a claim about something else."""
+    execution = witness.get("execution")
+    details = witness.get("details")
+    return {"kind": "g6_recheck", "oracle": str(witness.get("oracle") or ""),
+            "execution_id": str(execution.get("execution_id") or "") if isinstance(execution, Mapping) else "",
+            "subject": str(details.get("subject") or "") if isinstance(details, Mapping) else "",
+            "witness": str(witness.get("content_digest") or ""),
+            "summary": "G6 re-ran this check at the door and it reproduced"}
 
-    G6's re-checker for ``component`` names what to re-check from the result's own
-    content (``claim``); a ``promotion_witness`` the result carries is never read.
-    None when G6 has no re-checker for the component, or the result names nothing it
-    can re-check. Building the witness runs nothing: the law re-runs the check
-    whenever an envelope carrying it is built.
+
+def door_witness(producer: Any, value: Any, *, caller: Mapping[str, Any] | None = None, task_id: str = "",
+                 run_id: str = "") -> dict[str, Any] | None:
+    """The witness a door builds for a result ``value`` that ``producer`` (the code that made it) returned, or None.
+
+    G6's re-checker is chosen by where ``producer`` lives (:func:`g6_module`); it takes the result's own record and
+    what to compare it against from ``caller`` (the caller's own input), and declines a result that carries anything
+    the re-check does not examine. A ``promotion_witness`` the result carries is never read. The witness is sealed
+    with the door key. Building it runs nothing: the law re-runs the check whenever an envelope carrying it is built.
     """
-    entry = _G6_RECHECKERS.get(str(component or "").strip().lower())
+    entry = _rechecker_for(g6_module(producer))
     if entry is None or not isinstance(value, Mapping):
         return None
     module_name, oracle = entry
     try:
-        claimed = importlib.import_module(module_name).claim(value)
+        claimed = importlib.import_module(module_name).claim(value, caller if isinstance(caller, Mapping) else {})
     except Exception:  # noqa: BLE001 - a result the re-checker cannot read is a result it cannot vouch for
         return None
     if not claimed:
         return None
     execution_id, details = claimed
     try:
-        return build_promotion_witness(evaluator_id="g6-door", execution_id=str(execution_id), oracle=oracle,
-                                       details=details, task_id=task_id, run_id=run_id)
+        witness = build_promotion_witness(evaluator_id="g6-door", execution_id=str(execution_id), oracle=oracle,
+                                          details=details, task_id=task_id, run_id=run_id)
     except ValueError:
         return None
+    witness["door_seal"] = _door_mac("witness", witness["content_digest"], str(execution_id), task_id, run_id)
+    return witness
 
 
-def promotion_witness_faults(witness: Any, *, task_id: str = "", run_id: str = "") -> list[str]:
-    """Every reason ``witness`` does not let a ``verified`` stand (empty list: G6's re-check reproduced it).
-
-    The witness must name one of G6's own re-checkers, carry a witnessed execution
-    identity, belong to this envelope's task and run (a witness never transfers
-    between runs), and keep the core its ``content_digest`` sealed. Then the
-    re-check runs, now, and must reproduce that execution identity.
-    """
+def _promotion_verdict(witness: Any, *, task_id: str, run_id: str, evidence: Any) -> tuple[list[str], bool]:
+    """``(faults, refuted)`` for ``witness`` on an envelope with this task, run and evidence; see
+    :func:`promotion_witness_faults`. ``refuted`` is True when G6's re-check ran and the artifact contradicts it."""
     if not isinstance(witness, Mapping):
         return [
-            "no promotion witness attached - 'verified' stands only when G6's own code re-runs a check and "
+            "no promotion witness attached - 'verified' stands only when G6's own code re-runs a check at a door and "
             "reproduces it"
-        ]
+        ], False
     faults: list[str] = []
+    execution = witness.get("execution")
+    execution_id = (
+        str(execution.get("execution_id") or "")
+        if isinstance(execution, Mapping) else ""
+    )
+    sealed = _door_mac("witness", witness.get("content_digest"), execution_id, str(witness.get("task_id") or ""),
+                       str(witness.get("run_id") or ""))
+    seal = witness.get("door_seal")
+    if not (isinstance(seal, str) and hmac.compare_digest(seal, sealed)):
+        faults.append("the witness was not built at a G6 door - a witness the producer hands over is ignored")
     oracle = str(witness.get("oracle") or "")
     replay = _g6_rechecker(oracle)
     if replay is None:
         faults.append(
             f"oracle {oracle!r} is not one of G6's own re-checkers - a witness the producer hands over is ignored"
         )
-    execution = witness.get("execution")
-    execution_id = (
-        str(execution.get("execution_id") or "")
-        if isinstance(execution, Mapping) else ""
-    )
     if not execution_id:
         faults.append(
             "witness carries no witnessed execution identity - a verdict "
@@ -147,7 +212,7 @@ def promotion_witness_faults(witness: Any, *, task_id: str = "", run_id: str = "
         )
     for field, expected in (("task_id", task_id), ("run_id", run_id)):
         declared = str(witness.get(field) or "")
-        if declared and expected and declared != expected:
+        if declared != str(expected or ""):
             faults.append(
                 f"witness {field} {declared!r} does not match the envelope "
                 f"{field} {expected!r} - a witness never transfers between runs"
@@ -162,15 +227,32 @@ def promotion_witness_faults(witness: Any, *, task_id: str = "", run_id: str = "
                 "witness content_digest does not match its sealed core - "
                 "doctored verdicts do not promote"
             )
+        elif list(evidence or []) != [recheck_evidence(witness)]:
+            faults.append("the envelope's evidence is not the re-checked artifact - a witness vouches only for what "
+                          "G6 re-checked")
     if faults or replay is None:
-        return faults
+        return faults, False
     from g6.core import promotion_evaluator
 
     outcome = promotion_evaluator.replay_reproduces(witness, replay=replay)
     if not outcome.reproduced:
         faults.append(f"G6's re-check did not reproduce the result: {outcome.detail}")
-    return faults
+        return faults, bool(outcome.refuted)
+    return faults, False
 
+
+def promotion_witness_faults(witness: Any, *, task_id: str = "", run_id: str = "",
+                             evidence: list[Any] | None = None) -> list[str]:
+    """Every reason ``witness`` does not let a ``verified`` stand on an envelope with this task, run and evidence
+    (empty list: G6's re-check reproduced it).
+
+    The witness must carry a G6 door's seal (a witness the producer builds or hands over never does), name one of
+    G6's own re-checkers, carry a witnessed execution identity, belong to this envelope's task and run (a witness never
+    transfers between runs), keep the core its ``content_digest`` sealed, and be what the envelope's evidence is about:
+    the evidence must be exactly :func:`recheck_evidence` of the witness. Then the re-check runs, now, and must
+    reproduce that execution identity.
+    """
+    return _promotion_verdict(witness, task_id=task_id, run_id=run_id, evidence=evidence)[0]
 
 def build_promotion_witness(
     *,
@@ -186,10 +268,10 @@ def build_promotion_witness(
     """Seal a promotion witness: what to re-check (``oracle`` and ``details``) and the
     execution identity the re-check must reproduce.
 
-    Anyone can build one, so it carries no authority of its own: it promotes only
-    when ``oracle`` is one of G6's own re-checkers and that re-check reproduces
-    ``execution_id`` (:func:`promotion_witness_faults`). ``witnessed_at`` is
-    caller-supplied (no wall-clock coupling).
+    Anyone can build one, so it carries no authority of its own and never promotes:
+    only a witness a G6 door built and sealed does (:func:`door_witness`,
+    :func:`promotion_witness_faults`). ``witnessed_at`` is caller-supplied (no
+    wall-clock coupling).
     """
     if not str(evaluator_id or "").strip():
         raise ValueError("evaluator_id must be non-empty")
@@ -459,10 +541,11 @@ class ReliabilityEnvelope(BaseModel):
         validator, i.e. at EVERY door an envelope can be built through, and
         re-runs the check each time. Returns the state that stands.
         """
-        faults = promotion_witness_faults(
+        faults, refuted = _promotion_verdict(
             getattr(self, "promotion_witness", None),
             task_id=self.task_id,
             run_id=self.run_id,
+            evidence=self.evidence,
         )
         if not faults:
             return "verified"
@@ -481,11 +564,14 @@ class ReliabilityEnvelope(BaseModel):
         if self.warning_card is None:
             self.warning_card = warning_card(
                 PROMOTION_LAW,
-                "It was reported verified, but G6 did not re-run a check that reproduces it, so it is held at "
-                "qualified-draft.",
+                ("It was reported verified, but G6 re-ran the check and the artifact does not match it, so it is "
+                 "blocked." if refuted else
+                 "It was reported verified, but G6 did not re-run a check that reproduces it, so it is held at "
+                 "qualified-draft."),
                 "Treat it as a qualified draft: check it yourself, or use a component whose results G6 re-checks.",
             )
-        return "qualified-draft"
+        # A re-check that ran and found a mismatch blocks: the artifact contradicts the claim (DOWN-only still).
+        return "blocked-escalated" if refuted else "qualified-draft"
 
 
 def warning_card(code: str, message: str, suggested_action: str | None = None) -> dict[str, Any]:
@@ -540,6 +626,8 @@ __all__ = [
     "build_promotion_witness",
     "door_witness",
     "envelope_fields",
+    "g6_module",
     "promotion_witness_faults",
+    "recheck_evidence",
     "warning_card",
 ]

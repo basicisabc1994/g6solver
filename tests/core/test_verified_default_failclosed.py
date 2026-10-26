@@ -445,6 +445,9 @@ NOT_A_FREE_DEFAULT: dict[str, tuple[int, str]] = {
     'g6/core/reliability_envelope.py _apply_promotion_law: return "verified"': (
         1, "demote-only gate, reached only when the producer stated verified: keeps or lowers that state, never "
            "raises one"),
+    'g6/core/door.py state_of: return "verified"': (
+        1, "reads a word a result declares as the state it names, so the door can hold or correct it; a missing or "
+           "unknown word is None, never verified"),
     'g6/evidence/certificate.py _state: return "verified"': (
         1, "the issuer's rule: only when every predicate is supported by a pass receipt from an independent, frozen, "
            "controlled check G6 resolved in its own ledger, and every gate is decided"),

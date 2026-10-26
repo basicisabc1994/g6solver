@@ -379,6 +379,9 @@ class ReplayOutcome:
     reproduced: bool
     execution_id: str = ""
     detail: str = ""
+    #: The re-check ran and found the artifact contradicts the claim (not merely "could not reproduce"): the doors
+    #: then block the result instead of holding it as a draft.
+    refuted: bool = False
 
 
 _OracleReplay = Callable[[Mapping[str, Any]], ReplayOutcome]

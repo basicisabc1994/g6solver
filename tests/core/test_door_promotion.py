@@ -3,10 +3,7 @@
 and reproduces it; a witness the producer hands over is ignored. Offline."""
 from __future__ import annotations
 
-import hashlib
 import re
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -56,12 +53,8 @@ def test_an_envelope_has_no_task_contract_floor() -> None:
 
 
 # --------------------------------------------------------------------------------------------------------------------
-# The core law: a stated `verified` stands only on G6's own re-check, and nothing switches that off
+# The core law: a stated `verified` stands only on a re-check a G6 door ran, bound to what the envelope is about
 # --------------------------------------------------------------------------------------------------------------------
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
 
 def _stated_verified(**fields):
     from g6.core.reliability_envelope import ReliabilityEnvelope
@@ -69,31 +62,33 @@ def _stated_verified(**fields):
     return ReliabilityEnvelope(completion_state="verified", reliability_label="verified", **fields)
 
 
-@pytest.fixture
-def demo_rechecker(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """A re-checker registered for the component ``demo``, as G6's own are: the door names the artifact from the
-    result's content, and the re-check reads the artifact as it is now (``world``) and hashes it itself."""
-    from g6.core import promotion_evaluator, reliability_envelope
+def _tree(base: Path) -> tuple[Path, str]:
+    """A small tree and the pin a caller recorded for it before any work."""
+    from g6.integrity import build_manifest, manifest_sha256
 
-    world: dict[str, str] = {}
-    module = types.ModuleType("g6_test_demo_recheck")
+    root = base / "pkg"
+    root.mkdir(parents=True)
+    (root / "a.py").write_text("A = 1\n", encoding="utf-8")
+    return root, manifest_sha256(build_manifest(root))
 
-    def claim(value):
-        name, text = value.get("name"), value.get("text")
-        if not isinstance(name, str) or not isinstance(text, str):
-            return None
-        return _sha(text), {"name": name}
 
-    def replay(witness):
-        name = (witness.get("details") or {}).get("name")
-        if name not in world:
-            return promotion_evaluator.ReplayOutcome(False, detail="the artifact is gone")
-        return promotion_evaluator.ReplayOutcome(True, execution_id=_sha(world[name]))
+def _integrity_record(root: Path, pin: str) -> dict:
+    """What G6's integrity check returns for ``root``, as a door would see it: its own fields and its label."""
+    from dataclasses import asdict
 
-    module.claim, module.replay = claim, replay
-    monkeypatch.setitem(sys.modules, module.__name__, module)
-    monkeypatch.setitem(reliability_envelope._G6_RECHECKERS, "demo", (module.__name__, "demo.recheck"))
-    return world
+    from g6.integrity import build_manifest, verify_tree
+
+    result = verify_tree(root, build_manifest(root), expected_manifest_sha256=pin)
+    return {**asdict(result), "completion_state": result.reliability_label}
+
+
+def _integrity_door(value: dict, caller: dict | None, **fields) -> dict:
+    """The door for G6's own integrity code: the producer is ``verify_tree`` itself, the pin is the caller's."""
+    from g6.core.door import door_envelope
+    from g6.integrity import verify_tree
+
+    return door_envelope(value.get("completion_state"), who="g6.integrity", producer=verify_tree, value=value,
+                         caller=caller, **fields)
 
 
 @pytest.mark.parametrize(("name", "value"), [
@@ -108,14 +103,23 @@ def test_off_words_do_not_disable_the_law(monkeypatch: pytest.MonkeyPatch, name:
     assert envelope.degradation_reason.startswith("kernel promotion law:")
 
 
-def test_a_self_minted_witness_does_not_promote() -> None:
-    from g6.core.reliability_envelope import build_promotion_witness
+def test_a_self_minted_witness_does_not_promote(tmp_path: Path) -> None:
+    """The producer names G6's own integrity oracle over a tree it pinned itself, and says something else entirely:
+    a witness handed to the envelope by its producer never promotes."""
+    from g6.core.reliability_envelope import build_promotion_witness, envelope_fields
 
     witness = build_promotion_witness(evaluator_id="agent:producer", execution_id="exec-1", oracle="producer_tests",
                                       run_id="run-1")
-    envelope = _stated_verified(run_id="run-1", promotion_witness=witness)
-    assert envelope.completion_state == "qualified-draft"
-    assert "not one of G6's own re-checkers" in envelope.degradation_reason
+    assert _stated_verified(run_id="run-1", promotion_witness=witness).completion_state == "qualified-draft"
+    root, pin = _tree(tmp_path)
+    details = {"root": str(root.resolve()), "manifest": _integrity_record(root, pin)["manifest"],
+               "expected_manifest_sha256": pin, "patterns": ["**/*.py"]}
+    minted = build_promotion_witness(evaluator_id="agent:producer", execution_id=pin, oracle="g6.integrity.tree",
+                                     details=details)
+    held = envelope_fields(reliability_label="verified", evidence=[{"summary": "the patient is fine"}],
+                           promotion_witness=minted)
+    assert held["completion_state"] == "qualified-draft"
+    assert "not built at a G6 door" in held["degradation_reason"]
 
 
 def test_an_oracle_anyone_else_registers_does_not_promote(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,63 +134,104 @@ def test_an_oracle_anyone_else_registers_does_not_promote(monkeypatch: pytest.Mo
     assert _stated_verified(promotion_witness=witness).completion_state == "qualified-draft"
 
 
-def test_a_registered_g6_rechecker_promotes(demo_rechecker: dict[str, str]) -> None:
-    from g6.core.reliability_envelope import door_witness
-
-    demo_rechecker["a"] = "the artifact"
-    witness = door_witness("demo", {"name": "a", "text": "the artifact"}, run_id="run-1")
-    envelope = _stated_verified(run_id="run-1", promotion_witness=witness)
-    assert envelope.completion_state == envelope.reliability_label == "verified" and envelope.degraded is False
-
-
-def test_a_rechecker_that_does_not_reproduce_is_held(demo_rechecker: dict[str, str]) -> None:
-    from g6.core.reliability_envelope import door_witness
-
-    demo_rechecker["a"] = "changed after the producer looked"
-    witness = door_witness("demo", {"name": "a", "text": "the artifact"})
-    envelope = _stated_verified(promotion_witness=witness)
-    assert envelope.completion_state == "qualified-draft" and "did not reproduce" in envelope.degradation_reason
+def test_g6s_integrity_check_promotes_with_the_callers_pin_and_says_what_it_rechecked(tmp_path: Path) -> None:
+    root, pin = _tree(tmp_path)
+    envelope = _integrity_door(_integrity_record(root, pin), {"root": str(root), "expected_manifest_sha256": pin})
+    assert envelope["completion_state"] == envelope["reliability_label"] == "verified"
+    assert [e["kind"] for e in envelope["evidence"]] == ["g6_recheck"]
+    assert envelope["evidence"][0]["subject"] == str(root.resolve())
 
 
-def test_the_law_reruns_the_check_whenever_an_envelope_is_built(demo_rechecker: dict[str, str]) -> None:
-    from g6.core.reliability_envelope import ReliabilityEnvelope, door_witness
-
-    demo_rechecker["a"] = "the artifact"
-    promoted = _stated_verified(promotion_witness=door_witness("demo", {"name": "a", "text": "the artifact"}))
-    assert promoted.completion_state == "verified"
-    demo_rechecker["a"] = "edited later"
-    assert ReliabilityEnvelope(**promoted.model_dump()).completion_state == "qualified-draft"
-
-
-def test_a_witness_from_another_run_is_held(demo_rechecker: dict[str, str]) -> None:
-    from g6.core.reliability_envelope import door_witness
-
-    demo_rechecker["a"] = "the artifact"
-    witness = door_witness("demo", {"name": "a", "text": "the artifact"}, run_id="run-1")
-    envelope = _stated_verified(run_id="run-2", promotion_witness=witness)
-    assert envelope.completion_state == "qualified-draft" and "never transfers between runs" in envelope.degradation_reason
+@pytest.mark.parametrize("caller", [None, {}, {"root": "<root>"}, {"expected_manifest_sha256": "<pin>"}])
+def test_a_pin_the_caller_did_not_give_does_not_promote(tmp_path: Path, caller) -> None:
+    """The result carries its own pin; the re-check compares against the caller's, never the output's."""
+    root, pin = _tree(tmp_path)
+    if caller:
+        caller = {k: str(root) if v == "<root>" else pin for k, v in caller.items()}
+    assert _integrity_door(_integrity_record(root, pin), caller)["completion_state"] == "qualified-draft"
 
 
-def test_the_door_builds_its_witness_from_the_result_and_never_reads_the_producers(
-        demo_rechecker: dict[str, str]) -> None:
-    from g6.core.reliability_envelope import door_witness
+def test_a_caller_pin_that_is_not_the_manifests_blocks(tmp_path: Path) -> None:
+    root, pin = _tree(tmp_path)
+    envelope = _integrity_door(_integrity_record(root, pin), {"root": str(root), "expected_manifest_sha256": "0" * 64})
+    assert envelope["completion_state"] == "blocked-escalated"
 
-    demo_rechecker["a"] = "the artifact"
-    earned = door_witness("demo", {"name": "a", "text": "the artifact"})
-    assert door_witness("demo", {"promotion_witness": earned}) is None   # nothing in the result itself to re-check
-    assert door_witness("no_rechecker", {"name": "a", "text": "the artifact"}) is None
 
-def test_a_configured_signing_key_neither_promotes_nor_blocks(demo_rechecker: dict[str, str], key_file,
-                                                              monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+@pytest.mark.parametrize("extra", [{"answer": "the patient is fine"}, {"rows": [{"label": "ok"}]},
+                                   {"evidence": [{"summary": "all tests passed"}]}, {"promotion_witness": {}}])
+def test_a_result_with_a_claim_the_recheck_did_not_examine_is_held(tmp_path: Path, extra: dict) -> None:
+    root, pin = _tree(tmp_path)
+    envelope = _integrity_door({**_integrity_record(root, pin), **extra},
+                               {"root": str(root), "expected_manifest_sha256": pin})
+    assert envelope["completion_state"] == "qualified-draft"
+
+
+def test_a_tree_changed_after_the_check_blocks_and_rebuilding_reruns_it(tmp_path: Path) -> None:
+    from g6.core.reliability_envelope import ReliabilityEnvelope
+
+    root, pin = _tree(tmp_path)
+    caller = {"root": str(root), "expected_manifest_sha256": pin}
+    promoted = _integrity_door(_integrity_record(root, pin), caller)
+    assert promoted["completion_state"] == "verified"
+    (root / "a.py").write_text("A = 'edited later'\n", encoding="utf-8")
+    assert ReliabilityEnvelope(**promoted).completion_state == "blocked-escalated"
+    assert _integrity_door(_integrity_record(root, pin), caller)["completion_state"] == "blocked-escalated"
+
+
+def test_a_door_witness_from_another_run_is_held(tmp_path: Path) -> None:
+    from g6.core.reliability_envelope import ReliabilityEnvelope
+
+    root, pin = _tree(tmp_path)
+    promoted = _integrity_door(_integrity_record(root, pin), {"root": str(root), "expected_manifest_sha256": pin},
+                               run_id="run-1")
+    moved = ReliabilityEnvelope(**{**promoted, "run_id": "run-2"})
+    assert moved.completion_state == "qualified-draft" and "never transfers between runs" in moved.degradation_reason
+
+
+def test_a_witness_for_one_tree_does_not_promote_an_envelope_about_another(tmp_path: Path) -> None:
+    """Both trees are intact; tree A's door witness on an envelope whose evidence is tree B's re-check is held."""
+    from g6.core.reliability_envelope import ReliabilityEnvelope
+
+    root_a, pin_a = _tree(tmp_path / "a")
+    root_b, pin_b = _tree(tmp_path / "b")
+    a = _integrity_door(_integrity_record(root_a, pin_a), {"root": str(root_a), "expected_manifest_sha256": pin_a})
+    b = _integrity_door(_integrity_record(root_b, pin_b), {"root": str(root_b), "expected_manifest_sha256": pin_b})
+    assert a["completion_state"] == b["completion_state"] == "verified"
+    swapped = ReliabilityEnvelope(**{**b, "promotion_witness": a["promotion_witness"]})
+    assert swapped.completion_state == "qualified-draft"
+    assert "not the re-checked artifact" in swapped.degradation_reason
+    elsewhere = ReliabilityEnvelope(**{**a, "evidence": [{"summary": "the patient is fine"}]})
+    assert elsewhere.completion_state == "qualified-draft"
+
+
+def test_the_recheck_is_chosen_by_where_the_code_lives_never_by_a_name(tmp_path: Path) -> None:
+    from g6.core.door import door_envelope
+
+    root, pin = _tree(tmp_path)
+    value, caller = _integrity_record(root, pin), {"root": str(root), "expected_manifest_sha256": pin}
+
+    class Impostor:
+        """Claims to live in G6's integrity package."""
+
+    Impostor.__module__ = "g6.integrity.tree"
+
+    def integrity(**kwargs):  # a function named for the component
+        return kwargs
+
+    for producer in (None, "integrity", "g6.integrity", " INTEGRITY ", Impostor, integrity):
+        envelope = door_envelope("verified", producer=producer, value=value, caller=caller)
+        assert envelope["completion_state"] == "qualified-draft", producer
+
+
+def test_a_configured_signing_key_neither_promotes_nor_blocks(key_file, monkeypatch: pytest.MonkeyPatch,
+                                                              tmp_path: Path) -> None:
     """The law reads no signature, so neither a key in the key file nor a key path (whose evaluator service the
     library does not have) can block a result G6's re-check reproduces, or lift one it does not."""
-    from g6.core.reliability_envelope import door_witness
-
     key_file("G6_PROMOTION_EVALUATOR_KEY=test-evaluator-secret-key-abc123\n")
     monkeypatch.setenv("G6_PROMOTION_EVALUATOR_KEY_PATH", str(tmp_path / "evaluator.key"))
-    demo_rechecker["a"] = "the artifact"
-    witness = door_witness("demo", {"name": "a", "text": "the artifact"})
-    assert _stated_verified(promotion_witness=witness).completion_state == "verified"
+    root, pin = _tree(tmp_path)
+    caller = {"root": str(root), "expected_manifest_sha256": pin}
+    assert _integrity_door(_integrity_record(root, pin), caller)["completion_state"] == "verified"
     assert _stated_verified().completion_state == "qualified-draft"
 
 
@@ -199,11 +244,14 @@ def test_a_key_path_with_no_evaluator_service_says_so(monkeypatch: pytest.Monkey
     with pytest.raises(RuntimeError, match="no evaluator service"):
         promotion_evaluator.evaluator_configured()
 
+
 # --------------------------------------------------------------------------------------------------------------------
 # The MCP door (g6.core.door.door_reply): the reply's state and its result copy follow the same rule
 # --------------------------------------------------------------------------------------------------------------------
 
 class _Registry:
+    """A registry with no entries: whatever it answers comes from no code G6 can identify."""
+
     def __init__(self, value) -> None:
         self.value = value
 
@@ -213,27 +261,46 @@ class _Registry:
         return Success(self.value)
 
 
-def _mcp(component: str, value) -> dict:
+class _EntryRegistry(_Registry):
+    """A registry entry whose block is ``block``, listed as ``source``: how the door learns which code answered."""
+
+    def __init__(self, value, block, *, source: str = "builtin", module: str = "g6.integrity") -> None:
+        from g6.core.registry import ComponentRef
+
+        super().__init__(value)
+        self.block = block
+        self.refs = {"integrity_check": ComponentRef("integrity_check", module, source)}
+
+    def get_class(self, name):  # noqa: ANN001, ANN201
+        return self.block
+
+
+@pytest.fixture
+def planted_block(monkeypatch: pytest.MonkeyPatch):
+    """A stand-in for an integrity block G6 does not ship: a block class planted into ``g6.integrity`` for the test,
+    so it really lives in G6's integrity package and the door selects the re-checker by where the code lives. No
+    component reachable over MCP has a re-checker today, so this is the only way to exercise that path there."""
+    import g6.integrity as integrity
+    from g6.core import AIBlock
+
+    class Check(AIBlock):
+        pass
+
+    Check.__module__, Check.__qualname__ = "g6.integrity", "_PlantedCheck"
+    monkeypatch.setattr(integrity, "_PlantedCheck", Check, raising=False)
+    return Check
+
+
+def _mcp(component: str, value, *, registry=None, params: dict | None = None) -> dict:
+    import json
+
     from g6.invariants import check_envelope
     from g6.mcp import invoke_reply
 
-    found = invoke_reply(component, "op", "{}", registry=_Registry(value), allow_sensitive=frozenset())
+    found = invoke_reply(component, "op", json.dumps(params or {}), registry=registry or _Registry(value),
+                         allow_sensitive=frozenset())
     assert check_envelope(found) == [], found
     return found
-
-
-def _integrity_value(base: Path) -> tuple[dict, Path]:
-    """A pinned integrity result as a component would return it over a door: its own fields, saying verified."""
-    from dataclasses import asdict
-
-    from g6.integrity import build_manifest, manifest_sha256, verify_tree
-
-    root = base / "pkg"
-    root.mkdir(parents=True)
-    (root / "a.py").write_text("A = 1\n", encoding="utf-8")
-    manifest = build_manifest(root)
-    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
-    return {**asdict(result), "completion_state": "verified", "evidence": [{"kind": "integrity"}]}, root
 
 
 def test_verified_with_string_evidence_over_mcp_is_held_and_its_result_corrected() -> None:
@@ -250,53 +317,99 @@ def test_a_reliability_label_inside_the_result_is_corrected_too() -> None:
     assert _mcp("demo", {"reliability_label": "verified"})["result"]["reliability_label"] == "qualified-draft"
 
 
-def test_a_registered_g6_rechecker_promotes_over_mcp(tmp_path: Path) -> None:
-    value, _ = _integrity_value(tmp_path)
-    found = _mcp("integrity", value)
-    assert found["completion_state"] == "verified" and found["result"]["completion_state"] == "verified"
-    assert any(item.get("kind") == "g6_recheck" for item in found["evidence"])
-    assert "claimed_completion_state" not in found
+@pytest.mark.parametrize("value", [{"reliability_label": "blocked-escalated"},
+                                   {"completion_state": "verified", "reliability_label": "blocked-escalated"},
+                                   {"completion_state": "blocked_escalated"}])
+def test_the_door_takes_the_worse_of_the_two_state_fields_and_never_raises_a_block(value: dict) -> None:
+    assert _mcp("demo", value)["completion_state"] == "blocked-escalated"
 
 
-def test_a_rechecker_that_does_not_reproduce_is_held_over_mcp(tmp_path: Path) -> None:
-    value, root = _integrity_value(tmp_path)
-    (root / "a.py").write_text("A = 2\n", encoding="utf-8")
-    found = _mcp("integrity", value)
+def test_every_verified_anywhere_in_a_held_result_is_corrected() -> None:
+    found = _mcp("demo", {"completion_state": "verified_ready",
+                          "steps": [{"completion_state": "verified", "reliability_label": "VERIFIED"}],
+                          "trust": {"state": "Verified-Ready"},
+                          "warning_card": {"code": "G6_E_OK", "verified": True}})
+    result = found["result"]
+    assert found["completion_state"] == "qualified-draft" and result["completion_state"] == "qualified-draft"
+    assert result["steps"][0] == {"completion_state": "qualified-draft", "reliability_label": "qualified-draft"}
+    assert result["trust"]["state"] == "qualified-draft" and result["warning_card"]["verified"] is False
+
+
+def test_a_shipped_component_that_says_verified_is_held(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reachable path: the real registry, a built-in component, and no re-checker for its package."""
+    from g6.core.registry import get_registry
+    from g6.core.result import Result
+    from g6.mcp import invoke_reply
+
+    block = get_registry().get_class("action_gating")
+    monkeypatch.setattr(block, "infer", lambda self, data: Result.ok({"completion_state": "verified",
+                                                                       "evidence": [{"kind": "test"}]}))
+    found = invoke_reply("action_gating", "evaluate", '{"action": {"action_type": "read_file"}}')
     assert found["completion_state"] == "qualified-draft" and found["warning_card"]["code"] == "G6_E_PROMOTION_LAW"
-    assert "did not reproduce" in found["warning_card"]["message"]
 
 
-def test_a_producers_witness_is_ignored_over_mcp(tmp_path: Path) -> None:
-    """Even a witness that would reproduce is not read: the door re-checks only what the result itself names."""
-    from g6.core.reliability_envelope import door_witness
+def test_g6s_own_integrity_code_promotes_over_mcp_with_the_callers_pin(tmp_path: Path, planted_block) -> None:
+    root, pin = _tree(tmp_path)
+    registry = _EntryRegistry(_integrity_record(root, pin), planted_block)
+    found = _mcp("integrity_check", None, registry=registry,
+                 params={"root": str(root), "expected_manifest_sha256": pin})
+    assert found["completion_state"] == "verified" and found["result"]["completion_state"] == "verified"
+    assert [e["kind"] for e in found["evidence"]] == ["g6_recheck"] and "claimed_completion_state" not in found
 
-    value, _ = _integrity_value(tmp_path)
-    earned = door_witness("integrity", value)
-    found = _mcp("integrity", {"completion_state": "verified", "evidence": [{"kind": "test"}], "promotion_witness": earned})
+
+def test_over_mcp_a_producer_pin_extra_fields_or_an_extension_are_held(tmp_path: Path, planted_block) -> None:
+    root, pin = _tree(tmp_path)
+    record, caller = _integrity_record(root, pin), {"root": str(root), "expected_manifest_sha256": pin}
+    assert _mcp("integrity_check", None, registry=_EntryRegistry(record, planted_block),
+                params={"root": str(root)})["completion_state"] == "qualified-draft"
+    assert _mcp("integrity_check", None, registry=_EntryRegistry({**record, "answer": "fine"}, planted_block),
+                params=caller)["completion_state"] == "qualified-draft"
+    assert _mcp("integrity_check", None, registry=_EntryRegistry(record, planted_block, source="extension"),
+                params=caller)["completion_state"] == "qualified-draft"
+
+
+def test_a_failed_recheck_is_blocked_over_mcp(tmp_path: Path, planted_block) -> None:
+    root, pin = _tree(tmp_path)
+    record = _integrity_record(root, pin)
+    (root / "a.py").write_text("A = 2\n", encoding="utf-8")
+    found = _mcp("integrity_check", None, registry=_EntryRegistry(record, planted_block),
+                 params={"root": str(root), "expected_manifest_sha256": pin})
+    assert found["completion_state"] == "blocked-escalated" and found["result"]["completion_state"] == "blocked-escalated"
+
+
+def test_a_producers_witness_is_ignored_over_mcp(tmp_path: Path, planted_block) -> None:
+    """Even a door witness that would reproduce is not read from a result: the door builds its own."""
+    root, pin = _tree(tmp_path)
+    earned = _integrity_door(_integrity_record(root, pin), {"root": str(root), "expected_manifest_sha256": pin})
+    found = _mcp("demo", {"completion_state": "verified", "evidence": earned["evidence"],
+                          "promotion_witness": earned["promotion_witness"]})
     assert found["completion_state"] == "qualified-draft"
 
 
-def test_a_transferred_witness_is_held_over_mcp(tmp_path: Path) -> None:
-    from g6.core.reliability_envelope import door_witness
-
-    value_a, _ = _integrity_value(tmp_path / "a")
-    value_b, root_b = _integrity_value(tmp_path / "b")
-    (root_b / "a.py").write_text("A = 'tampered'\n", encoding="utf-8")
-    found = _mcp("integrity", {**value_b, "promotion_witness": door_witness("integrity", value_a)})
+def test_a_transferred_witness_is_held_over_mcp(tmp_path: Path, planted_block) -> None:
+    """Tree A's door witness, attached to an intact result about tree B, does not carry B through the door."""
+    root_a, pin_a = _tree(tmp_path / "a")
+    root_b, pin_b = _tree(tmp_path / "b")
+    earned = _integrity_door(_integrity_record(root_a, pin_a), {"root": str(root_a), "expected_manifest_sha256": pin_a})
+    value = {**_integrity_record(root_b, pin_b), "promotion_witness": earned["promotion_witness"]}
+    found = _mcp("integrity_check", None, registry=_EntryRegistry(value, planted_block),
+                 params={"root": str(root_b), "expected_manifest_sha256": pin_b})
     assert found["completion_state"] == "qualified-draft"
+
 
 # --------------------------------------------------------------------------------------------------------------------
 # The CLI door: `g6 invoke` prints door_reply(...)["result"], so it says what g6_invoke says
 # --------------------------------------------------------------------------------------------------------------------
 
-def _cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], component: str, value) -> dict:
+def _cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], component: str, registry,
+         params: dict | None = None) -> dict:
     import json
 
     from g6.cli import main as cli
-    from g6.core import registry
+    from g6.core import registry as registry_module
 
-    monkeypatch.setattr(registry, "get_registry", lambda: _Registry(value))
-    assert cli(["invoke", component, "op", "{}"]) == 0
+    monkeypatch.setattr(registry_module, "get_registry", lambda: registry)
+    assert cli(["invoke", component, "op", json.dumps(params or {})]) == 0
     return json.loads(capsys.readouterr().out)
 
 
@@ -310,20 +423,26 @@ def test_cli_and_mcp_give_the_same_outcome(monkeypatch: pytest.MonkeyPatch, caps
                                            value: dict) -> None:
     import json
 
-    printed = _cli(monkeypatch, capsys, "demo", value)
+    printed = _cli(monkeypatch, capsys, "demo", _Registry(value))
     assert printed == json.loads(json.dumps(_mcp("demo", value)["result"], default=str))
 
 
 def test_cli_holds_a_components_own_verified(monkeypatch: pytest.MonkeyPatch,
                                              capsys: pytest.CaptureFixture[str]) -> None:
-    printed = _cli(monkeypatch, capsys, "demo", {"completion_state": "verified", "evidence": [{"kind": "test"}]})
+    printed = _cli(monkeypatch, capsys, "demo", _Registry({"completion_state": "verified", "evidence": [{"kind": "t"}]}))
     assert printed["completion_state"] == "qualified-draft" and printed["claimed_completion_state"] == "verified"
 
 
-def test_cli_keeps_a_verified_g6s_recheck_reproduces(monkeypatch: pytest.MonkeyPatch,
-                                                      capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    value, _ = _integrity_value(tmp_path)
-    assert _cli(monkeypatch, capsys, "integrity", value)["completion_state"] == "verified"
+def test_cli_and_mcp_agree_on_g6s_own_integrity_code(monkeypatch: pytest.MonkeyPatch,
+                                                     capsys: pytest.CaptureFixture[str], tmp_path: Path,
+                                                     planted_block) -> None:
+    root, pin = _tree(tmp_path)
+    registry = _EntryRegistry(_integrity_record(root, pin), planted_block)
+    caller = {"root": str(root), "expected_manifest_sha256": pin}
+    assert _cli(monkeypatch, capsys, "integrity_check", registry, caller)["completion_state"] == "verified"
+    assert _cli(monkeypatch, capsys, "integrity_check", registry, {"root": str(root)})["completion_state"] == (
+        "qualified-draft")
+
 
 # --------------------------------------------------------------------------------------------------------------------
 # The threat statement: where a person or an agent reads the rule, it says what G6 does and does not defend against

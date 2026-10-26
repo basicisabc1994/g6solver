@@ -102,17 +102,66 @@ def test_the_recheck_plants_a_control_and_a_comparison_that_misses_it_vouches_fo
     assert result.reliability_label != "verified"
 
 
-def test_g6s_integrity_recheck_is_what_promotes_at_the_core_door(tmp_path) -> None:
+def test_g6s_integrity_recheck_promotes_only_what_it_rechecked(tmp_path) -> None:
+    """At the core door the pin is the caller's and the envelope's evidence is the re-check itself: the same witness
+    on an envelope that says something else is held."""
     from dataclasses import asdict
 
-    from g6.core.reliability_envelope import door_witness, envelope_fields
+    from g6.core.door import door_envelope
+    from g6.core.reliability_envelope import ReliabilityEnvelope
 
     root = _tree(tmp_path)
     manifest = build_manifest(root)
-    value = asdict(verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest)))
-    witness = door_witness("integrity", value)
-    claimed = {"reliability_label": "verified", "evidence": [{"kind": "integrity"}], "promotion_witness": witness}
-    assert envelope_fields(**claimed)["completion_state"] == "verified"
-    (root / "sub" / "b.py").write_text("B = 'changed after the check'\n")
-    assert envelope_fields(**claimed)["completion_state"] == "qualified-draft"
-    assert door_witness("integrity", {"completion_state": "verified", "matched": True, "pinned": True}) is None
+    pin = manifest_sha256(manifest)
+    value = {**asdict(verify_tree(root, manifest, expected_manifest_sha256=pin)), "completion_state": "verified"}
+    promoted = door_envelope("verified", producer=verify_tree, value=value,
+                             caller={"root": str(root), "expected_manifest_sha256": pin})
+    assert promoted["completion_state"] == "verified"
+    about_else = ReliabilityEnvelope(**{**promoted, "evidence": [{"summary": "the patient is fine"}]})
+    assert about_else.completion_state == "qualified-draft"
+    assert door_envelope("verified", producer=verify_tree, value=value,
+                         caller={"root": str(root)})["completion_state"] == "qualified-draft"
+
+
+def test_a_hand_built_result_with_its_own_correct_pin_is_not_verified(tmp_path) -> None:
+    """Only verify_tree, called with the caller's pin, makes a result G6 re-checks; a result that brings its own pin
+    is judging itself."""
+    from g6.integrity import IntegrityResult
+
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    forged = IntegrityResult(True, True, True, (), (), (), (), root=str(root.resolve()),
+                             manifest=tuple(sorted(manifest.items())), expected_manifest_sha256=manifest_sha256(manifest))
+    assert forged.reliability_label == "qualified-draft"
+
+
+def test_the_recheck_plants_a_control_through_the_real_hash(tmp_path, monkeypatch) -> None:
+    """A hash that ignores a file's content makes every tree agree with its manifest. Perturbing a digest in the
+    manifest text never reaches that hash; the control that flips one byte of a real file through it does."""
+    import hashlib
+
+    import g6.integrity as integrity
+
+    def file_blind(data: bytes) -> str:   # hashes manifest text (it holds "  ") but ignores every file's bytes
+        return hashlib.sha256(data if b"  " in data else b"").hexdigest()
+
+    monkeypatch.setattr(integrity, "_sha", file_blind)
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+    assert result.matched and result.reliability_label != "verified"
+
+
+def test_a_recheck_that_cannot_read_the_files_blocks_and_says_why(tmp_path, monkeypatch) -> None:
+    import g6.integrity as integrity
+
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+
+    def unreadable(*args, **kwargs):
+        raise PermissionError("a.py: permission denied")
+
+    monkeypatch.setattr(integrity, "build_manifest", unreadable)
+    assert result.reliability_label == "blocked-escalated"
+    assert "permission denied" in result.recheck()[1]

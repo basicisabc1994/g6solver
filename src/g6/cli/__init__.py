@@ -217,12 +217,13 @@ def main(argv: list[str] | None = None) -> int:
     except json.JSONDecodeError as exc:
         print(f"params is not JSON: {exc}", file=sys.stderr)
         return 2
-    result = get_registry().invoke(args.component, args.op, params)
+    registry = get_registry()
+    result = registry.invoke(args.component, args.op, params)
     if result.__class__.__name__ == "Success":
         from g6.core.door import door_reply
 
         # The same door as g6_invoke: a verified stands only when G6's own re-check reproduces it.
-        _print(door_reply(args.component, args.op, result)["result"])
+        _print(door_reply(args.component, args.op, result, caller=params, registry=registry)["result"])
         return 0
     print(result.failure(), file=sys.stderr)
     return 1

@@ -73,7 +73,8 @@ def test_two_self_verified_stages_are_held() -> None:
 
 
 class _Integrity(AIBlock):
-    """A stage named for the integrity component, returning a pinned integrity result over ``root``."""
+    """A stage named for the integrity package, returning a pinned integrity result over ``root``: its name is not
+    where its code lives, so it is not G6's integrity code."""
 
     def __init__(self, root) -> None:
         super().__init__(name="integrity")
@@ -89,10 +90,8 @@ class _Integrity(AIBlock):
         return Result.ok({**asdict(found), "completion_state": found.reliability_label})
 
 
-def test_a_chain_keeps_verified_when_g6_rechecks_every_stage(tmp_path) -> None:
+def test_a_stage_named_for_g6s_integrity_package_is_held(tmp_path) -> None:
     root = tmp_path / "pkg"
     root.mkdir()
     (root / "a.py").write_text("A = 1\n", encoding="utf-8")
-    chain = _Integrity(root) >> _Integrity(root)
-    assert chain.infer("x").completion_state == "verified"
-    assert (_Integrity(root) >> _Says("R", "verified")).infer("x").completion_state == "qualified-draft"
+    assert (_Integrity(root) >> _Integrity(root)).infer("x").completion_state == "qualified-draft"

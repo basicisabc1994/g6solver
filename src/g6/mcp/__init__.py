@@ -102,7 +102,8 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
         return failed("[G6_E_INPUT_VALIDATION] params_json must be a JSON object")
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
     model = _person_model()
-    result = (registry or get_registry()).invoke(component, op, params,
+    registry = registry or get_registry()
+    result = registry.invoke(component, op, params,
                                                  block_sensitive=not _allowed(component, op, allow),
                                                  **({"llm": model} if model is not None else {}))
     if result.__class__.__name__ != "Success":
@@ -114,7 +115,7 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
                       f"runs this server can allow it, by adding {component}.{op} (or {component}) to {SENSITIVE_ENV} "
                       f"where the server is registered. {UNCONFINED_WARNING}")
         return failed(error)
-    return door_reply(component, op, result, request_id=request_id)
+    return door_reply(component, op, result, caller=params, registry=registry, request_id=request_id)
 
 
 def build_server(surface: Any = None) -> Any:

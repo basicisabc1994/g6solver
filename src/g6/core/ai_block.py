@@ -282,15 +282,15 @@ def _stage_state(result: Result[Any]) -> str:
 
 def _door_state(block: AIBlock[Any, Any, Any], result: Result[Any]) -> str:
     """The state a stage's result keeps at the door: a stage's own ``verified`` stands only when G6's re-checker for
-    the stage's block re-runs the check its value names and reproduces it. A nested pipeline was already through the
-    door, so its state is kept."""
+    the code of the stage's block (its class, by where it lives) re-runs the check its value names and reproduces it.
+    A nested pipeline was already through the door, so its state is kept."""
     said = _stage_state(result)
     if said != "verified" or isinstance(block, PipelineBlock):
         return said
     from g6.core.door import door_envelope
 
     value = result.value if result.is_ok() else None
-    return door_envelope(said, component=block.name, value=value)["completion_state"]
+    return door_envelope(said, producer=type(block), value=value)["completion_state"]
 
 
 def _worst_completion_state(*states: str) -> str:

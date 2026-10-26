@@ -2,15 +2,20 @@
 """g6.core.door — the rule every door applies to what a component says about its own result (plan A1).
 
 ``verified`` stands only when G6's own code re-runs a check at the door and reproduces it; a witness the producer
-hands over is ignored. The door asks G6's re-checker for the component
-(``g6.core.reliability_envelope.door_witness``) to name what to re-check from the result's own content, and the
-promotion law re-runs it. Anything else a component calls ``verified`` is held at ``qualified-draft`` with a
-``G6_E_PROMOTION_LAW`` card, and ``claimed_completion_state`` keeps what it said. A door never raises a state.
+hands over is ignored. The door picks G6's re-checker by where the code that produced the result lives (a registry
+entry's built-in package and block class, a pipeline stage's class), never by a name; the re-checker takes what to
+compare against from the caller's own input, never from the output it judges, and declines a result that carries any
+claim it does not examine. The promotion law re-runs it (``g6.core.reliability_envelope.door_witness``). Anything else
+a component calls ``verified`` is held at ``qualified-draft`` with a ``G6_E_PROMOTION_LAW`` card, and
+``claimed_completion_state`` keeps what it said; a re-check that finds a mismatch blocks it. A door never raises a
+state, and every word in a held result that reads as ``verified`` is corrected in the copy it hands on.
 
 G6 re-checks artifacts with its own code; it does not defend against malicious code in its own process.
 
-The MCP server's ``g6_invoke`` and the ``g6 invoke`` command reply through :func:`door_reply`; a pipeline of blocks, a
-bundle's result and the harness build their envelopes with :func:`door_envelope`.
+The doors: the MCP server's ``g6_invoke``, the ``g6 invoke`` command, an agent's tool calls
+(``g6.agents._runtime.tools``) and a navigator plan's steps reply through :func:`door_reply`; a pipeline of blocks, a
+bundle's result and the harness build their envelopes with :func:`door_envelope`. ``get_registry().invoke`` is the raw
+library call beneath them: it returns a component's own answer, unchecked.
 """
 from __future__ import annotations
 
@@ -19,7 +24,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-from g6.core.reliability_envelope import PROMOTION_LAW, door_witness, envelope_fields
+from g6.core.reliability_envelope import PROMOTION_LAW, door_witness, envelope_fields, recheck_evidence
 from g6.core.reliability_envelope import warning_card as new_card
 
 _RANK = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
@@ -27,8 +32,10 @@ _RANK = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
 THREAT_STATEMENT = ("G6 re-checks artifacts with its own code; it does not defend against malicious code in its own "
                     "process.")
 #: What a held result's card tells its reader to do.
-HELD_NEXT_STEP = ("Treat it as a qualified draft: check it yourself, or use a component whose results G6 re-checks.")
+HELD_NEXT_STEP = "Treat it as a qualified draft: check it yourself, or use a component whose results G6 re-checks."
 _CODE = re.compile(r"^\[(G6_E_[A-Z0-9_]+)\]\s*")
+#: How deep the result copy is corrected; anything nested deeper is replaced by a note, never handed on unread.
+_MAX_DEPTH = 32
 
 
 def card(found: Any, code: str, message: str) -> dict[str, Any]:
@@ -40,33 +47,100 @@ def card(found: Any, code: str, message: str) -> dict[str, Any]:
     return new_card(code, message)
 
 
-def door_envelope(claimed: Any, *, who: str = "", component: str = "", value: Any = None,
-                  evidence: list[Any] | None = None, warning_card: dict[str, Any] | None = None,
-                  request_id: str = "", run_id: str = "", task_id: str = "") -> dict[str, Any]:
+def state_of(word: Any) -> str | None:
+    """The state a reliability word reads as, the way the product's own readers take it (``workforce.contracts``):
+    any ``blocked*`` (or ``failed`` / ``error``) is a block, ``verified`` or ``verified_ready*`` is verified, any
+    ``qualified*`` is a draft; None for anything else, or a word that is not a string."""
+    if not isinstance(word, str):
+        return None
+    norm = word.strip().lower().replace("-", "_")
+    if norm.startswith("blocked") or norm in {"failed", "error"}:
+        return "blocked-escalated"
+    if norm == "verified" or norm.startswith("verified_ready"):
+        return "verified"
+    if norm.startswith("qualified"):
+        return "qualified-draft"
+    return None
+
+
+def said_state(value: Any) -> str | None:
+    """The worse of the two state fields a result reports (``completion_state``, ``reliability_label``), or None when
+    it reports neither. A word outside the vocabulary is a ``qualified-draft``; a block is never raised."""
+    if not isinstance(value, Mapping):
+        return None
+    words = [value.get(key) for key in ("completion_state", "reliability_label") if value.get(key) is not None]
+    if not words:
+        return None
+    return max((state_of(word) or "qualified-draft" for word in words), key=_RANK.__getitem__)
+
+
+def held_copy(value: Any, state: str, *, _depth: int = 0) -> Any:
+    """A copy of ``value`` that claims no more than ``state``: every string anywhere in it that reads as
+    ``verified`` (:func:`state_of`) becomes ``state``, and a ``verified: true`` flag becomes false. Nothing changes
+    when ``state`` is ``verified``."""
+    if state == "verified":
+        return value
+    if _depth > _MAX_DEPTH:
+        return "(nested too deep for the door to read)"
+    if isinstance(value, Mapping):
+        out = {}
+        for key, item in value.items():
+            if key == "verified" and item is True:
+                out[key] = False
+            else:
+                out[key] = held_copy(item, state, _depth=_depth + 1)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [held_copy(item, state, _depth=_depth + 1) for item in value]
+    if state_of(value) == "verified":
+        return state
+    return value
+
+
+def _corrected(value: Any, state: str) -> Any:
+    """The result copy a door hands on: its top-level state fields say no more than ``state`` (``claimed_completion_
+    state`` keeps what it said when that was stronger), and nothing inside it reads as ``verified`` unless the door
+    kept a ``verified``."""
+    if not isinstance(value, Mapping):
+        return held_copy(value, state)
+    said = value.get("completion_state")
+    out = dict(held_copy(value, state))
+    for key in ("completion_state", "reliability_label"):
+        if key in out and _RANK.get(state_of(value.get(key)) or "qualified-draft", 1) < _RANK[state]:
+            out[key] = state
+    if state_of(said) is not None and _RANK[state_of(said)] < _RANK[state]:
+        out["claimed_completion_state"] = said
+    return out
+
+
+def door_envelope(claimed: Any, *, who: str = "", producer: Any = None, value: Any = None,
+                  caller: Mapping[str, Any] | None = None, evidence: list[Any] | None = None,
+                  warning_card: dict[str, Any] | None = None, request_id: str = "", run_id: str = "",
+                  task_id: str = "") -> dict[str, Any]:
     """The library envelope a door returns for a result whose producer (``who``) said ``claimed``.
 
-    A word outside the three states is a ``qualified-draft``. ``verified`` is kept only when G6's re-checker for
-    ``component`` re-runs the check named by ``value``'s own content and reproduces it; the re-check is then recorded
-    in ``evidence``. Otherwise it is held at ``qualified-draft`` with a ``G6_E_PROMOTION_LAW`` card, and
+    A word outside the three states is a ``qualified-draft``. ``verified`` is kept only when G6 has a re-checker for
+    the code ``producer`` (a class or function, located by :func:`g6.core.reliability_envelope.g6_module`), that
+    re-checker accepts ``value`` as its own record with what to compare it against from ``caller``, and the re-check
+    reproduces; the envelope's evidence is then the re-check itself. Otherwise the claim is held at ``qualified-draft``
+    (``blocked-escalated`` when the re-check found a mismatch) with a ``G6_E_PROMOTION_LAW`` card, and
     ``claimed_completion_state`` keeps ``verified``.
     """
     state = claimed if claimed in _RANK else "qualified-draft"
-    witness = door_witness(component, value, task_id=task_id, run_id=run_id) if state == "verified" else None
+    witness = (door_witness(producer, value, caller=caller, task_id=task_id, run_id=run_id)
+               if state == "verified" else None)
+    if witness is not None:
+        evidence, warning_card = [recheck_evidence(witness)], None
     envelope = envelope_fields(reliability_label=state, warning_card=warning_card, evidence=list(evidence or []),
                                request_id=request_id, task_id=task_id, run_id=run_id, promotion_witness=witness)
-    if state != "verified":
-        return envelope
-    if envelope["completion_state"] == "verified":
-        envelope["evidence"].append({"kind": "g6_recheck", "oracle": witness["oracle"],
-                                     "execution_id": witness["execution"]["execution_id"],
-                                     "summary": "G6 re-ran this check at the door and it reproduced"})
+    if state != "verified" or envelope["completion_state"] == "verified":
         return envelope
     reason = envelope.get("degradation_reason") or "G6 did not re-run a check that reproduces it"
-    envelope["warning_card"] = new_card(
-        PROMOTION_LAW,
-        f"{who or 'the producer'} reported verified, but G6 did not re-run a check that reproduces it, so it is held "
-        f"at qualified-draft ({reason})",
-        HELD_NEXT_STEP)
+    outcome = ("G6 re-ran the check and the artifact does not match it, so it is blocked"
+               if envelope["completion_state"] == "blocked-escalated" else
+               "G6 did not re-run a check that reproduces it, so it is held at qualified-draft")
+    envelope["warning_card"] = new_card(PROMOTION_LAW, f"{who or 'the producer'} reported verified, but {outcome} "
+                                                       f"({reason})", HELD_NEXT_STEP)
     envelope["claimed_completion_state"] = "verified"
     return envelope
 
@@ -79,29 +153,39 @@ def blocked_reply(error: str, *, request_id: str = "") -> dict[str, Any]:
                                                          request_id=request_id, degradation_reason=error[:300])}
 
 
-def _corrected(value: Any, state: str) -> Any:
-    """A copy of ``value`` whose own state fields claim no more than ``state`` (the raw-state leak, plan A1)."""
-    if not isinstance(value, Mapping):
-        return value
-    out = dict(value)
-    for key in ("completion_state", "reliability_label"):
-        said = out.get(key)
-        if isinstance(said, str) and _RANK.get(said, 1) < _RANK[state]:
-            out[key] = state
-            if key == "completion_state":
-                out["claimed_completion_state"] = said
-    return out
+def producer_of(component: str, registry: Any = None) -> Any:
+    """The code behind a registry entry, for :func:`door_envelope`: the block class of a built-in component, or None
+    (an extension, an unknown name, or a registry that does not say). A name never stands for code."""
+    if registry is None:
+        from g6.core.registry import get_registry
+
+        registry = get_registry()
+    refs = getattr(registry, "refs", None)
+    ref = refs.get(component) if isinstance(refs, Mapping) else None
+    if ref is None or getattr(ref, "source", "") != "builtin":
+        return None
+    try:
+        block = registry.get_class(component)
+    except Exception:  # noqa: BLE001 - code the door cannot load is code it cannot vouch for
+        return None
+    from g6.core.reliability_envelope import g6_module
+
+    package = str(getattr(ref, "module", "")).split(":", 1)[0]
+    module = g6_module(block)
+    return block if package and (module == package or module.startswith(package + ".")) else None
 
 
-def door_reply(component: str, op: str, outcome: Any, *, request_id: str = "") -> dict[str, Any]:
+def door_reply(component: str, op: str, outcome: Any, *, caller: Mapping[str, Any] | None = None,
+               registry: Any = None, request_id: str = "") -> dict[str, Any]:
     """The reply for ``component.op``'s registry ``outcome`` (a ``Success`` or a ``Failure``): ``ok``, the library
-    envelope, and ``result``, a copy of the component's answer whose state fields say what the door decided."""
+    envelope, and ``result``, a copy of the component's answer that claims no more than the door decided. ``caller``
+    is the caller's own input to the op (what a re-check compares against); ``registry`` says which code answered."""
     request_id = request_id or uuid.uuid4().hex[:12]
     if outcome.__class__.__name__ != "Success":
         return blocked_reply(str(outcome.failure()), request_id=request_id)
     value = outcome.unwrap()
     mapping = isinstance(value, Mapping)
-    said = value.get("completion_state") if mapping else None
+    said = said_state(value)
     evidence = value.get("evidence") if mapping and isinstance(value.get("evidence"), list) else []
     found_card = value.get("warning_card") if mapping else None
     run_id = value.get("run_id") if mapping and isinstance(value.get("run_id"), str) else ""
@@ -114,9 +198,11 @@ def door_reply(component: str, op: str, outcome: Any, *, request_id: str = "") -
         why = ("it reported a qualified draft: usable with caution" if said == "qualified-draft"
                else "it reported no reliability state, so treat the result as a draft")
         found = card(found_card if said == "qualified-draft" else None, "G6_E_QUALIFIED_DRAFT", f"{who}: {why}")
-    envelope = door_envelope(said, who=who, component=component, value=value, evidence=evidence,
+    producer = producer_of(component, registry) if said == "verified" else None
+    envelope = door_envelope(said, who=who, producer=producer, value=value, caller=caller, evidence=evidence,
                              warning_card=found, request_id=request_id, run_id=run_id)
     return {"ok": True, "result": _corrected(value, envelope["completion_state"]), **envelope}
 
 
-__all__ = ["HELD_NEXT_STEP", "THREAT_STATEMENT", "blocked_reply", "card", "door_envelope", "door_reply"]
+__all__ = ["HELD_NEXT_STEP", "THREAT_STATEMENT", "blocked_reply", "card", "door_envelope", "door_reply", "held_copy",
+           "producer_of", "said_state", "state_of"]
