@@ -24,8 +24,16 @@ isolation.
   folder, holds it, or holds G6's own folder with the key file: such a run is not confined, and the reason says why.
   The first confined run of an interpreter is preceded by a test start of it in the container; until that succeeds
   nothing is reported as confined.
-* Linux: unavailable, "not tested on this platform": the bubblewrap backend (:class:`_Bubblewrap`,
-  :func:`bwrap_arguments`) is built but not chosen until its tests on Linux run.
+* Linux: bubblewrap (``bwrap``, which the person installs; :class:`_Bubblewrap`), run unprivileged: new user, mount,
+  process, network, IPC and host-name namespaces with the owner's own ids, no capabilities, the child killed with G6 and
+  in a session of its own, and every process it starts in the same process namespace, which ends with the run. It
+  sees ``/usr`` and a few loader and user files from ``/etc``, read only; the interpreter's folders and the paths the
+  run may read, read only; the run's own folders, writable; nothing else (:func:`bwrap_arguments`): not the owner's
+  home, not ``~/.g6``, not ``/run``, ``/var`` or ``/tmp``. Its network is a private loopback, with nothing listening,
+  unless the run asks for the network. Before the first confined run of an interpreter a test run must start and see
+  nothing it must not; until it has, nothing is reported as confined, and the reason says what to fix
+  (:func:`bwrap_reason`: bubblewrap not installed or too old, user namespaces off, Ubuntu's AppArmor restriction, a
+  container's own settings).
 * macOS: unavailable.
 
 Threat model, where a backend is active. Closed: reading files outside the declared read paths (the owner's home and
@@ -37,8 +45,10 @@ runner record and its positive control), so code aimed at that record from insid
 what the declared read paths hold; what Windows lets every AppContainer read (the system folders, Program Files, and
 anything the owner or a program has granted to ALL APPLICATION PACKAGES); the run's own container folder, which
 Windows gives every AppContainer and G6 deletes with the profile; a run folder G6 could not remove, which keeps its
-grant, so a later run under the same container name could open it if it knew the folder's random name; and the
-processor and memory the child uses within the Job Object's and the deadline's bounds.
+grant, so a later run under the same container name could open it if it knew the folder's random name; under
+bubblewrap, what ``/usr`` and the listed ``/etc`` paths hold, and the kernel itself (a child shares it, as every
+namespace does); and the processor and memory the child uses within the Job Object's (on Linux, the child's own
+limits') and the deadline's bounds.
 
 With no backend the run goes ahead as before, as the owner, and its result says so: ``isolation: {"backend": null,
 "why": ..., "warning": ...}``. ``G6_REQUIRE_ISOLATION=1`` refuses such a run instead (:func:`refusal`,
@@ -86,7 +96,6 @@ ALL_APPLICATION_PACKAGES = "S-1-15-2-1"
 PROFILE_PREFIX = "g6.confined."
 _MAX_PROFILES = 4096
 _ALREADY_EXISTS = 0x800700B7   # HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)
-UNTESTED = "unavailable: not tested on this platform (G6's bubblewrap backend for Linux is not built yet)"
 NO_MACOS = "unavailable: G6 has no operating-system isolation backend for macOS"
 #: How long the test start of an interpreter in the container may take.
 PROBE_S = 60.0
@@ -325,7 +334,7 @@ def _select() -> tuple[Any, str]:
     if sys.platform == "win32":
         return _windows()
     if sys.platform.startswith("linux"):
-        return None, UNTESTED
+        return _linux()
     if sys.platform == "darwin":
         return None, NO_MACOS
     return None, f"unavailable: G6 has no operating-system isolation backend for {sys.platform}"
@@ -497,6 +506,17 @@ def _sddl(path: str) -> str:
 
 
 _WIN: tuple[Any, str] | None = None
+_LINUX: tuple[Any, str] | None = None
+
+
+def _linux() -> tuple[Any, str]:
+    """Bubblewrap, with the ``bwrap`` on PATH (None when there is none: its ``ready`` then says how to install it)."""
+    global _LINUX
+    if _LINUX is None:
+        from g6.core.outside import find_program   # outside -> component_process -> confine: imported here, not above
+
+        _LINUX = (_Bubblewrap(find_program("bwrap")), "")
+    return _LINUX
 
 
 def _windows() -> tuple[Any, str]:

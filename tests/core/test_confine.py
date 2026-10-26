@@ -61,7 +61,7 @@ def test_isolation_is_only_required_when_the_setting_says_so(monkeypatch, value)
     assert sandbox.run_script("print(1)", timeout_s=30).status == "ok"
 
 
-@pytest.mark.parametrize(("platform", "said"), [("linux", "not tested on this platform"), ("darwin", "macOS")])
+@pytest.mark.parametrize(("platform", "said"), [("darwin", "macOS"), ("freebsd14", "freebsd14")])
 def test_no_untested_backend_claims_isolation(monkeypatch, platform, said) -> None:
     monkeypatch.setattr(confine.sys, "platform", platform)
     name, why = confine.backend(sys.executable)

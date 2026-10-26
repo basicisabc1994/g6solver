@@ -6,6 +6,7 @@ flags and reasons are built from facts the tests hand over. What a confined run 
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -162,10 +163,17 @@ def test_a_posix_virtual_environment_names_the_base_installation_not_its_bin_fol
     assert confine._home(cfg, posix=False) == ["/opt/hostedtoolcache/Python/3.12.7/x64/bin"]
 
 
-def test_bubblewrap_is_built_but_not_yet_chosen(monkeypatch) -> None:
+def test_bubblewrap_is_linuxs_backend_and_says_how_to_install_it_where_it_is_missing(monkeypatch) -> None:
+    import g6.core.outside
+
     monkeypatch.setattr(confine.sys, "platform", "linux")
-    # fails if bubblewrap is selected before its integration tests run (A2 step 4)
-    assert confine._select()[0] is None
+    monkeypatch.setattr(confine, "_LINUX", None)
+    monkeypatch.setattr(g6.core.outside, "find_program", lambda name: None)
+    chosen, _ = confine._select()
+    # fails if Linux has no backend chosen, or a missing bwrap is not said with how to install it
+    assert chosen.name == confine.BUBBLEWRAP and chosen.program is None
+    name, why = confine.backend(sys.executable)
+    assert name is None and "bubblewrap (bwrap) is not installed" in why and "apt-get install bubblewrap" in why
 
 
 # --- CI: bubblewrap installed on every Linux job, and its tests fail rather than skip without it --------------------------
@@ -212,9 +220,14 @@ class _Unready:
         return "unavailable: switched off by this test"
 
 
-def test_the_bwrap_fixture_fails_rather_than_skips_where_ci_expects_bubblewrap(monkeypatch, request) -> None:
+def _unready_linux(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(confine.sys, "platform", "linux")
+    monkeypatch.setattr(confine, "_LINUX", None)
     monkeypatch.setattr(confine, "_Bubblewrap", _Unready)
+
+
+def test_the_bwrap_fixture_fails_rather_than_skips_where_ci_expects_bubblewrap(monkeypatch, request) -> None:
+    _unready_linux(monkeypatch)
     monkeypatch.setenv("G6_EXPECT_BACKEND", "bubblewrap")
     # fails if a CI job that expects bubblewrap lets its tests skip when it cannot confine a run
     with pytest.raises(pytest.fail.Exception, match="switched off by this test"):
@@ -222,8 +235,7 @@ def test_the_bwrap_fixture_fails_rather_than_skips_where_ci_expects_bubblewrap(m
 
 
 def test_the_bwrap_fixture_skips_where_nothing_expects_bubblewrap(monkeypatch, request) -> None:
-    monkeypatch.setattr(confine.sys, "platform", "linux")
-    monkeypatch.setattr(confine, "_Bubblewrap", _Unready)
+    _unready_linux(monkeypatch)
     monkeypatch.delenv("G6_EXPECT_BACKEND", raising=False)
     with pytest.raises(pytest.skip.Exception, match="switched off by this test"):
         request.getfixturevalue("bwrap_backend")

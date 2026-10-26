@@ -58,20 +58,19 @@ EXPECT_BACKEND = "G6_EXPECT_BACKEND"
 
 @pytest.fixture
 def bwrap_backend():
-    """G6's Linux backend (``g6.core.confine._Bubblewrap``), ready to confine a child of this interpreter, or a skip that
-    says why; a failure instead of the skip where ``G6_EXPECT_BACKEND=bubblewrap`` (CI's Linux jobs), so a missing
-    boundary there is never a silent skip."""
+    """G6's Linux backend (``g6.core.confine._Bubblewrap``), chosen and ready to confine a child of this interpreter, or
+    a skip that says why; a failure instead of the skip where ``G6_EXPECT_BACKEND=bubblewrap`` (CI's Linux jobs), so a
+    missing boundary there is never a silent skip."""
     from g6.core import confine
-    from g6.core.outside import find_program
 
     expected = os.environ.get(EXPECT_BACKEND, "").strip().lower() == confine.BUBBLEWRAP
-    if sys.platform.startswith("linux"):
-        chosen = confine._Bubblewrap(find_program("bwrap"))
+    chosen, why = confine._select()
+    if chosen is not None and chosen.name == confine.BUBBLEWRAP:
         why = chosen.ready(sys.executable)
         if not why:
             return chosen
-    else:
-        why = f"bubblewrap is G6's backend for Linux, not {sys.platform}"
+    elif chosen is not None:
+        why = f"this platform's backend is {chosen.name}, not bubblewrap (G6's backend for Linux)"
     (pytest.fail if expected else pytest.skip)(f"bubblewrap cannot confine a run here: {why}")
 
 
