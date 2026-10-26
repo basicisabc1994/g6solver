@@ -219,7 +219,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     result = get_registry().invoke(args.component, args.op, params)
     if result.__class__.__name__ == "Success":
-        _print(result.unwrap())
+        from g6.core.door import door_reply
+
+        # The same door as g6_invoke: a verified stands only when G6's own re-check reproduces it.
+        _print(door_reply(args.component, args.op, result)["result"])
         return 0
     print(result.failure(), file=sys.stderr)
     return 1

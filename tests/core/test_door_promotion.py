@@ -284,3 +284,43 @@ def test_a_transferred_witness_is_held_over_mcp(tmp_path: Path) -> None:
     (root_b / "a.py").write_text("A = 'tampered'\n", encoding="utf-8")
     found = _mcp("integrity", {**value_b, "promotion_witness": door_witness("integrity", value_a)})
     assert found["completion_state"] == "qualified-draft"
+
+# --------------------------------------------------------------------------------------------------------------------
+# The CLI door: `g6 invoke` prints door_reply(...)["result"], so it says what g6_invoke says
+# --------------------------------------------------------------------------------------------------------------------
+
+def _cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], component: str, value) -> dict:
+    import json
+
+    from g6.cli import main as cli
+    from g6.core import registry
+
+    monkeypatch.setattr(registry, "get_registry", lambda: _Registry(value))
+    assert cli(["invoke", component, "op", "{}"]) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("value", [
+    {"completion_state": "verified", "evidence": ["all tests passed"], "answer": 42},
+    {"completion_state": "qualified-draft", "answer": 42},
+    {"completion_state": "blocked-escalated", "reliability_label": "verified"},
+    {"answer": 42},
+])
+def test_cli_and_mcp_give_the_same_outcome(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+                                           value: dict) -> None:
+    import json
+
+    printed = _cli(monkeypatch, capsys, "demo", value)
+    assert printed == json.loads(json.dumps(_mcp("demo", value)["result"], default=str))
+
+
+def test_cli_holds_a_components_own_verified(monkeypatch: pytest.MonkeyPatch,
+                                             capsys: pytest.CaptureFixture[str]) -> None:
+    printed = _cli(monkeypatch, capsys, "demo", {"completion_state": "verified", "evidence": [{"kind": "test"}]})
+    assert printed["completion_state"] == "qualified-draft" and printed["claimed_completion_state"] == "verified"
+
+
+def test_cli_keeps_a_verified_g6s_recheck_reproduces(monkeypatch: pytest.MonkeyPatch,
+                                                      capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    value, _ = _integrity_value(tmp_path)
+    assert _cli(monkeypatch, capsys, "integrity", value)["completion_state"] == "verified"
