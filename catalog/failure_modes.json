@@ -670,12 +670,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_physical_ai"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_physical_ai"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "hallucinated_failure",
@@ -794,12 +794,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_bayesian"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_bayesian"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "ignored_warning",
@@ -822,14 +822,14 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_sklearn"
+    ],
     "introduced_by": [],
     "planned": [
       "g6.ml.adapt_algo_selector"
     ],
-    "awaiting_review": [
-      "adapt_sklearn"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "illusion_of_competence",
@@ -978,12 +978,12 @@
     "severity": "high",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_physical_ai"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_physical_ai"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "insecure_code_shipped",
@@ -1343,12 +1343,12 @@
     "severity": "high",
     "requires_human_review": true,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "duty_of_care"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "duty_of_care"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "missed_service_level",
@@ -1946,12 +1946,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_automl"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_automl"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "single_sensor_decision",
@@ -2172,13 +2172,13 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
-    "introduced_by": [],
-    "planned": [],
-    "awaiting_review": [
+    "guarded_by": [
       "adapt_automl",
       "adapt_sklearn"
-    ]
+    ],
+    "introduced_by": [],
+    "planned": [],
+    "awaiting_review": []
   },
   {
     "code": "training_loop_bug",
@@ -3104,12 +3104,12 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "adapt_automl"
+    ],
     "introduced_by": [],
     "planned": [],
-    "awaiting_review": [
-      "adapt_automl"
-    ]
+    "awaiting_review": []
   },
   {
     "code": "untested_agent_design",

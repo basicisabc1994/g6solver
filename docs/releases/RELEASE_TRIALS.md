@@ -1,7 +1,7 @@
 # Release trials — 27 October 2026
 
 These observations advance the v0.1.1 gates; they do not constitute a release approval.
-Candidate application code is unchanged from 509e047. Trial protocol/runner were frozen
+Candidate application logic is unchanged from 509e047; the final package version is 0.1.1. Trial protocol/runner were frozen
 at 6d16ef6 before execution. No model inference or public publication occurred.
 
 ## Installation and compatibility
@@ -73,4 +73,27 @@ prompts, errors, manual fixes and time. Do not put credentials or personal names
 public record. An exploration-only run is not successful tuning.
 
 The broader 8/10 usability gate, application utility comparison, live-client consent,
-certificate renewal, release artifacts and cross-platform CI remain separate gates.
+final release artifacts and cross-platform CI remain separate gates.
+
+## Final version and certificates
+
+The source version was frozen at 0.1.1 before issuance. A fresh independent reader
+verified that all 98 rule-function ASTs and all source/rule/case/adapter/refusal
+bindings were unchanged, reviewed the changed shared enforcement code, and then
+verified the exact version-only delta. Original source-reading attribution and
+limitations are preserved. The new attestation is a delta review, not a new reading
+of the source clauses and not authenticated domain-expert approval.
+
+All five certificates were issued through the normal tool, with 150 passing checks
+and no named gaps or current-artifact inspection problems. Each remains
+`qualified-draft`. Numerical runs used Windows's process-local unconfined opt-in;
+OS boundary evidence remains the separate Windows/Linux tests. Source files and
+private quote material stayed outside the public checkout.
+
+The final wheel passed installed-package/MCP smoke on Python 3.12 and 3.13. Two
+builds using the same SOURCE_DATE_EPOCH produced identical wheel bytes. The release
+workflow now requires a matching stable source version, refuses an existing release,
+and creates a draft without overwriting assets. Nothing was tagged or published.
+
+All five normal offline `--check` reruns exited 0 and reproduced the committed certificates.
+The installed wheel also passed all five certificate artifact-binding inspections.

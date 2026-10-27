@@ -33,5 +33,6 @@
       "checks": 26,
       "problems": []
     }
-  ]
+  ],
+  "offline_reproduction_check": "all five normal --check runs exit 0"
 }

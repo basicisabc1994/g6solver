@@ -172,3 +172,19 @@ recovery is not itself evidence that the integrated code passes.
   refuse existing releases, and create drafts only. Six new tests failed before implementation; the guard and
   adjacent workflow tests now pass (31 passed, 1 platform skip). The current development version is correctly
   refused for tag v0.1.1. No workflow was dispatched and no GitHub object was changed.
+
+### Final release-candidate artifacts
+
+- All five prechecks passed: sklearn 35, automl 36, bayesian 29, physical 24, care 26 (150 total).
+  The first sklearn run was invalidated by a concurrent review-file update and discarded; its frozen rerun
+  passed. Seeded-mutant SyntaxWarnings caused PowerShell stderr records, not numerical failures.
+- Final source version 0.1.1 committed at 98be89a. Independent reader verified that version-only delta and supplied
+  supplemental attestations; all five bindings checked and committed at 09a6205 before issuance.
+- Normal issuance renewed all five certificates at a0f2995. All 150 receipts pass, no named gaps; all records
+  remain qualified-draft. All five normal offline --check reruns then exited 0 and reproduced committed records.
+- Restored the 60 available extensions in the FAQ/catalogue only after artifact inspection reported no problems.
+  Site/guard regressions: 15 passed. Generated catalogue checks and Ruff pass.
+- Final wheel 0.1.1 built twice with the same SOURCE_DATE_EPOCH: identical SHA256 recorded in wheel.json.
+  Installed-wheel MCP smokes pass on Python 3.12.11 and 3.13.5; all five certificate bindings match installed bytes.
+- Ruling: freezing a stable source version and preparing artifacts does not authorize release publication.
+  Real human consent/usability, application utility and final cross-platform CI remain separate gates.
