@@ -2,26 +2,26 @@
   "reviewer": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25)",
   "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
   "reviewed": {
-    "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
-    "artifact_sha256": "3da50ffbf28010c528eba9f20ce2c3208a14b0b84bc651e166a16a6f99f7f90e",
-    "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
-    "refusals": [],
+    "artifact_sha256": "0b536c10ad44ee337e348737bf61077d290dea0154f475872e8fa931730d87d9",
     "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
     "sources_sha256": {
-      "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
-      "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
       "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
       "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+      "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+      "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+      "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+      "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+      "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860",
       "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
-      "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310",
+      "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+      "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
       "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
       "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
-      "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
-      "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
-      "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
-      "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
-      "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860"
-    }
+      "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310"
+    },
+    "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+    "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+    "refusals": []
   },
   "rules": [
     {
@@ -251,6 +251,151 @@
       "effect_only": true,
       "effect_reason": "licence_unsettled(data) is data['licence']['state'] != 'settled'; score() then refuses and catalogue() lists the reason. It reads one field.",
       "finding": "G6's own rule with no source, so g6 is right. I read the six unsettled data files (pcl5, audit, dass21, k10, must, barthel): each holds the state 'unsettled' and no item text. The PHQ-9 and GAD-7 are 'settled' on the forms' own footer permission line, which is in both held PDFs."
+    }
+  ],
+  "delta_reviews": [
+    {
+      "kind": "independent-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "419e43fdc6f52d773c6c0e25cb787fda63bcb776",
+      "reviewed_commit": "6d16ef6a87afe148a9f36a747d6084e15ef8566f",
+      "prior_review_sha256": "44b81caecceaa69a5e30e4d22445c3e7216cd9ad3f58744a19f51a6915d526b3",
+      "prior_source_reader": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25)",
+      "prior_reviewed": {
+        "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+        "artifact_sha256": "3da50ffbf28010c528eba9f20ce2c3208a14b0b84bc651e166a16a6f99f7f90e",
+        "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+        "refusals": [],
+        "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
+        "sources_sha256": {
+          "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+          "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+          "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
+          "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+          "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
+          "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310",
+          "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
+          "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
+          "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+          "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+          "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+          "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
+          "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860"
+        }
+      },
+      "reviewed": {
+        "artifact_sha256": "0b536c10ad44ee337e348737bf61077d290dea0154f475872e8fa931730d87d9",
+        "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
+        "sources_sha256": {
+          "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
+          "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+          "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+          "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+          "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+          "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+          "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860",
+          "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
+          "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+          "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
+          "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
+          "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
+          "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310"
+        },
+        "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+        "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+        "refusals": []
+      },
+      "scope": "Independent review of certificate-bound implementation and import-manifest changes since the public base. Original source-clause, tier and rule findings retain their original reviewer attribution. This reader did not reread original source clauses or private quotes. This is no new medical, legal or domain endorsement, qualified-person approval, cryptographic signature, or claim of application benefit.",
+      "method": "Recomputed the public-base review hashes in an extracted src tree and confirmed exact equality to the existing reviewed record; recomputed current reviewed hashes and bound inputs; read the changed shared implementation and newly bound invariants modules; compared ASTs of every covered directly implementing function; independently hashed held files using the source-register mapping. No model identity is inferred.",
+      "finding": "Only artifact_sha256 differs. Rules, canonical source entries, cases, adapter and refusal-list hashes are unchanged, and every directly implementing covered function has an unchanged AST. Shared changes alter result promotion, contract metadata, confinement availability/refusals and output collection, without changing the covered rule computations. Previous source and rule findings can be retained with this explicitly scoped delta attestation. Task-contract floor modules leave the import manifest; door and invariants enter it, plus choices for ML. Review is evidence of kind review and raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "base_sha256": "eaaeff98975794904e96c4fa7db2841db55936c61a9f3c8e5fa705947116ba33",
+          "current_sha256": "9e185142d301ec48c48334927b4bab8c281aa8b4e320a4b41a35ad9f0dac989d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/ai_block.py",
+          "base_sha256": "2e8db8569bc6aa2d972f834de1068a1ac96c626ff1c4f4b242253d523ff74f53",
+          "current_sha256": "1aec33e4a21b870ca395645397351df7876a25614541f23a6a2b87fde4385d4e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/block_contract.py",
+          "base_sha256": "848ecdd686750bbe460b996e7180d7f8f29e7d31d1c3cfda855a65fedaccf582",
+          "current_sha256": "4b0652f16e30c3c206abb0a5af28bb8088e226cfb403c04fbec64ec1d5578f59",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/door.py",
+          "base_sha256": null,
+          "current_sha256": "2ca96c8cfa10912336fdc8ab35e8cce0bca8114569c76a21d27ecf31a22f52f7",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/errors.py",
+          "base_sha256": "d09cd107363a679986ebf2580e41b02d87573b22ae4c31fc72a23670f80e9a30",
+          "current_sha256": "d8757e459de463d15574ea1f0e803144e1f07906b1d87eae7fa713f4be16600b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_custody.py",
+          "base_sha256": "0ea54329f0c2980352d0c6a58f0677d70d82df21c4a6850cdba7f1c30141bf23",
+          "current_sha256": "3bbe0b5d366a6d7ac07e62b46090dba08ba095b6669cefc865c650cdcb72d11d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_evaluator.py",
+          "base_sha256": "70e5f1c0a69c860cd3e457f635cf3cdfb2506e633b4eb8d43a7978e148cdbcb8",
+          "current_sha256": "be078564781808ccaae54c9f00b8bab27d5dd4873264e262560aadf9e30da933",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/registry.py",
+          "base_sha256": "6aa40d37aa2b2ed1ea17e9f0a71d75156351c788c17028908c12174b1ad6f5ea",
+          "current_sha256": "ff2cec51b0f2c7c06b09780094b784f5674582ee3cfbd3b009d690b6a418cf5c",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/reliability_envelope.py",
+          "base_sha256": "9faaaf806a736e124688cdb52675426f80d457176f11b4e7227c8243f4fb923f",
+          "current_sha256": "af7e5db33803b37ab07a9dc9e10a28c26928b0a7c1a90773995553699cf7ec21",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/task_contract_verifier.py",
+          "base_sha256": "b59023581d8b77c373d0bd5a602604018aa10e9484d6df4ba358c05d41d262e8",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/core/verification/methods.py",
+          "base_sha256": "95f18f5b5dfebaccecd14509553a3a47f0c5ff8391b3561c52708350780e47f4",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/invariants/__init__.py",
+          "base_sha256": null,
+          "current_sha256": "b0f23aed79f5c4a53c3148f2ed7759b6e3069b5005762c4efd1a115c346239e8",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/invariants/envelope.py",
+          "base_sha256": null,
+          "current_sha256": "8488151d0c49db70f170c8d13f9c1c9ab757501f0b2634f16a6c49f90e19d9ba",
+          "binding_change": "added"
+        }
+      ],
+      "validation": {
+        "tests": "tests/core/test_door_promotion.py tests/core/test_isolation_choice.py tests/core/test_confine_child_secrets.py tests/core/test_confine_bwrap.py",
+        "result": "109 passed, 1 skipped in 4.35s",
+        "covered_rule_function_AST_changes": 0,
+        "held_file_hashes": "all matched the unchanged source register; source text not reread",
+        "limitations": "Selected unit tests do not constitute a live Linux bubblewrap or fresh clinical/source-content review. Issuance must still rerun its full held-source/quote precheck and gates against the final bytes."
+      }
     }
   ]
 }

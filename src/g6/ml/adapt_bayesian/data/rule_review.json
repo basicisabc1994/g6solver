@@ -158,25 +158,212 @@
     }
   ],
   "reviewed": {
-    "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
-    "artifact_sha256": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
-    "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
-    "refusals": [
-      "MLError",
-      "NotConverged"
-    ],
+    "artifact_sha256": "b7a2647272ad5e543cf2daf39fe2388bd7a8e327afbe8a8cc5a628799bc427e1",
     "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
     "sources_sha256": {
-      "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
-      "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
-      "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
-      "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
       "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
       "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
       "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+      "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+      "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+      "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+      "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+      "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
       "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
-      "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7",
-      "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597"
+      "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+    },
+    "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+    "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+    "refusals": [
+      "MLError",
+      "NotConverged"
+    ]
+  },
+  "delta_reviews": [
+    {
+      "kind": "independent-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "419e43fdc6f52d773c6c0e25cb787fda63bcb776",
+      "reviewed_commit": "6d16ef6a87afe148a9f36a747d6084e15ef8566f",
+      "prior_review_sha256": "664d95fea8d8a15a0503523a6c42280f23fa8f05c36f5afb7ad363fbce2b5cbd",
+      "prior_source_reader": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25); the records of the other rules are kept from the earlier readers",
+      "prior_reviewed": {
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "artifact_sha256": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ],
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597"
+        }
+      },
+      "reviewed": {
+        "artifact_sha256": "b7a2647272ad5e543cf2daf39fe2388bd7a8e327afbe8a8cc5a628799bc427e1",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Independent review of certificate-bound implementation and import-manifest changes since the public base. Original source-clause, tier and rule findings retain their original reviewer attribution. This reader did not reread original source clauses or private quotes. This is no new medical, legal or domain endorsement, qualified-person approval, cryptographic signature, or claim of application benefit.",
+      "method": "Recomputed the public-base review hashes in an extracted src tree and confirmed exact equality to the existing reviewed record; recomputed current reviewed hashes and bound inputs; read the changed shared implementation and newly bound invariants modules; compared ASTs of every covered directly implementing function; independently hashed held files using the source-register mapping. No model identity is inferred.",
+      "finding": "Only artifact_sha256 differs. Rules, canonical source entries, cases, adapter and refusal-list hashes are unchanged, and every directly implementing covered function has an unchanged AST. Shared changes alter result promotion, contract metadata, confinement availability/refusals and output collection, without changing the covered rule computations. Previous source and rule findings can be retained with this explicitly scoped delta attestation. Task-contract floor modules leave the import manifest; door and invariants enter it, plus choices for ML. Review is evidence of kind review and raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "base_sha256": "eaaeff98975794904e96c4fa7db2841db55936c61a9f3c8e5fa705947116ba33",
+          "current_sha256": "9e185142d301ec48c48334927b4bab8c281aa8b4e320a4b41a35ad9f0dac989d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/action_gating/action_gating_block.py",
+          "base_sha256": "a305c05ec147074bc5ce121435c2fa26ea496f81c234b150d40263adcd803c11",
+          "current_sha256": "be07d46888e071ccc9cf3337319b3edeebf04f83b706fa483445cc75fd62ec2f",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/ai_block.py",
+          "base_sha256": "2e8db8569bc6aa2d972f834de1068a1ac96c626ff1c4f4b242253d523ff74f53",
+          "current_sha256": "1aec33e4a21b870ca395645397351df7876a25614541f23a6a2b87fde4385d4e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/block_contract.py",
+          "base_sha256": "848ecdd686750bbe460b996e7180d7f8f29e7d31d1c3cfda855a65fedaccf582",
+          "current_sha256": "4b0652f16e30c3c206abb0a5af28bb8088e226cfb403c04fbec64ec1d5578f59",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/choices.py",
+          "base_sha256": null,
+          "current_sha256": "940745fd97a352cdb207606c25052e4dc21c581983fa3bb3a23beedbc7215a7b",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/confine.py",
+          "base_sha256": "7465560b1155ee6da663e1f63bf7e560bb1e164fe49e78e6f52e71263da6d904",
+          "current_sha256": "190288d4b4a4af2f028cf89666c8327246f8e6464f6500a5e46fadd12041cb97",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/door.py",
+          "base_sha256": null,
+          "current_sha256": "2ca96c8cfa10912336fdc8ab35e8cce0bca8114569c76a21d27ecf31a22f52f7",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/errors.py",
+          "base_sha256": "d09cd107363a679986ebf2580e41b02d87573b22ae4c31fc72a23670f80e9a30",
+          "current_sha256": "d8757e459de463d15574ea1f0e803144e1f07906b1d87eae7fa713f4be16600b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/process_tree.py",
+          "base_sha256": "a9ff949d920ff6d8889e8eeab89a45af85c8784a319ae315da96570b115da485",
+          "current_sha256": "25378a0a2cad33ede6db5e2a0e45da7dc2163b8eae73cdfc8e0fd6e5e3e7f77b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_custody.py",
+          "base_sha256": "0ea54329f0c2980352d0c6a58f0677d70d82df21c4a6850cdba7f1c30141bf23",
+          "current_sha256": "3bbe0b5d366a6d7ac07e62b46090dba08ba095b6669cefc865c650cdcb72d11d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_evaluator.py",
+          "base_sha256": "70e5f1c0a69c860cd3e457f635cf3cdfb2506e633b4eb8d43a7978e148cdbcb8",
+          "current_sha256": "be078564781808ccaae54c9f00b8bab27d5dd4873264e262560aadf9e30da933",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/registry.py",
+          "base_sha256": "6aa40d37aa2b2ed1ea17e9f0a71d75156351c788c17028908c12174b1ad6f5ea",
+          "current_sha256": "ff2cec51b0f2c7c06b09780094b784f5674582ee3cfbd3b009d690b6a418cf5c",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/reliability_envelope.py",
+          "base_sha256": "9faaaf806a736e124688cdb52675426f80d457176f11b4e7227c8243f4fb923f",
+          "current_sha256": "af7e5db33803b37ab07a9dc9e10a28c26928b0a7c1a90773995553699cf7ec21",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/sandbox.py",
+          "base_sha256": "44f1c2ad1e288e36eb9e39a0afa76cde0cb86c56b97c487e71d5e41e4681e8b9",
+          "current_sha256": "4c4949948d459fa83208634e9da56de8709d8cf27c9b4ec58e520ecd85db291e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/task_contract_verifier.py",
+          "base_sha256": "b59023581d8b77c373d0bd5a602604018aa10e9484d6df4ba358c05d41d262e8",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/core/verification/methods.py",
+          "base_sha256": "95f18f5b5dfebaccecd14509553a3a47f0c5ff8391b3561c52708350780e47f4",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/invariants/__init__.py",
+          "base_sha256": null,
+          "current_sha256": "b0f23aed79f5c4a53c3148f2ed7759b6e3069b5005762c4efd1a115c346239e8",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/invariants/envelope.py",
+          "base_sha256": null,
+          "current_sha256": "8488151d0c49db70f170c8d13f9c1c9ab757501f0b2634f16a6c49f90e19d9ba",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/ml/_fit.py",
+          "base_sha256": "a94cccb758943130c2443df4ccc494a1c8c5238c9a5a73ca4b5dd8e5a339b64e",
+          "current_sha256": "d35ac3fbef386a70e3a5a36208e6b2c4adc6b2f033e4abe58229391bda694f36",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/ml/_types.py",
+          "base_sha256": "a9d39d044fc709b792c33471f45c80ce0e4343bd667e7dcefe94048a7c162e3c",
+          "current_sha256": "8d36a794047c9494122dd76fd76a35a290a88a0db09fde594a7a4d63ecd1523e",
+          "binding_change": "modified"
+        }
+      ],
+      "validation": {
+        "tests": "tests/core/test_door_promotion.py tests/core/test_isolation_choice.py tests/core/test_confine_child_secrets.py tests/core/test_confine_bwrap.py",
+        "result": "109 passed, 1 skipped in 4.35s",
+        "covered_rule_function_AST_changes": 0,
+        "held_file_hashes": "all matched the unchanged source register; source text not reread",
+        "limitations": "Selected unit tests do not constitute a live Linux bubblewrap or fresh clinical/source-content review. Issuance must still rerun its full held-source/quote precheck and gates against the final bytes."
+      }
     }
-  }
+  ]
 }

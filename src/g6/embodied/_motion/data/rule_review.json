@@ -7,22 +7,22 @@
   "method": "hashed every held source from its bytes and compared with the register; read each LaValle page as held (equations from the page's own MATH comments and image alt text) and each OpenStax passage in the corpus file; confirmed the one withheld quote the register's chain case hashes (found by its SHA-256 in the private quotes file) occurs in the held page's bytes and carries the case's numbers; read the implementing functions and the code around the friction, tolerance, work-bound and force guards. The withheld clauses are the register's own words, judged against the page, not against any quotation.",
   "label_effect": "none: a review raises no label",
   "reviewed": {
-    "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
-    "artifact_sha256": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
-    "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
-    "refusals": [],
+    "artifact_sha256": "c9fb0292b126ffbf4725b3c685e718c8a5b4f3f2a2f764ce5f6efdf9a66eaf34",
     "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
     "sources_sha256": {
-      "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
-      "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
-      "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
       "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
       "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
       "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
       "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+      "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
       "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+      "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+      "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
       "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
-    }
+    },
+    "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+    "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+    "refusals": []
   },
   "rules": [
     {
@@ -148,6 +148,143 @@
       "finding": "MAX_EXTENT = 1e6 is G6's own range. range_problems names every length, coordinate or angle field whose absolute value is strictly above it (so exactly 1,000,000 holds), including obstacle radii, clearance, the goal tolerance and waypoint entries; check_plan and both planners refuse with cannot-assess when it returns any.",
       "effect_only": true,
       "effect_reason": "range_problems only collects field names; its callers answer cannot-assess and stop, so it never lets a plan through and changes no value. Forces are not range-checked here but by geo.finite in the grasp code, which also fails closed."
+    }
+  ],
+  "delta_reviews": [
+    {
+      "kind": "independent-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "419e43fdc6f52d773c6c0e25cb787fda63bcb776",
+      "reviewed_commit": "6d16ef6a87afe148a9f36a747d6084e15ef8566f",
+      "prior_review_sha256": "22b5609954633115ffd7a185775302bb069bd2533a175faa1a507922ab13a6fd",
+      "prior_source_reader": "Claude Sonnet 5.5, an independent reader (certificate v2a, pass after withheld quotes), not the code's author or the case author",
+      "prior_reviewed": {
+        "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+        "artifact_sha256": "b88f45e50fa4db35348b0d6ec022915208c60de7902c9696852ef41ab562eb04",
+        "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+        "refusals": [],
+        "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+        "sources_sha256": {
+          "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
+          "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+          "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
+          "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
+          "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
+          "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
+          "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+          "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+          "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
+        }
+      },
+      "reviewed": {
+        "artifact_sha256": "c9fb0292b126ffbf4725b3c685e718c8a5b4f3f2a2f764ce5f6efdf9a66eaf34",
+        "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+        "sources_sha256": {
+          "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
+          "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
+          "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
+          "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+          "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
+          "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+          "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+          "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
+          "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
+        },
+        "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+        "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+        "refusals": []
+      },
+      "scope": "Independent review of certificate-bound implementation and import-manifest changes since the public base. Original source-clause, tier and rule findings retain their original reviewer attribution. This reader did not reread original source clauses or private quotes. This is no new medical, legal or domain endorsement, qualified-person approval, cryptographic signature, or claim of application benefit.",
+      "method": "Recomputed the public-base review hashes in an extracted src tree and confirmed exact equality to the existing reviewed record; recomputed current reviewed hashes and bound inputs; read the changed shared implementation and newly bound invariants modules; compared ASTs of every covered directly implementing function; independently hashed held files using the source-register mapping. No model identity is inferred.",
+      "finding": "Only artifact_sha256 differs. Rules, canonical source entries, cases, adapter and refusal-list hashes are unchanged, and every directly implementing covered function has an unchanged AST. Shared changes alter result promotion, contract metadata, confinement availability/refusals and output collection, without changing the covered rule computations. Previous source and rule findings can be retained with this explicitly scoped delta attestation. Task-contract floor modules leave the import manifest; door and invariants enter it, plus choices for ML. Review is evidence of kind review and raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "base_sha256": "eaaeff98975794904e96c4fa7db2841db55936c61a9f3c8e5fa705947116ba33",
+          "current_sha256": "9e185142d301ec48c48334927b4bab8c281aa8b4e320a4b41a35ad9f0dac989d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/ai_block.py",
+          "base_sha256": "2e8db8569bc6aa2d972f834de1068a1ac96c626ff1c4f4b242253d523ff74f53",
+          "current_sha256": "1aec33e4a21b870ca395645397351df7876a25614541f23a6a2b87fde4385d4e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/block_contract.py",
+          "base_sha256": "848ecdd686750bbe460b996e7180d7f8f29e7d31d1c3cfda855a65fedaccf582",
+          "current_sha256": "4b0652f16e30c3c206abb0a5af28bb8088e226cfb403c04fbec64ec1d5578f59",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/door.py",
+          "base_sha256": null,
+          "current_sha256": "2ca96c8cfa10912336fdc8ab35e8cce0bca8114569c76a21d27ecf31a22f52f7",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/errors.py",
+          "base_sha256": "d09cd107363a679986ebf2580e41b02d87573b22ae4c31fc72a23670f80e9a30",
+          "current_sha256": "d8757e459de463d15574ea1f0e803144e1f07906b1d87eae7fa713f4be16600b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_custody.py",
+          "base_sha256": "0ea54329f0c2980352d0c6a58f0677d70d82df21c4a6850cdba7f1c30141bf23",
+          "current_sha256": "3bbe0b5d366a6d7ac07e62b46090dba08ba095b6669cefc865c650cdcb72d11d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_evaluator.py",
+          "base_sha256": "70e5f1c0a69c860cd3e457f635cf3cdfb2506e633b4eb8d43a7978e148cdbcb8",
+          "current_sha256": "be078564781808ccaae54c9f00b8bab27d5dd4873264e262560aadf9e30da933",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/registry.py",
+          "base_sha256": "6aa40d37aa2b2ed1ea17e9f0a71d75156351c788c17028908c12174b1ad6f5ea",
+          "current_sha256": "ff2cec51b0f2c7c06b09780094b784f5674582ee3cfbd3b009d690b6a418cf5c",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/reliability_envelope.py",
+          "base_sha256": "9faaaf806a736e124688cdb52675426f80d457176f11b4e7227c8243f4fb923f",
+          "current_sha256": "af7e5db33803b37ab07a9dc9e10a28c26928b0a7c1a90773995553699cf7ec21",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/task_contract_verifier.py",
+          "base_sha256": "b59023581d8b77c373d0bd5a602604018aa10e9484d6df4ba358c05d41d262e8",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/core/verification/methods.py",
+          "base_sha256": "95f18f5b5dfebaccecd14509553a3a47f0c5ff8391b3561c52708350780e47f4",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/invariants/__init__.py",
+          "base_sha256": null,
+          "current_sha256": "b0f23aed79f5c4a53c3148f2ed7759b6e3069b5005762c4efd1a115c346239e8",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/invariants/envelope.py",
+          "base_sha256": null,
+          "current_sha256": "8488151d0c49db70f170c8d13f9c1c9ab757501f0b2634f16a6c49f90e19d9ba",
+          "binding_change": "added"
+        }
+      ],
+      "validation": {
+        "tests": "tests/core/test_door_promotion.py tests/core/test_isolation_choice.py tests/core/test_confine_child_secrets.py tests/core/test_confine_bwrap.py",
+        "result": "109 passed, 1 skipped in 4.35s",
+        "covered_rule_function_AST_changes": 0,
+        "held_file_hashes": "all matched the unchanged source register; source text not reread",
+        "limitations": "Selected unit tests do not constitute a live Linux bubblewrap or fresh clinical/source-content review. Issuance must still rerun its full held-source/quote precheck and gates against the final bytes."
+      }
     }
   ]
 }
