@@ -488,17 +488,35 @@ _CHILD_ENV = frozenset({
     "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL",
     "PYTHONIOENCODING", "PYTHONDONTWRITEBYTECODE", "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
     "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS",
+    "ELAN_TOOLCHAIN", "G6_DISABLE_LLM",
 })
 
 
-def child_environment(env: Mapping[str, str] | None = None) -> dict[str, str]:
+def child_environment(env: Mapping[str, str] | None = None, *, confinement: Confinement | None = None) -> dict[str, str]:
     """Minimal runtime settings only; no keys, import hooks, user home or model configuration.
 
     This is applied at the spawn boundary even when a caller supplies its entire environment.
     It does not make secrets deliberately placed in allowed inputs or mounted files inaccessible.
     """
     source = os.environ if env is None else env
-    return {key.upper(): value for key, value in source.items() if key.upper() in _CHILD_ENV}
+    result = {key.upper(): value for key, value in source.items() if key.upper() in _CHILD_ENV}
+    # Only explicitly supplied runtime paths already granted by the plan may survive.
+    # In particular, never inherit the host's HOME by default.
+    writable = {"HOME", "USERPROFILE", "DOT_SAGE", "IPYTHONDIR", "MPLCONFIGDIR"}
+    readable = {"ELAN_HOME", "SAGE_ROOT", "SAGE_LOCAL", "SAGE_VENV"}
+    if env is not None and confinement is not None:
+        for key, value in env.items():
+            name = key.upper()
+            if name not in writable | readable or not value or not Path(value).is_absolute():
+                continue
+            roots = confinement.read_write + (confinement.read_only if name in readable else ())
+            try:
+                target = Path(value).resolve()
+                if any(target.is_relative_to(Path(root).resolve()) for root in roots):
+                    result[name] = value
+            except (OSError, ValueError):
+                continue
+    return result
 
 
 def popen(plan: Plan, argv: list[str], **options: Any) -> Any:
@@ -513,7 +531,7 @@ def popen(plan: Plan, argv: list[str], **options: Any) -> Any:
         raise NotStarted("extra inherited descriptors are forbidden for confined children")
     options.pop("pass_fds", None)
     options["close_fds"] = True
-    options["env"] = child_environment(options.get("env"))
+    options["env"] = child_environment(options.get("env"), confinement=plan.confinement)
     try:
         return chosen.start(argv, plan.identity, network=plan.confinement.network, **options)
     except OSError as exc:

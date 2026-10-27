@@ -37,6 +37,7 @@ from __future__ import annotations
 import math
 import os
 import signal
+import stat
 import sys
 import time
 from collections.abc import Mapping
@@ -227,13 +228,12 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
             left = confined.release()   # the run's container profile: after the run, whatever happened
             if left:
                 isolation["cleanup"] = left
-        outputs, total = {}, 0
-        for path in sorted(root.iterdir()):
-            if path.is_file() and path.name not in files and path.name != SCRIPT:
-                size = path.stat().st_size
-                if total + size > max_output_bytes:
-                    break
-                outputs[path.name], total = path.read_bytes(), total + size
+        try:
+            outputs = _collect_outputs(root, set(files) | {SCRIPT}, max_output_bytes)
+        except (OSError, ValueError):
+            return ScriptRun("error", done.returncode, done.stdout.decode("utf-8", "replace"),
+                             "[G6_E_UNSAFE_OUTPUT] output collection refused a linked, special or changed file",
+                             seconds=time.monotonic() - started, limits=limits, isolation=isolation)
     seconds = time.monotonic() - started
     stdout, stderr = done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
     if confined.backend is not None and done.returncode != 0:
@@ -246,6 +246,40 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
                          outputs, seconds, limits, isolation)
     return ScriptRun("ok" if done.returncode == 0 else "error", done.returncode, stdout, stderr, outputs, seconds, limits,
                      isolation)
+
+
+def _collect_outputs(root: Path, excluded: set[str], limit: int) -> dict[str, bytes]:
+    """Read only ordinary files after all children have exited, never follow child-created links.
+
+    The trusted host must not mutate the run folder concurrently. POSIX O_NOFOLLOW and
+    inode comparison also reject a swapped file; reads remain bounded by actual bytes.
+    """
+    from g6.core.storage import contained, plain_file
+
+    outputs, total = {}, 0
+    for path in sorted(root.iterdir()):
+        if path.name in excluded:
+            continue
+        found = path.lstat()
+        if stat.S_ISDIR(found.st_mode) and not (getattr(found, "st_file_attributes", 0)
+                                               & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            continue  # outputs are flat; no recursion into child-owned directories
+        checked = plain_file(path)
+        contained(root, path, refuse_links=True)
+        if total + checked.st_size > limit:
+            break
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                     | getattr(os, "O_BINARY", 0))
+        with os.fdopen(fd, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
+                raise ValueError("output changed")
+            content = stream.read(limit - total + 1)
+        if total + len(content) > limit:
+            break
+        outputs[path.name] = content
+        total += len(content)
+    return outputs
 
 
 __all__ = ["MEMORY_LIMITS", "NETWORK_GUARD", "ScriptRun", "interpreter", "isolation_refused", "memory_limit",

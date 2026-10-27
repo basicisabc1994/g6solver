@@ -16,6 +16,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import threading
+from functools import wraps
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,47 @@ ENV = "G6_METAHARNESS"
 NOT_CONFIGURED = "G6_E_META_NOT_CONFIGURED"
 #: The run-ledger rows that name the MCP session that proposed a change.
 PROPOSED_BY = "proposed_by"
+
+
+def _lookup_serialized(method):
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        if not self._surface_lock.acquire(blocking=False):
+            return _blocked("G6_E_META_BUSY", "another workflow operation is running; poll its job and retry")
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._surface_lock.release()
+    return invoke
+
+
+def _surface_operation(method):
+    @wraps(method)
+    def invoke(self, workflow, *args, **kwargs):
+        from g6.workspace._envelope import WorkspaceRefused
+
+        def refused():
+            result = _blocked("G6_E_META_BUSY", "another workflow operation is running; poll its job and retry")
+            if method.__name__ == "approval_check":
+                return result, ""
+            if method.__name__ == "rollback_check":
+                return result, "", {}
+            return result
+
+        if not self._surface_lock.acquire(blocking=False):
+            return refused()
+        try:
+            mh = self.harness(workflow)
+            if isinstance(mh, dict):
+                # The method preserves its own return shape for missing or invalid workflows.
+                return method(self, workflow, *args, **kwargs)
+            with mh._operation():
+                return method(self, workflow, *args, **kwargs)
+        except WorkspaceRefused:
+            return refused()
+        finally:
+            self._surface_lock.release()
+    return invoke
 
 
 def _json(value: Any) -> Any:
@@ -69,6 +112,7 @@ class Surface:
 
     def __init__(self, workflows: dict[str, dict[str, Any]] | None = None, *, workflow_root: Path | None = None) -> None:
         self._config = workflows
+        self._surface_lock = threading.RLock()
         self._harnesses: dict[str, MetaHarness] = {}
         self.workflow_root = Path(workflow_root) if workflow_root is not None else Path.cwd() / ".g6" / "workflows"
 
@@ -85,6 +129,7 @@ class Surface:
         from g6.core.storage import g6_home
         return {**discover(g6_home() / "workflows"), **discover(self.workflow_root), **(self._config or {})} or None
 
+    @_lookup_serialized
     def harness(self, name: str) -> MetaHarness | dict[str, Any]:
         try:
             config = self._load()
@@ -138,6 +183,7 @@ class Surface:
         except (ValueError, OSError) as exc:
             return _blocked(SCHEMA, str(exc))
 
+    @_surface_operation
     def confirm(self, workflow: str, workflow_digest: str, *, answer: str | None) -> dict[str, Any]:
         mh = self.harness(workflow)
         if isinstance(mh, dict):
@@ -148,6 +194,7 @@ class Surface:
                             '--as "Your name" after inspecting that workflow.')
         return as_json(mh.confirm(answer.strip()))
 
+    @_surface_operation
     def propose_code(self, workflow: str, files: dict[str, str], *, hypothesis: str, session: str) -> dict[str, Any]:
         from g6.metaharness.declarative import valid_files
         mh = self.harness(workflow)
@@ -163,14 +210,17 @@ class Surface:
                 mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
         return as_json(got)
 
+    @_surface_operation
     def run(self, workflow: str, task_input: str) -> dict[str, Any]:
         mh = self.harness(workflow)
         return mh if isinstance(mh, dict) else as_json(mh.run(task_input))
 
+    @_surface_operation
     def inspect(self, workflow: str) -> dict[str, Any]:
         mh = self.harness(workflow)
         return mh if isinstance(mh, dict) else as_json(mh.inspect())
 
+    @_surface_operation
     def propose(self, workflow: str, *, session: str, profile: dict[str, Any] | None = None,
                 proposer: str = "") -> dict[str, Any]:
         """A profile the agent wrote, or (with no profile) the declared search space's proposals."""
@@ -193,6 +243,7 @@ class Surface:
                 mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
         return as_json(got)
 
+    @_surface_operation
     def evaluate(self, workflow: str, proposal_digest: str) -> dict[str, Any]:
         mh = self.harness(workflow)
         if isinstance(mh, dict):
@@ -202,6 +253,7 @@ class Surface:
             return _blocked(SCHEMA, why)
         return as_json(mh.evaluate(proposal))
 
+    @_surface_operation
     def decide(self, workflow: str, report_digest: str, proposal_digest: str) -> dict[str, Any]:
         mh = self.harness(workflow)
         if isinstance(mh, dict):
@@ -212,11 +264,13 @@ class Surface:
             return _blocked(SCHEMA, why or why_not)
         return as_json(mh.decide(report, proposal))
 
+    @_surface_operation
     def diagnose(self, workflow: str) -> dict[str, Any]:
         """Recovery and root cause: why the active version fails on dev, and what can be done next."""
         mh = self.harness(workflow)
         return mh if isinstance(mh, dict) else as_json(mh.diagnose())
 
+    @_surface_operation
     def approval_check(self, workflow: str, decision_digest: str, *, session: str) -> tuple[dict[str, Any] | None, str]:
         """Before anyone is asked: the refusal (no such decision or not ``recommend``), or
         None and the question to put to the person, which shows the change and its held-out result (review B2-I1)."""
@@ -229,6 +283,7 @@ class Surface:
                 "diff": dict(proposal.diff)}
         return None, f"Decision {decision_digest}. " + approval_question(decision.to_dict(), card)
 
+    @_surface_operation
     def approve(self, workflow: str, decision_digest: str, *, session: str, answer: str | None) -> dict[str, Any]:
         """``answer``: the name the person typed when the client asked them (None: they declined, or the client cannot
         ask). Identity is recorded as given; a trusted client must mediate this consent."""
@@ -253,6 +308,7 @@ class Surface:
             result["consent"] = consent
         return result
 
+    @_surface_operation
     def rollback_check(self, workflow: str, version: int) -> tuple[dict | None, str, dict]:
         mh = self.harness(workflow)
         if isinstance(mh, dict):
@@ -270,6 +326,7 @@ class Surface:
                     "not undone. Type your name; identity is recorded as given.")
         return None, question, binding
 
+    @_surface_operation
     def rollback(self, workflow: str, version: int, *, answer: str | None, binding: dict | None = None) -> dict[str, Any]:
         mh = self.harness(workflow)
         if isinstance(mh, dict):

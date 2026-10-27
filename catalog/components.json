@@ -107,7 +107,7 @@
     ],
     "requires": [],
     "sensitive_ops": [],
-    "vetting": "reviewed"
+    "vetting": "built, awaiting review"
   },
   {
     "name": "adapt_bayesian",
@@ -131,7 +131,7 @@
     "sensitive_ops": [
       "sample_pymc"
     ],
-    "vetting": "reviewed"
+    "vetting": "built, awaiting review"
   },
   {
     "name": "adapt_blender",
@@ -405,7 +405,7 @@
     ],
     "requires": [],
     "sensitive_ops": [],
-    "vetting": "reviewed"
+    "vetting": "built, awaiting review"
   },
   {
     "name": "adapt_pytorch",
@@ -470,7 +470,7 @@
     ],
     "requires": [],
     "sensitive_ops": [],
-    "vetting": "reviewed"
+    "vetting": "built, awaiting review"
   },
   {
     "name": "adapt_synth",
@@ -1311,7 +1311,7 @@
       "guards"
     ],
     "sensitive_ops": [],
-    "vetting": "reviewed"
+    "vetting": "built, awaiting review"
   },
   {
     "name": "epistemic_integrity",

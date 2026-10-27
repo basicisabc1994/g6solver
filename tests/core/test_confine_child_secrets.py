@@ -41,3 +41,16 @@ def test_confined_spawn_refuses_extra_inherited_descriptors(monkeypatch, options
     plan = confine.Plan("test-policy-only", "", confine.Confinement(()), object())
     with pytest.raises(confine.NotStarted, match="descriptor"):
         confine.popen(plan, [sys.executable, "-c", "pass"], **options)
+
+
+def test_explicit_runtime_paths_are_kept_only_inside_declared_mounts(tmp_path):
+    work, dependency, outside = tmp_path / "run", tmp_path / "deps", tmp_path / "host"
+    for folder in (work, dependency, outside):
+        folder.mkdir()
+    boundary = confine.Confinement(read_write=(str(work),), read_only=(str(dependency),))
+    got = confine.child_environment({"HOME": str(work), "USERPROFILE": str(work), "ELAN_HOME": str(dependency),
+                                    "DOT_SAGE": str(work / "sage"), "SAGE_ROOT": str(dependency),
+                                    "IPYTHONDIR": str(outside), "OPENAI_API_KEY": "synthetic", "PYTHONPATH": str(dependency)},
+                                   confinement=boundary)
+    assert got == {"HOME": str(work), "USERPROFILE": str(work), "ELAN_HOME": str(dependency),
+                   "DOT_SAGE": str(work / "sage"), "SAGE_ROOT": str(dependency)}

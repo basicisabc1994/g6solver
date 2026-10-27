@@ -13,6 +13,9 @@ import hashlib
 import re
 import time
 import uuid
+import threading
+from contextlib import contextmanager
+from functools import wraps
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -63,7 +66,8 @@ from g6.metaharness.store import ProfileStore, RunLedger
 
 #: The code that judges a change: pinned at confirmation, compared before every decision (MH-4).
 JUDGING_PATTERNS = ("metaharness/evaluate.py", "metaharness/gate.py", "metaharness/store.py", "metaharness/schema.py",
-                    "metaharness/declarative.py",
+                    "metaharness/declarative.py", "metaharness/api.py", "workspace/_coordination.py",
+                    "workspace/_envelope.py", "core/storage.py",
                     "metaharness/executor.py", "metaharness/measurement.py", "metaharness/promotion.py",
                     "metaharness/monitor.py", "metaharness/_code_safety.py", "metaharness/trace.py", "harness/*.py", "evidence/*.py", "reasoning/compare.py",
                     "reasoning/budget.py", "core/model_calls.py", "core/ledger.py", "core/stop.py", "invariants/*.py")
@@ -83,6 +87,18 @@ def _envelope(state: str, code: str, message: str, *, next_action: str = "", evi
 
 def _blocked(code: str, message: str, next_action: str = "", **extra: Any) -> dict[str, Any]:
     return _envelope("blocked-escalated", code, message, next_action=next_action, **extra)
+
+
+def _serialized(method):
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        from g6.workspace._envelope import WorkspaceRefused
+        try:
+            with self._operation():
+                return method(self, *args, **kwargs)
+        except WorkspaceRefused:
+            return _blocked("G6_E_META_BUSY", "another operation owns this workflow; retry after it finishes")
+    return invoke
 
 
 def _now() -> str:
@@ -113,6 +129,8 @@ class MetaHarness:
                  theories: TheoryStore | None, clock: Callable[[], float],
                  problems: list[tuple[str, str]]) -> None:
         self.workflow, self.workspace = workflow, workspace
+        self._operation_lock = threading.RLock()
+        self._operation_depth = 0
         self.theories, self._clock = theories, clock
         self.artifacts = ArtifactStore(workspace / "artifacts")
         self.factory = factory or (code_factory(workflow, self.artifacts) if workflow.code_root is not None
@@ -137,6 +155,28 @@ class MetaHarness:
                          _envelope("qualified-draft", "G6_E_META_READY", "the workflow is valid; a person confirms it next",
                                    next_action="mh.confirm(accepted_by='<your name>')",
                                    workflow_digest=workflow.digest(), workspace=str(workspace)))
+
+    @contextmanager
+    def _operation(self):
+        """One complete operation per workspace across synchronous tools, jobs and processes.
+
+        Nested calls share the lock. Reload after acquiring it so waiting handles cannot
+        spend a hold-out use or activate from the ledger snapshot seen before waiting.
+        """
+        from g6.workspace._coordination import Coordination
+        with self._operation_lock:
+            if self._operation_depth or self._problems:
+                yield
+                return
+            with Coordination(self.workspace / ".operation").mutex():
+                if self._moved():
+                    self.store._chain.reload()
+                    self.ledger._chain.reload()
+                self._operation_depth += 1
+                try:
+                    yield
+                finally:
+                    self._operation_depth -= 1
 
     def _live_leaks(self) -> list[tuple[str, str]]:
         """A live episode can never be held-out evidence (owner ruling Q3): a held-out case whose id is a live run's, or
@@ -249,6 +289,7 @@ class MetaHarness:
             ("store.jsonl", self.store.head_hash()), ("ledger.jsonl", self.ledger.head())))
 
     # --- the loop -----------------------------------------------------------------------------------------------
+    @_serialized
     def confirm(self, accepted_by: str, *, initial: Profile | Mapping[str, Any] | None = None) -> dict[str, Any]:
         """A person confirms the standard, the capabilities and the held-out provenance; the workflow is frozen."""
         refused = self._refusal(need_confirmed=False)
@@ -287,6 +328,7 @@ class MetaHarness:
                          head_profile=profile.digest(), accept_risky=self.workflow.accept_risky,
                          identity="accepted_by is recorded as given")
 
+    @_serialized
     def candidate(self, profile: Profile | Mapping[str, Any], *, proposer: str, strategy: str = "hand-written",
                   claim: Mapping[str, str] | None = None, source_run_ids: tuple[str, ...] = (),
                   parent_digests: tuple[str, ...] = ()) -> dict[str, Any]:
@@ -311,6 +353,7 @@ class MetaHarness:
                          next_action="mh.evaluate(proposal)", proposal=proposal, diff=proposal.diff,
                          candidate_digest=proposal.candidate_digest)
 
+    @_serialized
     def propose(self, strategy: Strategy, *, budget: int = 200, max_candidates: int = 3) -> dict[str, Any]:
         """Candidates from ``strategy``, which sees the dev split and the active version's dev failures only. Each is
         validated like a hand-written one; one already proposed is not proposed again."""
@@ -323,6 +366,7 @@ class MetaHarness:
                           artifacts=self.artifacts)
         return self._offer(view, strategy, f"auto:{strategy.name}", meter, max_candidates)
 
+    @_serialized
     def diagnose(self, *, budget: int = 200) -> dict[str, Any]:
         """Recovery and root cause (DECISIONS #27): why the active version fails on the dev split, and what can be done
         next: G6 components the meta-harness can try as candidates, and what only a person can unblock. It reads dev
@@ -387,6 +431,7 @@ class MetaHarness:
                          guard_flags=flagged, dev_success=view.dev_success, dev_calls_used=meter.used,
                          notes=list(view.notes))
 
+    @_serialized
     def select(self, proposals: Sequence[Proposal], *, block: int = 10, keep: float = 0.5,
                budget: int | None = None) -> dict[str, Any]:
         """Rank ``proposals`` on the selection split by racing (frontier design §4.2). It decides nothing: the winner
@@ -424,6 +469,7 @@ class MetaHarness:
                          ranking=result.ranking, winner=winner, cases_used=result.cases_used,
                          calls_used=result.calls_used, stopped=result.stopped)
 
+    @_serialized
     def baseline(self, *, budget: int | None = None) -> dict[str, Any]:
         """The active profile measured on dev and held-out against the negative control, with the power estimate."""
         refused = self._refusal() or self._vault_changed()
@@ -472,6 +518,7 @@ class MetaHarness:
                                   for c in report.cases if c["base"]["oracle"] != "unknown")],
             "run_ids": [c["candidate"]["run_id"] for c in report.cases]})
 
+    @_serialized
     def evaluate(self, proposal: Proposal, *, budget: int | None = None) -> dict[str, Any]:
         refused = self._refusal() or self._vault_changed()
         if refused:
@@ -501,6 +548,7 @@ class MetaHarness:
                          next_action="mh.decide(report)", report=report, success=report.success,
                          estimates=report.estimates, power=report.power)
 
+    @_serialized
     def decide(self, report: EvaluationReport, proposal: Proposal) -> dict[str, Any]:
         refused = self._refusal()
         if refused:
@@ -528,6 +576,7 @@ class MetaHarness:
                 "estimates": report.estimates, "negative_control": report.negative_control, "control": report.control,
                 "provenance": report.provenance, "proposer": decision.proposer, "gate_checks": list(decision.checks)}
 
+    @_serialized
     def activate(self, decision: GateDecision | str, accepted_by: str, *, candidate_digest: str = "") -> dict[str, Any]:
         """``decision``, or its digest: a decision recorded in this workspace by any process (one made over MCP among
         them) is rebuilt from the run ledger, checked against its digest and the report and proposal it names, and
@@ -602,6 +651,7 @@ class MetaHarness:
                      decisions=self.workflow.harness_decisions(), memory=memory, producer=producer)
         return result, ctx.calls, round(max(0.0, self._clock() - start), 6)
 
+    @_serialized
     def run(self, task_input: str, *, shadow: Proposal | None = None) -> dict[str, Any]:
         """One live task under the active profile: the ``harness.run`` result, never relabelled, plus a ledger row.
 
@@ -672,6 +722,7 @@ class MetaHarness:
                     found.append((SCHEMA, f"{kind}: {exc}"))
         return found
 
+    @_serialized
     def admit_distillate(self, source: str, *, step: str = "answer",
                          training_case_ids: tuple[str, ...] = ()) -> dict[str, Any]:
         """R2: compiled code that would replace a model call for ``step``, admitted only by
@@ -708,6 +759,7 @@ class MetaHarness:
                          next_action=f"mh.candidate({{..., 'distillates': {{'{step}': '{sha}'}}}}, proposer=...)",
                          distillate=sha)
 
+    @_serialized
     def code_candidate(self, files: Mapping[str, str], *, proposer: str, strategy: str = "hand-written",
                        claim: Mapping[str, str] | None = None) -> dict[str, Any]:
         """A code-level change (owner ruling Q7): new contents for files in the workflow's ``code_root``, stored by
@@ -722,6 +774,7 @@ class MetaHarness:
         return self.candidate(base.model_dump(mode="json") | {"code": code}, proposer=proposer, strategy=strategy,
                               claim=claim)
 
+    @_serialized
     def train_adapter(self, spec: Any, *, model: str, examples: list[tuple[str, str]] | None = None,
                       trainer: Callable[..., Any] | None = None) -> dict[str, Any]:
         """LoRA (owner ruling Q8): train an adapter for a declared local model on the dev split (or ``examples``, which
@@ -779,6 +832,7 @@ class MetaHarness:
         return {"previous_version": previous, "model_calls": calls, "wall_clock_s": elapsed,
                 "note": "the previous approved version also ran on this task; its output is not returned"}
 
+    @_serialized
     def promotion(self, request=None) -> dict[str, Any]:
         """Read/tighten the optional readiness cap; an upward step needs its own measured report and person."""
         from g6.metaharness.promotion import PromotionRequest, assess
@@ -790,6 +844,7 @@ class MetaHarness:
                 return _blocked(SCHEMA, "invalid promotion request")
         return assess(self, request)
 
+    @_serialized
     def monitor(self) -> dict[str, Any]:
         """The drift test over the audited pairs since the head moved; it may demote to the previous approved version.
         It does not run while G6 is stopped."""
@@ -825,6 +880,7 @@ class MetaHarness:
                         "Re-evaluate the demoted candidate on a fresh held-out split before trying it again.",
                         audit=summary, head_version=number, observations=observations, promotion=promotion)
 
+    @_serialized
     def set_audit_rate(self, rate: float, accepted_by: str) -> dict[str, Any]:
         """A person may raise the share of audited runs; never below the workflow's floor."""
         refused = self._refusal()
@@ -845,6 +901,7 @@ class MetaHarness:
         start = max((i for i, r in enumerate(rows) if r["_kind"] == "setting" and r.get("online_tuning")), default=-1)
         return sum(1 for r in rows[start + 1:] if r["_kind"] == "run" and r.get("purpose") == "live")
 
+    @_serialized
     def enable_online_tuning(self, strategy: Strategy, accepted_by: str, *, every: int = 32) -> dict[str, Any]:
         """Opt in (owner ruling Q3): every ``every`` live runs, ``strategy`` proposes from the live failures. What it
         proposes is a candidate only; a live run is never held-out evidence."""
@@ -863,6 +920,7 @@ class MetaHarness:
         return _envelope("qualified-draft", "G6_E_META_SETTING", f"online tuning on, every {every} live runs",
                          next_action="Proposals it makes are candidates: evaluate, decide and approve each one.")
 
+    @_serialized
     def disable_online_tuning(self, accepted_by: str) -> dict[str, Any]:
         who = accepted_by.strip()
         if self._problems:
@@ -874,6 +932,7 @@ class MetaHarness:
         self._online = None
         return _envelope("qualified-draft", "G6_E_META_SETTING", "online tuning off")
 
+    @_serialized
     def tune_online(self, strategy: Strategy, *, max_candidates: int = 2, budget: int = 100) -> dict[str, Any]:
         """Candidates from the failures of live runs under the active version (online tuning must be on)."""
         refused = self._refusal()
@@ -901,6 +960,7 @@ class MetaHarness:
                             notes=("failures from live runs under the active version; no answers are known for them",))
         return self._offer(view, strategy, f"auto:online:{strategy.name}", DevBudget(budget), max_candidates)
 
+    @_serialized
     def rollback(self, version: int, accepted_by: str) -> dict[str, Any]:
         """A person moves the head back to an approved version; allowed while G6 is stopped (it starts no work)."""
         refused = self._refusal(allow_stopped=True)
@@ -919,6 +979,7 @@ class MetaHarness:
                          head_version=number, head_profile=profile.digest())
 
     # --- Phase 4: profile packs ----------------------------------------------------------------------------------------
+    @_serialized
     def export(self, path: str | Path, *, version: int | None = None) -> dict[str, Any]:
         """A profile pack of the active (or a given approved) version, with the evidence recorded for it, stated."""
         if self._problems:
@@ -942,6 +1003,7 @@ class MetaHarness:
         return _envelope("qualified-draft", "G6_E_META_EXPORTED", f"version {number} exported", path=str(path),
                          content_digest=pack["content_digest"], hints=len(theories))
 
+    @_serialized
     def import_profile(self, path: str | Path, *, proposer: str,
                        routing: Mapping[str, str] | None = None) -> dict[str, Any]:
         """A pack as a candidate only: its stated evidence is ignored, its hints become candidate theories, and it must
@@ -970,6 +1032,7 @@ class MetaHarness:
         return {**made, "stated_evidence_ignored": pack.get("stated_evidence") or {}, "notes": notes,
                 "message": "imported as a candidate: it must win on this workflow's held-out split"}
 
+    @_serialized
     def inspect(self) -> dict[str, Any]:
         if self._problems:
             return self.envelope
@@ -979,6 +1042,7 @@ class MetaHarness:
                          decisions=[{k: r[k] for k in ("verdict", "code", "candidate_digest", "proposer")}
                                     for r in self.ledger.rows("decision")])
 
+    @_serialized
     def report(self) -> dict[str, Any]:
         """Claims tagged checked / measured / assumed (META_HARNESS_PLAN.md 5.6)."""
         if self._problems:

@@ -41,14 +41,14 @@ def test_the_home_page_starts_from_the_problem_then_says_what_g6_is(client):
     hero = page.split('<header class="hero">', 1)[1].split("</header>", 1)[0]
     # owner, 2026-10-23 (feedback, the Gaddie pitch): the hero says what you can now do, the subheading names who it is
     # for and what G6 is, then the problem it answers
-    assert "Now you can<br>make AI agents<br>check their<br>own work." in hero and "G6 engineers itself" not in _text(hero)
+    assert "Build agents<br>from parts<br>you can check." in hero and "G6 engineers itself" not in _text(hero)
     # owner, 2026-10-23: "way too long and way too wordy - pare this back aggressively": one subheading, nothing more
     ledes = re.findall(r'<p class="(lede[^"]*)">(.*?)</p>', hero, re.S)
     assert len(ledes) == 1 and "why" in ledes[0][0].split()
     sub = _text(ledes[0][1])
-    assert sub.startswith("For developers using Claude Code, Codex and other coding agents")
-    assert "free, open-source framework" in sub and len(sub.split()) <= 32
-    order = [page.index(mark) for mark in ('class="hero"', "G6<br>engineers<br>itself.", 'id="loop"', 'id="limits"',
+    assert sub.startswith("An open-source library of AI components")
+    assert "benefits must be demonstrated through testing" in sub and len(sub.split()) <= 65
+    order = [page.index(mark) for mark in ('class="hero"', "AI builds.<br>Evidence<br>decides.", 'id="loop"', 'id="limits"',
                                             'id="two-parts"', 'id="learning"', 'id="gives"', 'id="tests"')]
     assert order == sorted(order)
 

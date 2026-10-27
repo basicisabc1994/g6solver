@@ -20,6 +20,24 @@ from g6.core import component_process, confine, sandbox
 from g6.workforce import repo_tests
 
 
+def test_parent_never_collects_a_child_symlink_to_denied_host_data(bwrap_backend, tmp_path):
+    sentinel = tmp_path / "host-only.txt"
+    sentinel.write_text("PLANTED_SENTINEL_NOT_A_SECRET")
+    code = f"""import os
+try:
+    open({str(sentinel)!r}).read()
+    print('UNEXPECTED_ACCESS')
+except OSError:
+    print('DIRECT_READ_DENIED')
+os.symlink({str(sentinel)!r}, 'returned.txt')
+"""
+    result = sandbox.run_script(code)
+    assert "DIRECT_READ_DENIED" in result.stdout
+    assert result.isolation["backend"] == "bubblewrap"
+    assert "returned.txt" not in result.outputs
+    assert result.status == "error" and "G6_E_UNSAFE_OUTPUT" in result.stderr
+
+
 def _off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
     monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
@@ -153,6 +171,9 @@ WRITES = textwrap.dedent("""
 
 
     def test_the_repository_and_its_git_folder_cannot_be_written():
+        home = pathlib.Path.home()
+        (home / "scratch-home-sentinel").write_text("not a secret")
+        assert (home / "scratch-home-sentinel").read_text() == "not a secret"
         refused = []
         for path in (ROOT / ".git" / "planted", ROOT / "planted.txt"):
             try:

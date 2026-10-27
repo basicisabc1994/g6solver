@@ -4,7 +4,7 @@
 
 Every way of failing G6 names, the components in the library that guard against it today, and the ones whose own use can cause it. A component built in a vetted area guards nothing until its certificate is current.
 
-240 failure modes: 148 guarded by at least one component, 92 with no guard yet.
+240 failure modes: 140 guarded by at least one component, 100 with no guard yet.
 
 | Failure mode | Code | Guarded by | Can be caused by | Built, awaiting its certificate |
 |---|---|---|---|---|
@@ -55,7 +55,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | output presented as expert-reviewed when it was not | `false_expert_review` | — | — | — |
 | code changed by text edits that break its structure | `fragile_text_edit` | `meta_programming` | — | — |
 | a long task drifting from its goal | `goal_drift` | `goal_engine` | — | — |
-| an object dropped or crushed when grasped | `grasp_failure` | `adapt_physical_ai` | — | — |
+| an object dropped or crushed when grasped | `grasp_failure` | — | — | `adapt_physical_ai` (built, awaiting its certificate) |
 | hallucinated failure | `hallucinated_failure` | — | — | — |
 | an agent reporting work as done that the evidence does not back up | `hallucinated_success` | `coding_agent_gate` | — | — |
 | a result handed over without saying how far to rely on it | `handoff_gap` | `reliability_pipeline` | — | — |
@@ -64,9 +64,9 @@ Every way of failing G6 names, the components in the library that guard against 
 | an unstated assumption that would change the answer if false | `hidden_assumption` | `reliability_pipeline` | — | — |
 | agents overwriting each other's work | `hidden_state_or_workspace_conflict` | `shared_workspace` | — | — |
 | optimising one goal while quietly hurting another | `hidden_tradeoff` | `metaharness` | — | — |
-| a point estimate that hides its uncertainty | `hidden_uncertainty` | `adapt_bayesian` | — | — |
+| a point estimate that hides its uncertainty | `hidden_uncertainty` | — | — | `adapt_bayesian` (built, awaiting its certificate) |
 | a warning ignored on the way to an action | `ignored_warning` | `action_logic` | — | — |
-| a model ill-suited to the data it is used on | `ill_suited_model` | `adapt_sklearn` | — | — |
+| a model ill-suited to the data it is used on | `ill_suited_model` | — | — | `adapt_sklearn` (built, awaiting its certificate) |
 | learners who feel they know more than they do | `illusion_of_competence` | — | — | — |
 | quality judged by impression instead of measurement | `impression_not_measurement` | `reasoning` | — | — |
 | an agent improvising in a known risky situation | `improvised_risky_behaviour` | — | — | — |
@@ -77,7 +77,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | rules applied inconsistently across a long task | `inconsistent_rule_use` | `datalog` | — | — |
 | optimisers disagreeing on what a workflow looks like | `inconsistent_workflow_model` | `metaharness` | — | — |
 | a fix that does not fix the failure | `ineffective_fix` | — | — | — |
-| a motion plan that collides, or asks a body for what it cannot do | `infeasible_motion_plan` | `adapt_physical_ai` | — | — |
+| a motion plan that collides, or asks a body for what it cannot do | `infeasible_motion_plan` | — | — | `adapt_physical_ai` (built, awaiting its certificate) |
 | insecure code shipped | `insecure_code_shipped` | — | — | — |
 | interagent coordination failure | `interagent_coordination_failure` | — | — | — |
 | irrelevant exemplar | `irrelevant_exemplar` | — | — | — |
@@ -103,7 +103,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a consequence the rules imply that goes unnoticed | `missed_implication` | `datalog`, `prolog` | — | — |
 | key facts lost past a cut-off in long text, or given values the text does not hold | `missed_key_fact` | `ctx_langextract` | — | — |
 | output that misses a field's mandatory requirements | `missed_mandatory_requirement` | — | — | — |
-| an AI missing signs that a vulnerable person is at risk | `missed_risk_signs` | `duty_of_care` | — | — |
+| an AI missing signs that a vulnerable person is at risk | `missed_risk_signs` | — | — | `duty_of_care` (built, awaiting its certificate) |
 | unresolved complaints and missed service levels | `missed_service_level` | — | — | — |
 | safety or permit issues missed on a site | `missed_site_safety_issue` | — | — | — |
 | work in a specialist field started without that field's evidence standard | `missing_domain_standard` | `reliability_pipeline` | — | — |
@@ -144,7 +144,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | tampering with the safeguards themselves | `safeguard_tampering` | `guards` | — | — |
 | safety policy failure | `safety_policy_failure` | — | — | — |
 | workflow behaviour changing silently between releases | `silent_behaviour_change` | — | — | — |
-| a tool silently missing or replaced, with the result reported as if it ran | `silent_fallback` | `adapt_automl` | — | — |
+| a tool silently missing or replaced, with the result reported as if it ran | `silent_fallback` | — | — | `adapt_automl` (built, awaiting its certificate) |
 | a decision based on one noisy sensor | `single_sensor_decision` | — | — | — |
 | skipped safety checks and missed maintenance | `skipped_safety_check` | — | — | — |
 | a workflow slower than it needs to be | `slow_workflow` | `metaharness` | — | — |
@@ -161,7 +161,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | test suite missing or weak | `test_suite_missing_or_weak` | — | — | — |
 | an agent weakening tests to make them pass | `test_weakening` | `safety_engine` | — | — |
 | tool context missing | `tool_context_missing` | — | — | — |
-| a model scored on data it was trained on, or on a leaky split | `train_test_leakage` | `adapt_automl`, `adapt_sklearn` | — | — |
+| a model scored on data it was trained on, or on a leaky split | `train_test_leakage` | — | — | `adapt_automl` (built, awaiting its certificate), `adapt_sklearn` (built, awaiting its certificate) |
 | setup or training-loop bugs in hand-written model code | `training_loop_bug` | `adapt_pytorch` | — | — |
 | translated code that behaves differently from the original | `translation_changes_behaviour` | — | — | — |
 | a campaign run without audience or spend analysis | `unanalysed_campaign` | — | — | — |
@@ -226,7 +226,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a business decision made without a structured case | `unstructured_business_case` | — | — | — |
 | a document citing sources that do not support it | `unsupported_citation` | `grounding` | — | — |
 | a conclusion the rules and facts do not support | `unsupported_conclusion` | `datalog`, `prolog` | — | — |
-| models tuned by hand without a systematic search | `unsystematic_tuning` | `adapt_automl` | — | — |
+| models tuned by hand without a systematic search | `unsystematic_tuning` | — | — | `adapt_automl` (built, awaiting its certificate) |
 | an agent design judged by argument instead of by a test | `untested_agent_design` | `cog_arch_aixi` | — | — |
 | a prompt change adopted without testing whether it helps | `untested_prompt_change` | `metaharness` | — | — |
 | a clever prompt mistaken for a tested workflow | `untested_workflow` | — | — | — |

@@ -199,7 +199,7 @@ Copy is a draft for the owner's review in the live preview.
         <p class="ev__note">Grey is the model alone; black is G6. With the fixed self-tuning arm D, G6 solved
         {{ facts.primary_total }} of {{ facts.n }} tasks the model alone solved {{ facts.total.A }} of: a larger model's
         judgement, distilled into a small model's harness, with no weights changed.
-        {% if speed.changes %}In the last development run, G6 found, tested and approved its own changes on
+        {% if speed.changes %}In the last development run, the G6 development fixture recorded tested changes on
         {% for c in speed.changes %}{{ c.dataset }} in {{ c.minutes }} minutes ({{ c.alone }} to {{ c.tuned }} of {{ c.n }}{% if c.from_components %}, starting from every component on{% endif %}){% if not forloop.last %}{% if forloop.revcounter == 2 %} and {% else %}, {% endif %}{% endif %}{% endfor %}.{% endif %}
         <a class="link" href="{% url 'pages:research' %}#reading">How to read these results</a></p>
         <details class="ev__more">

@@ -109,3 +109,23 @@ recovery is not itself evidence that the integrated code passes.
   (2 reused OpenLibrary pilots) and 48 scored IDs; no scored text inspected, no model call. Protocol and split remain
   draft pending price/cap calibration, evaluator controls and final registration. Budget ceiling remaining $167.85.
 - v0.1.0 was not modified. Package development version becomes 0.1.1.dev0; no publication or shared-branch push.
+
+### Independent review fix pass
+
+- Final read-only review identified three material findings, documented in CONTINUATION_REVIEW.md.
+- Fixed a reproduced sandbox parent-read escape through a child-created symlink. Output collection now refuses
+  linked/special files and validates the bounded opened file. Synthetic sentinel only, no real secrets inspected.
+- Fixed overlapping evaluations spending the same held-out use: complete API operations acquire reentrant thread
+  and OS workspace locks, reload after locking, and MCP metadata writes share the transaction boundary. A busy
+  surface returns a refusal rather than blocking its async client. One-handle and separate-handle regressions pass.
+- Fixed stripped scratch HOME/USERPROFILE; explicit runtime paths survive only within the plan's writable mounts
+  (homes/caches) or readable mounts (Lean/Sage dependency roots). Secrets and import hooks remain excluded.
+- Updated boundary results: Windows 52 passed; Linux 12 passed. Adjacent runners 690 passed, 6 optional skips.
+  Full harness/metaharness after locking: 398 passed, 1 skipped. Import contracts: 3 kept, none broken.
+- Fresh built-wheel smoke passed with isolated settings, Codex skill, a composition and a separate stdio MCP process.
+  A later final wheel must be rebuilt to include the review fixes.
+- Documentation/tools broad run: 2767 passed, 2 skipped, 8 failures from stale generated catalogues and old homepage
+  assertions. Regenerated catalogues and updated expectations to the new claim; targeted rerun in progress.
+- Ruling on review exclusions: actual client consent and usability/utility remain release gates; same-user shell and
+  malicious host-process code remain outside the stated boundary; arbitrary Python check external state is not
+  frozen by a source hash; real toolchain compatibility and job cancellation are unproven. No claim extends to them.
