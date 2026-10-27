@@ -188,3 +188,17 @@ recovery is not itself evidence that the integrated code passes.
   Installed-wheel MCP smokes pass on Python 3.12.11 and 3.13.5; all five certificate bindings match installed bytes.
 - Ruling: freezing a stable source version and preparing artifacts does not authorize release publication.
   Real human consent/usability, application utility and final cross-platform CI remain separate gates.
+
+### Hosted release validation
+
+- Draft PR #1 contains the reviewed continuation stack. Windows, Linux and macOS bundle builds and offline
+  executable smokes passed in run 40450792761; no release job ran and no tag was created.
+- Initial PR conformance exposed two test-environment issues: the runtime recorder mistook the trusted bubblewrap
+  transport for the component payload, and GitHub's synthetic merge omitted the feature stack from first-parent
+  certificate history. Exact backend frame recognition now checks the payload; direct bwrap and undeclared payload
+  adversarial cases remain rejected. All 98 checker-fixture tests passed under real Linux bubblewrap.
+- CI now checks the exact PR head with full history. All three affected numerical certificates reproduce their
+  recorded positions on that head and fail on the synthetic merge in the controlled reproduction. Certificate
+  validation itself is unchanged. Preserve the reviewed history when integrating; squash/rebase/ordinary merge
+  require renewed history-bound records, not bypasses. Guard/backend tests: 32 passed, 1 platform skip; Ruff clean.
+- These CI/test-only changes leave packaged source, renewed certificates and reproducible wheel bytes unchanged.

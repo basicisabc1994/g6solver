@@ -26,3 +26,10 @@ def test_bundle_workflow_guards_tags_and_does_not_overwrite_or_auto_publish():
     assert "--clobber" not in workflow
     assert "--draft" in workflow and "--verify-tag" in workflow
     assert 'refusing to replace an existing release' in workflow
+
+
+def test_ci_checks_the_exact_reviewed_head_for_history_bound_certificates():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    # GitHub's synthetic PR merge has a different first-parent history. The release
+    # plan lands the reviewed stack by fast-forward, so CI must check that exact head.
+    assert workflow.count("ref: ${{ github.event.pull_request.head.sha || github.sha }}") == 4

@@ -1169,6 +1169,27 @@ def _python(program: str) -> bool:
     return same(sys.executable, program) or same(interpreter(), program)
 
 
+def _confined_program(program: str) -> tuple[str, bool]:
+    """Observe the payload, not G6's bubblewrap transport; identify exact core probes.
+
+    This is deliberately not a program-name allowlist: a component starting bwrap
+    itself is still recorded, and an undeclared payload remains undeclared.
+    """
+    from g6.core.confine import _Bubblewrap
+
+    frame = sys._getframe(2)
+    while frame is not None:
+        if frame.f_code in (_Bubblewrap.start.__code__, _Bubblewrap._probe.__code__,
+                            _Bubblewrap._features.__code__):
+            backend = frame.f_locals.get("self")
+            if program == getattr(backend, "program", None):
+                if frame.f_code is _Bubblewrap.start.__code__:
+                    return _program(frame.f_locals["argv"], None), False
+                return program, True
+        frame = frame.f_back
+    return program, False
+
+
 def _declared(program: str, outside: Iterable[Any]) -> bool:
     """``program`` is one ``outside`` (a component's ``__g6_outside__``) names: its command, or the program its
     environment variable names."""
@@ -1215,8 +1236,10 @@ def offline(outside: Iterable[Any] = ()) -> Iterator[list[str]]:
         return saved[3](program, method, path, *args, **kwargs)
 
     def launch(popen: object, args: object, executable: object, *rest: object, **kwargs: object) -> Any:
-        program = _program(args, executable)
-        if not _launched_by_core():
+        program, boundary_probe = _confined_program(_program(args, executable))
+        if boundary_probe:
+            pass  # Exact trusted backend feature/canary probe, not a component operation.
+        elif not _launched_by_core():
             reached.append(f"started {_stem(program) or program!r} itself, not through g6.core")
         elif not (_python(program) or _declared(program, programs)):
             reached.append(f"started {_stem(program) or program!r}, which its __g6_outside__ does not declare")
