@@ -235,3 +235,10 @@ recovery is not itself evidence that the integrated code passes.
   Core/grounding/invariants: 2394 passed, 19 skipped. Broader metaharness run in progress at source freeze.
 - All five certificates bind the changed reliability-envelope bytes; independent delta review and normal renewal
   are required before the next wheel. Earlier wheel remains the owner's tested installation until upgraded.
+- Final broad meta-harness run: 336 passed, 1 skipped. Independent reviewer rerun: 34 passed. Full lint/import
+  contracts pass; public-CI source scan zero findings. No existing public tag or release changed.
+- Independent frozen delta attestation committed at 5b6c69a, preserving original attribution. All five normal
+  renewals exited 0 (150 passing receipts) and committed at d755589. Generated catalogue refreshed.
+- New wheel builds are byte-identical. Installed-wheel/MCP smokes pass on Python 3.12/3.13 and all five installed
+  certificate bindings inspect cleanly. New hash/source recorded in wheel.json. Real UI retest remains pending;
+  the old owner installation is unchanged until the owner upgrades and restarts the client.

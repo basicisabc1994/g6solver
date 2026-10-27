@@ -1,8 +1,8 @@
 {
   "artifact": "g6-0.1.1-py3-none-any.whl",
-  "sha256": "b1dc4acdf12ec283ce4e3dab25cceddb4cd00498563b6580ddccc73ca63efb9e",
-  "source_commit": "20b21b853a29ddddac2510f29ed09dc5a9332df8",
-  "source_date_epoch": 1793078126,
+  "sha256": "9962272a36430341c2876a9e7a9acadcfed34353137bf106c2d55ca8268ca5f4",
+  "source_commit": "d7555892d943c6b6aedbeec79f7600330c0761ba",
+  "source_date_epoch": 1793143603,
   "identical_repeat_build": true,
   "installed_smoke_python": [
     "3.12.11",
