@@ -202,3 +202,17 @@ recovery is not itself evidence that the integrated code passes.
   validation itself is unchanged. Preserve the reviewed history when integrating; squash/rebase/ordinary merge
   require renewed history-bound records, not bypasses. Guard/backend tests: 32 passed, 1 platform skip; Ruff clean.
 - These CI/test-only changes leave packaged source, renewed certificates and reproducible wheel bytes unchanged.
+
+### Platform correction and pilot handoff
+
+- Hosted logs exposed a macOS trusted-parent alias refusal. Reproduced with a POSIX alias regression, fixed by
+  resolving the host-created run root before execution, and retained child-created-link refusal. Independent
+  reader reviewed commit 3d1c78a and supplied three scoped ML attestations committed at 9c521b3.
+- Linux: 108 passed, 19 platform skips across confinement/bubblewrap/repository tests. Windows selected confinement:
+  41 passed, 1 skip. Old dummy-key/proxy tests explicitly cover unconfined mode; a real bwrap case checks absence.
+- Normal renewal of all three affected certificates exited 0, committed at 20b21b8: 100 passing receipts. The two
+  unaffected records stay current. All five inspections report zero problems and 150 passing receipts total.
+- Refreshed wheel builds are byte-identical; installed-wheel/MCP smokes pass on Python 3.12 and 3.13. wheel.json
+  contains the new hash and source commit. Earlier bundle success does not cover this later source correction.
+- Full Ruff and import-boundary checks pass. Owner volunteered for both client pilots; OWNER_PILOT.md records
+  separate pending observations. This is an owner pilot, not the unfamiliar-user or application utility gate.

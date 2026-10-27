@@ -97,3 +97,29 @@ and creates a draft without overwriting assets. Nothing was tagged or published.
 
 All five normal offline `--check` reruns exited 0 and reproduced the committed certificates.
 The installed wheel also passed all five certificate artifact-binding inspections.
+
+## Hosted platform follow-up
+
+The first Windows, Linux and macOS bundle builds and executable smokes passed in
+run 40450792761. The hosted site suite passed 2,714 tests with one skip. Initial
+conformance failures exposed a recorder that mistook bubblewrap for its payload
+and the synthetic PR merge's different first-parent history; both were reproduced
+and fixed without changing certificate validation. CI now checks the reviewed head.
+
+Further platform logs exposed a real macOS output-collection problem: `/var` is a
+trusted parent alias, but was rejected by the new link checks. The sandbox now
+canonicalizes its host-created root before child execution; links created by the
+child are still refused. A failing alias regression passed after the fix, with
+an independent review. The broader Linux regression run passed 108 tests (19
+platform skips), and selected Windows confinement tests passed 41 (one skip).
+
+Two Linux tests expected the old unconfined dummy-key/proxy behavior. They now
+explicitly exercise that mode, with a separate real bubblewrap test proving that
+confined repository tests receive no model-key or proxy configuration.
+
+This source change supersedes the earlier wheel/bundle bytes. The three affected
+ML certificates require normal renewal; the other two bindings remain unchanged.
+Consult the current wheel manifest and PR checks for the refreshed candidate.
+
+The owner volunteered to pilot both clients. Follow [OWNER_PILOT.md](OWNER_PILOT.md)
+and record results separately; no human observations have yet been supplied.

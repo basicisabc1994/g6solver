@@ -34,5 +34,7 @@
       "problems": []
     }
   ],
-  "offline_reproduction_check": "all five normal --check runs exit 0"
+  "offline_reproduction_check": "All five passed before platform fix; three ML records reissued normally after fix, with 100 passing receipts. Fresh hosted reproduction pending.",
+  "platform_fix_review_commit": "9c521b3",
+  "platform_fix_issuance_commit": "20b21b8"
 }
