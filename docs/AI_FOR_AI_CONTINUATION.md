@@ -147,3 +147,23 @@ recovery is not itself evidence that the integrated code passes.
   Final installed-wheel smoke passes: isolated settings, skill install, composition, separate MCP process;
   no model calls. No client configuration, public tag, release, or shared branch was changed.
 - Final FAQ and certificate-status regressions: 9 passed. The earlier three remaining site failures are resolved.
+
+### Release continuation trials
+
+- Actual Codex 0.164.0 and Claude Code 2.1.311 CLI setup succeeded in isolated temporary homes;
+  both registrations retained the exact interpreter and installed the client skill. No user settings changed.
+- Python 3.13.5 installed-wheel smoke passed; 39 selected composition/setup/workflow/MCP tests passed.
+- Codex direct app-server tool calls discover G6 and create workflows but deliver no consent prompt. G6
+  refuses confirmation and supplies the terminal fallback. Interactive human consent remains unverified.
+- Frozen six-case patch trial executed under Linux bubblewrap. The selected-test baseline accepts two
+  behaviorally wrong patches and one runner-policy violation; G6 blocks all six, including the correct patch.
+  Ruling: report these as synthetic engineering observations, not application utility or improved correctness.
+  Blocking everything and missing an unselected regression cannot substantiate the performance proposition.
+- Located original held source snapshots and private quote files outside the public checkout. A fresh
+  independent certificate reader verified every bound source hash and all 98 unchanged rule ASTs, reviewed
+  changed shared enforcement code, and passed 109 selected tests (1 skip). Scoped delta attestations preserve
+  the original source reader and findings; current bindings match all five components. Commit 185bd73.
+- Certificate numerical/seeded-defect prechecks are in progress with process-local Windows unconfined opt-in.
+  Initial runs lacked optional numerical packages and OS grants; they produced unknowns, not passes. These
+  mathematical checks are separate from actual OS boundary evidence. No certificate is renewed yet.
+- Detailed observations and remaining trials: docs/releases/RELEASE_TRIALS.md.

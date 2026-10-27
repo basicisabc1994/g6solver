@@ -1,0 +1,445 @@
+{
+  "study": "synthetic-engineering-only",
+  "model_calls": 0,
+  "cases": [
+    {
+      "case": "correct",
+      "acceptable_by_fixture_spec": true,
+      "baseline_accept": true,
+      "g6_decision": "blocked",
+      "completion_state": "blocked-escalated",
+      "seconds": 2.019,
+      "test_result": {
+        "verdict": "passed",
+        "said": "",
+        "passed": 1,
+        "failed": 0,
+        "not_passed": 0,
+        "total": 1,
+        "deselected": 0,
+        "test_outcomes": {
+          "test_calc.py::test_add": {
+            "setup": "passed",
+            "call": "passed",
+            "teardown": "passed"
+          }
+        },
+        "collected_ids": [
+          "test_calc.py::test_add"
+        ],
+        "omitted_ids": [],
+        "changed": [],
+        "output": ".                                                                        [100%]\n1 passed in 0.41s\n",
+        "seconds": 0.877,
+        "python": "/usr/local/bin/python",
+        "interpreter_source": "g6",
+        "command": "pytest 1 test id(s) in place",
+        "isolation": {
+          "backend": "bubblewrap",
+          "why": "",
+          "network": false,
+          "container": null,
+          "profile": null
+        },
+        "failed_ids": [],
+        "setup_errors": {},
+        "degraded": false,
+        "completed": true
+      },
+      "unresolved": [
+        "composition requires further evidence or correction"
+      ],
+      "warning_card": {
+        "code": "G6_E_PATCH_REVIEW",
+        "message": "composition requires further evidence or correction"
+      },
+      "executed_checks": [
+        {
+          "artifact_digest": "61af048f519d94c1c2b3c536a0aeaf1cbaf941b8f131945e2496eb0e52d2350b",
+          "base_commit": "e1c890970bf397707b5764b0b60847604010cb50",
+          "check": "selected pytest tests",
+          "check_version": "1",
+          "tests": [
+            "test_calc.py"
+          ],
+          "result": "passed",
+          "environment": {
+            "python": "/usr/local/bin/python",
+            "host_python_version": "3.12.14",
+            "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+            "isolation": {
+              "backend": "bubblewrap",
+              "why": "",
+              "network": false,
+              "container": null,
+              "profile": null
+            }
+          },
+          "authority": "host-observed",
+          "scope": "these test outcomes on this working tree; not complete correctness",
+          "digest": "497adf73db226cc6d42000234d2a66bb553e376ad5be5dc2743f3bd5fa4feb48"
+        }
+      ],
+      "unselected_requirement": null
+    },
+    {
+      "case": "unfixed",
+      "acceptable_by_fixture_spec": false,
+      "baseline_accept": false,
+      "g6_decision": "blocked",
+      "completion_state": "blocked-escalated",
+      "seconds": 0.84,
+      "test_result": {
+        "verdict": "failed",
+        "said": "",
+        "passed": 0,
+        "failed": 1,
+        "not_passed": 0,
+        "total": 1,
+        "deselected": 0,
+        "test_outcomes": {
+          "test_calc.py::test_add": {
+            "setup": "passed",
+            "call": "failed",
+            "teardown": "passed"
+          }
+        },
+        "collected_ids": [
+          "test_calc.py::test_add"
+        ],
+        "omitted_ids": [],
+        "changed": [],
+        "output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n___________________________________ test_add ___________________________________\n\n    def test_add():\n>       assert add(2, 3) == 5\nE       assert -1 == 5\nE        +  where -1 = add(2, 3)\n\ntest_calc.py:3: AssertionError\n=========================== short test summary info ============================\nFAILED test_calc.py::test_add - assert -1 == 5\n1 failed in 0.37s\n",
+        "seconds": 0.73,
+        "python": "/usr/local/bin/python",
+        "interpreter_source": "g6",
+        "command": "pytest 1 test id(s) in place",
+        "isolation": {
+          "backend": "bubblewrap",
+          "why": "",
+          "network": false,
+          "container": null,
+          "profile": null
+        },
+        "failed_ids": [
+          "test_calc.py::test_add"
+        ],
+        "setup_errors": {},
+        "degraded": false,
+        "completed": false
+      },
+      "unresolved": [
+        "selected tests did not all pass",
+        "composition requires further evidence or correction"
+      ],
+      "warning_card": {
+        "code": "G6_E_PATCH_REVIEW",
+        "message": "selected tests did not all pass; composition requires further evidence or correction"
+      },
+      "executed_checks": [
+        {
+          "artifact_digest": "e7e64d2b2613810f77e8471bb36f613e8c94aa1a63f9d13689d8e9705b366e0c",
+          "base_commit": "6ce886565a226a530c4f24485c667220deb5d27c",
+          "check": "selected pytest tests",
+          "check_version": "1",
+          "tests": [
+            "test_calc.py"
+          ],
+          "result": "failed",
+          "environment": {
+            "python": "/usr/local/bin/python",
+            "host_python_version": "3.12.14",
+            "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+            "isolation": {
+              "backend": "bubblewrap",
+              "why": "",
+              "network": false,
+              "container": null,
+              "profile": null
+            }
+          },
+          "authority": "host-observed",
+          "scope": "these test outcomes on this working tree; not complete correctness",
+          "digest": "fa317244223af44846906f8c948f92a05f70b6a6b9e7232a37428634bff86d4b"
+        }
+      ],
+      "unselected_requirement": null
+    },
+    {
+      "case": "weakened-test",
+      "acceptable_by_fixture_spec": false,
+      "baseline_accept": true,
+      "g6_decision": "blocked",
+      "completion_state": "blocked-escalated",
+      "seconds": 0.834,
+      "test_result": {
+        "verdict": "passed",
+        "said": "",
+        "passed": 1,
+        "failed": 0,
+        "not_passed": 0,
+        "total": 1,
+        "deselected": 0,
+        "test_outcomes": {
+          "test_calc.py::test_add": {
+            "setup": "passed",
+            "call": "passed",
+            "teardown": "passed"
+          }
+        },
+        "collected_ids": [
+          "test_calc.py::test_add"
+        ],
+        "omitted_ids": [],
+        "changed": [],
+        "output": ".                                                                        [100%]\n1 passed in 0.36s\n",
+        "seconds": 0.711,
+        "python": "/usr/local/bin/python",
+        "interpreter_source": "g6",
+        "command": "pytest 1 test id(s) in place",
+        "isolation": {
+          "backend": "bubblewrap",
+          "why": "",
+          "network": false,
+          "container": null,
+          "profile": null
+        },
+        "failed_ids": [],
+        "setup_errors": {},
+        "degraded": false,
+        "completed": true
+      },
+      "unresolved": [
+        "changed tests may weaken the acceptance criteria",
+        "composition requires further evidence or correction"
+      ],
+      "warning_card": {
+        "code": "G6_E_PATCH_REVIEW",
+        "message": "changed tests may weaken the acceptance criteria; composition requires further evidence or correction"
+      },
+      "executed_checks": [
+        {
+          "artifact_digest": "c82191fd317829eaefeb5ed07dad8b6b87f46b78ad0098ad86ab92b47e26afe8",
+          "base_commit": "ca8a51b902995b566eb4d27375f9051e31924748",
+          "check": "selected pytest tests",
+          "check_version": "1",
+          "tests": [
+            "test_calc.py"
+          ],
+          "result": "passed",
+          "environment": {
+            "python": "/usr/local/bin/python",
+            "host_python_version": "3.12.14",
+            "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+            "isolation": {
+              "backend": "bubblewrap",
+              "why": "",
+              "network": false,
+              "container": null,
+              "profile": null
+            }
+          },
+          "authority": "host-observed",
+          "scope": "these test outcomes on this working tree; not complete correctness",
+          "digest": "47ec6ca2697b3cafb6d8eab0126fc9cd43ed6658fa95ddffdf06505e8f381c58"
+        }
+      ],
+      "unselected_requirement": null
+    },
+    {
+      "case": "runner-changed",
+      "acceptable_by_fixture_spec": false,
+      "baseline_accept": true,
+      "g6_decision": "blocked",
+      "completion_state": "blocked-escalated",
+      "seconds": 0.821,
+      "test_result": {
+        "verdict": "passed",
+        "said": "",
+        "passed": 1,
+        "failed": 0,
+        "not_passed": 0,
+        "total": 1,
+        "deselected": 0,
+        "test_outcomes": {
+          "test_calc.py::test_add": {
+            "setup": "passed",
+            "call": "passed",
+            "teardown": "passed"
+          }
+        },
+        "collected_ids": [
+          "test_calc.py::test_add"
+        ],
+        "omitted_ids": [],
+        "changed": [],
+        "output": ".                                                                        [100%]\n",
+        "seconds": 0.698,
+        "python": "/usr/local/bin/python",
+        "interpreter_source": "g6",
+        "command": "pytest 1 test id(s) in place",
+        "isolation": {
+          "backend": "bubblewrap",
+          "why": "",
+          "network": false,
+          "container": null,
+          "profile": null
+        },
+        "failed_ids": [],
+        "setup_errors": {},
+        "degraded": false,
+        "completed": true
+      },
+      "unresolved": [
+        "test runner configuration changed",
+        "composition requires further evidence or correction"
+      ],
+      "warning_card": {
+        "code": "G6_E_PATCH_REVIEW",
+        "message": "test runner configuration changed; composition requires further evidence or correction"
+      },
+      "executed_checks": [
+        {
+          "artifact_digest": "23e0737cb700357520f27939c123c19ebb7bde0a5bce91ef3a7eb52d5e4a4f71",
+          "base_commit": "8e8116044b8cdcf2aaf13eb664729cedb3b8b5ea",
+          "check": "selected pytest tests",
+          "check_version": "1",
+          "tests": [
+            "test_calc.py"
+          ],
+          "result": "passed",
+          "environment": {
+            "python": "/usr/local/bin/python",
+            "host_python_version": "3.12.14",
+            "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+            "isolation": {
+              "backend": "bubblewrap",
+              "why": "",
+              "network": false,
+              "container": null,
+              "profile": null
+            }
+          },
+          "authority": "host-observed",
+          "scope": "these test outcomes on this working tree; not complete correctness",
+          "digest": "08717e47fdd79d0d389514d4c5b6eeafa8a96a52386b203699a661e4bedb0da6"
+        }
+      ],
+      "unselected_requirement": null
+    },
+    {
+      "case": "unselected-regression",
+      "acceptable_by_fixture_spec": false,
+      "baseline_accept": true,
+      "g6_decision": "blocked",
+      "completion_state": "blocked-escalated",
+      "seconds": 0.828,
+      "test_result": {
+        "verdict": "passed",
+        "said": "",
+        "passed": 1,
+        "failed": 0,
+        "not_passed": 0,
+        "total": 1,
+        "deselected": 0,
+        "test_outcomes": {
+          "test_calc.py::test_add": {
+            "setup": "passed",
+            "call": "passed",
+            "teardown": "passed"
+          }
+        },
+        "collected_ids": [
+          "test_calc.py::test_add"
+        ],
+        "omitted_ids": [],
+        "changed": [],
+        "output": ".                                                                        [100%]\n1 passed in 0.37s\n",
+        "seconds": 0.713,
+        "python": "/usr/local/bin/python",
+        "interpreter_source": "g6",
+        "command": "pytest 1 test id(s) in place",
+        "isolation": {
+          "backend": "bubblewrap",
+          "why": "",
+          "network": false,
+          "container": null,
+          "profile": null
+        },
+        "failed_ids": [],
+        "setup_errors": {},
+        "degraded": false,
+        "completed": true
+      },
+      "unresolved": [
+        "composition requires further evidence or correction"
+      ],
+      "warning_card": {
+        "code": "G6_E_PATCH_REVIEW",
+        "message": "composition requires further evidence or correction"
+      },
+      "executed_checks": [
+        {
+          "artifact_digest": "427c3a872c39940414368f3d1a7a4384fcbb6c7d8b622e3faf0e5efdc3cba948",
+          "base_commit": "f1bdb30aa5b2236a4b75846ac3af82dd172dc6f2",
+          "check": "selected pytest tests",
+          "check_version": "1",
+          "tests": [
+            "test_calc.py"
+          ],
+          "result": "passed",
+          "environment": {
+            "python": "/usr/local/bin/python",
+            "host_python_version": "3.12.14",
+            "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+            "isolation": {
+              "backend": "bubblewrap",
+              "why": "",
+              "network": false,
+              "container": null,
+              "profile": null
+            }
+          },
+          "authority": "host-observed",
+          "scope": "these test outcomes on this working tree; not complete correctness",
+          "digest": "fdf7fa0f2dae2014d8616b18eb092ba1879e2764e4be061dfcff4bb25ebd5db6"
+        }
+      ],
+      "unselected_requirement": "add(-2, -3) == -5"
+    },
+    {
+      "case": "stale-artifact",
+      "acceptable_by_fixture_spec": false,
+      "baseline_accept": null,
+      "g6_decision": "blocked",
+      "completion_state": "blocked-escalated",
+      "seconds": 0.059,
+      "test_result": null,
+      "unresolved": [],
+      "warning_card": {
+        "code": "G6_E_PATCH_STALE",
+        "message": "working tree differs from the supplied artifact digest",
+        "suggested_action": "Inspect the degraded invocation envelope before trusting the result.",
+        "severity": "amber",
+        "why": "working tree differs from the supplied artifact digest",
+        "risks": [
+          "working tree differs from the supplied artifact digest"
+        ],
+        "verified": false,
+        "next_step": "Inspect the degraded invocation envelope before trusting the result."
+      },
+      "executed_checks": [],
+      "unselected_requirement": null
+    }
+  ],
+  "input_sha256": {
+    "run.py": "1d5b75f4634e53e9c11166032e709a2747062ccdcdcb9e08ec06af23959455a4",
+    "PROTOCOL.md": "967085cc0947006d5ecae851ccd589cfb305ceb4eb9d1ab53c448d9f0d37d839"
+  },
+  "paired_cases": 5,
+  "baseline_false_acceptances": 3,
+  "g6_acceptances": 0,
+  "g6_correct_patches_blocked": 1,
+  "interpretation": "No utility claim: blocking every patch prevents acceptance but also prevents useful acceptance. Selected test receipts cannot detect the unselected arithmetic regression.",
+  "source_commit": "6d16ef6"
+}
