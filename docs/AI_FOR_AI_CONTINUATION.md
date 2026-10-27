@@ -167,3 +167,8 @@ recovery is not itself evidence that the integrated code passes.
   Initial runs lacked optional numerical packages and OS grants; they produced unknowns, not passes. These
   mathematical checks are separate from actual OS boundary evidence. No certificate is renewed yet.
 - Detailed observations and remaining trials: docs/releases/RELEASE_TRIALS.md.
+
+- Release automation safeguard: removed asset clobbering, require an exact stable tag/source-version match,
+  refuse existing releases, and create drafts only. Six new tests failed before implementation; the guard and
+  adjacent workflow tests now pass (31 passed, 1 platform skip). The current development version is correctly
+  refused for tag v0.1.1. No workflow was dispatched and no GitHub object was changed.
