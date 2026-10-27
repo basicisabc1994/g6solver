@@ -197,7 +197,9 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
     argv = [python, "-I", "-c", _BOOT, str(mem), str(cpu), str(file_mb * 1024 * 1024), rlimit, SCRIPT]
     started = time.monotonic()
     with confine.run_folder(prefix="g6_sandbox_") as cwd:
-        root = Path(cwd)
+        # Canonicalize the host-created root before untrusted execution (macOS's
+        # /var is an alias); output paths must still contain no child-created links.
+        root = Path(cwd).resolve(strict=True)
         for name, content in files.items():
             (root / name).write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
         (root / SCRIPT).write_text(source, encoding="utf-8")

@@ -182,6 +182,7 @@ def test_known_limit_a_file_git_does_not_track_is_not_covered(repo):
     assert rt.run(repo, ["tests/test_scratch.py"])["verdict"] == rt.PASSED
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_the_tests_see_none_of_the_callers_environment(repo, monkeypatch):
     monkeypatch.setenv("G6_REPO_TESTS_SECRET_PROBE", "secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-real-looking")
@@ -228,12 +229,25 @@ PROXY_TEST = ("import os\n\n\ndef test_proxy():\n"
               "    assert os.environ.get('NO_PROXY') == 'localhost,127.0.0.1,::1'\n")
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_programs_the_tests_start_are_pointed_at_no_proxy_unless_the_network_is_allowed(repo, monkeypatch):
     """The second half of the guard (ruling VR-R6): a program the tests start that honours a proxy reaches nothing."""
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")  # the caller's own proxy never crosses
     _write(repo, "tests/test_proxy.py", PROXY_TEST)
     assert rt.run(repo, ["tests/test_proxy.py"])["verdict"] == rt.PASSED
     assert rt.run(repo, ["tests/test_proxy.py"], network=True)["verdict"] == rt.FAILED
+
+
+def test_confined_tests_receive_no_model_keys_or_proxy_configuration(repo, monkeypatch, bwrap_backend):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "planted-not-a-key")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+    _write(repo, "tests/test_env.py",
+           "import os\n\ndef test_env():\n"
+           "    for key in ('OPENROUTER_API_KEY', 'HTTPS_PROXY', 'NO_PROXY', 'G6_LLM_BACKEND_OVERRIDE'):\n"
+           "        assert key not in os.environ\n"
+           "    assert os.path.realpath(os.environ['HOME']) == os.path.realpath(os.environ['TMP'])\n")
+    result = rt.run(repo, ["tests/test_env.py"])
+    assert result["verdict"] == rt.PASSED, result
 
 
 def _alive(pid: int) -> bool:
