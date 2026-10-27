@@ -2,7 +2,7 @@
   "reviewer": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25)",
   "rebound": "2026-10-26: artifact_sha256 re-bound by the lead after the copyright header change (DECISIONS #23). Every changed code file differs from the one the reader read in its first two lines only, with an identical syntax tree; the reader's findings are unchanged.",
   "reviewed": {
-    "artifact_sha256": "faf80e3961bdbdc5aee53e58643040d971f1c592e83444a749107547d68a1167",
+    "artifact_sha256": "84e71da0f97a0fb9eb3cfb6e40129e9cb7b4578a8843886b1363157c5246e524",
     "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
     "sources_sha256": {
       "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
@@ -457,6 +457,73 @@
         "current_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec"
       },
       "validation": "Byte-exact version delta and prior artifact reconstruction passed for all five components. Final issuance remains responsible for its normal held-source/quote checks and gates."
+    },
+    {
+      "kind": "independent-uat-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-28",
+      "base_commit": "1725c9df9c004b504ae6cbe092008a1c3ff25d53",
+      "reviewed_commit": "bbf484c453ce5c16b8fe024617616c60d810541c",
+      "prior_review_sha256": "f1f02243cd30bc8a84f5be06f2e5f7c10363c5a32b5851ab6acd59bbc762eeef",
+      "prior_reviewed": {
+        "artifact_sha256": "faf80e3961bdbdc5aee53e58643040d971f1c592e83444a749107547d68a1167",
+        "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
+        "sources_sha256": {
+          "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
+          "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+          "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+          "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+          "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+          "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+          "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860",
+          "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
+          "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+          "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
+          "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
+          "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
+          "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310"
+        },
+        "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+        "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+        "refusals": []
+      },
+      "reviewed": {
+        "artifact_sha256": "84e71da0f97a0fb9eb3cfb6e40129e9cb7b4578a8843886b1363157c5246e524",
+        "rules_sha256": "861b91dea890224dfa436ff1794ec335f2ac7e826847de33dd1d6ea5f955a541",
+        "sources_sha256": {
+          "healthdirect-mental-health-helplines": "931a250c409839dff16342bb507958445ef178e544eef83bb0419df7962d5509",
+          "lifeline-get-help": "2b257a314bf956fe860731428db54da84da26eac63cfe80abda471cc98272c2e",
+          "988-lifeline": "6af41b5030ebd292f7683d82c4bbbd7a2a18b41a16948d6e815096e928bce286",
+          "samaritans-contact": "fe82b8d51f7bcc7117dc67b4828ac72629e9e847c8af7dbf24bd14fd9b8c36bd",
+          "phq9-form": "09032b52d642a62ba64eb8c40a05f0210ca16e87a3574765a2d5efdaab12f3ec",
+          "gad7-form": "4a24d3a98b132df0e4e139fbe1550ee7e8443ca478b6d20cf0d7caff2849c8f5",
+          "who-media-2023": "1f0230855bdc4408c4b00112c175fc29724d9d9e1fcefee9821fd944b48fc860",
+          "mindframe-guidelines": "11cdc76b506488a5c8de6311f632afa96a98dd4ff02a768b47c77efa96a5017e",
+          "nhs-when-to-call-999": "ac188f8803598c1c57b9627300a6f8efd7203caa1a93b22bab1aedce0f193f07",
+          "us-code-47-251": "1be1b3a562a506fdd4ed340622b32f361ad17d28f40a82069d3d93065b2d0e39",
+          "mindframe-language": "42cf243374dd224fcf4443b8ddf21165ba3d2876a68ace8afad2afbb402cb928",
+          "mindframe-method-location": "17cc3181179b0ffd1ed36961840f6fd9033f27a2845368e700b85a4472c93add",
+          "mindframe-help-seeking": "bfaf250b1d0534cfeca3e41f1f8abce35bc7275dea8d408a2d823b085c0d8310"
+        },
+        "cases_sha256": "a8173f9852684ae7a754365c142bdb34fb9ec374a58611e535f105f9ce08b1fe",
+        "adapter_sha256": "14b147785f7d2ee5d444b3e0a59b7f1a0f6b10815afe14197987f284bd838b74",
+        "refusals": []
+      },
+      "scope": "Supplement to prior independent delta attestations: UAT-driven reliability explanation change in the bound shared envelope. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses or private quotes were reread; no new medical, legal or domain endorsement, authenticated identity or cryptographic signature is asserted.",
+      "method": "Reviewed actual reliability-envelope, MCP consent, metaharness and grounding changes, including explicit client outcome handling and preserved digest rechecks. Recomputed all five reviewed records, compared current bound artifact bytes with baseline1725c9d, and reconstructed each previous artifact hash by substituting its baseline reliability_envelope.py bytes.",
+      "finding": "The only changed bound input is core/reliability_envelope.py: after state reconciliation, degraded envelopes lacking a reason receive explanatory text. Existing specific reasons remain intact. This addition neither promotes a result nor bypasses replay. Rules, canonical source entries, cases, adapters and refusal hashes are unchanged; prior scoped findings remain applicable. MCP/metadata changes reviewed separately do not enter these five artifact manifests. The initially identified null-warning-card inconsistency was corrected before this frozen commit; lifecycle replies retain required warning cards. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/core/reliability_envelope.py",
+          "previous_sha256": "af7e5db33803b37ab07a9dc9e10a28c26928b0a7c1a90773995553699cf7ec21",
+          "current_sha256": "c853fca0b43906f17601d5282f355846c30ae5beef125e99dc9bd838fb1fb860"
+        }
+      ],
+      "validation": {
+        "independently_run": "tests/metaharness/test_uat_diagnostics.py tests/metaharness/test_phase6_mcp.py tests/core/test_kernel_promotion_law.py",
+        "result": "34 passed, 1 dependency deprecation warning in 3.88s",
+        "limits": "Focused local tests and static delta review; this reader did not independently perform the parent-reported Codex client probes or broad test runs. Full held-source/quote issuance gates remain required."
+      }
     }
   ]
 }

@@ -7,7 +7,7 @@
   "method": "hashed every held source from its bytes and compared with the register; read each LaValle page as held (equations from the page's own MATH comments and image alt text) and each OpenStax passage in the corpus file; confirmed the one withheld quote the register's chain case hashes (found by its SHA-256 in the private quotes file) occurs in the held page's bytes and carries the case's numbers; read the implementing functions and the code around the friction, tolerance, work-bound and force guards. The withheld clauses are the register's own words, judged against the page, not against any quotation.",
   "label_effect": "none: a review raises no label",
   "reviewed": {
-    "artifact_sha256": "abe98129b48c8d8c1b3395982f9e8abf4cd8a4ff7e49a52410ace7debdf58169",
+    "artifact_sha256": "61a7075420a991c2b8bb6375c0176de566937c45dbc2c84247acb13a97db10fa",
     "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
     "sources_sha256": {
       "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
@@ -338,6 +338,65 @@
         "current_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec"
       },
       "validation": "Byte-exact version delta and prior artifact reconstruction passed for all five components. Final issuance remains responsible for its normal held-source/quote checks and gates."
+    },
+    {
+      "kind": "independent-uat-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-28",
+      "base_commit": "1725c9df9c004b504ae6cbe092008a1c3ff25d53",
+      "reviewed_commit": "bbf484c453ce5c16b8fe024617616c60d810541c",
+      "prior_review_sha256": "b4a646f78f6c8e775a4d16113111450a0f9b791acaaae710b53284b7619f535c",
+      "prior_reviewed": {
+        "artifact_sha256": "abe98129b48c8d8c1b3395982f9e8abf4cd8a4ff7e49a52410ace7debdf58169",
+        "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+        "sources_sha256": {
+          "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
+          "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
+          "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
+          "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+          "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
+          "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+          "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+          "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
+          "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
+        },
+        "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+        "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+        "refusals": []
+      },
+      "reviewed": {
+        "artifact_sha256": "61a7075420a991c2b8bb6375c0176de566937c45dbc2c84247acb13a97db10fa",
+        "rules_sha256": "62270a64c5c491ec3fdf2fd5abfb26fb223be84667caff49b72fd071ec1c0472",
+        "sources_sha256": {
+          "lavalle-2006-3.3.1": "5b7d2faf0509e9f217ab2775a84741d6010a88437d13a560fd61bcc8e993de92",
+          "lavalle-2006-5.3.1": "5bb8b91f1f9cb6a25f6f724f3ab4af99ca91e4fdfc159f2870d334f0a35b687e",
+          "lavalle-2006-5.3.4": "7ad57ae219fe081b232b772a736fa1698b26cd6b7535e612abf402e9ef824bd5",
+          "lavalle-2006-5.3.4-chain": "f4f8a3f6366651944330167a61caa6ece4896f1b330eba9fb8f6b06bdc6233c6",
+          "lavalle-2006-2.2.2": "a261654dabcb9c9b1a31ab25230664e8e99527d9aa76c07485d3a735abe00463",
+          "lavalle-2006-5.5.1": "c9c3253fa78dbff7cff6a7fd5d51dd34d6c028e445c9b95ccc595d59823447e8",
+          "lavalle-2006-14.3.2-euler": "e420d3dfff3bde418aa1ec306f6ee396cd4fbda2c579d08cc67b089e1177c37e",
+          "lavalle-2006-14.3.2-closed-form": "f2430b9a0d35f21bbc72fe9805cbea53fd02ec8ad9b089906694bd3e2d5445f4",
+          "openstax-up1-2016-6.2": "b01d900e958c45fb140031924b49a436614c9ae5b9e4cf4ff0021658d0da233b"
+        },
+        "cases_sha256": "07c70d49dd79a15d607aa2757295140e275347dbba9ebb4e70299a75691cfba7",
+        "adapter_sha256": "7e9374d9c694fc2274715677cdf591d523416e0b4f10ae23c3419e82564bf0e8",
+        "refusals": []
+      },
+      "scope": "Supplement to prior independent delta attestations: UAT-driven reliability explanation change in the bound shared envelope. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses or private quotes were reread; no new medical, legal or domain endorsement, authenticated identity or cryptographic signature is asserted.",
+      "method": "Reviewed actual reliability-envelope, MCP consent, metaharness and grounding changes, including explicit client outcome handling and preserved digest rechecks. Recomputed all five reviewed records, compared current bound artifact bytes with baseline1725c9d, and reconstructed each previous artifact hash by substituting its baseline reliability_envelope.py bytes.",
+      "finding": "The only changed bound input is core/reliability_envelope.py: after state reconciliation, degraded envelopes lacking a reason receive explanatory text. Existing specific reasons remain intact. This addition neither promotes a result nor bypasses replay. Rules, canonical source entries, cases, adapters and refusal hashes are unchanged; prior scoped findings remain applicable. MCP/metadata changes reviewed separately do not enter these five artifact manifests. The initially identified null-warning-card inconsistency was corrected before this frozen commit; lifecycle replies retain required warning cards. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/core/reliability_envelope.py",
+          "previous_sha256": "af7e5db33803b37ab07a9dc9e10a28c26928b0a7c1a90773995553699cf7ec21",
+          "current_sha256": "c853fca0b43906f17601d5282f355846c30ae5beef125e99dc9bd838fb1fb860"
+        }
+      ],
+      "validation": {
+        "independently_run": "tests/metaharness/test_uat_diagnostics.py tests/metaharness/test_phase6_mcp.py tests/core/test_kernel_promotion_law.py",
+        "result": "34 passed, 1 dependency deprecation warning in 3.88s",
+        "limits": "Focused local tests and static delta review; this reader did not independently perform the parent-reported Codex client probes or broad test runs. Full held-source/quote issuance gates remain required."
+      }
     }
   ]
 }
