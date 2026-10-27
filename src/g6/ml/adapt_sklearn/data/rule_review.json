@@ -184,7 +184,7 @@
     }
   ],
   "reviewed": {
-    "artifact_sha256": "fd2ebe4635d1e2ad8d5672639dad920c3dee7389efe11d2599848e8f18e21251",
+    "artifact_sha256": "a274a45e034b7486f7f60565457da26db489743800cdd4836b4197cab179f688",
     "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
     "sources_sha256": {
       "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
@@ -445,6 +445,72 @@
         "current_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec"
       },
       "validation": "Byte-exact version delta and prior artifact reconstruction passed for all five components. Final issuance remains responsible for its normal held-source/quote checks and gates."
+    },
+    {
+      "kind": "independent-platform-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "5eca6cc1b15d7b8526ef726d3e5555aed3078dd2",
+      "reviewed_commit": "3d1c78acea2efdb3e34b2235bcb97de962cf5eae",
+      "prior_review_sha256": "e9d935df2da062bbe7472bbf80bffd7988c476e2b38a2213d205cdd2ed736ccc",
+      "prior_reviewed": {
+        "artifact_sha256": "fd2ebe4635d1e2ad8d5672639dad920c3dee7389efe11d2599848e8f18e21251",
+        "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
+        "sources_sha256": {
+          "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
+          "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
+          "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
+          "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+          "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98",
+          "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
+          "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
+          "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
+          "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
+          "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
+          "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd"
+        },
+        "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+        "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+        "refusals": [
+          "MLError"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "a274a45e034b7486f7f60565457da26db489743800cdd4836b4197cab179f688",
+        "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
+        "sources_sha256": {
+          "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
+          "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
+          "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
+          "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+          "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98",
+          "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
+          "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
+          "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
+          "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
+          "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
+          "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd"
+        },
+        "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+        "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+        "refusals": [
+          "MLError"
+        ]
+      },
+      "scope": "Supplement to existing independent delta attestations: sandbox trusted-root canonicalization only. Original source-reader attribution and rule findings remain unchanged. No source clauses or private quotes were reread; no new medical, legal or domain endorsement or cryptographic signature.",
+      "method": "Independently read the sandbox source delta, surrounding run_script/output collector, storage.contained and storage.plain_file. Confirmed the sole runtime source edit canonicalizes the host-created temporary root with resolve(strict=True), before input writes and untrusted execution. Substituting prior sandbox bytes into each affected artifact manifest reconstructs its prior artifact hash exactly.",
+      "finding": "Trusted parent aliases such as macOS /var are resolved before child execution. Output rejection still uses plain_file, contained(refuse_links=True), O_NOFOLLOW where available, regular-file and inode checks, and bounded reads. The trusted host must continue to avoid concurrent mutation of the run folder, as the collector documents. No child-created link exception was added. Covered computations, rules, source entries, cases, adapters and refusal hashes are unchanged; only artifact_sha256 changes for the three ML components. Existing scoped findings remain applicable and review raises no label.",
+      "source_delta": {
+        "path": "g6/core/sandbox.py",
+        "previous_sha256": "4c4949948d459fa83208634e9da56de8709d8cf27c9b4ec58e520ecd85db291e",
+        "current_sha256": "613073147c3e0148cb82e867cd044829f341c90b35e77441c6b5df7f10226063"
+      },
+      "validation": {
+        "independently_run": "tests/core/test_confine.py::test_sandbox_accepts_trusted_temp_parent_alias_but_refuses_child_links",
+        "environment": "g6-a2-linux Docker image; repository bind-mounted read-only; network disabled",
+        "result": "1 passed in 0.89s",
+        "limits": "This independently exercises the POSIX alias and child-link rejection, not a native macOS runtime or live bubblewrap test. Full certificate issuance checks remain required."
+      }
     }
   ]
 }

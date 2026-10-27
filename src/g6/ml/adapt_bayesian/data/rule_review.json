@@ -158,7 +158,7 @@
     }
   ],
   "reviewed": {
-    "artifact_sha256": "ea9328a48d495558dba37ec50d49da0623cefda7f774c1dcad4f4f2be987ad94",
+    "artifact_sha256": "67f9da7c19441d2fcfd6511a1af0f587610671b0482917447e417f358418492f",
     "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
     "sources_sha256": {
       "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
@@ -425,6 +425,72 @@
         "current_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec"
       },
       "validation": "Byte-exact version delta and prior artifact reconstruction passed for all five components. Final issuance remains responsible for its normal held-source/quote checks and gates."
+    },
+    {
+      "kind": "independent-platform-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "5eca6cc1b15d7b8526ef726d3e5555aed3078dd2",
+      "reviewed_commit": "3d1c78acea2efdb3e34b2235bcb97de962cf5eae",
+      "prior_review_sha256": "70382803387463ffa2b69495f9e74af34199eeba1424c751116985b966a3c19e",
+      "prior_reviewed": {
+        "artifact_sha256": "ea9328a48d495558dba37ec50d49da0623cefda7f774c1dcad4f4f2be987ad94",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "67f9da7c19441d2fcfd6511a1af0f587610671b0482917447e417f358418492f",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to existing independent delta attestations: sandbox trusted-root canonicalization only. Original source-reader attribution and rule findings remain unchanged. No source clauses or private quotes were reread; no new medical, legal or domain endorsement or cryptographic signature.",
+      "method": "Independently read the sandbox source delta, surrounding run_script/output collector, storage.contained and storage.plain_file. Confirmed the sole runtime source edit canonicalizes the host-created temporary root with resolve(strict=True), before input writes and untrusted execution. Substituting prior sandbox bytes into each affected artifact manifest reconstructs its prior artifact hash exactly.",
+      "finding": "Trusted parent aliases such as macOS /var are resolved before child execution. Output rejection still uses plain_file, contained(refuse_links=True), O_NOFOLLOW where available, regular-file and inode checks, and bounded reads. The trusted host must continue to avoid concurrent mutation of the run folder, as the collector documents. No child-created link exception was added. Covered computations, rules, source entries, cases, adapters and refusal hashes are unchanged; only artifact_sha256 changes for the three ML components. Existing scoped findings remain applicable and review raises no label.",
+      "source_delta": {
+        "path": "g6/core/sandbox.py",
+        "previous_sha256": "4c4949948d459fa83208634e9da56de8709d8cf27c9b4ec58e520ecd85db291e",
+        "current_sha256": "613073147c3e0148cb82e867cd044829f341c90b35e77441c6b5df7f10226063"
+      },
+      "validation": {
+        "independently_run": "tests/core/test_confine.py::test_sandbox_accepts_trusted_temp_parent_alias_but_refuses_child_links",
+        "environment": "g6-a2-linux Docker image; repository bind-mounted read-only; network disabled",
+        "result": "1 passed in 0.89s",
+        "limits": "This independently exercises the POSIX alias and child-link rejection, not a native macOS runtime or live bubblewrap test. Full certificate issuance checks remain required."
+      }
     }
   ]
 }
