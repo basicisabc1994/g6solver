@@ -126,7 +126,7 @@ MCP, a reply with no state is a `qualified-draft`, and nothing is `verified` wit
 ### What is a component?
 A small package that does one job, such as `grounding` (check claims against sources) or `action_gating` (allow, ask
 a person, or block). Each works on its own and declares any other component it imports. There are 34 in the core
-harness, and 55 extensions are in the library, each in a family for one kind of work; the
+harness, and 60 extensions are in the library, each in a family for one kind of work; the
 [catalogue](components.md) is generated from the code. The two tables below list every one.
 
 ### Which components are in the core harness?
@@ -169,10 +169,6 @@ harness, and 55 extensions are in the library, each in a family for one kind of 
 | `workforce` | Fixes what done means before a coding task starts, has a person confirm it, then checks the agent's change against it | Python-only | — |
 
 ### Which extensions are in the library?
-Five built extensions currently await renewed independent review after shared code changed: `adapt_automl`,
-`adapt_bayesian`, `adapt_physical_ai`, `adapt_sklearn`, and `duty_of_care`. Their earlier certificates do not
-cover the current bytes, so G6 excludes them from the available library.
-
 The last column links the certificate G6 issued for each extension that works in a vetted area, such as clinical or
 scientific work (see the next answer).
 
@@ -188,8 +184,11 @@ scientific work (see the next answer).
 | `adapt_synth` | Media | Make tones, notes, chords, scales, melodies, noise and drum patterns, each one measured against what was asked. | MCP | none | — |
 | `adapt_visualisation` | Media | Chart the rows you give, and show the file holds every row and only the values given. | MCP | none | — |
 | `adapt_voice` | Media | Speak text and transcribe speech, refusing a transcript that is empty or at an impossible speaking rate; a wrong one of a plausible length passes. | MCP | `speak`, `speak_paid`, `transcribe`, `voices` | — |
+| `adapt_automl` | Machine learning | Search estimators and settings within a budget, and score the choice on rows it held out. | MCP | none | [certificate](https://github.com/basicisabc1994/g6solver/blob/main/src/g6/ml/adapt_automl/certificate/CERTIFICATE.md) |
+| `adapt_bayesian` | Machine learning | Exact Bayesian updates and checked posterior sampling: expose hidden uncertainty. | MCP | `sample_pymc` | [certificate](https://github.com/basicisabc1994/g6solver/blob/main/src/g6/ml/adapt_bayesian/certificate/CERTIFICATE.md) |
 | `adapt_pandas` | Machine learning | Read a table you give by one stated rule, and say where it mixes kinds, looks missing or repeats. | MCP | none | — |
 | `adapt_pytorch` | Machine learning | Train a small neural network on rows it holds out itself, seeded, and stopped on a broken loss. | MCP | `forget` | — |
+| `adapt_sklearn` | Machine learning | Fit and score a scikit-learn model on rows it holds out itself, after checking for leakage. | MCP | none | [certificate](https://github.com/basicisabc1994/g6solver/blob/main/src/g6/ml/adapt_sklearn/certificate/CERTIFICATE.md) |
 | `agent_autogen` | Agent runtimes | Run an AutoGen team (round robin, selector or swarm) on the model you pass in, stopped at a message limit, every tool call decided by G6's gate. | MCP | `run_team` | — |
 | `agent_claude` | Agent runtimes | Hand a coding task to Anthropic's Claude Code, which you installed: read tools only unless you grant edits, never its shell or the web. | MCP | `available`, `run` | — |
 | `agent_codex` | Agent runtimes | Hand a coding task to OpenAI's Codex, the coding agent you installed: read-only unless you grant writes, in the folder you name, under a deadline. | MCP | `available`, `run` | — |
@@ -225,10 +224,12 @@ scientific work (see the next answer).
 | `design_governance` | Code | Check a codebase's structure for import cycles, layer breaches and pass-through wrappers, and which cycles a change introduced. | MCP | none | — |
 | `meta_programming` | Code | Rename and extract Python code through its syntax tree and scopes, each edit checked against the tree it should give, comments kept. | MCP | `run_tests` | — |
 | `swe_diagnostics` | Code | Show a coding agent an unfamiliar repository before it changes it: its layout, build, tests and files, and what a change touches. | MCP | `patch_check` | — |
+| `adapt_physical_ai` | Embodied and simulation | Check a robot's motion plan against its world and its own limits, segment by segment, before anything moves. | MCP | none | [certificate](https://github.com/basicisabc1994/g6solver/blob/main/src/g6/embodied/adapt_physical_ai/certificate/CERTIFICATE.md) |
 | `cog_arch_actr` | Cognitive architectures | Rank an agent's memories by recency, frequency and context with ACT-R's equations, refusing a recall below the retrieval threshold. | MCP | none | — |
 | `cog_arch_aixi` | Cognitive architectures | Run a bounded MC-AIXI-CTW agent on a registered environment and judge it by its regret against a random policy on the same seed. | MCP | `run_episode` | — |
 | `cog_arch_gps` | Cognitive architectures | Plan a sequence of steps to a goal by means-ends analysis, every plan replayed against its operators before it is offered. | MCP | none | — |
 | `decision_making` | Cognitive architectures | Standard, seeded decision rules for what to try next and how many retries to allow, each answer with its working and the same on every run. | MCP | none | — |
+| `duty_of_care` | Professional workflows | Matches a fixed list of English crisis phrases; a paraphrase or another language passes. A match goes to a person. | MCP | none | [certificate](https://github.com/basicisabc1994/g6solver/blob/main/src/g6/jobs/duty_of_care/certificate/CERTIFICATE.md) |
 | `adapt_rq` | Integrations | Background JSON jobs on an operator-owned Redis queue, with registered functions and sensitive operations. | MCP | every op | — |
 | `database` | Integrations | Query and change a database the server's operator declares, reads on a connection that cannot write, changes dry-run first. | MCP | `execute` | — |
 | `hat_orchestrator` | Integrations | Coordinate declared team capabilities and claims; operator ranks never authorise real-world actions. | MCP | every op but `check_sync` | — |

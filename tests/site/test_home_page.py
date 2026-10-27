@@ -27,19 +27,18 @@ def test_the_catalogue_is_the_registry():
     members = {r["name"] for r in catalogue.family_members()}
     library = {r["name"] for r in catalogue.library_extensions()}
     waiting = {r["name"] for r in catalogue.awaiting_review()}
-    assert waiting == {'adapt_automl', 'adapt_sklearn', 'duty_of_care', 'adapt_bayesian', 'adapt_physical_ai'}
     rows = catalogue.components()
     assert {r["name"] for r in rows} == names - members and len(rows) == 34
     assert library == members - waiting and not library & waiting and library == {
-        "adapt_audio", "adapt_blender", "adapt_comfyui", "adapt_diagrams",
+        "adapt_audio", "adapt_automl", "adapt_bayesian", "adapt_blender", "adapt_comfyui", "adapt_diagrams",
         "adapt_django", "adapt_ffmpeg", "adapt_generative_art", "adapt_healing", "adapt_image",
-        "adapt_library_synthesizer", "adapt_pandas", "adapt_pytorch", "adapt_rq",
+        "adapt_library_synthesizer", "adapt_pandas", "adapt_physical_ai", "adapt_pytorch", "adapt_rq", "adapt_sklearn",
         "adapt_synth", "adapt_visualisation", "adapt_voice", "adapt_webpage", "agent_autogen", "agent_claude",
         "agent_codex", "agent_langgraph", "agent_nanoclaw", "agent_runtime", "agent_smolagents", "align_prompt_library",
         "australian_legal_corpus", "cog_arch_actr", "cog_arch_aixi", "cog_arch_gps", "component_creator", "ctx_ace",
         "ctx_cognee", "ctx_colbert", "ctx_contexthub", "ctx_elastic", "ctx_geo", "ctx_git", "ctx_langextract",
         "ctx_library_mapper", "ctx_search", "ctx_vision", "database", "decision_making", "design_governance",
-        "hat_orchestrator", "knowledge_chunker", "knowledge_converter", "knowledge_fetcher",
+        "duty_of_care", "hat_orchestrator", "knowledge_chunker", "knowledge_converter", "knowledge_fetcher",
         "knowledge_indexer", "knowledge_manifest", "llm_router", "meta_programming", "shared_workspace",
         "swe_diagnostics", "workspace_manager"}
     for row in rows:
