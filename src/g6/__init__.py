@@ -4,4 +4,4 @@
 Every sub-package is usable on its own (it depends only on `g6.core`).
 `g6.harness` composes them end to end.
 """
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.1.dev0"

@@ -67,7 +67,7 @@ exists as a Python API rather than trying to invoke it. To run a task end to end
   your user. Do not clear the stop yourself or route around it.
 - **The meta-harness tunes G6 to a workflow your user declared** (`metaharness_*` tools, `implemented`).
   You may propose a profile, evaluate it, read the decision and diagnose (`metaharness_diagnose`). You cannot approve
-  a change: `metaharness_approve` asks your user directly, and refuses the session that proposed. **When a reply is not
+  a change: `metaharness_approve` presents digest-bound client consent, including in the proposing session. Identity is recorded as given. **When a reply is not
   a recommendation, relay its `recovery` to your user:** the causes, then the remedies, saying which ones you can try
   as candidates (`who: candidate`) and which only your user can take (`who: person`). Never take a `person` step
   yourself. Never tell your user a change "improves results"
@@ -91,3 +91,5 @@ it. If a call fails for want of a key or a model, tell your user the line to add
 
 When you have used G6, tell your user which component and op you called, the label it returned, and the
 reasons, in one or two sentences.
+
+For application construction and the Python patch reference, see [AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). Start with `metaharness_start`; use `g6_compose` for explicit connections. Never interpret a contract check as empirical validation.

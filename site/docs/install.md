@@ -21,6 +21,10 @@ access grant), G6 refuses to run untrusted code for you (a patch, a generated sc
 allow it once with g6 setup. Code you allow then has your own rights: it can read your key file ~/.g6/.env and your
 other files, and its network guard works inside Python only. You are responsible for what you run.
 
+An app that runs code you give it (agent-change-check runs your repository's tests; ml-check runs your
+script) asks on its page, the first time, whether it may run that code without a boundary where your
+computer has none. Your answer is kept for this computer; `g6 setup` changes it.
+
 ??? question "The browser did not open"
     The small window shows an address like `http://127.0.0.1:52817/`. Copy it into your browser.
 

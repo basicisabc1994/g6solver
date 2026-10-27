@@ -143,9 +143,10 @@ def test_the_faq_says_what_a_certificate_holds_and_what_it_does_not(client):
 
 
 def test_the_sandbox_answers_say_what_g6_confines_and_where(client):
-    # g6.core.confine runs untrusted code in a Windows AppContainer once the one-time access grant is made, and
-    # unconfined elsewhere (CORE_SANDBOX-01: a warning, never a restriction). Fails while the FAQ or the Security page
-    # says nothing in G6 is an operating-system sandbox, or leaves out the warning in confine's own words
+    # g6.core.confine runs untrusted code in a Windows AppContainer once the one-time access grant is made, and in
+    # bubblewrap on Linux, and refuses it elsewhere unless the person allows it once (CORE_SANDBOX-01, owner ruling
+    # 2026-10-27). Fails while the FAQ or the Security page says nothing in G6 is an operating-system sandbox, or leaves
+    # out the warning in confine's own words
     from g6.core.confine import UNCONFINED_WARNING
 
     for path in ("/faq/", "/security/"):

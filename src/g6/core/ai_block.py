@@ -260,6 +260,8 @@ def _annotate_result(
 ) -> Result[Any]:
     setattr(result, "evidence", evidence)
     setattr(result, "completion_state", completion_state or "qualified-draft")
+    setattr(result, "assurance", {"status": "unvalidated", "connection": "plain >>",
+                                  "note": "Completion states are enforced; contracts and application benefit are not checked."})
     if warning_card is not None:
         if failed_stage:
             warning_card = {"failed_stage": failed_stage, **warning_card}

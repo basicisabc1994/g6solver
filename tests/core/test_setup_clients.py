@@ -12,7 +12,7 @@ def test_setup_registers_explicit_client_with_absolute_interpreter_and_skills(tm
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(setup, "isolation", lambda *a: 0)
     calls = []
-    monkeypatch.setattr("shutil.which", lambda name: f"C:/tools/{name}.exe")
+    monkeypatch.setattr("g6.core.outside.find_program", lambda name: f"C:/tools/{name}.exe")
     monkeypatch.setattr("subprocess.run", lambda command, **kw: calls.append(command) or
                         SimpleNamespace(returncode=0, stdout="", stderr=""))
     assert main(["setup", "--client", "codex", "--refuse-unconfined", "--allow", "patch_review.review"]) == 0

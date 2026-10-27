@@ -113,11 +113,22 @@ from. A held-out file is sealed; a change to it voids every evaluation against i
 
 ## Use it from your agent (MCP)
 
-The `g6-mcp` server adds seven tools: `metaharness_inspect`, `metaharness_propose`, `metaharness_evaluate`,
-`metaharness_decide`, `metaharness_diagnose`, `metaharness_approve` and `metaharness_rollback`, for the workflows you
-declare in a Python file named by `G6_METAHARNESS`. Your agent can propose, measure, read decisions and diagnose. It
-relays each recovery plan to you. It cannot approve: approval asks you directly through your client, and the session
-that proposed a change can never approve it.
+The MCP server supports data-only workflow creation with `metaharness_start`, digest-bound client confirmation,
+code proposals with a hypothesis, diagnosis, evaluation, decisions, approval, running and rollback.
+It discovers `.g6/workflows/` in the project and `$G6_HOME/workflows/` (project takes precedence).
+`G6_METAHARNESS` remains an explicit Python configuration override.
+
+Use `metaharness_evaluate_start` and `metaharness_job` for long evaluations. Jobs are process-local;
+a server restart loses handles and must never be interpreted as success. Inspect the workflow's ledger afterward.
+`metaharness_run` runs the approved version as a job. Approval may happen in the proposing session through
+client-mediated consent tied to the decision and candidate digests. The supplied name is not authenticated.
+If elicitation is unavailable, the refusal gives a `g6 workflow confirm` or `g6 workflow approve` terminal command.
+
+Generated-code workflows use `main.py` with `solve(task)`. Exact, contains and finite-number checks are supported.
+Below 30 held-out cases is exploration, not validated tuning. Code activation additionally needs a host-configured
+independent safety/injection evaluator; the data-only creator does not invent that evidence. Candidate code cannot
+edit the installed evaluator through these tools. This assumes a trusted host and confinement; a separate unrestricted
+shell running under the same account is outside that boundary.
 
 ## What you need
 

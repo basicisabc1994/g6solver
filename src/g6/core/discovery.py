@@ -118,6 +118,12 @@ def find(query: str, limit: int = 5) -> list[dict[str, Any]]:
             matched = sorted(t for t in q if d.get(t))
             scored.append({"component": name, "score": round(score, 3), "matched": matched})
     scored.sort(key=lambda r: (-r["score"], r["component"]))
+    if re.search(r"\b(tune|improve|keeps failing|make my agent better)\b", query.lower()):
+        # Explicit workflow intent routing, reported separately from the lexical score.
+        score = max((row["score"] for row in scored), default=0) + 1
+        scored = [{"component": "metaharness", "score": score, "matched": ["workflow-improvement-intent"],
+                   "route": "metaharness_start", "basis": "explicit workflow intent"},
+                  *(row for row in scored if row["component"] != "metaharness")]
     return scored[:limit]
 
 
@@ -145,6 +151,13 @@ def describe(name: str) -> dict[str, Any]:
 
 
 HELP = (
+    "Build agents from parts you can check. Use a component alone, connect declared contracts with g6_compose, "
+    "or fit an application to a task with Propose -> Test -> Gate -> Approve. For AI building AI: "
+    "metaharness_start creates a data-only Python application workflow; metaharness_confirm asks for client consent; "
+    "diagnose, propose_code with a hypothesis, evaluate_start, poll metaharness_job, decide, approve, then run. "
+    "All meta-harness tool names begin metaharness_. Below 30 held-out cases is exploration only. "
+    "Generated-code activation also needs independent host-configured safety checks. g6_review_patch runs selected "
+    "Python tests and a reference review composition, with host permission patch_review.review. "
     "G6 discovery, in order: find(query) ranks components by what they say about themselves and the failures "
     "they guard against; describe(component) gives maturity, ops, dependencies, the failure modes it guards "
     "against and can cause, the programs and extras it needs from outside G6, and the component's skill; "

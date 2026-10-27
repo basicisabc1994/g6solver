@@ -131,9 +131,9 @@ def configure_model(provider: str) -> None:
 def register_clients(args, clients: list[str], say: Say) -> int:
     """Explicit registration via the clients' CLIs; never parses or overwrites their config files."""
     import re
-    import shutil
     import subprocess
     from g6.cli import main as cli
+    from g6.core.outside import find_program
 
     allowed = args.allow.strip()
     if allowed and any(not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)?", item.strip())
@@ -141,7 +141,7 @@ def register_clients(args, clients: list[str], say: Say) -> int:
         say("--allow requires explicit component or component.operation names; wildcards are not supported.")
         return 2
     for client in clients:
-        binary = shutil.which(client)
+        binary = find_program(client)
         if binary is None:
             say(f"{client} is not on PATH; install its CLI, then run g6 setup --client {client}.")
             return 2

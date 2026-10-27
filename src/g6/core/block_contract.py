@@ -4,8 +4,7 @@
 """BlockContract — mvp.core.block_contract
 
 A block's self-declared promises about what it can do, what it costs,
-how it fails, and how a caller should verify it. Used by the reliability
-orchestrator to gate output instead of post-hoc enveloping.
+how it fails, and how a caller should verify it. The registry and strict composition enforce the documented subsets; other fields remain descriptive.
 
 Worked example
 --------------
@@ -110,23 +109,9 @@ def _handle_contract_violation(error_code: str, detail: str) -> None:
 
 @dataclass(frozen=True)
 class FailureMode:
-    """A known way this block can go wrong.
-
-    Important — ``detector`` strings ARE runtime dispatch. The
-    orchestrator's ``verify_output`` looks each declared ``detector`` up
-    in ``DETECTOR_REGISTRY`` and invokes it against the block's output; a
-    True return flags the failure mode as fired (``domain_standard_passed``
-    → False, surfaced in ``checks_failed``). A declared-but-unregistered
-    detector fails closed (recorded as an unresolved check, never silently
-    ignored), and the fleet-drift gate
-    (``tests/mvp/reliability/test_fleet_drift.py``) asserts every declared
-    detector either resolves in the registry or is the empty string
-    (explicit documentation-only). Register implementations with
-    ``@register_detector``; ``detector=""`` marks a documented failure mode
-    with deliberately no runtime check. ``known_failure_modes`` also
-    populates the epistemic contract's ``forbidden_claims`` list and drift
-    reports. (This docstring previously described detectors as pure
-    documentation — stale since the verify_output dispatch loop landed.)
+    """A declared failure mode. Detector names are metadata unless an explicit caller
+    invokes the registered detector; declaring one does not establish runtime enforcement.
+    Strict compose executes preconditions and stop_conditions, not named detectors.
     """
 
     name: str                 # short identifier, e.g. "hallucinated_citation"
@@ -242,42 +227,14 @@ PreconditionContext = dict[str, Any]
 
 @dataclass(frozen=True)
 class BlockContract:
-    """What a block promises and how to check it.
+    """Self-declared contract metadata with explicit enforcement points.
 
-    Two kinds of field on this dataclass:
-
-      *Executable* — drive the orchestrator's runtime behaviour:
-        - ``preconditions``    → callables run during ``run_preflight``;
-                                 failures land in ``task_contract.missing_inputs``.
-        - ``stop_conditions``  → callables run during ``verify_output``;
-                                 any True flips ``domain_standard_passed=False``
-                                 and routes the envelope to BLOCKED_ESCALATED.
-        - ``human_review_required``    → predicate consulted by ``verify_output``.
-        - ``verification_method``      → appended to the epistemic verification
-                                         strategy; surfaced in warning cards.
-        - ``fallback_block``   → surfaced in the warning card's recommended
-                                 next step on any non-green status.
-
-      *Input contract* — drives the registry invoker's pre-validation:
-        - ``inputs_required_per_op`` → maps each op name to the tuple of
-          fields that op rejects when empty. The registry invoker checks
-          these before Pydantic ``model_validate`` and emits the canonical
-          ``[<NAME>_ERROR] <op>: <field> is required`` envelope. Empty dict
-          (the default) means no per-op enforcement — unmigrated behaviour.
-
-      *Documentation* — surface in envelopes / drift reports / human review
-      but do NOT drive dispatch:
-        - ``purpose``, ``inputs_required``, ``inputs_optional``, ``outputs``,
-          ``good_at``, ``bad_at``  — descriptive only.
-        - ``known_failure_modes``  — the list populates ``forbidden_claims``
-          on the epistemic contract (informational markers) and feeds the
-          drift detector's declared-vs-observed comparison. The
-          ``FailureMode.detector`` string is purely documentary; turn a
-          declared mode into an enforced gate by adding a matching
-          ``stop_conditions`` callable.
-        - ``cost_estimate``        — surfaces in drift's cost_drift finding
-          when actual p95 > declared p95 * 1.5; does not gate anything by
-          itself.
+    Registry invocation validates required per-operation inputs and typed schemas.
+    Strict compose additionally checks explicit wiring, declared evidence kinds,
+    preconditions, outputs and stop conditions. Plain >> performs no contract checks.
+    Human-review policies, guarantees, failure-mode names, cost and fallback fields
+    describe intended behaviour; they are not enforced merely by declaring them.
+    Passing structural checks does not validate application utility or correctness.
     """
 
     __contract_schema_version__: ClassVar[str] = "2.0"

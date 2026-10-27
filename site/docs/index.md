@@ -1,11 +1,11 @@
 ---
 hide: [navigation, toc]
-title: G6 — hold your AI agent to the evidence
+title: G6 — build agents from parts you can check
 ---
 
 <div class="hero" markdown>
 
-# Hold your AI agent to the evidence.
+# Build agents from parts you can check.
 
 **G6 is free and fully open source** (Apache-2.0). It checks an agent's work, gates its risky actions, and labels
 every result for exactly what was shown. It runs on your computer, with a local model or your own key, and needs no
@@ -15,7 +15,7 @@ account.
 
 </div>
 
-An AI agent's "done" is a claim, not a fact. G6 turns it into a result you can check. You say what a correct result
+Our north star is AI for AI: agents construct applications, propose redesigns and test hypotheses. Application benefits remain to be demonstrated. An AI agent's "done" is a claim, not a fact. G6 turns it into a result you can check. You say what a correct result
 looks like. G6 freezes those checks before the work starts, runs them on the exact output, and labels the result with
 what the evidence supports, and nothing more. Every gap is named, with the next step. Before an agent acts, G6's
 action gate answers allow, ask a person, or block. Each piece is a small component you can use on its own or

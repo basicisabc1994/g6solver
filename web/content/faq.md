@@ -295,9 +295,11 @@ promotion gate rates the change low-risk, and you supply a rollback. A change th
 the evaluators, the safety rules) is blocked.
 
 ### Is G6 a sandbox?
-Not one to rely on alone. It runs tests and candidate code in bounded child processes. On Windows, once you have run
-the one-time access grant that `g6 doctor` prints, that code runs in an AppContainer: no network, and only its own run
-folder writable. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows
+Not one to rely on alone. It runs tests and candidate code in bounded child processes, and only inside an
+operating-system boundary: on Linux, bubblewrap (install the `bubblewrap` package), with a private loopback and no
+other network, and only its own run folder writable; on Windows, once you have run the one-time access grant that
+`g6 doctor` prints, an AppContainer: no network, and only its own run folder writable. `g6 doctor` says which you have
+and what your computer needs. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows
 before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a
 repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read your
 key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for what

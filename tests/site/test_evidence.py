@@ -225,3 +225,9 @@ def test_a_missing_results_file_fails_loudly(tmp_path, monkeypatch):
     monkeypatch.setattr(evidence, "VALIDATION_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
         evidence.studies()
+
+
+def test_fixed_arm_and_posthoc_selection_are_separate():
+    facts = evidence.headline_facts()
+    assert facts["primary_total"] == facts["total"]["D"] and facts["primary_arm"] == "D"
+    assert all("post-hoc" in row["selection"] and "unadjusted" in row["p_scope"] for row in evidence.winners())

@@ -90,3 +90,22 @@ recovery is not itself evidence that the integrated code passes.
 - Broader configured baseline: metaharness 309 passed, 1 skipped; core/integrity 2298 passed, 17 skipped and one
   expected-tools-list failure, since fixed and covered by the focused discovery tests.
 - Recovered the nine remaining A2 documentation/site-test edits without changing their source worktree.
+
+### Validation, public claims and study preparation
+
+- Windows OS confinement: 51 passed with no global unconfined opt-in. Linux bubblewrap and secret probes:
+  10 passed inside a disposable Docker container with a read-only checkout and no network. These are boundary
+  tests, distinct from the Windows CI opt-in used for general regression tests.
+- Adjacent grounding/coding/action/bundle suites: 535 passed. Full source/test Ruff scan passed.
+- Core/integrity: 2305 passed, 17 skipped; one resolver-policy failure fixed by using outside.find_program.
+  Setup and resolver regression: 31 passed.
+- Harness/metaharness: 392 passed, 1 skipped; three import-layer guard tests failed on the new terminal entry point.
+  Ruling: permit exactly g6.cli -> g6.metaharness.surface, retaining the prohibition for components and core.
+  This admits the authorized terminal consent path without relaxing component layering. All 26 guardrail tests pass.
+- Added a real FastMCP Client create/confirm/job/run journey and sensitive patch-tool refusal test; it passes.
+- Public headline now reports fixed arm D separately from post-hoc best-per-dataset selection. Exploratory winners
+  carry selection and unadjusted-p-value caveats. Positioning preserves AI-for-AI as the objective, not a result.
+- V8 draft sampler verified the existing V2 parquet hash and read only three metadata columns: 8 Python dev tasks
+  (2 reused OpenLibrary pilots) and 48 scored IDs; no scored text inspected, no model call. Protocol and split remain
+  draft pending price/cap calibration, evaluator controls and final registration. Budget ceiling remaining $167.85.
+- v0.1.0 was not modified. Package development version becomes 0.1.1.dev0; no publication or shared-branch push.

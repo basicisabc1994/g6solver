@@ -44,6 +44,39 @@ def test_rollback_prompt_and_action_are_bound_to_store_head(tmp_path):
     assert got["completion_state"] == "blocked-escalated"
 
 
+def test_data_only_application_over_real_mcp_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("G6_ALLOW_UNCONFINED", "1")
+    monkeypatch.delenv("G6_MCP_SENSITIVE", raising=False)
+    surface = Surface(workflow_root=tmp_path / "workflows")
+    server = build_server(surface)
+
+    async def consent(message, response_type, params, context):
+        assert "digest" in message and "Future activation requires separate consent" in message
+        return response_type(value="Ada")
+
+    async def flow():
+        async with Client(server, elicitation_handler=consent) as client:
+            specification = {"name": "echo", "task": "Echo {input}",
+                             "cases": [{"input": "a", "expected": "a"}, {"input": "b", "expected": "b"}],
+                             "baseline_code": {"main.py": "def solve(task):\n    return task.split(' ', 1)[1]\n"}}
+            made = _data(await client.call_tool("metaharness_start", {"specification_json": json.dumps(specification)}))
+            confirmed = _data(await client.call_tool("metaharness_confirm", {
+                "workflow": "echo", "workflow_digest": made["workflow_digest"]}))
+            assert confirmed["completion_state"] == "qualified-draft"
+            job = _data(await client.call_tool("metaharness_run", {"workflow": "echo", "task_input": "hello"}))
+            for _ in range(100):
+                result = _data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                if result.get("status") in ("completed", "failed"):
+                    break
+                await asyncio.sleep(0.05)
+            assert result["status"] == "completed" and result["result"]["output"] == "hello", result
+            refused = _data(await client.call_tool("g6_review_patch", {"repo": str(tmp_path), "task": "fix",
+                            "claim": "fixed", "sources": {}, "tests": []}))
+            assert refused["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
+    asyncio.run(flow())
+
+
 def _surface(tmp_path) -> Surface:
     wf, _ = rig.build(7)
     surface = Surface({"arith": {"workflow": wf, "workspace": tmp_path / "ws", "clock": rig.Clock()}})

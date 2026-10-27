@@ -456,3 +456,14 @@ the commit the entry names.
 - **Open before the freeze:** the ref and commit of G6's wheel; the pilot's measured costs.
 - **Not audited:** no second person has checked the order rule, A2's words, G6's check, the gaming-scan patterns or the
   verifier's reproduction of Harbor's.
+
+
+## V8 preparation ? draft, not frozen (2026-10-27)
+
+Protocol: `validation/v8_composition/PROTOCOL.md`; split: `results/V8/splits.draft.json`.
+The new split was drawn from the SHA-256-verified V2 parquet by reading only instance_id, repo and repo_language.
+Eight Python development tasks include two reused OpenLibrary pilots; 48 Python scored IDs are newly registered
+as a draft order, not a frozen scored study. No task statements, patches or hidden tests were inspected for the draw.
+The model candidate is the actual V7 runner's claude-sonnet-5-5, high effort, subject to availability and pricing
+calibration. Two-arm feasibility/effect estimation does not isolate composition's causal contribution.
+No paid execution or improvement claim is authorized until the protocol's outstanding gates are satisfied.

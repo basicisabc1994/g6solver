@@ -169,7 +169,7 @@ forbidden_modules = ["g6.harness", "g6.research", "g6.operator", "g6.mcp", "g6.c
 # the MCP surface exposes it. tests/metaharness checks that this list names every package except mcp and metaharness;
 # a family package (the second block) covers every extension in it.
 [[tool.importlinter.contracts]]
-name = "the meta-harness is a layer on top: only the MCP surface imports it"
+name = "the meta-harness is a layer on top: MCP and CLI consent entry points"
 type = "forbidden"
 source_modules = [
   "g6.abstraction", "g6.action_gating", "g6.action_logic", "g6.algebra", "g6.bundles", "g6.causal", "g6.cegis",
@@ -186,6 +186,7 @@ source_modules = [
   "g6.knowledge", "g6.media", "g6.memory", "g6.ml", "g6.provers", "g6.sources", "g6.workspace",
 ]
 forbidden_modules = ["g6.metaharness"]
+ignore_imports = ["g6.cli -> g6.metaharness.surface"]
 
 [[tool.importlinter.contracts]]
 name = "the meta-harness imports no research code (founder decision A1)"

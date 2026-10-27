@@ -9,13 +9,15 @@ execute, adjudicate and remember.
 pip install .               # core: pydantic + returns only
 pip install ".[all]"        # optional extras: MCP server, Anthropic SDK, abstraction tools, Z3
 g6 doctor                   # read-only check of the installation
+g6 setup                    # your choices for this computer, asked once (run it yourself)
 ```
 
 Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the one-time
 access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a repository's tests) unless you
 allow it once with g6 setup. Code you allow then has your own rights: it can read your key file ~/.g6/.env and your
-other files, and its network guard works inside Python only. You are responsible for what you run. `g6 doctor` says whether that code runs confined on your computer and, on Windows,
-prints the one-time commands that grant the access.
+other files, and its network guard works inside Python only. You are responsible for what you run. `g6 doctor` says whether that code runs confined on your computer: on Linux it needs
+bubblewrap (the `bubblewrap` package), and on Windows it prints the one-time commands that grant the access. Run
+`g6 setup` once yourself to make the choice for this computer.
 
 ## Run a task through the harness
 

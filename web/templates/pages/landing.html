@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}G6: make AI agents check their own work{% endblock %}
+{% block title %}G6: build agents from parts you can check{% endblock %}
 {% block meta_description %}For developers using Claude Code, Codex and other coding agents: G6 is a free, open-source framework that checks for made-up facts, unfinished work and risky actions before your agent says it's done.{% endblock %}
 {% block content %}
 {% comment %}
@@ -24,10 +24,10 @@ Copy is a draft for the owner's review in the live preview.
     </div>
     <div class="stage__copy wrap">
         <header class="hero">
-            <h1 class="display display--why" id="hero-title">Now you can<br>make AI agents<br>check their<br>own work.</h1>
-            <p class="lede strong why">For developers using Claude Code, Codex and other coding agents: a free,
-            open-source framework that checks for made-up facts, unfinished work and risky actions before your agent
-            says it's done.</p>
+            <h1 class="display display--why" id="hero-title">Build agents<br>from parts<br>you can check.</h1>
+            <p class="lede strong why">An open-source library of AI components for reasoning, evidence, verification and action control.
+            Use parts alone, connect explicit contracts, or adapt a workflow to your task. G6 records what was checked
+            and what remains uncertain; application benefits must be demonstrated through testing.</p>
             <div class="actions">
                 <a href="{% url 'pages:get_started' %}" class="btn cta">Get started</a>
                 <a href="#loop" class="btn">See how it works</a>
@@ -38,9 +38,9 @@ Copy is a draft for the owner's review in the live preview.
         </header>
 
         <div class="answer">
-            <h2 class="display">G6<br>engineers<br>itself.</h2>
+            <h2 class="display">AI builds.<br>Evidence<br>decides.</h2>
             <p class="lede">A harness is everything around a model: what it sees, how its answers are checked, what it
-            may do. G6's harness learns, in four steps.</p>
+            may do. Agents can propose application redesigns through four steps of controlled experimentation; improvement is not guaranteed.</p>
         </div>
 
         <ol class="steps" id="loop">
@@ -53,7 +53,7 @@ Copy is a draft for the owner's review in the live preview.
             <li class="step">
                 <span class="step__n">2</span>
                 <h2 class="h2">Test</h2>
-                <p class="lede">Each fix runs on held-out tasks no draft has seen. When one loses, G6 says why.</p>
+                <p class="lede">Each fix is compared with the baseline on registered held-out tasks. Independence depends on keeping those tasks from the proposer. When one loses, G6 says why.</p>
             </li>
             <li class="step">
                 <span class="step__n">3</span>
@@ -196,8 +196,8 @@ Copy is a draft for the owner's review in the live preview.
             </div>
             {% endfor %}
         </div>
-        <p class="ev__note">Grey is the model alone; black is G6. With its winning option for each task set, G6 solved
-        {{ facts.best_total }} of {{ facts.n }} tasks the model alone solved {{ facts.total.A }} of: a larger model's
+        <p class="ev__note">Grey is the model alone; black is G6. With the fixed self-tuning arm D, G6 solved
+        {{ facts.primary_total }} of {{ facts.n }} tasks the model alone solved {{ facts.total.A }} of: a larger model's
         judgement, distilled into a small model's harness, with no weights changed.
         {% if speed.changes %}In the last development run, G6 found, tested and approved its own changes on
         {% for c in speed.changes %}{{ c.dataset }} in {{ c.minutes }} minutes ({{ c.alone }} to {{ c.tuned }} of {{ c.n }}{% if c.from_components %}, starting from every component on{% endif %}){% if not forloop.last %}{% if forloop.revcounter == 2 %} and {% else %}, {% endif %}{% endif %}{% endfor %}.{% endif %}

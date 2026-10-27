@@ -1,18 +1,19 @@
 # G6
 
-**Hold your AI agent to the evidence.** G6 is an open-source harness that checks an agent's work, gates its risky
-actions, and labels every result for exactly what was shown. It runs on your computer, with a local model or your own
-key. Apache-2.0, free, no account and no hosted service.
+**Build agents from parts you can check.** G6 is an open-source library of AI components for reasoning,
+evidence, verification and action control. Its north star is **AI for AI**: agents construct applications,
+propose redesigns and test hypotheses against frozen checks, with evaluation and activation outside the candidate's
+writable scope. Components and workflow tools are available today; benefits for a particular application require testing.
 
 Every result carries one of three labels, and G6 never upgrades a label it did not earn:
 
 | Label | Meaning |
 |---|---|
-| `verified` | Every required check passed on independent evidence. |
+| `verified` | A registered check was independently reproduced for the stated artifact and claim scope; not complete correctness. |
 | `qualified-draft` | Usable, but something is unproven, and the result says what. |
 | `blocked-escalated` | Not safe to rely on; the result says what is needed. |
 
-## Why you can rely on what it says
+## What the checks establish
 
 - **The rule for labels.** `verified` should need independent evidence: a check the producer did not write, frozen
   before the work, that G6 has seen fail a planted wrong answer. A check you or your agent wrote is not independent,
@@ -39,7 +40,7 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
 git clone https://github.com/basicisabc1994/g6solver && cd g6solver
 pip install ".[all]"        # Python 3.12 or 3.13
 g6 doctor                   # read-only installation check
-g6 setup                    # your choices for this computer, asked once (run it yourself, not your agent)
+g6 setup --client codex      # register this installation and install its skill; or --client claude
 ```
 
 Not a programmer? Ready-made **bundles** (double-click apps) come with the first release; see the
@@ -50,12 +51,12 @@ Not a programmer? Ready-made **bundles** (double-click apps) come with the first
 **From a coding agent (MCP), the main surface:**
 
 ```bash
-claude mcp add g6 -- g6-mcp     # Claude Code
-codex mcp add g6 -- g6-mcp      # Codex
+g6 setup --client claude     # user-scoped registration, absolute Python path
+g6 setup --client codex      # install using-g6 for Codex too
 ```
 
-The agent gets five discovery tools (`g6_help`, `g6_components`, `g6_find`, `g6_describe` and `g6_invoke`) and seven
-`metaharness_*` tools for tuning. [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent itself.
+The agent gets discovery, `g6_compose`, `g6_review_patch`, and `metaharness_*` tools for constructing,
+measuring and revising applications. Long runs return job IDs; poll `metaharness_job`. [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent itself.
 
 G6 runs untrusted code for you only inside an operating-system boundary: bubblewrap on Linux (install the `bubblewrap`
 package), an AppContainer on Windows (after the one-time access grant `g6 doctor` prints). `g6 doctor` says which you
@@ -66,8 +67,7 @@ key file ~/.g6/.env and your other files, and its network guard works inside Pyt
 what you run. `G6_ALLOW_UNCONFINED=1`, set where you start G6, does the same as allowing it; `G6_REQUIRE_ISOLATION=1`
 refuses such code whatever you allowed.
 
-Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, which only you
-write: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code sign-in), `G6_LLM_PROVIDER=codex`
+Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values are local preferences under a trusted host: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code sign-in), `G6_LLM_PROVIDER=codex`
 (your Codex sign-in), `G6_LLM_PROVIDER=ollama` (a model on your computer), or a provider and its key. With none set,
 those steps say so and your agent can do them itself.
 
@@ -88,6 +88,22 @@ ev = evaluate_action({"action_type": "send_email", "target_resource": "all-custo
                       "reversibility": "irreversible", "blast_radius": "public"})
 print(ev.gate_decision.decision)    # block: irreversible and public, with no verification plan
 ```
+
+## Build and test an application
+
+Start with [the AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). The loop is:
+`metaharness_start` ? confirm ? diagnose ? propose code with a hypothesis ? evaluate ? decide ? client consent ? run.
+Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: it
+runs selected Python tests, checks source support, detects weakened tests and returns a scoped review report.
+Enable it explicitly with `g6 setup --client codex --allow patch_review.review`.
+
+Fewer than 30 held-out cases means exploration only. Generated-code activation still requires independently
+configured safety checks; source support and passing tests cannot replace them. A local file is not a human-only
+authorization boundary: an agent with unrestricted same-user shell access can edit it. Use a trusted host or
+separate account to enforce that separation.
+
+The public `v0.1.0` tag is immutable. See [the v0.1.1 release gates](docs/releases/v0.1.1.md) for known limitations
+and the checks required before recommending a new release.
 
 ## What is in it
 
