@@ -1,6 +1,6 @@
 ---
 name: using-g6
-description: Use G6 to construct AI applications from checkable components, investigate repeated failures, test redesign hypotheses, and review claims or risky actions against evidence.
+description: Use when constructing AI applications from checkable components, investigating repeated failures, testing redesign hypotheses, or reviewing claims and risky actions against evidence.
 ---
 
 # Using G6
@@ -14,6 +14,16 @@ The evaluator, authorization rules and promotion gate remain outside the candida
 Call `g6_help`, then `g6_find` with the task or failure mode. Read `g6_describe` before choosing fields or an operation.
 Use grounding for source support, coding_agent_gate for declared coding evidence, action_gating before consequential
 actions, and the meta-harness for repeated failures. Python-only components require their library APIs.
+
+For a direct component call, these examples show the parameter object; serialize it into `params_json`:
+
+```text
+g6_invoke("grounding", "check_claim", {"claim": "The limit is 42 units.", "sources": sources})
+g6_invoke("grounding", "check_claims", {"text": "The limit is 42 units.", "sources": sources})
+g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources": sources})
+```
+
+Here `sources` maps source names to supplied text. These are lexical source checks, not proof of factual truth.
 
 ## Compose
 

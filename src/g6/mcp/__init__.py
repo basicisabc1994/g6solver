@@ -199,12 +199,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))
 
-    async def ask(ctx: Any, question: str) -> str | None:
-        try:
-            answer = await ctx.elicit(question, response_type=str)
-        except Exception:  # noqa: BLE001 - a client that cannot ask means no person approved
-            return None
-        return answer.data if getattr(answer, "action", "") == "accept" else None
+    from g6.mcp.consent import request_consent, refusal as consent_refusal
 
     def metaharness_start(specification_json: str) -> dict:
         """Create a data-only Python application workflow: name, task with {input}, cases [{input, expected}],
@@ -223,12 +218,18 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             return held
         if held.workflow.digest() != workflow_digest:
             from g6.core.door import blocked_reply
-            return blocked_reply("[G6_E_META_APPROVAL_REQUIRED] workflow changed; inspect it before confirming")
+            return {**blocked_reply("[G6_E_META_APPROVAL_REQUIRED] workflow changed; inspect it before confirming"),
+                    "consent_status": "workflow_changed"}
         question = (f"Confirm workflow {workflow} digest {workflow_digest}? Task: {held.workflow.task}. "
                     f"Development cases: {len(held.workflow.suite.dev)}; held-out: {len(held.workflow.suite.held_out)}. "
                     "The baseline and generated candidates execute Python inside the configured boundary. "
                     "Future activation requires separate consent. Type your name; identity is recorded as given.")
-        return mh.confirm(workflow, workflow_digest, answer=await ask(ctx, question))
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return consent_refusal(consent, next_action=(
+                f'From the project directory, the user can inspect with g6 workflow inspect {workflow}, then '
+                f'personally confirm with g6 workflow confirm {workflow} {workflow_digest} --as "Your name".'))
+        return mh.confirm(workflow, workflow_digest, answer=consent.answer)
 
     def metaharness_propose_code(workflow: str, files_json: str, hypothesis: str, ctx: Any) -> dict:
         """Propose generated application code as {filename.py: source}, with a falsifiable hypothesis.
@@ -290,16 +291,20 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         refused, question = mh.approval_check(workflow, decision_digest, session=who)
         if refused is not None:
             return refused
-        answer = await ask(ctx, question)
-        return mh.approve(workflow, decision_digest, session=who, answer=answer)
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return consent_refusal(consent)
+        return mh.approve(workflow, decision_digest, session=who, answer=consent.answer)
 
     async def metaharness_rollback(workflow: str, version: int, ctx: Any) -> dict:
         """Ask the person, through the client, to move back to a version they approved."""
         refused, question, binding = mh.rollback_check(workflow, version)
         if refused is not None:
             return refused
-        answer = await ask(ctx, question)
-        return mh.rollback(workflow, version, answer=answer, binding=binding)
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return consent_refusal(consent)
+        return mh.rollback(workflow, version, answer=consent.answer, binding=binding)
 
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
                  metaharness_diagnose, metaharness_approve, metaharness_rollback, metaharness_start,

@@ -16,11 +16,17 @@ Set-Location $pilot
 py -3.12 -m venv .venv
 $python = Join-Path $pilot '.venv\Scripts\python.exe'
 $g6 = Join-Path $pilot '.venv\Scripts\g6.exe'
-$wheel = 'C:\Users\drdan\Desktop\g6-continuation-artifacts\dist\g6-0.1.1-py3-none-any.whl'
+$wheel = Join-Path $env:USERPROFILE 'Desktop\g6-continuation-artifacts\dist\g6-0.1.1-py3-none-any.whl'
 Get-FileHash -Algorithm SHA256 $wheel
 & $python -m pip install "${wheel}[all]"
 & $g6 doctor
 ```
+
+The explicit executable paths above work without activation. To use the shorter
+`g6` command in this terminal, run `.\.venv\Scripts\Activate.ps1` first; the prompt
+then starts with `(.venv)`. In a new terminal, return to this pilot directory and
+activate again, or keep using the full executable path. If activation is blocked
+by PowerShell policy, the full path still works; no policy change is needed.
 
 Compare the hash with the recorded wheel manifest. Keep this environment in place:
 the client entries point to its interpreter. Setup registers the `g6` MCP entry and

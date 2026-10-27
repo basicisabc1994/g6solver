@@ -428,6 +428,11 @@ class ReliabilityEnvelope(BaseModel):
         wc_msg = str(wc.get("message") or wc.get("why") or "").strip()
         wc_next = str(wc.get("suggested_action") or wc.get("next_step") or "").strip()
         wc_risks = wc.get("risks") if isinstance(wc.get("risks"), list) else []
+        if self.degraded and not self.degradation_reason.strip():
+            self.degradation_reason = (
+                wc_msg or "The operation was blocked; no successful result is claimed."
+                if self.reliability_label == "blocked-escalated" else
+                "Independent verification was not completed; qualified-draft does not imply an execution failure.")
         reason = (self.degradation_reason or "").strip()
 
         if self.reliability_label == "qualified-draft":

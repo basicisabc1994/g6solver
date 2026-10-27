@@ -79,9 +79,18 @@ def judging_sha256() -> str:
 
 def _envelope(state: str, code: str, message: str, *, next_action: str = "", evidence: list | None = None,
               **extra: Any) -> dict[str, Any]:
-    env = envelope_fields(reliability_label=state, request_id=uuid.uuid4().hex[:12], run_id=uuid.uuid4().hex,
-                          evidence=evidence or [])
-    env["warning_card"] = warning_card(code, message, next_action or None)
+    # Qualified replies retain the invariant-required warning card, but explain
+    # the assurance limit rather than implying ordinary bookkeeping failed.
+    ordinary = {"G6_E_META_CREATED", "G6_E_META_CONFIRMED", "G6_E_META_INSPECT", "G6_E_META_PROPOSED"}
+    if state == "qualified-draft" and code in ordinary:
+        next_action = next_action or "Review the recorded consent, versions, evaluations and decisions; inspection does not execute the application."
+        card = warning_card(code, message + ". This records workflow state, not independently verified application behavior.", next_action)
+    else:
+        card = warning_card(code, message, next_action or None)
+    env = envelope_fields(reliability_label=state, warning_card=card,
+                          request_id=uuid.uuid4().hex[:12], run_id=uuid.uuid4().hex, evidence=evidence or [])
+    if next_action:
+        env["recommended_next_steps"] = [next_action]
     return {**env, "code": code, "message": message, "next_action": next_action, **extra}
 
 
@@ -323,7 +332,7 @@ class MetaHarness:
                                       ledger_head=self.ledger.head())
         version, profile = self._head()
         return _envelope("qualified-draft", "G6_E_META_CONFIRMED", "workflow confirmed and frozen",
-                         next_action="mh.baseline()", workflow_digest=digest_now, judging_sha256=judging,
+                         next_action="Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation.", workflow_digest=digest_now, judging_sha256=judging,
                          held_out_digest=self.workflow.suite.digest("held_out"), head_version=version,
                          head_profile=profile.digest(), accept_risky=self.workflow.accept_risky,
                          identity="accepted_by is recorded as given")
@@ -1036,7 +1045,7 @@ class MetaHarness:
     def inspect(self) -> dict[str, Any]:
         if self._problems:
             return self.envelope
-        return _envelope("qualified-draft", "G6_E_META_INSPECT", "history", versions=self.store.versions(),
+        return _envelope("qualified-draft", "G6_E_META_INSPECT", "Workflow history; this inspection executed no application code", versions=self.store.versions(),
                          confirmed=self.store.confirmed(), store_head=self.store.head_hash(),
                          ledger_head=self.ledger.head(), evaluations=self.ledger.rows("evaluation"),
                          decisions=[{k: r[k] for k in ("verdict", "code", "candidate_digest", "proposer")}

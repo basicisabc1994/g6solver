@@ -61,7 +61,7 @@ class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
         outputs_per_op={"check_claim": ("check", "completion_state"),
                         "check_claims": ("checks", "completion_state"), "coverage": ("coverage", "completion_state")},
         evidence_outputs_per_op={"check_claims": {"checks": "source-support-assessment"}},
-        verification_method="model", bad_at=("omissions", "stale sources", "proving behavioural correctness"),
+        verification_method="lexical_sentence_overlap", bad_at=("omissions", "stale sources", "proving behavioural correctness"),
         guarantees=("reports support against supplied source text only",))
 
     def __init__(self, name: str = "grounding", state: dict | None = None) -> None:

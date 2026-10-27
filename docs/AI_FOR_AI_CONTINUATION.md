@@ -216,3 +216,22 @@ recovery is not itself evidence that the integrated code passes.
   contains the new hash and source commit. Earlier bundle success does not cover this later source correction.
 - Full Ruff and import-boundary checks pass. Owner volunteered for both client pilots; OWNER_PILOT.md records
   separate pending observations. This is an owner pilot, not the unfamiliar-user or application utility gate.
+
+### Owner UAT fixes (28 October)
+
+- Owner exercised discovery, lexical conflict handling, stop/continue composition controls, invalid mappings,
+  terminal consent, proposal separation, one AppContainer evaluation and missing-safety-evidence promotion refusal.
+  These are owner observations, not unfamiliar-user or utility evidence; see releases/UAT_ROUND_1.md.
+- Reproduced Codex prompt loss: FastMCP's primitive wrapper adds a top-level schema title, rejected by Codex's
+  typed schema parser, returning cancellation. Minimal SDK form schema now passes automated decline/cancel/accept
+  on isolated Codex 0.164.0 and installed 0.165.0. No model turns or human UI claims. Exact-version old/new comparison
+  reproduces the failure before the correction. Required nonempty string retained; empty auto-accept schemas avoided.
+- Consent diagnostics distinguish decline, cancellation, unavailable/invalid response and changed workflow.
+  Exception text is not exposed. Frozen digests are rechecked after consent; no activation policy relaxed.
+- Grounding contract now names lexical sentence overlap. All degraded replies explain assurance limitations.
+  Independent review caught mandatory warning-card compatibility; cards remain with useful lifecycle wording.
+- Corrected missing workspace dependency, obsolete mandatory-superpowers/same-session skill tests, portable pilot
+  wheel path and activation instructions. New diagnostics tests: 12 passed; combined focused run: 124 passed.
+  Core/grounding/invariants: 2394 passed, 19 skipped. Broader metaharness run in progress at source freeze.
+- All five certificates bind the changed reliability-envelope bytes; independent delta review and normal renewal
+  are required before the next wheel. Earlier wheel remains the owner's tested installation until upgraded.

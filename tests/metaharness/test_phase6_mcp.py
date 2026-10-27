@@ -103,6 +103,7 @@ def test_mcp_replies_are_the_python_envelopes_as_json(tmp_path) -> None:
     surface = _surface(tmp_path)
     via_surface = surface.propose("arith", session="s1", profile=CAREFUL, proposer="bo")
     direct = as_json(surface.harness("arith").candidate(Profile.model_validate(CAREFUL), proposer="bo"))
+    assert via_surface["code"] == direct["code"] == "G6_E_META_PROPOSED"
     assert via_surface["warning_card"]["code"] == direct["warning_card"]["code"] == "G6_E_META_PROPOSED"
     assert set(via_surface) == set(direct) and check_envelope(via_surface) == []
     json.dumps(via_surface)   # JSON all the way down

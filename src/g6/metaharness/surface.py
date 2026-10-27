@@ -188,8 +188,12 @@ class Surface:
         mh = self.harness(workflow)
         if isinstance(mh, dict):
             return mh
-        if mh.workflow.digest() != workflow_digest or not answer or not answer.strip():
-            return _blocked(APPROVAL_REQUIRED, "workflow changed or client consent was not supplied",
+        if mh.workflow.digest() != workflow_digest:
+            return _blocked(APPROVAL_REQUIRED, "workflow digest does not match; inspect the current workflow",
+                            "No consent was applied. Inspect the current digest before confirming.",
+                            consent_status="workflow_changed")
+        if not answer or not answer.strip():
+            return _blocked(APPROVAL_REQUIRED, "client consent was not supplied",
                             f'From the project directory: g6 workflow confirm {workflow} {mh.workflow.digest()} '
                             '--as "Your name" after inspecting that workflow.')
         return as_json(mh.confirm(answer.strip()))

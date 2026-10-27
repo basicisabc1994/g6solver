@@ -32,7 +32,7 @@ TWICE = {"routing": {"answer": "local"}, "prompt": "CAREFUL: check each digit tw
 def _proposer(tmp_path, *, careful_acc: float = 0.85):
     wf, _ = rig.build(7, careful_acc=careful_acc)
     mh = adapt(wf, workspace=tmp_path / "ws", clock=rig.Clock())
-    assert mh.confirm("Ada")["warning_card"]["code"] == "G6_E_META_CONFIRMED"
+    assert mh.confirm("Ada")["code"] == "G6_E_META_CONFIRMED"
     return mh, wf
 
 
