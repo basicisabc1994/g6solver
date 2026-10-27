@@ -144,7 +144,11 @@ def recheck_evidence(witness: Mapping[str, Any]) -> dict[str, Any]:
     envelope's evidence to be exactly this, so a witness never vouches for a claim about something else."""
     execution = witness.get("execution")
     details = witness.get("details")
+    details = details if isinstance(details, Mapping) else {}
     return {"kind": "g6_recheck", "oracle": str(witness.get("oracle") or ""),
+            "artifact_digest": details.get("artifact_digest", ""),
+            "check_version": details.get("check_version", ""), "claim": details.get("claim", ""),
+            "scope": details.get("scope", {}), "environment": details.get("environment", {}),
             "execution_id": str(execution.get("execution_id") or "") if isinstance(execution, Mapping) else "",
             "subject": str(details.get("subject") or "") if isinstance(details, Mapping) else "",
             "witness": str(witness.get("content_digest") or ""),

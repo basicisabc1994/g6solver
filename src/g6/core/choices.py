@@ -2,8 +2,10 @@
 """The person's choices for this computer, made once and kept in ``$G6_HOME/choices.json`` (DECISIONS #40, ruling 10).
 
 ``g6 setup`` asks the person; an app (bundle) that runs code asks too, on its first-run page, and keeps the click. An
-agent can read a choice (:func:`choice`) but cannot make one: :func:`record` is called only by ``g6.cli.setup`` and
-``g6.bundles.server`` (a test pins this), and no MCP tool or component op reaches either. The variable
+agent-facing MCP tools do not expose a writer: :func:`record` is called by ``g6.cli.setup`` and
+``g6.bundles.server``. This is a preference file, not an authorization boundary: an agent with shell or filesystem
+access as the same user can change it, invoke setup, or change registration settings. Protection assumes the trusted
+host restricts that access. Confined candidates must not receive this file or write access to the host. The variable
 ``G6_ALLOW_UNCONFINED=1`` stays as an override where the server or the command is started.
 
 One choice so far, :data:`UNCONFINED`: whether code G6 runs for the person (a patch, a generated script, a repository's

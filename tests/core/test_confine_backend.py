@@ -53,7 +53,10 @@ def test_a_backend_needs_only_ready_prepare_and_start(monkeypatch) -> None:
         child = confine.popen(plan, ["prog", "arg"], stdout=None)
     # fails if confine.popen stops handing the run's identity and network setting to the backend's start
     assert child == "a child"
-    assert fake.started_with == [(["prog", "arg"], plan.identity, {"network": True, "stdout": None})]
+    argv, identity, options = fake.started_with[0]
+    assert argv == ["prog", "arg"] and identity is plan.identity
+    assert options["network"] is True and options["stdout"] is None
+    assert options["close_fds"] is True and isinstance(options["env"], dict)
     assert plan.release() == ""
     assert plan.record()["container"] is None and plan.record()["profile"] is None
 

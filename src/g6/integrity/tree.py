@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import fields
 from pathlib import Path
+import platform
 from typing import Any
 
 import g6.integrity as integrity
@@ -127,7 +128,10 @@ def claim(value: Mapping[str, Any], caller: Mapping[str, Any]) -> tuple[str, dic
     if isinstance(patterns, str) or not all(isinstance(p, str) for p in patterns):
         return None
     return pin, {"subject": root, "root": root, "manifest": manifest, "expected_manifest_sha256": pin,
-                 "patterns": list(patterns)}
+                 "patterns": list(patterns), "artifact_digest": pin, "check_version": "1",
+                 "claim": "selected files match the caller-pinned manifest",
+                 "scope": {"patterns": list(patterns), "excludes": "behavioural correctness"},
+                 "environment": {"python": platform.python_version(), "platform": platform.system()}}
 
 
 def replay(witness: Mapping[str, Any]) -> ReplayOutcome:

@@ -129,6 +129,22 @@ def test_a_grandchild_that_leaves_the_session_is_killed_when_the_run_times_out(b
 
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
            **{key: os.environ[key] for key in ("PATH",) if key in os.environ}}
+
+
+def test_spawn_boundary_removes_secrets_even_from_explicit_environment(bwrap_backend, monkeypatch):
+    monkeypatch.setenv("G6_PLANTED_SECRET", "not-a-real-key")
+    with confine.run_folder("g6_test_env_") as folder:
+        plan = confine.plan(confine.Confinement(read_write=(folder,)), sys.executable)
+        try:
+            child = confine.popen(plan, [sys.executable, "-I", "-c",
+                                        "import os; print('G6_PLANTED_SECRET' in os.environ)"],
+                                 env=dict(os.environ), cwd=folder, stdout=subprocess.PIPE)
+            stdout, _ = child.communicate(timeout=30)
+            assert child.returncode == 0 and stdout.strip() == b"False"
+        finally:
+            plan.release()
+
+
 WRITES = textwrap.dedent("""
     import pathlib
     import subprocess

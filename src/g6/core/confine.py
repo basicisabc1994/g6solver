@@ -484,6 +484,23 @@ def _plan(confinement: Confinement, python: str | None) -> Plan:
     return Plan(chosen.name, "", confinement, identity)
 
 
+_CHILD_ENV = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL",
+    "PYTHONIOENCODING", "PYTHONDONTWRITEBYTECODE", "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS",
+})
+
+
+def child_environment(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Minimal runtime settings only; no keys, import hooks, user home or model configuration.
+
+    This is applied at the spawn boundary even when a caller supplies its entire environment.
+    It does not make secrets deliberately placed in allowed inputs or mounted files inaccessible.
+    """
+    source = os.environ if env is None else env
+    return {key.upper(): value for key, value in source.items() if key.upper() in _CHILD_ENV}
+
+
 def popen(plan: Plan, argv: list[str], **options: Any) -> Any:
     """The hook :mod:`g6.core.component_process` starts a confined child with, inside the Job Object on Windows: it takes
     ``subprocess.Popen``'s ``creationflags``, ``stdin``, ``stdout``, ``stderr`` (files or ``DEVNULL``), ``env`` and
@@ -492,6 +509,11 @@ def popen(plan: Plan, argv: list[str], **options: Any) -> Any:
     chosen, why = _select()
     if chosen is None or plan.confinement is None or plan.identity is None or plan.backend != chosen.name:
         raise NotStarted(f"the confined child did not start: {why or 'its plan has no backend'}")
+    if options.get("pass_fds") or options.get("close_fds") is False:
+        raise NotStarted("extra inherited descriptors are forbidden for confined children")
+    options.pop("pass_fds", None)
+    options["close_fds"] = True
+    options["env"] = child_environment(options.get("env"))
     try:
         return chosen.start(argv, plan.identity, network=plan.confinement.network, **options)
     except OSError as exc:

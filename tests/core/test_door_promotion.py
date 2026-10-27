@@ -140,6 +140,13 @@ def test_g6s_integrity_check_promotes_with_the_callers_pin_and_says_what_it_rech
     assert envelope["completion_state"] == envelope["reliability_label"] == "verified"
     assert [e["kind"] for e in envelope["evidence"]] == ["g6_recheck"]
     assert envelope["evidence"][0]["subject"] == str(root.resolve())
+    record = envelope["evidence"][0]
+    assert record["artifact_digest"] == pin
+    assert record["check_version"] == "1"
+    assert record["claim"] == "selected files match the caller-pinned manifest"
+    assert record["scope"]["patterns"] == ["**/*.py"]
+    assert record["environment"]["python"]
+    assert record["environment"]["platform"]
 
 
 @pytest.mark.parametrize("caller", [None, {}, {"root": "<root>"}, {"expected_manifest_sha256": "<pin>"}])
