@@ -292,6 +292,12 @@ class BlockContract:
     preconditions: tuple[Callable[[PreconditionContext], bool], ...] = ()
     outputs: tuple[str, ...] = ()
     good_at: tuple[str, ...] = ()
+    #: Enforced by strict compose, not by plain >>. Evidence kinds describe meaning, not truth.
+    outputs_per_op: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    evidence_inputs_per_op: dict[str, dict[str, str]] = field(default_factory=dict)
+    evidence_outputs_per_op: dict[str, dict[str, str]] = field(default_factory=dict)
+    side_effects: tuple[str, ...] = ()
+    guarantees: tuple[str, ...] = ()
     bad_at: tuple[str, ...] = ()
     known_failure_modes: tuple[FailureMode, ...] = ()
     mitigates_failure_modes: tuple[str, ...] = ()
@@ -576,6 +582,11 @@ def contract_to_dict(contract: BlockContract) -> dict[str, Any]:
         },
         "preconditions": [getattr(p, "__name__", str(p)) for p in contract.preconditions],
         "outputs": list(contract.outputs),
+        "outputs_per_op": {op: list(names) for op, names in contract.outputs_per_op.items()},
+        "evidence_inputs_per_op": contract.evidence_inputs_per_op,
+        "evidence_outputs_per_op": contract.evidence_outputs_per_op,
+        "side_effects": list(contract.side_effects),
+        "guarantees": list(contract.guarantees),
         "good_at": list(contract.good_at),
         "bad_at": list(contract.bad_at),
         "known_failure_modes": [asdict(fm) for fm in contract.known_failure_modes],
@@ -676,6 +687,11 @@ def contract_from_dict(payload: dict[str, Any]) -> BlockContract:
         },
         preconditions=preconditions,
         outputs=tuple(payload.get("outputs", ())),
+        outputs_per_op={op: tuple(names) for op, names in payload.get("outputs_per_op", {}).items()},
+        evidence_inputs_per_op=payload.get("evidence_inputs_per_op", {}),
+        evidence_outputs_per_op=payload.get("evidence_outputs_per_op", {}),
+        side_effects=tuple(payload.get("side_effects", ())),
+        guarantees=tuple(payload.get("guarantees", ())),
         good_at=tuple(payload.get("good_at", ())),
         bad_at=tuple(payload.get("bad_at", ())),
         known_failure_modes=failure_modes,

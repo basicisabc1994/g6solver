@@ -15,6 +15,7 @@ from g6.coding_agent_gate.evidence import Evidence, VerifierResult
 from g6.coding_agent_gate.gate import preflight, verify_answer
 from g6.coding_agent_gate.protected_paths import ProtectedPathsPolicy
 from g6.core.ai_block import AIBlock
+from g6.core.block_contract import BlockContract
 from g6.core.maturity import component_maturity
 from g6.core.result import Result
 
@@ -74,6 +75,13 @@ class CodingAgentGateInput(BaseModel):
 )
 class CodingAgentGateBlock(AIBlock[CodingAgentGateInput, dict, dict]):
     """Check a coding agent's plan or drafted answer. Advisory unless the caller obeys it."""
+    __g6_block_contract__ = BlockContract(
+        name="coding_agent_gate", purpose="Assess declared coding evidence, without running tests.",
+        inputs_required_per_op={"verify_answer": ("task", "answer"), "preflight": ("task",)},
+        outputs_per_op={op: ("verdict", "findings", "completion_state") for op in ("verify_answer", "preflight")},
+        verification_method="model", bad_at=("authenticating caller evidence", "executing tests"),
+        guarantees=("gate pass remains a qualified draft",))
+
 
     def __init__(self, name: str = "coding_agent_gate", state: dict | None = None,
                  *, protected_paths_policy: ProtectedPathsPolicy | None = None) -> None:

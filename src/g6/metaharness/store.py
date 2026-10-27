@@ -166,6 +166,15 @@ class RunLedger:
         if kind == "proposed_by":
             return [] if body.get("proposal_digest") and body.get("session") else [
                 "proposed_by: a proposal digest and a session are required"]
+        if kind == "client_consent":
+            from g6.core.ledger import digest
+            decision = seen.get(("decision", body.get("decision_digest")), {})
+            valid = (digest(body) == ident and decision
+                     and body.get("candidate_digest") == decision.get("candidate_digest")
+                     and body.get("proposal_digest") == decision.get("proposal_digest")
+                     and body.get("method") == "mcp-elicitation"
+                     and body.get("identity_authenticated") is False and body.get("accepted_by"))
+            return [] if valid else ["client_consent: a recorded decision and its exact candidate are required"]
         if kind == "setting":
             return [] if body.get("accepted_by") else ["setting: a person must make it (accepted_by)"]
         if kind in ("vault", "incident"):

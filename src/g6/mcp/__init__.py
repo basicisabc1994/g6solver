@@ -4,7 +4,7 @@
 Five discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke`` and ``g6_components``; and seven
 meta-harness tools (``metaharness_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``,
 ``_rollback``) for the workflows declared in the file ``G6_METAHARNESS`` names, where approval and rollback ask the
-person through the client and never come from the session that proposed, and a failed attempt carries its recovery
+person through the client, including in the proposing session, and a failed attempt carries its recovery
 (``g6.metaharness.surface``). Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
@@ -157,6 +157,18 @@ def build_server(surface: Any = None) -> Any:
         ``completion_state`` (verified / qualified-draft / blocked-escalated) and a ``warning_card``: read them."""
         return invoke_reply(component, op, params_json)
 
+    @server.tool()
+    def g6_compose(composition_json: str) -> dict:
+        """Run explicit stages with input mappings (caller.field or 0.field). Strict contracts and honest evidence.
+        JSON contains stages [{component, op, inputs?, params?}] and inputs {field: value}. No Python code."""
+        from g6.mcp.composition import compose_reply
+        from g6.core.door import blocked_reply
+        try:
+            payload = json.loads(composition_json)
+        except json.JSONDecodeError:
+            return blocked_reply("[G6_E_INPUT_VALIDATION] composition_json must be JSON")
+        return compose_reply(payload, allow_sensitive=allowed_sensitive())
+
     _metaharness_tools(server, surface, Context)
     return server
 
@@ -208,8 +220,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return mh.diagnose(workflow)
 
     async def metaharness_approve(workflow: str, decision_digest: str, ctx: Any) -> dict:
-        """Ask the person, through the client, to approve a recommended change. The session that proposed it cannot:
-        that is checked before anyone is asked, and the refusal says how a person approves it instead."""
+        """Present digest-bound client-mediated consent, including in the proposing session.
+        G6 records the supplied name; it does not authenticate human identity."""
         who = session(ctx)
         refused, question = mh.approval_check(workflow, decision_digest, session=who)
         if refused is not None:

@@ -50,3 +50,17 @@ recovery is not itself evidence that the integrated code passes.
 - Ruff and git diff --check passed for this slice.
 - Ruling: environment policy lives at the common confine.popen boundary; existing runners'
   narrower environments still apply. This avoids relying on every caller to scrub secrets.
+
+### Composition and consent slice
+
+- Same-session elicitation tests failed under supported FastMCP, then passed after consent
+  was bound to recorded decision/candidate/proposal digests and recorded as unauthenticated.
+- Added strict composition, typed inputs, explicit field mappings, per-operation outputs,
+  evidence-kind declarations, stop/precondition checks and append-only assertion provenance.
+- Added data-only g6_compose and contracts for grounding, coding-agent gate and action gating.
+- 28 composition/MCP/approval tests passed; focused Ruff and whitespace checks passed.
+- Created .venv using declared FastMCP <3 (system installation was incompatible).
+- Initial broader run: core/integrity 2274 passed, 10 failed, 21 skipped; metaharness
+  289 passed, 20 failed, 1 skipped. Failures traced to missing optional dependencies and
+  default isolation refusal; rerunning with declared extras and Windows CI's explicit opt-in.
+  These opt-in tests are not OS-isolation evidence.

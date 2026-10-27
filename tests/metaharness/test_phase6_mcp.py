@@ -63,7 +63,7 @@ def test_mcp_replies_are_the_python_envelopes_as_json(tmp_path) -> None:
     json.dumps(via_surface)   # JSON all the way down
 
 
-def test_over_mcp_only_a_person_through_another_session_approves(tmp_path) -> None:
+def test_over_mcp_declined_or_missing_client_consent_never_approves(tmp_path) -> None:
     surface = _surface(tmp_path)
     server = build_server(surface)
 
@@ -96,7 +96,7 @@ def test_over_mcp_only_a_person_through_another_session_approves(tmp_path) -> No
 
     out = asyncio.run(flow())
     assert out["decided"]["warning_card"]["code"] == S.RECOMMENDED
-    assert out["self"]["warning_card"]["code"] == S.APPROVER_IS_PROPOSER
+    assert out["self"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
     assert out["declined"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
     assert out["approved"]["head_version"] == 1 and out["approved"]["completion_state"] == "qualified-draft"
     assert surface.harness("arith").store.versions()[-1]["accepted_by"] == "Ada"
@@ -114,7 +114,7 @@ async def _decided(client) -> dict:
                                                               "proposal_digest": p}))
 
 
-def test_the_proposing_session_is_refused_before_the_person_is_asked_and_told_how_to_approve(tmp_path) -> None:
+def test_proposing_session_can_present_digest_bound_client_consent(tmp_path) -> None:
     surface = _surface(tmp_path)
     asked = []
 
@@ -128,14 +128,16 @@ def test_the_proposing_session_is_refused_before_the_person_is_asked_and_told_ho
             return decided, _data(await agent.call_tool("metaharness_approve", {
                 "workflow": "arith", "decision_digest": decided["decision_digest"]}))
 
-    decided, refused = asyncio.run(flow())
+    decided, approved = asyncio.run(flow())
     assert decided["warning_card"]["code"] == S.RECOMMENDED
-    assert refused["warning_card"]["code"] == S.APPROVER_IS_PROPOSER and check_envelope(refused) == []
-    assert asked == []   # nobody was asked to type a name only to be refused
-    how = refused["next_action"]
-    assert f".activate('{decided['decision_digest']}', accepted_by=" in how
-    assert str(surface.harness("arith").workspace) in how and "MCP session other than the proposer's" in how
-    assert len(surface.harness("arith").store.versions()) == 1
+    assert approved["head_version"] == 1 and check_envelope(approved) == []
+    assert len(asked) == 1 and decided["decision_digest"] in asked[0]
+    assert decided["decision"]["candidate_digest"] in asked[0]
+    consent = approved["consent"]
+    assert consent["method"] == "mcp-elicitation"
+    assert consent["identity_authenticated"] is False
+    assert consent["decision_digest"] == decided["decision_digest"]
+    assert len(surface.harness("arith").store.versions()) == 2
 
 
 def test_a_change_proposed_over_mcp_is_approved_by_digest_from_python_in_another_process(tmp_path) -> None:
@@ -158,7 +160,7 @@ def test_a_change_proposed_over_mcp_is_approved_by_digest_from_python_in_another
     assert elsewhere.activate(decided["decision_digest"], accepted_by="Bo")["warning_card"]["code"] == S.STANDARD_CHANGED
 
 
-def test_another_server_process_asks_the_person_but_never_the_session_that_proposed(tmp_path) -> None:
+def test_another_server_process_can_present_the_recorded_proposal_for_consent(tmp_path) -> None:
     first = _surface(tmp_path)
 
     async def answer_ada(message, response_type, params, context):
@@ -172,8 +174,8 @@ def test_another_server_process_asks_the_person_but_never_the_session_that_propo
     proposer, = {r["session"] for r in first.harness("arith").ledger.rows("proposed_by")}
     wf, _ = rig.build(7)
     second = Surface({"arith": {"workflow": wf, "workspace": tmp_path / "ws", "clock": rig.Clock()}})
-    again = second.approve("arith", decided["decision_digest"], session=proposer, answer="Ada")
-    assert again["warning_card"]["code"] == S.APPROVER_IS_PROPOSER   # the proposing session is recorded, not held
+    refused, question = second.approval_check("arith", decided["decision_digest"], session=proposer)
+    assert refused is None and decided["decision_digest"] in question
 
     async def review() -> dict:
         async with Client(build_server(second), elicitation_handler=answer_ada) as reviewer:

@@ -6,12 +6,10 @@ owns, named by ``G6_METAHARNESS``: it defines ``WORKFLOWS = {name: {"workflow": 
 ..., "space": {...}}}``. No tool input ever names a file to run. Every reply is the same envelope the Python API returns
 (same fields, same ``G6_E_*`` codes), made JSON: objects appear as their digests and their recorded fields.
 
-Approval is the stronger channel of plan 5.4: ``approve`` refuses a session that proposed the change, and the person's
-name comes from the client asking them directly (MCP elicitation), never from the agent's arguments. Both are checked
-before anyone is asked (``approval_check``). Proposals, reports, decisions and the proposing session are recorded in the
-workspace's run ledger, so a decision outlives this process: the stdio server's one session is the proposer's, and a
-person approves from Python in another process (``MetaHarness.activate`` by the decision's digest) or from a new MCP
-session whose client can ask them. A refusal says exactly how.
+Approval is client-mediated consent, including in the proposing session. The name comes from MCP elicitation,
+never from the tool's arguments. G6 records it as given, not as authenticated human identity. The question names the
+decision and candidate digests and the measured consequences; activation revalidates the recorded decision.
+This assumes a trusted client and host. Python callers and a same-user shell are outside that boundary.
 """
 from __future__ import annotations
 
@@ -25,7 +23,7 @@ from typing import Any
 from g6.metaharness.api import MetaHarness, _blocked, adapt
 from g6.metaharness.gate import GateDecision
 from g6.metaharness.propose import SearchStrategy
-from g6.metaharness.schema import APPROVAL_REQUIRED, APPROVER_IS_PROPOSER, SCHEMA
+from g6.metaharness.schema import APPROVAL_REQUIRED, SCHEMA
 
 ENV = "G6_METAHARNESS"
 NOT_CONFIGURED = "G6_E_META_NOT_CONFIGURED"
@@ -65,7 +63,7 @@ def how_to_approve(workflow: str, mh: MetaHarness, decision_digest: str) -> str:
             f"workspace=r'{mh.workspace}').activate({decision_digest!r}, accepted_by='<their name>'), with WORKFLOWS "
             f"from the file {ENV} names, which shows them the decision's card; then the same call with "
             "candidate_digest='<the candidate_digest on the card>'. Or with metaharness_approve from an MCP session "
-            "other than the proposer's, whose client asks them.")
+            "whose client presents the consent prompt (including the proposing session).")
 
 
 class Surface:
@@ -121,9 +119,6 @@ class Surface:
         if decision.verdict != "recommend":
             return None, None, _blocked(APPROVAL_REQUIRED, "only a 'recommend' decision can be approved",
                                         "Nothing changes; see the decision's recovery.")
-        if session in self._proposers(mh, decision.proposal_digest):
-            return None, None, _blocked(APPROVER_IS_PROPOSER, "the session that proposed this change cannot approve it",
-                                        how_to_approve(workflow, mh, decision_digest))
         return mh, decision, None
 
     # --- the tools ---------------------------------------------------------------------------------------------
@@ -178,7 +173,7 @@ class Surface:
         return mh if isinstance(mh, dict) else as_json(mh.diagnose())
 
     def approval_check(self, workflow: str, decision_digest: str, *, session: str) -> tuple[dict[str, Any] | None, str]:
-        """Before anyone is asked: the refusal (no such decision, not ``recommend``, or this session proposed it), or
+        """Before anyone is asked: the refusal (no such decision or not ``recommend``), or
         None and the question to put to the person, which shows the change and its held-out result (review B2-I1)."""
         mh, decision, refused = self._approvable(workflow, decision_digest, session)
         if refused is not None:
@@ -187,18 +182,31 @@ class Surface:
         proposal, _ = mh._recorded("proposal", decision.proposal_digest)
         card = {**mh._card(decision, report), "candidate_digest": decision.candidate_digest,
                 "diff": dict(proposal.diff)}
-        return None, approval_question(decision.to_dict(), card)
+        return None, f"Decision {decision_digest}. " + approval_question(decision.to_dict(), card)
 
     def approve(self, workflow: str, decision_digest: str, *, session: str, answer: str | None) -> dict[str, Any]:
         """``answer``: the name the person typed when the client asked them (None: they declined, or the client cannot
-        ask). The session that proposed the change cannot approve it."""
+        ask). Identity is recorded as given; a trusted client must mediate this consent."""
         mh, decision, refused = self._approvable(workflow, decision_digest, session)
         if refused is not None:
             return refused
         if not answer or not answer.strip():
             return _blocked(APPROVAL_REQUIRED, "no person approved: the client did not ask you, or you declined",
                             how_to_approve(workflow, mh, decision_digest))
-        return as_json(mh.activate(decision, accepted_by=answer.strip()))
+        consent = {"method": "mcp-elicitation", "identity_authenticated": False,
+                       "decision_digest": decision_digest, "candidate_digest": decision.candidate_digest,
+                       "proposal_digest": decision.proposal_digest, "session": session,
+                       "accepted_by": answer.strip()}
+        # Receipt of consent is recorded before activation: it is not itself an activation record.
+        from g6.core.ledger import digest
+        consent_id = digest(consent)
+        if not mh.ledger.has("client_consent", consent_id):
+            mh.ledger.append("client_consent", consent_id, consent)
+        result = as_json(mh.activate(decision_digest, accepted_by=answer.strip(),
+                                     candidate_digest=decision.candidate_digest))
+        if result.get("warning_card", {}).get("code") == "G6_E_META_ACTIVATED":
+            result["consent"] = consent
+        return result
 
     def rollback(self, workflow: str, version: int, *, answer: str | None) -> dict[str, Any]:
         mh = self.harness(workflow)
