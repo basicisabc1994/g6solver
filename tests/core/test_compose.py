@@ -84,3 +84,17 @@ def test_contract_change_changes_assurance_digest():
                                              version=2, verification_method="unit_tests_only")
     after = compose(Stage(Revised(), "run"), caller_inputs=("number",)).infer({"number": 1}).value
     assert before["assurance"]["digest"] != after["assurance"]["digest"]
+
+
+def test_contract_mutation_after_construction_refuses_execution(monkeypatch):
+    block = Increment()
+    flow = compose(Stage(block, "run"), caller_inputs=("number",))
+    monkeypatch.setattr(Increment, "__g6_block_contract__", BlockContract(name="changed", outputs=("different",)))
+    got = flow.infer({"number": 1}).value
+    assert got["completion_state"] == "blocked-escalated"
+    assert got["assurance"]["status"] == "unvalidated"
+
+
+def test_implementation_is_bound_in_manifest():
+    report = compose(Stage(Increment(), "run"), caller_inputs=("number",)).infer({"number": 1}).value["assurance"]
+    assert len(report["stages"][0]["implementation_sha256"]) == 64

@@ -95,7 +95,7 @@ def _skills(args: argparse.Namespace) -> int:
         else:
             wanted += [n for n in vendored if n not in wanted]
 
-    dest = (Path.home() if args.user else Path.cwd()) / ".claude" / "skills"
+    dest = (Path.home() if args.user else Path.cwd()) / f".{args.client}" / "skills"
     for name in wanted:
         target = dest / name
         if target.exists() and not args.force:
@@ -134,6 +134,12 @@ def main(argv: list[str] | None = None) -> int:
     setup.add_arguments(sub.add_parser("setup", help="your choices for this computer, asked once (run it yourself; "
                                                      "an agent should not)"))
     sub.add_parser("home", help="print the state folder")
+    wf = sub.add_parser("workflow", help="inspect or consent to a frozen workflow from a trusted terminal")
+    wf.add_argument("operation", choices=("inspect", "confirm", "approve"))
+    wf.add_argument("name")
+    wf.add_argument("digest", nargs="?", default="")
+    wf.add_argument("--as", dest="person", default="", help="recorded identity, not authenticated")
+    wf.add_argument("--candidate", default="", help="candidate digest displayed on the decision card")
     sub.add_parser("components", help="list installed components")
     f = sub.add_parser("find", help="rank components for a task description")
     f.add_argument("query")
@@ -176,8 +182,23 @@ def main(argv: list[str] | None = None) -> int:
     si.add_argument("--with-superpowers", action="store_true",
                     help="also the superpowers skills for a coding agent (skipped if the superpowers plugin is there)")
     si.add_argument("--user", action="store_true", help="into ~/.claude/skills, for every project")
+    si.add_argument("--client", choices=("claude", "codex"), default="claude", help="client skill directory")
     si.add_argument("--force", action="store_true", help="replace a skill folder that is already there")
     args = ap.parse_args(argv)
+
+    if args.cmd == "workflow":
+        from g6.metaharness.surface import Surface, as_json
+        surface = Surface()
+        if args.operation == "inspect":
+            result = surface.inspect(args.name)
+        elif args.operation == "confirm":
+            result = surface.confirm(args.name, args.digest, answer=args.person)
+        else:
+            held = surface.harness(args.name)
+            result = held if isinstance(held, dict) else as_json(held.activate(
+                args.digest, accepted_by=args.person, candidate_digest=args.candidate))
+        _print(result)
+        return 1 if result.get("completion_state") == "blocked-escalated" else 0
 
     if args.cmd == "setup":
         return setup.main(args)

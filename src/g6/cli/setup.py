@@ -39,6 +39,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     answer.add_argument("--refuse-unconfined", action="store_true",
                         help="refuse untrusted code where no operating-system boundary can confine it (no question "
                              "asked)")
+    parser.add_argument("--client", choices=("claude", "codex"), action="append", default=[],
+                        help="register G6 and install its skill for this client (repeat for both)")
+    parser.add_argument("--allow", default="", help="comma-separated sensitive components or operations for this registration")
+    parser.add_argument("--model", choices=("claude_code", "codex"),
+                        help="host model provider for registered servers; uses the client's existing sign-in")
 
 
 def isolation(args: argparse.Namespace, ask: Ask, say: Say) -> int:
@@ -81,6 +86,85 @@ def main(args: argparse.Namespace, *, ask: Ask = input, say: Say = print) -> int
         code = step(args, ask, say)
         if code:
             return code
+    from g6.core.storage import g6_home
+    g6_home().mkdir(parents=True, exist_ok=True)
+    if getattr(args, "model", None):
+        try:
+            configure_model(args.model)
+        except (OSError, ValueError):
+            say("Model preference could not be saved; no model call was made.")
+            return 2
+    clients = list(dict.fromkeys(getattr(args, "client", [])))
+    if clients:
+        code = register_clients(args, clients, say)
+        if code:
+            return code
+    return 0
+
+
+def configure_model(provider: str) -> None:
+    """Save an explicitly requested host provider, preserving other settings without displaying them."""
+    import re
+    import tempfile
+    from pathlib import Path
+    from g6.core import keys
+
+    if provider not in ("claude_code", "codex"):
+        raise ValueError("unsupported host provider")
+    target = keys.path()
+    if target.is_symlink():
+        raise ValueError("refusing a symlinked settings file")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    previous = target.read_text(encoding="utf-8") if target.exists() else ""
+    lines = [line for line in previous.splitlines() if not re.match(r"\s*(?:export\s+)?G6_LLM_PROVIDER\s*=", line)]
+    content = "\n".join([*lines, f"G6_LLM_PROVIDER={provider}", ""])
+    fd, name = tempfile.mkstemp(dir=target.parent, prefix=".g6-settings-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+        Path(name).chmod(0o600)
+        os.replace(name, target)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def register_clients(args, clients: list[str], say: Say) -> int:
+    """Explicit registration via the clients' CLIs; never parses or overwrites their config files."""
+    import re
+    import shutil
+    import subprocess
+    from g6.cli import main as cli
+
+    allowed = args.allow.strip()
+    if allowed and any(not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)?", item.strip())
+                       for item in allowed.split(",")):
+        say("--allow requires explicit component or component.operation names; wildcards are not supported.")
+        return 2
+    for client in clients:
+        binary = shutil.which(client)
+        if binary is None:
+            say(f"{client} is not on PATH; install its CLI, then run g6 setup --client {client}.")
+            return 2
+        command = [binary, "mcp", "add", "g6"]
+        if client == "claude":
+            command += ["--scope", "user"]
+        flag = "-e" if client == "claude" else "--env"
+        if allowed:
+            command += [flag, f"G6_MCP_SENSITIVE={allowed}"]
+        if args.model:
+            command += [flag, f"G6_LLM_PROVIDER={args.model}"]
+        command += ["--", sys.executable, "-c", "from g6.mcp import main; main()"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            say(f"{client} registration did not finish: {type(exc).__name__}")
+            return 2
+        if result.returncode:
+            say(f"{client} refused registration. Inspect its existing g6 entry with '{client} mcp get g6'.")
+            return 2
+        cli(["skills", "install", "--user", "--client", client])
+        say(f"Registered G6 for {client} with this installation's Python. Restart the client to load it.")
+    say("Local settings assume a trusted host. An agent with your account's unrestricted shell can change them.")
     return 0
 
 

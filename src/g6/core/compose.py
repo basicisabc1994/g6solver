@@ -10,6 +10,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
+import hashlib
+import inspect
+from pathlib import Path
 from typing import Any
 
 from g6.core.ai_block import AIBlock
@@ -96,7 +99,8 @@ class ComposedBlock(AIBlock):
             self.stages.append((stage, block, links, outputs, params))
             self.manifest.append({"component": block.name, "operation": stage.op,
                                   "implementation": f"{type(block).__module__}.{type(block).__qualname__}",
-                                  "contract": contract_to_dict(contract), "inputs": links, "params": params})
+                                  "implementation_sha256": _implementation_digest(block),
+                                  "contract": deepcopy(contract_to_dict(contract)), "inputs": links, "params": params})
 
     def infer(self, data: dict) -> Result[dict]:
         values, checks, evidence = [], [], []
@@ -104,6 +108,8 @@ class ComposedBlock(AIBlock):
         rank = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
         for index, (stage, block, links, outputs, params) in enumerate(self.stages):
             try:
+                if contract_to_dict(block.contract) != self.manifest[index]["contract"]:
+                    raise _error("CONTRACT_CHANGED", index, block.name)
                 raw = deepcopy(params)
                 for key, source in links.items():
                     owner, name = source.split(".", 1)
@@ -113,12 +119,13 @@ class ComposedBlock(AIBlock):
                            "job_name": block.name, "domain": block.contract.domain}
                 if self.strict and any(not check(context) for check in block.contract.preconditions):
                     raise _error("PRECONDITION_FAILED", index, block.name)
-                typed, error = build_typed_input(block, raw, code="[G6_E_INPUT_VALIDATION]", op=stage.op)
-                if error:
-                    raise CompositionError(error)
                 screen = getattr(block, "screen_raw", None)
                 outcome = screen(raw) if callable(screen) else None
-                outcome = block.infer(typed) if outcome is None else outcome
+                if outcome is None:
+                    typed, error = build_typed_input(block, raw, code="[G6_E_INPUT_VALIDATION]", op=stage.op)
+                    if error:
+                        raise CompositionError(error)
+                    outcome = block.infer(typed)
                 if not isinstance(outcome, Result) or outcome.is_fail():
                     raise CompositionError(outcome.error if isinstance(outcome, Result) else "invalid block result")
                 value = outcome.value
@@ -138,8 +145,8 @@ class ComposedBlock(AIBlock):
                 records = [{"stage": index, "authority": "producer-declared", "record": deepcopy(item)}
                            for item in claimed] if isinstance(claimed, list) else []
                 evidence.extend(records)
-                if "evidence" in value:
-                    value["evidence"] = records
+                # Preserve the component's schema for explicit downstream adapters. Assertion
+                # authority lives in the separate report and cannot promote completion state.
                 values.append(deepcopy(value))
                 checks.append({"stage": index, "typed_input": True, "outputs_checked": self.strict,
                                "completion_state": state})
@@ -152,7 +159,7 @@ class ComposedBlock(AIBlock):
         return Result.ok(self._reply(values, checks, evidence, state))
 
     def _reply(self, values, checks, evidence, state, warning=None):
-        report = {"status": "contract-checked" if self.strict else "unvalidated", "stages": self.manifest,
+        report = {"status": "contract-checked" if self.strict and len(checks) == len(self.stages) else "unvalidated", "stages": deepcopy(self.manifest),
                   "checks": checks, "evidence": evidence,
                   "not_checked": ["application benefit", "complete behavioural correctness",
                                   "producer-declared evidence authenticity"],
@@ -165,3 +172,11 @@ class ComposedBlock(AIBlock):
 def compose(*stages: Stage, caller_inputs: Sequence[str], strict: bool = True,
             allow_sensitive: frozenset[str] = frozenset()) -> ComposedBlock:
     return ComposedBlock(stages, caller_inputs, strict=strict, allow_sensitive=allow_sensitive)
+
+
+def _implementation_digest(block: AIBlock) -> str | None:
+    """Bind the defining module, not all transitive dependencies or runtime object state."""
+    try:
+        return hashlib.sha256(Path(inspect.getfile(type(block))).read_bytes()).hexdigest()
+    except (OSError, TypeError):
+        return None

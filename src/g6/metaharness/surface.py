@@ -58,42 +58,45 @@ def as_json(envelope: dict[str, Any]) -> dict[str, Any]:
 
 
 def how_to_approve(workflow: str, mh: MetaHarness, decision_digest: str) -> str:
-    """The exact ways a person approves a decision, never from the session that proposed it."""
-    return (f"A person approves it from Python, in a process of their own: adapt(WORKFLOWS[{workflow!r}]['workflow'], "
-            f"workspace=r'{mh.workspace}').activate({decision_digest!r}, accepted_by='<their name>'), with WORKFLOWS "
-            f"from the file {ENV} names, which shows them the decision's card; then the same call with "
-            "candidate_digest='<the candidate_digest on the card>'. Or with metaharness_approve from an MCP session "
-            "whose client presents the consent prompt (including the proposing session).")
+    """Terminal fallback for a trusted host; names are recorded, never authenticated."""
+    return (f'From the same project directory: g6 workflow approve {workflow} {decision_digest} '
+            '--candidate <candidate_digest-on-card> --as "Your name". Or use metaharness_approve with '
+            'a client that presents the consent prompt, including the proposing session.')
 
 
 class Surface:
     """One process's meta-harnesses, by workflow name. Who proposed what (by MCP session) is in each run ledger."""
 
-    def __init__(self, workflows: dict[str, dict[str, Any]] | None = None) -> None:
+    def __init__(self, workflows: dict[str, dict[str, Any]] | None = None, *, workflow_root: Path | None = None) -> None:
         self._config = workflows
         self._harnesses: dict[str, MetaHarness] = {}
+        self.workflow_root = Path(workflow_root) if workflow_root is not None else Path.cwd() / ".g6" / "workflows"
 
     def _load(self) -> dict[str, dict[str, Any]] | None:
         if self._config is None:
             path = os.environ.get(ENV, "")
-            if not path or not Path(path).is_file():
-                return None
-            spec = importlib.util.spec_from_file_location("g6_metaharness_workflows", path)
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            spec.loader.exec_module(module)
-            self._config = dict(getattr(module, "WORKFLOWS", {}))
-        return self._config
+            if path and Path(path).is_file():
+                spec = importlib.util.spec_from_file_location("g6_metaharness_workflows", path)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = module
+                spec.loader.exec_module(module)
+                self._config = dict(getattr(module, "WORKFLOWS", {}))
+        from g6.metaharness.declarative import discover
+        from g6.core.storage import g6_home
+        return {**discover(g6_home() / "workflows"), **discover(self.workflow_root), **(self._config or {})} or None
 
     def harness(self, name: str) -> MetaHarness | dict[str, Any]:
-        config = self._load()
+        try:
+            config = self._load()
+        except (ValueError, OSError) as exc:
+            return _blocked(SCHEMA, f"workflow data could not be loaded: {exc}")
         if config is None:
-            return _blocked(NOT_CONFIGURED, f"no workflows are declared: set {ENV} to a Python file defining WORKFLOWS",
-                            "Declare your workflows in a file you own, then restart the MCP server.")
+            return _blocked(NOT_CONFIGURED, "no workflows are declared",
+                            f"Use metaharness_start, or set {ENV} to a Python file defining WORKFLOWS.")
         if name not in config:
             return _blocked(NOT_CONFIGURED, f"no workflow {name!r}; declared: {sorted(config)}")
         held = self._harnesses.get(name)
-        if held is None or held._moved():   # another process (a person approving from Python) wrote the workspace
+        if held is None or held._moved() or held.workflow.digest() != config[name]["workflow"].digest():
             entry = config[name]
             extra = {"clock": entry["clock"]} if "clock" in entry else {}
             self._harnesses[name] = adapt(entry["workflow"], entry.get("factory"), workspace=entry.get("workspace"),
@@ -122,6 +125,48 @@ class Surface:
         return mh, decision, None
 
     # --- the tools ---------------------------------------------------------------------------------------------
+    def start(self, specification: dict) -> dict[str, Any]:
+        from g6.metaharness.declarative import create
+        from g6.metaharness.api import _envelope
+        try:
+            entry = create(specification, self.workflow_root)
+            wf = entry["workflow"]
+            return _envelope("qualified-draft", "G6_E_META_CREATED", "Workflow created; client consent is required",
+                             workflow=wf.name, workflow_digest=wf.digest(), held_out_cases=len(wf.suite.held_out),
+                             mode="explore" if len(wf.suite.held_out) < 30 else "evaluation",
+                             next_action="metaharness_confirm with this workflow and digest")
+        except (ValueError, OSError) as exc:
+            return _blocked(SCHEMA, str(exc))
+
+    def confirm(self, workflow: str, workflow_digest: str, *, answer: str | None) -> dict[str, Any]:
+        mh = self.harness(workflow)
+        if isinstance(mh, dict):
+            return mh
+        if mh.workflow.digest() != workflow_digest or not answer or not answer.strip():
+            return _blocked(APPROVAL_REQUIRED, "workflow changed or client consent was not supplied",
+                            f'From the project directory: g6 workflow confirm {workflow} {mh.workflow.digest()} '
+                            '--as "Your name" after inspecting that workflow.')
+        return as_json(mh.confirm(answer.strip()))
+
+    def propose_code(self, workflow: str, files: dict[str, str], *, hypothesis: str, session: str) -> dict[str, Any]:
+        from g6.metaharness.declarative import valid_files
+        mh = self.harness(workflow)
+        if isinstance(mh, dict):
+            return mh
+        if not hypothesis.strip() or not valid_files(files):
+            return _blocked(SCHEMA, "supply a hypothesis and flat application Python files")
+        got = mh.code_candidate(files, proposer=f"mcp:{session}", claim={"hypothesis": hypothesis})
+        if "proposal" in got:
+            proposal = got["proposal"]
+            key = f"{proposal.digest()}:{session}"
+            if not mh.ledger.has(PROPOSED_BY, key):
+                mh.ledger.append(PROPOSED_BY, key, {"proposal_digest": proposal.digest(), "session": session})
+        return as_json(got)
+
+    def run(self, workflow: str, task_input: str) -> dict[str, Any]:
+        mh = self.harness(workflow)
+        return mh if isinstance(mh, dict) else as_json(mh.run(task_input))
+
     def inspect(self, workflow: str) -> dict[str, Any]:
         mh = self.harness(workflow)
         return mh if isinstance(mh, dict) else as_json(mh.inspect())
@@ -208,12 +253,33 @@ class Surface:
             result["consent"] = consent
         return result
 
-    def rollback(self, workflow: str, version: int, *, answer: str | None) -> dict[str, Any]:
+    def rollback_check(self, workflow: str, version: int) -> tuple[dict | None, str, dict]:
+        mh = self.harness(workflow)
+        if isinstance(mh, dict):
+            return mh, "", {}
+        refused = mh._refusal(allow_stopped=True)
+        if refused:
+            return refused, "", {}
+        versions = mh.store.versions()
+        if not 0 <= version < len(versions) or versions[version]["kind"] not in ("initial", "activate"):
+            return _blocked(APPROVAL_REQUIRED, "target is not an approved version"), "", {}
+        binding = {"workflow_digest": mh.workflow.digest(), "store_head": mh.store.head_hash(),
+                   "profile_digest": versions[version]["profile_digest"], "version": version}
+        question = (f"Roll back workflow {workflow} ({binding['workflow_digest']}) to approved version {version}, "
+                    f"profile {binding['profile_digest']}? Future runs use that profile; prior external actions are "
+                    "not undone. Type your name; identity is recorded as given.")
+        return None, question, binding
+
+    def rollback(self, workflow: str, version: int, *, answer: str | None, binding: dict | None = None) -> dict[str, Any]:
         mh = self.harness(workflow)
         if isinstance(mh, dict):
             return mh
         if not answer or not answer.strip():
             return _blocked(APPROVAL_REQUIRED, "no person asked for the rollback (the client did not ask you)")
+        if binding is not None:
+            refused, _, current = self.rollback_check(workflow, version)
+            if refused is not None or current != binding:
+                return refused or _blocked(APPROVAL_REQUIRED, "workflow changed after the rollback prompt")
         return as_json(mh.rollback(version, accepted_by=answer.strip()))
 
 

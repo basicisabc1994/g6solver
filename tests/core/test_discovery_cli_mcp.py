@@ -75,6 +75,8 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
     tools = asyncio.run(server.get_tools())
     # the discovery surface, plus the meta-harness tools added in its Phase 6 (META_HARNESS_PLAN.md; owner ruling Q10)
     # and its recovery tool (DECISIONS #27)
-    assert set(tools) == {"g6_help", "g6_components", "g6_find", "g6_describe", "g6_invoke",
+    assert set(tools) == {"g6_help", "g6_components", "g6_find", "g6_describe", "g6_invoke", "g6_compose", "g6_review_patch",
+                          "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
+                          "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",
                           "metaharness_diagnose", "metaharness_approve", "metaharness_rollback"}

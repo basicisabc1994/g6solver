@@ -64,3 +64,29 @@ recovery is not itself evidence that the integrated code passes.
   289 passed, 20 failed, 1 skipped. Failures traced to missing optional dependencies and
   default isolation refusal; rerunning with declared extras and Windows CI's explicit opt-in.
   These opt-in tests are not OS-isolation evidence.
+
+### Application construction and reference workflow
+
+- Added data-only workflow creation and project/global discovery (project wins, explicit Python config overrides).
+- Added digest-bound confirmation, generated application code proposals with a hypothesis, bounded evaluation/run
+  jobs, terminal consent fallback, and rollback prompts bound to the workflow, profile and current version history.
+- Baseline files are frozen including the complete filename set; portable filenames cannot collide by case.
+  The declarative evaluator is included in the judging manifest frozen at confirmation.
+- Added a Python patch review application: actual selected pytest runs, source grounding, reviewed adapters,
+  coding gate and action gate. Receipts identify the working-tree digest, base commit, checks and environment.
+  Weakened tests, changed runner configuration, unconfined execution and stale artifacts block recommendation.
+- Ruling: source grounding remains lexical and caller-supplied; it cannot establish source freshness. The patch
+  application's best decision is needs_review, never merge authorization or complete patch correctness.
+- Ruling: declarative code workflows do not invent a successful independent safety/injection evaluation. They
+  can measure candidate improvements but need a host-configured patch_evaluator before activation, as the existing
+  gate requires. This limits turnkey code activation, rather than weakening the protected evaluator boundary.
+- Generated-code fixture: five observed paired wins; activation refused with five held-out cases. This tests the
+  mechanism, not empirical application benefit. Runtime opt-in used; not OS isolation evidence.
+- Setup registers explicitly selected Claude/Codex clients using the full interpreter path, preserves existing
+  skills, and stores an explicitly selected host model without exposing other settings. Registration syntax checked
+  against both installed CLIs. Tests use temporary configuration and mocked registration, not the user's settings.
+- 52 combined composition/MCP/reference tests passed; 35 setup/isolation-choice/skill tests passed; 11 terminal
+  workflow/MCP tests passed. Focused lint and whitespace checks passed.
+- Broader configured baseline: metaharness 309 passed, 1 skipped; core/integrity 2298 passed, 17 skipped and one
+  expected-tools-list failure, since fixed and covered by the focused discovery tests.
+- Recovered the nine remaining A2 documentation/site-test edits without changing their source worktree.

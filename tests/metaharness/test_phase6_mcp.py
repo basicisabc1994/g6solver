@@ -29,7 +29,19 @@ if not hasattr(rig, "build"):
 
 CAREFUL = {"routing": {"answer": "local"}, "prompt": "CAREFUL: add the two numbers digit by digit."}
 TOOLS = {"metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",
-         "metaharness_diagnose", "metaharness_approve", "metaharness_rollback"}
+         "metaharness_diagnose", "metaharness_approve", "metaharness_rollback", "metaharness_start",
+         "metaharness_confirm", "metaharness_propose_code", "metaharness_evaluate_start", "metaharness_job",
+         "metaharness_run"}
+
+
+def test_rollback_prompt_and_action_are_bound_to_store_head(tmp_path):
+    surface = _surface(tmp_path)
+    refused, question, binding = surface.rollback_check("arith", 0)
+    assert refused is None
+    assert binding["profile_digest"] in question and binding["workflow_digest"] in question
+    surface.harness("arith").rollback(0, accepted_by="someone else")
+    got = surface.rollback("arith", 0, answer="Ada", binding=binding)
+    assert got["completion_state"] == "blocked-escalated"
 
 
 def _surface(tmp_path) -> Surface:

@@ -63,6 +63,7 @@ from g6.metaharness.store import ProfileStore, RunLedger
 
 #: The code that judges a change: pinned at confirmation, compared before every decision (MH-4).
 JUDGING_PATTERNS = ("metaharness/evaluate.py", "metaharness/gate.py", "metaharness/store.py", "metaharness/schema.py",
+                    "metaharness/declarative.py",
                     "metaharness/executor.py", "metaharness/measurement.py", "metaharness/promotion.py",
                     "metaharness/monitor.py", "metaharness/_code_safety.py", "metaharness/trace.py", "harness/*.py", "evidence/*.py", "reasoning/compare.py",
                     "reasoning/budget.py", "core/model_calls.py", "core/ledger.py", "core/stop.py", "invariants/*.py")

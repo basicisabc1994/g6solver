@@ -179,6 +179,22 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     from g6.metaharness.surface import Surface
 
     mh = surface or Surface()
+    from g6.metaharness.jobs import Jobs
+    jobs = Jobs()
+
+    @server.tool()
+    def g6_review_patch(repo: str, task: str, claim: str, sources: dict[str, str], tests: list[str],
+                        base: str = "HEAD", expected_artifact_digest: str = "", timeout_s: int = 300) -> dict:
+        """Run selected Python tests and compose grounding, coding review and action gating. No merge is executed.
+        Requires host permission patch_review.review in G6_MCP_SENSITIVE. Poll metaharness_job for the result.
+        Source support, executed tests and unvalidated scope are reported separately; never proves a patch correct."""
+        from g6.core.door import blocked_reply
+        if not _allowed("patch_review", "review", allowed_sensitive()):
+            return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")
+        from g6.harness.patch_review import review_patch
+        return jobs.start(lambda: review_patch(repo, task=task, claim=claim, sources=sources, tests=tests,
+                                               base=base, expected_artifact_digest=expected_artifact_digest,
+                                               timeout_s=timeout_s))
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))
@@ -189,6 +205,54 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         except Exception:  # noqa: BLE001 - a client that cannot ask means no person approved
             return None
         return answer.data if getattr(answer, "action", "") == "accept" else None
+
+    def metaharness_start(specification_json: str) -> dict:
+        """Create a data-only Python application workflow: name, task with {input}, cases [{input, expected}],
+        baseline_code {main.py: source defining solve(task)}, check (exact/contains/number), tolerance, seed.
+        Does not confirm or execute it. Below 30 held-out cases is exploration only."""
+        from g6.core.door import blocked_reply
+        try:
+            return mh.start(json.loads(specification_json))
+        except json.JSONDecodeError:
+            return blocked_reply("[G6_E_INPUT_VALIDATION] specification_json must be JSON")
+
+    async def metaharness_confirm(workflow: str, workflow_digest: str, ctx: Any) -> dict:
+        """Confirm the frozen task, checks, split and baseline through client-mediated consent."""
+        held = mh.harness(workflow)
+        if isinstance(held, dict):
+            return held
+        if held.workflow.digest() != workflow_digest:
+            from g6.core.door import blocked_reply
+            return blocked_reply("[G6_E_META_APPROVAL_REQUIRED] workflow changed; inspect it before confirming")
+        question = (f"Confirm workflow {workflow} digest {workflow_digest}? Task: {held.workflow.task}. "
+                    f"Development cases: {len(held.workflow.suite.dev)}; held-out: {len(held.workflow.suite.held_out)}. "
+                    "The baseline and generated candidates execute Python inside the configured boundary. "
+                    "Future activation requires separate consent. Type your name; identity is recorded as given.")
+        return mh.confirm(workflow, workflow_digest, answer=await ask(ctx, question))
+
+    def metaharness_propose_code(workflow: str, files_json: str, hypothesis: str, ctx: Any) -> dict:
+        """Propose generated application code as {filename.py: source}, with a falsifiable hypothesis.
+        Stores content by digest; does not edit the evaluator or activate the candidate."""
+        from g6.core.door import blocked_reply
+        try:
+            files = json.loads(files_json)
+            if not isinstance(files, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
+                raise ValueError("files must map filenames to source strings")
+            return mh.propose_code(workflow, files, hypothesis=hypothesis, session=session(ctx))
+        except (ValueError, TypeError) as exc:
+            return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}")
+
+    def metaharness_evaluate_start(workflow: str, proposal_digest: str) -> dict:
+        """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied."""
+        return jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
+
+    def metaharness_job(job_id: str) -> dict:
+        """Read a process-local job's pending/running/completed/failed status and retained result."""
+        return jobs.status(job_id)
+
+    def metaharness_run(workflow: str, task_input: str) -> dict:
+        """Run the currently approved application version on new input as a job."""
+        return jobs.start(lambda: mh.run(workflow, task_input))
 
     def metaharness_inspect(workflow: str) -> dict:
         """A declared workflow's versions, confirmations, evaluations and decisions."""
@@ -231,11 +295,16 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
     async def metaharness_rollback(workflow: str, version: int, ctx: Any) -> dict:
         """Ask the person, through the client, to move back to a version they approved."""
-        answer = await ask(ctx, f"G6 asks a person to roll back to approved version {version}. Type your name.")
-        return mh.rollback(workflow, version, answer=answer)
+        refused, question, binding = mh.rollback_check(workflow, version)
+        if refused is not None:
+            return refused
+        answer = await ask(ctx, question)
+        return mh.rollback(workflow, version, answer=answer, binding=binding)
 
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
-                 metaharness_diagnose, metaharness_approve, metaharness_rollback):
+                 metaharness_diagnose, metaharness_approve, metaharness_rollback, metaharness_start,
+                 metaharness_confirm, metaharness_propose_code, metaharness_evaluate_start, metaharness_job,
+                 metaharness_run):
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)
