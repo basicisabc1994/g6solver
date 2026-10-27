@@ -158,7 +158,7 @@
     }
   ],
   "reviewed": {
-    "artifact_sha256": "b7a2647272ad5e543cf2daf39fe2388bd7a8e327afbe8a8cc5a628799bc427e1",
+    "artifact_sha256": "ea9328a48d495558dba37ec50d49da0623cefda7f774c1dcad4f4f2be987ad94",
     "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
     "sources_sha256": {
       "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
@@ -364,6 +364,67 @@
         "held_file_hashes": "all matched the unchanged source register; source text not reread",
         "limitations": "Selected unit tests do not constitute a live Linux bubblewrap or fresh clinical/source-content review. Issuance must still rerun its full held-source/quote precheck and gates against the final bytes."
       }
+    },
+    {
+      "kind": "independent-version-only-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "60a0937468ee55f54e9a565e06842e23edc26dd9",
+      "reviewed_commit": "98be89a046381b8ceb6919c482e54fbd90f19dcc",
+      "prior_review_sha256": "ba3c5b5b1805cffc58532da6dddfe80eaf2b3a659e1331c8940a26a04eb701ed",
+      "prior_reviewed": {
+        "artifact_sha256": "b7a2647272ad5e543cf2daf39fe2388bd7a8e327afbe8a8cc5a628799bc427e1",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "ea9328a48d495558dba37ec50d49da0623cefda7f774c1dcad4f4f2be987ad94",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to the existing independent implementation delta review. Only the package version assignment changed among bound artifact inputs, from 0.1.1.dev0 to 0.1.1. Existing source reader attribution, source findings and earlier delta attestations are retained. No source clauses or private quotes were reread; no new medical, legal or domain endorsement or cryptographic signature.",
+      "method": "Confirmed commit 98be89a changes only src/g6/__init__.py and its bytes differ solely by that version literal; recomputed all five reviewed records. Substituting the prior version file into each current artifact manifest reproduces its prior artifact hash exactly. Intervening release preparation commits after the earlier review are outside these artifact inputs.",
+      "finding": "Only artifact_sha256 changes for every component. Rules, canonical source entries, cases, adapter and refusals are unchanged. This version-only change leaves all prior scoped findings intact. Review raises no label.",
+      "version_file": {
+        "path": "g6/__init__.py",
+        "previous_sha256": "9e185142d301ec48c48334927b4bab8c281aa8b4e320a4b41a35ad9f0dac989d",
+        "current_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec"
+      },
+      "validation": "Byte-exact version delta and prior artifact reconstruction passed for all five components. Final issuance remains responsible for its normal held-source/quote checks and gates."
     }
   ]
 }
