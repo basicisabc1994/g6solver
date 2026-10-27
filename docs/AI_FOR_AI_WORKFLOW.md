@@ -87,7 +87,7 @@ The report separates host-observed test receipts from caller-supplied source tex
 working-tree digest, base commit, test selection and execution environment. Passing tests cannot prove
 the complete patch correct; source support cannot establish freshness. A stale supplied artifact digest,
 weakened tests, changed runner files, failed tests or unconfined execution blocks recommendation.
-The best result is `needs_review`; the application never merges code.
+Passing selected tests is a scoped observation, not an acceptance decision. The current reference supplies no merge authority or action profile, so the action gate can keep the overall result `blocked` even when tests pass. Inspect `tests`, `executed_checks`, and `composition` for the separate findings; the application never merges code.
 
 ## Boundary and validation status
 

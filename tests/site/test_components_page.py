@@ -227,15 +227,15 @@ def test_an_extension_in_the_library_is_listed_under_its_family_not_in_the_core(
     library = catalogue.library_extensions()
     # the site pass (SITE_PASS item 2) restores the exact library, by name: one joining or leaving fails here
     assert [ext["name"] for ext in library] == [
-        "adapt_audio", "adapt_automl", "adapt_bayesian", "adapt_blender", "adapt_comfyui", "adapt_diagrams",
+        "adapt_audio", "adapt_blender", "adapt_comfyui", "adapt_diagrams",
         "adapt_django", "adapt_ffmpeg", "adapt_generative_art", "adapt_healing", "adapt_image",
-        "adapt_library_synthesizer", "adapt_pandas", "adapt_physical_ai", "adapt_pytorch", "adapt_rq", "adapt_sklearn",
+        "adapt_library_synthesizer", "adapt_pandas", "adapt_pytorch", "adapt_rq",
         "adapt_synth", "adapt_visualisation", "adapt_voice", "adapt_webpage", "agent_autogen", "agent_claude",
         "agent_codex", "agent_langgraph", "agent_nanoclaw", "agent_runtime", "agent_smolagents", "align_prompt_library",
         "australian_legal_corpus", "cog_arch_actr", "cog_arch_aixi", "cog_arch_gps", "component_creator", "ctx_ace",
         "ctx_cognee", "ctx_colbert", "ctx_contexthub", "ctx_elastic", "ctx_geo", "ctx_git", "ctx_langextract",
         "ctx_library_mapper", "ctx_search", "ctx_vision", "database", "decision_making", "design_governance",
-        "duty_of_care", "hat_orchestrator", "knowledge_chunker", "knowledge_converter", "knowledge_fetcher",
+        "hat_orchestrator", "knowledge_chunker", "knowledge_converter", "knowledge_fetcher",
         "knowledge_indexer", "knowledge_manifest", "llm_router", "meta_programming", "shared_workspace",
         "swe_diagnostics", "workspace_manager"]
     rows = {row["name"]: row for row in extensions.rows()}

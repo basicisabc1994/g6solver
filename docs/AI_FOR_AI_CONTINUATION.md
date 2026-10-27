@@ -76,7 +76,8 @@ recovery is not itself evidence that the integrated code passes.
   coding gate and action gate. Receipts identify the working-tree digest, base commit, checks and environment.
   Weakened tests, changed runner configuration, unconfined execution and stale artifacts block recommendation.
 - Ruling: source grounding remains lexical and caller-supplied; it cannot establish source freshness. The patch
-  application's best decision is needs_review, never merge authorization or complete patch correctness.
+  application supplies no merge authority/action profile; even passing tests can leave the overall action blocked.
+  Its scoped observations are not merge authorization or complete patch correctness.
 - Ruling: declarative code workflows do not invent a successful independent safety/injection evaluation. They
   can measure candidate improvements but need a host-configured patch_evaluator before activation, as the existing
   gate requires. This limits turnkey code activation, rather than weakening the protected evaluator boundary.
@@ -123,9 +124,26 @@ recovery is not itself evidence that the integrated code passes.
 - Updated boundary results: Windows 52 passed; Linux 12 passed. Adjacent runners 690 passed, 6 optional skips.
   Full harness/metaharness after locking: 398 passed, 1 skipped. Import contracts: 3 kept, none broken.
 - Fresh built-wheel smoke passed with isolated settings, Codex skill, a composition and a separate stdio MCP process.
-  A later final wheel must be rebuilt to include the review fixes.
+  The final wheel was rebuilt with the review fixes and normalized LF source; its smoke also passed.
 - Documentation/tools broad run: 2767 passed, 2 skipped, 8 failures from stale generated catalogues and old homepage
-  assertions. Regenerated catalogues and updated expectations to the new claim; targeted rerun in progress.
+  assertions. Regenerated catalogues and updated expectations; rerun: 370 passed, 1 skipped, three
+  certificate-status failures. These exposed five stale independent passes, correctly refused by the registry.
+  Updated the FAQ and exact-library expectations to the unavailable status; final focused result below.
 - Ruling on review exclusions: actual client consent and usability/utility remain release gates; same-user shell and
   malicious host-process code remain outside the stated boundary; arbitrary Python check external state is not
   frozen by a source hash; real toolchain compatibility and job cancellation are unproven. No claim extends to them.
+
+### Final validation record
+
+- Workforce regression: 1498 passed, 18 skipped. This run began before the final review fixes; affected
+  confinement/runner and harness paths were separately rerun after those fixes, as recorded above.
+- Skills/component/composition regression: 967 passed. Adjacent gates/bundles: 535 passed.
+- Full source/test/validation Ruff and whitespace checks pass. Tracked-source public scan: zero findings
+  with --public-ci (no private terms list), using the exact 509e047 archive.
+- Certificate check refuses all five pre-existing certificates because independent review hashes differ
+  from current code. No signatures were fabricated or stale reviews reused. Available extensions: 55;
+  the five affected extensions remain awaiting review. This is an open release gate, not a passing check.
+- Development wheel: g6-0.1.1.dev0-py3-none-any.whl in the sibling g6-continuation-artifacts/dist folder.
+  Final installed-wheel smoke passes: isolated settings, skill install, composition, separate MCP process;
+  no model calls. No client configuration, public tag, release, or shared branch was changed.
+- Final FAQ and certificate-status regressions: 9 passed. The earlier three remaining site failures are resolved.
