@@ -194,6 +194,44 @@ counterexample or a failure gives at most insufficient evidence, with its reprod
 template). A forbidden import against the repository's contract or yours is a failed check, so
 `defect_detected`; a structural check that finds none counts for its requirement as a stated check does.
 
+The formal path searches multi-step behaviour, and never lets a result about a model read as one about the
+code. `state_invariant.v1` takes an abstract state model you state, in the closed grammar of G6's model
+checker (`variables` with their sorts, `init`, `transition` with `next_<name>` for the next state, named
+`invariants`; no command, comment or keyword, at most 64 variables), and binds it to the code: `constructor`
+(a call that makes the initial state), `action` (the whole-number state variable whose value says which action
+led to each step), `actions` (each such value's operation, called with the state first and literal
+arguments), `observe` (how each state variable the invariants read is read on the real state: a call's value,
+or with `refusal` an access outcome), `depth` (at most 12), `traces` (at most 16) and `search` (`bounded` or
+`induction`). G6 first checks the invariants themselves: a tautology, or invariants no state satisfies
+together, is reported and never searched. Then it searches the model, restricted to the actions you map: a
+bounded search asks again, each found sequence of actions excluded, up to the number of traces; induction
+proves or refutes the invariants on the model. Each trace is replayed on the real code by a test G6 writes
+from the template's fixed text: the operation calls in order from a fresh initial state, then the observed
+variables read and the invariants evaluated on them (with the model's own values for variables the code does
+not show). It runs confined on the patch, and at the base commit when the intent is `preserve`. Only a trace
+that breaks the invariants on the real code is a finding about the code, and then an unconfirmed one
+(`unconfirmed_counterexample`, at most insufficient evidence); one the base commit breaks too is
+`fails_on_base_too`. A trace the code keeps is `model_only`: the model was broader than the code, and nobody
+is accused. A proof by induction, or a bounded search that finds nothing, is about the model only: the
+requirement is left exactly as it was and says so. Each result comes in three parts, in its activity:
+`specification` (template, where the bindings and the model came from, and the check of the invariants),
+`model` (operation, verdict, depth or k, traces) and `correspondence` (`reproduced`, `not_reproduced` with
+`model_only`, `not_replayable`, `not_replayed` or `not_searched`), and every model run is an activity.
+
+`access_rule.v1` also takes a multi-step form, for grants, shares and revokes: `constructor`, the access as
+`operation` with its `args` and `refusal`, `steps` (each an operation call with its `effect` on whether the
+access may be allowed: `allow`, `refuse` or `none`), `initially`, `depth` and `traces`. G6 builds the model from
+the steps and goes through `state_invariant.v1`'s path, so a revoke followed by the access is tried on the
+real code. The single-step form is as before.
+
+When a `relation.v1` or `differential.v1` function is one return statement over whole numbers and booleans
+(arithmetic, comparisons, a conditional), G6 also reads its source as data and asks Z3 for an input between
+your smallest and largest that breaks the relation (for `differential.v1`, where the base commit's version and
+the patch's differ). Each input Z3 finds is re-run confined on the real code as a further check of the
+instance (its id with `.symbolic`, counted within the 20) before it is reported; one the real code does not
+reproduce is dropped and counted. A function outside that form is an activity that says "not in the subset",
+never an error.
+
 `search` is optional: `{"templates": false}` runs your free-form checks only, and lists each template instance
 as skipped; `{"test_adequacy": true}` also measures test adequacy. The configuration is in `scope.search`.
 

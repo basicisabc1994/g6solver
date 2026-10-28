@@ -72,6 +72,12 @@ which never pass a requirement; ``forbidden_dependency.v1`` reads imports only, 
 or the caller states it counts for its requirement as a stated check does. Optional ``search``: ``templates`` false
 runs free-form checks only; ``test_adequacy`` true reports, for each requirement, the mutants of the changed lines its
 stated checks killed and those that survived, which decides nothing. The configuration is in ``scope.search``.
+The formal path (``g6.harness.verification_formal``): ``state_invariant.v1``, and access_rule.v1's multi-step form
+through it, checks the invariants of a model the caller states, searches the model, and replays each trace on the real
+code; ``relation.v1`` and ``differential.v1`` functions in Z3Verifier's subset get a symbolic search whose inputs are
+re-run on the real code. Only a trace or an input that reproduces on the real code is a finding, unconfirmed
+(``unconfirmed_counterexample``); a result about a model never passes a requirement and never gives
+``defect_detected``. Each comes in three parts: specification, model, correspondence.
 Proposed checks, compiled checks and mutant runs run as the stated checks do (the import roots, ``G6_REPO_PYTHON``,
 ``G6_REPO_ENV``); one of their runs that loaded a changed module from outside the tree, or cannot say what it loaded,
 is a ``check_error`` (a mutant: not run), never ``not_refuted`` or a counterexample.

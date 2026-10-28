@@ -175,7 +175,16 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         cases of an operation), differential.v1 (the base and the patch agree on stated calls; a difference is a
         counterexample when intent is preserve, a question when it is change) and forbidden_dependency.v1 (the patch
         adds no import that breaks the repository's own import-linter contract, as the base commit declares it, or
-        one the bindings state; read from the files, no code runs). Bindings are data: names are dotted names
+        one the bindings state; read from the files, no code runs). state_invariant.v1 takes an abstract state model
+        you state in the model checker's closed grammar, its actions bound to the code's operations, and how each
+        variable the invariants read is observed on the real state: G6 checks the invariants (a vacuous or
+        conflicting one is never searched), searches the model, and replays each trace on the real code; only a
+        trace that breaks the invariants there is a finding (unconfirmed_counterexample), a trace the code keeps is
+        model_only and accuses nobody, and a proof about the model leaves the requirement as it was. access_rule.v1
+        also takes steps (grant, share, revoke, each with its effect) through that path. For a relation.v1 or
+        differential.v1 function of whole numbers and booleans, Z3 looks for an input your list misses, re-run on the
+        real code before it is reported. Each such result comes in three parts: specification, model,
+        correspondence. Bindings are data: names are dotted names
         (module.attribute) G6 finds in the files, literals are JSON; anything else refuses the review. G6 compiles
         each instance into a test from the template's fixed text, run like a proposed check, which never passes a
         requirement; an instance the repository gives nothing to apply to is refused and reported in activities. A
