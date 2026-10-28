@@ -175,6 +175,53 @@ def test_a_weakened_test_compromises_test_integrity(repo, monkeypatch):
     assert any(skip["tier"] == 2 for skip in got["assessment"]["scope"]["checks_skipped"])
 
 
+PARAMETRIZED = ("import pytest\n\nfrom calc import add\n\n\n@pytest.mark.parametrize('a, b, total', [(2, 3, 5), "
+                "(-2, -3, -5)])\ndef test_sums(a, b, total):\n    assert add(a, b) == total\n")
+HELPER = "from calc import add\n\n\ndef check(a, b, total):\n    assert add(a, b) == total\n"
+
+
+def _commit(repo, message: str) -> None:
+    _git(repo, "add", ".")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", message)
+
+
+@pytest.mark.parametrize("rel, before, after, named", [
+    # review C2, probe S1: a test file by pytest's other default name
+    ("tests/calc_test.py", "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+     "from calc import add\n\n\ndef test_add():\n    add(2, 3)\n", "test_add"),
+    # probe S2: a parametrize case cut
+    ("test_sums.py", PARAMETRIZED, PARAMETRIZED.replace(", (-2, -3, -5)", ""), "(-2, -3, -5)"),
+    # probe S3: the helper module the tests check through, gutted
+    ("tests/helpers.py", HELPER, "def check(a, b, total):\n    pass\n", "check"),
+])
+def test_every_changed_test_file_and_test_helper_is_compared_for_weakening(repo, monkeypatch, rel, before, after,
+                                                                          named):
+    """Review C2: only test_*.py files were compared, and only their asserts, so these three weakenings of a defective
+    patch's tests read supported_within_scope."""
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(before)
+    _commit(repo, "more tests")
+    (repo / rel).write_text(after)   # calc.py stays BAD: the weakened check is all that lets it pass
+    (repo / "calc.py").write_text(BAD + "\n")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "test_weakened" and rel in r["detail"] and named in r["detail"]
+               for r in got["assessment"]["reasons"]), got["assessment"]["reasons"]
+
+
+def test_a_moved_test_helper_is_compared_with_its_old_text_not_read_as_deleted(repo, monkeypatch):
+    (repo / "tests").mkdir()
+    (repo / "tests" / "helpers.py").write_text(HELPER)
+    _commit(repo, "a helper")
+    (repo / "calc.py").write_text(GOOD)
+    _git(repo, "mv", "tests/helpers.py", "tests/checks.py")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
 @pytest.mark.parametrize("name", [".pytest.ini", "pytest.ini", "conftest.py", "pytest.toml", ".pytest.toml"])
 def test_a_changed_runner_configuration_compromises_test_integrity(repo, monkeypatch, name):
     """An empty ``pytest.toml`` is pytest's configuration file whenever it exists (review C1, probe S13): it replaces a

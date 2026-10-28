@@ -3,7 +3,9 @@
 
 ``review_patch`` gives exactly one technical outcome, decided in this order:
 
-1. ``test_integrity_compromised``: a changed test weakened (a moved test file is compared with its old text), a
+1. ``test_integrity_compromised``: a sign of weakening ``g6.safety_engine.detect_test_weakening`` finds in a changed
+   test-related file (``repo_tests.is_test_related``: a test file by pytest's default names, ``conftest.py`` or a
+   start-up file, any Python file under a test folder; a moved one is compared with its old text), a
    changed test-runner file (``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` or a
    start-up file; ``pyproject.toml``,
    ``setup.cfg`` and ``tox.ini`` only when their pytest section changed), a git-ignored file that could change the
@@ -57,8 +59,8 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.result import Result
-from g6.safety_engine.weakening import _pytest_settings
-from g6.workforce import repo_tests, verify
+from g6.safety_engine.weakening import _pytest_settings, detect_test_weakening
+from g6.workforce import repo_tests
 
 SUPPORTED, DEFECT = "supported_within_scope", "defect_detected"
 INTEGRITY, INSUFFICIENT = "test_integrity_compromised", "insufficient_evidence"
@@ -411,9 +413,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     def reason(stage: str, code: str, detail: str) -> None:
         reasons.append({"stage": stage, "code": code, "detail": detail})
 
-    # Integrity, before anything runs: a moved test file is compared with its old text, never read as deleted.
-    for finding in verify.weakened_tests({change.renamed.get(rel, rel): text for rel, text in change.before.items()},
-                                         change.after):
+    # Integrity, before anything runs: every changed test-related file through G6's weakening detector (review C2); a
+    # moved one is compared with its old text, never read as deleted.
+    for finding in detect_test_weakening(*repo_tests.related_texts(change)).reasons:
         reason("integrity", "test_weakened", finding)
     runner = _runner_changes(change)
     if runner:

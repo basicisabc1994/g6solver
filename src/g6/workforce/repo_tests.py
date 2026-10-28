@@ -261,9 +261,27 @@ def inside(repo: Path, value: str, what: str) -> str:
 
 
 def is_test_file(rel: str) -> bool:
-    """pytest's default test files, ``test_*.py`` (the rule ``verify.run_set`` uses)."""
+    """pytest's default test files, ``test_*.py`` (the rule ``verify.run_set`` uses), named with the case rule pytest
+    matches them by on this system (``fnmatch``, through ``os.path.normcase``: Windows ignores case; review 14b)."""
+    name = os.path.normcase(PurePosixPath(rel).name)
+    return name.endswith(".py") and name.startswith("test_")
+
+
+#: Folders whose Python files are the tests' own (``g6.safety_engine.weakening``'s rule), and the files pytest or
+#: Python runs before any test.
+_TEST_FOLDERS = frozenset({"tests", "test", "testing"})
+_START_UP = frozenset({"conftest.py", "sitecustomize.py", "usercustomize.py"})
+
+
+def is_test_related(rel: str) -> bool:
+    """A Python file the tests are made of: a test file by either of pytest's default names (``test_*.py``,
+    ``*_test.py``, with ``is_test_file``'s case rule), ``conftest.py`` or a start-up file, or any Python file under a
+    ``tests``, ``test`` or ``testing`` folder, such as a helper the tests check through (review C2)."""
     path = PurePosixPath(rel)
-    return path.suffix == ".py" and path.name.startswith("test_")
+    name = os.path.normcase(path.name)
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")
+                                     or path.name.lower() in _START_UP
+                                     or any(part.lower() in _TEST_FOLDERS for part in path.parts[:-1]))
 
 
 @dataclass(frozen=True)
@@ -341,6 +359,23 @@ def _moves(repo: Path, commit: str, gone: list[str], new: list[str], before: dic
         if twin is not None:
             found[old] = twin
     return found
+
+
+def related_texts(change: Change) -> tuple[dict[str, str], dict[str, str]]:
+    """Every test-related file the change touches (``is_test_related``), as ``change`` reads its test files: its text
+    at the base commit (absent when it is new) and now (absent when it was deleted), with the line endings
+    ``Path.read_text`` gives. A file moved since the base (``_moves``) is keyed by its new path on both sides, so it
+    is compared with its old text, not read as one file deleted and another added."""
+    related = [rel for rel in change.files if is_test_related(rel)]
+    if not related:
+        return {}, {}
+    existed = set(_paths(_git(change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit, "--", *related)))
+    before = {rel: _text(_git(change.repo, "show", f"{change.base_commit}:{rel}")) for rel in sorted(existed)}
+    after = {rel: (change.repo / rel).read_text(encoding="utf-8", errors="replace") for rel in related
+             if (change.repo / rel).is_file()}
+    gone, new = [rel for rel in before if rel not in after], [rel for rel in after if rel not in before]
+    moved = _moves(change.repo, change.base_commit, gone, new, before, after) if gone and new else {}
+    return {moved.get(rel, rel): text for rel, text in before.items()}, after
 
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
