@@ -210,7 +210,154 @@ def test_the_mcp_tool_takes_import_roots():
     assert "import_roots" in tool.parameters["properties"]
 
 
+# --- the review's fix pass (2026-10-29): the reviewer's probes P1, P3, P3b, M1 and M4 --------------------------------
+
+#: A committed conftest that registers an optional dependency lazily (importlib.util.LazyLoader, as lazy_loader's
+#: load() does), never used by the tests, whose import would fail (the reviewer's P3b).
+LAZY_CONFTEST = '''import importlib.util, sys
+from pathlib import Path
+
+
+def _lazy(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    spec.loader = importlib.util.LazyLoader(spec.loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+
+
+_lazy("optional_dep", Path(__file__).with_name("optional_dep.py"))
+del _lazy
+'''
+#: An entry of sys.modules whose __dict__ cannot be read: the list is incomplete, the run never ends on it.
+ODD_CONFTEST = ("import sys\n\n\nclass _Odd:\n    @property\n    def __dict__(self):\n"
+                "        raise RuntimeError('no dict here')\n\n\nsys.modules['odd_entry'] = _Odd()\n")
+
+
+def _lazy_repo(tmp_path: Path, conftest: str) -> Path:
+    """calc.py (add wrong) and its test, with ``conftest`` and a module whose import fails, committed; then the
+    correct patch."""
+    repo = tmp_path / "app"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "calc.py").write_text(BROKEN, encoding="utf-8")
+    (repo / "tests" / "test_calc.py").write_text(TEST, encoding="utf-8")
+    (repo / "tests" / "conftest.py").write_text(conftest, encoding="utf-8")
+    (repo / "tests" / "optional_dep.py").write_text("raise ImportError('optional dependency missing')\n",
+                                                   encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    (repo / "calc.py").write_text(BASE, encoding="utf-8")   # the correct patch
+    return repo
+
+
+@pytest.mark.usefixtures("unconfined")
+def test_reading_the_module_list_never_loads_a_lazy_module_nor_ends_the_run(tmp_path, monkeypatch):
+    """Review C1 (Critical): reading a lazily loaded module's __file__ ran its failing import, so pytest exited 1."""
+    monkeypatch.delenv(rt.REPO_PYTHON, raising=False)
+    lazy = rt.run(_lazy_repo(tmp_path / "lazy", LAZY_CONFTEST), ["tests/test_calc.py"])
+    assert (lazy["verdict"], lazy["loaded_complete"]) == (rt.PASSED, True), lazy["output"][-1200:]
+    odd = rt.run(_lazy_repo(tmp_path / "odd", ODD_CONFTEST), ["tests/test_calc.py"])
+    assert (odd["verdict"], odd["loaded_complete"]) == (rt.PASSED, False), odd["output"][-1200:]
+
+
+@pytest.mark.usefixtures("unconfined")
+def test_import_roots_come_before_the_repositorys_top(tmp_path, monkeypatch):
+    """Review M4: a package both at the top and in a root comes from the root. (pytest itself puts a test file's own
+    folder first, so a test file at the top would still see the top's: the tests here are in tests/, as usual.)"""
+    monkeypatch.delenv(rt.REPO_PYTHON, raising=False)
+    repo = tmp_path / "app"
+    for folder in (repo / "calc", repo / "lib" / "calc", repo / "tests"):
+        folder.mkdir(parents=True)
+    for folder in (repo / "calc", repo / "lib" / "calc"):
+        (folder / "__init__.py").write_text(BASE, encoding="utf-8")
+    (repo / "tests" / "test_where.py").write_text(
+        "import calc\n\n\ndef test_where():\n"
+        "    assert calc.__file__.replace('\\\\', '/').endswith('lib/calc/__init__.py'), calc.__file__\n",
+        encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    found = rt.run(repo, ["tests/test_where.py"], roots=("lib",))
+    assert found["verdict"] == rt.PASSED, found["output"][-800:]
+
+
+def test_the_runs_records_keep_what_the_run_left_out_or_could_not_see(installed, monkeypatch):
+    """Review M1: the reply's run records carry the copy's links, the modules loaded from outside the tree, and the
+    submodule folders not hashed."""
+    repo, _ = installed
+    extra = {"links_left_out": {"pkg/up": rt.LINK_OUTSIDE}, "links_materialised": {"lib2": "lib"},
+             "loaded_outside": {"other": "/x/other.py"}, "loaded_complete": True,
+             "submodules_not_hashed": {"vendor/x": "it holds more than 1 files, the most G6 hashes"}}
+    _recorded(monkeypatch, _result([CHECK]) | extra)
+    got = review_patch(repo, task="Repair addition.", requirements=REQUIREMENTS)
+    [first, *_] = got["assessment"]["scope"]["checks_run"]
+    for key in ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed"):
+        assert first[key] == extra[key], key
+
+
+def _venv_in(folder: Path) -> tuple[Path, Path]:
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(folder)], check=True,
+                   capture_output=True, timeout=180)
+    python = folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    site = Path(subprocess.run([str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+                               check=True, capture_output=True, text=True).stdout.strip())
+    (site / "g6_test_pytest.pth").write_text(str(Path(pytest.__file__).resolve().parents[1]) + "\n", encoding="utf-8")
+    return python, site
+
+
 # --- confined (Linux bubblewrap; Docker on Windows) ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("folder", [".venv", ".tox/py312"])
+def test_confined_an_installed_copy_inside_the_repository_is_not_the_tree(tmp_path, bwrap_backend, monkeypatch,
+                                                                         folder):
+    """Review I1 (the reviewer's P1): an environment inside the repository (.venv, chosen by G6 itself, or .tox through
+    G6_REPO_PYTHON) holds an installed copy of the base code; the defective patch to lib/calc."""
+    repo = tmp_path / "app"
+    (repo / "lib" / "calc").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    (repo / "lib" / "calc" / "__init__.py").write_text(BASE, encoding="utf-8")
+    (repo / "tests" / "test_calc.py").write_text(TEST, encoding="utf-8")
+    (repo / ".gitignore").write_text(".venv/\n.tox/\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    python, site = _venv_in(repo / folder)
+    (site / "calc").mkdir()
+    (site / "calc" / "__init__.py").write_text(BASE, encoding="utf-8")
+    if folder == ".venv":
+        monkeypatch.delenv(rt.REPO_PYTHON, raising=False)
+    else:
+        monkeypatch.setenv(rt.REPO_PYTHON, str(python))
+    (repo / "lib" / "calc" / "__init__.py").write_text(BROKEN, encoding="utf-8")
+    got = review_patch(repo, task="Repair addition.", requirements=REQUIREMENTS)["assessment"]
+    assert got["outcome"] == "insufficient_evidence", got
+    assert "changed_code_not_loaded" in {r["code"] for r in got["reasons"]}
+
+
+def test_confined_a_correct_patch_beside_a_lazily_loaded_failing_module_keeps_its_outcome(tmp_path, bwrap_backend,
+                                                                                         monkeypatch):
+    """Review C1 (the reviewer's P3b): at b3c342b this read supported_within_scope; the module list made it
+    test_integrity_compromised."""
+    monkeypatch.delenv(rt.REPO_PYTHON, raising=False)
+    got = review_patch(_lazy_repo(tmp_path, LAZY_CONFTEST), task="Repair addition.",
+                       requirements=REQUIREMENTS)["assessment"]
+    assert got["outcome"] == "supported_within_scope", got
+
+
+def test_confined_a_receipt_never_vouches_for_a_run_that_loaded_tree_code_from_elsewhere(installed, bwrap_backend,
+                                                                                         monkeypatch):
+    """Review M1: receipts are reusable evidence, so a run that loaded a module of the tree from outside it, or whose
+    list is incomplete, gets none."""
+    repo, _ = installed
+    shadowed = rt.run(repo, ["tests/test_calc.py"], receipt=True)
+    assert shadowed["receipt"] == "" and "calc" in shadowed["receipt_withheld"], shadowed
+    rooted = rt.run(repo, ["tests/test_calc.py"], roots=("lib",), receipt=True)
+    assert rooted["receipt"], rooted   # survival: the same run loading the tree's own code gets one
+    monkeypatch.setattr(rt, "LOADED_LIMIT", 0)
+    cut = rt.run(repo, ["tests/test_calc.py"], roots=("lib",), receipt=True)
+    assert cut["receipt"] == "" and cut["receipt_withheld"], cut
 
 
 def test_confined_a_defective_patch_the_installed_copy_hides_is_not_supported_and_import_roots_find_it(

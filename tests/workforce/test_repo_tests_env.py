@@ -97,7 +97,10 @@ def test_hypothesis_stores_its_database_in_the_runs_own_folder_unless_the_settin
 
 @pytest.mark.parametrize("name", ["PYTHONPATH", "pythonhome", "PYTHONSTARTUP", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES",
                                   "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "G6_ALLOW_UNCONFINED", "PATH", "HOME",
-                                  "USERPROFILE", "TMP", "TEMP", "TMPDIR", "COV_CORE_SOURCE", "A=B", "A\0B", ""])
+                                  "USERPROFILE", "TMP", "TEMP", "TMPDIR", "COV_CORE_SOURCE", "A=B", "A\0B", "",
+                                  # review M2: every name G6's own environment for the tests sets, and TMP...
+                                  "OPENROUTER_API_KEY", "HTTP_PROXY", "HTTPS_PROXY", "https_proxy", "ALL_PROXY",
+                                  "NO_PROXY", "no_proxy", "TMP_BASE"])
 @pytest.mark.usefixtures("unconfined")
 def test_a_name_that_could_change_the_runner_is_refused_before_anything_runs(repo, monkeypatch, name):
     (repo / "tests" / "test_w.py").write_text("from pathlib import Path\n\n\ndef test_w():\n"
@@ -110,6 +113,31 @@ def test_a_name_that_could_change_the_runner_is_refused_before_anything_runs(rep
             call()
         assert caught.value.code == INVALID and SETTING in str(caught.value) and SECRET not in str(caught.value)
     assert not (repo / "ran").exists()
+
+
+#: A test that says what it saw of the names G6 sets itself (review M2, the reviewer's P5).
+SEES_G6S = ("import os\n\n\ndef test_g6s():\n"
+            "    assert os.environ.get('OPENROUTER_API_KEY') in (None, 'sk-or-dummy-not-a-key')\n"
+            "    assert os.environ.get('HTTPS_PROXY') in (None, 'http://127.0.0.1:9')\n"
+            "    assert os.environ['QUTE_QT_WRAPPER'] == 'PyQt6'\n")
+
+
+@pytest.mark.usefixtures("unconfined")
+def test_g6s_own_values_win_over_the_settings_even_past_its_check(repo, monkeypatch):
+    """Review M2, the second line: a name the check let through by mistake never replaces G6's own value."""
+    (repo / "tests" / "test_g6s.py").write_text(SEES_G6S, encoding="utf-8")
+    monkeypatch.setattr(rt, "_repo_env", lambda: {"OPENROUTER_API_KEY": "sk-or-a-real-looking-key",
+                                                  "HTTPS_PROXY": "http://proxy.example:3128", "QUTE_QT_WRAPPER": "PyQt6"})
+    found = rt.run(repo, ["tests/test_g6s.py"])
+    assert found["verdict"] == rt.PASSED, found["output"][-800:]
+
+
+def test_confined_g6s_own_values_win_over_the_settings_even_past_its_check(repo, bwrap_backend, monkeypatch):
+    (repo / "tests" / "test_g6s.py").write_text(SEES_G6S, encoding="utf-8")
+    monkeypatch.setattr(rt, "_repo_env", lambda: {"OPENROUTER_API_KEY": "sk-or-a-real-looking-key",
+                                                  "HTTPS_PROXY": "http://proxy.example:3128", "QUTE_QT_WRAPPER": "PyQt6"})
+    found = rt.run(repo, ["tests/test_g6s.py"])
+    assert found["verdict"] == rt.PASSED, found["output"][-800:]
 
 
 @pytest.mark.parametrize("raw", ["not json", "[\"QUTE_QT_WRAPPER\"]", "{\"QUTE_QT_WRAPPER\": 6}",

@@ -138,12 +138,15 @@ The run, `scope.environment` and the receipt record each name with the SHA-256 o
 Hypothesis keeps its database in the run's own folder (`HYPOTHESIS_STORAGE_DIRECTORY`, unless `G6_REPO_ENV`
 names it), since the repository is read only to a confined run; `env_set_by_g6` says so.
 
-Each run lists the modules it loaded from outside the tree it tested. When a module the patch changed came from
+Each run lists the modules its pytest process had loaded from outside the tree it tested when the session ended
+(an environment inside the repository, below `site-packages`, counts as outside; a subprocess's or a forked
+child's modules are not seen). When a module the patch changed came from
 there instead, an installed copy such as a package installed without `-e` beside a `lib/` layout, the run tested
 code the patch did not change: its passes and failures are not used, the outcome is at most insufficient evidence
 (`changed_code_not_loaded`), and an unknown names the module and where it came from. Name the folder that holds
 the package in `import_roots` (at most 8 folders inside the repository, such as `["lib"]`): they go first on the
-import path of every run of the review and are recorded in `scope.import_roots`.
+import path of every run of the review, before the repository's top, and are recorded in `scope.import_roots`.
+Such a run, or one whose list is incomplete, gets no test receipt.
 
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree

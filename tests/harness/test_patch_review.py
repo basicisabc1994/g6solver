@@ -1090,6 +1090,47 @@ def test_a_submodule_folder_g6_could_not_hash_is_insufficient_evidence(repo, mon
     assert any("vendor/lib" in r["detail"] for r in got["assessment"]["reasons"])
 
 
+def _during_the_review(monkeypatch, act) -> None:
+    """Every run of the review passes, and ``act`` happens while each runs (someone running the code in their own
+    shell, say)."""
+    def execute(root, ids, *, timeout_s, change=None, roots=()):
+        act()
+        return {rel: result([ADD, NEGATIVE]) for rel in ids} if change is not None else result([ADD, NEGATIVE])
+
+    monkeypatch.setattr(patch_review, "_execute", execute)
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda *args, **kwargs: {"verdict": "not_run", "said": "no run was recorded"})
+
+
+def test_bytecode_written_in_a_submodule_folder_during_the_review_is_no_accusation(repo, monkeypatch):
+    """Review I2 (the reviewer's P2): Python writes vendor/lib/lib/__pycache__ when the vendored code runs once in
+    someone's shell while the review runs; the patch itself is correct."""
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+
+    def bytecode() -> None:
+        cache = repo / "vendor" / "lib" / "lib" / "__pycache__"
+        cache.mkdir(exist_ok=True)
+        (cache / "__init__.cpython-312.pyc").write_bytes(b"\0" * 16)
+
+    _during_the_review(monkeypatch, bytecode)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
+def test_a_submodule_folder_g6_stops_hashing_during_the_review_is_insufficient_evidence_not_a_change(repo,
+                                                                                                    monkeypatch):
+    """Review I2: hashed at the start, over a cap at the end, is a folder G6 did not hash, never one that changed."""
+    from g6.workforce import repo_tests
+
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    _during_the_review(monkeypatch, lambda: monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 1))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert _reasons(got) == {"submodule_not_hashed"}
+
+
 # --- real confined runs (Linux bubblewrap; run in Docker on Windows) ---------------------------------------------------
 
 def test_confined_a_correct_patch_is_supported_and_a_defect_is_named(repo, bwrap_backend):

@@ -162,10 +162,16 @@ SAID = {
     # PENDING copy (pool compatibility): a G6_REPO_PYTHON that names no Python.
     "repo_python": ("{setting} {problem}: {value!r}. Set it, where you start G6, to the full path of the Python that "
                     "has your repository's dependencies, or unset it"),
+    # PENDING copy (review M1): why a run that loaded the tree's code from elsewhere, or cannot say, gets no receipt.
+    "shadowed_withheld": ("no test receipt: the run loaded the repository's own modules from outside it, an installed "
+                          "copy in place of its files ({modules})"),
+    "loaded_unknown_withheld": ("no test receipt: G6 cannot say which code the run loaded (its list of the modules "
+                                "loaded from outside the repository is incomplete)"),
     # PENDING copy (pool compatibility): a G6_REPO_ENV G6 cannot use. It never repeats a value.
     "repo_env": ("{setting} {problem}. Set it, where you start G6, to a JSON object of the variables your tests need, "
                  "names to text, without the names that would change how G6 runs them (PYTHON..., LD_..., DYLD_..., "
-                 "PYTEST_..., G6_..., COV_CORE_..., PATH, HOME, USERPROFILE, TMP, TEMP, TMPDIR), or unset it"),
+                 "PYTEST_..., G6_..., COV_CORE_..., TMP..., PATH, HOME, USERPROFILE, TEMP) and those G6 sets itself "
+                 "(OPENROUTER_API_KEY, the HTTP proxies, NO_PROXY), or unset it"),
 }
 
 
@@ -533,8 +539,11 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: exit code 0 is not read as a pass (review I3). Another turns pytest's "fd" capture, its default, into "sys" before
 #: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
 #: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays. A third, as the
-#: session ends, writes each module loaded from outside the tree under test (the working folder) and outside the
-#: standard library, name to file, at most ``LOADED_LIMIT`` of them (``shadowed``). Written for Python 3.8 and later.
+#: session ends, writes each module the pytest process has loaded from outside the tree under test (the working
+#: folder; an environment inside it, below ``site-packages`` or ``dist-packages``, is outside) and outside the standard
+#: library, name to file, at most ``LOADED_LIMIT`` of them (``shadowed``): read from each module's own dictionary,
+#: never through its attributes (a lazily loaded module would load), and any error makes the list incomplete, never the
+#: run fail. Modules of a subprocess or a forked child are not seen. Written for Python 3.8 and later.
 _BOOT = r'''
 import json, os, socket, sys
 sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
@@ -646,27 +655,44 @@ class _Capture:
         yield
 class _Loaded:
     def pytest_sessionfinish(self, session):
-        import sysconfig
-        def real(path):
-            return os.path.normcase(os.path.realpath(path))
-        def below(path, top):
-            return path == top or path.startswith(top.rstrip(os.sep) + os.sep)
-        tree, std = real(os.getcwd()), real(sysconfig.get_paths()["stdlib"])
         found, complete = {}, True
-        for name, module in sorted(sys.modules.items(), key=lambda item: item[0]):
-            path = getattr(module, "__file__", None)
-            if not isinstance(path, str) or not path:
-                continue
-            here = real(path)
-            installed = {"site-packages", "dist-packages"} & set(here.split(os.sep))
-            if below(here, tree) or (below(here, std) and not installed):
-                continue
-            if len(found) >= limit:
-                complete = False
-                break
-            found[name] = os.path.realpath(path)
-        with open(loaded, "w", encoding="utf-8") as handle:
-            json.dump({"modules": found, "complete": complete}, handle)
+        try:
+            import sysconfig
+            def real(path):
+                return os.path.normcase(os.path.realpath(path))
+            def within(path, top):
+                # below top, with no installed packages' folder between: an environment inside the tree is not it
+                if not (path == top or path.startswith(top.rstrip(os.sep) + os.sep)):
+                    return False
+                return not {"site-packages", "dist-packages"} & set(path[len(top):].split(os.sep))
+            tree, std = real(os.getcwd()), real(sysconfig.get_paths()["stdlib"])
+            for name, module in sorted(list(sys.modules.items()), key=lambda item: item[0]):
+                if module is None:
+                    continue
+                try:
+                    try:   # never through the module's own attributes: a lazily loaded one would load now
+                        attributes = object.__getattribute__(module, "__dict__")
+                    except AttributeError:
+                        continue
+                    path = attributes.get("__file__")
+                    if not isinstance(path, str) or not path:
+                        continue
+                    here = real(path)
+                    if within(here, tree) or within(here, std):
+                        continue
+                    if len(found) >= limit:
+                        complete = False
+                        break
+                    found[name] = os.path.realpath(path)
+                except Exception:
+                    complete = False
+        except Exception:
+            complete = False
+        try:
+            with open(loaded, "w", encoding="utf-8") as handle:
+                json.dump({"modules": found, "complete": complete}, handle)
+        except Exception:
+            pass
 sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
 _BOOT = confine.CHILD_PRELUDE + _BOOT
@@ -737,8 +763,9 @@ class _OverCap(Exception):
 
 def _submodule(repo: Path, rel: str, budget: dict) -> str:
     """The SHA-256 of a submodule folder git does not look into: every file and link in it, untracked and ignored ones
-    included, by sorted path, with each file's bytes and each link's own text, never followed (nor is a link on the
-    way to the folder); "" when nothing is there. ``NOT_HASHED`` and why, never a hash of part of it, when this
+    included (but not ``__pycache__`` folders, the bytecode Python writes as the code runs), by sorted path, with each
+    file's bytes and each link's own text, never followed (nor is a link on the way to the folder); "" when nothing is
+    there. ``NOT_HASHED`` and why, never a hash of part of it, when this
     snapshot's submodule folders together (``budget``) hold more than ``COPY_MAX_FILES`` files or ``COPY_MAX_BYTES``
     bytes, take longer than ``SUBMODULE_HASH_S`` seconds, or cannot be read."""
     parts = PurePosixPath(rel).parts
@@ -766,7 +793,9 @@ def _submodule(repo: Path, rel: str, budget: dict) -> str:
         for folder, dirs, files in os.walk(top, onerror=failed):
             here = Path(folder)
             names = sorted(files) + sorted(name for name in dirs if _linked(here / name))
-            dirs[:] = sorted(name for name in dirs if not _linked(here / name))
+            # review I2: the bytecode Python writes when the code runs is not the folder's content (a .pyc elsewhere,
+            # which Python can load in place of a source, still is)
+            dirs[:] = sorted(name for name in dirs if not _linked(here / name) and name != "__pycache__")
             for name in names:
                 path = here / name
                 budget["files"] += 1
@@ -812,7 +841,13 @@ def _moved(before: dict[str, str], after: dict[str, str]) -> list[str]:
             return SAID["submodule_name"].format(path=key[len(_SUBMODULE):])
         return names.get(key, key)
 
-    return [name(key) for key in sorted(set(before) | set(after)) if before.get(key) != after.get(key)]
+    def differs(key: str) -> bool:
+        # review I2: a folder G6 did not hash on either side is not hashed (submodules_not_hashed), never changed
+        if key.startswith(_SUBMODULE) and any(str(side.get(key, "")).startswith(NOT_HASHED) for side in (before, after)):
+            return False
+        return before.get(key) != after.get(key)
+
+    return [name(key) for key in sorted(set(before) | set(after)) if differs(key)]
 
 
 def child_env(scratch: Path, *, network: bool) -> dict[str, str]:
@@ -861,9 +896,16 @@ def _chosen_python() -> str:
 REPO_ENV = "G6_REPO_ENV"
 REPO_ENV_INVALID = "G6_E_REPO_ENV_INVALID"
 #: Names the setting may not give: they could change the interpreter, the runner, the libraries loaded, G6's own
-#: settings, or where the run may write.
-_RUNNER_NAMES = re.compile(r"(?:PYTHON|LD_|DYLD_|PYTEST_|G6_|COV_CORE_).*|PATH|HOME|USERPROFILE|TMP|TEMP|TMPDIR",
+#: settings, or where the run may write; and every name G6's own environment for the tests sets (``child_env``: the
+#: paid-model block, whose dummy key no real one may replace, and the proxies that point nowhere; review M2).
+_RUNNER_NAMES = re.compile(r"(?:PYTHON|LD_|DYLD_|PYTEST_|G6_|COV_CORE_|TMP).*|PATH|HOME|USERPROFILE|TEMP",
                            re.IGNORECASE)
+_G6_SETS = frozenset(name.upper() for name in (*_MODEL_BLOCK, *_PROXIES, "NO_PROXY"))
+
+
+def _runner_name(name: str) -> bool:
+    """Whether the setting may not give ``name`` (``_RUNNER_NAMES``, ``_G6_SETS``, or not a name at all)."""
+    return not name or "=" in name or "\0" in name or bool(_RUNNER_NAMES.fullmatch(name)) or name.upper() in _G6_SETS
 #: A writable folder Hypothesis keeps its database in (it would write ``.hypothesis`` beside the tests, in a
 #: repository a confined run keeps read only): the run's own, unless the setting names one.
 HYPOTHESIS_STORAGE = "HYPOTHESIS_STORAGE_DIRECTORY"
@@ -886,8 +928,7 @@ def _repo_env() -> dict[str, str]:
     elif any("\0" in value for value in found.values()):
         problem = "gives a value that holds a NUL character"
     else:
-        refused = sorted(repr(name) for name in found if not name or "=" in name or "\0" in name
-                         or _RUNNER_NAMES.fullmatch(name))
+        refused = sorted(repr(name) for name in found if _runner_name(name))
         problem = "may not set " + ", ".join(refused) if refused else ""
     if problem:
         raise RepoRefused(REPO_ENV_INVALID, SAID["repo_env"].format(setting=REPO_ENV, problem=problem))
@@ -1167,24 +1208,29 @@ def _loaded(path: Path) -> tuple[dict[str, str], bool]:
 
 
 def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[str, str]] | None:
-    """The changed source files (``sources``: a change's) whose module ``ran`` loaded from outside the tree it tested
-    under the same name, an installed copy in place of the file the patch changed: each path to the module's name and
-    the file it came from. {} when none was, or when ``ran`` records nothing of what it loaded (a recorded run); None
-    when it cannot say (its list was cut at ``LOADED_LIMIT``, or never written). A changed module that was never
-    loaded, or a standard-library module named like a changed file, is not one."""
+    """The source files (``sources``: a change's, or every Python file of the tree) whose module ``ran`` loaded from
+    outside the tree it tested under the same name, an installed copy in place of the tree's own file: each path to the
+    module's name and the file it came from. {} when none was, or when ``ran`` records nothing of what it loaded (a
+    recorded run); None when it cannot say (its list was cut at ``LOADED_LIMIT``, or never written). What a run lists
+    is the modules its pytest process had loaded when the session ended: a subprocess's, or a forked child's, are not
+    seen. A module that was never loaded, or a standard-library module named like a source file, is not one."""
     if "loaded_outside" not in ran:
         return {}
     if not ran.get("loaded_complete"):
         return None
+    ends: dict[str, list[str]] = {}   # each source by every tail of its path, for one look-up per module
+    for rel in sources:
+        parts = rel.split("/")
+        for start in range(len(parts)):
+            ends.setdefault("/".join(parts[start:]), []).append(rel)
     found: dict[str, dict[str, str]] = {}
     for name, file in sorted((ran.get("loaded_outside") or {}).items()):
         if name.startswith("__"):
             continue
         tail = name.replace(".", "/") + ("/__init__.py" if os.path.basename(file).startswith("__init__.") else ".py")
-        for rel in sources:
-            if rel not in found and (rel == tail or rel.endswith("/" + tail)):
-                found[rel] = {"module": name, "file": file}
-    return found
+        for rel in ends.get(tail, ()):
+            found.setdefault(rel, {"module": name, "file": file})
+    return dict(sorted(found.items()))
 
 
 def _root(repo: Path, rootdir: str) -> str:
@@ -1258,11 +1304,13 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     missing = [test for test in ids if not (repo / test.partition("::")[0]).exists()]
     if missing:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["missing"].format(value=missing[0]))
-    entries = [str(repo), *([str(repo / "src")] if (repo / "src").is_dir() else []),
-               *(str(repo / inside(repo, root, "import root")) for root in roots)]
+    # the import roots first, then the top and src: a package in a root wins over one of the same name at the top
+    entries = [*(str(repo / inside(repo, root, "import root")) for root in roots), str(repo),
+               *([str(repo / "src")] if (repo / "src").is_dir() else [])]
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     python = python or interpreter(repo)
-    person = _repo_env()
+    # a second line after _repo_env's check: no name G6 sets itself, or that could change the runner, is ever taken
+    person = {name: value for name, value in _repo_env().items() if not _runner_name(name)}
     set_by_g6 = [] if HYPOTHESIS_STORAGE in person else [HYPOTHESIS_STORAGE]
     seen: list = [{}, False]   # the modules the run loaded from outside the tree, and whether that list is whole
     whose = ("setting" if python == _chosen_python() else
@@ -1370,7 +1418,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
              and progress["expected"] == progress.get("finished")}
     if verdict == FAILED and isolation.get("backend") and "PermissionError" in output:
         found["said"] = SAID["confined_write"]   # the operating system refused a test something an owner's run allows
-    unhashed = submodules_not_hashed(before)
+    unhashed = {**submodules_not_hashed(before), **submodules_not_hashed(after)}
     if unhashed:   # a change in these folders would not be seen
         found["submodules_not_hashed"] = unhashed
     if receipt and isolation.get("backend") and unhashed:
@@ -1388,6 +1436,16 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "no test receipt: git ignores files that could change this run, " + ", ".join(scan.loadable[:10])
                 if scan.loadable else
                 f"no test receipt: the scan for git-ignored files stopped at its limit of {IGNORED_SCAN_LIMIT} entries")
+            return found
+        # review M1: receipts are reusable evidence, so none vouches for a run that loaded the tree's own modules from
+        # elsewhere (an installed copy), or that cannot say what it loaded
+        elsewhere = shadowed([rel for rel in _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z"))
+                              if rel.endswith(".py")], found)
+        if elsewhere is None or elsewhere:
+            found["receipt_withheld"] = (SAID["loaded_unknown_withheld"] if elsewhere is None else
+                                         SAID["shadowed_withheld"].format(modules=", ".join(
+                                             f"{where['module']} from {where['file']}"
+                                             for where in list(elsewhere.values())[:5])))
             return found
         try:
             found["receipt"] = receipt_store._record(receipt_store._body(

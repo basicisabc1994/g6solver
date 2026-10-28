@@ -210,6 +210,27 @@ def test_a_gitlink_folder_over_a_cap_is_not_hashed_and_says_so(openlib, monkeypa
     assert rt.submodules_not_hashed(rt.snapshot(make_openlib(openlib.parent / "plain", gitlink=False))) == {}
 
 
+def test_bytecode_python_writes_inside_the_gitlink_folder_is_not_a_change(openlib):
+    """Review I2 (the reviewer's P2): running the vendored code once writes __pycache__ there, which read as the
+    repository changing during the review. A stray .pyc outside __pycache__ is code Python can load: still hashed."""
+    before = rt.snapshot(openlib)
+    cache = openlib / "vendor" / "lib" / "lib" / "__pycache__"
+    cache.mkdir()
+    (cache / "__init__.cpython-312.pyc").write_bytes(b"\0" * 16)
+    assert rt._moved(before, rt.snapshot(openlib)) == []
+    (openlib / "vendor" / "lib" / "stray.pyc").write_bytes(b"\0" * 16)
+    assert rt._moved(before, rt.snapshot(openlib)) == [SUBMODULE]
+
+
+def test_a_folder_hashed_on_one_side_only_is_not_hashed_never_changed(openlib, monkeypatch):
+    """Review I2: a cap reached before or after, but not both, is a folder G6 did not hash, never a change."""
+    hashed = rt.snapshot(openlib)
+    monkeypatch.setattr(rt, "COPY_MAX_FILES", 1)
+    capped = rt.snapshot(openlib)
+    assert rt._moved(hashed, capped) == [] and rt._moved(capped, hashed) == []
+    assert list(rt.submodules_not_hashed(capped)) == ["vendor/lib"]
+
+
 @pytest.mark.parametrize("how", ["pointed at another commit", "removed", "added"])
 def test_a_gitlink_entry_that_differs_from_the_base_is_a_submodule_change(openlib, how):
     """git's own diff skips submodules, so G6 compares the gitlink entries of the base commit and the index."""

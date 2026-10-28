@@ -379,11 +379,21 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     return found
 
 
+#: What a run says of what it could not see, kept in the reply's record of it when it says anything (review M1): the
+#: links its copy left out or copied in place, the modules it loaded from outside the tree, the submodule folders G6
+#: could not hash.
+_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed")
+
+
 def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "") -> dict:
-    return {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(ids), "tests": list(ids),
-            "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
-            "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
-            "receipt": ran.get("receipt", "")}
+    found = {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(ids), "tests": list(ids),
+             "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
+             "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
+             "receipt": ran.get("receipt", "")}
+    found.update({key: ran[key] for key in _SEEN_KEYS if ran.get(key)})
+    if ran.get("loaded_complete") is False:
+        found["loaded_complete"] = False
+    return found
 
 
 def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str]) -> dict:
@@ -663,8 +673,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)
     skipped.append({"tier": 3, "check": "mutation and old-against-new probes", "reason": TIER_3})
 
-    if repo_tests.snapshot(root) != before:
+    final = repo_tests.snapshot(root)
+    if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
+    for rel, why in repo_tests.submodules_not_hashed(final).items():
+        if rel not in repo_tests.submodules_not_hashed(before):
+            reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=rel, why=why))
     in_place = [(tier, ran) for tier, ran in ((1, first), (2, second)) if ran]
     for tier, ran in in_place:   # review I4: changed and changed back around a run, the snapshots above still match
         if ran.get("source_before") and ran["source_before"] != artifact:
