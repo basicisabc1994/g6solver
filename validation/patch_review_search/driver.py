@@ -16,6 +16,12 @@ its reason codes, whether its deadline was reached during the search stage, its 
 node}``) and, when the proposer failed, G6's reason. Arm E is ``arm_e(patch, *, c_calls, t_calls, share_left, meter)``,
 around ``arm_e.arm_e``.
 
+**C and T in a child process.** At a study level (``children_only``) arms C and T are ``ChildArm``s: each run is a
+fresh isolated interpreter (``child.py``), killed with its process tree at the arm's limit plus its grace, so a hung
+review cannot stall the study. A killed run is a time-out, a tool error marked as shaped by the limit, and is charged
+what its meter (a ``FileMeter`` the child writes as it calls) counted before the kill. The child gets the study's
+environment without the research flag. A plain callable runs in this process, for development fixtures.
+
 **One run each.** A run that failed from infrastructure before its first model call (the arm raises
 ``InfrastructureFailure``, and its meter counted no call) is retried once, and the retry is logged; a second such
 failure is a tool error. The same failure after a model call, any other exception, or a reply without a disposition, is
@@ -41,15 +47,28 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
+from g6.core import component_process
+from patch_review_search.metering import NOTHING, FileMeter, InfrastructureFailure, Meter
+from patch_review_utility.arms import KILL_GRACE_S, RESEARCH_FLAG, ROOTS
 from patch_review_utility.dispositions import CATEGORIES, ERROR, make, tally
+
+__all__ = ["NOTHING", "ChildArm", "FileMeter", "InfrastructureFailure", "Meter", "Record", "Spending", "study"]
+CHILD = Path(__file__).with_name("child.py")
 
 ARMS = ("C", "T", "E")
 #: Each search arm's configuration, as G6's review takes it (``search``): C, free-form checks only; T, templates first
 #: (and the formal path where a template uses it), free-form checks where no template applies, and test adequacy.
 SEARCH = {"C": {"templates": False}, "T": {"templates": True, "test_adequacy": True}}
 INFRASTRUCTURE, SPEND_SHARE, TOOL_ERROR = "infrastructure_before_first_call", "spend_share_reached", "tool_error"
+#: A child arm stopped at its limit: a time-out, the kind arm E gives one (``arm_e.TIME_OUT``).
+TIME_OUT = "time_out"
 ARM_A = "arm_a_without_disposition"
 #: The reason codes that attribute a difference from arm A to search.
 SEARCH_REASONS = frozenset({"unconfirmed_counterexample", "unconfirmed_failure"})
@@ -59,31 +78,49 @@ TO_SEARCH, BETWEEN_RUNS = "search", "difference between runs"
 EXCLUDED = ("empty", "not_applying")
 
 
-class InfrastructureFailure(Exception):
-    """An arm's run that failed from infrastructure before its first model call."""
+@dataclass(frozen=True)
+class ChildArm:
+    """Arm C or T run in a child process of its own, as V9 runs arms 3 and 4 (``arms.in_child``): ``python -I
+    child.py``, through G6's ``component_process.run_process``, in a call window of ``limit_s`` (the arm's wall-clock
+    limit, V9's arm 3's) plus ``grace_s``, so a hung review cannot stall the study: at the window's end the child is
+    killed with its whole process tree. ``spec`` is the arm, ``module:function``, imported in the child from ``roots``
+    (with the study's folder and G6's)."""
+    spec: str
+    limit_s: float
+    roots: tuple = ()
+    grace_s: float = KILL_GRACE_S
 
 
-#: A meter's reading before anything ran.
-NOTHING = {"calls": 0, "characters": 0, "cents": 0.0}
+class ChildTimedOut(Exception):
+    """A child arm stopped at its limit, with no reply."""
 
 
-class Meter:
-    """What an arm's model calls have cost on one patch, counted as each call happens: calls, characters and cents.
-    The driver gives each arm run a fresh one (``meters``) and reads it after the arm returns and after it raises.
-    VS-5's MeteredCaller will be such a meter: anything with ``reading()`` giving those three counts."""
-
-    def __init__(self):
-        self._found = dict(NOTHING)
-
-    def add(self, *, calls: int = 1, characters: int = 0, cents: float = 0.0) -> None:
-        if calls < 0 or characters < 0 or cents < 0:
-            raise ValueError("a meter only counts up")
-        self._found = {"calls": self._found["calls"] + int(calls),
-                       "characters": self._found["characters"] + int(characters),
-                       "cents": self._found["cents"] + float(cents)}
-
-    def reading(self) -> dict:
-        return dict(self._found)
+def _in_child(arm: ChildArm, patch: dict, *, search: dict, share_cents: float, meter: FileMeter, folder: Path) -> dict:
+    """The child arm's reply, or ``InfrastructureFailure`` (it said so), ``ChildTimedOut`` (killed at its limit), or
+    ``RuntimeError`` (it raised, or ended with no reply)."""
+    job, reply, log = folder / "job.json", folder / "reply.json", folder / "child.log"
+    job.write_text(json.dumps({"spec": arm.spec, "patch": patch, "search": search, "share_cents": share_cents,
+                               "meter": str(meter.path), "roots": [*map(str, arm.roots), *ROOTS]}, default=str),
+                   encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if key != RESEARCH_FLAG}
+    argv = [sys.executable, "-I", str(CHILD), str(job), str(reply)]
+    try:
+        with open(log, "wb") as sink, component_process.window(arm.limit_s + arm.grace_s):
+            code = component_process.run_process(argv, env=env, stdout=sink, stderr=subprocess.STDOUT)
+    except component_process.ExecutionInterrupted as exc:
+        if exc.stopped:
+            raise   # an operator stop ends the study, never one arm's result
+        raise ChildTimedOut(f"the arm was stopped at its wall-clock limit of {arm.limit_s} seconds (and "
+                            f"{arm.grace_s} more), with no reply") from exc
+    if not reply.is_file():
+        said = log.read_text(encoding="utf-8", errors="replace")[-600:]
+        raise RuntimeError(f"the arm's process ended with exit code {code} and no reply: {said}")
+    found = json.loads(reply.read_text(encoding="utf-8"))
+    if "infrastructure" in found:
+        raise InfrastructureFailure(found["infrastructure"])
+    if "error" in found:
+        raise RuntimeError(found["error"])
+    return found["reply"]
 
 
 class Spending:
@@ -157,7 +194,7 @@ def _attribution(arm_a: dict, own: dict, reply: dict) -> str | None:
 
 
 def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, record: Record, rerun,
-          excluded: list[dict], meters=lambda arm: Meter()) -> dict:
+          excluded: list[dict], meters=lambda arm: Meter(), children_only: bool = False) -> dict:
     """Arms C, T and E on every patch in draw order, then the reruns of every finding (the module docstring).
     ``excluded``: the patches of the draw V9 found empty or not applying (``{id, draw_index, reason}``), each counted
     and recorded with its reason before any arm runs, never dropped."""
@@ -172,16 +209,18 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         raise ValueError("every excluded patch needs a draw index of its own, used by no other patch")
     if any(item.get("reason") not in EXCLUDED for item in excluded):
         raise ValueError(f"an excluded patch's reason must be one of V9's: {', '.join(EXCLUDED)}")
+    if children_only and not (isinstance(arm_c, ChildArm) and isinstance(arm_t, ChildArm)):
+        raise ValueError("at a study level, arms C and T run each in a child process of their own (ChildArm)")
     for item in excluded:
         record.add("excluded", dict(item))
     rows, retries, failures, differences = [], [], [], []
 
-    def once(patch: dict, arm: str, call) -> tuple[dict | None, int, str, dict]:
+    def once(patch: dict, arm: str, call, meter=None) -> tuple[dict | None, int, str, dict]:
         """The arm's reply, the attempts made, the tool error's kind when there is no usable reply, and the meter's
         reading. The arm is charged what its meter counted, read after it returns and after it raises."""
         if not spending.left(arm):
             return None, 0, SPEND_SHARE, dict(NOTHING)
-        meter = meters(arm)
+        meter = meter if meter is not None else meters(arm)
 
         def share_left() -> bool:   # what the arm has spent so far on this patch counts against its share
             return spending.spent[arm] + meter.reading()["cents"] < spending.share
@@ -202,6 +241,9 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                     retry = {"patch": patch["id"], "arm": arm, "attempt": attempt, "why": str(exc)[:300]}
                     retries.append(retry)
                     record.add("retry", retry)
+                except ChildTimedOut as exc:
+                    reply, kind = {"error": str(exc)}, TIME_OUT
+                    break
                 except Exception as exc:  # a tool error is counted, never dropped
                     reply, kind = {"error": f"{type(exc).__name__}: {exc}"}, TOOL_ERROR
                     break
@@ -222,14 +264,24 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
     def errored(kind: str, reply: dict | None) -> dict:
         said = {SPEND_SHARE: "the arm's share of the spending cap was spent before this patch",
                 INFRASTRUCTURE: "the run failed from infrastructure before its first model call, twice"}.get(kind, "")
-        return make(ERROR, (said or (reply or {}).get("error") or "no disposition")[:300], error_kind=kind)
+        return make(ERROR, (said or (reply or {}).get("error") or "no disposition")[:300], error_kind=kind,
+                    time_or_cap=kind == TIME_OUT)
+
+    def search_arm(patch: dict, arm: str) -> tuple[dict | None, int, str, dict]:
+        search, run = copy.deepcopy(SEARCH[arm]), arm_c if arm == "C" else arm_t
+        if not isinstance(run, ChildArm):
+            return once(patch, arm, lambda share_left, meter: run(patch, search=search, share_left=share_left,
+                                                                  meter=meter))
+        with tempfile.TemporaryDirectory(prefix="v10-arm-") as folder:
+            meter = FileMeter(Path(folder) / "meter.jsonl")
+            return once(patch, arm, lambda share_left, meter: _in_child(
+                run, patch, search=search, share_cents=spending.share - spending.spent[arm], meter=meter,
+                folder=Path(folder)), meter=meter)
 
     for patch in patches:
         arm_a, arms = patch["arm_a"], {}
         for arm in ("C", "T"):
-            search, run = copy.deepcopy(SEARCH[arm]), arm_c if arm == "C" else arm_t
-            reply, attempts, kind, reading = once(patch, arm, lambda share_left, meter, run=run, search=search: run(
-                patch, search=search, share_left=share_left, meter=meter))
+            reply, attempts, kind, reading = search_arm(patch, arm)
             if not kind and not _valid((reply or {}).get("own")):
                 kind = TOOL_ERROR
             reply = reply or {}

@@ -164,3 +164,14 @@ Items 15 to 24 cover the study driver (`driver.py`), the reruns (`reruns.py`) an
     cross-check: a difference in either is logged in the record and the report, and the meter is what is charged. The
     arm's model calls, and so E's call count, are the meter's. An infrastructure failure after the meter counted a call
     is not "before its first model call": a tool error, never retried. For the coordinator's ruling.
+
+26. **C and T in a child process.** At a study level the driver refuses arms C and T unless each is a child arm
+    (`ChildArm`, `children_only`). Each run is a fresh `python -I` interpreter started through G6's
+    `component_process.run_process`, in a call window of the arm's wall-clock limit (V9's arm 3's) plus 60 seconds
+    (V9's `KILL_GRACE_S`), and killed with its process tree when the window ends. A killed run is a tool error of the
+    kind `time_out`, the kind arm E gives a time-out, marked as shaped by the limit; V9's arms 3 and 4 call the same
+    case `killed_at_time_limit`. The child's meter is a file it appends one line to per call, so the driver reads what
+    it counted before the kill; the child is told what was left of the arm's share when the run began. The child gets
+    the study's environment without the research flag, as V9's arms do. An operator stop is never caught. Arm E runs
+    in the driver's own process: each of its calls and runs has its own time limit inside the arm's. For the
+    coordinator's ruling.
