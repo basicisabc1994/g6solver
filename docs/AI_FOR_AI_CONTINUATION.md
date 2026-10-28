@@ -242,3 +242,18 @@ recovery is not itself evidence that the integrated code passes.
 - New wheel builds are byte-identical. Installed-wheel/MCP smokes pass on Python 3.12/3.13 and all five installed
   certificate bindings inspect cleanly. New hash/source recorded in wheel.json. Real UI retest remains pending;
   the old owner installation is unchanged until the owner upgrades and restarts the client.
+
+### Step 1: one meaning of a call across doors (28 October)
+
+- `ok` is false whenever the effective state is blocked-escalated; a blocked result keeps its answer in `result`, and
+  `g6 invoke` exits 1 when not ok. `g6.invoke` is a checked Python door with the same label correction, door rule and
+  sensitive-operation policy as MCP and the CLI; a parity test covers plain, sensitive, blocked and self-claimed
+  verified results. Drift fixes and contract wording ("declared structural obligations") are in the release notes.
+- The patch-review utility protocol (V9) was registered and frozen before any Step 2 code; the owner approved its
+  margins, agent and pool for the feasibility level only. No patch has been generated and nothing has been spent.
+- An independent reader declined to attest the contract wording twice until it was true of the code, then attested
+  the delta (55c8cc6). Normal issuance at that commit ran in a Linux container with no network and bubblewrap
+  confinement; the renewed records changed hashes and isolation only, no check result (6654b19).
+- CI passed all nine jobs on 6654b19. Ruff, the three import contracts and the diff check pass. Two builds with the
+  same SOURCE_DATE_EPOCH are byte-identical; installed-wheel/MCP smokes pass on Python 3.12.11 and 3.13.5 and all
+  five installed certificates inspect cleanly. New hash/source recorded in wheel.json. Nothing was published.
