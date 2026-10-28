@@ -110,7 +110,8 @@ Items 15 to 24 cover the study driver (`driver.py`), the reruns (`reruns.py`) an
     such failure is a tool error (`infrastructure_before_first_call`). Any other exception, or a reply without a
     disposition, is a tool error and is not retried. Ruled by the coordinator: accepted as written.
 
-17. **Spending.** The cap is in cents, and each of C, T and E has a third of it. Each reply says what the arm spent
+17. **Spending.** (What an arm is charged is now its meter's count, item 25; what it reports is a cross-check.) The
+    cap is in cents, and each of C, T and E has a third of it. Each reply says what the arm spent
     on the patch (`spent_cents`), priced by the study script from the provider's token counts and the frozen price
     list, which wait for VS-5. An arm whose spending reaches its share has none left. What an arm reports spending on
     the patch where its share ran out is charged in full. Ruled by the coordinator: accepted as written.
@@ -154,3 +155,12 @@ Items 15 to 24 cover the study driver (`driver.py`), the reruns (`reruns.py`) an
     search). All are required unless the check is told fewer; a parity fixture is required with its group. A group not
     required is reported, never a failure. A tree from the pool-compatibility branch alone (8b5364c) has no
     verification search, so it can never pass with every group required. Ruled by the coordinator: accepted as written.
+
+25. **Spending is metered as it happens** (the coordinator's change to item 17). Every arm run on a patch gets a
+    fresh meter, which counts calls, characters and cents as each model call happens; VS-5's MeteredCaller will be
+    that meter. The driver charges the arm what the meter counted, read after the arm returns and after it raises, so a
+    run that fails after its calls is charged for them, and the next patch sees the reduced share. While the arm runs,
+    its share counts what the meter has counted so far. What the arm reports (its spent cents and its calls) is a
+    cross-check: a difference in either is logged in the record and the report, and the meter is what is charged. The
+    arm's model calls, and so E's call count, are the meter's. An infrastructure failure after the meter counted a call
+    is not "before its first model call": a tool error, never retried. For the coordinator's ruling.

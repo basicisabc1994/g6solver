@@ -8,21 +8,26 @@ the patch before the next; arm A is V9's arm 3 result on the patch, reused, neve
 every finding of C, T and E is rerun (``rerun``, before any label is read). Every arm's output, every retry and every
 rerun result goes into an append-only record (``Record``), each entry's SHA-256 chained to the one before it.
 
-**The arms are injected.** G6's arms C and T are callables, ``arm(patch, *, search, share_left)``, given the arm's
+**The arms are injected.** G6's arms C and T are callables, ``arm(patch, *, search, share_left, meter)``, given the arm's
 search configuration as data (``SEARCH``: C free-form checks only, T templates and test adequacy). G6's review takes
 it as ``search={"templates": bool, ...}`` (VS-3), and its proposer comes with VS-5; this driver never calls G6 itself.
 Each returns its own review's disposition by arm A's rule (``own``), its model calls, what it spent (``spent_cents``),
 its reason codes, whether its deadline was reached during the search stage, its findings (reproductions ``{file, text,
-node}``) and, when the proposer failed, G6's reason. Arm E is ``arm_e(patch, *, c_calls, t_calls, share_left)``, around
-``arm_e.arm_e``.
+node}``) and, when the proposer failed, G6's reason. Arm E is ``arm_e(patch, *, c_calls, t_calls, share_left, meter)``,
+around ``arm_e.arm_e``.
 
 **One run each.** A run that failed from infrastructure before its first model call (the arm raises
-``InfrastructureFailure``) is retried once, and the retry is logged; a second such failure is a tool error. Any other
-exception, or a reply without a disposition, is a tool error. Every tool error is counted, never dropped.
+``InfrastructureFailure``, and its meter counted no call) is retried once, and the retry is logged; a second such
+failure is a tool error. The same failure after a model call, any other exception, or a reply without a disposition, is
+a tool error, never retried. Every tool error is counted, never dropped.
 
-**Spending.** Each of C, T and E runs under a third of the study's spending cap (``Spending``). Each arm is asked
-before every model call whether its share still allows one (``share_left``). A patch reached after an arm's share is
-spent is a counted tool error for that arm, and the arm is not called.
+**Spending.** Each of C, T and E runs under a third of the study's spending cap (``Spending``). Every arm run gets a
+fresh meter (``Meter``; VS-5's MeteredCaller will be one), which counts calls, characters and cents as each model call
+happens; the driver charges the arm what its meter counted, read after the arm returns and after it raises, so a run
+that fails after its calls is charged for them. What the arm says it spent (``spent_cents``, and its calls) is a
+cross-check: a difference is logged. Each arm is asked before every model call whether its share, less what its meter
+has counted on the patch so far, still allows one (``share_left``). A patch reached after an arm's share is spent is a
+counted tool error for that arm, and the arm is not called.
 
 **Dispositions.** C and T accept when arm A accepts and their own review accepts by arm A's rule; their own review's
 tool error is theirs, arm A's leaves them none (``arm_a_without_disposition``), and when arm A does not accept they
@@ -56,6 +61,29 @@ EXCLUDED = ("empty", "not_applying")
 
 class InfrastructureFailure(Exception):
     """An arm's run that failed from infrastructure before its first model call."""
+
+
+#: A meter's reading before anything ran.
+NOTHING = {"calls": 0, "characters": 0, "cents": 0.0}
+
+
+class Meter:
+    """What an arm's model calls have cost on one patch, counted as each call happens: calls, characters and cents.
+    The driver gives each arm run a fresh one (``meters``) and reads it after the arm returns and after it raises.
+    VS-5's MeteredCaller will be such a meter: anything with ``reading()`` giving those three counts."""
+
+    def __init__(self):
+        self._found = dict(NOTHING)
+
+    def add(self, *, calls: int = 1, characters: int = 0, cents: float = 0.0) -> None:
+        if calls < 0 or characters < 0 or cents < 0:
+            raise ValueError("a meter only counts up")
+        self._found = {"calls": self._found["calls"] + int(calls),
+                       "characters": self._found["characters"] + int(characters),
+                       "cents": self._found["cents"] + float(cents)}
+
+    def reading(self) -> dict:
+        return dict(self._found)
 
 
 class Spending:
@@ -129,7 +157,7 @@ def _attribution(arm_a: dict, own: dict, reply: dict) -> str | None:
 
 
 def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, record: Record, rerun,
-          excluded: list[dict]) -> dict:
+          excluded: list[dict], meters=lambda arm: Meter()) -> dict:
     """Arms C, T and E on every patch in draw order, then the reruns of every finding (the module docstring).
     ``excluded``: the patches of the draw V9 found empty or not applying (``{id, draw_index, reason}``), each counted
     and recorded with its reason before any arm runs, never dropped."""
@@ -146,24 +174,50 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         raise ValueError(f"an excluded patch's reason must be one of V9's: {', '.join(EXCLUDED)}")
     for item in excluded:
         record.add("excluded", dict(item))
-    rows, retries, failures = [], [], []
+    rows, retries, failures, differences = [], [], [], []
 
-    def once(patch: dict, arm: str, call) -> tuple[dict | None, int, str]:
-        """The arm's reply, the attempts made, and the tool error's kind when there is no usable reply."""
+    def once(patch: dict, arm: str, call) -> tuple[dict | None, int, str, dict]:
+        """The arm's reply, the attempts made, the tool error's kind when there is no usable reply, and the meter's
+        reading. The arm is charged what its meter counted, read after it returns and after it raises."""
         if not spending.left(arm):
-            return None, 0, SPEND_SHARE
-        for attempt in (1, 2):
-            try:
-                return call(), attempt, ""
-            except InfrastructureFailure as exc:
-                if attempt == 2:
-                    return {"error": str(exc)}, attempt, INFRASTRUCTURE
-                retry = {"patch": patch["id"], "arm": arm, "attempt": attempt, "why": str(exc)[:300]}
-                retries.append(retry)
-                record.add("retry", retry)
-            except Exception as exc:  # a tool error is counted, never dropped
-                return {"error": f"{type(exc).__name__}: {exc}"}, attempt, TOOL_ERROR
-        raise AssertionError("unreachable")
+            return None, 0, SPEND_SHARE, dict(NOTHING)
+        meter = meters(arm)
+
+        def share_left() -> bool:   # what the arm has spent so far on this patch counts against its share
+            return spending.spent[arm] + meter.reading()["cents"] < spending.share
+
+        reply, attempt, kind = None, 0, ""
+        try:
+            for attempt in (1, 2):
+                try:
+                    reply = call(share_left, meter)
+                    break
+                except InfrastructureFailure as exc:
+                    if meter.reading()["calls"]:   # not before its first model call: a tool error, not retried
+                        reply, kind = {"error": f"after a model call: {exc}"}, TOOL_ERROR
+                        break
+                    if attempt == 2:
+                        reply, kind = {"error": str(exc)}, INFRASTRUCTURE
+                        break
+                    retry = {"patch": patch["id"], "arm": arm, "attempt": attempt, "why": str(exc)[:300]}
+                    retries.append(retry)
+                    record.add("retry", retry)
+                except Exception as exc:  # a tool error is counted, never dropped
+                    reply, kind = {"error": f"{type(exc).__name__}: {exc}"}, TOOL_ERROR
+                    break
+        finally:
+            reading = meter.reading()
+            spending.charge(arm, reading["cents"])
+        reported = {"cents": (reply or {}).get("spent_cents"),
+                    "calls": (reply or {}).get("model_calls", ((reply or {}).get("calls") or {}).get("made"))}
+        if any(isinstance(reported[key], (int, float)) and abs(float(reported[key]) - reading[key]) > 1e-6
+               for key in ("cents", "calls")):
+            found = {"patch": patch["id"], "arm": arm, "metered_cents": reading["cents"],
+                     "reported_cents": reported["cents"], "metered_calls": reading["calls"],
+                     "reported_calls": reported["calls"]}
+            differences.append(found)
+            record.add("spending_difference", found)
+        return reply, attempt, kind, reading
 
     def errored(kind: str, reply: dict | None) -> dict:
         said = {SPEND_SHARE: "the arm's share of the spending cap was spent before this patch",
@@ -174,32 +228,29 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         arm_a, arms = patch["arm_a"], {}
         for arm in ("C", "T"):
             search, run = copy.deepcopy(SEARCH[arm]), arm_c if arm == "C" else arm_t
-            reply, attempts, kind = once(patch, arm, lambda run=run, search=search, arm=arm: run(
-                patch, search=search, share_left=lambda: spending.left(arm)))
+            reply, attempts, kind, reading = once(patch, arm, lambda share_left, meter, run=run, search=search: run(
+                patch, search=search, share_left=share_left, meter=meter))
             if not kind and not _valid((reply or {}).get("own")):
                 kind = TOOL_ERROR
             reply = reply or {}
             own = errored(kind, reply) if kind else reply["own"]
-            spending.charge(arm, reply.get("spent_cents"))
             arms[arm] = {"disposition": _search_disposition(arm_a, own), "own": own, "attempts": attempts,
-                         "model_calls": int(reply.get("model_calls") or 0), "spent_cents": reply.get("spent_cents"),
+                         "model_calls": reading["calls"], "meter": reading, "spent_cents": reply.get("spent_cents"),
                          "reasons": list(reply.get("reasons") or []), "findings": list(reply.get("findings") or []),
                          "attribution": _attribution(arm_a, own, reply),
                          "proposer_failure": reply.get("proposer_failure")}
             if reply.get("proposer_failure"):
                 failures.append({"patch": patch["id"], "arm": arm, "reason": reply["proposer_failure"],
                                  "category": arms[arm]["disposition"]["category"]})
-        reply, attempts, kind = once(patch, "E", lambda: arm_e(
-            patch, c_calls=arms["C"]["model_calls"], t_calls=arms["T"]["model_calls"],
-            share_left=lambda: spending.left("E")))
+        reply, attempts, kind, reading = once(patch, "E", lambda share_left, meter: arm_e(
+            patch, c_calls=arms["C"]["model_calls"], t_calls=arms["T"]["model_calls"], share_left=share_left,
+            meter=meter))
         if not kind and not _valid((reply or {}).get("disposition")):
             kind = TOOL_ERROR
         reply = reply or {}
-        spending.charge("E", reply.get("spent_cents"))
         arms["E"] = {**{key: value for key, value in reply.items() if key not in ("disposition", "findings")},
                      "disposition": errored(kind, reply) if kind else reply["disposition"], "attempts": attempts,
-                     "model_calls": int(((reply.get("calls") or {}).get("made")) or 0),
-                     "findings": list(reply.get("findings") or [])}
+                     "model_calls": reading["calls"], "meter": reading, "findings": list(reply.get("findings") or [])}
         for arm in ARMS:
             record.add("arm", {"patch": patch["id"], "arm": arm, "output": arms[arm]})
         rows.append({"patch": patch["id"], "draw_index": patch["draw_index"], "arm_a": arm_a, "arms": arms})
@@ -214,6 +265,6 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                 record.add("rerun", found)
     counts = {reason: sum(item["reason"] == reason for item in excluded) for reason in EXCLUDED}
     return {"patches": rows, "excluded": {"counts": counts, "patches": [dict(item) for item in excluded]},
-            "reruns": reruns, "retries": retries, "proposer_failures": failures,
+            "reruns": reruns, "retries": retries, "proposer_failures": failures, "spending_differences": differences,
             "tallies": {arm: tally([row["arms"][arm]["disposition"] for row in rows]) for arm in ARMS},
             "spending": spending.report(), "record": record.final}

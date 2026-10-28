@@ -19,8 +19,17 @@ def patches(*arm_a, start=0):
             for index, disposition in enumerate(arm_a)]
 
 
+class Spend:
+    """A fake arm's run that meters ``calls`` model calls costing ``cents`` in all, then returns or raises ``then``."""
+
+    def __init__(self, calls, cents, then):
+        self.calls, self.cents, self.then = calls, cents, then
+
+
 class Arm:
-    """A fake arm: its replies by patch id (a dict, or an exception to raise, once per attempt), and every call."""
+    """A fake arm: its replies by patch id (a dict, an exception to raise, a ``Spend``, or a function of the call's
+    keywords, which meters its own calls), once per attempt, and every call. A plain reply meters the calls and cents
+    it reports."""
 
     def __init__(self, name, replies=None, default=None):
         self.name, self.replies, self.calls = name, {k: list(v) for k, v in (replies or {}).items()}, []
@@ -30,6 +39,14 @@ class Arm:
         self.calls.append((patch["id"], kwargs))
         queue = self.replies.get(patch["id"])
         found = queue.pop(0) if queue else self.default
+        if callable(found) and not isinstance(found, BaseException):
+            return found(**kwargs)                                      # it meters what it spends itself
+        if isinstance(found, Spend):
+            kwargs["meter"].add(calls=found.calls, cents=found.cents)
+            found = found.then
+        elif isinstance(found, dict):
+            calls = found.get("model_calls", (found.get("calls") or {}).get("made", 0))
+            kwargs["meter"].add(calls=calls, cents=found.get("spent_cents") or 0.0)
         if isinstance(found, BaseException):
             raise found
         return found
@@ -118,6 +135,54 @@ def test_each_arm_runs_under_a_third_of_the_spending_cap_and_a_patch_past_its_sh
     assert got["tallies"]["C"][ERROR] == 1 and got["tallies"]["C"]["error_kinds"] == {driver.SPEND_SHARE: 1}
     assert e.calls[1][1]["c_calls"] == 0                            # C made no call on p1
     assert t.calls[0][1]["share_left"]() is True
+
+
+def test_an_arm_that_raises_after_two_calls_is_charged_for_both_and_the_next_patch_sees_the_reduced_share():
+    seen = []
+
+    def spends(meter, share_left, **kwargs):
+        seen.append(share_left())
+        meter.add(calls=1, characters=900, cents=41.0)
+        seen.append(share_left())
+        return {"own": ACCEPTED, "model_calls": 1, "spent_cents": 41.0}
+
+    c = Arm("C", {"p0": [Spend(2, 60.0, then=RuntimeError("the review crashed"))], "p1": [spends]})
+    got, _, (c, t, e) = study(patches(ACCEPTED, ACCEPTED, ACCEPTED), c, cap=300.0)
+    first = got["patches"][0]["arms"]["C"]
+    assert first["disposition"]["error_kind"] == driver.TOOL_ERROR and first["model_calls"] == 2
+    assert first["meter"] == {"calls": 2, "characters": 0, "cents": 60.0}
+    assert e.calls[0][1]["c_calls"] == 2                               # E matches the calls C made before it failed
+    assert seen == [True, False]                                       # 60 spent, 40 left, 41 more passes the share
+    assert got["spending"]["spent_cents"]["C"] == 101.0
+    assert got["patches"][2]["arms"]["C"]["disposition"]["error_kind"] == driver.SPEND_SHARE
+    assert [patch for patch, _ in c.calls] == ["p0", "p1"]
+
+
+def test_what_an_arm_says_it_spent_is_a_cross_check_and_a_difference_is_logged():
+    c = Arm("C", {"p0": [Spend(1, 5.0, then={"own": ACCEPTED, "model_calls": 1, "spent_cents": 1.0})]})
+    record = driver.Record()
+    got, _, _ = study(patches(ACCEPTED), c, record=record)
+    assert got["spending"]["spent_cents"]["C"] == 5.0                  # the meter is charged, not the reply
+    assert got["spending_differences"] == [{"patch": "p0", "arm": "C", "metered_cents": 5.0, "reported_cents": 1.0,
+                                            "metered_calls": 1, "reported_calls": 1}]
+    assert [entry["kind"] for entry in record.entries].count("spending_difference") == 1
+
+
+def test_a_meter_counts_calls_characters_and_cents_and_only_counts_up():
+    meter = driver.Meter()
+    meter.add(characters=1200, cents=0.5)
+    meter.add(calls=2, characters=300, cents=1.25)
+    assert meter.reading() == {"calls": 3, "characters": 1500, "cents": 1.75}
+    with pytest.raises(ValueError):
+        meter.add(cents=-1.0)
+
+
+def test_an_infrastructure_failure_after_a_model_call_is_a_tool_error_never_retried():
+    c = Arm("C", {"p0": [Spend(1, 2.0, then=driver.InfrastructureFailure("the container went away"))]})
+    got, _, (c, _, _) = study(patches(ACCEPTED), c)
+    row = got["patches"][0]["arms"]["C"]
+    assert row["disposition"]["error_kind"] == driver.TOOL_ERROR and row["attempts"] == 1 and got["retries"] == []
+    assert len(c.calls) == 1 and got["spending"]["spent_cents"]["C"] == 2.0
 
 
 def test_a_run_that_failed_from_infrastructure_before_its_first_call_is_retried_once_and_logged():
