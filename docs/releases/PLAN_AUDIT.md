@@ -10,7 +10,8 @@ at each step, and a row changes only with new evidence.
 - **Audited commit:** `a2df4fd` (branch `claude/step2`), on 28 October 2026. Later commits are named only where a row
   says so. The Step 2 rows (S2-12 onward, and the fix-pass table) were checked again on 29 October 2026 against the
   frozen Step 2 commit `b3c342b`, and VS-0 against `cd52d48` on branch `claude/vs`. Rows S2-16, S2-18 and S2-19
-  were checked on 29 October 2026 against `8b5364c` on branch `claude/pool-compat`.
+  were checked on 29 October 2026 against `8b5364c` on branch `claude/pool-compat`, and rows VS-1 to VS-3 against
+  `051b062` and `633f61b` on branch `claude/vs`.
 - **Sources:** the plans are kept outside this repository, and their items are described here in plain words. The
   Phase 0 usability ledger is also kept outside this repository; its identifiers (P0-01 to P0-32) are used below. It
   was recorded on 27 October 2026 by following each public journey literally from a fresh clone of public `main` at
@@ -34,6 +35,7 @@ Continuous-integration runs cited below:
 | 40644090822 | `94d99ee` (the tip of `codex/ai-for-ai-continuation`) | all nine jobs passed |
 | 40654008114 | `a2df4fd` (the audited commit) | conformance, scan and site passed. All six test jobs failed on one test (row S2-12). Every other test in those jobs passed, so a test cited with this run passed there. |
 | 40602312893 | `30ab0cf` | the last bundle build; passed |
+| 40768957226 | `051b062` (VS-2's tip on `claude/vs`) | all nine jobs passed |
 
 On the Linux jobs bubblewrap is installed and expected, and a confined test fails rather than skips
 (`tools/ci_bubblewrap.sh:17`, `tests/conftest.py:55-87`). The Windows and macOS jobs set the person's opt-in
@@ -53,7 +55,7 @@ exists.
 | Utility | Correctness, false assurances, failure recovery, cost and time against a stated baseline | **Open.** V9 is registered and has not run (row S4-3). The six-case engineering trial is synthetic, and its committed result is from the earlier version of the review (row S2-11). |
 | Broader usability | Later ten-journey trial: 8 of 10 usable, zero unexplained errors | **Open.** Not run (row S5-5). |
 | Artifacts | Docs and bundles match the tested commit; stale certificates regenerated through their normal checks | **Open.** The certificates are current (conformance passed in run 40654008114). The recorded wheel was built at `6654b19`, before Step 2. The bundles were last built at `30ab0cf`. The site and docs still differ from the code (tables 1 and 2). |
-| V10 feasibility report (current plan) | The verification-search study's feasibility report | **Open.** The V10 protocol is registered (row VS-0); VS-1 onward is being built. |
+| V10 feasibility report (current plan) | The verification-search study's feasibility report | **Open.** The V10 protocol is registered (row VS-0). VS-1 and VS-2 pass continuous integration on their branch. VS-3 is built and under review, and VS-4 onward is being built. |
 | Step 5 trial (current plan) | The owner pilot and the fresh-user trial | **Open.** Rows S5-1 to S5-7. |
 | Security reviews (current plan) | A fresh reviewer for each security-sensitive change, with its findings fixed | **Open.** The second review of Step 2 found three critical and six important problems; the fix pass fixed each with a test that failed first (rows S2-C1 to S2-15). The review of the fix pass itself was thin, and a deep adversarial review is owed before go-live (rows S2-12, S2-17). |
 
@@ -86,7 +88,7 @@ exists.
 | 1. Earlier plan items | 37 | 14 | 27 | 12 | 90 |
 | 2. Phase 0 findings | 6 | 2 | 20 | 1 | 29 |
 | 3. Revision 3 steps and amendments | 35 | 7 | 16 | 8 | 66 |
-| 4. Verification search | 1 | 1 | 8 | 0 | 10 |
+| 4. Verification search | 3 | 2 | 5 | 0 | 10 |
 
 ## 1. Earlier plan items
 
@@ -387,9 +389,9 @@ whether it preserved what it must not break, and whether it is tested enough. Go
 |---|---|---|---|---|
 | VS-pre | The existing parts the workstream builds on are present | implemented, not verified | `IntentContract` (`src/g6/intent_engine/schema.py:105`), `IntentElicitor` (`elicitor.py:42`), `detect_test_weakening` (`src/g6/safety_engine/weakening.py:142`), `check_invariant` and `prove_invariant` (`src/g6/model_checking/symbolic.py:202-212`), `check_contract` (`src/g6/formal/contract.py:22`), `check_equivalence` (`src/g6/formal/z3_depth.py:541`), `Z3Verifier` (`src/g6/cegis/z3_verifier.py:201`) and `layer_violations` (`src/g6/code/design_governance/graph.py:259`). Their fitness for this use is untested | — |
 | VS-0 | Register the V10 protocol before any verification-search code | implemented and verified | `cd52d48` on `claude/vs` adds `docs/validation/patch_review_search/PROTOCOL.md` and its registry entry; the file's hash with Unix line endings (`2573c84e…`) matches the entry, and no verification-search code exists before it. `tests/site/test_evidence.py` passes against it. Not yet on `codex/ai-for-ai-continuation` | — |
-| VS-1 | Intent modelling: requirements from an intent contract, the provenance of every requirement, and an optional `intent` parameter | missing | `g6_review_patch` takes no `intent` (`src/g6/mcp/__init__.py:152-154`) | VS-1 |
-| VS-2 | The executor, the classifier and the completion report for checks the caller supplies | missing | `src/g6/harness/verification_search.py` does not exist | VS-2 |
-| VS-3 | The template registry and compiler, five templates, and test adequacy through mutation | missing | `src/g6/harness/verification_templates.py` does not exist | VS-3 |
+| VS-1 | Intent modelling: requirements from an intent contract, the provenance of every requirement, and an optional `intent` parameter | implemented and verified | `43f0234` on `claude/vs`. `requirements_from_intent` and the `intent` parameter of `review_patch` and `g6_review_patch`. Tests: `tests/harness/test_verification_search.py`, and the identity test `tests/harness/test_patch_review_off_path.py` with its golden file: with no `intent`, every decided field is unchanged. Continuous integration: run 40768957226 on `051b062`, a descendant, passed all nine jobs. Not yet on `codex/ai-for-ai-continuation` | — |
+| VS-2 | The executor, the classifier and the completion report for checks the caller supplies | implemented and verified | `bb218ce` and `ae11694`, then the fix pass after its review, `d8f06c6` and `051b062`, on `claude/vs`. The optional `proposed_checks` run confined on the patched tree and at the base commit, are classified by their declared intent, never pass a requirement, and give at most `insufficient_evidence`; every reply has `assessment.completion`. Tests: `tests/harness/test_proposed_checks.py`. Continuous integration: run 40768957226 on `051b062` passed all nine jobs. Not yet on `codex/ai-for-ai-continuation` | — |
+| VS-3 | The template registry and compiler, five templates, and test adequacy through mutation | implemented, not verified | `51ba696`, `43a85ee` and `633f61b` on `claude/vs` (with the pool-compatibility merge `c8a15c9`). `src/g6/harness/verification_templates.py`, the `template_instances` and `search` parameters, and test adequacy reported only. Tests: `tests/harness/test_verification_templates.py`. So far only local Docker runs with bubblewrap. Its independent review and its continuous-integration run are pending | VS-3 |
 | VS-4 | The formal path, with a three-part report: specification, model, correspondence | missing | Not started | VS-4 |
 | VS-5 | The opt-in proposer through the person's own model, with injection fixtures and one small model smoke on development fixtures | missing | Not started | VS-5 |
 | VS-6 | The ledgers, adoption detection, `g6_confirm_behaviour`, and worked examples from three kinds of application | missing | No `g6_confirm_behaviour` tool | VS-6 |
