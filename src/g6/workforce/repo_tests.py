@@ -71,7 +71,7 @@ from xml.etree import ElementTree
 from g6.core import component_process, confine, git_env
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
-from g6.workforce import test_receipts, verify
+from g6.workforce import receipt_store, verify
 
 DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 1800
@@ -849,7 +849,7 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     ``RepoRefused`` before anything runs when the request cannot run.
 
     ``receipt=True``: a run that started confined (its ``isolation`` names a backend) and whose repository git could
-    read after it is written to G6's test-receipt store (``g6.workforce.test_receipts``), and ``receipt`` is the
+    read after it is written to G6's test-receipt store (``g6.workforce.receipt_store``), and ``receipt`` is the
     receipt's id; every other run, an unconfined one included, has ``receipt`` "" (and ``receipt_error`` when the store
     could not take the receipt). A mutant is not the artifact under review: ``receipt=True`` with ``mutant`` raises
     ``ValueError``."""
@@ -973,7 +973,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         found["said"] = SAID["confined_write"]   # the operating system refused a test something an owner's run allows
     if receipt and isolation.get("backend"):   # only a run G6 confined and watched start is given a receipt
         try:
-            found["receipt"] = test_receipts._record(test_receipts._body(
+            found["receipt"] = receipt_store._record(receipt_store._body(
                 started_at=began, finished_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 before=before, after=after, base_commit=head, python=python, requested=ids, found=found))
         except (OSError, ValueError) as exc:

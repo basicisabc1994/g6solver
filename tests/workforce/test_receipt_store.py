@@ -11,10 +11,14 @@ the operating-system boundary itself is pinned by the bubblewrap test, which run
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
+import importlib
+import inspect
 import json
 import os
 import platform
+import re
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -27,7 +31,7 @@ from g6.core.ledger import ChainLedger, digest
 from g6.core.registry import get_registry
 from g6.core.storage import state_path
 from g6.workforce import repo_tests as rt
-from g6.workforce import test_receipts
+from g6.workforce import receipt_store
 
 # The repository of tests/workforce/test_repo_tests_run.py: calc.py with a bug in add(), and its two tests.
 BUGGY = "def add(a, b):\n    return a - b\n\n\ndef sub(a, b):\n    return a - b\n"
@@ -113,7 +117,7 @@ def _a_receipt_binds_the_run(repo, backend: str) -> None:
     assert (found["verdict"], found["isolation"]["backend"]) == (rt.PASSED, backend), found
     [entry] = _entries()
     body = entry["body"]
-    assert entry["kind"] == "test-receipt" and entry["id"] == found["receipt"] == test_receipts.receipt_id(body)
+    assert entry["kind"] == "test-receipt" and entry["id"] == found["receipt"] == receipt_store.receipt_id(body)
     assert body["schema"] == "g6.test_receipt/1" and len(body["execution_id"]) == 32
     int(body["execution_id"], 16)
     assert body["g6_version"] == g6.__version__
@@ -129,9 +133,9 @@ def _a_receipt_binds_the_run(repo, backend: str) -> None:
     assert body["result"] == {"verdict": rt.PASSED, "passed": 2, "failed": 0, "not_passed": 0, "total": 2,
                               "failed_ids": [], "completed": True}
     # lookup gives it back for the tree the run began on, and for nothing else
-    assert test_receipts.lookup(found["receipt"], artifact_digest=artifact) == body
-    assert test_receipts.lookup(found["receipt"], artifact_digest="0" * 64) is None
-    assert test_receipts.lookup(found["receipt"], artifact_digest="") is None
+    assert receipt_store.lookup(found["receipt"], artifact_digest=artifact) == body
+    assert receipt_store.lookup(found["receipt"], artifact_digest="0" * 64) is None
+    assert receipt_store.lookup(found["receipt"], artifact_digest="") is None
 
 
 def test_a_confined_run_with_receipt_records_one_receipt_binding_the_run(repo, fake_boundary):
@@ -184,11 +188,11 @@ def test_an_edited_receipt_is_never_given_back(repo, fake_boundary):
     artifact = digest(rt.snapshot(repo))
     found = rt.run(repo, TESTS, receipt=True)   # the buggy calc.py: this run failed
     ident, text = found["receipt"], _store().read_text(encoding="utf-8")
-    assert test_receipts.lookup(ident, artifact_digest=artifact)["result"]["verdict"] == rt.FAILED
+    assert receipt_store.lookup(ident, artifact_digest=artifact)["result"]["verdict"] == rt.FAILED
     # 1. the body edited in place: the chain no longer checks out
     _store().write_text(text.replace('"verdict": "failed"', '"verdict": "passed"'), encoding="utf-8")
     assert _store().read_text(encoding="utf-8") != text
-    assert test_receipts.lookup(ident, artifact_digest=artifact) is None
+    assert receipt_store.lookup(ident, artifact_digest=artifact) is None
     # 2. the body edited and the chain's hashes redone to match: the body no longer hashes to its id
     entry = json.loads(text)
     entry["body"]["result"]["verdict"] = rt.PASSED
@@ -196,21 +200,33 @@ def test_an_edited_receipt_is_never_given_back(repo, fake_boundary):
     entry["entry_sha256"] = digest({key: entry[key] for key in ("seq", "kind", "id", "body_sha256", "prev")})
     _store().write_text(json.dumps(entry, sort_keys=True) + "\n", encoding="utf-8")
     assert ChainLedger.audit(_store()) == ()
-    assert test_receipts.lookup(ident, artifact_digest=artifact) is None
+    assert receipt_store.lookup(ident, artifact_digest=artifact) is None
 
 
 def test_lookup_answers_none_for_a_missing_or_unreadable_store():
     ident = "ab" * 32
-    assert test_receipts.lookup(ident, artifact_digest="cd" * 32) is None   # no store at all
+    assert receipt_store.lookup(ident, artifact_digest="cd" * 32) is None   # no store at all
     assert not _store().exists()                                            # and asking made none
     _store().parent.mkdir(parents=True)
     _store().write_bytes(b"\xff not a ledger\n")
-    assert test_receipts.lookup(ident, artifact_digest="cd" * 32) is None
+    assert receipt_store.lookup(ident, artifact_digest="cd" * 32) is None
+
+
+def test_the_receipt_store_the_gate_imports_is_never_taken_for_a_test_file():
+    # Fails if the store module is named the way G6's own test rule or pytest's default discovery reads a test.
+    from g6.coding_agent_gate import coding_agent_gate_block as gate
+
+    [name] = set(re.findall(r"from g6\.workforce import (\w+)", inspect.getsource(gate)))
+    module = importlib.import_module(f"g6.workforce.{name}")
+    assert getattr(rt, name) is module   # repo_tests writes through the same module the gate reads
+    filename = Path(module.__file__).name
+    assert not rt.is_test_file(f"src/g6/workforce/{filename}")
+    assert not fnmatch.fnmatch(filename, "test_*.py") and not fnmatch.fnmatch(filename, "*_test.py")
 
 
 def test_a_receipt_id_is_the_sha256_of_the_bodys_canonical_json():
-    assert test_receipts.receipt_id({"b": 1, "a": [1, "x"]}) == test_receipts.receipt_id({"a": [1, "x"], "b": 1})
-    assert test_receipts.receipt_id({"b": 1, "a": [1, "x"]}) == hashlib.sha256(b'{"a":[1,"x"],"b":1}').hexdigest()
+    assert receipt_store.receipt_id({"b": 1, "a": [1, "x"]}) == receipt_store.receipt_id({"a": [1, "x"], "b": 1})
+    assert receipt_store.receipt_id({"b": 1, "a": [1, "x"]}) == hashlib.sha256(b'{"a":[1,"x"],"b":1}').hexdigest()
 
 
 def test_the_gate_counts_a_real_receipt_for_the_reviewed_tree_as_g6_observed(repo, fake_boundary):

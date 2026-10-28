@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The coding-agent gate's door counts an evidence item as G6-observed only when it cites a receipt id that G6's
 store holds for the artifact under review (plan Step 2, amendment A6). The receipts here are written straight to the
-store (``test_receipts._record``) in place of a confined run; tests/workforce/test_test_receipts.py writes them with
+store (``receipt_store._record``) in place of a confined run; tests/workforce/test_receipt_store.py writes them with
 real runs. Whatever JSON the caller sends (``observed_by``, a digest, a receipt's body) stays caller-declared."""
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pytest
 
 from g6.core.registry import get_registry
 from g6.mcp import invoke_reply
-from g6.workforce import test_receipts
+from g6.workforce import receipt_store
 
 ARTIFACT = "a1" * 32
 TASK = {"task": "Fix add()", "answer": "Fixed add(); all tests pass.",
@@ -27,7 +27,7 @@ def home(tmp_path, monkeypatch):
 
 def _receipt(verdict: str = "passed", source_before: str = ARTIFACT) -> str:
     passed = 2 if verdict == "passed" else 1
-    return test_receipts._record({
+    return receipt_store._record({
         "schema": "g6.test_receipt/1", "execution_id": uuid.uuid4().hex, "started_at": "2026-10-28T10:00:00.000+00:00",
         "finished_at": "2026-10-28T10:00:01.000+00:00", "g6_version": "0.1.1", "source_before": source_before,
         "source_after": source_before, "base_commit": "0" * 40,
@@ -107,7 +107,7 @@ def test_a_caller_cannot_send_g6_provenance_or_a_receipts_body(item):
 
 def test_a_receipts_body_sent_as_its_id_is_not_a_receipt():
     body = {"schema": "g6.test_receipt/1", "source_before": ARTIFACT, "result": {"verdict": "passed"}}
-    for ident in (json.dumps(body), test_receipts.receipt_id(body)):
+    for ident in (json.dumps(body), receipt_store.receipt_id(body)):
         seen = _gate([{"kind": "test", "ref": "pytest -q", "exit_code": 0, "receipt": ident}],
                      artifact_digest=ARTIFACT)
         assert seen["evidence_basis"] == "caller-declared"

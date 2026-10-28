@@ -23,7 +23,7 @@ environment or writes a file.
 What it does not establish (audit 004): it reads what the caller sends. It does not open a file, run a test or check
 that a reviewer exists. Evidence is ``observed_by="caller"`` unless a G6 component produced it, and everything
 through the registry or MCP door is caller-declared, except a test run whose ``receipt`` id G6's own store holds for
-the ``artifact_digest`` sent (``g6.workforce.test_receipts``: only G6's confined runs write receipts; the store is a
+the ``artifact_digest`` sent (``g6.workforce.receipt_store``: only G6's confined runs write receipts; the store is a
 file owned by the same user, so it defends against what a caller sends, not against code running as that user).
 The shortcut text detector is a tripwire fitted to known
 phrasings (it caught none of the audit's fresh paraphrases); a supplied diff is scanned for its structure, but

@@ -94,7 +94,7 @@ Composed:
 - `safety_engine`: `detect_test_weakening` reads the test files before and after a change; this gate sees only
   the diff text you send. Run both on a change that touches tests.
 - `workforce`: `g6.workforce.repo_tests.run(..., receipt=True)` writes the test receipts this gate reads
-  (`g6.workforce.test_receipts`).
+  (`g6.workforce.receipt_store`).
 
 ## Failure modes it catches
 

@@ -6,7 +6,7 @@ Everything that arrives through this door is caller-declared: an evidence item o
 and silently did nothing with it), and the list fields take JSON arrays of the declared type only (CAG-010).
 
 One exception (plan Step 2, A6): an evidence item whose ``receipt`` is the id of a test receipt that G6's own store
-holds for the ``artifact_digest`` sent (``g6.workforce.test_receipts.check``) is replaced by that receipt's test run,
+holds for the ``artifact_digest`` sent (``g6.workforce.receipt_store.check``) is replaced by that receipt's test run,
 ``observed_by="g6"``, whatever else the item says; the result's ``receipts`` says, item by item, why each one was or
 was not (``verified``, ``unknown``, ``artifact_mismatch``, ``not_supplied``). Only G6's confined test runs write
 receipts, so no JSON a caller sends (an id, a digest, a receipt's body) is G6-observed on its own. The store is a
@@ -135,9 +135,9 @@ def _evidence(data: CodingAgentGateInput) -> tuple[list[Evidence], list[dict[str
     for e in data.evidence:
         status, body = "not_supplied", None
         if e.receipt:
-            from g6.workforce import test_receipts   # here, not above: a call that cites no receipt never loads it
+            from g6.workforce import receipt_store   # here, not above: a call that cites no receipt never loads it
 
-            status, body = test_receipts.check(e.receipt, artifact_digest=data.artifact_digest)
+            status, body = receipt_store.check(e.receipt, artifact_digest=data.artifact_digest)
         receipts.append({"receipt": e.receipt, "receipt_status": status})
         if body is None:
             items.append(Evidence(e.kind, e.ref, e.output, e.exit_code, e.reviewer))
