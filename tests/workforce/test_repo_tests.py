@@ -284,6 +284,42 @@ def test_d3_a_deleted_test_file_and_an_unrelated_new_one_are_not_a_move(repo):
     assert verify.weakened_tests(found.before, found.after) == ["tests/test_calc.py: test file deleted"]
 
 
+def test_14b_a_test_file_is_named_with_the_case_pytest_matches_on_this_system():
+    """Review 14b: pytest matches ``test_*.py`` with the system's case rule (``fnmatch``, through
+    ``os.path.normcase``), so on Windows ``Test_Calc.py`` is a test file it collects."""
+    ignores_case = os.path.normcase("A") == "a"
+    assert rt.is_test_file("tests/test_calc.py") and not rt.is_test_file("tests/calc.py")
+    assert rt.is_test_file("tests/Test_Calc.py") is ignores_case
+    assert rt.is_test_file("tests/TEST_CALC.PY") is ignores_case
+
+
+def test_14b_the_tests_a_change_touches_name_a_test_file_with_the_case_pytest_matches(repo):
+    """Review 14b, its loose end: ``verify.run_set``, which picks the tests a change touches, matched names
+    case-sensitively, as ``is_test_file`` did."""
+    ignores_case = os.path.normcase("A") == "a"
+    assert (verify.run_set(repo, ["tests/Test_Calc.py"], candidates=[]) == ["tests/Test_Calc.py"]) is ignores_case
+    assert verify.run_set(repo, ["tests/test_calc.py"], candidates=[]) == ["tests/test_calc.py"]
+
+
+def test_c2_every_changed_test_related_file_is_read_then_and_now_and_a_move_keeps_its_old_text(repo):
+    """Review C2: the weakening scan gets each changed test file by either of pytest's default names, conftest.py,
+    and every Python file under a test folder, at the base and now; a moved one is keyed by its new path."""
+    (repo / "tests" / "helpers.py").write_text("def check():\n    assert True\n", encoding="utf-8")
+    (repo / "tests" / "calc_test.py").write_text("def test_c():\n    assert 1\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "helpers")
+    (repo / "tests" / "calc_test.py").write_text("def test_c():\n    pass\n", encoding="utf-8")
+    (repo / "conftest.py").write_text("\n", encoding="utf-8")
+    (repo / "tests" / "data.json").write_text("{}\n", encoding="utf-8")   # not Python: not read
+    (repo / "calc.py").write_text(FIXED, encoding="utf-8")                # not a test: not read
+    git(repo, "mv", "tests/helpers.py", "tests/checks.py")
+    before, after = rt.related_texts(rt.change(repo))
+    assert before == {"tests/calc_test.py": "def test_c():\n    assert 1\n",
+                      "tests/checks.py": "def check():\n    assert True\n"}
+    assert after == {"conftest.py": "\n", "tests/calc_test.py": "def test_c():\n    pass\n",
+                     "tests/checks.py": "def check():\n    assert True\n"}
+
+
 def test_d15_a_changed_conftest_or_setup_names_no_test_by_its_stem(repo):
     """D15 (probe D15): a test file that mentions the words 'conftest' or 'setup' is not a test of them."""
     (repo / "tests" / "test_doc.py").write_text("# the conftest sets things up; see setup in the README\n"

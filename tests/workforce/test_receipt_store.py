@@ -21,6 +21,7 @@ import platform
 import re
 import subprocess
 from datetime import datetime, timedelta
+from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 
 import pytest
@@ -144,6 +145,15 @@ def test_a_confined_run_with_receipt_records_one_receipt_binding_the_run(repo, f
     _a_receipt_binds_the_run(repo, fake_boundary.name)
 
 
+def test_a_run_says_the_digest_of_the_tree_it_began_on(repo, fake_boundary):
+    """Review I4: the patch review compares this with its artifact digest itself, not only through the gate."""
+    _write(repo, "calc.py", FIXED)
+    artifact = digest(rt.snapshot(repo))
+    assert rt.run(repo, TESTS)["source_before"] == artifact
+    found = rt.run(repo, TESTS, receipt=True)
+    assert found["source_before"] == artifact == _entries()[0]["body"]["source_before"]
+
+
 def test_a_run_confined_by_bubblewrap_records_its_receipt(repo, bwrap_backend):
     _a_receipt_binds_the_run(repo, confine.BUBBLEWRAP)
 
@@ -231,6 +241,8 @@ def test_a_torn_store_says_so_and_a_run_says_how_to_recover(repo, fake_boundary)
     ("tests/conftest.py", {"tests/conftest.py": "def pytest_runtest_setup(item):\n    pass\n"}),
     ("pytest.ini", {"pytest.ini": "[pytest]\naddopts = -q\n"}),
     (".pytest.ini", {".pytest.ini": "[pytest]\n"}),
+    ("pytest.toml", {"pytest.toml": "[pytest]\n"}),   # review C1
+    (".pytest.toml", {".pytest.toml": "\n"}),
     ("setup.cfg", {"setup.cfg": "[tool:pytest]\naddopts = -q\n"}),
     ("tox.ini", {"tox.ini": "[pytest]\n"}),
     ("pyproject.toml", {"pyproject.toml": "[tool.pytest.ini_options]\n"}),
@@ -242,6 +254,14 @@ def test_a_torn_store_says_so_and_a_run_says_how_to_recover(repo, fake_boundary)
     ("tests/calc.py", {"tests/calc.py": "def add(a, b):\n    return 5\n"}),   # shadows the tracked calc.py
     ("vendor/", {"vendor/calc/__init__.py": "\n"}),                           # a package that shadows it
     ("hidden/", {"hidden/conftest.py": "\n"}),                                # inside an ignored folder
+    # review C3: bytecode Python imports without its source (probe S6), a compiled extension module, and a package's
+    # metadata declaring a pytest plugin, which pytest loads at start-up (probe S7)
+    ("tests/calc.pyc", {"tests/calc.pyc": "not bytecode\n"}),
+    ("*.pyc", {"zzplug.pyc": "not bytecode\n"}),
+    (f"calc{EXTENSION_SUFFIXES[0]}", {f"calc{EXTENSION_SUFFIXES[0]}": "not a module\n"}),
+    ("logs/", {f"logs/speedups{EXTENSION_SUFFIXES[-1]}": "not a module\n"}),
+    ("zz.egg-info/", {"zz.egg-info/entry_points.txt": "[pytest11]\nzz = zz_absent_plugin\n"}),
+    ("zz-1.0.dist-info/", {"zz-1.0.dist-info/entry_points.txt": "[pytest11]\nzz = zz_absent_plugin\n"}),
 ])
 def test_a_run_a_git_ignored_file_could_change_gets_no_receipt(repo, fake_boundary, ignored, files):
     """I2: git's view leaves ignored files out, so the receipt's digest could not show a file pytest loaded."""
@@ -258,6 +278,12 @@ def test_a_run_a_git_ignored_file_could_change_gets_no_receipt(repo, fake_bounda
 @pytest.mark.parametrize("files", [
     {".venv/lib/conftest.py": "\n"}, {"build/conftest.py": "\n"}, {"dist/x.pth": "\n"},
     {"calc.egg-info/conftest.py": "\n"}, {"__pycache__/conftest.py": "\n"}, {"notes.txt": "\n"},
+    {"__pycache__/calc.cpython-312.pyc": "\n"},   # bytecode beside its source: used only when it matches the source
+    {"calc.egg-info/entry_points.txt": "[console_scripts]\ncalc = calc:main\n"},   # declares no pytest plugin
+    # review I9(b): other environments' folders, and a virtual environment by any name (it holds a pyvenv.cfg)
+    {".direnv/python-3.12/lib/conftest.py": "\n"}, {".eggs/conftest.py": "\n"},
+    {"__pypackages__/3.12/lib/conftest.py": "\n"}, {".conda/lib/conftest.py": "\n"},
+    {"py312/pyvenv.cfg": "home = /usr/bin\n", "py312/lib/site-packages/conftest.py": "\n"},
 ])
 def test_ignored_environments_caches_and_other_files_do_not_withhold_the_receipt(repo, fake_boundary, files):
     (repo / ".git" / "info").mkdir(exist_ok=True)
@@ -269,6 +295,22 @@ def test_ignored_environments_caches_and_other_files_do_not_withhold_the_receipt
     found = rt.run(repo, TESTS, receipt=True)
     assert found["receipt"] and found.get("ignored_loadable", []) == [], found.get("receipt_withheld")
     assert found["ignored_inputs"] == {} and _entries()[0]["body"]["ignored_inputs"] == {}
+
+
+def test_a_git_ignored_link_can_change_the_run(repo):
+    """Review C3 (probe S8): a link git ignores can put any folder's code under a module's name, outside the digest:
+    one at the top, and one inside an ignored folder the scan enters, which it never follows."""
+    (repo / "build" / "shadow" / "calc").mkdir(parents=True)
+    _write(repo, "build/shadow/calc/__init__.py", FIXED)
+    (repo / "logs").mkdir()
+    try:
+        os.symlink(repo / "build" / "shadow" / "calc", repo / "shadow", target_is_directory=True)
+        os.symlink(repo / "build" / "shadow" / "calc", repo / "logs" / "inner", target_is_directory=True)
+    except OSError as exc:   # Windows lets only a privileged process, or developer mode, make one
+        pytest.skip(f"this process cannot make a symbolic link here: {exc}")
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("build/\n/shadow\nlogs/\n", encoding="utf-8")
+    assert rt.ignored_inputs(repo).loadable == ("logs/inner", "shadow")
 
 
 def test_an_ignored_python_file_g6_does_not_judge_is_bound_into_the_receipt(repo, fake_boundary):

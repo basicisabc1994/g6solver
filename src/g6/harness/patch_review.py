@@ -3,26 +3,37 @@
 
 ``review_patch`` gives exactly one technical outcome, decided in this order:
 
-1. ``test_integrity_compromised``: a changed test weakened (a moved test file is compared with its old text), a
-   changed test-runner file (``conftest.py``, ``pytest.ini``, ``.pytest.ini`` or a start-up file; ``pyproject.toml``,
-   ``setup.cfg`` and ``tox.ini`` only when their pytest section changed), a git-ignored file that could change the
-   tests (``repo_tests.ignored_inputs``: a runner, start-up, path or test-named file, or one that could shadow a
-   tracked module; outside git's view, so outside the digest; any other ignored Python file is an unknown, bound into
-   the receipt), a run that changed tracked files or whose result cannot be believed, the repository changing during
-   the review, or the coding gate finding a shortcut;
-2. ``defect_detected``: a stated check or extra test failed, failed to collect because of the repository's own code,
-   or timed out; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the
-   base commit. One that does not pass at the base commit either is not counted against the patch: an unknown;
+1. ``test_integrity_compromised``: a sign of weakening ``g6.safety_engine.detect_test_weakening`` finds in a changed
+   test-related file (``repo_tests.is_test_related``: a test file by pytest's default names, ``conftest.py`` or a
+   start-up file, any Python file under a test folder; a moved one is compared with its old text), a changed
+   test-runner file (``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` or a
+   start-up file; ``pyproject.toml``, ``setup.cfg`` and ``tox.ini`` only when their pytest section changed, an empty
+   one included), a git-ignored file that could change the tests (``repo_tests.ignored_inputs``: a runner, start-up,
+   path or test-named file, one that could shadow a tracked module, bytecode, an extension module, a link, or package
+   metadata declaring a pytest plugin; outside git's view, so outside the digest; any other ignored Python file is an
+   unknown, bound into the receipt), a run that changed tracked files, whose result cannot be believed or that began
+   on a tree other than the one under review, the repository changing during the review, or the coding gate finding
+   a shortcut in the diff against the base of the test, test-runner and continuous-integration files (the review
+   binds the gate to that part of the diff; ``_test_diff``);
+2. ``defect_detected``: a stated check or extra test failed, or failed to collect because of the repository's own
+   code; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the base
+   commit (a moved test file runs there at its old path). One that does not pass at the base commit either, or could
+   not be run there, is not counted against the patch: an unknown;
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
-   run (missing, not collected, could not be collected in this environment, skipped, deselected), no test ran, no
-   change against the base, or the scan for ignored files stopping at its limit;
+   run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
+   by the time limit, never reached before it), the tier 1 run out of time, a shortcut only the claim's text reports
+   (``claim_reports_shortcut``), no test ran, no change against the base, or the scan for ignored files stopping at
+   its limit;
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
    support on the checks named, never a claim that the patch does everything the task needs.
 
 Each requirement reads ``passed_on_stated_checks``, ``failed`` or ``not_established`` (with a reason and a suggested
 test in words); G6 never invents a passing test. Checks adapt to cost: tier 1 (always) is the digest, integrity, and
 the stated checks with the extra tests in one confined run; tier 2, the tests that touch the changed modules, runs
-only when tier 1 found no integrity problem and no defect; tier 3 (mutation, old-against-new probes) is not run here.
+only when tier 1 found no integrity problem and no defect, and then, when nothing so far found a problem, the stated
+checks that passed run against the base commit's code in a copy: one that passes there too may not exercise the
+change, an unknown with a next action and never an outcome (review I8); tier 3 (mutation, old-against-new probes)
+is not run here.
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -36,6 +47,7 @@ caller assertions; their lexical support is reported and decides nothing.
 """
 from __future__ import annotations
 
+import configparser
 import platform
 import re
 import time
@@ -55,23 +67,27 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.result import Result
-from g6.safety_engine.weakening import _pytest_settings
-from g6.workforce import repo_tests, verify
+from g6.safety_engine.weakening import _kind as _weakening_kind
+from g6.safety_engine.weakening import _pytest_settings, detect_test_weakening
+from g6.workforce import repo_tests
 
 SUPPORTED, DEFECT = "supported_within_scope", "defect_detected"
 INTEGRITY, INSUFFICIENT = "test_integrity_compromised", "insufficient_evidence"
 PASSED_ON_CHECKS, FAILED, NOT_ESTABLISHED = "passed_on_stated_checks", "failed", "not_established"
 CODE = "G6_E_PATCH_REVIEW"
-#: Files that configure, or could stand in for, the runner: ``repo_tests``'s list and pytest's hidden config file.
-RUNNER_FILES = repo_tests.RUNNER_FILES | {".pytest.ini"}
+#: Files that configure, or could stand in for, the runner: ``repo_tests``'s list, every configuration file pytest
+#: looks for by name among them (``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` and the project
+#: files below; review C1).
+RUNNER_FILES = repo_tests.RUNNER_FILES
 #: Project files that hold more than pytest's settings: only a change to the pytest section named counts.
 PYTEST_SECTIONS = {"pyproject.toml": "[tool.pytest]", "setup.cfg": "[tool:pytest]", "tox.ini": "[pytest]"}
 #: Run verdicts whose results are not believed: an integrity problem, never evidence.
 UNTRUSTED = frozenset({repo_tests.CHANGED, "inconsistent_report", "incomplete"})
 #: A check's verdicts that are a defect when it is stated or extra; every other verdict but "passed" did not run.
 #: ``failed`` includes a collection error G6 places in the repository's own code; ``collection_error`` is the
-#: environment's (a dependency it lacks), which leaves the check not run.
-DEFECTS = frozenset({repo_tests.FAILED, "timed_out"})
+#: environment's (a dependency it lacks), which leaves the check not run. A run out of time is no defect (review I5):
+#: a check it started reads ``timed_out``, one it never reached ``not_run``, and the outcome is insufficient evidence.
+DEFECTS = frozenset({repo_tests.FAILED})
 ENVIRONMENT = "could not be collected in this environment"
 #: pytest's own lines naming a file it could not collect: "ERROR collecting x.py" and, in its summary, "ERROR x.py".
 _COLLECTING = re.compile(r"ERROR (?:collecting )?([^\s:]+\.py)(?=\s|$)", re.MULTILINE)
@@ -79,6 +95,8 @@ BOUNDARY_HELP = ("Allowing unconfined runs (g6 setup or G6_ALLOW_UNCONFINED) doe
                  "uses only confined runs, the only ones that get test receipts. To get a boundary, install bubblewrap "
                  "on Linux, or on Windows make the one-time access grant g6 doctor prints; macOS has none yet.")
 #: Coding gate findings about the checks themselves: they change the outcome. Every other finding is a merge reason.
+#: A shortcut in the diff is an integrity problem, and so is one the claim reports when the diff shows one too; one
+#: only the claim's text reports is insufficient evidence (``claim_reports_shortcut``; review I9(c)).
 INTEGRITY_FINDINGS = frozenset({"shortcut_in_answer", "shortcut_in_diff"})
 SPECIFICATION_NOTE = ("The task's specification may be incomplete: G6 checks the requirements stated here, and it "
                       "cannot rule out in general that the task needs something no requirement states.")
@@ -142,6 +160,12 @@ def _execute(root: Path, ids: list[str], *, timeout_s: int, change: repo_tests.C
     return repo_tests.run(root, ids, timeout_s=timeout_s, receipt=True)
 
 
+def _execute_at_base(change: repo_tests.Change, ids: list[str], *, timeout_s: int) -> dict:
+    """The stated checks that passed, as their test files are now, run against the base commit's code in a copy
+    (``repo_tests.run_at_base``; review I8)."""
+    return repo_tests.run_at_base(change, ids, timeout_s=timeout_s)
+
+
 def _confined(ran: dict) -> dict:
     """``ran``, or a refusal when no operating-system boundary confined it: its results are never assessed."""
     isolation = ran.get("isolation") or {}
@@ -164,11 +188,22 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
             continue
         reader = "pytest.ini" if name == "tox.ini" else name   # tox.ini's [pytest] section reads as pytest.ini's does
         path = change.repo / rel
+
+        def settings(text: str | None):
+            # An empty section is still the configuration pytest reads (review I7). Read as pytest.ini, a tox.ini with
+            # no [pytest] section reads {}, as an empty one does: it is none. pytest reads nothing from an empty
+            # [tool.pytest] table in pyproject.toml, so that is none too.
+            found = None if text is None else _pytest_settings(reader, text)
+            if found == {} and name == "tox.ini":
+                parser = configparser.ConfigParser(interpolation=None, strict=False)
+                parser.read_string(text)
+                found = {} if parser.has_section("pytest") else None
+            return None if name == "pyproject.toml" and found == {} else found
+
         try:
             before = repo_tests.read_at(change.repo, change.base_commit, rel)
             now = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
-            old = (None if before is None else _pytest_settings(reader, before)) or None
-            new = (None if now is None else _pytest_settings(reader, now)) or None
+            old, new = settings(before), settings(now)
         except ValueError as exc:
             found.append(f"{rel}: could not be read ({exc}), so its {PYTEST_SECTIONS[name]} settings may have changed")
             continue
@@ -237,14 +272,22 @@ def _not_found(check: str, output: str) -> bool:
     return False
 
 
+def _in_repository(ran: dict):
+    """A function from a test id or file as pytest named it in ``ran``, relative to its root folder, to the same id
+    relative to the repository's top, as checks name them (review I9: a pytest config below the top moves the root)."""
+    prefix = (ran.get("rootdir") or "").strip("/")
+    return (lambda node: f"{prefix}/{node}") if prefix else (lambda node: node)
+
+
 def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     """Each check's own verdict in one run, read from pytest's per-test outcomes."""
     run, said, output = ran["verdict"], ran.get("said") or "", ran.get("output") or ""
-    outcomes = ran.get("test_outcomes") or {}
-    failed = set(ran.get("failed_ids") or []) | set(ran.get("setup_errors") or {})
-    omitted = set(ran.get("omitted_ids") or [])
+    full = _in_repository(ran)
+    outcomes = {full(node): phases for node, phases in (ran.get("test_outcomes") or {}).items()}
+    failed = {full(node) for node in [*(ran.get("failed_ids") or []), *(ran.get("setup_errors") or {})]}
+    omitted = {full(node) for node in ran.get("omitted_ids") or []}
     missing = {check for check in ids if _not_found(check, output)}
-    broken = _collection_errors(output)
+    broken = {full(rel) for rel in _collection_errors(output)}
     found: dict[str, dict] = {}
     for check in ids:
         nodes = {node: _node(phases, node in failed) for node, phases in outcomes.items() if _covers(check, node)}
@@ -273,7 +316,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         elif run == "collection_error":
             verdict, detail = "collection_error", ENVIRONMENT + (f" ({said})" if said else "")
         elif run == "timed_out":
-            verdict, detail = "timed_out", said
+            verdict, detail = "not_run", "the run's time ran out before this check started" + (f" ({said})" if said
+                                                                                                  else "")
         elif run in repo_tests.RAN or run == "no_tests_collected":
             verdict, detail = "not_collected", "no test with this id ran"
         else:
@@ -309,13 +353,82 @@ def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, st
         c["id"] for c in checks)}
 
 
-def _gate(task: str, claim: str, runs: list[dict], artifact: str) -> dict:
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_ESCAPE = re.compile(rb"\\([0-7]{3}|.)")
+#: Continuous-integration and task-runner files the weakening detector's list leaves out (``weakening._kind``'s
+#: "runner" kind holds the others: tox.ini, noxfile.py, .gitlab-ci.yml, .github/workflows/, .circleci/, ...).
+_CI_FILES = frozenset({"makefile", ".pre-commit-config.yaml"})
+
+
+def _unquoted(raw: str) -> str:
+    """A path as git writes it in a diff: unquoted (git quotes a name holding a control character, a quote or a
+    backslash), without the line's end or the tab git ends a name holding a space with."""
+    name = raw.rstrip("\n").removesuffix("\t")
+    if len(name) >= 2 and name[0] == name[-1] == '"':
+        name = _ESCAPE.sub(lambda m: bytes([int(m[1], 8)]) if len(m[1]) == 3 else {b"t": b"\t", b"n": b"\n"}.get(
+            m[1], m[1]), name[1:-1].encode("utf-8")).decode("utf-8", "replace")
+    return name
+
+
+def _diff_name(raw: str) -> str:
+    """A path as a ``---`` / ``+++`` line gives it (``_unquoted``), without ``a/`` or ``b/``; "" for ``/dev/null``."""
+    name = _unquoted(raw)
+    return "" if name == "/dev/null" else name[2:] if name[:2] in ("a/", "b/") else name
+
+
+def _diff_files(diff: str) -> list[tuple[set[str], str]]:
+    """``diff`` (``repo_tests.diff_text``) cut into one part per file, each with the paths it names, old and new. A
+    part begins at ``diff --git``, or at a ``---`` line outside a hunk once the part has had one (the untracked files
+    ``diff_text`` appends have no ``diff --git`` line); a hunk's lines are counted from its header, so a removed line
+    that itself starts with ``-- `` is never taken for a header."""
+    parts: list[tuple[set[str], list[str]]] = []
+    old = new = 0
+    for line in diff.splitlines(keepends=True):
+        if old > 0 or new > 0:   # inside a hunk
+            mark = line[:1]
+            old -= mark in ("-", " ", "\n")
+            new -= mark in ("+", " ", "\n")
+            parts[-1][1].append(line)
+            continue
+        names, lines = parts[-1] if parts else (set(), [])
+        if not parts or line.startswith("diff --git ") or (line.startswith("--- ") and any(
+                seen.startswith(("--- ", "@@")) for seen in lines)):
+            parts.append((set(), []))
+            names, lines = parts[-1]
+        lines.append(line)
+        if line.startswith(("--- ", "+++ ")):
+            names.add(_diff_name(line[4:]))
+        elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
+            names.add(_unquoted(line.split(" ", 2)[2]))
+        elif (found := _HUNK_HEADER.match(line)) is not None:
+            old = int(found[1]) if found[1] is not None else 1
+            new = int(found[2]) if found[2] is not None else 1
+    return [(names - {""}, "".join(lines)) for names, lines in parts]
+
+
+def _scanned(rel: str) -> bool:
+    """A file whose diff is a question of the tests: test-related (``repo_tests.is_test_related``), a runner file
+    (``RUNNER_FILES``), or continuous-integration or task-runner configuration."""
+    name = PurePosixPath(rel).name.lower()
+    return (repo_tests.is_test_related(rel) or name in RUNNER_FILES or name in _CI_FILES
+            or _weakening_kind(rel) == "runner")
+
+
+def _test_diff(diff: str) -> str:
+    """The parts of ``diff`` the coding gate scans for shortcuts: those of the files ``_scanned`` keeps, and any part
+    whose file cannot be read from it. A source file's hunks are left out: an assert it drops, or a setting named
+    SKIP_..., weakens no test (``detect_test_weakening`` reads the test files themselves)."""
+    return "".join(text for names, text in _diff_files(diff) if not names or any(_scanned(rel) for rel in names))
+
+
+def _gate(task: str, claim: str, runs: list[dict], artifact: str, diff: str) -> dict:
     """The test runs through the coding gate, which this host binds to the review's own snapshot digest: the only
-    way a receipt counts as G6-observed (review C1); no digest travels in the request."""
+    way a receipt counts as G6-observed (review C1); no digest travels in the request. The host binds the diff it read
+    from git too, which the gate scans for shortcuts and does not count as evidence (review I8)."""
     flow = compose(
         Stage(GateAdapter(), "adapt", inputs={"task": "caller.task", "claim": "caller.claim",
                                               "test_runs": "caller.test_runs"}),
-        Stage(CodingAgentGateBlock(receipt_artifact_digest=artifact), "verify_answer",
+        Stage(CodingAgentGateBlock(receipt_artifact_digest=artifact, scanned_diff=diff), "verify_answer",
               inputs={key: f"0.{key}" for key in ("task", "answer", "task_contract", "evidence", "verifier")}),
         caller_inputs=("task", "claim", "test_runs"))
     composition = flow.infer({"task": task, "claim": claim, "test_runs": runs}).value
@@ -396,9 +509,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     def reason(stage: str, code: str, detail: str) -> None:
         reasons.append({"stage": stage, "code": code, "detail": detail})
 
-    # Integrity, before anything runs: a moved test file is compared with its old text, never read as deleted.
-    for finding in verify.weakened_tests({change.renamed.get(rel, rel): text for rel, text in change.before.items()},
-                                         change.after):
+    # Integrity, before anything runs: every changed test-related file through G6's weakening detector (review C2); a
+    # moved one is compared with its old text, never read as deleted.
+    for finding in detect_test_weakening(*repo_tests.related_texts(change)).reasons:
         reason("integrity", "test_weakened", finding)
     runner = _runner_changes(change)
     if runner:
@@ -426,6 +539,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         verdicts.update(_verdicts(present, first))
         if first["verdict"] in UNTRUSTED:
             reason("integrity", "run_not_trusted", _untrusted(1, first))
+        elif first["verdict"] == "timed_out":
+            reason("evidence", "run_timed_out", f"the tier 1 run did not finish: {first.get('said') or 'timed out'}")
     else:
         skipped.append({"tier": 1, "check": "stated checks and extra tests",
                         "reason": "no check was stated" if not ids else "no stated check names a file on the tree"})
@@ -461,12 +576,17 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             elif second["verdict"] not in repo_tests.RAN:
                 unknowns.append(f"the tests that touch the changed modules did not run to a result "
                                 f"({second['verdict']}): {second.get('said', '')}")
+    follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns)
     skipped.append({"tier": 3, "check": "mutation and old-against-new probes", "reason": TIER_3})
 
     if repo_tests.snapshot(root) != before:
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
     in_place = [(tier, ran) for tier, ran in ((1, first), (2, second)) if ran]
-    gate = _gate(task, claim, [ran for _, ran in in_place], artifact)
+    for tier, ran in in_place:   # review I4: changed and changed back around a run, the snapshots above still match
+        if ran.get("source_before") and ran["source_before"] != artifact:
+            reason("integrity", "repository_changed_during_review", f"the tier {tier} run began on a working tree "
+                   "other than the one under review (its digest is not the artifact digest)")
+    gate = _gate(task, claim, [ran for _, ran in in_place], artifact, _test_diff(repo_tests.diff_text(change)))
     statuses = [found.get("receipt_status", "unknown") for found in gate["receipts"]]
     receipts = [{"tier": tier, "receipt": ran.get("receipt", ""),
                  "receipt_status": statuses[index] if index < len(statuses) else "unknown"}
@@ -477,8 +597,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             unknowns.append(f"tier {found['tier']}'s test receipt did not match ({found['receipt_status']}"
                             + (f": {why}" if why else "") + "), so the coding gate counted that run as caller-declared")
     merge_reasons = []
+    in_diff = any(finding.get("code") == "shortcut_in_diff" for finding in gate["findings"])
     for finding in gate["findings"]:
-        if finding.get("code") in INTEGRITY_FINDINGS:
+        if finding.get("code") == "shortcut_in_answer" and not in_diff:
+            # review I9(c), the owner's ruling: the claim's words alone say nothing about the tests
+            reason("evidence", "claim_reports_shortcut", finding.get("message", ""))
+        elif finding.get("code") in INTEGRITY_FINDINGS:
             reason("integrity", "gate_shortcut", finding.get("message", ""))
         else:
             merge_reasons.append(finding.get("message", ""))
@@ -496,15 +620,57 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
-                  artifact, claim, sources, started)
+                  artifact, claim, sources, started, follow_ups)
+
+
+AT_BASE = "stated checks at the base commit"
+#: The base-commit run's verdicts under which each check's own verdict is read; any other, nothing is said per check.
+_READABLE_AT_BASE = frozenset({*repo_tests.RAN, "collection_error", "no_tests_collected"})
+
+
+def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns) -> list[str]:
+    """Review I8, the owner's ruling: the stated checks that passed, as their test files are now, run against the
+    base commit's code, only when nothing so far found a problem. One that passes there too may not exercise the
+    change: an unknown, and a next action for each requirement it checks; never an outcome, since a requirement to
+    keep behaviour passes at the base by design. Returns those next actions."""
+    passing = [check for check in dict.fromkeys(norm[raw] for req in stated for raw in req.checks)
+               if verdicts[check]["verdict"] == "passed"]
+    if not passing or not change.files:
+        return []
+    if any(r["stage"] in ("integrity", "tier_1", "tier_2") for r in reasons):
+        skipped.append({"tier": 2, "check": AT_BASE, "reason": "an earlier check found a problem"})
+        return []
+    if _left(deadline) < 1:
+        skipped.append({"tier": 2, "check": AT_BASE, "reason": "the time budget is spent"})
+        unknowns.append("whether the stated checks pass against the base commit's code too was not checked: the "
+                        "time budget was spent")
+        return []
+    ran = _confined(_execute_at_base(change, passing, timeout_s=max(1, _left(deadline))))
+    if "isolation" in ran:   # it ran, in a copy
+        runs.append(_record(2, AT_BASE, passing, ran, command=f"pytest {' '.join(passing)} against the base "
+                                                              "commit's code, in a copy"))
+    if ran.get("verdict") not in _READABLE_AT_BASE:
+        unknowns.append(f"whether the stated checks pass against the base commit's code too was not established "
+                        f"({ran.get('verdict')}: {ran.get('said') or 'no result'})")
+        return []
+    actions = []
+    for check, found in _verdicts(passing, ran).items():
+        if found["verdict"] != "passed":
+            continue
+        unknowns.append(f"{check} passes against the base commit's code too, so it may not exercise the change")
+        actions += [f"{req.id}: {check} passes at the base commit as well; if {req.id} asks for new behaviour, state "
+                    "a check that fails at the base commit and passes on the patch (if it asks to keep behaviour, "
+                    "this is expected)" for req in stated if check in {norm[raw] for raw in req.checks}]
+    return actions
 
 
 def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) -> None:
     """Replay each failing derived test file, and each one pytest could not collect, at the base commit: a defect only
     when it passed there."""
-    failing = sorted(({node.partition("::")[0] for node in [*second.get("failed_ids", []),
-                                                            *second.get("setup_errors", {})]}
-                      | _collection_errors(second.get("output") or "")) & set(derived))
+    full = _in_repository(second)
+    failing = sorted({full(rel) for rel in {node.partition("::")[0] for node in [*second.get("failed_ids", []),
+                                                                              *second.get("setup_errors", {})]}
+                      | _collection_errors(second.get("output") or "")} & set(derived))
     if not failing:
         unknowns.append(f"the tests that touch the changed modules failed without a test G6 can name: "
                         f"{second.get('said') or 'read their output'}")
@@ -529,9 +695,13 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) ->
         elif out.get("baseline") == "passed":
             unknowns.append(f"{rel} fails on the patch, and its run there could not be compared with its passing run "
                             f"at the base commit ({out.get('said') or out.get('patched')})")
-        else:
-            unknowns.append(f"{rel} fails on the patch and did not pass at the base commit either, so G6 does not "
-                            f"count it as a defect of this patch ({out.get('said') or out.get('verdict')})")
+        elif out.get("baseline"):
+            unknowns.append(f"{rel} fails on the patch and did not pass at the base commit either "
+                            f"({out['baseline']}), so G6 does not count it as a defect of this patch"
+                            + (f" ({out['said']})" if out.get("said") else ""))
+        else:   # review I6: the base run never happened, so nothing says the file failed there
+            unknowns.append(f"{rel} fails on the patch and could not be run at the base commit, so G6 cannot say "
+                            f"whether the patch broke it ({out.get('said') or out.get('verdict')})")
 
 
 _SUMMARY = {
@@ -553,7 +723,7 @@ _NEXT = {
 
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
-           sources, started) -> dict:
+           sources, started, follow_ups=()) -> dict:
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
     if "integrity" in stages:
@@ -568,6 +738,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     next_actions = [_NEXT[outcome]]
     next_actions += [f"{req['id']}: {req['reason']}; suggested: {req['suggested_test']}" for req in evaluated
                      if "suggested_test" in req]
+    next_actions += list(follow_ups)
     if unknowns:
         next_actions.append("Look into the unknowns yourself: G6 does not count them for or against the patch.")
     environment = {"isolation": ran.get("isolation"), "python": ran.get("python"),
