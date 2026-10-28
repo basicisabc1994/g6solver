@@ -5,7 +5,9 @@ outcome read from a small pytest plugin, never from the console.
 ``Executor.run`` copies the tree into a fresh temporary folder, so the tree an arm reviewed is never changed; adds the
 overlay (the label contract's hidden test files, or its test patch, applied with ``git apply``); runs the command;
 and reports each test id pytest reported as ``passed``, ``failed`` (a failure or error in any phase) or ``skipped``
-(a skip, or an expected failure). It runs the files (or folders) of the tests asked for, those present in the copy,
+(a skip, or an expected failure), and (``phases``) what it reported in each phase, set-up, call and teardown, for a
+reader that tells a failure in a test's body from one in its set-up (V10's arm E). It runs the files (or folders) of
+the tests asked for, those present in the copy,
 as the benchmark's own procedure runs test files, so one test id that no longer exists does not stop the others; a
 test asked for that pytest never reported is ``missing`` (``outcome``).
 
@@ -133,7 +135,8 @@ class Executor:
                                error=f"no outcome report (exit code {done.returncode})")
             found = json.loads(report.read_text(encoding="utf-8"))
             return _result(started, exit_code=found["exit"], collection_errors=found["collection_errors"],
-                           outcomes={node: _outcome(phases) for node, phases in found["tests"].items()})
+                           outcomes={node: _outcome(phases) for node, phases in found["tests"].items()},
+                           phases=found["tests"])
 
 
 def stop_container(cmd: list[str], name: str) -> bool:
@@ -166,6 +169,7 @@ def _overlay(copy: Path, overlay: dict) -> str:
 
 
 def _result(started: float, *, outcomes: dict | None = None, collection_errors: list | None = None,
-            exit_code: int | None = None, timed_out: bool = False, error: str = "") -> dict:
-    return {"outcomes": outcomes or {}, "collection_errors": collection_errors or [], "exit": exit_code,
-            "seconds": round(time.monotonic() - started, 3), "timed_out": timed_out, "error": error}
+            exit_code: int | None = None, timed_out: bool = False, error: str = "", phases: dict | None = None) -> dict:
+    """One run: each test's outcome, and (``phases``) what pytest reported for it in each phase it ran."""
+    return {"outcomes": outcomes or {}, "phases": phases or {}, "collection_errors": collection_errors or [],
+            "exit": exit_code, "seconds": round(time.monotonic() - started, 3), "timed_out": timed_out, "error": error}

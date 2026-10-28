@@ -93,6 +93,18 @@ def test_the_executor_reports_each_test_and_never_touches_the_tree(source, tmp_p
     assert not (tree / "test_hidden.py").exists() and run["timed_out"] is False and run["error"] == ""
 
 
+def test_the_executor_also_reports_each_tests_phases(source, tmp_path):
+    root, base = source
+    tree = trees.checkout(root, base, tmp_path / "t")
+    text = ("import pytest\n\n\n@pytest.fixture\ndef broken():\n    raise RuntimeError('set-up')\n\n\n"
+            "def test_setup(broken):\n    pass\n\n\ndef test_body():\n    assert False\n")
+    run = executor.Executor().run(tree, ["test_phases.py"], timeout_s=120, overlay={"files": {"test_phases.py": text}})
+    assert run["phases"]["test_phases.py::test_setup"]["setup"] == "failed"
+    assert run["phases"]["test_phases.py::test_body"] == {"setup": "passed", "call": "failed", "teardown": "passed"}
+    assert run["outcomes"]["test_phases.py::test_setup"] == run["outcomes"]["test_phases.py::test_body"] == "failed"
+    assert executor.Executor().run(tree, ["x.py"], timeout_s=5)["phases"] == {}
+
+
 def test_the_executor_applies_a_patch_overlay_records_collection_errors_and_stops_at_its_timeout(source, tmp_path):
     root, base = source
     tree = trees.checkout(root, base, tmp_path / "t")
