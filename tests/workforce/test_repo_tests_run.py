@@ -692,6 +692,26 @@ def test_c1_a_pytest_toml_is_the_repositorys_own_config_and_no_empty_one_replace
     assert (found["verdict"], found["passed"]) == (rt.PASSED, 1)
 
 
+def test_i6_a_moved_test_file_is_replayed_at_its_old_path_at_the_base_commit(repo):
+    """Review I6 (probe S4): the base commit has no file at the new path, so the base run of a moved test file found
+    nothing to run, and a regression it showed on the patch read as a failure that predates the patch."""
+    from dataclasses import replace
+
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_neg.py", "from calc import add\n\n\ndef test_neg():\n    assert add(-2, -3) == -5\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "the base: add sums, and a negative test")
+    _write(repo, "calc.py", "def add(a, b):\n    return abs(a + b)\n\n\ndef sub(a, b):\n    return a - b\n")
+    (repo / "tests" / ".moved").mkdir()
+    git(repo, "mv", "tests/test_neg.py", "tests/.moved/test_neg.py")   # out of pytest's walk of tests/
+    change = rt.change(repo)
+    assert change.renamed == {"tests/test_neg.py": "tests/.moved/test_neg.py"}
+    rel = "tests/.moved/test_neg.py"
+    found = rt.run_before(replace(change, before={rel: (repo / rel).read_text(encoding="utf-8")}))[rel]
+    assert found["verdict"] == rt.FAILED, found
+    assert found["failed_ids"] == [f"{rel}::test_neg"]
+
+
 def test_m9_a_repository_path_with_the_path_separator_in_it_runs(tmp_path):
     """M9: the import path was one string joined with os.pathsep, so a ';' (':' on POSIX) in the path split it."""
     repo = make_repo(tmp_path, f"a{os.pathsep}b")

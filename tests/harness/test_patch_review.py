@@ -537,6 +537,23 @@ def test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect(r
                for r in found["assessment"]["reasons"])
 
 
+def test_a_failing_derived_file_g6_could_not_run_at_the_base_commit_is_said_so_not_called_pre_existing(repo,
+                                                                                                        monkeypatch):
+    """Review I6: when the base run never happened, the unknown said the file "did not pass at the base commit
+    either"; it says why it did not run there instead."""
+    (repo / "test_legacy.py").write_text("import calc\n\n\ndef test_legacy():\n    assert calc.add(1, 1) == 2\n")
+    _commit(repo, "legacy")
+    (repo / "calc.py").write_text(GOOD)
+    never = {"verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded"}   # no baseline
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
+                           ("test_calc.py", "test_legacy.py"): result([ADD, NEGATIVE], ["test_legacy.py::test_legacy"])},
+             on_base={"test_legacy.py": never})
+    unknowns = review(repo)["assessment"]["unknowns"]
+    assert not any("did not pass at the base commit" in u for u in unknowns), unknowns
+    assert any("test_legacy.py" in u and "could not be run at the base commit" in u and "copy cap" in u
+               for u in unknowns), unknowns
+
+
 @pytest.mark.parametrize("verdict, output", [("failed", "ERROR test_legacy.py\n"),
                                              ("collection_error", "____ ERROR collecting test_legacy.py ____\n")])
 def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_base_is_a_defect(repo, monkeypatch,
@@ -914,6 +931,25 @@ def test_confined_a_derived_file_the_patch_stops_collecting_is_a_defect(repo, bw
     got = review(repo)
     assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
     assert any(r["code"] == "derived_test_regressed" and "test_helpers.py" in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
+def test_confined_a_failing_test_moved_out_of_the_stated_folder_is_a_regression(repo, bwrap_backend):
+    """Review I6 (probe S4): the patch breaks negative sums and moves the test that shows it under a dot folder, which
+    pytest's walk of tests/ skips; the stated check names the folder."""
+    _git(repo, "rm", "-q", "test_calc.py")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_pos.py").write_text("from calc import add\n\n\ndef test_pos():\n    assert add(2, 3) == 5\n")
+    (repo / "tests" / "test_neg.py").write_text("from calc import add\n\n\ndef test_neg():\n"
+                                                "    assert add(-2, -3) == -5\n")
+    (repo / "calc.py").write_text(GOOD)
+    _commit(repo, "tests in a folder; add sums")
+    (repo / "tests" / ".off").mkdir()
+    _git(repo, "mv", "tests/test_neg.py", "tests/.off/test_neg.py")
+    (repo / "calc.py").write_text("def add(a, b):\n    return abs(a + b)\n")
+    got = review(repo, [{"id": "R1", "text": "add sums positive integers", "checks": ["tests"]}])
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
+    assert any(r["code"] == "derived_test_regressed" and "tests/.off/test_neg.py" in r["detail"]
                for r in got["assessment"]["reasons"])
 
 

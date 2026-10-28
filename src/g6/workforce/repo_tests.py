@@ -1330,10 +1330,18 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
     Same file/time caps as the main run. All old files are restored together for cross-file imports; each file gets
     a fresh copy so a previous test cannot contaminate the next file's evidence. Git metadata is never copied. A
     ``not_run`` entry made after the old-code baseline ran carries that baseline's verdict (``baseline``), and, when
-    the baseline passed but the new run did not match its tests, the new run's verdict (``patched``).
+    the baseline passed but the new run did not match its tests, the new run's verdict (``patched``). A file of
+    ``change.before`` that ``change.renamed`` moved there runs at its old path at the base commit, where the new one
+    is absent, and its tests are matched across the move (review I6).
     """
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     started, results = time.monotonic(), {}
+    old_path = {new: old for old, new in change.renamed.items()}
+
+    def moved(outcomes: dict | None, old: str, new: str) -> set[str]:
+        """The test ids of a base run at ``old``, as they read at ``new``."""
+        return {new + node[len(old):] if node == old or node.startswith(old + "::") else node for node in outcomes or {}}
+
     for index, rel in enumerate(sorted(change.before)):
         remaining = bound - (time.monotonic() - started)
         if index >= MAX_DERIVED:
@@ -1345,7 +1353,7 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
         try:
             with repository_copy(change.repo, deadline=started + bound, before=change.before) as copy:
                 with _base_revision(change, copy, started + bound):
-                    baseline = _run(copy, [rel], roots=roots, timeout_s=bound, network=network,
+                    baseline = _run(copy, [old_path.get(rel, rel)], roots=roots, timeout_s=bound, network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
                                     deadline=started + bound)
                 if (baseline["verdict"] != PASSED or baseline.get("degraded") or baseline.get("not_passed")
@@ -1361,7 +1369,8 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                 results[rel] = _run(copy, [rel], roots=roots, timeout_s=int(remaining), network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
                                     deadline=started + bound)
-                if set(baseline["test_outcomes"]) != set(results[rel].get("test_outcomes") or {}):
+                if moved(baseline["test_outcomes"], old_path.get(rel, rel), rel) != set(
+                        results[rel].get("test_outcomes") or {}):
                     reason = results[rel].get("said") or (SAID["collection_error"] if results[rel]["verdict"] == FAILED
                                                          and not results[rel].get("failed_ids") else OLD_BASELINE_NOT_RUN)
                     results[rel] = {"verdict": "not_run", "said": reason, "baseline": PASSED,

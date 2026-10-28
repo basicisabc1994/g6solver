@@ -555,9 +555,13 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) ->
         elif out.get("baseline") == "passed":
             unknowns.append(f"{rel} fails on the patch, and its run there could not be compared with its passing run "
                             f"at the base commit ({out.get('said') or out.get('patched')})")
-        else:
-            unknowns.append(f"{rel} fails on the patch and did not pass at the base commit either, so G6 does not "
-                            f"count it as a defect of this patch ({out.get('said') or out.get('verdict')})")
+        elif out.get("baseline"):
+            unknowns.append(f"{rel} fails on the patch and did not pass at the base commit either "
+                            f"({out['baseline']}), so G6 does not count it as a defect of this patch"
+                            + (f" ({out['said']})" if out.get("said") else ""))
+        else:   # review I6: the base run never happened, so nothing says the file failed there
+            unknowns.append(f"{rel} fails on the patch and could not be run at the base commit, so G6 cannot say "
+                            f"whether the patch broke it ({out.get('said') or out.get('verdict')})")
 
 
 _SUMMARY = {
