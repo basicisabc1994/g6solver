@@ -127,24 +127,33 @@ probes) is not run yet.
 
 `proposed_checks` is optional: at most 20 test files you propose, each `{id, requirement_id, intent, file,
 source, test}`. `intent` is `preserve` (behaviour the patch must keep) or `change` (behaviour it must bring);
-`file` is a relative path named `test_<name>.py`, and `source` its text, at most 64 KB; `test` is an optional
-node ID inside it. A conftest, a pytest or tox configuration, a `.pth` file, an `__init__.py`, a path with `..`,
-an absolute path or a link is refused, and so is the whole review, before anything runs. G6 places each check in
-a folder of its own (`g6_check_` and the start of its text's SHA-256) and, unless integrity is already in doubt,
-runs it confined with no network, in a fresh copy of the patch and in one of the base commit's code, neither
-holding the repository's history. Each run has its own time limit inside the review's; checks the time cannot
-reach are listed as skipped. Where no operating-system boundary can confine these runs, the review is refused,
-even where you allowed unconfined runs. The results: for `preserve`, `counterexample` (passes at the base, fails
-on the patch) or `fails_on_base_too` (nobody is accused); for `change`, `unconfirmed_failure` (fails on the
-patch); otherwise `not_refuted`. A run that times out, changes its copy, cannot be collected or set up, fails
-on an operating-system error (how the boundary refuses a file outside the copy or the network), or fails
-without its output saying how, is a `check_error`, counted and never a finding. A probe prints one line per observation, `G6-OBSERVATION
-{"input": ..., "output": ...}`, to the real output (in a test, inside `with capsys.disabled():`), at most 32;
-when both runs pass and the observations differ it is `behaviour_changed`, a question only. A proposed check
-never passes a requirement: the reply says how many did not refute it. A counterexample or an unconfirmed
-failure gives at most insufficient evidence (`unconfirmed_counterexample`, `unconfirmed_failure`), never a
-defect, and its reproduction is in the next actions: the check's text and SHA-256, its path and node ID, a
-`python -m pytest` command that needs no G6, and the digests of the two copies it ran in.
+`file` is a relative path named `test_<name>.py`, and `source` its text, at most 64 kilobytes; `test` is an
+optional node identifier inside it. A conftest, a pytest or tox configuration, a `.pth` file, an `__init__.py`,
+a path with `..`, an absolute path or a link is refused, and so is the whole review, before anything runs. G6
+places each check in a folder of its own (`g6_check_` and the start of its text's SHA-256) and, unless
+integrity is already in doubt, runs it confined with no network, in a fresh copy of the patch and in one of the
+base commit's code, neither holding the repository's history. Each run has its own time limit inside the
+review's; checks the time cannot reach are listed as skipped. Where no operating-system boundary can confine
+these runs, the review is refused, even where you allowed unconfined runs. The results: for `preserve`,
+`counterexample` (passes at the base, fails on the patch) or `fails_on_base_too` (nobody is accused); for
+`change`, `unconfirmed_failure` (fails on the patch, whatever the base gives: a new function cannot even be
+imported there); otherwise `not_refuted`. A check whose own file the patch stops collecting (it imports a name
+the patch removed, say) has failed, and its run at the base commit decides, as for the repository's own tests.
+A run that times out, changes its copy, cannot be collected or set up for another reason, fails on an
+operating-system error or on a refusal a client library wraps (the boundary refusing a file outside the copy,
+the network or a name lookup), or fails without saying how, is a `check_error`, counted and never a finding.
+A probe prints one line per observation, `G6-OBSERVATION {"input": ..., "output": ...}`, to the real output
+(in a test, inside `with capsys.disabled():`), at most 32, each at most 1,000 characters and 16 levels deep;
+when both runs pass and the observations differ it is `behaviour_changed`, a question only, and the differing
+values are reported as JSON text. A proposed check never passes a requirement: the reply says how many did not
+refute it. A counterexample or an unconfirmed failure gives at most insufficient evidence
+(`unconfirmed_counterexample`, `unconfirmed_failure`), never a defect. The reason says so in G6's own words;
+what the check printed or failed with is your text and stays in `assessment.completion`. The reproduction is in
+the next actions: the check's text and SHA-256, its path and node identifier, the plain `python -m pytest` run
+G6's run amounted to (`PYTHONPATH=src` where G6 put `src` on the import path, an empty configuration where the
+repository has none), which needs no G6, the interpreter and boundary each run had, and the digests of the two
+copies it ran in. The check is code you wrote: G6 ran it only inside its boundary with no network, so read it
+before you run it, or run it in a container.
 
 Every reply has `assessment.completion`, built from what ran: `demonstrated` (requirements passed on their
 stated checks, with the receipts), `not_established` (with what would settle each), `defects_reproduced`

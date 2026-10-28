@@ -106,9 +106,11 @@ outcome: test integrity compromised, defect detected, insufficient evidence, or 
 within scope means every stated requirement passed its stated checks; it does not show that the patch does
 everything the task needs. Each requirement gets its own evidence, and merging always needs a separate approval.
 You can also propose checks of your own (`proposed_checks`, at most 20 test files): G6 runs each inside the same
-boundary on a copy of the patch and on one of the base commit's code, and says whether it found a counterexample.
-A proposed check never passes a requirement, and a failing one gives at most insufficient evidence, with a
-reproduction you can run with plain pytest.
+boundary on a copy of the patch and on one of the base commit's code, and says whether it found a counterexample,
+or, for a check of what the change should bring, whether it fails on the patch, whatever the base gives. A
+proposed check never passes a requirement, and a failing one gives at most insufficient evidence, with a
+reproduction you can run with plain pytest, the way G6 ran it (with `PYTHONPATH=src` where G6 put `src` on the
+import path).
 G6 keeps its record of its own test runs (test receipts) in a file your user account owns: it stops a caller's
 claimed results from counting as G6's, not a program running as you.
 Enable it explicitly with `g6 setup --client codex --allow patch_review.review`.
