@@ -13,6 +13,9 @@ of these, and takes them as inputs:
 - the repository context: ``context``, passed to every request unchanged. E uses G6's selection and nothing else of G6;
 - the reply format: a JSON object ``{"files": [{"path", "text"}]}`` (``parse``), proposed here until E's prompt fixes
   it (INTERPRETATIONS.md);
+- the time-out of each model call: the hosted interface VS-5 builds enforces its own, inside the ``timeout_s`` each
+  request carries; until then a hung ``ask`` can stall the arm, and a watchdog in the driver for E is revisited at
+  VS-5;
 - the spending share: ``share_left``, asked before every call; tokens and dollars are counted by whoever implements
   ``ask``;
 - the frozen parameters the freeze entry records (``Frozen``): R and each run's own time limit, read from G6's frozen

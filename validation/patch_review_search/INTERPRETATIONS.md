@@ -163,7 +163,7 @@ Items 15 to 24 cover the study driver (`driver.py`), the reruns (`reruns.py`) an
     its share counts what the meter has counted so far. What the arm reports (its spent cents and its calls) is a
     cross-check: a difference in either is logged in the record and the report, and the meter is what is charged. The
     arm's model calls, and so E's call count, are the meter's. An infrastructure failure after the meter counted a call
-    is not "before its first model call": a tool error, never retried. For the coordinator's ruling.
+    is not "before its first model call": a tool error, never retried. Ruled by the coordinator: accepted.
 
 26. **C and T in a child process.** At a study level the driver refuses arms C and T unless each is a child arm
     (`ChildArm`, `children_only`). Each run is a fresh `python -I` interpreter started through G6's
@@ -173,5 +173,10 @@ Items 15 to 24 cover the study driver (`driver.py`), the reruns (`reruns.py`) an
     case `killed_at_time_limit`. The child's meter is a file it appends one line to per call, so the driver reads what
     it counted before the kill; the child is told what was left of the arm's share when the run began. The child gets
     the study's environment without the research flag, as V9's arms do. An operator stop is never caught. Arm E runs
-    in the driver's own process: each of its calls and runs has its own time limit inside the arm's. For the
-    coordinator's ruling.
+    in the driver's own process: each of its calls and runs has its own time limit inside the arm's. The hosted
+    interface VS-5 builds must enforce its own time-out on each call; a watchdog in the driver for arm E is revisited
+    at VS-5. Ruled by the coordinator: accepted; V10's arms use `time_out`, as arm E does, and telling the child what
+    was left of its share is accepted.
+
+    The kinds map across the two studies as follows: V10's `time_out` for a run stopped at its limit is V9's
+    `killed_at_time_limit`.
