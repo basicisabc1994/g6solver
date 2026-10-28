@@ -191,7 +191,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.8,
+              "seconds": 2.0,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -207,7 +207,7 @@
           "with_break_without_import_roots": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.7,
+              "seconds": 2.7,
               "stderr_tail": []
             },
             "category": "insufficient_evidence",
@@ -226,7 +226,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.7,
+              "seconds": 2.6,
               "stderr_tail": []
             },
             "category": "accept",
@@ -240,7 +240,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.8,
+              "seconds": 2.7,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -256,7 +256,7 @@
           "with_break_without_import_roots": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.6,
+              "seconds": 2.4,
               "stderr_tail": []
             },
             "category": "insufficient_evidence",
@@ -514,7 +514,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 3.6,
+              "seconds": 5.5,
               "stderr_tail": []
             },
             "category": "accept",
@@ -528,7 +528,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.9,
+              "seconds": 2.5,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -546,7 +546,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.9,
+              "seconds": 2.0,
               "stderr_tail": []
             },
             "category": "accept",
@@ -560,7 +560,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.8,
+              "seconds": 1.9,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -647,7 +647,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.7,
+              "seconds": 1.6,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -679,7 +679,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.7,
+              "seconds": 1.5,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -798,7 +798,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.4,
+              "seconds": 1.5,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -871,7 +871,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 3.2,
+              "seconds": 3.3,
               "stderr_tail": []
             },
             "category": "accept",
@@ -885,7 +885,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.9,
+              "seconds": 2.0,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -903,7 +903,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.7,
+              "seconds": 2.0,
               "stderr_tail": []
             },
             "category": "accept",
@@ -917,7 +917,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.8,
+              "seconds": 1.9,
               "stderr_tail": []
             },
             "category": "defect_found",

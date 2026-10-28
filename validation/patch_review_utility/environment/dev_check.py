@@ -330,6 +330,7 @@ def merge_g6_arms(found: dict, controls: dict[str, dict], lock: dict) -> dict:
         elif "g6_arms_control" in result and earlier:
             result.setdefault("g6_arms_commit", earlier["commit"])
     toolchains.append(lock)
+    found["g6_arms_toolchains"] = [lock for n, lock in enumerate(toolchains) if lock not in toolchains[:n]]
     return found
 
 

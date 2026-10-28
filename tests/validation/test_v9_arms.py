@@ -257,6 +257,79 @@ def test_without_g6s_loaded_code_check_the_direct_checks_run_as_before(repo, mon
     assert got["disposition"]["accepted"] is True
 
 
+def test_the_direct_checks_do_not_accept_a_submodule_folder_g6_could_not_hash(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    monkeypatch.setattr(repo_tests, "submodules_not_hashed", lambda found: {"vendor/lib": "it holds too many files"},
+                        raising=False)
+    got = direct(repo, checks, Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}))
+    assert got["disposition"]["accepted"] is False and got["disposition"]["category"] == "insufficient_evidence"
+    by_name = {c["name"]: c for c in got["checks"]}
+    assert by_name["submodule_folders"]["passed"] is False and "vendor/lib" in by_name["submodule_folders"]["detail"]
+    assert by_name["tests_touching_changed_modules"]["passed"] is True     # as in G6, evidence never stops tier 2
+    assert by_name["repository_unchanged"]["passed"] is True
+
+
+#: Whether the G6 under test reads submodule folders git does not look into (the pool-compatibility change); before
+#: it, G6 refuses a repository that holds one.
+READS_SUBMODULES = hasattr(repo_tests, "submodules_not_hashed")
+
+
+class Growing(Runs):
+    """Recorded runs that also add a file to ``folder`` on the first one: a submodule folder that grows past G6's cap
+    while the tests run."""
+
+    def __init__(self, folder, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.folder = folder
+
+    def run(self, repo, tests, *, timeout_s, receipt=False):
+        (self.folder / "grown.txt").write_text("written by a test\n", encoding="utf-8")
+        return super().run(repo, tests, timeout_s=timeout_s, receipt=receipt)
+
+
+def linked(root: Path, case: str, monkeypatch) -> tuple[list[str], Runs]:
+    """``root`` a development fixture holding a submodule folder git does not look into (a gitlink that was never set
+    up, its files in place), with ``case`` applied; the stated checks, and the recorded runs."""
+    root.mkdir()
+    (root / "calc.py").write_text(BAD, encoding="utf-8")
+    (root / "test_calc.py").write_text(TEST, encoding="utf-8")
+    (root / "vendor" / "lib").mkdir(parents=True)
+    (root / "vendor" / "lib" / "data.txt").write_text("vendored\n", encoding="utf-8")
+    git(root, "init", "-q")
+    git(root, "add", "calc.py", "test_calc.py")
+    git(root, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},vendor/lib")
+    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+        "commit", "-qm", "development fixture with a submodule folder")
+    checks = patch(root, {"calc.py": GOOD, "test_more.py": MORE})
+    in_place = {("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}
+    if case == "entry_changed":
+        git(root, "update-index", "--cacheinfo", f"160000,{'2' * 40},vendor/lib")
+    if case == "not_hashed":
+        monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 0)
+    if case == "not_hashed_after_the_runs":
+        monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 1)
+        return checks, Growing(root / "vendor" / "lib", in_place)
+    return checks, Runs(in_place)
+
+
+@pytest.mark.skipif(not READS_SUBMODULES, reason="this G6 refuses a repository that holds a submodule folder")
+@pytest.mark.parametrize("case, accepted, code", [
+    ("unchanged", True, None), ("entry_changed", False, "change_inside_submodule"),
+    ("not_hashed", False, "submodule_not_hashed"), ("not_hashed_after_the_runs", False, "submodule_not_hashed")])
+def test_g6_and_the_direct_checks_read_a_submodule_folder_alike(tmp_path, monkeypatch, case, accepted, code):
+    checks, runs = linked(tmp_path / "for_g6", case, monkeypatch)
+    runs.into(monkeypatch)
+    review = g6(tmp_path / "for_g6", checks)
+    checks, runs = linked(tmp_path / "direct", case, monkeypatch)
+    plain = direct(tmp_path / "direct", checks, runs)
+    assert review["disposition"]["accepted"] is accepted and plain["disposition"]["accepted"] is accepted
+    assert review["disposition"]["category"] == plain["disposition"]["category"]
+    codes = review["row"]["reason_codes"]
+    assert any(code in found for found in codes) if code else codes == []
+    by_name = {c["name"]: c for c in plain["checks"]}
+    assert by_name["submodule_folders"]["passed"] is accepted and by_name["repository_unchanged"]["passed"] is True
+
+
 def test_g6s_model_calls_come_from_its_reply_when_it_reports_them(repo, monkeypatch):
     checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
     Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}).into(monkeypatch)

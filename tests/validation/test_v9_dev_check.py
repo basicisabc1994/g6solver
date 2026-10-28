@@ -91,6 +91,8 @@ def test_a_rerun_of_g6s_arms_replaces_only_the_named_tasks_controls_and_says_whi
     assert "g6_arms_toolchain" not in new and old["results"][0]["g6_arms_control"] == {"g6": "old"}   # a copy
     with pytest.raises(ValueError, match="t9"):
         dev_check.merge_g6_arms(old, {"t9": {}}, {"commit": "b" * 40})
+    again = dev_check.merge_g6_arms(new, {"t1": {"g6": "newer"}}, {"commit": "b" * 40, "volume": "v"})
+    assert again["g6_arms_toolchains"] == new["g6_arms_toolchains"]          # a toolchain is listed once
 
 
 def test_the_check_reads_what_is_left_of_the_images_pytest_settings_after_the_apply_script():

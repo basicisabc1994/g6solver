@@ -100,7 +100,21 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     by the coordinator. Where the G6 under test reads which code a run loaded (the pool-compatibility change), arm 4
     reads it the same way: a run of the stated checks, or of the tests that touch the changed modules, that loaded a
     changed module from outside the tree, or cannot say what it loaded, is no evidence of the patch, and that check
-    does not pass. At b3c342b, which has no such reading, arm 4 runs as before.
+    does not pass. At b3c342b, which has no such reading, arm 4 runs as before. On the same principle (every
+    deterministic rule that can stop G6's acceptance is mirrored), where the G6 under test reads the submodule folders
+    git does not look into, arm 4 does not accept a patch that changes a submodule's entry, or a repository with such
+    a folder G6 could not hash, before the runs or only after them. It reads them as G6's review fix pass (8b5364c)
+    does: a folder not hashed on either side is "not hashed", never "changed", and Python's bytecode folders
+    (`__pycache__`) are left out of the hash. Ruled by the coordinator.
+
+    Arm 4 decides acceptance as G6 does, but it does not always give the same kind of non-acceptance, and its kinds
+    are its own: the per-reason secondary measures read arm 4's categories as arm 4's, not as G6's. There are two
+    differences, kept in the code because neither changes whether a patch is accepted. First, arm 4 does not run the
+    tests that touch the changed modules once any earlier check has failed, while G6 still runs them unless an
+    earlier check found an integrity problem or a failing test; so where G6 would go on to find a defect after a
+    shortfall in the evidence, arm 4 reports the shortfall (insufficient evidence) instead. Second, when the scan for
+    git-ignored files stops at its limit, arm 4 counts it as an integrity problem and G6 counts it as insufficient
+    evidence. Ruled by the coordinator.
 
 17. **Where each arm runs.** At a study level, every arm runs in a fresh container of the task's own benchmark image,
     removed when it ends; the image is never changed and never fetched during a study. Inside the container the
@@ -111,8 +125,10 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     wheel built at the frozen commit, git 2.31 or newer, and bubblewrap; the images carry neither G6's Python nor,
     in ansible's case, a git G6 accepts), while the repository's tests still run with the image's own interpreter,
     named by `G6_REPO_PYTHON`. The toolchain's sources are pinned by hash in `environment/toolchain.json`, and a
-    toolchain is used only when it matches its lock. Every task image is named by its digest, never by a tag. Ruled
-    by the coordinator.
+    toolchain is used only when it matches its lock. Every task image is named by its digest, never by a tag. The
+    study's toolchain lock is built at the verification search freeze commit, which includes the pool-compatibility
+    change; the lock built at b3c342b, and every throwaway toolchain the development check uses, is for development
+    only and never runs the study. Ruled by the coordinator.
 
 18. **One test environment per repository, and the image's pytest settings cleared.** Each repository's test
     environment is declared once in the manifest (qutebrowser's choice of Qt binding, for example) and is the same

@@ -43,10 +43,14 @@ order and with the same deadline, and accepted only when every check passes (``D
    (named against the run's root folder) are replayed at the base commit with ``repo_tests.run_before``, as
    ``patch_review._on_base`` does (lines 667-704), a moved file at its old path (review I6, inside ``run_before``),
    within the same budget; the replay is recorded and never turns a failure into a pass;
-7. ``repository_unchanged``: ``repo_tests.snapshot`` is the same after the runs as before (line 582);
-8. ``runs_on_the_reviewed_tree``: every in-place run began on the tree under review, its ``source_before`` the digest
+7. ``repository_unchanged``: ``repo_tests.snapshot`` is the same after the runs as before (line 582), compared by
+   ``repo_tests._moved``, the comparison G6 itself uses from the pool-compatibility fix pass on (at b3c342b it is the
+   same as comparing the two snapshots);
+8. ``submodule_folders``: with the pool-compatibility change only (below), no submodule folder leaves the evidence
+   short; at b3c342b it always passes, since that G6 refuses a repository holding one;
+9. ``runs_on_the_reviewed_tree``: every in-place run began on the tree under review, its ``source_before`` the digest
    of the snapshot taken first (lines 469-470 and 584-588; review I4);
-9. ``test_diff_shortcuts``: the coding gate's diff scan (``g6.coding_agent_gate.scan_diff``) finds nothing in the diff
+10. ``test_diff_shortcuts``: the coding gate's diff scan (``g6.coding_agent_gate.scan_diff``) finds nothing in the diff
    against the base of the test, test-runner and continuous-integration files only (``patch_review._test_diff`` over
    ``repo_tests.diff_text``, lines 409-421 and 589, read as integrity at 600-606; review I8). With no claim, the
    gate's other shortcut finding cannot occur.
@@ -58,7 +62,11 @@ It can only add an unknown and a next action, never change G6's outcome, so it c
 b3c342b): the repository's import roots go first on the import path of every run (``import_roots``), and G6's guard
 is mirrored: a tier 1 or tier 2 run that loaded a changed module from outside the tree, or cannot say what it loaded
 (``repo_tests.shadowed``, applied where ``patch_review.py`` applies it at a2161c7, lines 569-584, 624 and 656), is no
-evidence of the patch, so its check does not pass and the base replay is not run.
+evidence of the patch, so its check does not pass and the base replay is not run. The submodule folders git does not
+look into are read as at the fix pass (8b5364c, lines 615-620 and 663-668): a changed gitlink entry
+(``change_inside_submodule``), or a folder G6 could not hash before the runs or only after them
+(``submodule_not_hashed``), fails ``submodule_folders`` (insufficient evidence, never an integrity finding: a folder
+not hashed on either side is not a change). It is recorded after the runs, so, as in G6, it never stops them.
 
 What arm 4 leaves out is G6's assessment logic: the outcome order, requirement statuses (a requirement with no check,
 or a stated check that did not run, is G6's insufficient evidence; arm 4 has no rule for it), the unknowns (a test that
@@ -101,8 +109,8 @@ from patch_review_utility.executor import stop_container, unrunnable
 
 RUNS = 3
 DIRECT_CHECKS = ("test_weakening", "runner_configuration", "ignored_inputs", "patch_changes_files", "stated_checks",
-                 "tests_touching_changed_modules", "repository_unchanged", "runs_on_the_reviewed_tree",
-                 "test_diff_shortcuts")
+                 "tests_touching_changed_modules", "repository_unchanged", "submodule_folders",
+                 "runs_on_the_reviewed_tree", "test_diff_shortcuts")
 #: How long past its time limit an arm's call window stays open, so G6's own deadline gives a reply first.
 KILL_GRACE_S = 60
 KILLED = "killed_at_time_limit"
@@ -319,9 +327,24 @@ def _not_loaded(change, ran: dict) -> str:
                      for rel, where in found.items())
 
 
+def _submodule_folders(change, before: dict, final: dict) -> tuple[bool, str]:
+    """Whether the submodule folders git does not look into leave the evidence whole, as G6 reads them at the
+    pool-compatibility fix pass (8b5364c): no changed gitlink entry (``change_inside_submodule``), and no folder G6
+    could not hash, before the runs or only after them (``submodule_not_hashed``). (True, "") when this G6 reads no
+    such folder (before the pool-compatibility change, which refuses a repository holding one)."""
+    not_hashed = getattr(repo_tests, "submodules_not_hashed", None)
+    short = [f"{rel}: the patch changes this submodule's entry" for rel in getattr(change, "submodule_changes", ())]
+    if not_hashed is not None:
+        earlier = not_hashed(before)
+        short += [f"{rel}: G6 could not hash this submodule folder ({why})" for rel, why in earlier.items()]
+        short += [f"{rel}: G6 could not hash this submodule folder after the runs ({why})"
+                  for rel, why in not_hashed(final).items() if rel not in earlier]
+    return not short, "; ".join(short)
+
+
 def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline: float, run, run_before,
             add, done: list[dict], trace: dict, rooted: dict) -> None:
-    """The nine checks in order (the module docstring gives each one's line in G6's review), each recorded with
+    """The ten checks in order (the module docstring gives each one's line in G6's review), each recorded with
     ``add`` into ``done``; runs go through ``run`` and ``run_before``."""
     in_place: list[dict] = []
 
@@ -385,9 +408,11 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
                     detail += "; at the base commit: " + ", ".join(
                         f"{rel} {(replays.get(rel) or {}).get('verdict')}" for rel in failing)
             add("tests_touching_changed_modules", passed, detail, category)
-    unchanged = repo_tests.snapshot(root) == before                               # line 582
+    final = repo_tests.snapshot(root)
+    unchanged = not repo_tests._moved(before, final)                              # line 582
     add("repository_unchanged", unchanged, "" if unchanged else "the working tree changed during the checks",
         INTEGRITY)
+    add("submodule_folders", *_submodule_folders(change, before, final), ABSTAIN)
     elsewhere = [ran["source_before"] for ran in in_place
                  if ran.get("source_before") and ran["source_before"] != artifact]   # lines 584-588
     add("runs_on_the_reviewed_tree", not elsewhere,
