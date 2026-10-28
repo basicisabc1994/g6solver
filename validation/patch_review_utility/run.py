@@ -20,8 +20,9 @@ then the labels, which no arm ever sees. The research flag (``G6_ECHA_RESEARCH=1
 ``confined``, ``network``: a study level needs a confined executor with the network closed), or instead
 ``environment`` (``kind`` "containers"; ``toolchain`` ``{volume, lock}``, G6's toolchain checked against its lock
 before anything runs; ``python``, each repository's interpreter in its image; optionally ``env``, each repository's
-test environment; and an ``image`` for every task: ``containers.py`` says how each arm runs there); ``suites`` (test
-paths
+test environment; and an ``image`` for every task: ``containers.py`` says how each arm runs there); optionally
+``import_roots`` (per repository, the folders that make the patched code importable: ``PYTHONPATH`` for arm 1 and
+the labels, ``import_roots`` for G6's arms); ``suites`` (test paths
 per repository, for arm 1); ``vault`` (``roots``, ``id``, ``ledger``); ``audit`` (``audited``, ``label_errors``, or
 null); ``registered_size`` (or null); optional ``setup_effort`` and ``deviations``, copied into the results; and
 ``tasks``, each ``{task_id, repository, source (a git repository holding the base commit), base_commit, statement
@@ -108,6 +109,10 @@ def load_manifest(path: str | Path) -> dict:
     seconds = manifest["limits"]["arm_seconds"]
     if not isinstance(seconds, int) or not 1 <= seconds <= MAX_ARM_SECONDS:
         raise Refused(f"arm_seconds is a whole number from 1 to {MAX_ARM_SECONDS}, G6's own limit")
+    for repository, roots in (manifest.get("import_roots") or {}).items():
+        problems = containers.root_problems(roots)
+        if problems:
+            raise Refused(f"{repository}'s import roots: " + "; ".join(problems))
     environment = _containers(manifest)
     if environment is not None:
         if not {"volume", "lock"} <= set(environment.get("toolchain") or {}):
@@ -159,11 +164,18 @@ def task_executor(manifest: dict, task: dict) -> executor.Executor:
     environment = _containers(manifest)
     if environment is not None:
         python, env = environment["python"][task["repository"]], (environment.get("env") or {}).get(task["repository"])
-        return executor.Executor(containers.tests_command(task["image"], python=python, env=env), confined=True,
-                                 network=False)
+        command = containers.tests_command(task["image"], python=python, env=env,
+                                           import_roots=import_roots(manifest, task))
+        return executor.Executor(command, confined=True, network=False)
     described = manifest["executor"]
     return executor.Executor(described["command"], confined=bool(described.get("confined")),
                              network=described.get("network"))
+
+
+def import_roots(manifest: dict, task: dict) -> list[str]:
+    """The folders that make the repository's patched code importable (``lib`` for a ``lib/`` layout whose package
+    the image also installs): ``PYTHONPATH`` in arm 1's and the labels' containers, G6's ``import_roots``."""
+    return list((manifest.get("import_roots") or {}).get(task["repository"]) or [])
 
 
 def g6_command(manifest: dict, task: dict) -> list[str] | None:
@@ -332,10 +344,11 @@ def _review_task(manifest, task, index, work, calibration, markers, findings, a5
     prepared = self_review.prepare(task_id, requirements, patch=patch, time_limit_s=limits["arm_seconds"],
                                    token_cap=limits["token_cap"])
     own = self_review.disposition(prepared, record)
+    roots = import_roots(manifest, task)
     reviewed = arms.in_child("g6", fresh("g6"), requirements, checks, timeout_s=limits["arm_seconds"],
-                             command=in_image)
+                             command=in_image, import_roots=roots)
     direct = arms.in_child("direct_checks", fresh("direct"), requirements, checks, timeout_s=limits["arm_seconds"],
-                           command=in_image)
+                           command=in_image, import_roots=roots)
     if reviewed.get("a5") is not None:
         a5["checked"] += 1
         if not reviewed["a5"]["complete"]:

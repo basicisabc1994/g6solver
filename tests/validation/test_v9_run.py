@@ -190,6 +190,15 @@ def test_a_container_environment_runs_each_task_in_its_own_image_with_g6s_toolch
     loaded = study.load_manifest(manifest_path)
     assert "QT_QPA_PLATFORM=offscreen" in study.task_executor(loaded, task).command       # arm 1 and the labels
     assert study.containers.repo_env_flag(frozen) in study.g6_command(loaded, task)       # G6, through its setting
+    rooted = {**feasibility, "import_roots": {"fixture/calc": ["lib"]}}
+    write(manifest_path, json.dumps(rooted))
+    loaded = study.load_manifest(manifest_path)
+    assert "PYTHONPATH=/app/lib" in study.task_executor(loaded, task).command        # arm 1 and the labels
+    assert study.import_roots(loaded, task) == ["lib"]                               # G6's arms, through review_patch
+    outside = {**feasibility, "import_roots": {"fixture/calc": ["../elsewhere"]}}
+    write(manifest_path, json.dumps(outside))
+    with pytest.raises(study.Refused, match="import root"):
+        study.load_manifest(manifest_path)
     runner = {**feasibility, "environment": {**environment, "env": {"fixture/calc": {"PYTEST_ADDOPTS": "-x"}}}}
     write(manifest_path, json.dumps(runner))
     with pytest.raises(study.Refused, match="PYTEST_ADDOPTS"):

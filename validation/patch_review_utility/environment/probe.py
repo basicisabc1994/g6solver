@@ -3,7 +3,7 @@
 (``dev_check.py``): G6's repository check on ``/app``, then one confined run of one unit-test folder through G6 with
 the image's own interpreter. Only counts, verdicts and reasons are written, never a test's name or a file's contents.
 
-    /opt/g6/python/bin/python3 -I probe.py <out.json> <test folder> <seconds>
+    /opt/g6/python/bin/python3 -I probe.py <out.json> <test folder> <seconds> [<import roots, JSON> [<control test>]]
 
 ``G6_REPO_PYTHON`` names the image's interpreter. Where the G6 under test does not read that setting yet, this probe
 supplies it to ``repo_tests.interpreter`` itself, and says so (``g6_reads_repo_python``); once G6 reads it, the probe
@@ -21,6 +21,8 @@ from pathlib import Path
 
 def main(argv: list[str]) -> int:
     out, folder, seconds = argv[1], argv[2], int(argv[3])
+    roots = tuple(json.loads(argv[4])) if len(argv) > 4 else ()
+    control = argv[5] if len(argv) > 5 else ""
     from g6.workforce import repo_tests
 
     found: dict = {"repo_python": os.environ.get("G6_REPO_PYTHON", "")}
@@ -44,12 +46,15 @@ def main(argv: list[str]) -> int:
     found["g6_reads_repo_python"] = repo_tests.interpreter(root) == wanted
     if wanted and not found["g6_reads_repo_python"]:
         repo_tests.interpreter = lambda repo: wanted   # until G6 reads the setting itself
+    found["import_roots"] = list(roots)
     try:
-        ran = repo_tests.run(root, [folder], timeout_s=seconds)
+        ran = repo_tests.run(root, [folder], timeout_s=seconds, roots=roots)
     except repo_tests.RepoRefused as exc:
         found["confined_run"] = {"result": "refused", "code": exc.code, "reason": str(exc)[:500]}
         return write()
     found["confined_run"] = _summary(ran, folder)
+    if control:
+        found["control_test"] = _outcome(ran, control)
     extra = json.loads(os.environ.get("G6_REPO_ENV") or "{}")
     passed_on = repo_tests.child_env(Path("/tmp"), network=False)
     found["g6_passes_test_env"] = {name: passed_on.get(name) == value for name, value in extra.items()}
@@ -63,9 +68,23 @@ def main(argv: list[str]) -> int:
         repo_tests.child_env = lambda scratch, *, network: {**tests_env(scratch, network=network), **extra}
         confine.child_environment = lambda env=None, *, confinement=None: {
             **spawn_env(env, confinement=confinement), **extra}
-        found["confined_run_with_test_env_simulated"] = _summary(repo_tests.run(root, [folder], timeout_s=seconds),
-                                                                 folder)
+        simulated = repo_tests.run(root, [folder], timeout_s=seconds, roots=roots)
+        found["confined_run_with_test_env_simulated"] = _summary(simulated, folder)
+        if control:
+            found["control_test_with_test_env_simulated"] = _outcome(simulated, control)
     return write()
+
+
+def _outcome(ran: dict, test: str) -> str:
+    """One test's outcome in a run, its id read against the root folder the run reports."""
+    prefix = (ran.get("rootdir") or "").strip("/")
+    for node, phases in (ran.get("test_outcomes") or {}).items():
+        if (f"{prefix}/{node}" if prefix else node) == test:
+            states = set(phases.values())
+            if "failed" in states:
+                return "failed"
+            return "passed" if phases.get("call") == "passed" else "skipped" if "skipped" in states else "missing"
+    return "missing"
 
 
 def _summary(ran: dict, folder: str) -> dict:

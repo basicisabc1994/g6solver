@@ -70,6 +70,7 @@ the arm's reply: not accepted when late, its own outcome otherwise, and marked `
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import subprocess
@@ -205,13 +206,20 @@ def model_calls(reply: dict | None) -> dict:
 
 
 def g6_review(tree: Path, requirements: list[dict], checks: list[str], *, timeout_s: int,
-              review=patch_review.review_patch, kill_after_s: float | None = None) -> dict:
+              review=patch_review.review_patch, kill_after_s: float | None = None,
+              import_roots: list[str] | tuple = ()) -> dict:
     start = _clock()
+    if import_roots and "import_roots" not in inspect.signature(review).parameters:
+        said = ("this repository needs its import roots (" + ", ".join(import_roots) + "), and the frozen G6's "
+                "review takes no import_roots, so it would test the installed code, not the patch")
+        return {"disposition": _with_cost(make(ERROR, said, error_kind="tool_error"), start),
+                "trace": {"commands": [], "isolation": []}, "model_calls": model_calls(None)}
+    rooted = {"import_roots": list(import_roots)} if import_roots else {}
     cited = review_contract.cite(requirements, checks)
     reply, error, killed = None, "", False
     try:
         with component_process.window(timeout_s + KILL_GRACE_S if kill_after_s is None else kill_after_s):
-            reply = review(tree, task=_task(requirements), requirements=cited, timeout_s=timeout_s)
+            reply = review(tree, task=_task(requirements), requirements=cited, timeout_s=timeout_s, **rooted)
     except component_process.ExecutionInterrupted as exc:
         if exc.stopped:
             raise   # an operator stop ends the study, never one arm's result
@@ -290,7 +298,7 @@ def _passes(ran: dict, ids: list[str]) -> tuple[bool, str, str]:
 
 
 def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline: float, run, run_before,
-            add, done: list[dict], trace: dict) -> None:
+            add, done: list[dict], trace: dict, rooted: dict) -> None:
     """The nine checks in order (the module docstring gives each one's line in G6's review), each recorded with
     ``add`` into ``done``; runs go through ``run`` and ``run_before``."""
     in_place: list[dict] = []
@@ -300,7 +308,7 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
 
     def execute(ids: list[str]) -> dict:
         trace["commands"].append("pytest " + " ".join(ids))
-        ran = _confined(run(root, ids, timeout_s=left()))
+        ran = _confined(run(root, ids, timeout_s=left(), **rooted))
         trace["isolation"].append(ran.get("isolation") or {})
         trace["verdicts"].append(ran.get("verdict"))
         in_place.append(ran)
@@ -347,7 +355,7 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
                     | patch_review._collection_errors(second.get("output") or "")} & set(derived))
                 if failing:
                     texts = {rel: (root / rel).read_text(encoding="utf-8", errors="replace") for rel in failing}
-                    replays = run_before(replace(change, before=texts), timeout_s=left())
+                    replays = run_before(replace(change, before=texts), timeout_s=left(), **rooted)
                     detail += "; at the base commit: " + ", ".join(
                         f"{rel} {(replays.get(rel) or {}).get('verdict')}" for rel in failing)
             add("tests_touching_changed_modules", passed, detail, category)
@@ -364,7 +372,8 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
 
 
 def direct_checks(tree: Path, requirements: list[dict], checks: list[str], *, timeout_s: int, run=repo_tests.run,
-                  run_before=repo_tests.run_before, kill_after_s: float | None = None) -> dict:
+                  run_before=repo_tests.run_before, kill_after_s: float | None = None,
+                  import_roots: list[str] | tuple = ()) -> dict:
     start = _clock()
     done: list[dict] = []
     trace: dict = {"commands": [], "isolation": [], "verdicts": []}
@@ -380,7 +389,8 @@ def direct_checks(tree: Path, requirements: list[dict], checks: list[str], *, ti
     try:
         with component_process.window(timeout_s + KILL_GRACE_S if kill_after_s is None else kill_after_s):
             _checks(Path(tree), requirements, checks, deadline=start[0] + timeout_s, run=run, run_before=run_before,
-                    add=add, done=done, trace=trace)
+                    add=add, done=done, trace=trace,
+                    rooted={"roots": tuple(import_roots)} if import_roots else {})
     except component_process.ExecutionInterrupted as exc:
         if exc.stopped:
             raise
@@ -425,7 +435,8 @@ def run_job(job: dict) -> dict:
     else:
         module, _, name = arm.partition(":")
         review = getattr(importlib.import_module(module), name)
-    return review(Path(job["tree"]), job["requirements"], job["checks"], timeout_s=job["timeout_s"])
+    rooted = {"import_roots": job["import_roots"]} if job.get("import_roots") else {}
+    return review(Path(job["tree"]), job["requirements"], job["checks"], timeout_s=job["timeout_s"], **rooted)
 
 
 def _fill(word: str, filled: dict[str, str]) -> str:
@@ -441,7 +452,7 @@ def _no_reply(disposition: dict, start: tuple[float, float], child: dict) -> dic
 
 def in_child(arm: str, tree: Path, requirements: list[dict], checks: list[str], *, timeout_s: int,
              kill_after_s: float | None = None, roots: list[str | Path] | tuple = (),
-             command: list[str] | None = None) -> dict:
+             command: list[str] | None = None, import_roots: list[str] | tuple = ()) -> dict:
     """``arm``'s review of ``tree`` in a fresh isolated interpreter, killed with its process tree at the limit. With
     ``command`` (``containers.g6_command``), the interpreter is G6's toolchain inside the task's image: the change is
     staged beside the job, the child reviews the image's ``/app``, and a container past its limit is stopped by name."""
@@ -458,7 +469,8 @@ def in_child(arm: str, tree: Path, requirements: list[dict], checks: list[str], 
             target, imports = containers.REPOSITORY, [containers.STUDY_MOUNT]
             argv = [_fill(word, filled) for word in command]
         job.write_text(json.dumps({"arm": arm, "tree": target, "requirements": requirements, "checks": checks,
-                                   "timeout_s": timeout_s, "roots": imports}), encoding="utf-8")
+                                   "timeout_s": timeout_s, "roots": imports,
+                                   "import_roots": list(import_roots)}), encoding="utf-8")
         env = {key: value for key, value in os.environ.items() if key != RESEARCH_FLAG}
         try:
             with open(log, "wb") as sink, component_process.window(limit):

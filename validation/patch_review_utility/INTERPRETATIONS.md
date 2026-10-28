@@ -122,6 +122,31 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     would make one side more lenient than the other, and V9's own rules of three runs are what handle checks that do
     not give the same result each time. Ruled by the coordinator.
 
+19. **Testing the patched code, not the installed one: each repository's import roots and test environment.** Where
+    an image installs the repository's own package outside the repository, `import` from the repository's folder
+    loads the installed, unpatched code, and every arm would test the base commit. Each repository therefore names
+    its import roots, the folders that make the patched code importable: `PYTHONPATH` in arm 1's and the labels'
+    containers, and G6's `import_roots` for its arms (the direct checks pass the same roots to G6's runner). A
+    planted-change control in the development check shows, per image, that an arm fails a chosen test when a
+    throwaway change breaks the function it exercises, and passes it without the change; a control that does not
+    fail means the arm is not testing the patch. The choices, from the benchmark's own run scripts and Dockerfiles,
+    read for V7's development tasks only:
+    - ansible: import roots `lib`. Its image installs ansible-core without the editable option (`pip install .` in
+      the task's instance Dockerfile), and the benchmark runs `ansible-test units` from the checkout
+      (`run_script.sh`), which imports ansible from the checkout's `lib`. Test environment `ANSIBLE_VERBOSITY=3`
+      (`run_script.sh`, beside `PYTHONPATH=/app`, which the repository's folder on the import path already gives).
+    - qutebrowser: no import roots: its image installs it in editable mode from `/app` (`pip install -e .`, instance
+      Dockerfile). Test environment `QUTE_QT_WRAPPER=PyQt6`, `QT_QPA_PLATFORM=offscreen` and
+      `QTWEBENGINE_CHROMIUM_FLAGS=--no-sandbox --disable-dev-shm-usage --disable-gpu` (`run_script.sh`). Its
+      `PYTEST_QT_API=pyqt6` is a `PYTEST_*` name, refused and cleared (item 18); PyQt6 is the only binding the image
+      has, so pytest-qt chooses it anyway. Its `DISPLAY` and Xvfb display are not used: the offscreen platform needs
+      none.
+    - openlibrary: no import roots: the repository's folder is on the import path for every arm, which is what the
+      `PYTHONPATH=/app` of two of its four V7 run scripts gives. Test environment
+      `OL_CONFIG=/app/conf/openlibrary.yml` (two of its V7 run scripts and Dockerfiles; the file is in all four
+      images).
+    Ruled by the coordinator.
+
 Two readings are mechanics rather than rulings, recorded so the hash covers them. The executor runs the files of the
 test ids asked for, as the benchmark's own procedure runs test files, so a test id that no longer exists is missing
 instead of stopping the whole run. When the executor's command runs a container, each run names its container, and a

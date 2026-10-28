@@ -105,6 +105,22 @@ def test_env_problems(env: dict[str, str] | None) -> list[str]:
             if name.upper() in REFUSED_NAMES or name.upper().startswith(REFUSED_PREFIXES)]
 
 
+def root_problems(roots: list[str] | None) -> list[str]:
+    """Why ``roots`` cannot be a repository's import roots: each one that is not a folder path inside it."""
+    return [f"import root {root!r} is not a relative path inside the repository" for root in roots or []
+            if not isinstance(root, str) or not root or root.startswith(("/", "\\")) or ":" in root
+            or ".." in root.replace("\\", "/").split("/")]
+
+
+def _python_path(roots: list[str] | None) -> list[str]:
+    """``PYTHONPATH`` putting the repository's import roots first (``lib`` for a ``lib/`` layout installed elsewhere),
+    for a container that runs the tests itself."""
+    if not roots:
+        return []
+    paths = [REPOSITORY if root.strip("/") in ("", ".") else f"{REPOSITORY}/{root.strip('/')}" for root in roots]
+    return ["-e", "PYTHONPATH=" + ":".join(paths)]
+
+
 def pinned(image: str) -> bool:
     """Whether ``image`` is named by its digest (``name@sha256:<64 hexadecimal digits>``), never by a tag."""
     return bool(_DIGEST.fullmatch(image))
@@ -122,11 +138,12 @@ def _env(env: dict[str, str] | None) -> list[str]:
     return [word for name in sorted(env or {}) for word in ("-e", f"{name}={env[name]}")]
 
 
-def tests_command(image: str, *, python: str = "python", env: dict[str, str] | None = None) -> list[str]:
+def tests_command(image: str, *, python: str = "python", env: dict[str, str] | None = None,
+                  import_roots: list[str] | None = None) -> list[str]:
     """Arm 1's and the labels' command template: the pristine image, no toolchain, the network closed, with the
-    repository's test environment ``env``."""
+    repository's test environment ``env`` and its ``import_roots`` first on the import path."""
     return ["docker", "run", "--rm", "--pull", "never", "--name", "{container}", "--network", "none",
-            "-v", f"{{support}}:{WORK}", *_env(env),
+            "-v", f"{{support}}:{WORK}", *_env(env), *_python_path(import_roots),
             "-e", f"V9_OUTCOMES={WORK}/outcomes.json", "-e", "V9_BASE={base}", image, "sh", f"{WORK}/apply.sh",
             python, "-c", PYTEST_MAIN, "-q", "-p", "no:cacheprovider", "-p", "v9_outcomes", "{tests}"]
 

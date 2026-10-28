@@ -121,6 +121,16 @@ def test_one_frozen_test_environment_reaches_arm_1_directly_and_g6_through_its_s
         IMAGE, toolchain="t", study=Path("/s"), repo_python="python"))
 
 
+def test_the_import_roots_put_the_patched_code_first_for_arm_1_and_the_labels():
+    command = containers.tests_command(IMAGE, python="python", import_roots=["lib", "test/lib"])
+    assert "PYTHONPATH=/app/lib:/app/test/lib" in command and command[command.index(
+        "PYTHONPATH=/app/lib:/app/test/lib") - 1] == "-e"
+    assert not any(word.startswith("PYTHONPATH=") for word in containers.tests_command(IMAGE, python="python"))
+    assert containers.root_problems(["lib", "test/lib"]) == []
+    assert containers.root_problems(["../outside"]) and containers.root_problems(["/abs"])
+    assert containers.root_problems(["."]) == []
+
+
 @pytest.mark.parametrize("name", ["PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH", "LD_PRELOAD", "PATH", "HOME",
                                   "G6_ALLOW_UNCONFINED"])
 def test_a_test_environment_that_names_a_runner_or_interpreter_setting_is_refused(name):

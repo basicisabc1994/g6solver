@@ -73,13 +73,24 @@
       "base": "20ef733ee02ba688757998404c1926381356b031",
       "python": "/usr/bin/python",
       "folder": "test/units/errors",
-      "env": {},
-      "g6_container": {
-        "exit_code": 0,
-        "seconds": 1.3,
-        "stderr_tail": []
+      "env": {
+        "ANSIBLE_VERBOSITY": "3"
+      },
+      "import_roots": [
+        "lib"
+      ],
+      "control": {
+        "file": "lib/ansible/errors/__init__.py",
+        "old": "self._message = to_native(message)",
+        "new": "self._message = to_native(message) + ' (planted change)'",
+        "test": "test/units/errors/test_errors.py::TestErrors::test_basic_error"
       },
       "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.8,
+          "stderr_tail": []
+        },
         "repo_python": "/usr/bin/python",
         "repository_check": {
           "result": "passed",
@@ -89,6 +100,9 @@
           "scan_complete": true
         },
         "g6_reads_repo_python": false,
+        "import_roots": [
+          "lib"
+        ],
         "confined_run": {
           "result": "ran",
           "folder": "test/units/errors",
@@ -98,7 +112,7 @@
           "failed": 0,
           "skipped": 0,
           "deselected": 0,
-          "seconds": 0.259,
+          "seconds": 0.289,
           "python": "/usr/bin/python",
           "interpreter_source": "g6",
           "backend": "bubblewrap",
@@ -106,20 +120,59 @@
           "said": "",
           "error_tail": []
         },
-        "g6_passes_test_env": {}
+        "control_test": "passed",
+        "g6_passes_test_env": {
+          "ANSIBLE_VERBOSITY": false
+        },
+        "confined_run_with_test_env_simulated": {
+          "result": "ran",
+          "folder": "test/units/errors",
+          "verdict": "passed",
+          "collected": 7,
+          "passed": 7,
+          "failed": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "seconds": 0.221,
+          "python": "/usr/bin/python",
+          "interpreter_source": "g6",
+          "backend": "bubblewrap",
+          "network": false,
+          "said": "",
+          "error_tail": []
+        },
+        "control_test_with_test_env_simulated": "passed"
       },
-      "arm_1_container": {
-        "exit_code": 0,
-        "seconds": 0.5,
-        "stderr_tail": []
-      },
-      "pytest_settings_left": [],
       "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.5,
+          "stderr_tail": []
+        },
         "pytest_exit": 0,
         "collection_errors": 0,
+        "control_test": "passed",
         "passed": 7,
         "failed": 0,
-        "skipped": 0
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        },
+        "arm_1_without_import_roots": {
+          "with_change": "passed",
+          "verdict": "does not test the patch"
+        },
+        "g6_runner": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch",
+          "note": "through G6's runner (repo_tests.run) with the import roots; review_patch takes import_roots once the pool-compatibility change lands"
+        }
       }
     },
     {
@@ -131,14 +184,22 @@
       "folder": "tests/unit/api",
       "env": {
         "QUTE_QT_WRAPPER": "PyQt6",
-        "QT_QPA_PLATFORM": "offscreen"
+        "QT_QPA_PLATFORM": "offscreen",
+        "QTWEBENGINE_CHROMIUM_FLAGS": "--no-sandbox --disable-dev-shm-usage --disable-gpu"
       },
-      "g6_container": {
-        "exit_code": 0,
-        "seconds": 2.1,
-        "stderr_tail": []
+      "import_roots": [],
+      "control": {
+        "file": "qutebrowser/api/cmdutils.py",
+        "old": "raise CommandError(\"Only one of {} can be given!\".format(argstr))",
+        "new": "return  # planted change",
+        "test": "tests/unit/api/test_cmdutils.py::TestCheckExclusive::test_bad"
       },
       "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.9,
+          "stderr_tail": []
+        },
         "repo_python": "/usr/bin/python",
         "repository_check": {
           "result": "passed",
@@ -148,6 +209,7 @@
           "scan_complete": true
         },
         "g6_reads_repo_python": false,
+        "import_roots": [],
         "confined_run": {
           "result": "ran",
           "folder": "tests/unit/api",
@@ -157,7 +219,7 @@
           "failed": 0,
           "skipped": 0,
           "deselected": 0,
-          "seconds": 0.588,
+          "seconds": 0.571,
           "python": "/usr/bin/python",
           "interpreter_source": "g6",
           "backend": "bubblewrap",
@@ -168,7 +230,9 @@
             "E   ModuleNotFoundError: No module named 'PyQt5'"
           ]
         },
+        "control_test": "missing",
         "g6_passes_test_env": {
+          "QTWEBENGINE_CHROMIUM_FLAGS": false,
           "QT_QPA_PLATFORM": false,
           "QUTE_QT_WRAPPER": false
         },
@@ -181,7 +245,7 @@
           "failed": 0,
           "skipped": 0,
           "deselected": 0,
-          "seconds": 0.827,
+          "seconds": 0.745,
           "python": "/usr/bin/python",
           "interpreter_source": "g6",
           "backend": "bubblewrap",
@@ -191,23 +255,38 @@
             "ImportError while loading conftest '/app/tests/conftest.py'.",
             "E   hypothesis.errors.HypothesisWarning: The database setting is not configured, and the default location is unusable - falling back to an in-memory database for this session.  path='/app/.hypothesis/"
           ]
-        }
+        },
+        "control_test_with_test_env_simulated": "missing"
       },
-      "arm_1_container": {
-        "exit_code": 1,
-        "seconds": 1.8,
-        "stderr_tail": [
-          "XIO:  fatal IO error 0 (Success) on X server \":0\"",
-          "      after 32 requests (32 known processed) with 0 events remaining."
-        ]
-      },
-      "pytest_settings_left": [],
       "arm_1": {
+        "container": {
+          "exit_code": 1,
+          "seconds": 1.7,
+          "stderr_tail": [
+            "XIO:  fatal IO error 0 (Success) on X server \":0\"",
+            "      after 32 requests (32 known processed) with 0 events remaining."
+          ]
+        },
         "pytest_exit": 0,
         "collection_errors": 0,
+        "control_test": "passed",
         "passed": 65,
         "failed": 0,
-        "skipped": 0
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        },
+        "g6_runner": {
+          "without_change": "missing",
+          "with_change": "missing",
+          "verdict": "inconclusive: the control test does not pass without the change",
+          "note": "through G6's runner (repo_tests.run) with the import roots; review_patch takes import_roots once the pool-compatibility change lands"
+        }
       }
     },
     {
@@ -217,13 +296,22 @@
       "base": "247986f00311d9ee34009b0bb02d0d3bd7497ebd",
       "python": "/usr/local/bin/python",
       "folder": "openlibrary/utils/tests",
-      "env": {},
-      "g6_container": {
-        "exit_code": 0,
-        "seconds": 0.5,
-        "stderr_tail": []
+      "env": {
+        "OL_CONFIG": "/app/conf/openlibrary.yml"
+      },
+      "import_roots": [],
+      "control": {
+        "file": "openlibrary/utils/__init__.py",
+        "old": "for c in s.lower() if c not in to_drop)",
+        "new": "for c in s if c not in to_drop)",
+        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
       },
       "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.5,
+          "stderr_tail": []
+        },
         "repo_python": "/usr/local/bin/python",
         "repository_check": {
           "result": "refused",
@@ -231,18 +319,26 @@
           "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
         }
       },
-      "arm_1_container": {
-        "exit_code": 0,
-        "seconds": 1.3,
-        "stderr_tail": []
-      },
-      "pytest_settings_left": [],
       "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.3,
+          "stderr_tail": []
+        },
         "pytest_exit": 0,
         "collection_errors": 0,
+        "control_test": "passed",
         "passed": 178,
         "failed": 0,
-        "skipped": 0
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        }
       }
     },
     {
@@ -252,13 +348,22 @@
       "base": "9a9204b43f9ab94601e8664340eb1dd0fca33517",
       "python": "/usr/local/bin/python",
       "folder": "openlibrary/utils/tests",
-      "env": {},
-      "g6_container": {
-        "exit_code": 0,
-        "seconds": 0.5,
-        "stderr_tail": []
+      "env": {
+        "OL_CONFIG": "/app/conf/openlibrary.yml"
+      },
+      "import_roots": [],
+      "control": {
+        "file": "openlibrary/utils/__init__.py",
+        "old": "for c in s.lower() if c not in to_drop)",
+        "new": "for c in s if c not in to_drop)",
+        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
       },
       "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.5,
+          "stderr_tail": []
+        },
         "repo_python": "/usr/local/bin/python",
         "repository_check": {
           "result": "refused",
@@ -266,18 +371,26 @@
           "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
         }
       },
-      "arm_1_container": {
-        "exit_code": 0,
-        "seconds": 1.0,
-        "stderr_tail": []
-      },
-      "pytest_settings_left": [],
       "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.1,
+          "stderr_tail": []
+        },
         "pytest_exit": 0,
         "collection_errors": 0,
+        "control_test": "passed",
         "passed": 169,
         "failed": 0,
-        "skipped": 0
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        }
       }
     },
     {
@@ -287,13 +400,22 @@
       "base": "5e9872c8e19487fbeac11873549275184ce9b817",
       "python": "/usr/local/bin/python",
       "folder": "openlibrary/utils/tests",
-      "env": {},
-      "g6_container": {
-        "exit_code": 0,
-        "seconds": 0.5,
-        "stderr_tail": []
+      "env": {
+        "OL_CONFIG": "/app/conf/openlibrary.yml"
+      },
+      "import_roots": [],
+      "control": {
+        "file": "openlibrary/utils/__init__.py",
+        "old": "for c in s.lower() if c not in to_drop)",
+        "new": "for c in s if c not in to_drop)",
+        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
       },
       "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.4,
+          "stderr_tail": []
+        },
         "repo_python": "/usr/local/bin/python",
         "repository_check": {
           "result": "refused",
@@ -301,18 +423,26 @@
           "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
         }
       },
-      "arm_1_container": {
-        "exit_code": 0,
-        "seconds": 1.0,
-        "stderr_tail": []
-      },
-      "pytest_settings_left": [],
       "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.1,
+          "stderr_tail": []
+        },
         "pytest_exit": 0,
         "collection_errors": 0,
+        "control_test": "passed",
         "passed": 157,
         "failed": 0,
-        "skipped": 0
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        }
       }
     },
     {
@@ -322,13 +452,22 @@
       "base": "b70f9abab445676042e5c300dcf5dd8eac4afd18",
       "python": "/usr/local/bin/python",
       "folder": "openlibrary/utils/tests",
-      "env": {},
-      "g6_container": {
-        "exit_code": 0,
-        "seconds": 0.4,
-        "stderr_tail": []
+      "env": {
+        "OL_CONFIG": "/app/conf/openlibrary.yml"
+      },
+      "import_roots": [],
+      "control": {
+        "file": "openlibrary/utils/__init__.py",
+        "old": "for c in s.lower() if c not in to_drop)",
+        "new": "for c in s if c not in to_drop)",
+        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
       },
       "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.5,
+          "stderr_tail": []
+        },
         "repo_python": "/usr/local/bin/python",
         "repository_check": {
           "result": "refused",
@@ -336,18 +475,26 @@
           "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
         }
       },
-      "arm_1_container": {
-        "exit_code": 0,
-        "seconds": 1.3,
-        "stderr_tail": []
-      },
-      "pytest_settings_left": [],
       "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.6,
+          "stderr_tail": []
+        },
         "pytest_exit": 0,
         "collection_errors": 0,
+        "control_test": "passed",
         "passed": 178,
         "failed": 0,
-        "skipped": 0
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        }
       }
     }
   ]

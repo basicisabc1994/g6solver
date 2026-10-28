@@ -7,6 +7,7 @@ that take ``bwrap_backend`` (Linux bubblewrap; they skip elsewhere); the others 
 results, which say nothing about confinement."""
 from __future__ import annotations
 
+import inspect
 import subprocess
 import sys
 import time
@@ -206,6 +207,36 @@ def test_only_g6s_own_codes_say_it_ran_out_of_time_never_the_words_in_its_reply(
         return reply
     found = g6(repo, checks, review=worded)["disposition"]
     assert found["category"] == "defect_found" and found["time_or_cap_reached"] is False
+
+
+def test_g6_gets_the_repositorys_import_roots_and_a_g6_without_the_parameter_is_a_tool_error(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}).into(monkeypatch)
+    asked = {}
+
+    def taking(*args, import_roots=(), **kwargs):
+        asked["import_roots"] = import_roots
+        return patch_review.review_patch(*args, **kwargs)
+    assert g6(repo, checks, review=taking, import_roots=["lib"])["disposition"]["accepted"] is True
+    assert asked["import_roots"] == ["lib"]
+    unable = g6(repo, checks, review=patch_review.review_patch, import_roots=["lib"])["disposition"]
+    if "import_roots" not in inspect.signature(patch_review.review_patch).parameters:
+        assert unable["error_kind"] == "tool_error" and "import_roots" in unable["detail"]
+    assert g6(repo, checks)["disposition"]["accepted"] is True              # no roots: nothing is passed
+
+
+def test_the_direct_checks_run_with_the_same_import_roots(repo):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    seen = []
+
+    class Rooted(Runs):
+        def run(self, repo, tests, *, timeout_s, receipt=False, roots=()):
+            seen.append(tuple(roots))
+            return super().run(repo, tests, timeout_s=timeout_s)
+    runs = Rooted({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = arms.direct_checks(repo, CONTRACT, checks, timeout_s=300, run=runs.run, run_before=runs.run_before,
+                             import_roots=["lib"])
+    assert got["disposition"]["accepted"] is True and seen == [("lib",), ("lib",)]
 
 
 def test_g6s_model_calls_come_from_its_reply_when_it_reports_them(repo, monkeypatch):
@@ -462,12 +493,13 @@ def crashes(tree, requirements, checks, *, timeout_s):
     os._exit(3)
 
 
-def replies(tree, requirements, checks, *, timeout_s):
+def replies(tree, requirements, checks, *, timeout_s, import_roots=()):
     return {"disposition": {"accepted": True, "category": "accept", "error_kind": "", "time_or_cap_reached": False,
                             "detail": "", "cost": {"seconds": 0.0, "processor_seconds": 0.0, "model_calls": 0}},
             "trace": {"commands": [], "isolation": []},
             "seen": {"requirements": requirements, "checks": checks, "timeout_s": timeout_s,
-                     "research_flag": os.environ.get("G6_ECHA_RESEARCH"), "isolated": sys.flags.isolated}}
+                     "research_flag": os.environ.get("G6_ECHA_RESEARCH"), "isolated": sys.flags.isolated,
+                     "import_roots": list(import_roots)}}
 """
 
 
@@ -480,10 +512,10 @@ def fixture_arms(tmp_path):
 def test_an_arm_in_its_own_isolated_process_replies_without_the_research_flag(fixture_arms, monkeypatch):
     monkeypatch.setenv("G6_ECHA_RESEARCH", "1")
     got = arms.in_child("v9_fixture_arms:replies", fixture_arms, CONTRACT, ["test_more.py"], timeout_s=30,
-                        roots=[fixture_arms])
+                        roots=[fixture_arms], import_roots=["lib"])
     assert got["disposition"]["accepted"] is True and got["child"]["exit_code"] == 0
     assert got["seen"] == {"requirements": CONTRACT, "checks": ["test_more.py"], "timeout_s": 30,
-                           "research_flag": None, "isolated": 1}
+                           "research_flag": None, "isolated": 1, "import_roots": ["lib"]}
 
 
 def test_an_arm_process_that_ends_with_no_reply_is_a_tool_error(fixture_arms):
