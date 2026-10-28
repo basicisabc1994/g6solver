@@ -2,8 +2,8 @@
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
 Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
-``g6_review_patch``, which runs a repository's selected tests and a review composition as a job; and thirteen
-meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
+``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job; and
+thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
 ``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
 declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and rollback ask the person through the
 client, including in the proposing session, and a failed attempt carries its recovery (``g6.metaharness.surface``).
@@ -149,17 +149,25 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     jobs = Jobs()
 
     @server.tool()
-    def g6_review_patch(repo: str, task: str, claim: str, sources: dict[str, str], tests: list[str],
-                        base: str = "HEAD", expected_artifact_digest: str = "", timeout_s: int = 300) -> dict:
-        """Run selected Python tests and compose grounding, coding review and action gating. No merge is executed.
-        Requires host permission patch_review.review in G6_MCP_SENSITIVE. Poll metaharness_job for the result.
-        Source support, executed tests and unvalidated scope are reported separately; never proves a patch correct."""
+    def g6_review_patch(repo: str, task: str, requirements: list[dict] | None = None, tests: list[str] | None = None,
+                        claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
+                        expected_artifact_digest: str = "", timeout_s: int = 300) -> dict:
+        """Assess the working tree's Python patch against base on stated requirements [{id, text, checks: [pytest
+        node ids]}] plus extra tests, in confined runs. Poll metaharness_job for the result. assessment.outcome is one
+        of: test_integrity_compromised (a weakened test, a changed test runner, or a run that cannot be believed);
+        defect_detected (a stated check or extra test failed, or a test of a changed module fails on the patch and
+        passed at the base commit); insufficient_evidence (no requirement, a requirement with no check, or a check
+        that did not run); supported_within_scope (every requirement passed its stated checks: support on those
+        checks only, never proof the patch is complete). Each is qualified-draft. A refusal is blocked-escalated with
+        no outcome. merge is always requires_separate_approval; nothing is merged. Requires host permission
+        patch_review.review in G6_MCP_SENSITIVE."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")
         from g6.harness.patch_review import review_patch
-        return jobs.start(lambda: review_patch(repo, task=task, claim=claim, sources=sources, tests=tests,
-                                               base=base, expected_artifact_digest=expected_artifact_digest,
+        return jobs.start(lambda: review_patch(repo, task=task, requirements=requirements or [], tests=tests or [],
+                                               claim=claim, sources=sources, base=base,
+                                               expected_artifact_digest=expected_artifact_digest,
                                                timeout_s=timeout_s))
 
     def session(ctx: Any) -> str:

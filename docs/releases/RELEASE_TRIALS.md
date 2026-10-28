@@ -37,8 +37,9 @@ of its consent semantics. The protocol mechanism is described in the
 
 ## Patch-review engineering trial
 
-Six synthetic cases ran in Linux bubblewrap with no network, using the
-[frozen protocol](../../validation/patch_review/PROTOCOL.md). All five executed test
+Six synthetic cases ran in Linux bubblewrap with no network, using version 1 of the
+[frozen protocol](../../validation/patch_review/PROTOCOL.md); version 2 replaced it when
+the review gained its four technical outcomes, so the file now holds version 2. All five executed test
 cases recorded the actual bubblewrap backend; the stale artifact was refused before
 test execution. The simplistic comparator accepts a patch whenever its selected
 test passes. Both conditions use the same observed test run.
