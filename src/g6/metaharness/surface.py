@@ -25,7 +25,7 @@ from typing import Any
 from g6.metaharness.api import MetaHarness, _blocked, adapt
 from g6.metaharness.gate import GateDecision
 from g6.metaharness.propose import SearchStrategy
-from g6.metaharness.schema import APPROVAL_REQUIRED, SCHEMA
+from g6.metaharness.schema import APPROVAL_REQUIRED, PROTECTED, SCHEMA
 
 ENV = "G6_METAHARNESS"
 NOT_CONFIGURED = "G6_E_META_NOT_CONFIGURED"
@@ -161,6 +161,17 @@ class Surface:
         refused = mh._refusal()   # stopped, unconfirmed or changed: say so before deciding anything again
         if refused:
             return None, None, refused
+        # Check before replay (including cached decisions) and before eliciting consent.
+        from g6.metaharness.api import judging_sha256
+
+        confirmed_judging = mh.store.confirmed().get("judging_sha256")
+        current_judging = judging_sha256()
+        if confirmed_judging != current_judging:
+            return None, None, _blocked(
+                PROTECTED, "the judging code changed since workflow confirmation; approval is blocked",
+                "Review the installed G6 changes before choosing whether to reconfirm the workflow. "
+                "Reconfirmation does not approve this candidate; obtain a current decision before requesting approval.",
+                confirmed_judging_sha256=confirmed_judging, current_judging_sha256=current_judging)
         decision, why = mh._recorded("decision", decision_digest)
         if decision is None:
             return None, None, _blocked(SCHEMA, why, "Pass the decision_digest that metaharness_decide returned.")

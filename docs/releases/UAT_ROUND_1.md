@@ -58,6 +58,59 @@ failure. Qualified lifecycle replies retain the required warning card but descri
 the recorded state and useful next steps. Confirmation no longer suggests a
 Python-only `mh.baseline()` instruction to MCP/terminal users.
 
-Repeat real Codex decline and acceptance after upgrading, then test Claude Code.
-Do not treat terminal consent or automated protocol handlers as those human trials.
+The owner subsequently reported seeing the Codex consent form: Esc cancelled it
+and left the fresh workflow unconfirmed. No separate Decline control was visible.
+A later acceptance recorded consent to the expected workflow digest and initial
+version 0, without evaluation or decisions. This establishes observed cancellation
+and acceptance in Codex, not an explicit Decline UI path or authenticated identity.
+Claude Code remains untested. Do not treat terminal consent or automated protocol
+handlers as those human trials.
 The unfamiliar-user and application-utility gates remain open.
+
+## Approval after an installation upgrade
+
+The owner attempted approval of the original blocked decision after installing the
+consent-fix wheel. Approval refused and version 0 remained unchanged, but the error
+was a decision-replay schema mismatch rather than the non-recommend approval guard.
+Read-only investigation reproduced the saved judging-code hash from the previous
+source. Only `metaharness/api.py` differed in that manifest; its diagnostic changes
+changed the whole-file hash. The current gate therefore blocked on changed judging
+code before reaching the original missing-patch-evidence reason.
+
+The source correction checks judging-code drift before decision replay and before
+requesting consent, including cached decisions. It returns `G6_E_META_PROTECTED`
+with saved/current hashes and guidance to review the installation changes before
+choosing whether to reconfirm. Reconfirmation is not candidate approval. No pilot
+records were changed and no evaluation was repeated. This correction still needs
+packaging and a client retest; it is not in the previously installed wheel.
+
+Local validation of this correction: all 10 cross-process approval tests passed,
+including four upgrade cases covering cached/reloaded decisions and favorable/
+unfavorable outcomes; lint and whitespace checks passed. The broader metaharness
+run returned 321 passed, 1 skipped and 20 failed, concentrated in
+`test_phase5_structural.py` and `test_steps.py`. A distillate failure explicitly
+reported unavailable AppContainer access for the development interpreter. No ACLs
+or unconfined-execution settings were changed to make these tests pass. The broader
+suite is not green and this result is not release clearance.
+
+Follow-up ran the two locally failing modules plus the cross-process approval
+module under real Linux bubblewrap: 53 passed, 1 skipped, without a G6 unconfined
+opt-in. The path-ID regression also passed in a Windows AppContainer using a
+disposable interpreter and test-created repository with read/execute grants;
+the pilot environment's permissions were not changed.
+
+Hosted run 40602321117 (before this approval correction) passed both Linux matrix
+jobs, conformance, scan and site. Windows failed the path-ID normalization test;
+macOS failed that test and the related correct-patch suite comparison. These
+cross-platform failures were subsequently reproduced with CI's pytest 9.2.
+That version replaces automatic string IDs longer than 100 characters with
+argument/index IDs such as `path0`; baseline and patched copies at different path
+lengths can therefore disagree. The suite runner now requests the legacy string
+ID strategy before normalizing repository roots. The regression fixture uses a
+long filename so short Linux temp paths exercise this threshold too.
+
+The two affected workforce modules passed all 40 tests under pytest 9.2 and real
+Linux bubblewrap. Both targeted cases also passed under pytest 8.0.2 and under
+pytest 9.1.1 in Windows AppContainer. Independent review found no blocking issues
+in the approval or path-ID correction. Fresh hosted cross-platform CI remains
+required; these local reproductions do not replace it.

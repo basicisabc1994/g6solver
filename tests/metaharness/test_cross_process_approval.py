@@ -12,6 +12,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 from g6.invariants import check_envelope
 from g6.metaharness import adapt
 from g6.metaharness import schema as S
@@ -143,3 +145,31 @@ def test_the_question_put_to_the_person_over_mcp_shows_the_change(tmp_path) -> N
     assert refused is None
     assert decision.candidate_digest in question and "CAREFUL: add the two numbers digit by digit." in question
     assert "held-out" in question
+
+
+@pytest.mark.parametrize("careful_acc", [0.1, 0.85])
+@pytest.mark.parametrize("cached", [False, True])
+def test_upgrade_refuses_approval_before_consent_with_judging_hashes(tmp_path, monkeypatch, careful_acc, cached):
+    from g6.metaharness import api
+
+    mh, wf = _proposer(tmp_path, careful_acc=careful_acc)
+    decision = _decided(mh, CAREFUL)
+    surface = _second_surface(wf, tmp_path)
+    if cached:
+        surface.harness("arith")._recorded("decision", decision.digest())
+    confirmed_hash = mh.store.confirmed()["judging_sha256"]
+    before = {name: (tmp_path / "ws" / name).read_bytes() for name in ("store.jsonl", "ledger.jsonl")}
+    monkeypatch.setattr(api, "judging_sha256", lambda: "f" * 64)
+
+    refused, question = surface.approval_check("arith", decision.digest(), session="reviewer")
+    assert question == ""
+    assert refused["code"] == S.PROTECTED
+    assert refused["confirmed_judging_sha256"] == confirmed_hash
+    assert refused["current_judging_sha256"] == "f" * 64
+    assert "judging code changed" in refused["message"]
+    assert "reconfirm" in refused["next_action"].lower()
+    assert check_envelope(refused) == []
+    # A caller supplying an answer directly cannot bypass the same preflight.
+    reply = surface.approve("arith", decision.digest(), session="reviewer", answer="Ada")
+    assert reply["code"] == S.PROTECTED
+    assert before == {name: (tmp_path / "ws" / name).read_bytes() for name in before}

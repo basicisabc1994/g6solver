@@ -431,7 +431,11 @@ def run_suite(repo: Path, timeout: float | None = None) -> dict:
             env["TMPDIR"] = _own_temp(scratch)
         cmd = [python, "-I", "-c", _SUITE_BOOT, str(repo), str(result), SUITE_DIR, "-q", "-p", "no:cacheprovider",
                *no_null_device(scratch), "--rootdir", str(repo), f"--confcutdir={repo}", "-c", str(config),
-               "--import-mode=prepend", "--continue-on-collection-errors"]
+               "--import-mode=prepend", "--continue-on-collection-errors",
+               # pytest 9.2 shortens long string IDs to argname+index. Copies at different
+               # path lengths would then disagree before norm() can replace their roots.
+               # Older pytest ignores this unregistered command-line ini override.
+               "-o", "parametrize_long_str_id_strategy=legacy"]
         try:
             proc = _run_owned(cmd, repo, env, limit, confined)
         except component_process.ExecutionInterrupted as exc:
