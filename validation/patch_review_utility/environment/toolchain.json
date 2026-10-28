@@ -1,0 +1,39 @@
+{
+  "about": "The pinned sources of G6's toolchain for V9's arms that run G6. Every file is checked against its SHA-256 and size before use. The hashes are the publishers' own: python-build-standalone's release (the file V7 pinned), kernel.org's sha256sums.asc, the bubblewrap release's asset digest on GitHub, and PyPI's.",
+  "python": {
+    "role": "python",
+    "version": "3.12.15",
+    "file": "cpython-3.12.15+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+    "sha256": "5ff9f0602ce964a529ed1e8555d3abab6341926d724402ba9a15e9e877191124",
+    "size": 67908973
+  },
+  "git": {
+    "role": "git",
+    "version": "2.56.0",
+    "file": "git-2.56.0.tar.xz",
+    "url": "https://www.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz",
+    "sha256": "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3",
+    "size": 8489656
+  },
+  "bubblewrap": {
+    "role": "bubblewrap",
+    "version": "0.13.1",
+    "file": "bubblewrap-0.13.1.tar.xz",
+    "url": "https://github.com/containers/bubblewrap/releases/download/v0.13.1/bubblewrap-0.13.1.tar.xz",
+    "sha256": "0e85c8702248b8dd64144f594147553650cdd0e4c951690345faace79c217c4d",
+    "size": 129472
+  },
+  "wheels": [
+    {"role": "wheel", "file": "pydantic-2.14.1-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/35/ea/a56b9fe5066f3537b7882f77e9c5dfb26d8c2eefdaed9b5fc73d57b4dc22/pydantic-2.14.1-py3-none-any.whl", "sha256": "9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454", "size": 488106},
+    {"role": "wheel", "file": "pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", "url": "https://files.pythonhosted.org/packages/90/24/48cd98388e4ac2c08d0800af36d15413db15e20387f1038123a2c86cb2f6/pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", "sha256": "93ba4e9d8210d941c200431a56b2c0400b131865947903937ed3ec5404307d2e", "size": 2160157},
+    {"role": "wheel", "file": "typing_extensions-4.16.0-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl", "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8", "size": 45571},
+    {"role": "wheel", "file": "annotated_types-0.8.0-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl", "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0", "size": 13427},
+    {"role": "wheel", "file": "typing_inspection-0.4.4-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147", "size": 14750},
+    {"role": "wheel", "file": "returns-0.30.0-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/0d/61/80af914168131784d5970171b800791bfe3747657c1aab902a586cc83d46/returns-0.30.0-py3-none-any.whl", "sha256": "bc1ab0ec51391a36545acbff43f3abb916d3d3625ec17f93605e15ee60efa687", "size": 161754}
+  ],
+  "builders": {
+    "static": "alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+    "glibc": "python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db"
+  }
+}

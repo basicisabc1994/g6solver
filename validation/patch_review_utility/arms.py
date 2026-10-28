@@ -87,10 +87,10 @@ from g6.harness import patch_review
 from g6.safety_engine.weakening import detect_test_weakening
 from g6.workforce import repo_tests
 from patch_review.run import row
+from patch_review_utility import containers, report_check
 from patch_review_utility import contract as review_contract
-from patch_review_utility import report_check
 from patch_review_utility.dispositions import ABSTAIN, ACCEPT, DEFECT, ERROR, G6_OUTCOMES, INTEGRITY, make
-from patch_review_utility.executor import unrunnable
+from patch_review_utility.executor import stop_container, unrunnable
 
 RUNS = 3
 DIRECT_CHECKS = ("test_weakening", "runner_configuration", "ignored_inputs", "patch_changes_files", "stated_checks",
@@ -428,29 +428,47 @@ def run_job(job: dict) -> dict:
     return review(Path(job["tree"]), job["requirements"], job["checks"], timeout_s=job["timeout_s"])
 
 
+def _fill(word: str, filled: dict[str, str]) -> str:
+    for key, value in filled.items():
+        word = word.replace(key, value)
+    return word
+
+
 def _no_reply(disposition: dict, start: tuple[float, float], child: dict) -> dict:
     return {"disposition": _with_cost(disposition, start), "trace": {"commands": [], "isolation": []},
             "child": child}
 
 
 def in_child(arm: str, tree: Path, requirements: list[dict], checks: list[str], *, timeout_s: int,
-             kill_after_s: float | None = None, roots: list[str | Path] | tuple = ()) -> dict:
-    """``arm``'s review of ``tree`` in a fresh isolated interpreter, killed with its process tree at the limit."""
+             kill_after_s: float | None = None, roots: list[str | Path] | tuple = (),
+             command: list[str] | None = None) -> dict:
+    """``arm``'s review of ``tree`` in a fresh isolated interpreter, killed with its process tree at the limit. With
+    ``command`` (``containers.g6_command``), the interpreter is G6's toolchain inside the task's image: the change is
+    staged beside the job, the child reviews the image's ``/app``, and a container past its limit is stopped by name."""
     start = _clock()
     limit = timeout_s + KILL_GRACE_S if kill_after_s is None else kill_after_s
     with tempfile.TemporaryDirectory(prefix="v9-arm-") as folder:
         job, reply, log = Path(folder) / "job.json", Path(folder) / "reply.json", Path(folder) / "child.log"
-        job.write_text(json.dumps({"arm": arm, "tree": str(tree), "requirements": requirements, "checks": checks,
-                                   "timeout_s": timeout_s, "roots": [*map(str, roots), *ROOTS]}), encoding="utf-8")
+        name = f"v9-{os.urandom(8).hex()}"
+        if command is None:
+            target, imports = str(tree), [*map(str, roots), *ROOTS]
+            argv = [sys.executable, "-I", str(CHILD), str(job), str(reply)]
+        else:
+            filled = {"{container}": name, "{job}": folder, "{base}": containers.stage(tree, folder)}
+            target, imports = containers.REPOSITORY, [containers.STUDY_MOUNT]
+            argv = [_fill(word, filled) for word in command]
+        job.write_text(json.dumps({"arm": arm, "tree": target, "requirements": requirements, "checks": checks,
+                                   "timeout_s": timeout_s, "roots": imports}), encoding="utf-8")
         env = {key: value for key, value in os.environ.items() if key != RESEARCH_FLAG}
         try:
             with open(log, "wb") as sink, component_process.window(limit):
-                code = component_process.run_process([sys.executable, "-I", str(CHILD), str(job), str(reply)],
-                                                     env=env, stdout=sink, stderr=subprocess.STDOUT)
+                code = component_process.run_process(argv, env=env, stdout=sink, stderr=subprocess.STDOUT)
         except component_process.ExecutionInterrupted as exc:
             if exc.stopped:
                 raise
-            return _no_reply(_killed(f"the {arm} review"), start, {"killed": True, "limit_s": limit})
+            stopped = stop_container(argv, name) if command is not None else None
+            return _no_reply(_killed(f"the {arm} review"), start, {"killed": True, "limit_s": limit,
+                                                                   "container_stopped": stopped})
         said = log.read_text(encoding="utf-8", errors="replace")[-600:]
         if not reply.is_file():
             return _no_reply(make(ERROR, f"the review's process ended with exit code {code} and no reply: {said}",

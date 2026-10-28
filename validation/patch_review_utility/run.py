@@ -17,7 +17,10 @@ then the labels, which no arm ever sees. The research flag (``G6_ECHA_RESEARCH=1
 "feasibility" or "confirmatory"); ``g6_commit`` (a study level: the frozen commit, which must be this checkout's clean
 ``HEAD``, and gives the seed) or ``seed`` (development); ``limits`` (``arm_seconds`` for arms 2 to 4, at most G6's
 1,800; ``suite_run_seconds`` per arm-1 run; ``calibration_seconds``; ``token_cap``); ``executor`` (``command``,
-``confined``, ``network``: a study level needs a confined executor with the network closed); ``suites`` (test paths
+``confined``, ``network``: a study level needs a confined executor with the network closed), or instead
+``environment`` (``kind`` "containers"; ``toolchain`` ``{volume, lock}``, G6's toolchain checked against its lock
+before anything runs; ``python``, each repository's interpreter in its image; and an ``image`` for every task:
+``containers.py`` says how each arm runs there); ``suites`` (test paths
 per repository, for arm 1); ``vault`` (``roots``, ``id``, ``ledger``); ``audit`` (``audited``, ``label_errors``, or
 null); ``registered_size`` (or null); optional ``setup_effort`` and ``deviations``, copied into the results; and
 ``tasks``, each ``{task_id, repository, source (a git repository holding the base commit), base_commit, statement
@@ -43,7 +46,9 @@ if sys.path and Path(sys.path[0] or ".").resolve() == HERE:
 if str(VALIDATION) not in sys.path:
     sys.path.insert(0, str(VALIDATION))
 
-from patch_review_utility import arms, contract, executor, gaming, labels, self_review, stats, trees  # noqa: E402
+from patch_review_utility import (  # noqa: E402
+    arms, containers, contract, executor, gaming, labels, self_review, stats, trees)
+from patch_review_utility.environment import toolchain  # noqa: E402
 
 LEVELS = ("development", "feasibility", "confirmatory")
 STUDY_LEVELS = ("feasibility", "confirmatory")
@@ -88,20 +93,39 @@ def load_manifest(path: str | Path) -> dict:
             manifest["seed"] = stats.seed(level, manifest.get("g6_commit", ""))
         except ValueError as exc:
             raise Refused(str(exc)) from exc
-        described = manifest["executor"]
-        if described.get("confined") is not True or described.get("network") is not False:
-            raise Refused("a study level runs arm 1 and the labels only in a confined executor with the network closed")
-        command = [str(word) for word in described.get("command", [])]
-        if command and Path(command[0]).stem.lower() in CONTAINER_PROGRAMS and "{container}" not in command:
-            raise Refused("a container command names each run's container ({container}), so a run past its timeout "
-                          "can be stopped by name")
+        if _containers(manifest) is None:
+            described = manifest["executor"]
+            if described.get("confined") is not True or described.get("network") is not False:
+                raise Refused("a study level runs arm 1 and the labels only in a confined executor with the network "
+                              "closed")
+            command = [str(word) for word in described.get("command", [])]
+            if command and Path(command[0]).stem.lower() in CONTAINER_PROGRAMS and "{container}" not in command:
+                raise Refused("a container command names each run's container ({container}), so a run past its "
+                              "timeout can be stopped by name")
     elif not isinstance(manifest.get("seed"), int):
         raise Refused("a development manifest gives its own integer seed")
     seconds = manifest["limits"]["arm_seconds"]
     if not isinstance(seconds, int) or not 1 <= seconds <= MAX_ARM_SECONDS:
         raise Refused(f"arm_seconds is a whole number from 1 to {MAX_ARM_SECONDS}, G6's own limit")
+    environment = _containers(manifest)
+    if environment is not None:
+        if not {"volume", "lock"} <= set(environment.get("toolchain") or {}):
+            raise Refused("a container environment names G6's toolchain volume and its lock")
+        for task in manifest["tasks"]:
+            if not task.get("image"):
+                raise Refused(f"task {task['task_id']} names no image: each task runs in its own benchmark image")
+            if task["repository"] not in (environment.get("python") or {}):
+                raise Refused(f"the environment names no Python of the image for {task['repository']}")
     manifest["_path"], manifest["_folder"] = path, path.parent
     return manifest
+
+
+def _containers(manifest: dict) -> dict | None:
+    """The manifest's container environment, or None when the arms run on this computer (development)."""
+    environment = manifest.get("environment") or {"kind": "local"}
+    if environment.get("kind") not in ("local", "containers"):
+        raise Refused("the environment's kind is local or containers")
+    return environment if environment["kind"] == "containers" else None
 
 
 def _at(manifest: dict, rel: str) -> Path:
@@ -121,10 +145,37 @@ def _vault(manifest: dict):
     return labels.seal(roots, ledger=ledger, vault_id=manifest["vault"]["id"]), ledger, roots
 
 
-def _executor(manifest: dict) -> executor.Executor:
+def task_executor(manifest: dict, task: dict) -> executor.Executor:
+    """Arm 1's and the labels' executor for ``task``: its own pristine image in a container environment, else the
+    manifest's executor."""
+    environment = _containers(manifest)
+    if environment is not None:
+        python = environment["python"][task["repository"]]
+        return executor.Executor(containers.tests_command(task["image"], python=python), confined=True, network=False)
     described = manifest["executor"]
     return executor.Executor(described["command"], confined=bool(described.get("confined")),
                              network=described.get("network"))
+
+
+def g6_command(manifest: dict, task: dict) -> list[str] | None:
+    """The command arms 3 and 4 run in for ``task``: its image with G6's toolchain; None runs them on this computer."""
+    environment = _containers(manifest)
+    if environment is None:
+        return None
+    return containers.g6_command(task["image"], toolchain=environment["toolchain"]["volume"], study=VALIDATION,
+                                 repo_python=environment["python"][task["repository"]])
+
+
+def _toolchain_ready(manifest: dict) -> dict | None:
+    """In a container environment, the toolchain volume checked against its lock (a refusal when they differ)."""
+    environment = _containers(manifest)
+    if environment is None:
+        return None
+    lock = _at(manifest, environment["toolchain"]["lock"])
+    problems = toolchain.check(toolchain.load(), volume=environment["toolchain"]["volume"], lock=lock)
+    if problems:
+        raise Refused("G6's toolchain does not match its lock: " + "; ".join(problems))
+    return json.loads(lock.read_text(encoding="utf-8"))
 
 
 def _folder(index: int, task_id: str) -> str:
@@ -132,8 +183,9 @@ def _folder(index: int, task_id: str) -> str:
 
 
 def _digests(manifest: dict, extra: dict[str, bytes]) -> dict[str, str]:
-    found = {f"scripts/{p.name}": _sha256(p.read_bytes())
-             for p in sorted([*HERE.glob("*.py"), *HERE.glob("*.md")])}
+    found = {f"scripts/{p.relative_to(HERE).as_posix()}": _sha256(p.read_bytes())
+             for p in sorted([*HERE.glob("*.py"), *HERE.glob("*.md"), *(HERE / "environment").glob("*.*")])
+             if p.suffix in (".py", ".md", ".json", ".sh")}
     for key, path in (("validation/patch_review/run.py", TRIAL),
                       ("docs/validation/patch_review_utility/PROTOCOL.md", PROTOCOL)):
         found[key] = _sha256(path.read_bytes()) if path.is_file() else "missing"
@@ -174,8 +226,8 @@ def calibrate(manifest: dict, output: str | Path) -> dict:
     vault, ledger, _ = _vault(manifest)
     if manifest["level"] in STUDY_LEVELS and not vault.covers(Path(output).resolve().parent):
         raise Refused("a study level keeps its calibration inside the vault: it names the hidden tests")
-    run_with = _executor(manifest)
-    found = {}
+    environment = _toolchain_ready(manifest)
+    found, executors = {}, {}
     with tempfile.TemporaryDirectory(prefix="v9-calibrate-") as work:
         for index, task in enumerate(manifest["tasks"]):
             label_contract = labels.load(vault, _at(manifest, task["label_contract"]), ledger=ledger)
@@ -187,10 +239,12 @@ def calibrate(manifest: dict, output: str | Path) -> dict:
                 found[task["task_id"]] = {"task_id": task["task_id"], "passed": False,
                                           "why": "the reference fix does not apply to the base commit"}
                 continue
+            run_with = executors.setdefault(task["task_id"], task_executor(manifest, task))
             found[task["task_id"]] = labels.calibrate(label_contract, reference_tree=reference, base_tree=base,
                                                       executor=run_with,
                                                       timeout_s=manifest["limits"]["calibration_seconds"])
-    result = {"study": "V9", "level": manifest["level"], "g6_checkout": checkout, "executor": run_with.describe(),
+    result = {"study": "V9", "level": manifest["level"], "g6_checkout": checkout,
+              "executors": {task: ran.describe() for task, ran in executors.items()}, "toolchain": environment,
               "vault": {"id": vault.vault_id, "digest": vault.digest}, "input_sha256": _digests(manifest, {}),
               "tasks": found, "replace": sorted(t for t, c in found.items() if not c.get("passed"))}
     _write(output, result)
@@ -230,8 +284,9 @@ def cited_checks(tree: Path) -> list[str]:
     return [rel for rel in contract.patch_tests(trees.changed_files(tree)) if (Path(tree) / rel).is_file()]
 
 
-def _review_task(manifest, task, index, work, calibration, run_with, markers, findings, a5) -> dict:
+def _review_task(manifest, task, index, work, calibration, markers, findings, a5) -> dict:
     task_id, repository = task["task_id"], task["repository"]
+    run_with, in_image = task_executor(manifest, task), g6_command(manifest, task)
     patch = _at(manifest, task["patch"]).read_text(encoding="utf-8")
     requirements = _requirements(task)
     folder = Path(work) / _folder(index, task_id)
@@ -267,8 +322,10 @@ def _review_task(manifest, task, index, work, calibration, run_with, markers, fi
     prepared = self_review.prepare(task_id, requirements, patch=patch, time_limit_s=limits["arm_seconds"],
                                    token_cap=limits["token_cap"])
     own = self_review.disposition(prepared, record)
-    reviewed = arms.in_child("g6", fresh("g6"), requirements, checks, timeout_s=limits["arm_seconds"])
-    direct = arms.in_child("direct_checks", fresh("direct"), requirements, checks, timeout_s=limits["arm_seconds"])
+    reviewed = arms.in_child("g6", fresh("g6"), requirements, checks, timeout_s=limits["arm_seconds"],
+                             command=in_image)
+    direct = arms.in_child("direct_checks", fresh("direct"), requirements, checks, timeout_s=limits["arm_seconds"],
+                           command=in_image)
     if reviewed.get("a5") is not None:
         a5["checked"] += 1
         if not reviewed["a5"]["complete"]:
@@ -299,13 +356,13 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
     else:
         calibration_bytes = calibration_path.read_bytes()
     calibration = json.loads(calibration_bytes)["tasks"]
-    run_with = _executor(manifest)
+    environment = _toolchain_ready(manifest)
     markers = [*vault.roots, *(str(root) for root in roots), manifest["vault"]["id"]]
     incidents_before = sum(e["event"] == "incident" for e in ledger.events())
     rows, findings, a5 = [], [], {"checked": 0, "incomplete": []}
     with tempfile.TemporaryDirectory(prefix="v9-study-") as work:
         for index, task in enumerate(manifest["tasks"]):
-            rows.append(_review_task(manifest, task, index, work, calibration, run_with, markers, findings, a5))
+            rows.append(_review_task(manifest, task, index, work, calibration, markers, findings, a5))
         vault_changes = list(vault.verify_unchanged(ledger=ledger))
         incidents = [e for e in ledger.events() if e["event"] == "incident"][incidents_before:]
         contaminated = gaming.contaminating(findings) or bool(vault_changes) or bool(incidents)
@@ -318,7 +375,7 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
             tree = trees.checkout(_at(manifest, task["source"]), task["base_commit"],
                                   Path(work) / _folder(index, task["task_id"]) / "label")
             trees.apply(tree, _at(manifest, task["patch"]).read_text(encoding="utf-8"))
-            labelled = labels.label(label_contract, found, tree, executor=run_with)
+            labelled = labels.label(label_contract, found, tree, executor=task_executor(manifest, task))
             row["label"], row["defect_categories"] = labelled["label"], labelled["defect_categories"]
             row["label_detail"] = {key: labelled.get(key) for key in ("failed", "by_origin", "disagreement",
                                                                        "infrastructure_errors", "retried",
@@ -327,7 +384,8 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
     counts = analysis["counts"]
     result = {
         "study": "V9", "level": manifest["level"], "g6_commit": manifest.get("g6_commit"), "g6_checkout": checkout,
-        "seed": manifest["seed"], "limits": manifest["limits"], "executor": run_with.describe(),
+        "seed": manifest["seed"], "limits": manifest["limits"], "toolchain": environment,
+        "executors": {task["task_id"]: task_executor(manifest, task).describe() for task in manifest["tasks"]},
         "model_calls_by_g6": sum(((r["arms"].get("g6") or {}).get("cost") or {}).get("model_calls", 0) for r in rows),
         "model_calls_by_g6_source": sorted({((r["details"].get("g6") or {}).get("model_calls") or {}).get("source", "")
                                             for r in rows if r["details"].get("g6")} - {""}),

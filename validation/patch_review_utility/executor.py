@@ -33,6 +33,8 @@ import time
 import uuid
 from pathlib import Path
 
+from patch_review_utility import containers
+
 PLUGIN = '''\
 import json
 import os
@@ -106,6 +108,8 @@ class Executor:
                 return _result(started, error="none of the tests named is in the tree")
             name = f"v9-{uuid.uuid4().hex[:16]}"
             words = {"{python}": sys.executable, "{tree}": str(copy), "{support}": str(support), "{container}": name}
+            if any("{base}" in word for word in self.command):   # a container applies the change to its own tree
+                words["{base}"] = containers.stage(copy, support)
             cmd: list[str] = []
             for word in self.command:
                 if word == "{tests}":
@@ -119,7 +123,7 @@ class Executor:
             try:
                 done = subprocess.run(cmd, cwd=copy, env=env, capture_output=True, timeout=timeout_s)
             except subprocess.TimeoutExpired:
-                stopped = _stop_container(cmd, name) if "{container}" in self.command else None
+                stopped = stop_container(cmd, name) if "{container}" in self.command else None
                 return {**_result(started, timed_out=True), "container_stopped": stopped}
             except OSError as exc:
                 return _result(started, error=f"the command could not start ({type(exc).__name__})")
@@ -132,7 +136,7 @@ class Executor:
                            outcomes={node: _outcome(phases) for node, phases in found["tests"].items()})
 
 
-def _stop_container(cmd: list[str], name: str) -> bool:
+def stop_container(cmd: list[str], name: str) -> bool:
     """Kill and remove the container ``name`` with the program words before ``run``; whether the removal succeeded."""
     program = cmd[:cmd.index("run")] if "run" in cmd else cmd[:1]
     try:

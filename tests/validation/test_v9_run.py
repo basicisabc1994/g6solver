@@ -166,6 +166,36 @@ def test_a_study_level_refuses_an_unconfined_executor_or_an_arm_input_inside_the
                     "--output", str(root / "r.json")])
 
 
+def test_a_container_environment_runs_each_task_in_its_own_image_with_g6s_toolchain_only_where_g6_runs(layout):
+    root, manifest_path, manifest = layout
+    commit = "0123456789abcdef0123456789abcdef01234567"
+    environment = {"kind": "containers", "toolchain": {"volume": "g6-v9-toolchain-x", "lock": "toolchain.lock.json"},
+                   "python": {"fixture/calc": "/usr/bin/python"}}
+    tasks = [{**task, "image": f"registry.invalid/calc:{task['task_id']}"} for task in manifest["tasks"]]
+    feasibility = {**manifest, "level": "feasibility", "g6_commit": commit, "environment": environment, "tasks": tasks}
+    feasibility.pop("executor")
+    write(manifest_path, json.dumps(feasibility))
+    loaded = study.load_manifest(manifest_path)          # containers confine every run, with the network closed
+    task = loaded["tasks"][0]
+    tests = study.task_executor(loaded, task)
+    assert tests.confined is True and tests.network is False and tests.command == tuple(
+        study.containers.tests_command(task["image"], python="/usr/bin/python"))
+    g6 = study.g6_command(loaded, task)
+    assert g6 == study.containers.g6_command(task["image"], toolchain="g6-v9-toolchain-x", study=study.VALIDATION,
+                                             repo_python="/usr/bin/python")
+    missing = {**feasibility, "tasks": [{k: v for k, v in t.items() if k != "image"} for t in tasks]}
+    write(manifest_path, json.dumps(missing))
+    with pytest.raises(study.Refused, match="image"):
+        study.load_manifest(manifest_path)
+    unnamed = {**feasibility, "environment": {**environment, "python": {}}}
+    write(manifest_path, json.dumps(unnamed))
+    with pytest.raises(study.Refused, match="Python"):
+        study.load_manifest(manifest_path)
+    write(manifest_path, json.dumps(manifest))
+    local = study.load_manifest(manifest_path)
+    assert study.g6_command(local, local["tasks"][0]) is None             # development runs G6 on the host
+
+
 def test_the_cited_checks_are_the_patchs_test_files_still_on_the_tree(tmp_path):
     root = tmp_path / "r"
     for rel in ("test_gone.py", "test_kept.py", "calc.py"):
