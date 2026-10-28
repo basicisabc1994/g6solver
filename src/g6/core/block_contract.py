@@ -6,8 +6,8 @@
 A block's self-declared promises about what it can do, what it costs,
 how it fails, and how a caller should verify it. They are declared structural obligations, not evidence that a block's
 output is right: the registry checks a block's typed input, composition (``g6.core.compose``) checks per-op required
-inputs and wiring, strict composition also checks preconditions, outputs and stop conditions, and every other field is
-description.
+inputs, wiring and declared evidence kinds, strict composition also checks preconditions, outputs and stop
+conditions, and every other field is description.
 
 Worked example
 --------------
@@ -233,8 +233,8 @@ class BlockContract:
     """Self-declared contract metadata with explicit enforcement points.
 
     Registry invocation validates the block's typed input. Composition checks
-    per-operation required inputs and explicit wiring; strict compose additionally
-    checks declared evidence kinds, preconditions, outputs and stop conditions.
+    per-operation required inputs, explicit wiring and declared evidence kinds;
+    strict compose additionally checks preconditions, outputs and stop conditions.
     Plain >> performs no contract checks.
     Human-review policies, guarantees, failure-mode names, cost and fallback fields
     describe intended behaviour; they are not enforced merely by declaring them.
@@ -254,7 +254,8 @@ class BlockContract:
     preconditions: tuple[Callable[[PreconditionContext], bool], ...] = ()
     outputs: tuple[str, ...] = ()
     good_at: tuple[str, ...] = ()
-    #: Enforced by strict compose, not by plain >>. Evidence kinds describe meaning, not truth.
+    #: Outputs are checked by strict compose; evidence kinds by composition in either mode; neither by plain >>.
+    #: Evidence kinds describe meaning, not truth.
     outputs_per_op: dict[str, tuple[str, ...]] = field(default_factory=dict)
     evidence_inputs_per_op: dict[str, dict[str, str]] = field(default_factory=dict)
     evidence_outputs_per_op: dict[str, dict[str, str]] = field(default_factory=dict)

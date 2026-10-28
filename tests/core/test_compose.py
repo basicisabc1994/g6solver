@@ -77,6 +77,39 @@ def test_incompatible_evidence_types_are_refused_before_running():
                 caller_inputs=("number",))
 
 
+def test_each_mode_checks_what_the_contract_module_says_it_checks():
+    """g6.core.block_contract's account: composition checks per-op required inputs, wiring and evidence kinds in both
+    modes; only strict composition checks preconditions, declared outputs and stop conditions."""
+    class NeedsTests(Increment):
+        __g6_block_contract__ = BlockContract(
+            name="needs-tests", inputs_required=("number",), outputs=("number",),
+            evidence_inputs_per_op={"run": {"number": "executed-tests"}}, verification_method="unit_tests_only")
+
+    class Guarded(Increment):
+        __g6_block_contract__ = BlockContract(
+            name="guarded", inputs_required=("number",), outputs=("absent",),
+            preconditions=(lambda ctx: ctx["context"]["number"] > 0,), verification_method="unit_tests_only")
+
+    class Stopped(Increment):
+        __g6_block_contract__ = BlockContract(
+            name="stopped", inputs_required=("number",), outputs=("number",),
+            stop_conditions=(lambda value: True,), verification_method="unit_tests_only")
+
+    for strict in (True, False):
+        with pytest.raises(CompositionError, match="EVIDENCE_MISMATCH"):
+            compose(Stage(Increment(), "run"), Stage(NeedsTests(), "run", inputs={"number": "0.number"}),
+                    caller_inputs=("number",), strict=strict)
+        with pytest.raises(CompositionError, match="UNMET_INPUT"):
+            compose(Stage(Increment(), "run"), Stage(Increment(), "run"), caller_inputs=("number",), strict=strict)
+    for block in (Guarded(), Stopped()):
+        lenient = compose(Stage(block, "run"), caller_inputs=("number",), strict=False).infer({"number": -1}).value
+        assert lenient["completion_state"] == "qualified-draft" and lenient["result"]["number"] == 0, block.name
+    strict = compose(Stage(Stopped(), "run"), caller_inputs=("number",)).infer({"number": 1}).value
+    assert strict["warning_card"]["code"] == "G6_E_COMPOSITION_STOP_CONDITION"
+    # Gating the evidence check on strict, or running preconditions, outputs or stop conditions without it, makes this
+    # fail; block_contract's docstrings then need the same change.
+
+
 def test_contract_change_changes_assurance_digest():
     before = compose(Stage(Increment(), "run"), caller_inputs=("number",)).infer({"number": 1}).value
     class Revised(Increment):
