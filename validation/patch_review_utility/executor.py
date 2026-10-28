@@ -72,11 +72,15 @@ def unrunnable(run: dict) -> bool:
 
 
 class Executor:
-    def __init__(self, command: tuple[str, ...] | list[str] = DEFAULT_COMMAND, *, confined: bool = False):
-        self.command, self.confined = tuple(command), confined
+    """``confined`` and ``network`` declare what the frozen command does (``network`` None: not stated, which only a
+    development manifest may leave)."""
+
+    def __init__(self, command: tuple[str, ...] | list[str] = DEFAULT_COMMAND, *, confined: bool = False,
+                 network: bool | None = None):
+        self.command, self.confined, self.network = tuple(command), confined, network
 
     def describe(self) -> dict:
-        return {"command": list(self.command), "confined": self.confined}
+        return {"command": list(self.command), "confined": self.confined, "network": self.network}
 
     def run(self, tree: str | Path, tests: list[str], *, timeout_s: float, overlay: dict | None = None) -> dict:
         overlay = overlay or {}

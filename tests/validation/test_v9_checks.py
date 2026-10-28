@@ -67,6 +67,10 @@ def test_a_report_missing_a_part_is_named(reply, damage, part):
     assert found["complete"] is False and part in found["missing"]
 
 
+def test_the_frozen_note_is_the_one_g6_gives_at_this_commit():
+    assert report_check.SPECIFICATION_NOTE == patch_review.SPECIFICATION_NOTE
+
+
 def test_a_reply_with_no_assessment_fails_every_part():
     assert report_check.check({"ok": False}, ["R1"])["missing"] == list(report_check.PARTS)
 
