@@ -45,7 +45,6 @@ reason, beside its disposition.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import os
 import subprocess
@@ -56,6 +55,7 @@ from pathlib import Path
 
 from g6.core import component_process
 from patch_review_search.metering import NOTHING, FileMeter, InfrastructureFailure, Meter
+from patch_review_search.record import Record
 from patch_review_utility.arms import KILL_GRACE_S, RESEARCH_FLAG, ROOTS
 from patch_review_utility.dispositions import CATEGORIES, ERROR, make, tally
 
@@ -143,33 +143,6 @@ class Spending:
 
     def report(self) -> dict:
         return {"cap_cents": self.cap, "share_cents": self.share, "spent_cents": dict(self.spent)}
-
-
-def _canonical(data) -> bytes:
-    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
-
-
-class Record:
-    """An append-only record: each entry ``{seq, kind, sha256, previous, chain, data}``, where ``sha256`` is its data's
-    and ``chain`` the SHA-256 of the previous chain and that; written as JSON lines to ``path``, which must be new."""
-
-    def __init__(self, path: str | Path | None = None):
-        self.path, self.entries, self.final = (Path(path) if path else None), [], "0" * 64
-        if self.path is not None:
-            with open(self.path, "x", encoding="utf-8"):
-                pass
-
-    def add(self, kind: str, data: dict) -> str:
-        digest = hashlib.sha256(_canonical(data)).hexdigest()
-        chain = hashlib.sha256((self.final + digest).encode("ascii")).hexdigest()
-        entry = {"seq": len(self.entries), "kind": kind, "sha256": digest, "previous": self.final, "chain": chain,
-                 "data": data}
-        self.entries.append(entry)
-        if self.path is not None:
-            with open(self.path, "a", encoding="utf-8", newline="\n") as handle:
-                handle.write(_canonical(entry).decode("utf-8") + "\n")
-        self.final = chain
-        return chain
 
 
 def _valid(disposition) -> bool:
