@@ -27,7 +27,7 @@ def task(name, repository, label, *, tests=True, self_review=True, g6=True, dire
 
 
 def outputs(*, c=True, t=True, e=True, c_own=None, t_own=None, e_filtered=None, a_and_e=None, calls=2, cents=4.0,
-            seconds=6.0, c_error="", search_stage=None):
+            seconds=6.0, c_error="", search_stage=None, report_check=None):
     def disposition(accepted):
         return dict(OK if accepted else NO)
     c_disposition = make(ERROR, "x", error_kind=c_error) if c_error else disposition(c)
@@ -35,7 +35,8 @@ def outputs(*, c=True, t=True, e=True, c_own=None, t_own=None, e_filtered=None, 
     def search(found, own):
         return {"disposition": found, "own": disposition(found["accepted"] if own is None else own),
                 "meter": {"calls": calls, "characters": 100, "cents": cents}, "model_calls": calls,
-                "seconds": seconds, "processor_seconds": 1.0, "findings": [], "search_stage": search_stage}
+                "seconds": seconds, "processor_seconds": 1.0, "findings": [], "search_stage": search_stage,
+                "report_check": report_check}
     return {"C": search(c_disposition, c_own), "T": search(disposition(t), t_own),
             "E": {"disposition": disposition(e), "e_filtered": disposition(e if e_filtered is None else e_filtered),
                   "a_and_e": disposition(e if a_and_e is None else a_and_e),
@@ -233,6 +234,27 @@ def test_criterion_3_the_search_stage_ran_a_check_to_a_result_on_at_least_half_t
     fewer = {name: outputs(search_stage={"ran_to_result": index == 0}) for index, name in enumerate(ARMS)}
     _, by = criteria(tmp_path / "fewer", arms=fewer)
     assert by[3]["result"] == "not met"
+
+
+PASSING_REPORT = {"complete": True, "missing": [], "completion_problems": [], "model_originated_passing": [],
+                  "formal_problems": []}
+
+
+def test_criterion_4_reads_each_search_arms_report_check(tmp_path):
+    _, by = criteria(tmp_path)
+    assert by[4]["result"] == "inconclusive" and "report check" in by[4]["why"]
+    clean = {name: outputs(report_check=PASSING_REPORT) for name in ARMS}
+    _, by = criteria(tmp_path / "clean", arms=clean)
+    assert by[4]["result"] == "met" and by[4]["numbers"]["checked"] == {"C": 6, "T": 6}
+    listing = {**PASSING_REPORT, "complete": False,
+               "model_originated_passing": [{"requirement": "R1", "check": "x", "provenance": "proposed"}]}
+    unsplit = {**PASSING_REPORT, "complete": False, "formal_problems": ["activity 1: no three parts"]}
+    incomplete = {**PASSING_REPORT, "complete": False, "missing": ["completion_section"]}
+    for bad, field in ((listing, "model_originated_passing"), (unsplit, "formal_problems")):
+        _, by = criteria(tmp_path / field, arms={**clean, "d1": outputs(report_check=bad)})
+        assert by[4]["result"] == "not met" and by[4]["numbers"][field] == {"C": ["d1"], "T": ["d1"]}
+    _, by = criteria(tmp_path / "incomplete", arms={**clean, "d1": outputs(report_check=incomplete)})
+    assert by[4]["result"] == "met"                       # a report missing a part is a tool error, criterion 1's
 
 
 def test_criteria_4_and_5_wait_for_scripts_not_built_and_say_so_with_their_numbers(tmp_path):

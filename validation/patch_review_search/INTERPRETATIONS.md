@@ -240,6 +240,8 @@ Items 34 to 37 cover the feasibility criteria (`analysis.feasibility`).
     controls for every non-empty task. The study is feasible only when all six are met, not feasible when any is not
     met, and inconclusive otherwise. Ruled by the coordinator: accepted as written.
 
+Item 37's criterion 4 is now computed: see item 42.
+
 Items 38 to 41 cover the headline sentences (`analysis.headlines`).
 
 38. **N and R.** N is the number of analysed patches (non-empty and labelled), and R the number of their repositories.
@@ -259,3 +261,19 @@ Items 38 to 41 cover the headline sentences (`analysis.headlines`).
     interval); the second when any of arm T's and arm A's four rates has no interval, so neither pair is used without
     the other; the third when arm T's costs were not recorded. Each is listed with its reason. Ruled by the coordinator:
     accepted as written.
+
+Items 42 to 44 cover the report check (`report_check.py`), the comparison of stated-check results
+(`stated_checks.py`) and the study runner's inputs to the driver (`runner.py`).
+
+42. **The report check and criterion 4.** V9's A5 check is reused for the three parts. The completion section's parts
+    must be present in the form G6 gives them: lists, and `defects_reproduced` with its two lists. Test adequacy must be
+    present as a list for both search arms: the protocol's "where the arm measures it" cannot be told from an empty
+    list. A check a model originated is any whose provenance is neither `stated` nor `derived` (`proposed`,
+    `adopted_proposal`, and `structural`, a template filled from a model's names); a check without a provenance is a
+    stated one. The formal results read are the `formal` parts of activities and defects; a requirement's `formal`
+    notes are G6's notes that a result is about the model only. The driver checks a search arm's report when its
+    result carries it (`report`), against the patch's `contract_ids`, and a report that fails is a tool error of the
+    kind `report_check_failed` (V9's A5 failure is `a5_report_incomplete`). Criterion 4 is met when every search arm's
+    output carries a report check and none lists a model-originated check as passing a requirement or a formal result
+    without its three parts; a report short of another part is a tool error, counted by criterion 1. While the outputs
+    carry no report check, criterion 4 is inconclusive. For the coordinator's ruling.

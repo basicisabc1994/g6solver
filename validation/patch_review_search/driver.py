@@ -58,6 +58,7 @@ from pathlib import Path
 
 from g6.core import component_process
 from patch_review_search.metering import NOTHING, FileMeter, InfrastructureFailure, Meter
+from patch_review_search import report_check
 from patch_review_search.record import Record
 from patch_review_utility.arms import KILL_GRACE_S, RESEARCH_FLAG, ROOTS
 from patch_review_utility.dispositions import CATEGORIES, ERROR, make, tally
@@ -72,6 +73,8 @@ SEARCH = {"C": {"templates": False}, "T": {"templates": True, "test_adequacy": T
 INFRASTRUCTURE, SPEND_SHARE, TOOL_ERROR = "infrastructure_before_first_call", "spend_share_reached", "tool_error"
 #: A child arm stopped at its limit: a time-out, the kind arm E gives one (``arm_e.TIME_OUT``).
 TIME_OUT = "time_out"
+#: A search arm's report that failed the report check (``report_check``): a tool error for that patch.
+REPORT_CHECK = "report_check_failed"
 ARM_A = "arm_a_without_disposition"
 #: The reason codes that attribute a difference from arm A to search.
 SEARCH_REASONS = frozenset({"unconfirmed_counterexample", "unconfirmed_failure"})
@@ -266,6 +269,13 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
             if not kind and not _valid((reply or {}).get("own")):
                 kind = TOOL_ERROR
             reply = reply or {}
+            checked = (report_check.check(reply["report"], list(patch.get("contract_ids") or []))
+                       if not kind and reply.get("report") is not None else None)
+            if checked is not None and not checked["complete"]:
+                kind, reply = REPORT_CHECK, {**reply, "error": "the report failed the report check: " + "; ".join(
+                    [*checked["missing"], *(f"{c['check']} ({c['provenance']}) is listed as passing {c['requirement']}"
+                                            for c in checked["model_originated_passing"]),
+                     *checked["formal_problems"]])}
             own = errored(kind, reply) if kind else reply["own"]
             arms[arm] = {"disposition": _search_disposition(arm_a, own), "own": own, "attempts": attempts,
                          "model_calls": reading["calls"], "meter": reading, **timing,
@@ -275,7 +285,9 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                          "proposer_failure": reply.get("proposer_failure"),
                          # whether the search stage ran a check to a pass or a fail (feasibility criterion 3), as
                          # G6's report says it once VS-5 settles the field
-                         "search_stage": reply.get("search_stage")}
+                         "search_stage": reply.get("search_stage"),
+                         # G6's report itself, and the report check of it (feasibility criterion 4)
+                         "report": reply.get("report"), "report_check": checked}
             if reply.get("proposer_failure"):
                 failures.append({"patch": patch["id"], "arm": arm, "reason": reply["proposer_failure"],
                                  "category": arms[arm]["disposition"]["category"]})

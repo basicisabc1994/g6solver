@@ -196,10 +196,20 @@ def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None) -> dict
                                           "fail on at least half of the non-empty patches",
                   "result": result, "why": why, "numbers": ran})
 
+    checks = {arm: [(task["task_id"], (outputs.get(task["task_id"], {}).get(arm) or {}).get("report_check"))
+                    for task in tasks if outputs.get(task["task_id"], {}).get(arm)] for arm in "CT"}
+    if not n or any(found_check is None for arm in "CT" for _, found_check in checks[arm]):
+        result, why, numbers = "inconclusive", ("not computed: the search arms' outputs carry no report check (their "
+                                                "replies carry no report)" if n else "there is no non-empty patch"), {}
+    else:
+        numbers = {"checked": {arm: len(checks[arm]) for arm in "CT"},
+                   **{field: {arm: [patch for patch, found_check in checks[arm] if found_check[field]]
+                              for arm in "CT"} for field in ("model_originated_passing", "formal_problems")}}
+        broken = any(numbers[field][arm] for field in ("model_originated_passing", "formal_problems") for arm in "CT")
+        result, why = ("not met" if broken else "met"), ""
     found.append({"criterion": 4, "text": "no search arm's report lists a model-originated check as passing a "
                                           "requirement, and every formal result is reported in its three parts",
-                  "result": "inconclusive", "numbers": {},
-                  "why": "not computed: the report check for arms C and T is not built yet"})
+                  "result": result, "numbers": numbers, "why": why})
 
     differ = {arm: [task["task_id"] for task in tasks
                     if _accepts((outputs.get(task["task_id"], {}).get(arm) or {}).get("own"))
