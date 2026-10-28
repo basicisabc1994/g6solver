@@ -493,3 +493,29 @@ The evidence page lists a study once it has run; V9 gets its tile when its first
 - **Review:** a fresh, read-only agent session reviewed the draft against the plan's amendments A2–A5 and §0. It
   found 2 blocking, 10 important and 5 minor problems, and this version addresses each. No person has reviewed this
   version yet.
+
+## V10 (protocol registered 2026-10-29; not run) — verification search on agent-written patches
+
+The evidence page lists a study once it has run; V10 gets its tile when its first outcome is appended.
+
+- **Protocol:** `docs/validation/patch_review_search/PROTOCOL.md`, version 1,
+  `2573c84e9d637716f131842717e16da6eed5aff23d0f47a1f0627531f1dd8494`. Feasibility only: it observes and tests no
+  hypothesis. It runs on V9's feasibility draw, patches, labels and contracts, and changes nothing V9 registered.
+- **Plan:** `docs/validation/VALIDATION_PLAN.md` `054a92de4483964c9118c72e27846817e9a33e351f04b6885aecd6de454bee1d`
+  (§0 governs, except the deviations the protocol lists).
+- **Depends on:** V9's protocol `1f2f74c6151d2de2aa693fa1a8ec12de65416ab2b095e42fde5a117cf20f692d`, and two conditions on
+  how V9 is run: V9's feasibility freeze names a G6 commit that includes verification search (off in V9's arms), and
+  V9's labels stay unread until this study's arms and reruns are recorded. If either fails, this study is not run on
+  V9's patches, and this registry says so.
+- **Frozen by this entry:** the arms (A, C, T and E, with V9's arms 1, 2 and 4 as comparators) and their acceptance
+  rules; what counts as a finding; the rerun rules and the meanings of reproducible, actionable and compatible with the
+  reference fix; the headline count and the only sentences the results permit; the primary and secondary measures; the
+  feasibility criteria; the order of verdicts; the report check; and what G6's frozen commit must provide. The owner may
+  tighten a limit or criterion before the freeze. Nothing is loosened.
+- **Left to the freeze entry:** G6's commit, the search configuration of arms C and T, the model and the hosted
+  interface, the sampling settings and per-call limits, the call cap, the number of runs per check, the seeds, the price
+  list, the owner's spending cap, the scripts and the similarity measure with its threshold.
+- **State:** no code for verification search written, no task drawn, no patch generated, no arm run.
+- **Review:** a fresh, read-only agent session reviewed the draft against V9's protocol, the plan's §0 and the design.
+  It found 1 blocking, 20 important and 20 minor problems, and this version addresses each. No person has reviewed this
+  version yet.
