@@ -36,6 +36,15 @@ every comparison on the same patches). A comparison with no discordant pair is r
 is tested and no interval is adjusted. Also from the record: E-filtered, A-and-E, and each search arm's own-run
 acceptance; and every arm's tool errors by kind.
 
+**Feasibility** (``feasibility``): the six criteria, each met, not met or inconclusive with the numbers behind it, and
+the outcome (feasible only when all six are met).
+
+**The headline sentences** (``headlines``): the three sentences "What the results permit saying" allows, their text
+exactly the protocol's (``SENTENCES``), filled from the outcome, each with its intervals beside it and arm C's numbers
+beside arm T's, never in their place. A sentence one of whose numbers or intervals cannot be computed is not printed,
+and the report says why: the first when M is zero (the protocol's own rule), the false and correct acceptance pair
+never one without the other.
+
 **Not built yet**, until VS-4 and VS-5 settle their fields: template applicability (arm T), the formal path's counts
 (arm T), whether surviving mutants predict defects (test adequacy, arm T), similarity to the hidden tests, the
 per-reason-code shares over findings with their bootstrap, and token counts. Measure 3 for V9's arms 1 and 4 is not
@@ -344,6 +353,94 @@ def _costs(rows: list[dict]) -> dict:
     return found
 
 
+#: The sentences "What the results permit saying" allows, exactly as the protocol writes them, with their numbers as
+#: fields (``X2`` for X′, and so on). Arm C's numbers go beside them, never in arm T's place.
+SENTENCES = (
+    "On {N} agent-written Python patches from {R} repositories, of the {M} defective patches that the repository's "
+    "tests and the agent's own review both accepted, G6 with verification search in its full configuration (arm T) "
+    "gave a reproducible finding on {K}, of which {K_ref} also pass on the benchmark's reference fix. Model-written "
+    "tests run without G6 (arm E) did so on {K_E}. On the {L} correct patches that both accepted, arm T gave a "
+    "reproducible finding on {J}.",
+    "On the same patches, arm T's false acceptance was {X}% against arm A's {Y}%, and its correct acceptance {X2}% "
+    "against {Y2}%",
+    "Arm T cost a mean of {C} model calls, {S} seconds and {D} dollars per patch (median {C2}, {S2} and {D2}).")
+
+
+def percent(share: float) -> str:
+    return f"{100 * share:.1f}"
+
+
+def percent_interval(pair) -> str:
+    return f"{percent(pair[0])}% to {percent(pair[1])}%"
+
+
+def _of(found: dict) -> str:
+    return f"{found['count']} of {found['of']}"
+
+
+def headlines(result: dict) -> dict:
+    """The protocol's sentences filled from ``result`` (``analyse``'s), each with its intervals and arm C's numbers
+    beside it; a sentence one of whose numbers or intervals cannot be computed is not printed, and the report says
+    why."""
+    sentences, not_printed = [], []
+    counts, head, rates, costs = result["counts"], result["headline"], result["rates"], result["costs"]
+    t, c, e = head["arms"]["T"], head["arms"]["C"], head["arms"]["E"]
+    if not head["M"]:
+        not_printed.append({"id": 1, "why": "no defective patch was accepted by both the repository's tests and the "
+                                            "agent's own review (M is zero)"})
+    elif not head["L"]:
+        not_printed.append({"id": 1, "why": "no correct patch was accepted by both the repository's tests and the "
+                                            "agent's own review (L is zero), so J has no interval"})
+    else:
+        text = SENTENCES[0].format(N=counts["defective"] + counts["correct"], R=len(counts["repositories"]),
+                                   M=head["M"], K=t["K"]["count"], K_ref=t["K_ref"]["count"], K_E=e["K"]["count"],
+                                   L=head["L"], J=t["J"]["count"])
+        sentences.append({"id": 1, "text": text,
+                          "intervals": {"K": percent_interval(t["K"]["interval"]),
+                                        "K_ref": percent_interval(t["K_ref"]["interval"]),
+                                        "K_E": percent_interval(e["K"]["interval"]),
+                                        "J": percent_interval(t["J"]["interval"])},
+                          "beside": {"arm": "C", "K": _of(c["K"]), "K_ref": _of(c["K_ref"]), "J": _of(c["J"]),
+                                     "intervals": {key: percent_interval(c[key]["interval"])
+                                                   for key in ("K", "K_ref", "J")}}})
+    wanted = [rates[arm][measure] for arm in ("T", "A") for measure in ("false_acceptance", "correct_acceptance")]
+    if any(found["interval"] is None for found in wanted):
+        missing = [f"{measure.replace('_', ' ')} cannot be computed: no {label} patch"
+                   for measure, label in (("false_acceptance", "defective"), ("correct_acceptance", "correct"))
+                   if rates["T"][measure]["interval"] is None or rates["A"][measure]["interval"] is None]
+        not_printed.append({"id": 2, "why": "; ".join(missing) + "; neither pair is used without the other"})
+    else:
+        fa_t, ca_t, fa_a, ca_a = (rates[arm][measure] for arm in ("T", "A")
+                                  for measure in ("false_acceptance", "correct_acceptance"))
+        text = SENTENCES[1].format(X=percent(fa_t["rate"]), Y=percent(fa_a["rate"]), X2=percent(ca_t["rate"]),
+                                   Y2=percent(ca_a["rate"]))
+        both_c = [rates["C"][measure] for measure in ("false_acceptance", "correct_acceptance")]
+        sentences.append({"id": 2, "text": text,
+                          "intervals": {f"{measure} {arm}": percent_interval(rates[arm][measure]["interval"])
+                                        for arm in ("T", "A") for measure in ("false_acceptance",
+                                                                              "correct_acceptance")},
+                          "beside": {"arm": "C", "false_acceptance": f"{percent(both_c[0]['rate'])}%",
+                                     "correct_acceptance": f"{percent(both_c[1]['rate'])}%",
+                                     "intervals": {measure: percent_interval(found["interval"]) for measure, found in
+                                                   zip(("false_acceptance", "correct_acceptance"), both_c)}}})
+    spent = costs["T"]
+    if any(spent[key][stat] is None for key in ("model_calls", "seconds", "dollars") for stat in ("mean", "median")):
+        not_printed.append({"id": 3, "why": "arm T's model calls, seconds or dollars per patch were not recorded"})
+    else:
+        def cost(found, stat):
+            return {"C": f"{found['model_calls'][stat]:.1f}", "S": f"{found['seconds'][stat]:.1f}",
+                    "D": f"{found['dollars'][stat]:.2f}"}
+        mean, median = cost(spent, "mean"), cost(spent, "median")
+        text = SENTENCES[2].format(**mean, C2=median["C"], S2=median["S"], D2=median["D"])
+        beside = costs["C"]
+        printable = all(beside[key][stat] is not None for key in ("model_calls", "seconds", "dollars")
+                        for stat in ("mean", "median"))
+        sentences.append({"id": 3, "text": text,
+                          "beside": {"arm": "C", "mean": cost(beside, "mean"), "median": cost(beside, "median")}
+                          if printable else {"arm": "C", "not_printed": "arm C's costs were not recorded"}})
+    return {"sentences": sentences, "not_printed": not_printed}
+
+
 def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], limits: dict | None = None,
             resamples: int = stats.RESAMPLES) -> dict:
     """The primary measures and the feasibility criteria (the module docstring), from a record that verifies against
@@ -351,6 +448,11 @@ def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], lim
     entries = verify(record_path, committed)
     rows, counts = _patches(entries, v9, reference)
     seed = int(v9["seed"]) + 2
+    found = _measures(entries, rows, counts, v9, limits, committed, seed, resamples)
+    return {**found, "headlines": headlines(found)}
+
+
+def _measures(entries, rows, counts, v9, limits, committed, seed, resamples) -> dict:
     return {"study": "V10", "kind": "primary measures", "confidence": CONFIDENCE,
             "feasibility": feasibility(v9, _outputs(entries), limits),
             "record": {"committed": committed, "entries": len(entries)}, "counts": counts,

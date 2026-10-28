@@ -239,3 +239,22 @@ Items 34 to 37 cover the feasibility criteria (`analysis.feasibility`).
     list must hold (each search arm's own review accepted, arm A did not). Criterion 6 is read from V9's oracle
     controls for every non-empty task. The study is feasible only when all six are met, not feasible when any is not
     met, and inconclusive otherwise. For the coordinator's ruling.
+
+Items 38 to 41 cover the headline sentences (`analysis.headlines`).
+
+38. **N and R.** N is the number of analysed patches (non-empty and labelled), and R the number of their repositories.
+    For the coordinator's ruling.
+
+39. **How the numbers are written.** The sentence text is the protocol's exactly, numbers filled in; the second
+    sentence has no closing full stop in the protocol, and has none here. Percentages are written to one decimal place,
+    model calls and seconds to one decimal place, dollars to two. Each sentence's intervals are given beside it
+    (`a% to b%`), not inside the sentence, so its text stays the protocol's. For the coordinator's ruling.
+
+40. **Arm C beside arm T.** Arm C's numbers (its K, K_ref and J; its false and correct acceptance; its costs) are given
+    in an entry labelled as arm C's beside each sentence, never as a sentence of their own and never in arm T's
+    place. For the coordinator's ruling.
+
+41. **A sentence not printed.** The first when M is zero (the protocol's rule) or L is zero (J would have no
+    interval); the second when any of arm T's and arm A's four rates has no interval, so neither pair is used without
+    the other; the third when arm T's costs were not recorded. Each is listed with its reason. For the coordinator's
+    ruling.

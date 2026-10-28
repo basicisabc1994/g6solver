@@ -253,6 +253,70 @@ def test_criterion_6_and_the_outcome(tmp_path):
     assert got["result"] == "inconclusive"                                 # criteria 4 and 5 cannot be checked yet
 
 
+#: The protocol's permitted sentences, as "What the results permit saying" writes them.
+PROTOCOL = (
+    "On N agent-written Python patches from R repositories, of the M defective patches that the repository's tests "
+    "and the agent's own review both accepted, G6 with verification search in its full configuration (arm T) gave a "
+    "reproducible finding on K, of which K_ref also pass on the benchmark's reference fix. Model-written tests run "
+    "without G6 (arm E) did so on K_E. On the L correct patches that both accepted, arm T gave a reproducible finding "
+    "on J.",
+    "On the same patches, arm T's false acceptance was X% against arm A's Y%, and its correct acceptance X′% against "
+    "Y′%",
+    "Arm T cost a mean of C model calls, S seconds and D dollars per patch (median C′, S′ and D′).")
+HEADLINE_RERUNS = [finding("d1", "T", "a.py::t1"), finding("d2", "T", "a.py::t"), finding("d3", "T", "b.py::t"),
+                   finding("c1", "T", "c.py::t"), finding("c1", "C", "c.py::u", False), finding("d2", "C", "a.py::u")]
+HEADLINE_REFERENCE = [{"patch": "d1", "arm": "T", "node": "a.py::t1",
+                       "result": {"compatible": True, "not_comparable": False}}]
+
+
+def headlines(tmp_path, tasks=TASKS, arms=ARMS):
+    return study(tmp_path, tasks, arms, HEADLINE_RERUNS, reference=HEADLINE_REFERENCE)["headlines"]
+
+
+def test_the_sentence_templates_are_the_protocols_text_exactly():
+    names = {"N": "N", "R": "R", "M": "M", "K": "K", "K_ref": "K_ref", "K_E": "K_E", "L": "L", "J": "J",
+             "X": "X", "Y": "Y", "X2": "X′", "Y2": "Y′", "C": "C", "S": "S", "D": "D", "C2": "C′", "S2": "S′",
+             "D2": "D′"}
+    assert tuple(template.format(**names) for template in analysis.SENTENCES) == PROTOCOL
+
+
+def test_the_headline_sentences_are_filled_from_the_outcome_with_arm_c_beside_arm_t_never_in_its_place(tmp_path):
+    got = headlines(tmp_path)
+    first, second, third = got["sentences"]
+    assert first["text"] == (
+        "On 6 agent-written Python patches from 2 repositories, of the 3 defective patches that the repository's "
+        "tests and the agent's own review both accepted, G6 with verification search in its full configuration (arm "
+        "T) gave a reproducible finding on 2, of which 1 also pass on the benchmark's reference fix. Model-written "
+        "tests run without G6 (arm E) did so on 0. On the 2 correct patches that both accepted, arm T gave a "
+        "reproducible finding on 1.")
+    assert second["text"] == ("On the same patches, arm T's false acceptance was 0.0% against arm A's 50.0%, and its "
+                              "correct acceptance 50.0% against 50.0%")
+    assert third["text"] == ("Arm T cost a mean of 2.0 model calls, 6.0 seconds and 0.04 dollars per patch (median "
+                             "2.0, 6.0 and 0.04).")
+    assert all("arm C" not in item["text"] for item in got["sentences"])
+    assert first["beside"]["arm"] == "C" and first["beside"]["K"] == "1 of 3" and first["beside"]["J"] == "0 of 2"
+    assert len(second["intervals"]) == 4 and second["beside"]["false_acceptance"] == "25.0%"
+    assert first["intervals"]["K"] == analysis.percent_interval(analysis.exact(2, 3))
+    assert got["not_printed"] == []
+
+
+def test_the_first_sentence_is_not_used_when_no_defective_patch_was_accepted_by_both(tmp_path):
+    tasks = [dict(t, arms={**t["arms"], "tests": dict(NO)}) if t["label"] == "defective" else t for t in TASKS]
+    got = headlines(tmp_path, tasks=tasks)
+    assert [item["id"] for item in got["sentences"]] == [2, 3]
+    assert got["not_printed"] == [{"id": 1, "why": "no defective patch was accepted by both the repository's tests "
+                                                   "and the agent's own review (M is zero)"}]
+
+
+def test_a_false_and_correct_acceptance_pair_is_never_printed_without_both_rates(tmp_path):
+    defective = [t for t in TASKS if t["label"] == "defective"]
+    got = headlines(tmp_path, tasks=defective, arms={k: v for k, v in ARMS.items() if k.startswith("d")})
+    assert all(item["id"] != 2 for item in got["sentences"])
+    why = {item["id"]: item["why"] for item in got["not_printed"]}
+    assert "correct acceptance" in why[2] and "no correct patch" in why[2]
+    assert all("false_acceptance" not in str(item.get("beside")) for item in got["sentences"])
+
+
 def test_unlabelled_and_excluded_patches_are_counted_and_left_out_of_every_rate(tmp_path):
     tasks = [*TASKS, task("u1", "r1", None), task("e1", "r2", None, patch="empty")]
     arms = {**ARMS, "u1": outputs()}
