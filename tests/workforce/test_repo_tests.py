@@ -293,6 +293,14 @@ def test_14b_a_test_file_is_named_with_the_case_pytest_matches_on_this_system():
     assert rt.is_test_file("tests/TEST_CALC.PY") is ignores_case
 
 
+def test_14b_the_tests_a_change_touches_name_a_test_file_with_the_case_pytest_matches(repo):
+    """Review 14b, its loose end: ``verify.run_set``, which picks the tests a change touches, matched names
+    case-sensitively, as ``is_test_file`` did."""
+    ignores_case = os.path.normcase("A") == "a"
+    assert (verify.run_set(repo, ["tests/Test_Calc.py"], candidates=[]) == ["tests/Test_Calc.py"]) is ignores_case
+    assert verify.run_set(repo, ["tests/test_calc.py"], candidates=[]) == ["tests/test_calc.py"]
+
+
 def test_c2_every_changed_test_related_file_is_read_then_and_now_and_a_move_keeps_its_old_text(repo):
     """Review C2: the weakening scan gets each changed test file by either of pytest's default names, conftest.py,
     and every Python file under a test folder, at the base and now; a moved one is keyed by its new path."""
