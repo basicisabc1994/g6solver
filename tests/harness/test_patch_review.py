@@ -803,6 +803,109 @@ def test_grounding_is_reported_and_does_not_decide_the_outcome(repo, monkeypatch
     assert grounding["sources"]["spec"]["authority"] == "caller-supplied"
 
 
+# --- where requirements and checks came from (verification search, part 1) -------------------------------------------
+
+def _decided(got) -> dict:
+    """What a reply decides (as ``test_patch_review_off_path.decided``)."""
+    assessment = got.get("assessment") or {}
+    return {"completion_state": got.get("completion_state"), "outcome": assessment.get("outcome"),
+            "requirements": [(r["id"], r["status"]) for r in assessment.get("requirements", [])],
+            "reasons": [(r["stage"], r["code"]) for r in assessment.get("reasons", [])],
+            "merge": (got.get("merge") or {}).get("status"), "unknowns": len(assessment.get("unknowns", []))}
+
+
+def test_each_requirement_and_each_check_says_where_it_came_from(repo, monkeypatch):
+    """A requirement the caller states is ``stated``, of kind ``requirement``; a check the caller cites is ``stated``,
+    and tier 2's tests of the changed modules are ``derived``. The envelope's evidence items are as they were."""
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
+             at_base=result([], [ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    for found in got["assessment"]["requirements"]:
+        assert (found["provenance"], found["kind"]) == ("stated", "requirement")
+        assert [check["provenance"] for check in found["checks"]] == ["stated"]
+    assert [(run["check"], run["provenance"]) for run in got["assessment"]["scope"]["checks_run"]] == [
+        ("stated checks and extra tests", "stated"), ("tests that touch the changed modules", "derived"),
+        (patch_review.AT_BASE, "stated")]
+    assert got["evidence"] and all("provenance" not in item for item in got["evidence"])
+    # a derived test replayed at the base commit stays derived
+    (repo / "calc.py").write_text(POSITIVE_ONLY)
+    regressed = {**result([ADD], [NEGATIVE]), "baseline": "passed", "patched": "failed"}
+    Recorded(monkeypatch, {(ADD,): result([ADD]), ("test_calc.py",): result([ADD], [NEGATIVE])},
+             on_base={"test_calc.py": regressed})
+    found = review(repo, [SUM[0]])
+    assert "derived_test_regressed" in _reasons(found)
+    assert [(run["check"], run["provenance"]) for run in found["assessment"]["scope"]["checks_run"]] == [
+        ("stated checks and extra tests", "stated"), ("tests that touch the changed modules", "derived"),
+        ("base-commit comparison", "derived")]
+
+
+def test_the_check_provenances_later_phases_use_are_named_and_unused():
+    import typing
+
+    assert typing.get_args(patch_review.CheckProvenance) == (
+        "stated", "derived", "structural", "proposed", "adopted_proposal")
+    assert typing.get_args(patch_review.RequirementProvenance) == (
+        "stated", "repository_stated", "person_confirmed", "inferred", "model_hypothesis")
+    assert patch_review.NORMATIVE == {"stated", "repository_stated", "person_confirmed"}
+
+
+@pytest.mark.parametrize("extra", [{"provenance": "person_confirmed"}, {"provenance": "model_hypothesis"},
+                                   {"kind": "preserve"}, {"merged_from": ["intent.non_goals.0"]}])
+def test_a_request_cannot_say_where_its_requirements_came_from(repo, monkeypatch, extra):
+    """Only G6 (or Python code that builds a ``Requirement``) sets these: an agent cannot mark its own requirement as
+    confirmed by the person, nor turn one into a preservation obligation."""
+    runs = Recorded(monkeypatch, default=result([ADD]))
+    got = review(repo, [{**SUM[0], **extra}])
+    _refused(got, "G6_E_INPUT_VALIDATION")
+    assert "set by G6" in got["warning_card"]["message"] and runs.calls == []
+
+
+@pytest.mark.parametrize("provenance, listed_as", [("model_hypothesis", "proposals"), ("inferred", "assumptions")])
+def test_a_requirement_no_one_stated_gets_no_status_and_changes_no_outcome(repo, monkeypatch, provenance, listed_as):
+    """Rule 11: only stated, repository-stated and person-confirmed requirements are normative. A model's reading, or
+    an inference, given through the Python API, is listed and nothing more: no status, no part in the outcome, and its
+    checks never run, even one that names a stated test or a path outside the repository."""
+    from g6.harness.patch_review import Requirement
+
+    (repo / "calc.py").write_text(GOOD)
+    runs = Recorded(monkeypatch, {(ADD,): result([ADD]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    hypothesis = Requirement(id="H1", text="add rejects floats", checks=[NEGATIVE, "../outside.py"],
+                             provenance=provenance)
+    plain = review(repo, [SUM[0]])
+    got = review(repo, [SUM[0], hypothesis])
+    assert _decided(got) == _decided(plain) and got["assessment"]["outcome"] == "supported_within_scope"
+    assert not any(NEGATIVE in ids for _, ids in runs.calls), runs.calls
+    assessment = got["assessment"]
+    assert "H1" not in assessment["requirements_without_adequate_check"]
+    assert not any("H1" in text for text in [*assessment["next_actions"], *assessment["unknowns"],
+                                             *(r["detail"] for r in assessment["reasons"])])
+    if listed_as == "proposals":
+        [entry] = assessment["proposals"]
+        assert (entry["id"], entry["provenance"], entry["checks"]) == ("H1", "model_hypothesis",
+                                                                      [NEGATIVE, "../outside.py"])
+    else:
+        assert assessment["proposals"] == []
+        [entry] = assessment["scope"]["assumptions"]
+        assert (entry["id"], entry["source"], entry["normative"]) == ("H1", "inferred", False)
+    assert not {"status", "reason", "suggested_test"} & set(entry)
+    # alone, it is no requirement stated
+    assert _decided(review(repo, [hypothesis])) == _decided(review(repo, []))
+
+
+@pytest.mark.parametrize("provenance", ["repository_stated", "person_confirmed"])
+def test_a_requirement_the_repository_states_or_the_person_confirmed_is_assessed(repo, monkeypatch, provenance):
+    from g6.harness.patch_review import Requirement
+
+    (repo / "calc.py").write_text(POSITIVE_ONLY)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD], [NEGATIVE])})
+    got = review(repo, [SUM[0], Requirement(**SUM[1], provenance=provenance)])
+    assert got["assessment"]["outcome"] == "defect_detected"
+    second = _requirement(got, "R2")
+    assert (second["status"], second["provenance"]) == ("failed", provenance)
+
+
 # --- refusals: no outcome, never a detection --------------------------------------------------------------------------
 
 def _stored() -> int:

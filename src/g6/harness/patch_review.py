@@ -35,6 +35,12 @@ checks that passed run against the base commit's code in a copy: one that passes
 change, an unknown with a next action and never an outcome (review I8); tier 3 (mutation, old-against-new probes)
 is not run here.
 
+Each requirement and each check says where it came from (``provenance``). A request's requirements are ``stated``, of
+kind ``requirement``; only a ``stated``, ``repository_stated`` or ``person_confirmed`` one is assessed. An ``inferred``
+requirement is listed among the scope's assumptions and a ``model_hypothesis`` among the proposals: neither gets a
+status or takes part in the outcome, and their checks never run. A check the caller cited is ``stated``; a test of the
+changed modules tier 2 found is ``derived``.
+
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
 run as G6-observed only when its store holds that receipt for that digest (status ``matched``).
@@ -54,6 +60,7 @@ import time
 import uuid
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -106,13 +113,31 @@ NOT_CHECKED = ("behaviour no stated check exercises", "requirements the task nee
                "whether the tests are independent of the patch's author", "source freshness",
                "benefit relative to a baseline", "merge authorisation")
 TIER_3 = "tier 3 not run: mutation and old-against-new probes are not part of this version"
+#: Where a requirement's expectation came from. Only ``NORMATIVE`` ones get a status and take part in the outcome; an
+#: ``inferred`` one is listed among the assumptions, a ``model_hypothesis`` among the proposals, and neither's checks
+#: run. A request's requirements are ``stated``.
+RequirementProvenance = Literal["stated", "repository_stated", "person_confirmed", "inferred", "model_hypothesis"]
+NORMATIVE = frozenset({"stated", "repository_stated", "person_confirmed"})
+#: Where a check came from: ``stated`` (the caller cited it) or ``derived`` (tier 2's tests of the changed modules).
+#: ``structural``, ``proposed`` and ``adopted_proposal`` are kept for verification search's later phases; no check
+#: has them yet.
+CheckProvenance = Literal["stated", "derived", "structural", "proposed", "adopted_proposal"]
+STATED, DERIVED = "stated", "derived"
+#: The fields only G6, or Python code that builds a ``Requirement``, sets: a request's requirements cannot carry them.
+SET_BY_G6 = ("provenance", "kind", "merged_from")
 
 
 class Requirement(BaseModel):
+    """A requirement: ``{id, text, checks}`` as the caller states it, with where it came from (``provenance``), whether
+    it asks for behaviour or asks that behaviour be kept (``kind``: ``requirement`` or ``preserve``), and the ids of
+    intent items with the same text that were merged into it (``merged_from``)."""
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=200)
     text: str = Field(min_length=1, max_length=20_000)
     checks: list[str] = Field(default_factory=list, max_length=200)
+    provenance: RequirementProvenance = STATED
+    kind: Literal["requirement", "preserve"] = "requirement"
+    merged_from: list[str] = Field(default_factory=list)
 
 
 class GateAdapterInput(BaseModel):
@@ -240,6 +265,9 @@ def _inputs(task, claim, tests, sources, timeout_s, requirements) -> list[Requir
         raise bad(f"timeout_s must be a whole number of seconds from 1 to {repo_tests.MAX_TIMEOUT_S}")
     if not isinstance(requirements, (list, tuple)):
         raise bad("requirements must be a list of {id, text, checks}")
+    if any(isinstance(item, dict) and set(SET_BY_G6) & set(item) for item in requirements):
+        raise bad("each requirement is {id, text, checks}: " + ", ".join(SET_BY_G6) + " are set by G6, never by a "
+                  "request")
     try:
         stated = [Requirement.model_validate(item) for item in requirements]
     except ValidationError as exc:
@@ -326,29 +354,33 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     return found
 
 
-def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "") -> dict:
+def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:
     return {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(ids), "tests": list(ids),
             "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
             "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
-            "receipt": ran.get("receipt", "")}
+            "receipt": ran.get("receipt", ""), "provenance": provenance}
 
 
 def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str]) -> dict:
-    checks = [{"id": check, **verdicts[check]} for check in dict.fromkeys(norm[raw] for raw in req.checks)]
-    out = {"id": req.id, "text": req.text, "checks": checks}
+    checks = [{"id": check, "provenance": STATED, **verdicts[check]}
+              for check in dict.fromkeys(norm[raw] for raw in req.checks)]
+    out = {"id": req.id, "text": req.text, "provenance": req.provenance, "kind": req.kind, "checks": checks}
+    if req.merged_from:
+        out["merged_from"] = list(req.merged_from)
     failing = [c["id"] for c in checks if c["verdict"] in DEFECTS]
     unrun = [f"{c['id']} {ENVIRONMENT}" if c["verdict"] == "collection_error" else f"{c['id']} ({c['verdict']})"
              for c in checks if c["verdict"] != "passed" and c["id"] not in failing]
+    test = ("a test that passes at the base commit and on the patch, and asserts the behaviour this requirement keeps"
+            if req.kind == "preserve" else
+            "a test that runs the changed code the way this requirement describes and asserts its result")
     if not checks:
         return {**out, "status": NOT_ESTABLISHED, "reason": "no check was stated for this requirement",
-                "suggested_test": "a test that runs the changed code the way this requirement describes and asserts "
-                                  f"its result: {req.text}"}
+                "suggested_test": f"{test}: {req.text}"}
     if failing:
         return {**out, "status": FAILED, "reason": "failed on its stated checks: " + ", ".join(failing)}
     if unrun:
         return {**out, "status": NOT_ESTABLISHED, "reason": "stated checks did not run to a pass: " + ", ".join(unrun),
-                "suggested_test": "make those checks run here, or add a test that runs the changed code the way this "
-                                  f"requirement describes and asserts its result: {req.text}"}
+                "suggested_test": f"make those checks run here, or add {test}: {req.text}"}
     return {**out, "status": PASSED_ON_CHECKS, "reason": "passed on its stated checks: " + ", ".join(
         c["id"] for c in checks)}
 
@@ -471,12 +503,15 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if expected_artifact_digest and artifact != expected_artifact_digest:
             return blocked_reply("[G6_E_PATCH_STALE] working tree differs from the supplied artifact digest")
         change = repo_tests.change(root, base)
+        # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
+        listed = [req for req in stated if req.provenance not in NORMATIVE]
+        stated = [req for req in stated if req.provenance in NORMATIVE]
         norm = {raw: repo_tests.inside(root, raw, "test") for req in stated for raw in req.checks}
         norm.update({raw: repo_tests.inside(root, raw, "test") for raw in tests})
         stated_ids = list(dict.fromkeys(norm[raw] for req in stated for raw in req.checks))
         ids = list(dict.fromkeys([*stated_ids, *(norm[raw] for raw in tests)]))
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
-                       deadline=started + timeout_s, started=started)
+                       deadline=started + timeout_s, started=started, listed=listed)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -500,7 +535,7 @@ def _untrusted(tier: int, ran: dict) -> str:
 
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
-            started) -> dict:
+            started, listed=()) -> dict:
     reasons: list[dict] = []
     unknowns: list[str] = []
     runs: list[dict] = []
@@ -568,7 +603,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                             "reason": "no other test file names a changed module"})
         else:
             second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline))))
-            runs.append(_record(2, "tests that touch the changed modules", derived, second))
+            runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
             if second["verdict"] in UNTRUSTED:
                 reason("integrity", "run_not_trusted", _untrusted(2, second))
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):
@@ -620,7 +655,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
-                  artifact, claim, sources, started, follow_ups)
+                  artifact, claim, sources, started, follow_ups, listed)
 
 
 AT_BASE = "stated checks at the base commit"
@@ -683,7 +718,8 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) ->
     for rel in failing:
         out = _confined(replays.get(rel) or {"verdict": "not_run", "said": "not replayed"})
         runs.append(_record(2, "base-commit comparison", [rel], out, command=f"pytest {rel} at the base commit "
-                                                                              "and on the patch, in a copy"))
+                                                                              "and on the patch, in a copy",
+                            provenance=DERIVED))
         if out.get("verdict") == repo_tests.FAILED:
             reason("tier_2", "derived_test_regressed", f"{rel} passed at the base commit and fails on the patch: "
                    + ", ".join(out.get("failed_ids", [])[:5]))
@@ -722,8 +758,24 @@ _NEXT = {
 }
 
 
+#: What a requirement no one stated is (rule 11): listed, and nothing more.
+LISTED_ONLY = ("no one stated this: it is listed only, has no status, its checks did not run, and it does not change "
+               "the outcome")
+
+
+def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
+    """The proposals (each ``model_hypothesis`` requirement) and the assumptions the assessment depends on (``assumed``,
+    then each ``inferred`` requirement): none has a status."""
+    proposals = [{"id": req.id, "text": req.text, "provenance": req.provenance, "kind": req.kind,
+                  "checks": list(req.checks), "note": LISTED_ONLY} for req in listed if req.provenance != "inferred"]
+    assumptions = [*assumed, *({"id": req.id, "statement": req.text, "source": "inferred", "normative": False,
+                                "kind": req.kind, "checks": list(req.checks), "note": LISTED_ONLY}
+                               for req in listed if req.provenance == "inferred")]
+    return proposals, assumptions
+
+
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
-           sources, started, follow_ups=()) -> dict:
+           sources, started, follow_ups=(), listed=(), assumed=()) -> dict:
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
     if "integrity" in stages:
@@ -744,18 +796,21 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     environment = {"isolation": ran.get("isolation"), "python": ran.get("python"),
                    "interpreter_source": ran.get("interpreter_source"),
                    "host_python_version": platform.python_version(), "platform": platform.platform()}
+    # the envelope's evidence items are as they were before checks carried a provenance (in scope.checks_run)
     evidence = [{"source": "g6.workforce.repo_tests", "summary": f"tier {run['tier']}: {run['command']}: "
                  f"{run['verdict']}"[:200], "authority": "host-observed", "artifact_digest": artifact,
                  "base_commit": change.base_commit,
-                 "scope": "these test outcomes on this working tree; not complete correctness", **run} for run in runs]
+                 "scope": "these test outcomes on this working tree; not complete correctness",
+                 **{key: value for key, value in run.items() if key != "provenance"}} for run in runs]
+    proposals, assumptions = _listed(listed, assumed)
     assessment = {
         "outcome": outcome, "summary": summary, "reasons": reasons,
         "requirements": evaluated,
         "requirements_without_adequate_check": [r["id"] for r in evaluated if r["status"] == NOT_ESTABLISHED],
-        "specification_note": SPECIFICATION_NOTE,
+        "specification_note": SPECIFICATION_NOTE, "proposals": proposals,
         "scope": {"artifact_digest": artifact, "base_commit": change.base_commit, "changed_files": list(change.files),
                   "environment": environment, "checks_run": runs, "checks_skipped": skipped, "receipts": receipts,
-                  "seconds": round(time.monotonic() - started, 3)},
+                  "assumptions": assumptions, "seconds": round(time.monotonic() - started, 3)},
         "unknowns": unknowns, "next_actions": next_actions, "not_checked": list(NOT_CHECKED)}
     card = warning_card(CODE, summary, next_actions[0])
     return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
