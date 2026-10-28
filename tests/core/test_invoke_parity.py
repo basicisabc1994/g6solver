@@ -23,10 +23,11 @@ class _Registry:
     refs: dict = {}
 
     def __init__(self, value, *, sensitive: bool = False) -> None:
-        self.value, self.sensitive, self.calls = value, sensitive, []
+        self.value, self.sensitive, self.calls, self.models = value, sensitive, [], []
 
     def invoke(self, component, op, params, *, block_sensitive=False, **kwargs):  # noqa: ANN001, ANN201
         self.calls.append(params)
+        self.models.append(kwargs.get("llm"))
         if self.sensitive and block_sensitive:
             return Failure(f"[{DENIED}] {component}.{op} is not available on this surface")
         return Success(self.value)
@@ -95,6 +96,34 @@ def test_the_persons_setting_allows_it_on_every_surface(surfaces, monkeypatch: p
     monkeypatch.setenv(SENSITIVE_ENV, "demo.op")
     reply = _same(surfaces(_Registry({"answer": 42}, sensitive=True)))
     assert reply["ok"] is True and reply["result"]["answer"] == 42
+
+
+def test_every_surface_hands_the_component_the_persons_model(surfaces, monkeypatch: pytest.MonkeyPatch) -> None:
+    from g6.core import llm
+
+    model = llm.FakeLLM()
+    monkeypatch.setattr(llm, "provider_from_env", lambda *args, **kwargs: model)
+    registry = _Registry({"answer": 42})
+    _same(surfaces(registry))
+    assert registry.models == [model, model, model]   # g6.invoke, g6_invoke, g6 invoke
+    # Dropping the llm hand-over in door.invoke_checked, or a surface calling the registry itself, makes this fail.
+
+
+def test_the_mcp_tool_takes_nothing_an_agent_could_use_to_allow_a_sensitive_op() -> None:
+    """Over MCP the agent supplies only component, op and params_json; whether a sensitive op may run is the server's
+    own setting."""
+    fastmcp = pytest.importorskip("fastmcp")
+    import asyncio
+
+    from g6.mcp import build_server
+    from g6.metaharness.surface import Surface
+
+    async def schema() -> dict:
+        async with fastmcp.Client(build_server(Surface({}))) as agent:
+            return {tool.name: tool.inputSchema for tool in await agent.list_tools()}["g6_invoke"]
+
+    assert set(asyncio.run(schema())["properties"]) == {"component", "op", "params_json"}
+    # Adding an allow (or allow_sensitive) parameter to the g6_invoke tool makes this fail.
 
 
 def test_only_the_callers_own_allow_grants_more_in_python(monkeypatch: pytest.MonkeyPatch) -> None:
