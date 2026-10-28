@@ -151,13 +151,22 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     @server.tool()
     def g6_review_patch(repo: str, task: str, requirements: list[dict] | None = None, tests: list[str] | None = None,
                         claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
-                        expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None) -> dict:
+                        expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
+                        proposed_checks: list[dict] | None = None) -> dict:
         """Assess the working tree's Python patch against base on stated requirements [{id, text, checks: [pytest
         node ids]}] plus extra tests, in confined runs. Optional intent, an intent contract {goal, success_criteria,
         non_goals, failure_criteria, assumptions}: each success criterion becomes a stated requirement, and each
         non-goal or failure criterion a stated obligation to keep behaviour, not established until a requirement
         with the same text states its checks; each assumption is listed with its source (explicit, inferred or
-        fallback) and decides nothing. An invalid intent is refused. Poll metaharness_job for the result.
+        fallback) and decides nothing. An invalid intent is refused. Optional proposed_checks, at most 20 test files
+        you propose, [{id, requirement_id, intent: preserve|change, file: a relative path named test_*.py, source: its
+        text, at most 64 KB, test: an optional node id in it}]: each runs confined, with no network, in a copy of the
+        patch and one of the base commit's code, and is classified (counterexample, fails_on_base_too, not_refuted,
+        unconfirmed_failure, behaviour_changed or check_error). A proposed check never passes a requirement: a
+        counterexample or a failure of the change gives at most insufficient_evidence, with a reproduction in
+        next_actions. Anything else, a conftest or a pytest configuration say, is refused. Every reply has
+        assessment.completion: what was demonstrated, what is not established, the defects reproduced, preservation,
+        open questions and every activity. Poll metaharness_job for the result.
         assessment.outcome is one of: test_integrity_compromised (a sign of a weakened test or test helper that G6's
         static comparison finds, a changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
@@ -181,7 +190,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             try:
                 return review_patch(repo, task=task, requirements=requirements or [], tests=tests or [], claim=claim,
                                     sources=sources, base=base, expected_artifact_digest=expected_artifact_digest,
-                                    timeout_s=timeout_s, intent=intent)
+                                    timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks)
             except component_process.ExecutionInterrupted as exc:
                 if exc.stopped:
                     return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")

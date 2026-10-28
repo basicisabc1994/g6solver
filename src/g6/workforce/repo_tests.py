@@ -923,8 +923,11 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
 
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
-         scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False) -> dict:
-    """The shared execution path; only old-test replay uses a copy without git metadata."""
+         scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
+         require_isolation: bool = False) -> dict:
+    """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
+    no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
+    unconfined runs (verification search's proposed checks)."""
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
     ids = [inside(repo, test, "test") for test in tests]
@@ -989,6 +992,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             python)
         isolation = confined.record()
         said = confine.refused(confined)
+        if not said and require_isolation and not isolation.get("backend"):
+            said = confine.refusal(confined)
         if said:
             raise RepoRefused(ISOLATION_UNAVAILABLE, said)
         try:
@@ -1405,24 +1410,28 @@ OLD_TEST_LIMIT = "the limit of {n} old test file(s) was reached"
 
 
 def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
-                network: bool = False) -> dict:
+                network: bool = False, overlay: dict[str, str] | None = None, require_isolation: bool = False) -> dict:
     """``tests`` (files, folders or ``file::test`` ids) as they are now, run against the base commit's code: in a copy
     (``repository_copy``, with its caps), every file the change touched is put back as it was at the base commit
     (``_base_revision``) except the files and folders ``tests`` name, which keep their text now. A check that passes
     here does not need the patch to pass (review I8). The repository itself is never written, and the run gets no
     receipt (it is not the artifact under review). ``{"verdict": "not_run", "said": ...}`` when the copy or the run
-    could not be made."""
+    could not be made. ``overlay`` ({path: text}) adds files to the copy only, as ``repository_copy``'s ``before``
+    does; ``require_isolation`` refuses a run no backend confines (``_run``), and that refusal is raised, not returned."""
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     deadline = time.monotonic() + bound
     try:
         keep = frozenset(inside(change.repo, test, "test").partition("::")[0].rstrip("/") for test in tests)
-        with repository_copy(change.repo, deadline=deadline) as copy:
+        with repository_copy(change.repo, deadline=deadline, before=overlay) as copy:
             with _base_revision(change, copy, deadline, keep=keep):
                 return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
-                            python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline)
+                            python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline,
+                            require_isolation=require_isolation)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, RepoRefused, CopyNotRun) as exc:
+        if require_isolation and getattr(exc, "code", "") == ISOLATION_UNAVAILABLE:
+            raise
         return {"verdict": "not_run", "said": str(exc)}
 
 
