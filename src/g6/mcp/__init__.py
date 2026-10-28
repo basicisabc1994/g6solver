@@ -154,13 +154,17 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                         expected_artifact_digest: str = "", timeout_s: int = 300) -> dict:
         """Assess the working tree's Python patch against base on stated requirements [{id, text, checks: [pytest
         node ids]}] plus extra tests, in confined runs. Poll metaharness_job for the result. assessment.outcome is one
-        of: test_integrity_compromised (a weakened test, a changed test runner, or a run that cannot be believed);
-        defect_detected (a stated check or extra test failed, or a test of a changed module fails on the patch and
-        passed at the base commit); insufficient_evidence (no requirement, a requirement with no check, or a check
-        that did not run); supported_within_scope (every requirement passed its stated checks: support on those
-        checks only, never proof the patch is complete). Each is qualified-draft. A refusal is blocked-escalated with
-        no outcome. merge is always requires_separate_approval; nothing is merged. Requires host permission
-        patch_review.review in G6_MCP_SENSITIVE."""
+        of: test_integrity_compromised (a sign of a weakened test or test helper that G6's static comparison finds, a
+        changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff, or a run that
+        cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
+        on the patch and passed at the base commit); insufficient_evidence (no requirement, a requirement with no
+        check, a check that did not run or ran out of time, or a shortcut only the claim reports);
+        supported_within_scope (every requirement passed its stated checks: support on those checks only, never proof
+        the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
+        qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
+        same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
+        is always requires_separate_approval; nothing is merged. Requires host permission patch_review.review in
+        G6_MCP_SENSITIVE."""
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")

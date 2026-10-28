@@ -833,6 +833,7 @@ def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes(repo, m
     tool, got = asyncio.run(flow())
     assert "requirements" in tool.parameters["properties"]
     assert all(outcome in tool.description for outcome in OUTCOMES)
+    assert "owned by the same user" in " ".join(tool.description.split())   # review 13: what a receipt cannot stop
     assert got["status"] == "completed", got
     assert got["result"]["assessment"]["outcome"] == "supported_within_scope"
     assert [r["id"] for r in got["result"]["assessment"]["requirements"]] == ["R1", "R2"]
@@ -877,6 +878,26 @@ def test_an_interrupted_review_over_mcp_ends_with_a_code_not_a_traceback(repo, m
     assert got["status"] == "completed", got
     assert got["result"]["warning_card"]["code"] == code
     assert got["result"]["completion_state"] == "blocked-escalated" and "Traceback" not in str(got)
+
+
+def test_the_docs_say_what_the_integrity_checks_and_the_receipts_cannot_show():
+    """Review 13: the README said the review "checks that no test or test runner was weakened", and neither it nor the
+    workflow guide said that the receipt store is a file the same user owns, or that a receipt binds neither the
+    repository's own virtual environment nor ignored files that are not Python."""
+    from g6.workforce import receipt_store
+
+    root = Path(__file__).resolve().parents[2]
+    readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
+    guide = " ".join((root / "docs" / "AI_FOR_AI_WORKFLOW.md").read_text(encoding="utf-8").split())
+    store = " ".join(receipt_store.__doc__.split())
+    assert "checks that no test or test runner was weakened" not in readme
+    assert "a static comparison: it cannot show that the tests are as strong as before" in readme
+    assert "in a file your user account owns" in readme
+    assert "Integrity is what these checks find, and nothing more" in guide
+    assert "The receipt store is a file owned by the same user as G6" in guide
+    for text in (guide, store):
+        assert "the repository's own `.venv`" in text or "the repository's own ``.venv``" in text, text
+        assert "ignored files that are not Python" in text, text
 
 
 # --- the engineering trial's counts -----------------------------------------------------------------------------------
