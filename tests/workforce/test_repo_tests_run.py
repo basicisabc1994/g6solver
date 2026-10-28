@@ -682,6 +682,57 @@ def test_m3_the_repositorys_own_config_in_a_test_folder_is_still_read(repo):
     assert (found["verdict"], found["passed"]) == (rt.PASSED, 1)
 
 
+@pytest.mark.parametrize("name", ["pytest.toml", ".pytest.toml"])
+def test_c1_a_pytest_toml_is_the_repositorys_own_config_and_no_empty_one_replaces_it(repo, tmp_path, name):
+    """Review C1: G6 did not know pytest.toml, so it read the folder as unconfigured and ran the tests with an empty
+    config of its own in place of the repository's."""
+    _write(repo, name, '[pytest]\naddopts = ["--deselect=tests/test_calc.py::test_add"]\n')
+    assert rt._config_args(repo, ["tests/test_calc.py"], tmp_path) == []
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert (found["verdict"], found["passed"]) == (rt.PASSED, 1)
+
+
+def test_i6_a_moved_test_file_is_replayed_at_its_old_path_at_the_base_commit(repo):
+    """Review I6 (probe S4): the base commit has no file at the new path, so the base run of a moved test file found
+    nothing to run, and a regression it showed on the patch read as a failure that predates the patch."""
+    from dataclasses import replace
+
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_neg.py", "from calc import add\n\n\ndef test_neg():\n    assert add(-2, -3) == -5\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "the base: add sums, and a negative test")
+    _write(repo, "calc.py", "def add(a, b):\n    return abs(a + b)\n\n\ndef sub(a, b):\n    return a - b\n")
+    (repo / "tests" / ".moved").mkdir()
+    git(repo, "mv", "tests/test_neg.py", "tests/.moved/test_neg.py")   # out of pytest's walk of tests/
+    change = rt.change(repo)
+    assert change.renamed == {"tests/test_neg.py": "tests/.moved/test_neg.py"}
+    rel = "tests/.moved/test_neg.py"
+    found = rt.run_before(replace(change, before={rel: (repo / rel).read_text(encoding="utf-8")}))[rel]
+    assert found["verdict"] == rt.FAILED, found
+    assert found["failed_ids"] == [f"{rel}::test_neg"]
+
+
+def test_i9_a_run_says_the_root_folder_pytest_named_its_tests_against(repo):
+    """Review I9(a): pytest names each test relative to its root folder, which a config below the top moves."""
+    assert rt.run(repo, ["tests/test_calc.py"])["rootdir"] == ""
+    _write(repo, "tests/pytest.ini", "[pytest]\n")
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert found["rootdir"] == "tests" and found["failed_ids"] == ["test_calc.py::test_add"]
+
+
+def test_i8_tests_as_they_are_now_run_against_the_base_commits_code(repo):
+    """Review I8: the stated checks, with the test files' text as it is now, against every other changed file as it
+    was at the base commit, in a copy; the repository itself is not touched."""
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_calc.py", TESTS + "\n\ndef test_new():\n    assert add(1, 1) == 2\n")
+    ids = ["tests/test_calc.py::test_add", "tests/test_calc.py::test_sub", "tests/test_calc.py::test_new"]
+    found = rt.run_at_base(rt.change(repo), ids)
+    assert found["verdict"] == rt.FAILED, found
+    assert sorted(found["failed_ids"]) == ["tests/test_calc.py::test_add", "tests/test_calc.py::test_new"]
+    assert found["test_outcomes"]["tests/test_calc.py::test_sub"]["call"] == "passed"
+    assert (repo / "calc.py").read_text(encoding="utf-8") == FIXED   # the patched tree is as it was
+
+
 def test_m9_a_repository_path_with_the_path_separator_in_it_runs(tmp_path):
     """M9: the import path was one string joined with os.pathsep, so a ';' (':' on POSIX) in the path split it."""
     repo = make_repo(tmp_path, f"a{os.pathsep}b")

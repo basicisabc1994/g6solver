@@ -53,6 +53,7 @@ invoked here.
 from __future__ import annotations
 
 import hashlib
+import importlib.machinery
 import json
 import os
 import re
@@ -68,7 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 
-from g6.core import component_process, confine, git_env
+from g6.core import component_process, confine, git_env, ledger
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
 from g6.workforce import receipt_store, verify
@@ -96,10 +97,10 @@ SANDBOX = "repository_in_place"
 #: A run's verdicts. Only ``passed`` and ``failed`` mean the tests ran to a result.
 PASSED, FAILED, CHANGED = "passed", "failed", "changed_tracked_files"
 RAN = frozenset({PASSED, FAILED})
-#: Files that configure, or could stand in for, the runner (the bench's lists, ``bench.py:60-63``): a change to one is
-#: said, not judged.
-RUNNER_FILES = frozenset({"conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "pytest.py",
-                          "sitecustomize.py", "usercustomize.py"})
+#: Files that configure, or could stand in for, the runner (the bench's lists, ``bench.py:60-63``, and every
+#: configuration file pytest looks for by name): a change to one is said, not judged.
+RUNNER_FILES = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml",
+                          "setup.cfg", "tox.ini", "pytest.py", "sitecustomize.py", "usercustomize.py"})
 #: The census probe's own repository and test (``probe_repo``).
 PROBE_TEST = "tests/test_probe.py::test_probe"
 #: Every sentence this module says to a person: why the tests did not run, or a refusal. PENDING the founder's copy
@@ -261,9 +262,27 @@ def inside(repo: Path, value: str, what: str) -> str:
 
 
 def is_test_file(rel: str) -> bool:
-    """pytest's default test files, ``test_*.py`` (the rule ``verify.run_set`` uses)."""
+    """pytest's default test files, ``test_*.py`` (the rule ``verify.run_set`` uses), named with the case rule pytest
+    matches them by on this system (``fnmatch``, through ``os.path.normcase``: Windows ignores case; review 14b)."""
+    name = os.path.normcase(PurePosixPath(rel).name)
+    return name.endswith(".py") and name.startswith("test_")
+
+
+#: Folders whose Python files are the tests' own (``g6.safety_engine.weakening``'s rule), and the files pytest or
+#: Python runs before any test.
+_TEST_FOLDERS = frozenset({"tests", "test", "testing"})
+_START_UP = frozenset({"conftest.py", "sitecustomize.py", "usercustomize.py"})
+
+
+def is_test_related(rel: str) -> bool:
+    """A Python file the tests are made of: a test file by either of pytest's default names (``test_*.py``,
+    ``*_test.py``, with ``is_test_file``'s case rule), ``conftest.py`` or a start-up file, or any Python file under a
+    ``tests``, ``test`` or ``testing`` folder, such as a helper the tests check through (review C2)."""
     path = PurePosixPath(rel)
-    return path.suffix == ".py" and path.name.startswith("test_")
+    name = os.path.normcase(path.name)
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")
+                                     or path.name.lower() in _START_UP
+                                     or any(part.lower() in _TEST_FOLDERS for part in path.parts[:-1]))
 
 
 @dataclass(frozen=True)
@@ -341,6 +360,23 @@ def _moves(repo: Path, commit: str, gone: list[str], new: list[str], before: dic
         if twin is not None:
             found[old] = twin
     return found
+
+
+def related_texts(change: Change) -> tuple[dict[str, str], dict[str, str]]:
+    """Every test-related file the change touches (``is_test_related``), as ``change`` reads its test files: its text
+    at the base commit (absent when it is new) and now (absent when it was deleted), with the line endings
+    ``Path.read_text`` gives. A file moved since the base (``_moves``) is keyed by its new path on both sides, so it
+    is compared with its old text, not read as one file deleted and another added."""
+    related = [rel for rel in change.files if is_test_related(rel)]
+    if not related:
+        return {}, {}
+    existed = set(_paths(_git(change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit, "--", *related)))
+    before = {rel: _text(_git(change.repo, "show", f"{change.base_commit}:{rel}")) for rel in sorted(existed)}
+    after = {rel: (change.repo / rel).read_text(encoding="utf-8", errors="replace") for rel in related
+             if (change.repo / rel).is_file()}
+    gone, new = [rel for rel in before if rel not in after], [rel for rel in after if rel not in before]
+    moved = _moves(change.repo, change.base_commit, gone, new, before, after) if gone and new else {}
+    return {moved.get(rel, rel): text for rel, text in before.items()}, after
 
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
@@ -478,12 +514,14 @@ class _Counted:
         self.collected, self.deselected, self.started, self.finished = None, 0, set(), set()
         self.failed, self.setup_errors = [], {}
         self.test_outcomes, self.collected_ids, self.omitted_ids = {}, set(), set()
+        self.rootdir = ""
     def pytest_itemcollected(self, item):
         self.collected_ids.add(item.nodeid)
     def pytest_deselected(self, items):
         self.deselected += len(items)
         self.omitted_ids.update(item.nodeid for item in items)
     def pytest_collection_finish(self, session):
+        self.rootdir = str(getattr(session.config, "rootpath", None) or session.config.rootdir)
         self.collected = len(session.items) + self.deselected
         self.omitted_ids.update(self.collected_ids - {item.nodeid for item in session.items})
         self.write()
@@ -508,7 +546,8 @@ class _Counted:
                 json.dump({"collected": self.collected, "deselected": self.deselected, "started": len(self.started),
                            "finished": len(self.finished), "failed_ids": self.failed,
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
-                           "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids)}, handle)
+                           "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
+                           "rootdir": self.rootdir}, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -771,7 +810,7 @@ def _output(log: Path) -> str:
 
 
 #: The files pytest reads its configuration from, and the section that makes each one count ("": any content).
-_PYTEST_CONFIG = (("pytest.ini", ""), (".pytest.ini", ""),
+_PYTEST_CONFIG = (("pytest.toml", ""), (".pytest.toml", ""), ("pytest.ini", ""), (".pytest.ini", ""),
                   ("pyproject.toml", r"^\s*\[\s*tool\.pytest(?:\.ini_options)?\s*\]"),
                   ("tox.ini", r"^\s*\[pytest\]"), ("setup.cfg", r"^\s*\[tool:pytest\]"))
 
@@ -823,7 +862,18 @@ def _progress(counts: dict[str, int], counted: Path) -> dict[str, int]:
             "test_outcomes": found.get("test_outcomes"), "collected_ids": found.get("collected_ids", []),
             "omitted_ids": found.get("omitted_ids", []),
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
+            "rootdir": found.get("rootdir") or "",
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
+
+
+def _root(repo: Path, rootdir: str) -> str:
+    """pytest's root folder, which it names each test relative to, as a path inside ``repo`` ("" for its top, and when
+    the run did not say or named a folder outside it)."""
+    try:
+        rel = Path(rootdir).resolve().relative_to(repo.resolve()).as_posix() if rootdir else ""
+    except (OSError, ValueError):
+        return ""
+    return "" if rel == "." else rel
 
 
 def _said(verdict: str, *, seconds: int, python: str) -> str:
@@ -845,8 +895,11 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     with the paths, whatever the tests said, and so is one after which git cannot read the repository (with that
     said). ``mutant`` (path, source): that module is imported from the source given instead of its file, which is
     never written (the changed-lines mutation check). ``interpreter_source`` says whose Python ran the tests
-    ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path. Raises
-    ``RepoRefused`` before anything runs when the request cannot run.
+    ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path, and
+    ``source_before`` the digest of the ``snapshot`` the run began on (the digest the patch review calls its
+    ``artifact_digest``), and ``rootdir`` the folder pytest named the tests relative to ("" for the repository's top;
+    a pytest configuration below the top moves it). Raises ``RepoRefused`` before anything runs when the request
+    cannot run.
 
     ``receipt=True``: a run that started confined (its ``isolation`` names a backend), whose repository git could
     read after it, and beside which ``ignored_inputs`` found no git-ignored file the run could load, is written to
@@ -904,7 +957,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "python": python, "interpreter_source": whose, "command": command, "isolation": isolation,
                 "failed_ids": list(tally.get("failed_ids", [])), "setup_errors": tally.get("setup_errors", {}),
                 "degraded": verdict not in RAN or ("expected" in tally and
-                    (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": ""}
+                    (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
+                "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or "")}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
@@ -997,17 +1051,39 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
 
 
 #: Git-ignored files that can change a run (review I2): runner configuration, start-up and path files.
-_LOADABLE = frozenset({"conftest.py", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml",
-                       "sitecustomize.py", "usercustomize.py"})
-#: Folders the ignored-file scan does not enter: environments, caches and build output.
-_UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "__pycache__",
-                        ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
+_LOADABLE = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "setup.cfg",
+                       "tox.ini", "pyproject.toml", "sitecustomize.py", "usercustomize.py"})
+#: Folders the ignored-file scan does not enter: environments, caches and build output; and any folder holding a
+#: ``pyvenv.cfg``, a virtual environment whatever its name (review I9).
+_UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", ".direnv", ".eggs", "__pypackages__", ".conda",
+                        "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
+#: An installed package's metadata folder: pytest loads, at start-up, every plugin one declares (an entry point in its
+#: ``pytest11`` group) when the folder's parent is on the import path (review C3).
+_METADATA = (".egg-info", ".dist-info")
+_PLUGIN_GROUP = re.compile(r"^\s*\[\s*pytest11\s*\]\s*$", re.MULTILINE)
+#: Compiled extension modules: Python imports one in place of a ``.py`` file of the same name (review C3).
+_EXTENSIONS = tuple(suffix.lower() for suffix in importlib.machinery.EXTENSION_SUFFIXES)
 #: The most entries the ignored-file scan reads; past it, the scan is incomplete and says so.
 IGNORED_SCAN_LIMIT = 20_000
 
 
-def _unscanned(rel: str) -> bool:
-    return any(part in _UNSCANNED or part.endswith(".egg-info") for part in PurePosixPath(rel).parts)
+def _unscanned(repo: Path, rel: str) -> bool:
+    """Whether ``rel`` is, or is inside, a folder the scan does not enter (``_UNSCANNED``, or a virtual environment)."""
+    parts = PurePosixPath(rel).parts
+    return any(part in _UNSCANNED for part in parts) or any(
+        (repo.joinpath(*parts[:end]) / "pyvenv.cfg").is_file() for end in range(1, len(parts) + 1))
+
+
+def _linked(path: Path) -> bool:
+    """A symbolic link or, on Windows, a junction: it can put any file or folder under the name it has."""
+    return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+
+
+def _declares_plugin(entry_points: Path) -> bool:
+    try:
+        return bool(_PLUGIN_GROUP.search(entry_points.read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        return True   # unread, it may declare one
 
 
 @dataclass(frozen=True)
@@ -1029,12 +1105,21 @@ def _module(path: PurePosixPath) -> str:
 
 def ignored_inputs(repo: Path) -> Ignored:
     """The git-ignored files in ``repo`` a test run could load. Loadable (``Ignored.loadable``): an ignored
-    ``conftest.py``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``,
-    ``sitecustomize.py``, ``usercustomize.py`` or ``.pth`` file; a test-named file (``test_*.py``, ``*_test.py``); and
-    a ``.py`` file whose module name (its stem, or its package's) is a tracked module's anywhere in the repository,
-    which it could shadow on the import path. Every other ignored ``.py`` file is listed with its SHA-256
-    (``Ignored.other``). Environments, caches and build output (``_UNSCANNED``, ``*.egg-info``) are not entered.
-    Installed packages and stale bytecode are not covered."""
+    ``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``,
+    ``pyproject.toml``,
+    ``sitecustomize.py``, ``usercustomize.py`` or ``.pth`` file; a test-named file (``test_*.py``, ``*_test.py``); a
+    ``.py`` file whose module name (its stem, or its package's) is a tracked module's anywhere in the repository,
+    which it could shadow on the import path; bytecode outside ``__pycache__`` (``.pyc``: Python imports it when no
+    source is beside it, in place of a source further down the path) and a compiled extension module
+    (``importlib.machinery.EXTENSION_SUFFIXES``: Python prefers one to a ``.py`` file of the same name); a symbolic
+    link or junction, which can put any code under any name (the scan never follows one); and an ``.egg-info`` or
+    ``.dist-info`` folder whose ``entry_points.txt`` declares a pytest plugin (the ``pytest11`` group), which pytest
+    loads at start-up (review C3). Every other ignored ``.py`` file is listed with its SHA-256 (``Ignored.other``).
+    Environments, caches and build output (``_UNSCANNED``, and any folder holding a ``pyvenv.cfg``) are not entered,
+    nor is a metadata folder past its ``entry_points.txt``. Not covered: the packages and plugins installed in the
+    interpreter's own environment, outside the repository or in a virtual environment inside it; stale bytecode in
+    ``__pycache__``; and ignored files of any other kind (data the tests read, say), which are neither judged nor
+    bound."""
     listed = _paths(_git(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"))
     modules = {_module(PurePosixPath(rel)) for rel in _paths(_git(repo, "ls-files", "-z")) if rel.endswith(".py")}
     loadable: list[str] = []
@@ -1044,11 +1129,27 @@ def ignored_inputs(repo: Path) -> Ignored:
     def judge(rel: str) -> None:
         path = PurePosixPath(rel)
         name = path.name.lower()
-        if name in _LOADABLE or path.suffix == ".pth" or (path.suffix == ".py" and (
-                name.startswith("test_") or name.endswith("_test.py") or _module(path) in modules)):
+        inside = next((index for index, part in enumerate(path.parts[:-1]) if part.endswith(_METADATA)), None)
+        if inside is not None:   # a metadata folder's files: only its own entry_points.txt can load code
+            if inside == len(path.parts) - 2 and name == "entry_points.txt" and _declares_plugin(repo / rel):
+                loadable.append(rel)
+        elif _linked(repo / rel) or name in _LOADABLE or name.endswith((".pth", ".pyc", *_EXTENSIONS)) or (
+                path.suffix == ".py" and (
+                    name.startswith("test_") or name.endswith("_test.py") or _module(path) in modules)):
             loadable.append(rel)
         elif path.suffix == ".py":
             other[rel] = _digest(repo / rel)
+
+    def folder(rel: str) -> bool:
+        """Judge a folder the scan would enter: True when its files are to be read."""
+        if _linked(repo / rel):
+            loadable.append(rel)
+        elif rel.endswith(_METADATA):
+            if (repo / rel / "entry_points.txt").is_file():
+                judge(f"{rel}/entry_points.txt")
+        else:
+            return True
+        return False
 
     def found(complete: bool) -> Ignored:
         return Ignored(tuple(sorted(loadable)), dict(sorted(other.items())), complete)
@@ -1057,18 +1158,23 @@ def ignored_inputs(repo: Path) -> Ignored:
         seen += 1
         if seen > IGNORED_SCAN_LIMIT:
             return found(False)
-        if _unscanned(entry):
+        rel = entry.rstrip("/")
+        if _unscanned(repo, rel):
             continue
         if not entry.endswith("/"):
-            judge(entry)
+            judge(rel)
             continue
-        for folder, dirs, files in os.walk(repo / entry):
-            dirs[:] = sorted(name for name in dirs if not _unscanned(name))
+        if not folder(rel):
+            continue
+        for top, dirs, files in os.walk(repo / rel):   # never through a link: os.walk does not follow one
+            here = Path(top).relative_to(repo).as_posix()
+            dirs[:] = sorted(name for name in dirs if name not in _UNSCANNED
+                             and not (Path(top) / name / "pyvenv.cfg").is_file() and folder(f"{here}/{name}"))
             for name in sorted(files):
                 seen += 1
                 if seen > IGNORED_SCAN_LIMIT:
                     return found(False)
-                judge((Path(folder) / name).relative_to(repo).as_posix())
+                judge(f"{here}/{name}")
     return found(True)
 
 
@@ -1189,12 +1295,14 @@ def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, st
 
 
 @contextmanager
-def _base_revision(change: Change, copy: Path, deadline: float):
-    """Temporarily restore all base-revision differences in the bounded replay copy."""
+def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[str] = frozenset()):
+    """Temporarily restore all base-revision differences in the bounded replay copy, except the files and folders
+    ``keep`` names, which stay as the copy has them."""
     from contextlib import ExitStack
 
     changed = set(_paths(_git(change.repo, "diff", "--name-only", "--no-renames", "-z", change.base_commit)))
     changed.update(_untracked(change.repo))
+    changed = {rel for rel in changed if not any(rel == kept or rel.startswith(kept + "/") for kept in keep)}
     entries = _paths(_git(change.repo, "ls-tree", "-r", "-l", "-z", change.base_commit))
     base = {}
     for entry in entries:
@@ -1240,10 +1348,18 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
     Same file/time caps as the main run. All old files are restored together for cross-file imports; each file gets
     a fresh copy so a previous test cannot contaminate the next file's evidence. Git metadata is never copied. A
     ``not_run`` entry made after the old-code baseline ran carries that baseline's verdict (``baseline``), and, when
-    the baseline passed but the new run did not match its tests, the new run's verdict (``patched``).
+    the baseline passed but the new run did not match its tests, the new run's verdict (``patched``). A file of
+    ``change.before`` that ``change.renamed`` moved there runs at its old path at the base commit, where the new one
+    is absent, and its tests are matched across the move (review I6).
     """
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     started, results = time.monotonic(), {}
+    old_path = {new: old for old, new in change.renamed.items()}
+
+    def moved(outcomes: dict | None, old: str, new: str) -> set[str]:
+        """The test ids of a base run at ``old``, as they read at ``new``."""
+        return {new + node[len(old):] if node == old or node.startswith(old + "::") else node for node in outcomes or {}}
+
     for index, rel in enumerate(sorted(change.before)):
         remaining = bound - (time.monotonic() - started)
         if index >= MAX_DERIVED:
@@ -1255,7 +1371,7 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
         try:
             with repository_copy(change.repo, deadline=started + bound, before=change.before) as copy:
                 with _base_revision(change, copy, started + bound):
-                    baseline = _run(copy, [rel], roots=roots, timeout_s=bound, network=network,
+                    baseline = _run(copy, [old_path.get(rel, rel)], roots=roots, timeout_s=bound, network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
                                     deadline=started + bound)
                 if (baseline["verdict"] != PASSED or baseline.get("degraded") or baseline.get("not_passed")
@@ -1271,7 +1387,8 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                 results[rel] = _run(copy, [rel], roots=roots, timeout_s=int(remaining), network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
                                     deadline=started + bound)
-                if set(baseline["test_outcomes"]) != set(results[rel].get("test_outcomes") or {}):
+                if moved(baseline["test_outcomes"], old_path.get(rel, rel), rel) != set(
+                        results[rel].get("test_outcomes") or {}):
                     reason = results[rel].get("said") or (SAID["collection_error"] if results[rel]["verdict"] == FAILED
                                                          and not results[rel].get("failed_ids") else OLD_BASELINE_NOT_RUN)
                     results[rel] = {"verdict": "not_run", "said": reason, "baseline": PASSED,
@@ -1285,6 +1402,28 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
 
 # COPY: reason for old tests omitted by the replay's file cap (A1 amendment B).
 OLD_TEST_LIMIT = "the limit of {n} old test file(s) was reached"
+
+
+def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
+                network: bool = False) -> dict:
+    """``tests`` (files, folders or ``file::test`` ids) as they are now, run against the base commit's code: in a copy
+    (``repository_copy``, with its caps), every file the change touched is put back as it was at the base commit
+    (``_base_revision``) except the files and folders ``tests`` name, which keep their text now. A check that passes
+    here does not need the patch to pass (review I8). The repository itself is never written, and the run gets no
+    receipt (it is not the artifact under review). ``{"verdict": "not_run", "said": ...}`` when the copy or the run
+    could not be made."""
+    bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
+    deadline = time.monotonic() + bound
+    try:
+        keep = frozenset(inside(change.repo, test, "test").partition("::")[0].rstrip("/") for test in tests)
+        with repository_copy(change.repo, deadline=deadline) as copy:
+            with _base_revision(change, copy, deadline, keep=keep):
+                return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
+                            python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline)
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except (OSError, RepoRefused, CopyNotRun) as exc:
+        return {"verdict": "not_run", "said": str(exc)}
 
 
 def probe_repo(scratch: Path) -> Path:

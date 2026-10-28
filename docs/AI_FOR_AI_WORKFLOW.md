@@ -84,25 +84,47 @@ pytest node IDs and may be empty), optional extra `tests`, and a base ref (defau
 `sources` are optional: their lexical support is reported and decides nothing. Poll its job.
 
 The checks adapt to cost. Tier 1 always runs: the working-tree digest, test integrity, and the stated
-checks with the extra tests in one confined run. Integrity covers a weakened test (a moved test file is
-compared with its old text), a changed `conftest.py`, `pytest.ini` or `.pytest.ini`, a changed pytest
-section in `pyproject.toml`, `setup.cfg` or `tox.ini` (a dependency or metadata change does not count),
-and a git-ignored file that could change the tests: a `conftest.py` hidden through `.git/info/exclude`, a
-pytest configuration, start-up, `.pth` or test-named file, or a Python file named like a tracked module,
-which could shadow it. Any other ignored Python file (a generated `_version.py`, say) is listed as an
-unknown and bound into the test receipt, path to SHA-256. A
-stated check the environment cannot collect (a dependency it lacks) is not established; one whose own code
-fails to collect is a defect. Tier 2, the other tests that touch the changed modules, runs only when tier 1
-found no integrity problem and no defect; one that fails, or fails to collect, on the patch is replayed at
-the base commit, and counts as a defect only if it passed there. Tier 3 (mutation, old-against-new probes)
-is not run yet.
+checks with the extra tests in one confined run. Integrity is what these checks find, and nothing more:
+
+- the signs of weakening `safety_engine.detect_test_weakening` reads in each changed test file (by either of
+  pytest's default names), `conftest.py`, start-up file and Python file under a `tests`, `test` or `testing`
+  folder: a test or check removed or changed, a parametrize case dropped, a skip, mock or early return added
+  (a moved file is compared with its old text). It compares text; it does not show that the tests are as
+  strong as before;
+- a changed `conftest.py`, `pytest.toml`, `.pytest.toml`, `pytest.ini` or `.pytest.ini`, or a changed pytest
+  section in `pyproject.toml`, `setup.cfg` or `tox.ini`, an empty one included (a dependency or metadata
+  change does not count);
+- a git-ignored file that could change the tests: a `conftest.py` hidden through `.git/info/exclude`, a pytest
+  configuration, start-up, `.pth` or test-named file, a Python file named like a tracked module, bytecode
+  outside `__pycache__`, a compiled extension module, a link, or a package's `.egg-info` or `.dist-info`
+  folder declaring a pytest plugin. Any other ignored Python file (a generated `_version.py`, say) is listed
+  as an unknown and bound into the test receipt, path to SHA-256;
+- a run that changed tracked files, whose result cannot be believed, or that began on a tree other than the
+  one under review, and the repository changing during the review;
+- a shortcut the coding gate finds in the diff against the base of the test, test-runner and
+  continuous-integration files (a source file's diff is not scanned: an assert it drops weakens no test).
+  One found only in the `claim` text is insufficient evidence (`claim_reports_shortcut`), not an integrity
+  problem.
+
+A stated check the environment cannot collect (a dependency it lacks) is not established; one whose own code
+fails to collect is a defect. A check the time limit cuts off, or never reaches, is not established either,
+never a defect. Tier 2, the other tests that touch the changed modules, runs only when tier 1 found no
+integrity problem and no defect; one that fails, or fails to collect, on the patch is replayed at the base
+commit (a moved test file at its old path), and counts as a defect only if it passed there. When nothing so
+far found a problem, the stated checks that passed also run against the base commit's code, in a copy: one
+that passes there too may not exercise the change, and is listed as an unknown with a next action, never an
+outcome (a requirement to keep behaviour passes at the base by design). Tier 3 (mutation, old-against-new
+probes) is not run yet.
 
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
 under review; over `g6_invoke` the gate has no binding and every receipt stays caller-declared. A run gets
-no receipt when it was unconfined or when git ignores a file that could change it. A receipt does not bind the
-packages and pytest plugins installed in the interpreter's environment, or stale bytecode left beside the
-sources.
+no receipt when it was unconfined or when git ignores a file that could change it. A receipt does not bind
+the packages and pytest plugins installed in the interpreter's environment (the repository's own `.venv`
+included, and a plugin installed outside the repository can still change results), stale bytecode in
+`__pycache__`, or ignored files that are not Python (data the tests read, say). The receipt store is a file
+owned by the same user as G6: it stops a caller's JSON from claiming that G6 ran a test, not a program
+running as that user, which can write the file itself.
 
 `assessment.outcome` is exactly one of, in this order: `test_integrity_compromised`, `defect_detected`,
 `insufficient_evidence`, `supported_within_scope`. All four are `qualified-draft`. Supported within scope

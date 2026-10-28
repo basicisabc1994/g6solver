@@ -96,11 +96,14 @@ Start with [the AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). The loop is:
 `metaharness_start` ? confirm ? diagnose ? propose code with a hypothesis ? evaluate ? decide ? client consent ? run.
 Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: give
 it the patched repository, the task, and the requirements the patch must meet, each with the tests that check it.
-It runs those tests inside an operating-system boundary, checks that no test or test runner was weakened, then runs
-the other tests that touch the changed modules, and returns one outcome: test integrity compromised, defect
-detected, insufficient evidence, or supported within scope. Supported within scope means every stated requirement
-passed its stated checks; it does not show that the patch does everything the task needs. Each requirement gets its
-own evidence, and merging always needs a separate approval.
+It runs those tests inside an operating-system boundary, compares the changed tests, test helpers and test-runner
+files with the base commit for the signs of weakening G6 knows how to find (a static comparison: it cannot show
+that the tests are as strong as before), then runs the other tests that touch the changed modules, and returns one
+outcome: test integrity compromised, defect detected, insufficient evidence, or supported within scope. Supported
+within scope means every stated requirement passed its stated checks; it does not show that the patch does
+everything the task needs. Each requirement gets its own evidence, and merging always needs a separate approval.
+G6 keeps its record of its own test runs (test receipts) in a file your user account owns: it stops a caller's
+claimed results from counting as G6's, not a program running as you.
 Enable it explicitly with `g6 setup --client codex --allow patch_review.review`.
 
 Fewer than 30 held-out cases means exploration only. Generated-code activation still requires independently

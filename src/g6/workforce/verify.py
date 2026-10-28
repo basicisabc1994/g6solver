@@ -93,8 +93,7 @@ def head_snapshot(workdir: Path) -> Path | None:
 
 
 def _is_test_file(rel: str) -> bool:
-    p = Path(rel)
-    return p.suffix == ".py" and p.name.startswith("test_")
+    return Path(rel).match("test_*.py")   # with the system's case rule, as pytest matches it (review 14b)
 
 
 def run_set(workdir: Path, changed: list[str], candidates: list[str] | None = None, *,

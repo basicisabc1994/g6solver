@@ -5,9 +5,11 @@ amendment A6).
 ``repo_tests.run(..., receipt=True)`` writes one receipt after a confined run that started, and only then: never for
 a run without an operating-system boundary (whoever allowed it), one that could not start, a mutant's, or one beside
 a git-ignored file that could change the run (``repo_tests.ignored_inputs``: an ignored ``conftest.py``,
-``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``, ``sitecustomize.py``,
-``usercustomize.py`` or ``.pth`` file, a test-named file, or a Python file named like a tracked module, which could
-shadow it), or when that scan stopped at its limit: git's view, which the digest covers, leaves ignored files out.
+``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``,
+``sitecustomize.py``,
+``usercustomize.py`` or ``.pth`` file, a test-named file, a Python file named like a tracked module, which could
+shadow it, bytecode outside ``__pycache__``, a compiled extension module, a link, or package metadata declaring a
+pytest plugin), or when that scan stopped at its limit: git's view, which the digest covers, leaves ignored files out.
 Every other ignored Python file (a generated ``_version.py``, say) is bound into the receipt instead, path to SHA-256,
 as ``ignored_inputs``. A receipt says what ran (the interpreter, with the SHA-256 of its file; the tests asked for,
 collected and left out), on what (the digest of git's view of the repository before and after the run, the digest the
@@ -20,8 +22,10 @@ it, and only for the artifact digest its host bound it to, never one a caller se
 What a receipt shows: G6 ran these tests on these files in that environment, and what pytest reported. It does not
 show that the code is correct or that the tests are good ones, and the tests share their process with pytest's
 report, so code under test could still bend what pytest reports. Nothing binds what the run loaded from outside git's
-view and the scan above: the packages and pytest plugins installed in the interpreter's environment, and stale
-bytecode (``__pycache__``) left beside the sources.
+view and the scan above: the packages and pytest plugins installed in the interpreter's environment (the
+repository's own ``.venv`` included, when its interpreter runs the tests; a plugin installed there can still change
+results), stale bytecode (``__pycache__``) left beside the sources, and ignored files that are not Python (data the
+tests read, say), which the scan neither judges nor binds.
 
 Known limits, deferred: every ``check`` reads and rehashes the whole store; a receipt records the run's command as a
 short summary and does not record the environment variables or installed packages.
@@ -40,7 +44,6 @@ import hashlib
 import json
 import os
 import platform
-import shutil
 import sys
 import uuid
 from collections.abc import Iterator
@@ -49,6 +52,7 @@ from pathlib import Path
 from time import monotonic, sleep
 
 from g6.core.ledger import ChainLedger, digest
+from g6.core.outside import find_program
 from g6.core.storage import state_path
 
 SCHEMA = "g6.test_receipt/1"
@@ -148,7 +152,7 @@ def _executable(python: str) -> dict:
     """The interpreter that ran the tests: its path as run; its version, G6's own when it is the interpreter running
     G6, else as its virtual environment's ``pyvenv.cfg`` records it (it is never started to ask: "" when neither
     says); and the SHA-256 of its file ("" when that cannot be read)."""
-    exe = python if os.path.isabs(python) else (shutil.which(python) or python)   # "python" in a frozen build
+    exe = python if os.path.isabs(python) else (find_program(python) or python)   # "python" in a frozen build
     real = os.path.realpath(exe)
     version = ""
     if os.path.normcase(real) == os.path.normcase(os.path.realpath(sys.executable)):
