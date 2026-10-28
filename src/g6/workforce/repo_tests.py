@@ -848,10 +848,11 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path. Raises
     ``RepoRefused`` before anything runs when the request cannot run.
 
-    ``receipt=True``: a run that started confined (its ``isolation`` names a backend) and whose repository git could
-    read after it is written to G6's test-receipt store (``g6.workforce.receipt_store``), and ``receipt`` is the
-    receipt's id; every other run, an unconfined one included, has ``receipt`` "" (and ``receipt_error`` when the store
-    could not take the receipt). A mutant is not the artifact under review: ``receipt=True`` with ``mutant`` raises
+    ``receipt=True``: a run that started confined (its ``isolation`` names a backend), whose repository git could
+    read after it, and beside which ``ignored_inputs`` found no git-ignored file the run could load, is written to
+    G6's test-receipt store (``g6.workforce.receipt_store``), and ``receipt`` is the receipt's id; every other run, an
+    unconfined one included, has ``receipt`` "" (with ``receipt_withheld`` and ``ignored_inputs`` when ignored files
+    stopped it, and ``receipt_error`` when the store could not take the receipt). A mutant is not the artifact under review: ``receipt=True`` with ``mutant`` raises
     ``ValueError``."""
     if receipt and mutant is not None:
         raise ValueError("a mutant run is not the artifact under review, so it is never given a test receipt")
@@ -973,12 +974,71 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         found["said"] = SAID["confined_write"]   # the operating system refused a test something an owner's run allows
     if receipt and isolation.get("backend"):   # only a run G6 confined and watched start is given a receipt
         try:
+            loadable, complete = ignored_inputs(repo)
+        except RepoRefused:   # git could not list them: nothing says the digest covers what the run loaded
+            loadable, complete = [], False
+        if loadable or not complete:   # review I2: the digest leaves git-ignored files out, and pytest may load them
+            found["ignored_inputs"] = loadable
+            found["receipt_withheld"] = (
+                "no test receipt: git ignores files this run could load, " + ", ".join(loadable[:10]) if loadable else
+                f"no test receipt: the scan for git-ignored files stopped at its limit of {IGNORED_SCAN_LIMIT} entries")
+            return found
+        try:
             found["receipt"] = receipt_store._record(receipt_store._body(
                 started_at=began, finished_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 before=before, after=after, base_commit=head, python=python, requested=ids, found=found))
         except (OSError, ValueError) as exc:
-            found["receipt_error"] = f"the test receipt could not be recorded ({type(exc).__name__})"
+            found["receipt_error"] = (f"the test receipt could not be recorded ({type(exc).__name__}); if the store is "
+                                      f"unreadable, move it aside ({receipt_store.RECOVERY})")
     return found
+
+
+#: Git-ignored files pytest or Python could load into a run (review I2): runner configuration and path files.
+_LOADABLE = frozenset({"conftest.py", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"})
+#: Folders the ignored-file scan does not enter: environments, caches and build output.
+_UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "__pycache__",
+                        ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
+#: The most entries the ignored-file scan reads; past it, the scan is incomplete and says so.
+IGNORED_SCAN_LIMIT = 20_000
+
+
+def _unscanned(rel: str) -> bool:
+    return any(part in _UNSCANNED or part.endswith(".egg-info") for part in PurePosixPath(rel).parts)
+
+
+def ignored_inputs(repo: Path) -> tuple[list[str], bool]:
+    """The git-ignored files in ``repo`` that pytest or Python could load into a test run, which git's view (and so the
+    artifact digest) leaves out: an ignored ``conftest.py``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``,
+    ``tox.ini``, ``pyproject.toml`` or ``.pth`` file, and an ignored ``.py`` file in a folder that holds tracked ones;
+    and whether the scan finished within ``IGNORED_SCAN_LIMIT`` entries. Environments, caches and build output
+    (``_UNSCANNED``, ``*.egg-info``) are not entered. Installed packages and stale bytecode are not covered."""
+    listed = _paths(_git(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"))
+    beside = {PurePosixPath(rel).parent for rel in _paths(_git(repo, "ls-files", "-z")) if rel.endswith(".py")}
+    found: list[str] = []
+    seen = 0
+
+    def loadable(rel: str) -> None:
+        path = PurePosixPath(rel)
+        if path.name.lower() in _LOADABLE or path.suffix == ".pth" or (path.suffix == ".py" and path.parent in beside):
+            found.append(rel)
+
+    for entry in listed:
+        seen += 1
+        if seen > IGNORED_SCAN_LIMIT:
+            return sorted(found), False
+        if _unscanned(entry):
+            continue
+        if not entry.endswith("/"):
+            loadable(entry)
+            continue
+        for folder, dirs, files in os.walk(repo / entry):
+            dirs[:] = sorted(name for name in dirs if not _unscanned(name))
+            for name in sorted(files):
+                seen += 1
+                if seen > IGNORED_SCAN_LIMIT:
+                    return sorted(found), False
+                loadable((Path(folder) / name).relative_to(repo).as_posix())
+    return sorted(found), True
 
 
 def _copy_ignored(folder: str, names: list[str]) -> set[str]:
@@ -1138,7 +1198,9 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
     """Execute the old changed/deleted tests against copied current code, never overwrite the caller's tests.
 
     Same file/time caps as the main run. All old files are restored together for cross-file imports; each file gets
-    a fresh copy so a previous test cannot contaminate the next file's evidence. Git metadata is never copied.
+    a fresh copy so a previous test cannot contaminate the next file's evidence. Git metadata is never copied. A
+    ``not_run`` entry made after the old-code baseline ran carries that baseline's verdict (``baseline``), and, when
+    the baseline passed but the new run did not match its tests, the new run's verdict (``patched``).
     """
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     started, results = time.monotonic(), {}
@@ -1159,7 +1221,8 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                 if (baseline["verdict"] != PASSED or baseline.get("degraded") or baseline.get("not_passed")
                         or baseline.get("deselected") or not baseline.get("test_outcomes")):
                     reason = baseline.get("said") or "; ".join(baseline.get("setup_errors", {}).values())
-                    results[rel] = {"verdict": "not_run", "said": reason or OLD_BASELINE_NOT_RUN}
+                    results[rel] = {"verdict": "not_run", "said": reason or OLD_BASELINE_NOT_RUN,
+                                    "baseline": baseline["verdict"]}
                     continue
                 remaining = bound - (time.monotonic() - started)
                 if remaining < 1:
@@ -1171,7 +1234,8 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                 if set(baseline["test_outcomes"]) != set(results[rel].get("test_outcomes") or {}):
                     reason = results[rel].get("said") or (SAID["collection_error"] if results[rel]["verdict"] == FAILED
                                                          and not results[rel].get("failed_ids") else OLD_BASELINE_NOT_RUN)
-                    results[rel] = {"verdict": "not_run", "said": reason}
+                    results[rel] = {"verdict": "not_run", "said": reason, "baseline": PASSED,
+                                    "patched": results[rel]["verdict"]}
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except (OSError, RepoRefused, CopyNotRun) as exc:

@@ -58,11 +58,13 @@ A declared `risk_tier` can raise the computed tier, never lower it, and an unkno
 gate checks structure; it does not open a file, run a test or check that a reviewer exists. Declare only what you
 ran or read.
 
-The one exception is a test receipt, which G6 writes only after its own confined test run
-(`repo_tests.run(..., receipt=True)`). An item with `"receipt": "<id>"`, sent with the reviewed tree's
-`artifact_digest`, becomes that run, `observed_by: "g6"`, whatever else the item says; the result's `receipts` gives
-each item's `receipt_status` (`verified`, `unknown`, `artifact_mismatch` or `not_supplied`). Any other item stays
-caller-declared. A receipt shows that G6 ran those tests on those files, not that the code is correct.
+Test receipts, written only after G6's own confined run (`repo_tests.run(..., receipt=True)`), count only where
+the host bound the block to the tree it reviews (`CodingAgentGateBlock(receipt_artifact_digest=...)`, as
+`g6_review_patch` does). Over MCP there is no binding and no request field gives one: a cited receipt stays
+caller-declared, `not_honoured_at_door`. Bound, a stored receipt for that tree becomes its run, `observed_by: "g6"`,
+a pass only when every collected test ran and passed. `receipt_status` is `matched`, `unknown`,
+`artifact_mismatch`, `store_unreadable`, `not_honoured_at_door` or `not_supplied`. A receipt shows G6 ran those
+tests on those files, not that the code is correct.
 
 For protected changes, supply a host-owned `ProtectedPathsPolicy(protected=("rules/**",), exemptions=...)`
 to the block constructor, or `protected_paths_policy=` to either Python gate, and pass `touched_paths`.

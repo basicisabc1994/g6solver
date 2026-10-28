@@ -20,11 +20,14 @@ passes. A declared risk tier can raise the computed tier, never lower it; high-r
 is an opt-in model reviewer that can only make a decision stricter; nothing else calls a model, reads the
 environment or writes a file.
 
-What it does not establish (audit 004): it reads what the caller sends. It does not open a file, run a test or check
-that a reviewer exists. Evidence is ``observed_by="caller"`` unless a G6 component produced it, and everything
-through the registry or MCP door is caller-declared, except a test run whose ``receipt`` id G6's own store holds for
-the ``artifact_digest`` sent (``g6.workforce.receipt_store``: only G6's confined runs write receipts; the store is a
-file owned by the same user, so it defends against what a caller sends, not against code running as that user).
+What it does not establish (audit 004): it reads what the caller sends. It does not run a test or check that a
+reviewer exists, and the only file it opens is G6's own test-receipt store, read when an item cites a receipt and the
+host built the block with ``receipt_artifact_digest``. Evidence is ``observed_by="caller"`` unless a G6 component
+produced it, and everything through the registry or MCP door is caller-declared: the door's instance has no binding,
+so a receipt there is ``not_honoured_at_door`` (review C1). A host that binds the block to the digest of the tree it
+reviews (``g6.harness.patch_review``) gets a cited receipt the store holds for that digest counted as G6-observed
+(``g6.workforce.receipt_store``: only G6's confined runs write receipts; the store is a file owned by the same user,
+so it defends against what a caller sends, not against code running as that user).
 The shortcut text detector is a tripwire fitted to known
 phrasings (it caught none of the audit's fresh paraphrases); a supplied diff is scanned for its structure, but
 semantic shortcuts (a snapshot pinned to wrong output, a test made to return True) are out of reach. So a pass is

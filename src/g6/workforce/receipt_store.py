@@ -3,21 +3,34 @@
 amendment A6).
 
 ``repo_tests.run(..., receipt=True)`` writes one receipt after a confined run that started, and only then: never for
-a run without an operating-system boundary (whoever allowed it), one that could not start, or a mutant's. A receipt
-says what ran (the interpreter, with the SHA-256 of its file; the tests asked for, collected and left out), on what
-(the digest of git's view of the repository before and after the run, the digest the patch review calls
-``artifact_digest``, and the commit checked out), how (the run's isolation record) and what pytest found. Each goes
-into an append-only, hash-chained store, ``$G6_HOME/evidence/test_receipts.jsonl``; its id is the SHA-256 of its
-body. ``lookup`` gives a receipt back only when the store's chain checks out, the body still hashes to its id, and
-the run began on the artifact named. The coding-agent gate counts an evidence item as G6-observed only through it.
+a run without an operating-system boundary (whoever allowed it), one that could not start, a mutant's, or one beside
+a git-ignored file pytest or Python could load (``repo_tests.ignored_inputs``: an ignored ``conftest.py``,
+``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml`` or ``.pth`` file, or an ignored
+Python file beside tracked ones), or when that scan stopped at its limit: git's view, which the digest covers, leaves
+ignored files out. A receipt says what ran (the interpreter, with the SHA-256 of its file; the tests asked for,
+collected and left out), on what (the digest of git's view of the repository before and after the run, the digest the
+patch review calls ``artifact_digest``, and the commit checked out), how (the run's isolation record) and what pytest
+found. Each goes into an append-only, hash-chained store, ``$G6_HOME/evidence/test_receipts.jsonl``; its id is the
+SHA-256 of its body. ``check`` says ``matched`` only when the store's chain checks out, the body still hashes to its
+id, and the run began on the artifact named. The coding-agent gate counts an evidence item as G6-observed only through
+it, and only for the artifact digest its host bound it to, never one a caller sends.
 
 What a receipt shows: G6 ran these tests on these files in that environment, and what pytest reported. It does not
 show that the code is correct or that the tests are good ones, and the tests share their process with pytest's
-report, so code under test could still bend what pytest reports.
+report, so code under test could still bend what pytest reports. Nothing binds what the run loaded from outside git's
+view and the scan above: the packages and pytest plugins installed in the interpreter's environment, and stale
+bytecode (``__pycache__``) left beside the sources.
+
+Known limits, deferred: every ``check`` reads and rehashes the whole store; a receipt records the run's command as a
+short summary and does not record the environment variables or installed packages.
 
 The limit: the store is a file on this computer, owned by the same user as G6. It defends against JSON a caller sends
 (an evidence item cannot make itself G6-observed by naming an id, a digest or a receipt's body), not against code
 running as that user, which can write the file, or call ``_record``, itself.
+
+A store whose chain does not check out (a torn last line after a crash, an edit) is ``store_unreadable`` to every
+check, and takes no more receipts. To recover, move the file aside: G6 starts a new store, and the receipts in the
+old one no longer count.
 """
 from __future__ import annotations
 
@@ -38,8 +51,12 @@ from g6.core.storage import state_path
 
 SCHEMA = "g6.test_receipt/1"
 KIND = "test-receipt"
-#: Why an evidence item that cites a receipt is, or is not, G6-observed (``check``).
-VERIFIED, UNKNOWN, ARTIFACT_MISMATCH = "verified", "unknown", "artifact_mismatch"
+#: Why an evidence item that cites a receipt is, or is not, G6-observed (``check``). Not "verified": that word is a
+#: reliability state, and the door rewrites it wherever it appears in a result.
+MATCHED, UNKNOWN, ARTIFACT_MISMATCH, STORE_UNREADABLE = "matched", "unknown", "artifact_mismatch", "store_unreadable"
+#: How to recover from ``STORE_UNREADABLE``.
+RECOVERY = ("move $G6_HOME/evidence/test_receipts.jsonl aside: G6 starts a new store, and the receipts in the old one "
+            "no longer count")
 
 
 def store_path() -> Path:
@@ -97,26 +114,31 @@ def _record(body: dict) -> str:
 
 
 def check(receipt: str, *, artifact_digest: str) -> tuple[str, dict | None]:
-    """``("verified", body)`` when the store holds a receipt with this id, in a chain that checks out, whose body still
+    """``("matched", body)`` when the store holds a receipt with this id, in a chain that checks out, whose body still
     hashes to the id and whose run began on ``artifact_digest`` (its ``source_before``); ``("artifact_mismatch",
-    None)`` when it holds such a receipt but ``artifact_digest`` is empty or another; ``("unknown", None)`` for anything
-    else, a missing, unreadable or edited store included. Reads only: never raises, never writes."""
+    None)`` when it holds such a receipt but ``artifact_digest`` is empty or another; ``("store_unreadable", None)``
+    when the store is there but its chain does not check out (``RECOVERY``); ``("unknown", None)`` for anything else, a
+    missing store or an edited body included. Reads only: never raises, never writes."""
     try:
         path = store_path()
         if not (isinstance(receipt, str) and receipt and path.is_file()):
             return UNKNOWN, None
-        body = ChainLedger(path).get(KIND, receipt)   # opening the ledger checks its whole chain
-        if receipt_id(body) != receipt:
-            return UNKNOWN, None
+        ledger = ChainLedger(path)   # opening the ledger checks its whole chain
     except Exception:  # a store that cannot be read vouches for nothing
+        return STORE_UNREADABLE, None
+    try:
+        body = ledger.get(KIND, receipt)
+    except Exception:
+        return UNKNOWN, None
+    if receipt_id(body) != receipt:
         return UNKNOWN, None
     if not (isinstance(artifact_digest, str) and artifact_digest) or body.get("source_before") != artifact_digest:
         return ARTIFACT_MISMATCH, None
-    return VERIFIED, body
+    return MATCHED, body
 
 
 def lookup(receipt_id: str, *, artifact_digest: str) -> dict | None:
-    """The stored receipt with this id when it binds ``artifact_digest`` (``check``'s ``verified``), else None."""
+    """The stored receipt with this id when it binds ``artifact_digest`` (``check``'s ``matched``), else None."""
     return check(receipt_id, artifact_digest=artifact_digest)[1]
 
 
@@ -162,8 +184,16 @@ def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_
                       "deselected": int(found.get("deselected") or 0), "omitted": list(found.get("omitted_ids") or [])},
             "command": found.get("command", ""), "isolation": dict(found.get("isolation") or {}),
             "result": {key: found.get(key) for key in ("verdict", "passed", "failed", "not_passed", "total",
-                                                       "failed_ids", "completed")}}
+                                                       "failed_ids", "completed", "degraded")}}
 
 
-__all__ = ["ARTIFACT_MISMATCH", "KIND", "SCHEMA", "UNKNOWN", "VERIFIED", "check", "lookup", "receipt_id",
-           "store_path"]
+def counts_as_pass(body: dict) -> bool:
+    """Whether a receipt's run is a pass: pytest's verdict ``passed`` with at least one test, nothing skipped or left
+    unrun, the run complete and not degraded (the patch review's rule). "1 passed, 50 skipped" is not a pass."""
+    result = body.get("result") if isinstance(body.get("result"), dict) else {}
+    return (result.get("verdict") == "passed" and isinstance(result.get("total"), int) and result["total"] > 0
+            and result.get("not_passed") == 0 and result.get("completed") is True and not result.get("degraded"))
+
+
+__all__ = ["ARTIFACT_MISMATCH", "KIND", "MATCHED", "RECOVERY", "SCHEMA", "STORE_UNREADABLE", "UNKNOWN", "check",
+           "counts_as_pass", "lookup", "receipt_id", "store_path"]

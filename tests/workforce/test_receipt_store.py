@@ -131,7 +131,7 @@ def _a_receipt_binds_the_run(repo, backend: str) -> None:
     assert body["tests"] == {"requested": TESTS, "collected": IDS, "deselected": 0, "omitted": []}
     assert body["command"] == found["command"] and body["isolation"] == found["isolation"]
     assert body["result"] == {"verdict": rt.PASSED, "passed": 2, "failed": 0, "not_passed": 0, "total": 2,
-                              "failed_ids": [], "completed": True}
+                              "failed_ids": [], "completed": True, "degraded": False}
     # lookup gives it back for the tree the run began on, and for nothing else
     assert receipt_store.lookup(found["receipt"], artifact_digest=artifact) == body
     assert receipt_store.lookup(found["receipt"], artifact_digest="0" * 64) is None
@@ -206,10 +206,76 @@ def test_an_edited_receipt_is_never_given_back(repo, fake_boundary):
 def test_lookup_answers_none_for_a_missing_or_unreadable_store():
     ident = "ab" * 32
     assert receipt_store.lookup(ident, artifact_digest="cd" * 32) is None   # no store at all
+    assert receipt_store.check(ident, artifact_digest="cd" * 32)[0] == "unknown"
     assert not _store().exists()                                            # and asking made none
     _store().parent.mkdir(parents=True)
     _store().write_bytes(b"\xff not a ledger\n")
     assert receipt_store.lookup(ident, artifact_digest="cd" * 32) is None
+    assert receipt_store.check(ident, artifact_digest="cd" * 32)[0] == "store_unreadable"
+
+
+def test_a_torn_store_says_so_and_a_run_says_how_to_recover(repo, fake_boundary):
+    """M1: a torn last line leaves the store unreadable: checks say "store_unreadable", and a run that cannot record
+    its receipt says to move the file aside, after which its old receipts no longer count."""
+    _write(repo, "calc.py", FIXED)
+    artifact = digest(rt.snapshot(repo))
+    first = rt.run(repo, TESTS, receipt=True)
+    _store().write_text(_store().read_text(encoding="utf-8") + '{"seq": 1, "kind": "test-re', encoding="utf-8")
+    assert receipt_store.check(first["receipt"], artifact_digest=artifact) == ("store_unreadable", None)
+    second = rt.run(repo, TESTS, receipt=True)
+    assert second["receipt"] == "" and "move it aside" in second["receipt_error"]
+
+
+@pytest.mark.parametrize(("ignored", "files"), [
+    ("tests/conftest.py", {"tests/conftest.py": "def pytest_runtest_setup(item):\n    pass\n"}),
+    ("pytest.ini", {"pytest.ini": "[pytest]\naddopts = -q\n"}),
+    (".pytest.ini", {".pytest.ini": "[pytest]\n"}),
+    ("setup.cfg", {"setup.cfg": "[tool:pytest]\naddopts = -q\n"}),
+    ("tox.ini", {"tox.ini": "[pytest]\n"}),
+    ("pyproject.toml", {"pyproject.toml": "[tool.pytest.ini_options]\n"}),
+    ("hook.pth", {"hook.pth": "import os\n"}),
+    ("calc_local.py", {"calc_local.py": "X = 1\n"}),    # beside the tracked calc.py
+    ("hidden/", {"hidden/conftest.py": "\n"}),          # inside an ignored folder
+])
+def test_a_run_a_git_ignored_file_could_change_gets_no_receipt(repo, fake_boundary, ignored, files):
+    """I2: git's view leaves ignored files out, so the receipt's digest could not show a file pytest loaded."""
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text(ignored + "\n", encoding="utf-8")
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        _write(repo, rel, text)
+    found = rt.run(repo, TESTS, receipt=True)
+    assert found["receipt"] == "" and _entries() == []
+    assert found["ignored_inputs"] == sorted(files) and sorted(files)[0] in found["receipt_withheld"]
+
+
+@pytest.mark.parametrize("files", [
+    {".venv/lib/conftest.py": "\n"}, {"build/conftest.py": "\n"}, {"dist/x.pth": "\n"},
+    {"calc.egg-info/conftest.py": "\n"}, {"__pycache__/conftest.py": "\n"},
+    {"notes.txt": "\n"}, {"generated/data.py": "X = 1\n"},   # not loadable: no tracked Python file in generated/
+])
+def test_ignored_environments_caches_and_other_files_do_not_withhold_the_receipt(repo, fake_boundary, files):
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("\n".join({rel.split("/")[0] + ("/" if "/" in rel else "")
+                                                              for rel in files}) + "\n", encoding="utf-8")
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        _write(repo, rel, text)
+    found = rt.run(repo, TESTS, receipt=True)
+    assert found["receipt"] and found.get("ignored_inputs", []) == [], found.get("receipt_withheld")
+
+
+def test_an_ignored_file_scan_that_reaches_its_limit_withholds_the_receipt(repo, fake_boundary, monkeypatch):
+    monkeypatch.setattr(rt, "IGNORED_SCAN_LIMIT", 2)
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("logs/\n", encoding="utf-8")
+    (repo / "logs").mkdir()
+    for index in range(5):
+        _write(repo, f"logs/run{index}.log", "x\n")
+    found, complete = rt.ignored_inputs(repo)
+    assert (found, complete) == ([], False)
+    ran = rt.run(repo, TESTS, receipt=True)
+    assert ran["receipt"] == "" and "limit" in ran["receipt_withheld"]
 
 
 def test_the_receipt_store_the_gate_imports_is_never_taken_for_a_test_file():
@@ -229,18 +295,26 @@ def test_a_receipt_id_is_the_sha256_of_the_bodys_canonical_json():
     assert receipt_store.receipt_id({"b": 1, "a": [1, "x"]}) == hashlib.sha256(b'{"a":[1,"x"],"b":1}').hexdigest()
 
 
-def test_the_gate_counts_a_real_receipt_for_the_reviewed_tree_as_g6_observed(repo, fake_boundary):
+def test_the_gate_counts_a_real_receipt_for_the_tree_its_host_bound_it_to_as_g6_observed(repo, fake_boundary):
+    from g6.coding_agent_gate import CodingAgentGateBlock, CodingAgentGateInput
+
     _write(repo, "calc.py", FIXED)
     artifact = digest(rt.snapshot(repo))
     found = rt.run(repo, TESTS, receipt=True)
-    params = {"task": "Fix add()", "answer": "Fixed add(); all tests pass.",
+    params = {"op": "verify_answer", "task": "Fix add()", "answer": "Fixed add(); all tests pass.",
               "task_contract": "add(2, 3) == 5 and the existing tests stay green",
               "evidence": [{"kind": "test", "ref": "pytest -q", "exit_code": 0, "receipt": found["receipt"]}]}
-    seen = get_registry().invoke("coding_agent_gate", "verify_answer", {**params, "artifact_digest": artifact}).unwrap()
+
+    def gate(bound: str) -> dict:
+        return CodingAgentGateBlock(receipt_artifact_digest=bound).infer(CodingAgentGateInput(**params)).unwrap()
+
+    seen = gate(artifact)
     assert (seen["verdict"], seen["evidence_basis"]) == ("pass", "g6-observed"), seen
-    assert seen["receipts"] == [{"receipt": found["receipt"], "receipt_status": "verified"}]
+    assert [r["receipt_status"] for r in seen["receipts"]] == ["matched"]
     _write(repo, "calc.py", FIXED + "\n# changed after the run\n")
-    later = get_registry().invoke("coding_agent_gate", "verify_answer",
-                                  {**params, "artifact_digest": digest(rt.snapshot(repo))}).unwrap()
+    later = gate(digest(rt.snapshot(repo)))
     assert later["evidence_basis"] == "caller-declared" and later["verdict"] == "revise"
     assert later["receipts"] == [{"receipt": found["receipt"], "receipt_status": "artifact_mismatch"}]
+    door = get_registry().invoke("coding_agent_gate", "verify_answer", {k: v for k, v in params.items()
+                                                                         if k != "op"}).unwrap()
+    assert door["receipts"] == [{"receipt": found["receipt"], "receipt_status": "not_honoured_at_door"}]
