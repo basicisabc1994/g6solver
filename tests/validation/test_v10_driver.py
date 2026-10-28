@@ -40,7 +40,7 @@ def e_arm(replies=None):
                                       "calls": {"due": 1, "made": 1}})
 
 
-def study(items, c=None, t=None, e=None, *, cap=300.0, rerun=None, record=None):
+def study(items, c=None, t=None, e=None, *, cap=300.0, rerun=None, record=None, excluded=()):
     c, t, e = c or Arm("C"), t or Arm("T"), e or e_arm()
     order = []
     for arm in (c, t, e):
@@ -51,7 +51,8 @@ def study(items, c=None, t=None, e=None, *, cap=300.0, rerun=None, record=None):
             return _original(patch, **kwargs)
         arm.logged = logged
     got = driver.study(items, arm_c=c.logged, arm_t=t.logged, arm_e=e.logged, spending=driver.Spending(cap),
-                       record=record or driver.Record(), rerun=rerun or (lambda patch, arm, reproduction: {}))
+                       record=record or driver.Record(), rerun=rerun or (lambda patch, arm, reproduction: {}),
+                       excluded=list(excluded))
     return got, order, (c, t, e)
 
 
@@ -61,10 +62,25 @@ def test_arms_c_t_and_e_all_run_on_one_patch_before_the_next_in_draw_order():
     assert [row["patch"] for row in got["patches"]] == ["p0", "p1"]
     with pytest.raises(ValueError, match="draw order"):
         driver.study(list(reversed(patches(ACCEPTED, ACCEPTED))), arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(),
-                     spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {})
+                     spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {}, excluded=[])
     with pytest.raises(ValueError, match="arm A"):
         driver.study([{"id": "p0", "draw_index": 0}], arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(),
-                     spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {})
+                     spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {}, excluded=[])
+
+
+def test_empty_and_non_applying_patches_are_counted_and_recorded_with_their_reason_never_dropped():
+    record = driver.Record()
+    excluded = [{"id": "x1", "draw_index": 1, "reason": "empty"}, {"id": "x3", "draw_index": 3, "reason": "not_applying"}]
+    items = [{"id": "p0", "draw_index": 0, "arm_a": ACCEPTED}, {"id": "p2", "draw_index": 2, "arm_a": ACCEPTED}]
+    got, _, _ = study(items, record=record, excluded=excluded)
+    assert got["excluded"] == {"counts": {"empty": 1, "not_applying": 1}, "patches": excluded}
+    assert [entry["data"] for entry in record.entries if entry["kind"] == "excluded"] == excluded
+    assert record.entries[0]["kind"] == "excluded"                    # recorded before any arm runs
+    for bad, said in (([{"id": "x", "draw_index": 5, "reason": "dull"}], "reason"),
+                      ([{"id": "x", "draw_index": 0, "reason": "empty"}], "draw index"),
+                      ([{"id": "x", "reason": "empty"}], "draw index")):
+        with pytest.raises(ValueError, match=said):
+            study(items, excluded=bad)
 
 
 def test_g6s_arms_get_their_search_configuration_as_data_and_e_the_calls_c_and_t_made():

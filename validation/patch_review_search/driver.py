@@ -2,7 +2,8 @@
 """V10's study driver over patches (docs/validation/patch_review_search/PROTOCOL.md, "For all arms of this study" and
 "Reruns", with the attribution rule under "Arms").
 
-**Order** (``study``). The non-empty patches of V9's draw, in draw order. On each, arms C, T and E run, all three on
+**Order** (``study``). The non-empty patches of V9's draw, in draw order; the empty and non-applying ones are
+counted and recorded with their reason first (``excluded``), never dropped. On each, arms C, T and E run, all three on
 the patch before the next; arm A is V9's arm 3 result on the patch, reused, never rerun. When every patch is done,
 every finding of C, T and E is rerun (``rerun``, before any label is read). Every arm's output, every retry and every
 rerun result goes into an append-only record (``Record``), each entry's SHA-256 chained to the one before it.
@@ -48,6 +49,9 @@ ARM_A = "arm_a_without_disposition"
 #: The reason codes that attribute a difference from arm A to search.
 SEARCH_REASONS = frozenset({"unconfirmed_counterexample", "unconfirmed_failure"})
 TO_SEARCH, BETWEEN_RUNS = "search", "difference between runs"
+#: Why a patch of the draw is left out before the driver: V9's states for it (``trees.apply``; V9's ``run.py`` keeps
+#: each such task's row, with its state in ``patch``).
+EXCLUDED = ("empty", "not_applying")
 
 
 class InfrastructureFailure(Exception):
@@ -124,13 +128,24 @@ def _attribution(arm_a: dict, own: dict, reply: dict) -> str | None:
     return TO_SEARCH if codes & SEARCH_REASONS or reply.get("deadline_in_search") else BETWEEN_RUNS
 
 
-def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, record: Record, rerun) -> dict:
-    """Arms C, T and E on every patch in draw order, then the reruns of every finding (the module docstring)."""
+def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, record: Record, rerun,
+          excluded: list[dict]) -> dict:
+    """Arms C, T and E on every patch in draw order, then the reruns of every finding (the module docstring).
+    ``excluded``: the patches of the draw V9 found empty or not applying (``{id, draw_index, reason}``), each counted
+    and recorded with its reason before any arm runs, never dropped."""
     order = [patch.get("draw_index") for patch in patches]
     if any(not isinstance(index, int) for index in order) or order != sorted(set(order)):
         raise ValueError("the patches must come in draw order, each with its own draw_index")
     if not all(_valid(patch.get("arm_a")) for patch in patches):
         raise ValueError("every patch needs arm A's disposition (V9's arm 3 result on it)")
+    left_out = [item.get("draw_index") for item in excluded]
+    if any(not isinstance(index, int) for index in left_out) or len(set(left_out) | set(order)) != len(
+            left_out) + len(order):
+        raise ValueError("every excluded patch needs a draw index of its own, used by no other patch")
+    if any(item.get("reason") not in EXCLUDED for item in excluded):
+        raise ValueError(f"an excluded patch's reason must be one of V9's: {', '.join(EXCLUDED)}")
+    for item in excluded:
+        record.add("excluded", dict(item))
     rows, retries, failures = [], [], []
 
     def once(patch: dict, arm: str, call) -> tuple[dict | None, int, str]:
@@ -197,6 +212,8 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                          "result": rerun(patch, arm, reproduction)}
                 reruns.append(found)
                 record.add("rerun", found)
-    return {"patches": rows, "reruns": reruns, "retries": retries, "proposer_failures": failures,
+    counts = {reason: sum(item["reason"] == reason for item in excluded) for reason in EXCLUDED}
+    return {"patches": rows, "excluded": {"counts": counts, "patches": [dict(item) for item in excluded]},
+            "reruns": reruns, "retries": retries, "proposer_failures": failures,
             "tallies": {arm: tally([row["arms"][arm]["disposition"] for row in rows]) for arm in ARMS},
             "spending": spending.report(), "record": record.final}
