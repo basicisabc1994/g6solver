@@ -53,13 +53,24 @@ def test_only_a_final_single_exact_accept_line_is_acceptance(prepared, answer, c
     assert found["category"] == category and found["accepted"] is (category == "accept")
 
 
-def test_a_timeout_a_spent_token_cap_an_error_a_refusal_or_no_record_is_never_acceptance(prepared):
+@pytest.mark.parametrize("ended, kind", [("timed_out", "killed_at_time_limit"), ("token_cap", "stopped_at_token_cap")])
+def test_a_session_stopped_at_its_limit_without_a_reply_is_a_tool_error_with_one_an_abstention(prepared, ended, kind):
+    silent = self_review.disposition(prepared, session("", ended=ended))
+    assert (silent["category"], silent["error_kind"], silent["time_or_cap_reached"]) == (
+        "tool_error_or_refusal", kind, True)
+    said = self_review.disposition(prepared, session("VERDICT: ACCEPT", ended=ended))
+    assert (said["category"], said["time_or_cap_reached"]) == ("insufficient_evidence", True)
+
+
+def test_a_late_or_over_cap_reply_an_error_a_refusal_or_no_record_is_never_acceptance(prepared):
     accept = "VERDICT: ACCEPT"
-    assert self_review.disposition(prepared, session(accept, ended="timed_out"))["detail"] == "the session timed out"
     late = self_review.disposition(prepared, session(accept, elapsed_s=1801.0))
     assert late["category"] == "insufficient_evidence" and "time limit" in late["detail"]
     over = self_review.disposition(prepared, session(accept, tokens=200_001))
     assert over["category"] == "insufficient_evidence" and "token cap" in over["detail"]
+    assert late["time_or_cap_reached"] is True and over["time_or_cap_reached"] is True
+    plain = self_review.disposition(prepared, session("No verdict here."))
+    assert plain["category"] == "insufficient_evidence" and plain["time_or_cap_reached"] is False
     assert self_review.disposition(prepared, session(accept, ended="error"))["error_kind"] == "tool_error"
     assert self_review.disposition(prepared, session(accept, ended="refused"))["error_kind"] == "refusal"
     assert self_review.disposition(prepared, None)["error_kind"] == "tool_error"

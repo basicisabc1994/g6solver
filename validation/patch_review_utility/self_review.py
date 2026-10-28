@@ -4,14 +4,18 @@
 ``prepare`` writes what the owner's session needs: the frozen review prompt with the review contract, and the caps
 (the same wall-clock limit as G6's arm, the token cap the entry freezes, no network, the tools the session had while
 writing, edits discarded). The owner resumes the session that wrote the patch, after the patch was captured, gives it
-the prompt, and saves a session record: ``{task_id, patch_sha256, answer, ended ("completed", "timed_out", "error"
-or "refused"), elapsed_s, tokens, model_calls}``. Edits made while reviewing never reach any arm: every arm reviews
-the captured patch, and the record must name its digest.
+the prompt, and saves a session record: ``{task_id, patch_sha256, answer, ended ("completed"; "timed_out", killed at
+the wall-clock limit; "token_cap", stopped at the token cap; "error"; or "refused"), elapsed_s, tokens,
+model_calls}``. Edits made while reviewing never reach any arm: every arm reviews the captured patch, and the record
+must name its digest.
 
-``disposition`` reads that record. Acceptance is an answer whose last non-empty line is exactly ``VERDICT: ACCEPT``
-and which has no other ``VERDICT:`` line. A last line of exactly ``VERDICT: REJECT``, alone, is a defect found. Any
-other ending, a hedged or doubled verdict, a timeout, a run past the time limit or the token cap is an abstention;
-an error, a refusal, a missing record or a record of another patch is a tool error or refusal. None is acceptance.
+``disposition`` reads that record. Acceptance is a completed session within both caps whose answer's last non-empty
+line is exactly ``VERDICT: ACCEPT``, with no other ``VERDICT:`` line. A last line of exactly ``VERDICT: REJECT``,
+alone, is a defect found. Any other ending, or a hedged or doubled verdict, is an abstention. A session killed at its
+time limit or stopped at its token cap with no answer is a tool error; with an answer, the answer is the arm's own
+reply, cut short, and an abstention; a completed answer past the time limit or over the token cap is an abstention
+too. All of these are marked ``time_or_cap_reached``. An error, a refusal, a missing record or a record of another
+patch is a tool error or refusal. None is acceptance.
 """
 from __future__ import annotations
 
@@ -36,6 +40,9 @@ if the patch meets every requirement and is ready to merge, or otherwise
 VERDICT: REJECT
 """
 _VERDICT = re.compile(r"^\s*\W*\s*VERDICT\b", re.IGNORECASE)
+#: How a session record says the session was stopped at a limit: its error kind when no reply came, and why.
+STOPPED = {"timed_out": ("killed_at_time_limit", "the session was killed at its time limit"),
+           "token_cap": ("stopped_at_token_cap", "the session was stopped at its token cap")}
 
 
 def _sha256(text: str) -> str:
@@ -65,22 +72,24 @@ def disposition(prepared: dict, record: dict | None) -> dict:
     cost = {"seconds": record.get("elapsed_s", 0.0), "model_calls": record.get("model_calls", 0),
             "tokens": record.get("tokens", 0)}
 
-    def found(category: str, detail: str = "", kind: str = "") -> dict:
-        return {**make(category, detail, error_kind=kind), "cost": cost}
+    def found(category: str, detail: str = "", kind: str = "", *, limit: bool = False) -> dict:
+        return {**make(category, detail, error_kind=kind, time_or_cap=limit), "cost": cost}
 
-    caps = prepared["caps"]
+    caps, ended = prepared["caps"], record.get("ended")
     if record.get("patch_sha256") != prepared["patch_sha256"]:
         return found(ERROR, "the session record is not of the captured patch", "tool_error")
-    if record.get("ended") == "refused":
+    if ended == "refused":
         return found(ERROR, "the agent refused", "refusal")
-    if record.get("ended") not in ("completed", "timed_out"):
-        return found(ERROR, f"the session ended with {record.get('ended')!r}", "tool_error")
-    if record.get("ended") == "timed_out":
-        return found(ABSTAIN, "the session timed out")
+    if ended in STOPPED:
+        if not str(record.get("answer") or "").strip():
+            return found(ERROR, f"{STOPPED[ended][1]}, with no reply", STOPPED[ended][0], limit=True)
+        return found(ABSTAIN, f"{STOPPED[ended][1]}; its reply was cut short", limit=True)
+    if ended != "completed":
+        return found(ERROR, f"the session ended with {ended!r}", "tool_error")
     if cost["seconds"] > caps["time_limit_s"]:
-        return found(ABSTAIN, "the review ran past its time limit")
+        return found(ABSTAIN, "the review ran past its time limit", limit=True)
     if cost["tokens"] > caps["token_cap"]:
-        return found(ABSTAIN, "the review spent more than its token cap")
+        return found(ABSTAIN, "the review spent more than its token cap", limit=True)
     said = verdict(record.get("answer", ""))
     if said == "accept":
         return found(ACCEPT)

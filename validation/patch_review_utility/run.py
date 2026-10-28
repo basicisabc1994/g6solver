@@ -48,6 +48,7 @@ from patch_review_utility import arms, contract, executor, gaming, labels, self_
 LEVELS = ("development", "feasibility", "confirmatory")
 STUDY_LEVELS = ("feasibility", "confirmatory")
 MAX_ARM_SECONDS = 1800
+CONTAINER_PROGRAMS = frozenset({"docker", "podman"})
 PROTOCOL = VALIDATION.parent / "docs" / "validation" / "patch_review_utility" / "PROTOCOL.md"
 TRIAL = VALIDATION / "patch_review" / "run.py"
 INTERPRETATION = {
@@ -90,6 +91,10 @@ def load_manifest(path: str | Path) -> dict:
         described = manifest["executor"]
         if described.get("confined") is not True or described.get("network") is not False:
             raise Refused("a study level runs arm 1 and the labels only in a confined executor with the network closed")
+        command = [str(word) for word in described.get("command", [])]
+        if command and Path(command[0]).stem.lower() in CONTAINER_PROGRAMS and "{container}" not in command:
+            raise Refused("a container command names each run's container ({container}), so a run past its timeout "
+                          "can be stopped by name")
     elif not isinstance(manifest.get("seed"), int):
         raise Refused("a development manifest gives its own integer seed")
     seconds = manifest["limits"]["arm_seconds"]
@@ -127,7 +132,8 @@ def _folder(index: int, task_id: str) -> str:
 
 
 def _digests(manifest: dict, extra: dict[str, bytes]) -> dict[str, str]:
-    found = {f"scripts/{p.name}": _sha256(p.read_bytes()) for p in sorted(HERE.glob("*.py"))}
+    found = {f"scripts/{p.name}": _sha256(p.read_bytes())
+             for p in sorted([*HERE.glob("*.py"), *HERE.glob("*.md")])}
     for key, path in (("validation/patch_review/run.py", TRIAL),
                       ("docs/validation/patch_review_utility/PROTOCOL.md", PROTOCOL)):
         found[key] = _sha256(path.read_bytes()) if path.is_file() else "missing"
@@ -265,9 +271,10 @@ def _review_task(manifest, task, index, work, calibration, run_with, markers, fi
         findings += gaming.scan_trace(traced.get("trace") or {}, source=f"{arm}:{task_id}", vault_markers=markers)
     row["arms"] = {"tests": ci["disposition"], "self_review": own, "g6": reviewed["disposition"],
                    "direct_checks": direct["disposition"]}
-    row["details"] = {"tests": {key: ci[key] for key in ("base_passing", "base_flaky", "regressions",
-                                                         "added_not_passing", "unrunnable")},
-                      "g6": {"row": reviewed.get("row"), "a5": reviewed.get("a5")},
+    row["details"] = {"tests": {key: ci.get(key) for key in ("base_passing", "base_flaky", "regressions",
+                                                             "added_not_passing", "unrunnable", "killed")},
+                      "g6": {"row": reviewed.get("row"), "a5": reviewed.get("a5"),
+                             "model_calls": reviewed.get("model_calls")},
                       "direct_checks": {"checks": direct.get("checks")}}
     return row
 
@@ -307,14 +314,17 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
             trees.apply(tree, _at(manifest, task["patch"]).read_text(encoding="utf-8"))
             labelled = labels.label(label_contract, found, tree, executor=run_with)
             row["label"], row["defect_categories"] = labelled["label"], labelled["defect_categories"]
-            row["label_detail"] = {key: labelled[key] for key in ("failed", "by_origin", "disagreement",
-                                                                   "executor_errors")}
+            row["label_detail"] = {key: labelled.get(key) for key in ("failed", "by_origin", "disagreement",
+                                                                       "infrastructure_errors", "retried",
+                                                                       "unlabelled_because")}
     analysis = stats.analyse(rows, seed=manifest["seed"])
     counts = analysis["counts"]
     result = {
         "study": "V9", "level": manifest["level"], "g6_commit": manifest.get("g6_commit"), "g6_checkout": checkout,
         "seed": manifest["seed"], "limits": manifest["limits"], "executor": run_with.describe(),
         "model_calls_by_g6": sum(((r["arms"].get("g6") or {}).get("cost") or {}).get("model_calls", 0) for r in rows),
+        "model_calls_by_g6_source": sorted({((r["details"].get("g6") or {}).get("model_calls") or {}).get("source", "")
+                                            for r in rows if r["details"].get("g6")} - {""}),
         "vault": {"id": vault.vault_id, "digest": vault.digest, "blinding": labels.blinding_status(vault)},
         "input_sha256": _digests(manifest, {"calibration": calibration_bytes}),
         "tasks": rows, "a5": a5,

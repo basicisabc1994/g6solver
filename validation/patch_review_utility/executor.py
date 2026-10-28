@@ -9,12 +9,17 @@ and reports each test id pytest reported as ``passed``, ``failed`` (a failure or
 as the benchmark's own procedure runs test files, so one test id that no longer exists does not stop the others; a
 test asked for that pytest never reported is ``missing`` (``outcome``).
 
-The command is a list of words with three placeholders: ``{python}`` (this interpreter), ``{tree}`` (the copy) and
-``{support}`` (the folder holding the plugin, ``v9_outcomes``, and its report, ``outcomes.json``); a word that is
-exactly ``{tests}`` becomes those files. The default runs this interpreter's pytest in the copy, which is for
-development fixtures only. A study level runs the command its entry freezes, inside a confined environment with no
-network, for example a ``docker run --rm --network none`` prefix that mounts ``{tree}`` and ``{support}`` and sets
-``PYTHONPATH`` and ``V9_OUTCOMES`` inside the container; ``confined`` records which.
+The command is a list of words with four placeholders: ``{python}`` (this interpreter), ``{tree}`` (the copy),
+``{support}`` (the folder holding the plugin, ``v9_outcomes``, and its report, ``outcomes.json``) and ``{container}``
+(a name new to each run); a word that is exactly ``{tests}`` becomes those files. The default runs this interpreter's
+pytest in the copy, which is for development fixtures only. A study level runs the command its entry freezes, inside
+a confined environment with no network, for example ``docker run --rm --name {container} --network none ...`` that
+mounts ``{tree}`` and ``{support}`` and sets ``PYTHONPATH`` and ``V9_OUTCOMES`` inside the container; ``confined``
+records which.
+
+**A run past its timeout.** The command is killed. Killing a container client does not stop its container, so when the
+command names ``{container}``, the container itself is stopped by that name: the words before ``run`` (the container
+program) with ``kill <name>`` and then ``rm -f <name>``; ``container_stopped`` says whether the removal succeeded.
 """
 from __future__ import annotations
 
@@ -25,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 PLUGIN = '''\
@@ -50,6 +56,8 @@ def pytest_sessionfinish(session, exitstatus):
 DEFAULT_COMMAND = ("{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "v9_outcomes", "{tests}")
 #: pytest's exit codes for a run that did not get to run its tests: interrupted, internal error, usage error.
 NOT_RUN_EXITS = frozenset({2, 3, 4})
+#: How long stopping a container by name may take.
+STOP_TIMEOUT_S = 120
 _KEEP = ("PATH", "SYSTEMROOT", "WINDIR", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL")
 
 
@@ -96,7 +104,8 @@ class Executor:
             targets = [rel for rel in dict.fromkeys(test.partition("::")[0] for test in tests) if (copy / rel).exists()]
             if not targets:
                 return _result(started, error="none of the tests named is in the tree")
-            words = {"{python}": sys.executable, "{tree}": str(copy), "{support}": str(support)}
+            name = f"v9-{uuid.uuid4().hex[:16]}"
+            words = {"{python}": sys.executable, "{tree}": str(copy), "{support}": str(support), "{container}": name}
             cmd: list[str] = []
             for word in self.command:
                 if word == "{tests}":
@@ -110,7 +119,8 @@ class Executor:
             try:
                 done = subprocess.run(cmd, cwd=copy, env=env, capture_output=True, timeout=timeout_s)
             except subprocess.TimeoutExpired:
-                return _result(started, timed_out=True)
+                stopped = _stop_container(cmd, name) if "{container}" in self.command else None
+                return {**_result(started, timed_out=True), "container_stopped": stopped}
             except OSError as exc:
                 return _result(started, error=f"the command could not start ({type(exc).__name__})")
             report = support / "outcomes.json"
@@ -120,6 +130,17 @@ class Executor:
             found = json.loads(report.read_text(encoding="utf-8"))
             return _result(started, exit_code=found["exit"], collection_errors=found["collection_errors"],
                            outcomes={node: _outcome(phases) for node, phases in found["tests"].items()})
+
+
+def _stop_container(cmd: list[str], name: str) -> bool:
+    """Kill and remove the container ``name`` with the program words before ``run``; whether the removal succeeded."""
+    program = cmd[:cmd.index("run")] if "run" in cmd else cmd[:1]
+    try:
+        subprocess.run([*program, "kill", name], capture_output=True, timeout=STOP_TIMEOUT_S)
+        return subprocess.run([*program, "rm", "-f", name], capture_output=True,
+                              timeout=STOP_TIMEOUT_S).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _overlay(copy: Path, overlay: dict) -> str:

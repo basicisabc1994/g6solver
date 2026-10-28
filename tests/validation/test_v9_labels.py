@@ -8,6 +8,7 @@ from __future__ import annotations
 import itertools
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,31 @@ def test_the_executor_applies_a_patch_overlay_records_collection_errors_and_stop
     assert refused["error"].startswith("the overlay did not apply")
 
 
+FAKE_DOCKER = """\
+import sys, time
+with open(sys.argv[1], "a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[2:]) + "\\n")
+if sys.argv[2] == "run":
+    time.sleep(60)
+"""
+
+
+def test_a_container_run_past_its_timeout_is_killed_by_its_own_unique_name(source, tmp_path):
+    root, base = source
+    tree = trees.checkout(root, base, tmp_path / "t")
+    fake, log = tmp_path / "fake_docker.py", tmp_path / "docker.log"
+    fake.write_text(FAKE_DOCKER, encoding="utf-8")
+    prefix = [sys.executable, str(fake), str(log)]
+    command = [*prefix, "run", "--rm", "--name", "{container}", "--network", "none", "image", "pytest", "{tests}"]
+    run = executor.Executor(command, confined=True, network=False).run(tree, ["tests"], timeout_s=2)
+    assert run["timed_out"] is True and run["container_stopped"] is True
+    started, killed, removed = log.read_text(encoding="utf-8").splitlines()
+    name = started.split("--name ")[1].split()[0]
+    assert name.startswith("v9-") and killed == f"kill {name}" and removed == f"rm -f {name}"
+    again = executor.Executor(command, confined=True, network=False).run(tree, ["tests"], timeout_s=2)
+    assert log.read_text(encoding="utf-8").count(name) == 3 and again["timed_out"]   # every run its own name
+
+
 # --- the vault and the label contract ------------------------------------------------------------------------------------
 
 def write_contract(folder: Path, base_root: Path, base: str, *, specification=True) -> Path:
@@ -168,6 +194,9 @@ class Scripted:
         key = (Path(tree).name, "spec" if "test_spec.py" in (overlay or {}).get("files", {}) else "hidden")
         self.calls.append((key, tuple(tests), timeout_s))
         step = self.script[key].pop(0)
+        if step == "error":
+            return {"outcomes": {}, "collection_errors": [], "exit": None, "seconds": 0.1, "timed_out": False,
+                    "error": "the command could not start (OSError)"}
         if step == "timeout":
             return {"outcomes": {}, "collection_errors": [], "exit": None, "seconds": timeout_s, "timed_out": True,
                     "error": ""}
@@ -232,6 +261,32 @@ def test_a_check_fails_on_two_of_three_runs_or_a_timeout_and_a_patch_is_correct_
         ("patched", "hidden"): [ALL_PASS, "timeout", ALL_PASS], ("patched", "spec"): [{NEG: "passed"}] * 3}))
     assert timed["label"] == "defective" and timed["failed"] == [ADD, ZERO]
     assert timed["defect_categories"] == ["fail_to_pass", "pass_to_pass"]
+
+
+def test_an_infrastructure_error_is_retried_once_and_a_persistent_one_leaves_the_patch_unlabelled(sealed):
+    vault, ledger, path = sealed
+    contract = labels.load(vault, path, ledger=ledger)
+    once = Scripted({("patched", "hidden"): ["error", ALL_PASS, ALL_PASS, ALL_PASS],
+                     ("patched", "spec"): [{NEG: "passed"}] * 3})
+    got = labels.label(contract, calibrated(), Path("patched"), executor=once)
+    assert got["label"] == "correct" and got["retried"] == 1 and got["infrastructure_errors"] == []
+    assert len(once.calls) == 7
+    twice = Scripted({("patched", "hidden"): [ALL_PASS, "error", "error", ALL_PASS],
+                      ("patched", "spec"): [{NEG: "failed"}] * 3})
+    got = labels.label(contract, calibrated(), Path("patched"), executor=twice)
+    assert got["label"] is None and got["retried"] == 1 and got["defect_categories"] == []
+    assert got["infrastructure_errors"] == ["hidden_tests: the command could not start (OSError)"]
+    assert "infrastructure" in got["unlabelled_because"]
+
+
+def test_calibration_retries_an_infrastructure_error_once_too(sealed):
+    vault, ledger, path = sealed
+    contract = labels.load(vault, path, ledger=ledger)
+    got = labels.calibrate(contract, reference_tree=Path("reference"), base_tree=Path("base"), executor=Scripted({
+        ("reference", "hidden"): ["error", ALL_PASS, ALL_PASS, ALL_PASS], ("reference", "spec"): [{NEG: "passed"}] * 3,
+        ("base", "hidden"): [{ADD: "failed", ZERO: "passed"}] * 3, ("base", "spec"): [{NEG: "failed"}] * 3}),
+        timeout_s=600)
+    assert got["passed"] is True and got["groups"][0]["dropped"] == []
 
 
 def test_a_disagreement_between_the_hidden_tests_and_the_specification_is_recorded(sealed):

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from g6.core import component_process
 from g6.harness import patch_review
 from g6.workforce import repo_tests
 from patch_review_utility import arms, contract, executor
@@ -149,7 +150,42 @@ def test_a_refusal_an_exception_an_incomplete_report_or_a_late_review_is_never_a
     def slow(*args, **kwargs):
         time.sleep(1.2)
         return patch_review.review_patch(*args, **kwargs)
-    assert g6(repo, checks, review=slow, timeout_s=1)["disposition"]["category"] == "insufficient_evidence"
+    late = g6(repo, checks, review=slow, timeout_s=1)["disposition"]      # a reply, after the limit: an abstention
+    assert (late["category"], late["time_or_cap_reached"]) == ("insufficient_evidence", True)
+
+
+def test_a_review_stopped_at_its_wall_clock_limit_without_a_reply_is_a_tool_error(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+
+    def hangs(*args, **kwargs):
+        time.sleep(1.2)
+        component_process.checkpoint()          # where G6's own runs check the enclosing allowance
+        raise AssertionError("the allowance should have ended the review")
+    found = g6(repo, checks, review=hangs, timeout_s=1, kill_after_s=1)["disposition"]
+    assert (found["category"], found["error_kind"], found["time_or_cap_reached"]) == (
+        "tool_error_or_refusal", "killed_at_time_limit", True)
+
+
+def test_a_reply_that_says_g6_ran_out_of_time_is_tallied_as_time_reached(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    Runs(default=result(verdict="timed_out")).into(monkeypatch)
+    found = g6(repo, checks)["disposition"]
+    assert found["accepted"] is False and found["time_or_cap_reached"] is True and found["error_kind"] == ""
+
+
+def test_g6s_model_calls_come_from_its_reply_when_it_reports_them(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}).into(monkeypatch)
+    assert g6(repo, checks)["model_calls"] == {"count": 0, "source": arms.MODEL_CALLS_NOT_REPORTED}
+
+    def reporting(*args, **kwargs):
+        reply = patch_review.review_patch(*args, **kwargs)
+        reply["assessment"]["completion"] = {"activities": [{"kind": "proposer", "model_calls": 2},
+                                                            {"kind": "replay"}, {"kind": "judge", "model_calls": 1}]}
+        return reply
+    got = g6(repo, checks, review=reporting)
+    assert got["model_calls"] == {"count": 3, "source": "assessment.completion.activities"}
+    assert got["disposition"]["cost"]["model_calls"] == 3
 
 
 # --- arm 4, the same checks without G6 ------------------------------------------------------------------------------------
@@ -204,6 +240,22 @@ def test_an_unconfined_or_refused_run_is_a_refusal_never_a_result(repo):
     assert direct(repo, checks, Refusing())["disposition"]["error_kind"] == "refusal"
 
 
+def test_direct_checks_stopped_at_their_limit_are_a_tool_error_and_a_timed_out_run_is_time_reached(repo):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+
+    class Hanging(Runs):
+        def run(self, repo, tests, *, timeout_s, receipt=False):
+            time.sleep(1.2)
+            component_process.checkpoint()
+            raise AssertionError("the allowance should have ended the run")
+    hung = Hanging()
+    found = arms.direct_checks(repo, CONTRACT, checks, timeout_s=1, kill_after_s=1, run=hung.run,
+                               run_before=hung.run_before)["disposition"]
+    assert (found["error_kind"], found["time_or_cap_reached"]) == ("killed_at_time_limit", True)
+    slow = direct(repo, checks, Runs(default=result(verdict="timed_out")))["disposition"]
+    assert slow["accepted"] is False and slow["time_or_cap_reached"] is True and slow["error_kind"] == ""
+
+
 # --- what arm 4 isolates: the parity of arms 3 and 4, and their two designed differences -----------------------------------
 
 @pytest.mark.parametrize("files, in_place, on_base, g6_accepts, direct_accepts", [
@@ -239,6 +291,9 @@ class Scripted:
     def run(self, tree, tests, *, timeout_s, overlay=None):
         self.calls.append((Path(tree).name, tuple(tests), timeout_s))
         step = self.script[Path(tree).name].pop(0)
+        if step == "timeout":
+            return {"outcomes": {}, "collection_errors": [], "exit": None, "seconds": timeout_s, "timed_out": True,
+                    "error": ""}
         broken = step == "broken"
         return {"outcomes": {} if broken else dict(step), "collection_errors": ["x.py"] if broken else [],
                 "exit": 2 if broken else 0, "seconds": 1.0, "timed_out": False, "error": ""}
@@ -277,6 +332,18 @@ def test_ci_rejects_a_regression_an_added_test_that_does_not_pass_or_a_suite_tha
 def test_a_base_suite_that_cannot_run_is_a_tool_error():
     got, _ = run_ci([{OLD: "passed"}, "broken", {OLD: "passed"}], [{OLD: "passed", NEW: "passed"}] * 3)
     assert got["disposition"]["error_kind"] == "tool_error"
+    assert got["disposition"]["time_or_cap_reached"] is False
+
+
+@pytest.mark.parametrize("base, patched", [
+    ([{OLD: "passed"}, "timeout", {OLD: "passed"}], [{OLD: "passed", NEW: "passed"}] * 3),
+    ([{OLD: "passed"}] * 3, ["timeout", "timeout", {OLD: "passed", NEW: "passed"}]),
+])
+def test_a_suite_run_killed_at_its_limit_is_a_tool_error_tallied_as_time_reached(base, patched):
+    got, _ = run_ci(base, patched)
+    found = got["disposition"]
+    assert (found["category"], found["error_kind"], found["time_or_cap_reached"]) == (
+        "tool_error_or_refusal", "killed_at_time_limit", True)
 
 
 def test_ci_end_to_end_with_the_real_executor(repo, tmp_path):

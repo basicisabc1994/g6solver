@@ -129,14 +129,15 @@ def test_a_development_study_runs_from_calibration_to_one_results_file(layout, m
     assert rows["dev-defective"]["arms"]["g6"]["accepted"] is False
     assert rows["dev-correct"]["checks_cited"] == ["tests/test_more.py"]
     analysis = results["experiment_1"]
-    assert analysis["counts"] == {"tasks": 3, "non_empty": 2, "empty": 1, "not_applying": 0, "correct": 1,
-                                  "defective": 1}
+    assert analysis["counts"] == {"tasks": 3, "non_empty": 2, "empty": 1, "not_applying": 0, "unlabelled": 0,
+                                  "correct": 1, "defective": 1}
     assert analysis["rates"]["self_review"]["false_acceptance"]["rate"] == 1.0
     assert results["feasibility"]["result"] == "feasible"
     assert results["verdict"]["verdict"] == "inconclusive" and results["level"] == "development"
     assert results["gaming"]["contaminated"] is False and results["gaming"]["vault_changes"] == []
     assert results["a5"] == {"checked": 2, "incomplete": []}
-    assert results["model_calls_by_g6"] == 0
+    assert results["model_calls_by_g6"] == 0 and results["model_calls_by_g6_source"] == []   # the stand-ins say none
+    assert "scripts/INTERPRETATIONS.md" in results["input_sha256"]
     digests = results["input_sha256"]
     assert {"manifest", "calibration", "scripts/run.py", "scripts/arms.py", "validation/patch_review/run.py",
             "patches/dev-correct.diff", "sessions/dev-correct.json"} <= set(digests)
@@ -153,6 +154,11 @@ def test_a_study_level_refuses_an_unconfined_executor_or_an_arm_input_inside_the
     write(manifest_path, json.dumps({**feasibility, "executor": {**manifest["executor"], "confined": True,
                                                                    "network": False}}))
     assert study.load_manifest(manifest_path)["seed"] == study.stats.seed("feasibility", commit)
+    unnamed = {**feasibility, "executor": {"command": ["docker", "run", "--rm", "image", "{tests}"], "confined": True,
+                                           "network": False}}
+    write(manifest_path, json.dumps(unnamed))
+    with pytest.raises(study.Refused, match="container"):
+        study.load_manifest(manifest_path)
     leaky = {**manifest, "tasks": [{**manifest["tasks"][0], "patch": "vault/dev-correct/reference.diff"}]}
     write(manifest_path, json.dumps(leaky))
     with pytest.raises(study.Refused, match="vault"):
@@ -186,7 +192,9 @@ def test_confined_arms_on_the_development_manifest(bwrap_backend, layout):
     study.main(["calibrate", "--manifest", str(manifest_path), "--output", str(calibration)])
     study.main(["run", "--manifest", str(manifest_path), "--calibration", str(calibration),
                 "--output", str(root / "results.json")])
-    rows = {r["task_id"]: r for r in json.loads((root / "results.json").read_text(encoding="utf-8"))["tasks"]}
+    results = json.loads((root / "results.json").read_text(encoding="utf-8"))
+    rows = {r["task_id"]: r for r in results["tasks"]}
+    assert results["model_calls_by_g6_source"] == [arms.MODEL_CALLS_NOT_REPORTED]
     assert rows["dev-correct"]["arms"]["g6"]["accepted"] is True
     assert rows["dev-correct"]["arms"]["direct_checks"]["accepted"] is True
     assert rows["dev-defective"]["arms"]["g6"]["category"] == "defect_found"

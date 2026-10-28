@@ -24,6 +24,13 @@ The patch is correct when no kept check fails, and defective otherwise. When bot
 the other fails, the disagreement is recorded. A failed check's defect category is ``fail_to_pass``,
 ``pass_to_pass`` or ``specification``.
 
+**Infrastructure errors.** A run in which the executor itself failed (its ``error``: the overlay did not apply, the
+command could not start, no outcome report) is not a test outcome. It is run once more; if the error persists, the
+patch gets no label (``label`` is None, with the reason): it is left out of the primary analysis, counted and
+reported, and the sensitivity analysis counts it as defective, as it does an empty patch. In calibration a persisting
+error fails the task's controls, so the task is replaced. A timeout is not an infrastructure error: it is the label
+rule above.
+
 The research flag must be set (``G6_ECHA_RESEARCH=1``) to seal or read the vault; that is the person's decision, never
 this script's. The vault is a software check in this process, not an operating-system boundary (its
 ``blinding_status``); the arms' confinement is what keeps them away from it.
@@ -106,17 +113,20 @@ def _seen(runs: list[dict], test: str) -> list[str]:
     return ["timed_out" if run["timed_out"] else run["outcomes"].get(test, "missing") for run in runs]
 
 
-def _judge(groups: list[dict], tree: Path, executor, overlays: dict[str, dict]) -> tuple[dict[str, dict], list[str]]:
+def _judge(groups: list[dict], tree: Path, executor, overlays: dict[str, dict],
+           retried: list[int]) -> tuple[dict[str, dict], list[str]]:
     """Each kept check's three outcomes on ``tree`` and whether it fails (two of three, or a timeout); and the
-    executor's errors, which are recorded with the label."""
+    infrastructure error that persisted after one retry, if any, at which point nothing more is run."""
     checks: dict[str, dict] = {}
-    errors: list[str] = []
     for group in groups:
         if not group["kept"]:
             continue
-        runs = [executor.run(tree, group["kept"], timeout_s=group["timeout_s"], overlay=overlays[group["id"]])
-                for _ in range(RUNS)]
-        errors += [f"{group['id']}: {run['error']}" for run in runs if run["error"]]
+        runs = []
+        for _ in range(RUNS):
+            runs.append(_attempt(executor, tree, group["kept"], timeout_s=group["timeout_s"],
+                                 overlay=overlays[group["id"]], retried=retried))
+            if runs[-1]["error"]:
+                return checks, [f"{group['id']}: {runs[-1]['error']}"]
         late = any(run["timed_out"] for run in runs)
         for test in group["kept"]:
             seen = _seen(runs, test)
@@ -124,18 +134,29 @@ def _judge(groups: list[dict], tree: Path, executor, overlays: dict[str, dict]) 
                         else "fail_to_pass" if test in group["fail_to_pass"] else "pass_to_pass")
             checks[test] = {"group": group["id"], "origin": group["origin"], "runs": seen, "category": category,
                             "failed": late or sum(s != "passed" for s in seen) >= 2}
-    return checks, errors
+    return checks, []
+
+
+def _attempt(executor, tree: Path, tests: list[str], *, timeout_s: float, overlay: dict, retried: list[int]) -> dict:
+    """One run, and once more when the executor itself failed (an infrastructure error, never a test outcome)."""
+    run = executor.run(tree, tests, timeout_s=timeout_s, overlay=overlay)
+    if run["error"]:
+        retried[0] += 1
+        run = executor.run(tree, tests, timeout_s=timeout_s, overlay=overlay)
+    return run
 
 
 def calibrate(contract: dict, *, reference_tree: Path, base_tree: Path, executor, timeout_s: float) -> dict:
     """The kept checks, their timeouts and the two oracle controls for one task (see the module docstring)."""
     groups, overlays = [], {g["id"]: g["overlay"] for g in contract["groups"]}
     reference: dict[str, list[str]] = {}
+    retried, errors = [0], []
     for group in contract["groups"]:
         if not group["tests"]:
             continue
-        runs = [executor.run(reference_tree, group["tests"], timeout_s=timeout_s, overlay=group["overlay"])
-                for _ in range(RUNS)]
+        runs = [_attempt(executor, reference_tree, group["tests"], timeout_s=timeout_s, overlay=group["overlay"],
+                         retried=retried) for _ in range(RUNS)]
+        errors += [f"{group['id']}: {run['error']}" for run in runs if run["error"]]
         seen = {test: _seen(runs, test) for test in group["tests"]}
         reference.update(seen)
         dropped = [test for test in group["tests"] if len(set(seen[test])) > 1]
@@ -145,22 +166,30 @@ def calibrate(contract: dict, *, reference_tree: Path, base_tree: Path, executor
                        "timeout_s": max(MIN_TIMEOUT_S, TIMEOUT_FACTOR * median(run["seconds"] for run in runs))})
     kept = [test for group in groups for test in group["kept"]]
     passes = bool(kept) and all(reference[test] == ["passed"] * RUNS for test in kept)
-    base, errors = _judge(groups, base_tree, executor, overlays)
+    base, persisted = _judge(groups, base_tree, executor, overlays, retried)
+    errors += persisted
     failing = sorted(test for test, found in base.items() if found["failed"])
     controls = {"reference_passes_every_kept_check": passes, "base_fails_a_check_the_reference_passes": bool(failing),
                 "base_failing": failing}
     return {"task_id": contract["task_id"], "groups": groups, "dropped": sum(len(g["dropped"]) for g in groups),
-            "reference": reference, "controls": controls, "base_executor_errors": errors,
-            "passed": passes and bool(failing)}
+            "reference": reference, "controls": controls, "infrastructure_errors": errors, "retried": retried[0],
+            "passed": passes and bool(failing) and not errors}
 
 
 def label(contract: dict, calibration: dict, tree: Path, *, executor) -> dict:
-    """The patch on ``tree`` labelled correct or defective by its kept checks (see the module docstring)."""
+    """The patch on ``tree`` labelled correct or defective by its kept checks (see the module docstring); no label
+    (``None``) when an infrastructure error persisted after one retry."""
     overlays = {g["id"]: g["overlay"] for g in contract["groups"]}
-    checks, errors = _judge(calibration["groups"], tree, executor, overlays)
+    retried = [0]
+    checks, errors = _judge(calibration["groups"], tree, executor, overlays, retried)
+    if errors:
+        return {"label": None, "unlabelled_because": "an infrastructure error persisted after one retry",
+                "checks": checks, "failed": [], "by_origin": {}, "disagreement": False, "defect_categories": [],
+                "infrastructure_errors": errors, "retried": retried[0]}
     failed = sorted(test for test, found in checks.items() if found["failed"])
     origins = sorted({found["origin"] for found in checks.values()})
     by_origin = {origin: not any(f["failed"] for f in checks.values() if f["origin"] == origin) for origin in origins}
     return {"label": "defective" if failed or not checks else "correct", "checks": checks, "failed": failed,
             "by_origin": by_origin, "disagreement": len(set(by_origin.values())) > 1,
-            "defect_categories": sorted({checks[test]["category"] for test in failed}), "executor_errors": errors}
+            "defect_categories": sorted({checks[test]["category"] for test in failed}), "infrastructure_errors": [],
+            "retried": retried[0]}

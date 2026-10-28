@@ -16,7 +16,12 @@ G6's false acceptance rate minus arm 4's (5 points), H3 = arm 1's correct accept
 is met when the upper limit is at most its margin, not met when the lower limit is above it, and inconclusive
 otherwise; the comparisons are exact, with no tolerance. Experiment 1 is met only when all three are met, not met when
 any is not met, and inconclusive otherwise. McNemar's exact test on the discordant pairs is reported for each as a
-secondary result, and the same three differences with arm 2 in G6's place are reported with no verdict.
+secondary result. Arm 2 is compared with G6 with no verdict in two ways: the three differences with arm 2 in G6's place,
+and G6 against arm 2 directly (``DIRECT_SELF``).
+
+Patches left out of the primary analysis (empty, not applying, or with no label because an infrastructure error
+persisted) are counted, and the sensitivity analysis counts each as defective: an empty or non-applying patch as
+accepted by no arm, since none reviewed it; an unlabelled patch with the dispositions the arms gave it.
 
 **Verdicts** ("Verdicts"): the first that applies, with the label audit's one-sided 95% Clopper-Pearson upper bound.
 
@@ -41,6 +46,13 @@ HYPOTHESES = (
     ("H1", "false acceptance against tests and continuous integration", "defective", "g6", "tests", 0.05),
     ("H2", "false acceptance against the same checks without G6", "defective", "g6", "direct_checks", 0.05),
     ("H3", "correct acceptance against tests and continuous integration", "correct", "tests", "g6", 0.15),
+)
+#: G6 compared with the agent's own review directly, with no verdict: H1's form (false acceptance, G6 minus arm 2) and
+#: H3's form (correct acceptance, arm 2 minus G6). H2's form would compare G6 with arm 2 on false acceptance again,
+#: the same difference as the first, so it is not computed.
+DIRECT_SELF = (
+    ("H1", "false acceptance: G6 minus the agent's own review", "defective", "g6", "self_review"),
+    ("H3", "correct acceptance: the agent's own review minus G6", "correct", "self_review", "g6"),
 )
 LABEL_ERROR_LIMIT = 0.15
 TOOL_ERROR_LIMIT = 0.10
@@ -197,6 +209,7 @@ def analyse(rows: list[dict], *, seed: int) -> dict:
     secondary = [difference(name, text + " (the agent's own review in G6's place)", classes[label],
                             "self_review" if x == "g6" else x, "self_review" if y == "g6" else y, seed=boot_seed)
                  for name, text, label, x, y, _ in HYPOTHESES]
+    direct = [difference(name, text, classes[label], x, y, seed=boot_seed) for name, text, label, x, y in DIRECT_SELF]
     repositories = sorted({r["repository"] for r in non_empty})
     per_repository = {
         repo: {arm: {"false_acceptance": _rate([r for r in classes["defective"] if r["repository"] == repo], arm),
@@ -215,20 +228,23 @@ def analyse(rows: list[dict], *, seed: int) -> dict:
                 correct_not_accepted[arm][found["category"]] = correct_not_accepted[arm].get(found["category"], 0) + 1
     costs = {arm: {key: round(sum(((r["arms"].get(arm) or {}).get("cost") or {}).get(key, 0) for r in non_empty), 3)
                    for key in ("seconds", "processor_seconds", "model_calls")} for arm in ARMS}
+    unlabelled = [r for r in non_empty if r.get("label") not in ("correct", "defective")]
     flagged = [r for r in rows if r["patch"] != "non_empty"]
-    widened = classes["defective"] + [dict(r, arms={}) for r in flagged]
-    sensitivity = {"counted_as_defective": len(flagged),
+    widened = classes["defective"] + [dict(r, arms={}) for r in flagged] + unlabelled
+    sensitivity = {"counted_as_defective": len(flagged) + len(unlabelled),
                    "rates": {arm: {"false_acceptance": _rate(widened, arm)} for arm in ARMS},
                    "hypotheses": [difference(name, text, widened, x, y, seed=boot_seed)
                                   for name, text, label, x, y, _ in HYPOTHESES if label == "defective"]}
     return {"counts": {"tasks": len(rows), "non_empty": len(non_empty),
                        "empty": sum(r["patch"] == "empty" for r in rows),
                        "not_applying": sum(r["patch"] == "not_applying" for r in rows),
+                       "unlabelled": len(unlabelled),
                        "correct": len(classes["correct"]), "defective": len(classes["defective"])},
-            "unlabelled": [r["task_id"] for r in non_empty if r.get("label") not in ("correct", "defective")],
+            "unlabelled": [r["task_id"] for r in unlabelled],
             "rates": rates, "hypotheses": hypotheses,
             "experiment_1": experiment_1([h["result"] for h in hypotheses]),
-            "secondary_self_review": secondary, "per_repository": per_repository,
+            "secondary_self_review": secondary, "secondary_g6_minus_self_review": direct,
+            "per_repository": per_repository,
             "tallies": {arm: tally([r["arms"].get(arm) for r in non_empty]) for arm in ARMS},
             "correct_not_accepted": correct_not_accepted, "detection_by_category": detection, "costs": costs,
             "sensitivity_empty_as_defective": sensitivity, "bootstrap_seed": boot_seed}

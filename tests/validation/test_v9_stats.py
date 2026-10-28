@@ -141,13 +141,46 @@ def test_tallies_keep_every_kind_of_not_accepted_and_the_sensitivity_counts_empt
     rows[1]["arms"]["self_review"] = {"accepted": False, "category": "tool_error_or_refusal", "error_kind": "refusal"}
     rows.append(make_row("t9", "r1", None, tests=None, self_review=None, g6=None, direct=None, patch="empty"))
     got = stats.analyse(rows, seed=3)
-    assert got["counts"] == {"tasks": 3, "non_empty": 2, "empty": 1, "not_applying": 0, "correct": 1, "defective": 1}
+    assert got["counts"] == {"tasks": 3, "non_empty": 2, "empty": 1, "not_applying": 0, "unlabelled": 0,
+                             "correct": 1, "defective": 1}
     assert got["tallies"]["self_review"]["tool_error_or_refusal"] == 1
     assert got["tallies"]["self_review"]["error_kinds"] == {"refusal": 1}
     assert got["correct_not_accepted"]["g6"] == {"insufficient_evidence": 1}
     sensitivity = got["sensitivity_empty_as_defective"]
     assert sensitivity["rates"]["g6"]["false_acceptance"] == {"accepted": 1, "of": 2, "rate": 0.5}
     assert [h["name"] for h in sensitivity["hypotheses"]] == ["H1", "H2"]
+
+
+def test_an_unlabelled_patch_is_left_out_counted_and_counted_as_defective_in_the_sensitivity_analysis():
+    rows = rows_of([("r1", "defective", False, False, False, False), ("r1", "correct", True, True, True, True),
+                    ("r1", None, True, True, True, True)])
+    rows[2]["label_detail"] = {"unlabelled_because": "an infrastructure error persisted after one retry"}
+    got = stats.analyse(rows, seed=3)
+    assert got["counts"]["unlabelled"] == 1 and got["unlabelled"] == ["t2"]
+    assert got["rates"]["g6"]["false_acceptance"] == {"accepted": 0, "of": 1, "rate": 0.0}
+    sensitivity = got["sensitivity_empty_as_defective"]
+    assert sensitivity["counted_as_defective"] == 1
+    # every arm reviewed it, so its acceptances count as false acceptances here (an empty patch has none)
+    assert sensitivity["rates"]["g6"]["false_acceptance"] == {"accepted": 1, "of": 2, "rate": 0.5}
+
+
+def test_g6_is_also_compared_with_the_agents_own_review_directly_with_no_verdict():
+    table = [("r1", "defective", False, True, False, False)] * 4 + [("r1", "correct", True, True, False, True)] * 4
+    got = stats.analyse(rows_of(table), seed=2)["secondary_g6_minus_self_review"]
+    assert [(h["name"], h["x"], h["y"]) for h in got] == [("H1", "g6", "self_review"), ("H3", "self_review", "g6")]
+    assert [h["difference"] for h in got] == [-1.0, 1.0]
+    assert all("result" not in h and "margin" not in h for h in got)
+
+
+def test_time_or_cap_reached_is_tallied_apart_whatever_the_category():
+    rows = rows_of([("r1", "defective", False, False, False, False), ("r1", "correct", True, True, True, True)])
+    rows[0]["arms"]["self_review"] = {"accepted": False, "category": "tool_error_or_refusal",
+                                      "error_kind": "killed_at_time_limit", "time_or_cap_reached": True}
+    rows[1]["arms"]["self_review"] = {"accepted": False, "category": "insufficient_evidence", "error_kind": "",
+                                      "time_or_cap_reached": True}
+    tally = stats.analyse(rows, seed=1)["tallies"]["self_review"]
+    assert tally["time_or_cap_reached"] == {"tool_error_or_refusal": 1, "insufficient_evidence": 1}
+    assert stats.feasibility(rows)["criteria"]["dispositions"]["self_review"]["tool_errors"] == 1
 
 
 def test_detection_by_defect_category_counts_the_defective_patches_each_arm_did_not_accept():
