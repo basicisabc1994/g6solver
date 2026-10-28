@@ -13,12 +13,13 @@
    tracked module; outside git's view, so outside the digest; any other ignored Python file is an unknown, bound into
    the receipt), a run that changed tracked files or whose result cannot be believed, the repository changing during
    the review, or the coding gate finding a shortcut;
-2. ``defect_detected``: a stated check or extra test failed, failed to collect because of the repository's own code,
-   or timed out; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the
-   base commit. One that does not pass at the base commit either is not counted against the patch: an unknown;
+2. ``defect_detected``: a stated check or extra test failed, or failed to collect because of the repository's own
+   code; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the base
+   commit. One that does not pass at the base commit either is not counted against the patch: an unknown;
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
-   run (missing, not collected, could not be collected in this environment, skipped, deselected), no test ran, no
-   change against the base, or the scan for ignored files stopping at its limit;
+   run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
+   by the time limit, never reached before it), the tier 1 run out of time, no test ran, no change against the base,
+   or the scan for ignored files stopping at its limit;
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
    support on the checks named, never a claim that the patch does everything the task needs.
 
@@ -76,8 +77,9 @@ PYTEST_SECTIONS = {"pyproject.toml": "[tool.pytest]", "setup.cfg": "[tool:pytest
 UNTRUSTED = frozenset({repo_tests.CHANGED, "inconsistent_report", "incomplete"})
 #: A check's verdicts that are a defect when it is stated or extra; every other verdict but "passed" did not run.
 #: ``failed`` includes a collection error G6 places in the repository's own code; ``collection_error`` is the
-#: environment's (a dependency it lacks), which leaves the check not run.
-DEFECTS = frozenset({repo_tests.FAILED, "timed_out"})
+#: environment's (a dependency it lacks), which leaves the check not run. A run out of time is no defect (review I5):
+#: a check it started reads ``timed_out``, one it never reached ``not_run``, and the outcome is insufficient evidence.
+DEFECTS = frozenset({repo_tests.FAILED})
 ENVIRONMENT = "could not be collected in this environment"
 #: pytest's own lines naming a file it could not collect: "ERROR collecting x.py" and, in its summary, "ERROR x.py".
 _COLLECTING = re.compile(r"ERROR (?:collecting )?([^\s:]+\.py)(?=\s|$)", re.MULTILINE)
@@ -290,7 +292,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         elif run == "collection_error":
             verdict, detail = "collection_error", ENVIRONMENT + (f" ({said})" if said else "")
         elif run == "timed_out":
-            verdict, detail = "timed_out", said
+            verdict, detail = "not_run", "the run's time ran out before this check started" + (f" ({said})" if said
+                                                                                                  else "")
         elif run in repo_tests.RAN or run == "no_tests_collected":
             verdict, detail = "not_collected", "no test with this id ran"
         else:
@@ -443,6 +446,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         verdicts.update(_verdicts(present, first))
         if first["verdict"] in UNTRUSTED:
             reason("integrity", "run_not_trusted", _untrusted(1, first))
+        elif first["verdict"] == "timed_out":
+            reason("evidence", "run_timed_out", f"the tier 1 run did not finish: {first.get('said') or 'timed out'}")
     else:
         skipped.append({"tier": 1, "check": "stated checks and extra tests",
                         "reason": "no check was stated" if not ids else "no stated check names a file on the tree"})

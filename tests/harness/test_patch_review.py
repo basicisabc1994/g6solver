@@ -416,15 +416,35 @@ def test_a_defect_inside_the_declared_coverage_is_detected_and_named(repo, monke
     assert runs.calls == [("in_place", (ADD, NEGATIVE))]   # tier 2 skipped after a defect
 
 
-@pytest.mark.parametrize("verdict", ["failed", "timed_out"])
-def test_a_stated_check_that_times_out_or_fails_to_collect_in_the_repositorys_code_is_a_defect(repo, monkeypatch,
-                                                                                                  verdict):
+@pytest.mark.parametrize("verdict, outcome, check", [
+    ("failed", "defect_detected", "failed"),
+    # review I5: corrected. This case expected a defect from a run out of time, which says nothing against the patch:
+    # the check it never reached did not run.
+    ("timed_out", "insufficient_evidence", "not_run"),
+])
+def test_a_stated_check_that_fails_to_collect_is_a_defect_and_one_the_time_never_reached_did_not_run(
+        repo, monkeypatch, verdict, outcome, check):
     """``failed`` with no test run is a collection error G6 places in the repository's own code."""
     (repo / "calc.py").write_text(GOOD)
     Recorded(monkeypatch, default=result(verdict=verdict, said="the run stopped"))
     got = review(repo)
-    assert got["assessment"]["outcome"] == "defect_detected"
-    assert _requirement(got, "R1")["checks"][0]["verdict"] == verdict
+    assert got["assessment"]["outcome"] == outcome
+    assert _requirement(got, "R1")["checks"][0]["verdict"] == check
+
+
+def test_a_run_out_of_time_is_insufficient_evidence_and_a_check_it_never_reached_did_not_run(repo, monkeypatch):
+    """Review I5 (probe S10): a correct patch whose first stated check is slow. The run's time budget ran out during
+    that check and before the second started; both read as failed, and the outcome as defect_detected."""
+    (repo / "calc.py").write_text(GOOD)
+    out_of_time = {**result(verdict="timed_out", said="the tests did not finish within 8 seconds"),
+                   "test_outcomes": {ADD: {"setup": "passed"}}}   # started, never finished
+    Recorded(monkeypatch, default=out_of_time)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert [c["verdict"] for c in _requirement(got, "R1")["checks"]] == ["timed_out"]
+    assert [c["verdict"] for c in _requirement(got, "R2")["checks"]] == ["not_run"]
+    assert {_requirement(got, ident)["status"] for ident in ("R1", "R2")} == {"not_established"}
+    assert "check_failed" not in _reasons(got) and "run_timed_out" in _reasons(got)
 
 
 def test_a_stated_check_the_environment_cannot_collect_is_not_established(repo, monkeypatch):
