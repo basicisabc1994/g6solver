@@ -101,8 +101,10 @@ checks with the extra tests in one confined run. Integrity is what these checks 
   as an unknown and bound into the test receipt, path to SHA-256;
 - a run that changed tracked files, whose result cannot be believed, or that began on a tree other than the
   one under review, and the repository changing during the review;
-- a shortcut the coding gate finds in the diff against the base. One found only in the `claim` text is
-  insufficient evidence (`claim_reports_shortcut`), not an integrity problem.
+- a shortcut the coding gate finds in the diff against the base of the test, test-runner and
+  continuous-integration files (a source file's diff is not scanned: an assert it drops weakens no test).
+  One found only in the `claim` text is insufficient evidence (`claim_reports_shortcut`), not an integrity
+  problem.
 
 A stated check the environment cannot collect (a dependency it lacks) is not established; one whose own code
 fails to collect is a defect. A check the time limit cuts off, or never reaches, is not established either,

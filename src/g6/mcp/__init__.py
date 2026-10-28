@@ -155,8 +155,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """Assess the working tree's Python patch against base on stated requirements [{id, text, checks: [pytest
         node ids]}] plus extra tests, in confined runs. Poll metaharness_job for the result. assessment.outcome is one
         of: test_integrity_compromised (a sign of a weakened test or test helper that G6's static comparison finds, a
-        changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff, or a run that
-        cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
+        changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
+        their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
         on the patch and passed at the base commit); insufficient_evidence (no requirement, a requirement with no
         check, a check that did not run or ran out of time, or a shortcut only the claim reports);
         supported_within_scope (every requirement passed its stated checks: support on those checks only, never proof

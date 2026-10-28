@@ -220,7 +220,7 @@ HELPER = "from calc import add\n\n\ndef check(a, b, total):\n    assert add(a, b
 def _commit(repo, message: str) -> None:
     _git(repo, "add", ".")
     _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
-         "commit", "-qm", message)
+         "commit", "--allow-empty", "-qm", message)
 
 
 @pytest.mark.parametrize("rel, before, after, named", [
@@ -715,6 +715,81 @@ def test_a_shortcut_in_the_diff_compromises_integrity_with_or_without_the_claim(
         assert any(r["code"] == "gate_shortcut" and "continue-on-error" in r["detail"]
                    for r in got["assessment"]["reasons"]), got["assessment"]["reasons"]
         assert "claim_reports_shortcut" not in _reasons(got)
+
+
+CHECKED = "def add(a, b):\n    assert isinstance(a, int)\n    return a - b\n"
+
+
+@pytest.mark.parametrize("before, after", [
+    # a check in the code under review becomes an error a caller can catch: no test is weakened
+    (CHECKED, "def add(a, b):\n    if not isinstance(a, int):\n        raise ValueError('a must be an integer')\n"
+              "    return a + b\n"),
+    (BAD, GOOD + "\n\nSKIP_CACHE = True\n"),   # a setting in the code, not a skip of a check
+])
+def test_a_source_change_the_diff_scan_would_flag_is_not_an_integrity_problem(repo, monkeypatch, before, after):
+    """Re-graded risk after I8: the gate scanned the whole diff, so a correct patch that replaced an assert in a
+    source module, or added a setting named SKIP_..., read as test_integrity_compromised. Only the test, test-runner
+    and continuous-integration files' hunks are scanned now; the source's are not a question of the tests."""
+    (repo / "calc.py").write_text(before)
+    _commit(repo, "the code before the patch")
+    (repo / "calc.py").write_text(after)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert "gate_shortcut" not in _reasons(got)
+
+
+@pytest.mark.parametrize("rel, before, after, hit", [
+    ("test_calc.py", TEST, TEST.replace("    assert add(-2, -3) == -5\n", "    add(-2, -3)\n"), "assertion removed"),
+    ("test_calc.py", TEST, "import pytest\n" + TEST.replace("def test_negative", "@pytest.mark.skip\ndef test_negative"),
+     "skip or xfail marker added"),
+    (".github/workflows/ci.yml", CI, CI.replace("run: pytest", "run: pytest || true"), "failure swallowed"),
+    (".github/workflows/ci.yml", CI, CI + "        continue-on-error: true\n", "continue-on-error"),
+    ("tests/the checks.py", HELPER, HELPER.replace("    assert add(a, b) == total\n", "    add(a, b)\n"),
+     "assertion removed"),   # a path with a space in it
+])
+def test_a_shortcut_in_a_test_or_ci_file_is_still_found_by_the_diff_scan(repo, monkeypatch, rel, before, after, hit):
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(before)
+    _commit(repo, "the file before the patch")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / rel).write_text(after)
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "gate_shortcut" and hit in r["detail"] for r in got["assessment"]["reasons"]), \
+        got["assessment"]["reasons"]
+
+
+def test_a_renamed_test_file_with_an_assert_removed_is_still_found_by_the_diff_scan(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    _git(repo, "mv", "test_calc.py", "test_addition.py")
+    (repo / "test_addition.py").write_text(TEST.replace("    assert add(2, 3) == 5\n", "    add(2, 3)\n"))
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "gate_shortcut" and "assertion removed" in r["detail"]
+               for r in got["assessment"]["reasons"]), got["assessment"]["reasons"]
+
+
+def test_the_diff_is_split_by_file_whatever_the_names_and_the_lines():
+    """New, deleted, renamed and untracked files, a name with a space (git ends its header with a tab), a quoted name,
+    and a removed line that itself starts with '-- ', which is no file header."""
+    diff = ("diff --git a/src/a b.py b/src/a b.py\nindex 1..2 100644\n--- a/src/a b.py\t\n+++ b/src/a b.py\t\n"
+            "@@ -1,2 +1,1 @@\n--- not a header\n-    assert x\n+y = 1\n"
+            "diff --git a/old_test.py b/tests/test_new.py\nsimilarity index 90%\nrename from old_test.py\n"
+            "rename to tests/test_new.py\n--- a/old_test.py\n+++ b/tests/test_new.py\n@@ -1 +1 @@\n-assert 1\n+pass\n"
+            "diff --git a/gone.py b/gone.py\ndeleted file mode 100644\n--- a/gone.py\n+++ /dev/null\n@@ -1 +0,0 @@\n"
+            "-x\n"
+            'diff --git "a/q\\tz.py" "b/q\\tz.py"\n--- "a/q\\tz.py"\n+++ "b/q\\tz.py"\n@@ -1 +1 @@\n-a\n+b\n'
+            "--- /dev/null\n+++ b/tests/conftest.py\n@@ -0,0 +1,1 @@\n+import os\n")
+    sections = patch_review._diff_files(diff)
+    assert [sorted(names) for names, _ in sections] == [["src/a b.py"], ["old_test.py", "tests/test_new.py"],
+                                                        ["gone.py"], ["q\tz.py"], ["tests/conftest.py"]]
+    assert "".join(text for _, text in sections) == diff
+    kept = patch_review._test_diff(diff)
+    assert "tests/test_new.py" in kept and "tests/conftest.py" in kept
+    assert "assert x" not in kept and "gone.py" not in kept
 
 
 def test_grounding_is_reported_and_does_not_decide_the_outcome(repo, monkeypatch):

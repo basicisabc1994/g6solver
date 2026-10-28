@@ -13,7 +13,8 @@
    metadata declaring a pytest plugin; outside git's view, so outside the digest; any other ignored Python file is an
    unknown, bound into the receipt), a run that changed tracked files, whose result cannot be believed or that began
    on a tree other than the one under review, the repository changing during the review, or the coding gate finding
-   a shortcut in the diff against the base (the review binds the gate to that diff);
+   a shortcut in the diff against the base of the test, test-runner and continuous-integration files (the review
+   binds the gate to that part of the diff; ``_test_diff``);
 2. ``defect_detected``: a stated check or extra test failed, or failed to collect because of the repository's own
    code; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the base
    commit (a moved test file runs there at its old path). One that does not pass at the base commit either, or could
@@ -66,6 +67,7 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.result import Result
+from g6.safety_engine.weakening import _kind as _weakening_kind
 from g6.safety_engine.weakening import _pytest_settings, detect_test_weakening
 from g6.workforce import repo_tests
 
@@ -351,6 +353,74 @@ def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, st
         c["id"] for c in checks)}
 
 
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_ESCAPE = re.compile(rb"\\([0-7]{3}|.)")
+#: Continuous-integration and task-runner files the weakening detector's list leaves out (``weakening._kind``'s
+#: "runner" kind holds the others: tox.ini, noxfile.py, .gitlab-ci.yml, .github/workflows/, .circleci/, ...).
+_CI_FILES = frozenset({"makefile", ".pre-commit-config.yaml"})
+
+
+def _unquoted(raw: str) -> str:
+    """A path as git writes it in a diff: unquoted (git quotes a name holding a control character, a quote or a
+    backslash), without the line's end or the tab git ends a name holding a space with."""
+    name = raw.rstrip("\n").removesuffix("\t")
+    if len(name) >= 2 and name[0] == name[-1] == '"':
+        name = _ESCAPE.sub(lambda m: bytes([int(m[1], 8)]) if len(m[1]) == 3 else {b"t": b"\t", b"n": b"\n"}.get(
+            m[1], m[1]), name[1:-1].encode("utf-8")).decode("utf-8", "replace")
+    return name
+
+
+def _diff_name(raw: str) -> str:
+    """A path as a ``---`` / ``+++`` line gives it (``_unquoted``), without ``a/`` or ``b/``; "" for ``/dev/null``."""
+    name = _unquoted(raw)
+    return "" if name == "/dev/null" else name[2:] if name[:2] in ("a/", "b/") else name
+
+
+def _diff_files(diff: str) -> list[tuple[set[str], str]]:
+    """``diff`` (``repo_tests.diff_text``) cut into one part per file, each with the paths it names, old and new. A
+    part begins at ``diff --git``, or at a ``---`` line outside a hunk once the part has had one (the untracked files
+    ``diff_text`` appends have no ``diff --git`` line); a hunk's lines are counted from its header, so a removed line
+    that itself starts with ``-- `` is never taken for a header."""
+    parts: list[tuple[set[str], list[str]]] = []
+    old = new = 0
+    for line in diff.splitlines(keepends=True):
+        if old > 0 or new > 0:   # inside a hunk
+            mark = line[:1]
+            old -= mark in ("-", " ", "\n")
+            new -= mark in ("+", " ", "\n")
+            parts[-1][1].append(line)
+            continue
+        names, lines = parts[-1] if parts else (set(), [])
+        if not parts or line.startswith("diff --git ") or (line.startswith("--- ") and any(
+                seen.startswith(("--- ", "@@")) for seen in lines)):
+            parts.append((set(), []))
+            names, lines = parts[-1]
+        lines.append(line)
+        if line.startswith(("--- ", "+++ ")):
+            names.add(_diff_name(line[4:]))
+        elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
+            names.add(_unquoted(line.split(" ", 2)[2]))
+        elif (found := _HUNK_HEADER.match(line)) is not None:
+            old = int(found[1]) if found[1] is not None else 1
+            new = int(found[2]) if found[2] is not None else 1
+    return [(names - {""}, "".join(lines)) for names, lines in parts]
+
+
+def _scanned(rel: str) -> bool:
+    """A file whose diff is a question of the tests: test-related (``repo_tests.is_test_related``), a runner file
+    (``RUNNER_FILES``), or continuous-integration or task-runner configuration."""
+    name = PurePosixPath(rel).name.lower()
+    return (repo_tests.is_test_related(rel) or name in RUNNER_FILES or name in _CI_FILES
+            or _weakening_kind(rel) == "runner")
+
+
+def _test_diff(diff: str) -> str:
+    """The parts of ``diff`` the coding gate scans for shortcuts: those of the files ``_scanned`` keeps, and any part
+    whose file cannot be read from it. A source file's hunks are left out: an assert it drops, or a setting named
+    SKIP_..., weakens no test (``detect_test_weakening`` reads the test files themselves)."""
+    return "".join(text for names, text in _diff_files(diff) if not names or any(_scanned(rel) for rel in names))
+
+
 def _gate(task: str, claim: str, runs: list[dict], artifact: str, diff: str) -> dict:
     """The test runs through the coding gate, which this host binds to the review's own snapshot digest: the only
     way a receipt counts as G6-observed (review C1); no digest travels in the request. The host binds the diff it read
@@ -516,7 +586,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if ran.get("source_before") and ran["source_before"] != artifact:
             reason("integrity", "repository_changed_during_review", f"the tier {tier} run began on a working tree "
                    "other than the one under review (its digest is not the artifact digest)")
-    gate = _gate(task, claim, [ran for _, ran in in_place], artifact, repo_tests.diff_text(change))
+    gate = _gate(task, claim, [ran for _, ran in in_place], artifact, _test_diff(repo_tests.diff_text(change)))
     statuses = [found.get("receipt_status", "unknown") for found in gate["receipts"]]
     receipts = [{"tier": tier, "receipt": ran.get("receipt", ""),
                  "receipt_status": statuses[index] if index < len(statuses) else "unknown"}
