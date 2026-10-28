@@ -116,6 +116,16 @@ that passes there too may not exercise the change, and is listed as an unknown w
 outcome (a requirement to keep behaviour passes at the base by design). Tier 3 (mutation, old-against-new
 probes) is not run yet.
 
+A submodule that was never set up here (a gitlink with no `.git` in its folder, as some repositories ship
+their vendored code) is accepted: git never enters its folder, and G6 hashes the folder's files itself into
+the digest, so a run that changes one of them is caught as a tracked file would be. Git holds nothing to
+compare that folder with, so whether the patch changed its files is listed as an unknown. A patch that changes
+the gitlink entry itself, or a folder too large for G6 to hash, is insufficient evidence
+(`change_inside_submodule`, `submodule_not_hashed`). A submodule that was set up (a `.git` in its folder, or
+anything under `.git/modules`) is refused, `G6_E_GIT_SUBMODULE_REFUSED`. The copies the base-commit runs use
+keep a tracked link only when it is relative and resolves inside the copy; each run lists the links it left
+out.
+
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
 under review; over `g6_invoke` the gate has no binding and every receipt stays caller-declared. A run gets

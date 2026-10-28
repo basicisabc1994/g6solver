@@ -22,8 +22,10 @@
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
    run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
    by the time limit, never reached before it), the tier 1 run out of time, a shortcut only the claim's text reports
-   (``claim_reports_shortcut``), no test ran, no change against the base, or the scan for ignored files stopping at
-   its limit;
+   (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at
+   its limit, a changed entry of a submodule git does not look into (``change_inside_submodule``: git cannot check
+   the files a submodule holds), or such a submodule folder G6 could not hash (``submodule_not_hashed``). Each such
+   folder is an unknown too: G6 hashes it into the digest, but cannot tell whether the patch changed its files;
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
    support on the checks named, never a claim that the patch does everything the task needs.
 
@@ -106,6 +108,13 @@ NOT_CHECKED = ("behaviour no stated check exercises", "requirements the task nee
                "whether the tests are independent of the patch's author", "source freshness",
                "benefit relative to a baseline", "merge authorisation")
 TIER_3 = "tier 3 not run: mutation and old-against-new probes are not part of this version"
+# PENDING copy (pool compatibility): a submodule folder git does not look into (``repo_tests._gitlinks``).
+SUBMODULE_UNKNOWN = ("git cannot check the files inside {path}, a submodule that was never set up here: G6 hashed them "
+                     "itself, so a change made while the tests ran is seen, but not whether the patch changed them "
+                     "since the base commit")
+SUBMODULE_CHANGED = ("{path}: the patch changes this submodule's entry (the commit it names, or whether it is there), "
+                     "and git cannot check the files a submodule holds")
+SUBMODULE_NOT_HASHED = "{path}: G6 could not hash the files inside this submodule folder ({why}), so a change there is not seen"
 
 
 class Requirement(BaseModel):
@@ -527,6 +536,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                f"at its limit of {repo_tests.IGNORED_SCAN_LIMIT} entries")
     if not change.files:
         reason("evidence", "no_change", f"the working tree shows no change against {change.base}")
+    # A submodule folder git does not look into: G6 hashes it into the digest, but nothing says what it held at the
+    # base. A changed gitlink entry, or a folder G6 could not hash, leaves the evidence short; neither is an accusation.
+    for rel in change.submodule_changes:
+        reason("evidence", "change_inside_submodule", SUBMODULE_CHANGED.format(path=rel))
+    unknowns.extend(SUBMODULE_UNKNOWN.format(path=rel) for rel in change.submodules)
+    for rel, why in repo_tests.submodules_not_hashed(before).items():
+        reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=rel, why=why))
 
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
