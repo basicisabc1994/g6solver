@@ -651,9 +651,33 @@ def test_only_integrity_class_gate_findings_change_the_outcome(repo, monkeypatch
     plain = review(repo, claim="Fixed addition; all tests pass and it is production ready.")
     assert plain["assessment"]["outcome"] == "supported_within_scope"
     assert plain["gate"]["findings"] and plain["merge"]["reasons"]   # an overclaim is a merge reason, not a defect
+    # Review I9(c), the owner's ruling (probe S11): a shortcut only the claim's text reports, with nothing in the diff
+    # to show it, says nothing about the tests: insufficient evidence, not an integrity problem.
     shortcut = review(repo, claim="I skipped the failing test so the suite is green.")
-    assert shortcut["assessment"]["outcome"] == "test_integrity_compromised"
-    assert "gate_shortcut" in _reasons(shortcut)
+    assert shortcut["assessment"]["outcome"] == "insufficient_evidence"
+    assert any(r["stage"] == "evidence" and r["code"] == "claim_reports_shortcut"
+               for r in shortcut["assessment"]["reasons"])
+    assert "gate_shortcut" not in _reasons(shortcut)
+
+
+CI = "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest\n"
+
+
+def test_a_shortcut_in_the_diff_compromises_integrity_with_or_without_the_claim(repo, monkeypatch):
+    """Review I8: the gate was sent no diff, so its diff scan never ran. Here the patch lets CI ignore failing tests,
+    which only the diff shows; a claim reporting a shortcut, so corroborated, stays an integrity problem (I9(c))."""
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text(CI)
+    _commit(repo, "continuous integration")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / ".github" / "workflows" / "ci.yml").write_text(CI + "        continue-on-error: true\n")
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    for claim in ("Addition returns the sum.", "I skipped the failing test so the suite is green."):
+        got = review(repo, claim=claim)
+        assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+        assert any(r["code"] == "gate_shortcut" and "continue-on-error" in r["detail"]
+                   for r in got["assessment"]["reasons"]), got["assessment"]["reasons"]
+        assert "claim_reports_shortcut" not in _reasons(got)
 
 
 def test_grounding_is_reported_and_does_not_decide_the_outcome(repo, monkeypatch):

@@ -14,6 +14,8 @@ and there every receipt is ``not_honoured_at_door``. The result's ``receipts`` s
 was not (``matched``, ``unknown``, ``artifact_mismatch``, ``store_unreadable``, ``not_honoured_at_door``,
 ``not_supplied``), with the matched run's digest, commit, tests asked for and counts, as ``evidence_counted`` does.
 A matched run counts as a pass only when every test it collected ran and passed (``receipt_store.counts_as_pass``).
+A host may also bind the diff it read itself (``scanned_diff``, as the patch review binds its working tree's diff):
+``verify_answer`` scans it for shortcuts as it scans a diff item, and does not count it as evidence.
 Only G6's confined test runs write receipts. The store is a file owned by the same user as G6: this defends against
 what a caller sends, not against code running as that user.
 """
@@ -105,11 +107,13 @@ class CodingAgentGateBlock(AIBlock[CodingAgentGateInput, dict, dict]):
 
     def __init__(self, name: str = "coding_agent_gate", state: dict | None = None,
                  *, protected_paths_policy: ProtectedPathsPolicy | None = None,
-                 receipt_artifact_digest: str = "") -> None:
+                 receipt_artifact_digest: str = "", scanned_diff: str = "") -> None:
         super().__init__(name=name, state=state or {})
         self.protected_paths_policy = protected_paths_policy
         #: The digest of the tree the host reviews; "" (the door's instance): no receipt is honoured.
         self.receipt_artifact_digest = receipt_artifact_digest
+        #: The diff the host read itself, which ``verify_answer`` scans and never counts; "" at the door.
+        self.scanned_diff = scanned_diff
 
     def infer(self, data: CodingAgentGateInput) -> Result[dict]:
         if data.op == "ops":
@@ -129,7 +133,8 @@ class CodingAgentGateBlock(AIBlock[CodingAgentGateInput, dict, dict]):
             decision = verify_answer(data.task, data.answer, evidence=evidence, verifier=verifier, claims=data.claims,
                                      task_contract=data.task_contract, risk_tier=data.risk_tier, author=data.author,
                                      require_task_contract=data.require_task_contract, touched_paths=data.touched_paths,
-                                     protected_paths_policy=self.protected_paths_policy)
+                                     protected_paths_policy=self.protected_paths_policy,
+                                     scanned_diff=self.scanned_diff)
         out = decision.to_dict()
         runs = {r["receipt"]: r["run"] for r in receipts if "run" in r}
         out["evidence_counted"] = [{**item, "receipt_run": runs[item["ref"]]}

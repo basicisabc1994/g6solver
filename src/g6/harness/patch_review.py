@@ -5,21 +5,24 @@
 
 1. ``test_integrity_compromised``: a sign of weakening ``g6.safety_engine.detect_test_weakening`` finds in a changed
    test-related file (``repo_tests.is_test_related``: a test file by pytest's default names, ``conftest.py`` or a
-   start-up file, any Python file under a test folder; a moved one is compared with its old text), a
-   changed test-runner file (``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` or a
-   start-up file; ``pyproject.toml``,
-   ``setup.cfg`` and ``tox.ini`` only when their pytest section changed), a git-ignored file that could change the
-   tests (``repo_tests.ignored_inputs``: a runner, start-up, path or test-named file, or one that could shadow a
-   tracked module; outside git's view, so outside the digest; any other ignored Python file is an unknown, bound into
-   the receipt), a run that changed tracked files or whose result cannot be believed, the repository changing during
-   the review, or the coding gate finding a shortcut;
+   start-up file, any Python file under a test folder; a moved one is compared with its old text), a changed
+   test-runner file (``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` or a
+   start-up file; ``pyproject.toml``, ``setup.cfg`` and ``tox.ini`` only when their pytest section changed, an empty
+   one included), a git-ignored file that could change the tests (``repo_tests.ignored_inputs``: a runner, start-up,
+   path or test-named file, one that could shadow a tracked module, bytecode, an extension module, a link, or package
+   metadata declaring a pytest plugin; outside git's view, so outside the digest; any other ignored Python file is an
+   unknown, bound into the receipt), a run that changed tracked files, whose result cannot be believed or that began
+   on a tree other than the one under review, the repository changing during the review, or the coding gate finding
+   a shortcut in the diff against the base (the review binds the gate to that diff);
 2. ``defect_detected``: a stated check or extra test failed, or failed to collect because of the repository's own
    code; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the base
-   commit. One that does not pass at the base commit either is not counted against the patch: an unknown;
+   commit (a moved test file runs there at its old path). One that does not pass at the base commit either, or could
+   not be run there, is not counted against the patch: an unknown;
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
    run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
-   by the time limit, never reached before it), the tier 1 run out of time, no test ran, no change against the base,
-   or the scan for ignored files stopping at its limit;
+   by the time limit, never reached before it), the tier 1 run out of time, a shortcut only the claim's text reports
+   (``claim_reports_shortcut``), no test ran, no change against the base, or the scan for ignored files stopping at
+   its limit;
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
    support on the checks named, never a claim that the patch does everything the task needs.
 
@@ -87,6 +90,8 @@ BOUNDARY_HELP = ("Allowing unconfined runs (g6 setup or G6_ALLOW_UNCONFINED) doe
                  "uses only confined runs, the only ones that get test receipts. To get a boundary, install bubblewrap "
                  "on Linux, or on Windows make the one-time access grant g6 doctor prints; macOS has none yet.")
 #: Coding gate findings about the checks themselves: they change the outcome. Every other finding is a merge reason.
+#: A shortcut in the diff is an integrity problem, and so is one the claim reports when the diff shows one too; one
+#: only the claim's text reports is insufficient evidence (``claim_reports_shortcut``; review I9(c)).
 INTEGRITY_FINDINGS = frozenset({"shortcut_in_answer", "shortcut_in_diff"})
 SPECIFICATION_NOTE = ("The task's specification may be incomplete: G6 checks the requirements stated here, and it "
                       "cannot rule out in general that the task needs something no requirement states.")
@@ -337,13 +342,14 @@ def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, st
         c["id"] for c in checks)}
 
 
-def _gate(task: str, claim: str, runs: list[dict], artifact: str) -> dict:
+def _gate(task: str, claim: str, runs: list[dict], artifact: str, diff: str) -> dict:
     """The test runs through the coding gate, which this host binds to the review's own snapshot digest: the only
-    way a receipt counts as G6-observed (review C1); no digest travels in the request."""
+    way a receipt counts as G6-observed (review C1); no digest travels in the request. The host binds the diff it read
+    from git too, which the gate scans for shortcuts and does not count as evidence (review I8)."""
     flow = compose(
         Stage(GateAdapter(), "adapt", inputs={"task": "caller.task", "claim": "caller.claim",
                                               "test_runs": "caller.test_runs"}),
-        Stage(CodingAgentGateBlock(receipt_artifact_digest=artifact), "verify_answer",
+        Stage(CodingAgentGateBlock(receipt_artifact_digest=artifact, scanned_diff=diff), "verify_answer",
               inputs={key: f"0.{key}" for key in ("task", "answer", "task_contract", "evidence", "verifier")}),
         caller_inputs=("task", "claim", "test_runs"))
     composition = flow.infer({"task": task, "claim": claim, "test_runs": runs}).value
@@ -500,7 +506,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if ran.get("source_before") and ran["source_before"] != artifact:
             reason("integrity", "repository_changed_during_review", f"the tier {tier} run began on a working tree "
                    "other than the one under review (its digest is not the artifact digest)")
-    gate = _gate(task, claim, [ran for _, ran in in_place], artifact)
+    gate = _gate(task, claim, [ran for _, ran in in_place], artifact, repo_tests.diff_text(change))
     statuses = [found.get("receipt_status", "unknown") for found in gate["receipts"]]
     receipts = [{"tier": tier, "receipt": ran.get("receipt", ""),
                  "receipt_status": statuses[index] if index < len(statuses) else "unknown"}
@@ -511,8 +517,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             unknowns.append(f"tier {found['tier']}'s test receipt did not match ({found['receipt_status']}"
                             + (f": {why}" if why else "") + "), so the coding gate counted that run as caller-declared")
     merge_reasons = []
+    in_diff = any(finding.get("code") == "shortcut_in_diff" for finding in gate["findings"])
     for finding in gate["findings"]:
-        if finding.get("code") in INTEGRITY_FINDINGS:
+        if finding.get("code") == "shortcut_in_answer" and not in_diff:
+            # review I9(c), the owner's ruling: the claim's words alone say nothing about the tests
+            reason("evidence", "claim_reports_shortcut", finding.get("message", ""))
+        elif finding.get("code") in INTEGRITY_FINDINGS:
             reason("integrity", "gate_shortcut", finding.get("message", ""))
         else:
             merge_reasons.append(finding.get("message", ""))
