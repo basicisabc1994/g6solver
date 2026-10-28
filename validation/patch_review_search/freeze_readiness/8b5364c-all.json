@@ -1,0 +1,260 @@
+{
+  "study": "V9 and V10",
+  "kind": "freeze readiness",
+  "g6": {
+    "commit": "8b5364caff200a1a5084b1030b2fc1bb3322b170",
+    "tree_sha256": "25e5c8fe3a8f20cb3d4cabbe519507c1a0ec4992b0f4597dbdff7713b49585d3"
+  },
+  "required": [
+    "base",
+    "pool",
+    "search"
+  ],
+  "ready": false,
+  "problems": [
+    "search: verification_search: ModuleNotFoundError: No module named 'g6.harness.verification_search'",
+    "search: check limits: ModuleNotFoundError: No module named 'g6.harness.verification_search'",
+    "search: check file rule: ModuleNotFoundError: No module named 'g6.harness.verification_search'",
+    "search: placement: ModuleNotFoundError: No module named 'g6.harness.verification_search'",
+    "search: placements: ModuleNotFoundError: No module named 'g6.harness.verification_search'",
+    "search: R and each run's limit: ModuleNotFoundError: No module named 'g6.harness.verification_search'",
+    "search: search settings: ModuleNotFoundError: No module named 'g6.harness.verification_search'",
+    "search: review_patch's search setting: review_patch takes no search setting"
+  ],
+  "features": [
+    {
+      "name": "review_patch",
+      "group": "base",
+      "present": true,
+      "read": [
+        "base",
+        "claim",
+        "expected_artifact_digest",
+        "import_roots",
+        "repo",
+        "requirements",
+        "sources",
+        "task",
+        "tests",
+        "timeout_s"
+      ]
+    },
+    {
+      "name": "UNTRUSTED",
+      "group": "base",
+      "present": true,
+      "read": [
+        "changed_tracked_files",
+        "incomplete",
+        "inconsistent_report"
+      ]
+    },
+    {
+      "name": "arm 4's review helpers",
+      "group": "base",
+      "present": true,
+      "read": [
+        "_in_repository",
+        "_runner_changes",
+        "_collection_errors",
+        "_test_diff"
+      ]
+    },
+    {
+      "name": "deadline reason codes",
+      "group": "base",
+      "present": true,
+      "read": [
+        "run_timed_out",
+        "timed_out"
+      ]
+    },
+    {
+      "name": "runner functions",
+      "group": "base",
+      "present": true,
+      "read": [
+        "checked_repo",
+        "change",
+        "snapshot",
+        "ignored_inputs",
+        "related_texts",
+        "derive_tests",
+        "diff_text",
+        "inside",
+        "run",
+        "run_before"
+      ]
+    },
+    {
+      "name": "_moved",
+      "group": "base",
+      "present": true,
+      "read": "lists the keys whose values differ"
+    },
+    {
+      "name": "the arms import",
+      "group": "base",
+      "present": true,
+      "read": [
+        "ignored_inputs",
+        "patch_changes_files",
+        "repository_unchanged",
+        "runner_configuration",
+        "runs_on_the_reviewed_tree",
+        "stated_checks",
+        "submodule_folders",
+        "test_diff_shortcuts",
+        "test_weakening",
+        "tests_touching_changed_modules"
+      ]
+    },
+    {
+      "name": "roots on every run",
+      "group": "base",
+      "present": true,
+      "read": "run(roots=...), run_before(roots=...)"
+    },
+    {
+      "name": "import_roots",
+      "group": "pool",
+      "present": true,
+      "read": "review_patch(import_roots=...)"
+    },
+    {
+      "name": "G6_REPO_PYTHON",
+      "group": "pool",
+      "present": true,
+      "read": "G6_REPO_PYTHON"
+    },
+    {
+      "name": "G6_REPO_ENV encoding",
+      "group": "pool",
+      "present": true,
+      "read": "one JSON object of names to text"
+    },
+    {
+      "name": "G6_REPO_ENV refused names",
+      "group": "pool",
+      "present": true,
+      "read": "(?:PYTHON|LD_|DYLD_|PYTEST_|G6_|COV_CORE_|TMP).*|PATH|HOME|USERPROFILE|TEMP"
+    },
+    {
+      "name": "shadowed",
+      "group": "pool",
+      "present": true,
+      "read": "shadowed(sources, ran) -> {path: {module, file}} | None"
+    },
+    {
+      "name": "changed_code_not_loaded",
+      "group": "pool",
+      "present": true,
+      "read": "changed_code_not_loaded"
+    },
+    {
+      "name": "submodules_not_hashed",
+      "group": "pool",
+      "present": true,
+      "read": "submodules_not_hashed(snapshot) -> {path: why}"
+    },
+    {
+      "name": "_moved and a folder not hashed",
+      "group": "pool",
+      "present": true,
+      "read": "not hashed on either side is never changed"
+    },
+    {
+      "name": "Change's submodule fields",
+      "group": "pool",
+      "present": true,
+      "read": [
+        "sources",
+        "submodule_changes",
+        "submodules"
+      ]
+    },
+    {
+      "name": "submodule reason codes",
+      "group": "pool",
+      "present": true,
+      "read": [
+        "change_inside_submodule",
+        "submodule_not_hashed"
+      ]
+    },
+    {
+      "name": "verification_search",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "check limits",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "check file rule",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "placement",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "placements",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "R and each run's limit",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "search settings",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "review_patch's search setting",
+      "group": "search",
+      "present": false,
+      "problem": "review_patch takes no search setting"
+    }
+  ],
+  "parity": {
+    "tests/validation/test_v9_arms.py::test_arm_4_runs_g6s_checks_and_differs_only_where_g6s_assessment_logic_decides": {
+      "group": "base",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    "tests/validation/test_v9_arms.py::test_arm_4_mirrors_every_check_the_frozen_review_added": {
+      "group": "base",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    "tests/validation/test_v9_arms.py::test_g6_and_the_direct_checks_read_the_code_a_run_loaded_alike": {
+      "group": "pool",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    "tests/validation/test_v9_arms.py::test_g6_and_the_direct_checks_read_a_submodule_folder_alike": {
+      "group": "pool",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    }
+  }
+}

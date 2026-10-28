@@ -1,0 +1,241 @@
+{
+  "study": "V9 and V10",
+  "kind": "freeze readiness",
+  "g6": {
+    "commit": "b3c342b49df549b46e1e1cc9196bedf1a795cd93",
+    "tree_sha256": "0cdbdf1afdea7dd2993aec7d053d2518d7d7d1ee886019993f173838b009cdaa"
+  },
+  "required": [
+    "base"
+  ],
+  "ready": true,
+  "problems": [],
+  "features": [
+    {
+      "name": "review_patch",
+      "group": "base",
+      "present": true,
+      "read": [
+        "base",
+        "claim",
+        "expected_artifact_digest",
+        "repo",
+        "requirements",
+        "sources",
+        "task",
+        "tests",
+        "timeout_s"
+      ]
+    },
+    {
+      "name": "UNTRUSTED",
+      "group": "base",
+      "present": true,
+      "read": [
+        "changed_tracked_files",
+        "incomplete",
+        "inconsistent_report"
+      ]
+    },
+    {
+      "name": "arm 4's review helpers",
+      "group": "base",
+      "present": true,
+      "read": [
+        "_in_repository",
+        "_runner_changes",
+        "_collection_errors",
+        "_test_diff"
+      ]
+    },
+    {
+      "name": "deadline reason codes",
+      "group": "base",
+      "present": true,
+      "read": [
+        "run_timed_out",
+        "timed_out"
+      ]
+    },
+    {
+      "name": "runner functions",
+      "group": "base",
+      "present": true,
+      "read": [
+        "checked_repo",
+        "change",
+        "snapshot",
+        "ignored_inputs",
+        "related_texts",
+        "derive_tests",
+        "diff_text",
+        "inside",
+        "run",
+        "run_before"
+      ]
+    },
+    {
+      "name": "_moved",
+      "group": "base",
+      "present": true,
+      "read": "lists the keys whose values differ"
+    },
+    {
+      "name": "the arms import",
+      "group": "base",
+      "present": true,
+      "read": [
+        "ignored_inputs",
+        "patch_changes_files",
+        "repository_unchanged",
+        "runner_configuration",
+        "runs_on_the_reviewed_tree",
+        "stated_checks",
+        "submodule_folders",
+        "test_diff_shortcuts",
+        "test_weakening",
+        "tests_touching_changed_modules"
+      ]
+    },
+    {
+      "name": "roots on every run",
+      "group": "base",
+      "present": true,
+      "read": "run(roots=...), run_before(roots=...)"
+    },
+    {
+      "name": "import_roots",
+      "group": "pool",
+      "present": false,
+      "problem": "review_patch takes no import_roots"
+    },
+    {
+      "name": "G6_REPO_PYTHON",
+      "group": "pool",
+      "present": false,
+      "problem": "G6 does not read G6_REPO_PYTHON"
+    },
+    {
+      "name": "G6_REPO_ENV encoding",
+      "group": "pool",
+      "present": false,
+      "problem": "G6 does not read G6_REPO_ENV"
+    },
+    {
+      "name": "G6_REPO_ENV refused names",
+      "group": "pool",
+      "present": false,
+      "problem": "G6 has no list of names G6_REPO_ENV may not set"
+    },
+    {
+      "name": "shadowed",
+      "group": "pool",
+      "present": false,
+      "problem": "G6 does not read which code a run loaded"
+    },
+    {
+      "name": "changed_code_not_loaded",
+      "group": "pool",
+      "present": false,
+      "problem": "the reason code changed_code_not_loaded is gone"
+    },
+    {
+      "name": "submodules_not_hashed",
+      "group": "pool",
+      "present": false,
+      "problem": "G6 does not read submodule folders"
+    },
+    {
+      "name": "_moved and a folder not hashed",
+      "group": "pool",
+      "present": false,
+      "problem": "AttributeError: module 'g6.workforce.repo_tests' has no attribute '_SUBMODULE'"
+    },
+    {
+      "name": "Change's submodule fields",
+      "group": "pool",
+      "present": false,
+      "problem": "Change lacks a field arm 4 reads"
+    },
+    {
+      "name": "submodule reason codes",
+      "group": "pool",
+      "present": false,
+      "problem": "a submodule reason code arm 4 mirrors is gone"
+    },
+    {
+      "name": "verification_search",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "check limits",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "check file rule",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "placement",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "placements",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "R and each run's limit",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "search settings",
+      "group": "search",
+      "present": false,
+      "problem": "ModuleNotFoundError: No module named 'g6.harness.verification_search'"
+    },
+    {
+      "name": "review_patch's search setting",
+      "group": "search",
+      "present": false,
+      "problem": "review_patch takes no search setting"
+    }
+  ],
+  "parity": {
+    "tests/validation/test_v9_arms.py::test_arm_4_runs_g6s_checks_and_differs_only_where_g6s_assessment_logic_decides": {
+      "group": "base",
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    "tests/validation/test_v9_arms.py::test_arm_4_mirrors_every_check_the_frozen_review_added": {
+      "group": "base",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    "tests/validation/test_v9_arms.py::test_g6_and_the_direct_checks_read_the_code_a_run_loaded_alike": {
+      "group": "pool",
+      "passed": 0,
+      "failed": 0,
+      "skipped": 3
+    },
+    "tests/validation/test_v9_arms.py::test_g6_and_the_direct_checks_read_a_submodule_folder_alike": {
+      "group": "pool",
+      "passed": 0,
+      "failed": 0,
+      "skipped": 4
+    }
+  }
+}

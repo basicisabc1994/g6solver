@@ -269,6 +269,25 @@ def test_the_direct_checks_do_not_accept_a_submodule_folder_g6_could_not_hash(re
     assert by_name["repository_unchanged"]["passed"] is True
 
 
+#: Whether the G6 under test reads which code a run loaded (the pool-compatibility change's guard).
+READS_LOADED = hasattr(repo_tests, "shadowed")
+
+
+@pytest.mark.skipif(not READS_LOADED, reason="this G6 does not read which code a run loaded")
+@pytest.mark.parametrize("loaded, complete, accepted", [
+    ({}, True, True), ({"calc": "/usr/lib/python3/dist-packages/calc.py"}, True, False), ({}, False, False)])
+def test_g6_and_the_direct_checks_read_the_code_a_run_loaded_alike(repo, monkeypatch, loaded, complete, accepted):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    stated = {**result([MORE_ID]), "loaded_outside": loaded, "loaded_complete": complete}
+    in_place = {("test_more.py",): stated, ("test_calc.py",): result([ADD, NEGATIVE])}
+    Runs(in_place).into(monkeypatch)
+    review = g6(repo, checks)
+    plain = direct(repo, checks, Runs(in_place))
+    assert review["disposition"]["accepted"] is accepted and plain["disposition"]["accepted"] is accepted
+    assert review["disposition"]["category"] == plain["disposition"]["category"]
+    assert any("changed_code_not_loaded" in code for code in review["row"]["reason_codes"]) is not accepted
+
+
 #: Whether the G6 under test reads submodule folders git does not look into (the pool-compatibility change); before
 #: it, G6 refuses a repository that holds one.
 READS_SUBMODULES = hasattr(repo_tests, "submodules_not_hashed")
