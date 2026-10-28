@@ -831,6 +831,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                                 f"({second['verdict']}): {second.get('said', '')}")
     follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)
     search = None
+    formal = None
+    if prepared is not None and prepared.formal:   # the formal path: obligations, search, and each trace's replay
+        from g6.harness import verification_formal
+        formal = verification_formal.run(prepared, deadline=deadline, skip=INTEGRITY_SKIP if any(
+            r["stage"] == "integrity" for r in reasons) else "")
     compiled = list(prepared.checks) if prepared is not None else []
     if proposed or compiled:   # verification search: compiled template instances first, then the caller's proposed
         from g6.harness import verification_search   # checks, each on the patch and at the base commit
@@ -844,6 +849,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         for code, detail in search.reasons:
             reason("evidence", code, detail)
         follow_ups = [*follow_ups, *search.next_actions]
+    if formal is not None:
+        verification_formal.finish(formal, search)
     adequacy = None
     if config is not None and config["test_adequacy"]:   # report only: it changes no outcome
         from g6.harness import verification_search
@@ -891,6 +898,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                                                     if found["requirement"] == req.id]) for req in stated]
     if search is not None:
         verification_search.annotate(evaluated, search)
+    if formal is not None:
+        verification_formal.annotate(evaluated, formal)
     if not stated:
         reason("evidence", "no_requirement_stated", "no requirement was stated, so none can be supported")
     for req in evaluated:

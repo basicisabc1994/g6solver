@@ -104,7 +104,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Literal
+from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -642,9 +642,17 @@ class Origin:
     caution: str = CAUTION
     template: str = ""
     refuted_by_difference: bool = False
+    #: A replay of a formal trace (``g6.harness.verification_formal``): its observations are read whether it passed or
+    #: failed; it runs on the patch only (an instance whose intent is change); and ``judge`` classifies it from its two
+    #: readings instead of ``classify``.
+    keep_observations: bool = False
+    patch_only: bool = False
+    judge: Callable[[str, dict, dict | None], dict] | None = None
 
 
 FREE_FORM = Origin()
+#: Why a patch-only check has no run at the base commit.
+PATCH_ONLY = "an instance whose intent is change is replayed on the patch only"
 
 
 def _activity(one: ProposedCheck, placed: str, origin: Origin = FREE_FORM) -> dict:
@@ -683,7 +691,10 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
     def read(at_base: bool) -> dict:
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
                          timeout_s=_bound(deadline - _clock()), **rooted)
-        return _guarded(change, ran, reading(ran, node))
+        found = _guarded(change, ran, reading(ran, node))
+        if origin.keep_observations and found["result"] == "failed":   # a replay says which traces broke
+            found = {**found, "observations": _observations(ran.get("output") or "")}
+        return found
 
     for one in checks:
         origin = (origins or {}).get(one.id, FREE_FORM)
@@ -697,7 +708,9 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         on_patch = read(at_base=False)
         activity["runs"].append({"on": "patch", **_summary(on_patch)})
         at_base, skip = None, ""
-        if on_patch["result"] == "error":
+        if origin.patch_only:
+            skip = PATCH_ONLY
+        elif on_patch["result"] == "error":
             skip = "the run on the patch did not run to a result, so a run at the base commit would decide nothing"
         elif deadline - _clock() < MIN_RUN_S:
             skip = OUT_OF_TIME
@@ -706,7 +719,8 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             activity["runs"].append({"on": "base commit", **_summary(at_base)})
         if skip:
             activity["runs"].append({"on": "base commit", "result": "skipped", "reason": skip})
-        verdict = classify(one.intent, on_patch, at_base)
+        verdict = origin.judge(one.intent, on_patch, at_base) if origin.judge else classify(one.intent, on_patch,
+                                                                                             at_base)
         if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR:   # only where the base run would have decided
             verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
         if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:
@@ -763,7 +777,7 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
             reproduction["template"] = origin.template
         if "differences" in verdict:
             reproduction.update(differences=verdict["differences"], compare=COMPARE)
-        shape = DIFFERS if "differences" in verdict else SHAPE[result]
+        shape = verdict.get("shape") or (DIFFERS if "differences" in verdict else SHAPE[result])
         # review 10: in G6's own words only; what the check printed or failed with stays in assessment.completion
         said = "observed" if "differences" in verdict else "failed with"
         done.reasons.append((REASONS[result], f"{about}: {shape}; unconfirmed: {origin.unconfirmed}, and what it "

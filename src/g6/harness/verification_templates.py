@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import collections
 import configparser
 import hashlib
 import inspect
@@ -316,6 +317,77 @@ class ForbiddenBindings(_Strict):
             raise ValueError("with the repository's own contract, the package is the one its configuration names")
         if self.contract != "repository" and self.package is None:
             raise ValueError("a contract the instance states needs package: the package whose imports it rules")
+        return self
+
+
+#: ``state_invariant.v1``'s limits: the depth of a search whose traces are replayed, and how many traces it replays.
+MAX_FORMAL_DEPTH = 12
+MAX_TRACES = 16
+DEFAULT_TRACES = 8
+#: The operators the replay evaluates an invariant with, on the values it observed (the fixed text's ``_value``).
+REPLAY_OPS = frozenset({"and", "or", "not", "=>", "xor", "=", "distinct", "<", "<=", ">", ">=", "+", "-", "*", "div",
+                        "mod", "ite"})
+#: State variable names G6 keeps for its own (a trace's history).
+RESERVED = "g6_"
+_INTEGER = re.compile(r"-?[0-9]{1,9}")
+
+
+class CallSpec(Call):
+    """A call of a top-level callable the tree defines (``call``), with JSON arguments."""
+    call: Name
+
+
+class ObserveSpec(CallSpec):
+    """How a state variable is read on the real state: ``call(state, *args, **kwargs)``, its value; or, with
+    ``refusal``, an access outcome (true when allowed): refused when it raises ``exception``, or returns a falsy value."""
+    refusal: Literal["exception", "falsy_return"] | None = None
+    exception: ErrorName | None = None
+
+    @model_validator(mode="after")
+    def _refusal(self):
+        if (self.refusal == "exception") != (self.exception is not None):
+            raise ValueError("refusal exception names the exception type the call raises to refuse (exception); any "
+                             "other read names none")
+        return self
+
+
+class StateInvariantBindings(_Strict):
+    """``state_invariant.v1``: a constructor for the initial state, an abstract state model in model_checking's closed
+    grammar, the Int state variable whose value at each step names the action that led to it (``action``), each such
+    value's operation call (``actions``, called with the state first), how each state variable the invariants read is
+    observed on the real state (``observe``), and the search: ``bounded`` to ``depth`` steps, replaying at most
+    ``traces`` of them, or ``induction``."""
+    constructor: CallSpec
+    model: dict[str, Any]
+    action: str = Field(min_length=1, max_length=100)
+    actions: dict[str, CallSpec] = Field(min_length=1, max_length=16)
+    observe: dict[str, ObserveSpec] = Field(min_length=1, max_length=32)
+    depth: int = Field(default=4, ge=1)
+    traces: int = Field(default=DEFAULT_TRACES, ge=1)
+    search: Literal["bounded", "induction"] = "bounded"
+
+    @model_validator(mode="after")
+    def _model(self):
+        from g6.model_checking.encoding import read_model
+        from g6.model_checking.envelope import INPUT_TOO_LARGE, Refusal
+
+        variables = self.model.get("variables")
+        if isinstance(variables, dict) and any(isinstance(name, str) and name.startswith(RESERVED)
+                                               for name in variables):
+            raise ValueError(f"model: no state variable's name may begin with {RESERVED}, which G6 keeps for its own")
+        try:
+            read_model(self.model, need_invariants=True)
+        except Refusal as exc:
+            if exc.code != INPUT_TOO_LARGE:   # over the limits: refused for this instance, before anything runs
+                raise ValueError(f"model: {exc.reason}") from None
+        if not isinstance(variables, dict) or variables.get(self.action) != "Int":
+            raise ValueError("action must name an Int state variable of the model: the one whose value at each step "
+                             "says which action led to that step")
+        if any(not _INTEGER.fullmatch(key) for key in self.actions):
+            raise ValueError("actions maps each value of the action variable, written as a whole number, to an "
+                             "operation call")
+        if any(name not in variables or name == self.action for name in self.observe):
+            raise ValueError("observe names state variables of the model, other than the action variable")
         return self
 
 
@@ -617,6 +689,82 @@ def _differential(tree: Tree, b: DifferentialBindings, side: str) -> Applied:
                     "calls": [{"args": call.args, "kwargs": call.kwargs} for call in b.calls]}, notes)
 
 
+def _replayable(node, sorts: dict[str, str], name: str, used: set[str], depth: int = 1):
+    """An invariant's parsed term as the replay evaluates it, nested lists of operators, variables, whole numbers and
+    booleans; an ``Inapplicable`` naming anything else (a quantifier, a let, a real number, a bit-vector)."""
+    if depth > 64:
+        raise Inapplicable(f"invariant {name} is nested more than 64 levels deep, more than the replay evaluates")
+    if isinstance(node, str):
+        if node in ("true", "false"):
+            return node == "true"
+        if node.isdigit():
+            return int(node)
+        if node in sorts:
+            if sorts[node] not in ("Int", "Bool"):
+                raise Inapplicable(f"{node} is a {sorts[node]}: the replay reads Int or Bool variables only")
+            used.add(node)
+            return node
+        raise Inapplicable(f"invariant {name} uses {node[:40]}, which the replay cannot evaluate on the real state")
+    head = node[0] if node else None
+    if not isinstance(head, str) or head not in REPLAY_OPS:
+        shown = head if isinstance(head, str) else "a term in operator position"
+        raise Inapplicable(f"invariant {name} uses {str(shown)[:40]}, which the replay cannot evaluate on the real "
+                           "state")
+    return [head, *(_replayable(part, sorts, name, used, depth + 1) for part in node[1:])]
+
+
+def _state_invariant(tree: Tree, b: StateInvariantBindings, side: str) -> Applied:
+    """Every name resolved and every call's arguments bound; the model inside model_checking's limits and G6's own; each
+    invariant one the replay evaluates, reading at least one observed variable (else a trace that breaks it would say
+    nothing of the code). The literal still lacks its traces: the formal path adds them."""
+    from g6.formal.z3_bridge import _term
+    from g6.model_checking.encoding import MAX_VARIABLES, read_model
+    from g6.model_checking.envelope import Refusal
+
+    try:
+        model = read_model(b.model, need_invariants=True)
+    except Refusal as exc:
+        raise Inapplicable(f"the model is over model_checking's limits: {exc.reason}") from None
+    if b.depth > MAX_FORMAL_DEPTH:
+        raise Inapplicable(f"depth {b.depth} is above the limit of {MAX_FORMAL_DEPTH} steps for a search whose traces "
+                           "are replayed")
+    if b.traces > MAX_TRACES:
+        raise Inapplicable(f"traces {b.traces} is above the limit of {MAX_TRACES} replayed traces")
+    if b.search == "bounded" and len(model.variables) + 1 + b.depth > MAX_VARIABLES:
+        raise Inapplicable(f"the model has {len(model.variables)} state variables; with the {1 + b.depth} G6 adds to "
+                           f"keep each trace's history (a step counter and one per step), that is over model_checking's "
+                           f"limit of {MAX_VARIABLES}")
+    for name in b.observe:
+        if model.variables[name] not in ("Int", "Bool"):
+            raise Inapplicable(f"{name} is a {model.variables[name]}: the replay reads Int or Bool variables only")
+    invariants, read = {}, set()
+    for name, text in model.invariants.items():
+        used: set[str] = set()
+        invariants[name] = _replayable(_term(text, f"invariant {name}").tree, model.variables, name, used)
+        if not used & set(b.observe):
+            raise Inapplicable(f"invariant {name} reads no observed variable, so a trace that breaks it would say "
+                               "nothing of the code: a result about it is about the model only")
+        read |= used
+    constructor = resolve(tree, b.constructor.call, side)
+    notes = _checked(b.constructor.call, constructor, [(b.constructor.args, b.constructor.kwargs, "the constructor")])
+    actions = {}
+    for key, call in b.actions.items():
+        target = resolve(tree, call.call, side)
+        notes += _checked(call.call, target, [([None, *call.args], call.kwargs, f"action {key}")])
+        actions[str(int(key))] = {"call": target.spec(), "args": call.args, "kwargs": call.kwargs}
+    observe = {}
+    for name, call in b.observe.items():
+        target = resolve(tree, call.call, side)
+        notes += _checked(call.call, target, [([None, *call.args], call.kwargs, f"the read of {name}")])
+        observe[name] = {"call": target.spec(), "args": call.args, "kwargs": call.kwargs, "refusal": call.refusal,
+                         "error": _error_target(tree, call.exception, side).spec() if call.exception else None}
+    return Applied({"constructor": {"call": constructor.spec(), "args": b.constructor.args,
+                                    "kwargs": b.constructor.kwargs},
+                    "actions": actions, "observe": observe,
+                    "sorts": {name: model.variables[name] for name in sorted(read | set(b.observe))},
+                    "invariants": invariants}, list(dict.fromkeys(notes)))
+
+
 # --- the fixed texts ------------------------------------------------------------------------------------------------------
 
 _HEADER = """\
@@ -868,6 +1016,136 @@ def test_differential(capsys):
 """
 
 
+_REPLAY = """
+
+MARK = "G6-OBSERVATION"
+_NONE = object()
+
+
+def _value(term, values):
+    # one term of an invariant, as G6 read it (nested lists), evaluated on the values given
+    if isinstance(term, (bool, int)):
+        return term
+    if isinstance(term, str):
+        return values[term]
+    op, parts = term[0], term[1:]
+    if op == "ite":
+        return _value(parts[1], values) if _value(parts[0], values) else _value(parts[2], values)
+    found = [_value(part, values) for part in parts]
+    if op == "and":
+        return all(found)
+    if op == "or":
+        return any(found)
+    if op == "not":
+        return not found[0]
+    if op == "=>":
+        result = found[-1]
+        for premise in reversed(found[:-1]):
+            result = (not premise) or result
+        return result
+    if op == "xor":
+        result = found[0]
+        for other in found[1:]:
+            result = result != other
+        return result
+    if op == "=":
+        return all(a == b for a, b in zip(found, found[1:]))
+    if op == "distinct":
+        return all(found[i] != found[j] for i in range(len(found)) for j in range(i + 1, len(found)))
+    if op in ("<", "<=", ">", ">="):
+        compare = {"<": lambda a, b: a < b, "<=": lambda a, b: a <= b, ">": lambda a, b: a > b,
+                   ">=": lambda a, b: a >= b}[op]
+        return all(compare(a, b) for a, b in zip(found, found[1:]))
+    if op == "+":
+        return sum(found)
+    if op == "-":
+        return -found[0] if len(found) == 1 else found[0] - sum(found[1:])
+    if op == "*":
+        result = 1
+        for factor in found:
+            result *= factor
+        return result
+    if op in ("div", "mod"):
+        a, b = found
+        rest = a % abs(b)   # SMT-LIB: a = b * q + r, with 0 <= r < |b|
+        return rest if op == "mod" else (a - rest) // b
+    raise ValueError(op + " is not an operator the replay evaluates")
+
+
+def _call(entry, state=_NONE):
+    function = _load(entry["call"])
+    args, kwargs = copy.deepcopy(entry["args"]), copy.deepcopy(entry["kwargs"])
+    return function(*args, **kwargs) if state is _NONE else function(state, *args, **kwargs)
+
+
+def _read(state, read):
+    if read["refusal"] is None:
+        return _call(read, state)
+    error = _error(read["error"]) if read["refusal"] == "exception" else None
+    try:
+        result = _call(read, state)
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt) or error is None or not isinstance(exc, error):
+            raise
+        return False
+    return True if error is not None else bool(result)
+
+
+def _not_replayable(why, exc=None):
+    return {"outcome": "not_replayable", "why": why + ("" if exc is None else " raised " + _name(type(exc))[:100])}
+
+
+def _replay(trace):
+    try:
+        state = _call(BINDINGS["constructor"])
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        return _not_replayable("the constructor", exc)
+    for step, value in enumerate(trace["actions"]):
+        try:
+            _call(BINDINGS["actions"][str(value)], state)
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            return _not_replayable("step %d (action %d)" % (step + 1, value), exc)
+    values = dict(trace["ghost"])
+    for name, read in BINDINGS["observe"].items():
+        try:
+            got = _read(state, read)
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            return _not_replayable("reading " + name, exc)
+        if type(got) not in (bool, int) or (type(got) is bool) != (BINDINGS["sorts"][name] == "Bool"):
+            return _not_replayable("reading %s gave a %s, not a %s" % (name, _name(type(got))[:60],
+                                                                         BINDINGS["sorts"][name]))
+        values[name] = got
+    try:
+        broken = [name for name, term in BINDINGS["invariants"].items() if not _value(term, values)]
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        return _not_replayable("evaluating the invariants on the values read", exc)
+    observed = {name: values[name] for name in BINDINGS["observe"]}
+    return {"outcome": "broken" if broken else "holds", "broken": broken, "observed": observed}
+
+
+def test_replay(capsys):
+    # each trace from a fresh initial state: the operation calls in order, then the invariants on the real state
+    outcomes = []
+    for index, trace in enumerate(BINDINGS["traces"]):
+        outcome = _replay(trace)
+        outcomes.append(outcome)
+        line = json.dumps({"input": index, "output": outcome}, sort_keys=True)
+        with capsys.disabled():
+            print(MARK + " " + line, flush=True)
+    broken = [str(index) for index, outcome in enumerate(outcomes) if outcome["outcome"] == "broken"]
+    if broken:
+        pytest.fail("trace(s) " + ", ".join(broken) + " break the invariant on the real state", pytrace=False)
+"""
+
+
 def _text(ident: str, body: str) -> str:
     """A template's fixed text: the header, its id, the shared helpers, the slot for the bindings, and its body."""
     text = f"{_HEADER}\nTEMPLATE = {ident!r}\n{_COMMON}\n\nBINDINGS = {SLOT}\n{body}"
@@ -899,6 +1177,9 @@ class TemplateDefinition:
     applies: Callable[[Tree, Any, str], Applied] | None
     text: str
     intents: tuple[str, ...] = ("preserve", "change")
+    #: Whether its check is compiled from what a model checker finds (``g6.harness.verification_formal``), not from the
+    #: instance's bindings alone.
+    formal: bool = False
 
     @property
     def text_sha256(self) -> str:
@@ -952,6 +1233,25 @@ TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for defini
          "the repository's own contract is the one its import-linter configuration declares at the base commit"),
         None, "", ("preserve",)),
 )}
+#: The templates whose check G6 compiles from what a model checker finds on a model the caller states: kept apart from
+#: ``TEMPLATES``, whose checks compile from an instance's bindings alone, because their results come in three parts.
+FORMAL_TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for definition in (
+    TemplateDefinition(
+        "state_invariant.v1", SAFETY_STRUCTURAL,
+        "an invariant over sequences of the named operations holds on the real state after each trace a model checker "
+        "finds",
+        StateInvariantBindings,
+        ("the model is the caller's abstraction of the operations: a trace it allows that the code does not follow, "
+         "or along which the code keeps the invariant, is about the model only (model_only), and nobody is accused",
+         "a trace is replayed from a fresh initial state: the constructor, then each operation called with the state "
+         "first and its literal arguments, then each observed variable read and the invariants evaluated on those "
+         "values, with the model's own values for the variables the code does not show",
+         "a bounded search covers paths of at most depth steps, and G6 replays at most the instance's number of traces; "
+         "k-induction and a bounded 'none found' are results about the model only"),
+        _state_invariant, _text("state_invariant.v1", _REPLAY), formal=True),
+)}
+#: Every template a review takes, by id: a view of both registries.
+REGISTRY = collections.ChainMap(TEMPLATES, FORMAL_TEMPLATES)
 
 
 def template_instances(value, requirement_ids) -> list[TemplateInstance]:
@@ -980,9 +1280,9 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
         except ValidationError as exc:
             first = exc.errors()[0]
             raise ValueError(f"{where}: {'.'.join(str(p) for p in first['loc']) or 'instance'}: {first['msg']}") from exc
-        definition = TEMPLATES.get(one.template)
+        definition = REGISTRY.get(one.template)
         if definition is None:
-            raise ValueError(f"{where}: template must be one of {', '.join(sorted(TEMPLATES))}")
+            raise ValueError(f"{where}: template must be one of {', '.join(sorted(REGISTRY))}")
         if one.intent not in definition.intents:
             raise ValueError(f"{where}: {one.template} checks that behaviour is kept: its intent is preserve")
         problem = literal_problem(one.bindings)
@@ -992,7 +1292,8 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
             definition.bindings.model_validate(one.bindings)
         except ValidationError as exc:
             first = exc.errors()[0]
-            raise ValueError(f"{where}: bindings.{'.'.join(str(p) for p in first['loc'])}: {first['msg']}") from exc
+            loc = ".".join(str(p) for p in first["loc"])
+            raise ValueError(f"{where}: bindings{'.' + loc if loc else ''}: {first['msg']}") from exc
         if one.requirement_id not in requirement_ids:
             raise ValueError(f"{where}: requirement_id {one.requirement_id!r} names no requirement this review "
                              "assesses")
@@ -1005,7 +1306,7 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
 def instance_digest(one: TemplateInstance) -> str:
     """The SHA-256 that cites an instance: its template's id and version, the digest of the template's fixed text, and
     the instance's requirement, intent, bindings and their provenance, as canonical JSON."""
-    definition = TEMPLATES[one.template]
+    definition = REGISTRY[one.template]
     body = {"template": one.template, "template_text_sha256": definition.text_sha256, "id": one.id,
             "requirement_id": one.requirement_id, "intent": one.intent, "bindings": one.bindings,
             "provenance": one.provenance}
@@ -1025,40 +1326,52 @@ class Prepared:
     structural: list[dict] = field(default_factory=list)
     activities: list[dict] = field(default_factory=list)
     instances: int = 0
+    #: Each formal instance that applies, for the formal path (``g6.harness.verification_formal``): the instance, its
+    #: bindings, what applying it gave (the literal still without traces), and the root its check is placed in.
+    formal: list[dict] = field(default_factory=list)
 
 
 def _listing(one: TemplateInstance) -> dict:
-    definition = TEMPLATES[one.template]
+    definition = REGISTRY[one.template]
     return {"activity": "template instance", "check": one.id, "template": one.template, "family": definition.family,
             "requirement": one.requirement_id, "intent": one.intent, "instance_sha256": instance_digest(one),
             "bindings_provenance": one.provenance, "seconds": 0.0, "model_calls": 0}
 
 
-def _compiled(root: Path, tree: Tree, one: TemplateInstance) -> tuple[vs.ProposedCheck, str, vs.Origin]:
-    definition = TEMPLATES[one.template]
-    applied = definition.applies(tree, definition.bindings.model_validate(one.bindings), _side(one))
-    source = compile_text(definition, applied.data)
+def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[str], *, ident: str = "",
+                   **origin: Any) -> tuple[vs.ProposedCheck, str, vs.Origin]:
+    """``one``'s template's fixed text compiled for ``data`` (``compile_text``), as a check placed in the copies, and
+    the origin its activity, reasons and reproduction name. ``ident``: the check's id when it is not the instance's
+    (a further check of one instance); ``origin``: further fields of its ``Origin``."""
+    definition = REGISTRY[one.template]
+    source = compile_text(definition, data)
     if len(source.encode("utf-8")) > vs.MAX_SOURCE_BYTES:
         raise Inapplicable("its compiled check would hold more than 64 kilobytes")
-    check = vs.ProposedCheck(id=one.id, requirement_id=one.requirement_id, intent=one.intent,
+    check = vs.ProposedCheck(id=ident or one.id, requirement_id=one.requirement_id, intent=one.intent,
                              file=f"test_g6_{one.template.split('.')[0]}.py", source=source)
     try:
-        placed = vs.placements(root, [check])[one.id]
+        placed = vs.placements(root, [check])[check.id]
     except ValueError as exc:
         raise Inapplicable(f"G6 could not place its compiled check: {exc}") from exc
     about = {key: value for key, value in _listing(one).items() if key in (
         "template", "family", "instance_sha256", "bindings_provenance")}
-    about["notes"] = applied.notes
-    label = f"an instance of {one.template} G6 compiled"
-    origin = vs.Origin(
-        activity="template instance", proposed_by=COMPILED_BY, about=about, label=label,
-        unconfirmed="G6 compiled it from the caller's bindings, and a compiled check decides no requirement",
-        caution=(f"G6 generated the check from the fixed text of template {one.template}, with the caller's bindings "
-                 "written in it as one literal; it imports and runs the repository's code, so G6 ran it only inside "
-                 "its operating-system boundary, with no network. Read it before you run it, or run it in a "
-                 "container."),
-        template=one.template, refuted_by_difference=one.template == "differential.v1" and one.intent == "preserve")
-    return check, placed, origin
+    about["notes"] = notes
+    fields = {"activity": "template instance", "proposed_by": COMPILED_BY, "about": about,
+              "label": f"an instance of {one.template} G6 compiled",
+              "unconfirmed": "G6 compiled it from the caller's bindings, and a compiled check decides no requirement",
+              "caution": (f"G6 generated the check from the fixed text of template {one.template}, with the caller's "
+                          "bindings written in it as one literal; it imports and runs the repository's code, so G6 ran "
+                          "it only inside its operating-system boundary, with no network. Read it before you run it, "
+                          "or run it in a container."),
+              "template": one.template,
+              "refuted_by_difference": one.template == "differential.v1" and one.intent == "preserve", **origin}
+    return check, placed, vs.Origin(**fields)
+
+
+def _compiled(root: Path, tree: Tree, one: TemplateInstance) -> tuple[vs.ProposedCheck, str, vs.Origin]:
+    definition = REGISTRY[one.template]
+    applied = definition.applies(tree, definition.bindings.model_validate(one.bindings), _side(one))
+    return compiled_check(root, one, applied.data, applied.notes)
 
 
 def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInstance], *,
@@ -1075,9 +1388,13 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
         return found
     tree = Tree.read(root, change, deadline, roots)
     for one in instances:
-        definition = TEMPLATES[one.template]
+        definition = REGISTRY[one.template]
         try:
-            if definition.text:
+            if definition.formal:   # its check is compiled from what the model checker finds, in the formal path
+                bindings = definition.bindings.model_validate(one.bindings)
+                found.formal.append({"instance": one, "bindings": bindings, "root": root,
+                                     "applied": definition.applies(tree, bindings, _side(one))})
+            elif definition.text:
                 check, placed, origin = _compiled(root, tree, one)
                 found.checks.append(check)
                 found.placed[one.id] = placed
@@ -1091,7 +1408,7 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
                 f"G6 could not read what it names ({type(exc).__name__})")
             refused = {**_listing(one), "result": "refused", "reason": why}
             found.activities.append(refused)
-            if not definition.text:
+            if not definition.text and not definition.formal:
                 provenance = _contract_provenance(one)
                 found.structural.append({"id": one.id, "requirement": one.requirement_id, "verdict": "not_run",
                                          "normative": provenance != "model_hypothesis",
