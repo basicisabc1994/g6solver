@@ -107,6 +107,111 @@ def _summary(values: list) -> dict:
             "missing": len(values) - len(found)}
 
 
+def _outputs(entries: list[dict]) -> dict[str, dict]:
+    found: dict[str, dict] = {}
+    for entry in entries:
+        if entry["kind"] == "arm":
+            found.setdefault(entry["data"]["patch"], {})[entry["data"]["arm"]] = entry["data"]["output"]
+    return found
+
+
+#: The tool error kinds of a run stopped at a limit: the time limit, and the spending share.
+LIMIT_KINDS = ("time_out", "killed_at_time_limit", "spend_share_reached")
+
+
+def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None) -> dict:
+    """The feasibility criteria (PROTOCOL.md, "The level: feasibility only"), each met, not met or inconclusive, with
+    the numbers behind it, over every non-empty patch; feasible only when all six are met. ``limits``: the frozen
+    ``cap_cents``, ``call_cap``, ``limit_s`` and ``grace_s``."""
+    tasks = [task for task in v9["tasks"] if task.get("patch") == "non_empty"]
+    n = len(tasks)
+
+    def disposition(task: dict, arm: str):
+        if arm == "A":
+            return task["arms"].get("g6")
+        return (outputs.get(task["task_id"], {}).get(arm) or {}).get("disposition")
+
+    found = []
+    numbers, broken = {}, False
+    for arm in ARMS:
+        given = [disposition(task, arm) for task in tasks]
+        errors = sum(isinstance(d, dict) and d.get("category") == "tool_error_or_refusal" for d in given)
+        missing = sum(d is None for d in given)
+        numbers[arm] = {"patches": n, "missing": missing, "tool_errors": errors,
+                        "tool_error_rate": round(errors / n, 4) if n else None}
+        broken = broken or bool(missing) or (n and errors / n > stats.TOOL_ERROR_LIMIT)
+    found.append({"criterion": 1, "text": "every arm returns a disposition or a counted tool error for every non-empty "
+                                          "patch, and none has a tool error on more than 10% of them",
+                  "result": "inconclusive" if not n else "not met" if broken else "met", "numbers": numbers,
+                  "why": "" if n else "there is no non-empty patch"})
+
+    stopped = {arm: {} for arm in "CTE"}
+    for task in tasks:
+        for arm in "CTE":
+            given = disposition(task, arm) or {}
+            if given.get("error_kind") in LIMIT_KINDS or given.get("time_or_cap_reached"):
+                kind = given.get("error_kind") or "time_or_cap_reached"
+                stopped[arm][kind] = stopped[arm].get(kind, 0) + 1
+    usage = {}
+    for arm in "CTE":
+        runs = [outputs.get(task["task_id"], {}).get(arm) or {} for task in tasks]
+        usage[arm] = {"cents": round(sum((run.get("meter") or {}).get("cents") or 0.0 for run in runs), 6),
+                      "most_calls": max([(run.get("meter") or {}).get("calls") or 0 for run in runs], default=0),
+                      "most_seconds": max([run.get("seconds") or 0.0 for run in runs], default=0.0)}
+    if not limits:
+        result, why = "inconclusive", "not computed: the frozen limits were not given"
+    else:
+        share = float(limits["cap_cents"]) / len("CTE")
+        over = [arm for arm in "CTE" if usage[arm]["cents"] > share + 1e-9
+                or usage[arm]["most_calls"] > limits["call_cap"]
+                or usage[arm]["most_seconds"] > limits["limit_s"] + limits.get("grace_s", 0)]
+        result, why = ("not met" if over else "met"), (f"over a limit: {', '.join(over)}" if over else "")
+    found.append({"criterion": 2, "text": "no search arm and not arm E used more than its frozen limits; a run stopped "
+                                          "at a limit is counted, with the limit it reached",
+                  "result": result, "why": why, "numbers": {**usage, "stopped_at_a_limit": stopped,
+                                                            "limits": limits}})
+
+    stages = {arm: [(outputs.get(task["task_id"], {}).get(arm) or {}).get("search_stage") for task in tasks]
+              for arm in "CT"}
+    if any(stage is None for arm in "CT" for task, stage in zip(tasks, stages[arm])
+           if outputs.get(task["task_id"], {}).get(arm)):
+        result, why, ran = "inconclusive", ("not computed: the search arms' replies do not say whether the search "
+                                            "stage ran a check to a pass or a fail (the field waits for VS-5)"), {}
+    else:
+        ran = {arm: {"ran_to_result": sum(bool((stage or {}).get("ran_to_result")) for stage in stages[arm]),
+                     "of": n} for arm in "CT"}
+        result = ("inconclusive" if not n else
+                  "met" if all(ran[arm]["ran_to_result"] * 2 >= n for arm in "CT") else "not met")
+        why = "" if n else "there is no non-empty patch"
+    found.append({"criterion": 3, "text": "in each search arm, the search stage ran at least one check to a pass or a "
+                                          "fail on at least half of the non-empty patches",
+                  "result": result, "why": why, "numbers": ran})
+
+    found.append({"criterion": 4, "text": "no search arm's report lists a model-originated check as passing a "
+                                          "requirement, and every formal result is reported in its three parts",
+                  "result": "inconclusive", "numbers": {},
+                  "why": "not computed: the report check for arms C and T is not built yet"})
+
+    differ = {arm: [task["task_id"] for task in tasks
+                    if _accepts((outputs.get(task["task_id"], {}).get(arm) or {}).get("own"))
+                    and not _accepts(task["arms"].get("g6"))] for arm in "CT"}
+    found.append({"criterion": 5, "text": "the frozen comparison of each search arm's stated-check results with arm "
+                                          "A's lists every patch a search arm's own review accepted and arm A did not",
+                  "result": "inconclusive", "numbers": {"own_accepted_arm_a_did_not": differ},
+                  "why": "not computed: the comparison of stated-check results is not built yet; the patches it must "
+                         "list are given"})
+
+    failed = [task["task_id"] for task in tasks if task.get("oracle_controls_passed") is not True]
+    found.append({"criterion": 6, "text": "V9's feasibility level met its own criterion 3 (oracle controls) for every "
+                                          "task used",
+                  "result": "inconclusive" if not n else "not met" if failed else "met",
+                  "numbers": {"tasks": n, "failed": failed}, "why": "" if n else "there is no non-empty patch"})
+    results = [item["result"] for item in found]
+    outcome = ("not feasible" if "not met" in results else "feasible" if all(r == "met" for r in results)
+               else "inconclusive")
+    return {"result": outcome, "criteria": found}
+
+
 def _patches(entries: list[dict], v9: dict, reference: list[dict]) -> tuple[list[dict], dict]:
     """The analysed patches, each with every arm's disposition, findings and cost; and the counts."""
     outputs: dict[str, dict] = {}
@@ -239,13 +344,15 @@ def _costs(rows: list[dict]) -> dict:
     return found
 
 
-def analyse(record_path, committed: str, *, v9: dict, reference: list[dict],
+def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], limits: dict | None = None,
             resamples: int = stats.RESAMPLES) -> dict:
-    """The primary measures (the module docstring), from a record that verifies against ``committed``."""
+    """The primary measures and the feasibility criteria (the module docstring), from a record that verifies against
+    ``committed``. ``limits``: the frozen ``cap_cents``, ``call_cap``, ``limit_s`` and ``grace_s``."""
     entries = verify(record_path, committed)
     rows, counts = _patches(entries, v9, reference)
     seed = int(v9["seed"]) + 2
     return {"study": "V10", "kind": "primary measures", "confidence": CONFIDENCE,
+            "feasibility": feasibility(v9, _outputs(entries), limits),
             "record": {"committed": committed, "entries": len(entries)}, "counts": counts,
             "bootstrap_seed": seed, "resamples": resamples,
             "rates": {name: _rates(rows, name) for name in (*ARMS, *VARIANTS)},

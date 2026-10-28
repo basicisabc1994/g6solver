@@ -49,6 +49,7 @@ def finding(patch, arm, node, reproducible=True):
 
 
 def written(tmp_path, arms, reruns=(), excluded=()):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "record.jsonl"
     kept = record.Record(path)
     for item in excluded:
@@ -189,6 +190,67 @@ def test_costs_per_arm_and_tool_errors_by_kind(tmp_path):
     assert costs["T"]["cents"]["total"] == 24.0 and costs["T"]["dollars"]["mean"] == 0.04
     assert costs["A"]["seconds"]["mean"] == 10.0 and costs["A"]["cents"]["missing"] == 6
     assert got["tool_errors"]["C"]["error_kinds"] == {"time_out": 1}
+
+
+LIMITS = {"cap_cents": 300.0, "call_cap": 8, "limit_s": 1800, "grace_s": 60}
+
+
+def criteria(tmp_path, tasks=TASKS, arms=ARMS, limits=LIMITS):
+    got = study(tmp_path, tasks, arms, limits=limits)["feasibility"]
+    return got, {item["criterion"]: item for item in got["criteria"]}
+
+
+def test_criterion_1_every_arm_answers_every_non_empty_patch_with_at_most_one_tool_error_in_ten(tmp_path):
+    got, by = criteria(tmp_path)
+    assert by[1]["result"] == "not met"                              # C: one tool error in six, above 10%
+    assert by[1]["numbers"]["C"] == {"patches": 6, "missing": 0, "tool_errors": 1, "tool_error_rate": round(1 / 6, 4)}
+    clean = {name: outputs() for name in ARMS}
+    _, by = criteria(tmp_path / "clean", arms=clean)
+    assert by[1]["result"] == "met"
+    _, by = criteria(tmp_path / "missing", arms={k: v for k, v in clean.items() if k != "c2"})
+    assert by[1]["result"] == "not met" and by[1]["numbers"]["T"]["missing"] == 1
+
+
+def test_criterion_2_no_arm_used_more_than_its_frozen_limits_and_runs_stopped_at_a_limit_are_counted(tmp_path):
+    _, by = criteria(tmp_path)
+    assert by[2]["result"] == "met" and by[2]["numbers"]["stopped_at_a_limit"]["C"] == {"time_out": 1}
+    spendthrift = {name: outputs(cents=60.0) for name in ARMS}
+    _, by = criteria(tmp_path / "over", arms=spendthrift)
+    assert by[2]["result"] == "not met" and by[2]["numbers"]["C"]["cents"] == 360.0
+    chatty = {**{name: outputs() for name in ARMS}, "d1": outputs(calls=9)}
+    _, by = criteria(tmp_path / "calls", arms=chatty)
+    assert by[2]["result"] == "not met" and by[2]["numbers"]["T"]["most_calls"] == 9
+    _, by = criteria(tmp_path / "none", limits=None)
+    assert by[2]["result"] == "inconclusive" and "frozen limits" in by[2]["why"]
+
+
+def test_criterion_3_the_search_stage_ran_a_check_to_a_result_on_at_least_half_the_patches(tmp_path):
+    _, by = criteria(tmp_path)
+    assert by[3]["result"] == "inconclusive" and "VS-5" in by[3]["why"]
+    ran = {name: outputs(search_stage={"ran_to_result": index % 2 == 0}) for index, name in enumerate(ARMS)}
+    _, by = criteria(tmp_path / "half", arms=ran)
+    assert by[3]["result"] == "met" and by[3]["numbers"]["T"] == {"ran_to_result": 3, "of": 6}
+    fewer = {name: outputs(search_stage={"ran_to_result": index == 0}) for index, name in enumerate(ARMS)}
+    _, by = criteria(tmp_path / "fewer", arms=fewer)
+    assert by[3]["result"] == "not met"
+
+
+def test_criteria_4_and_5_wait_for_scripts_not_built_and_say_so_with_their_numbers(tmp_path):
+    _, by = criteria(tmp_path)
+    assert by[4]["result"] == "inconclusive" and "report check" in by[4]["why"]
+    assert by[5]["result"] == "inconclusive" and "comparison" in by[5]["why"]
+    assert by[5]["numbers"]["own_accepted_arm_a_did_not"] == {"C": ["c2"], "T": []}
+
+
+def test_criterion_6_and_the_outcome(tmp_path):
+    got, by = criteria(tmp_path)
+    assert by[6]["result"] == "met" and got["result"] == "not feasible"     # criterion 1 is not met
+    tasks = [*TASKS[:-1], task("c2", "r2", "correct", g6=False, oracle=False)]
+    _, by = criteria(tmp_path / "oracle", tasks=tasks)
+    assert by[6]["result"] == "not met" and by[6]["numbers"]["failed"] == ["c2"]
+    clean = {name: outputs(search_stage={"ran_to_result": True}) for name in ARMS}
+    got, _ = criteria(tmp_path / "clean", arms=clean)
+    assert got["result"] == "inconclusive"                                 # criteria 4 and 5 cannot be checked yet
 
 
 def test_unlabelled_and_excluded_patches_are_counted_and_left_out_of_every_rate(tmp_path):

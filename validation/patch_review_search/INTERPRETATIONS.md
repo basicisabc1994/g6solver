@@ -217,3 +217,25 @@ Items 27 to 33 cover the analysis of the primary measures (`analysis.py`).
     (`arm_a_findings`, as reproductions built from V9's arm 3 reply by the study's runner, which is not built yet)
     with the other arms' findings, so arm A's discovery and its K, K_ref and J are computed the same way. For the
     coordinator's ruling.
+
+Items 34 to 37 cover the feasibility criteria (`analysis.feasibility`).
+
+34. **Criterion 1** is read over every non-empty patch, labelled or not. An arm with no disposition on one fails it,
+    as does a tool error rate above 10% (V9's limit, `TOOL_ERROR_LIMIT`). For the coordinator's ruling.
+
+35. **Criterion 2.** For each search arm and arm E: its metered cents over the study are at most its share (a third of
+    the cap), its most calls on one patch at most the call cap, and its longest run at most the arm's limit plus the
+    grace its child is killed after. Runs stopped at a limit are counted by kind (`time_out`, V9's
+    `killed_at_time_limit`, `spend_share_reached`, or another disposition marked as shaped by a limit). Without the
+    frozen limits, the criterion is inconclusive. For the coordinator's ruling.
+
+36. **Criterion 3** reads, for each search arm and patch, whether its search stage ran a check to a pass or a fail
+    (`search_stage.ran_to_result`, the field VS-5 settles), over every non-empty patch; an arm with no output on a
+    patch did not. When any reply does not say, the criterion is inconclusive. "At least half" is twice the count at
+    least the number of patches. For the coordinator's ruling.
+
+37. **Criteria 4 and 5, and the outcome.** Criterion 4 waits for the report check of arms C and T, and criterion 5 for
+    the frozen comparison of stated-check results: both are reported inconclusive, criterion 5 with the patches its
+    list must hold (each search arm's own review accepted, arm A did not). Criterion 6 is read from V9's oracle
+    controls for every non-empty task. The study is feasible only when all six are met, not feasible when any is not
+    met, and inconclusive otherwise. For the coordinator's ruling.

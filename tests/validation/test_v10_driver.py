@@ -262,6 +262,14 @@ def test_arm_as_findings_are_rerun_too_and_every_arm_run_is_timed():
         assert row["seconds"] >= 0 and row["processor_seconds"] >= 0
 
 
+def test_what_a_search_arm_says_of_its_search_stage_is_kept_for_the_feasibility_check():
+    stage = {"ran_to_result": True, "checks": 3}
+    c = Arm("C", {"p0": [{"own": ACCEPTED, "model_calls": 1, "spent_cents": 1.0, "search_stage": stage}]})
+    got, _, _ = study(patches(ACCEPTED), c)
+    assert got["patches"][0]["arms"]["C"]["search_stage"] == stage
+    assert got["patches"][0]["arms"]["T"]["search_stage"] is None
+
+
 def test_the_record_is_append_only_each_entry_chained_to_the_one_before(tmp_path):
     path = tmp_path / "record.jsonl"
     record = driver.Record(path)

@@ -272,7 +272,10 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                          "spent_cents": reply.get("spent_cents"),
                          "reasons": list(reply.get("reasons") or []), "findings": list(reply.get("findings") or []),
                          "attribution": _attribution(arm_a, own, reply),
-                         "proposer_failure": reply.get("proposer_failure")}
+                         "proposer_failure": reply.get("proposer_failure"),
+                         # whether the search stage ran a check to a pass or a fail (feasibility criterion 3), as
+                         # G6's report says it once VS-5 settles the field
+                         "search_stage": reply.get("search_stage")}
             if reply.get("proposer_failure"):
                 failures.append({"patch": patch["id"], "arm": arm, "reason": reply["proposer_failure"],
                                  "category": arms[arm]["disposition"]["category"]})
