@@ -145,6 +145,15 @@ def test_a_confined_run_with_receipt_records_one_receipt_binding_the_run(repo, f
     _a_receipt_binds_the_run(repo, fake_boundary.name)
 
 
+def test_a_run_says_the_digest_of_the_tree_it_began_on(repo, fake_boundary):
+    """Review I4: the patch review compares this with its artifact digest itself, not only through the gate."""
+    _write(repo, "calc.py", FIXED)
+    artifact = digest(rt.snapshot(repo))
+    assert rt.run(repo, TESTS)["source_before"] == artifact
+    found = rt.run(repo, TESTS, receipt=True)
+    assert found["source_before"] == artifact == _entries()[0]["body"]["source_before"]
+
+
 def test_a_run_confined_by_bubblewrap_records_its_receipt(repo, bwrap_backend):
     _a_receipt_binds_the_run(repo, confine.BUBBLEWRAP)
 

@@ -483,6 +483,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if repo_tests.snapshot(root) != before:
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
     in_place = [(tier, ran) for tier, ran in ((1, first), (2, second)) if ran]
+    for tier, ran in in_place:   # review I4: changed and changed back around a run, the snapshots above still match
+        if ran.get("source_before") and ran["source_before"] != artifact:
+            reason("integrity", "repository_changed_during_review", f"the tier {tier} run began on a working tree "
+                   "other than the one under review (its digest is not the artifact digest)")
     gate = _gate(task, claim, [ran for _, ran in in_place], artifact)
     statuses = [found.get("receipt_status", "unknown") for found in gate["receipts"]]
     receipts = [{"tier": tier, "receipt": ran.get("receipt", ""),

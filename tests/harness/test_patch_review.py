@@ -374,6 +374,18 @@ def test_a_run_that_cannot_be_believed_compromises_test_integrity(repo, monkeypa
     assert _requirement(got, "R1")["status"] != "passed_on_stated_checks"
 
 
+def test_a_run_that_began_on_another_tree_compromises_integrity_whatever_the_gate_says(repo, monkeypatch):
+    """Review I4 (probe S9): the tree was the defective one when the review took its digest, the fixed one while the
+    tests ran, and the defective one again at the end, so the before and after digests matched and only the receipts
+    (artifact_mismatch, an unknown) showed it. The run's own record of the tree it began on decides."""
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, default={**result([ADD, NEGATIVE]), "source_before": "0" * 64})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "repository_changed_during_review" and "tier 1" in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
 def test_a_moved_test_file_is_compared_with_its_old_text_not_read_as_deleted(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
     _git(repo, "mv", "test_calc.py", "test_addition.py")

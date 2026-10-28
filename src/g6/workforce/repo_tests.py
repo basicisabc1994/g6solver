@@ -69,7 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 
-from g6.core import component_process, confine, git_env
+from g6.core import component_process, confine, git_env, ledger
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
 from g6.workforce import receipt_store, verify
@@ -881,8 +881,9 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     with the paths, whatever the tests said, and so is one after which git cannot read the repository (with that
     said). ``mutant`` (path, source): that module is imported from the source given instead of its file, which is
     never written (the changed-lines mutation check). ``interpreter_source`` says whose Python ran the tests
-    ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path. Raises
-    ``RepoRefused`` before anything runs when the request cannot run.
+    ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path, and
+    ``source_before`` the digest of the ``snapshot`` the run began on (the digest the patch review calls its
+    ``artifact_digest``). Raises ``RepoRefused`` before anything runs when the request cannot run.
 
     ``receipt=True``: a run that started confined (its ``isolation`` names a backend), whose repository git could
     read after it, and beside which ``ignored_inputs`` found no git-ignored file the run could load, is written to
@@ -940,7 +941,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "python": python, "interpreter_source": whose, "command": command, "isolation": isolation,
                 "failed_ids": list(tally.get("failed_ids", [])), "setup_errors": tally.get("setup_errors", {}),
                 "degraded": verdict not in RAN or ("expected" in tally and
-                    (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": ""}
+                    (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
+                "source_before": ledger.digest(before)}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
