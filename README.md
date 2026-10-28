@@ -96,6 +96,9 @@ Start with [the AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). The loop is:
 `metaharness_start` ? confirm ? diagnose ? propose code with a hypothesis ? evaluate ? decide ? client consent ? run.
 Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: give
 it the patched repository, the task, and the requirements the patch must meet, each with the tests that check it.
+You can also give it the task's intent: its success criteria become requirements and its non-goals and failure
+criteria behaviour the patch must keep, each not established until a requirement with the same text names the
+tests that check it.
 It runs those tests inside an operating-system boundary, compares the changed tests, test helpers and test-runner
 files with the base commit for the signs of weakening G6 knows how to find (a static comparison: it cannot show
 that the tests are as strong as before), then runs the other tests that touch the changed modules, and returns one

@@ -83,6 +83,15 @@ with the repository root, the task, `requirements` (a list of `{id, text, checks
 pytest node IDs and may be empty), optional extra `tests`, and a base ref (default `HEAD`). A `claim` and
 `sources` are optional: their lexical support is reported and decides nothing. Poll its job.
 
+An `intent` is optional too: an intent contract with a `goal` and any of `success_criteria`, `non_goals`,
+`failure_criteria` and `assumptions`. Its items count as stated by you. Each success criterion becomes a
+requirement, and each non-goal or failure criterion an obligation to keep behaviour (`kind: preserve`). Each is
+not established until a requirement with the same text names the tests that check it; the two are merged, never
+counted twice. Each assumption is listed in the scope with its source (`explicit`, `inferred` or `fallback`); it
+is not a requirement and decides nothing. The intent's own `success_checks` and `failure_checks` test the text of
+an answer, not a repository, so they are not used, and the unknowns say so. An intent that is not valid is
+refused. Each requirement and each check in the reply says where it came from (`provenance`).
+
 The checks adapt to cost. Tier 1 always runs: the working-tree digest, test integrity, and the stated
 checks with the extra tests in one confined run. Integrity is what these checks find, and nothing more:
 

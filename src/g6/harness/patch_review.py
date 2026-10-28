@@ -39,7 +39,10 @@ Each requirement and each check says where it came from (``provenance``). A requ
 kind ``requirement``; only a ``stated``, ``repository_stated`` or ``person_confirmed`` one is assessed. An ``inferred``
 requirement is listed among the scope's assumptions and a ``model_hypothesis`` among the proposals: neither gets a
 status or takes part in the outcome, and their checks never run. A check the caller cited is ``stated``; a test of the
-changed modules tier 2 found is ``derived``.
+changed modules tier 2 found is ``derived``. An optional ``intent`` (an intent contract) adds its items as stated
+(``g6.harness.verification_search``): its success criteria as requirements, its non-goals and failure criteria as
+obligations to keep behaviour (kind ``preserve``), each not established until a check is stated for it, and its
+assumptions, with their source, in the scope. With no intent nothing of this runs.
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -248,7 +251,9 @@ def _names(check: str, files: set[str]) -> bool:
     return any(path == head or path.startswith(head + "/") for path in files)
 
 
-def _inputs(task, claim, tests, sources, timeout_s, requirements) -> list[Requirement]:
+def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None) -> tuple[list[Requirement], list, list]:
+    """The requirements (with an intent's items mapped in), the intent's assumptions and its unknowns; a refusal for
+    any invalid input."""
     def bad(message: str) -> _Refused:
         return _Refused("G6_E_INPUT_VALIDATION", message)
 
@@ -272,9 +277,17 @@ def _inputs(task, claim, tests, sources, timeout_s, requirements) -> list[Requir
         stated = [Requirement.model_validate(item) for item in requirements]
     except ValidationError as exc:
         raise bad(f"each requirement is {{id, text, checks}}: {exc.errors()[0]['msg']}") from exc
+    assumed, unmapped = [], []
+    if intent is not None:
+        from g6.harness import verification_search   # only for an intent: with none, nothing new is imported or runs
+        try:
+            mapped = verification_search.requirements_from_intent(verification_search.intent_contract(intent), stated)
+        except ValueError as exc:
+            raise bad(f"intent must be an intent contract: {exc}") from exc
+        stated, assumed, unmapped = mapped.requirements, mapped.assumptions, mapped.unknowns
     if len({r.id for r in stated}) != len(stated):
         raise bad("requirement ids must be unique")
-    return stated
+    return stated, assumed, unmapped
 
 
 def _covers(check: str, node: str) -> bool:
@@ -488,15 +501,17 @@ def _grounding(claim: str, sources: dict[str, str] | None) -> dict:
 
 def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests: list[str] | tuple[str, ...] = (),
                  claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
-                 expected_artifact_digest: str = "", timeout_s: int = 300) -> dict:
+                 expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None) -> dict:
     """Assess the working tree's patch against ``base`` on the stated requirements (``[{id, text, checks}]``, checks
     being pytest node ids) and the extra ``tests``. Never accepts claimed test results; never authorises a merge.
 
     Optional ``expected_artifact_digest`` pins a prior snapshot; a changed one is refused (``G6_E_PATCH_STALE``).
+    Optional ``intent``, an intent contract (``g6.intent_engine.schema.IntentContract``), adds its items as
+    caller-stated (``g6.harness.verification_search.requirements_from_intent``); one that is not valid is refused.
     """
     started = time.monotonic()
     try:
-        stated = _inputs(task, claim, tests, sources, timeout_s, requirements)
+        stated, assumed, unmapped = _inputs(task, claim, tests, sources, timeout_s, requirements, intent)
         root = repo_tests.checked_repo(repo)
         before = repo_tests.snapshot(root)
         artifact = digest(before)
@@ -511,7 +526,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         stated_ids = list(dict.fromkeys(norm[raw] for req in stated for raw in req.checks))
         ids = list(dict.fromkeys([*stated_ids, *(norm[raw] for raw in tests)]))
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
-                       deadline=started + timeout_s, started=started, listed=listed)
+                       deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
+                       unmapped=unmapped)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -535,9 +551,9 @@ def _untrusted(tier: int, ran: dict) -> str:
 
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
-            started, listed=()) -> dict:
+            started, listed=(), assumed=(), unmapped=()) -> dict:
     reasons: list[dict] = []
-    unknowns: list[str] = []
+    unknowns: list[str] = list(unmapped)   # what an intent held that is not a check of this patch
     runs: list[dict] = []
     skipped: list[dict] = []
 
@@ -655,7 +671,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
-                  artifact, claim, sources, started, follow_ups, listed)
+                  artifact, claim, sources, started, follow_ups, listed, assumed)
 
 
 AT_BASE = "stated checks at the base commit"

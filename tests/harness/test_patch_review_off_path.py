@@ -58,7 +58,7 @@ def _golden() -> dict:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]
 
 
-@pytest.mark.parametrize("extra", [{}], ids=["as-the-trial-calls"])
+@pytest.mark.parametrize("extra", [{}, {"intent": None}], ids=["as-the-trial-calls", "intent-none"])
 def test_with_search_off_and_no_intent_every_decided_field_is_unchanged(bwrap_backend, extra):
     assert replies(**extra) == _golden()
 

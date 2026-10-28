@@ -906,6 +906,80 @@ def test_a_requirement_the_repository_states_or_the_person_confirmed_is_assessed
     assert (second["status"], second["provenance"]) == ("failed", provenance)
 
 
+INTENT = {"goal": "Repair addition for positive and negative integers.",
+          "success_criteria": ["Add returns the sum of two negative integers.", "add returns 0 for 0 and 0"],
+          "non_goals": ["change the signature of add"],
+          "assumptions": [{"statement": "inputs are integers", "source": "explicit"},
+                          {"statement": "callers use Python 3.12", "source": "inferred"}],
+          "success_checks": {"add returns 0 for 0 and 0": {"kind": "contains", "value": "0"}}}
+
+
+def test_an_intents_items_are_assessed_as_caller_stated(repo, monkeypatch):
+    """Its success criteria are requirements and its non-goals obligations to keep behaviour, each not established
+    until a check is stated for it (here R2, with the same text, states one); its assumptions are listed with their
+    source; nothing new runs."""
+    (repo / "calc.py").write_text(GOOD)
+    runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo, intent=INTENT)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence" and got["completion_state"] == "qualified-draft"
+    assert {r["id"]: (r["status"], r["kind"], r["provenance"]) for r in assessment["requirements"]} == {
+        "R1": ("passed_on_stated_checks", "requirement", "stated"),
+        "R2": ("passed_on_stated_checks", "requirement", "stated"),
+        "intent.success_criteria.1": ("not_established", "requirement", "stated"),
+        "intent.non_goals.0": ("not_established", "preserve", "stated")}
+    assert _requirement(got, "R2")["merged_from"] == ["intent.success_criteria.0"]
+    assert assessment["requirements_without_adequate_check"] == ["intent.success_criteria.1", "intent.non_goals.0"]
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("evidence", "requirement_without_check")] * 2
+    assert "passes at the base commit and on the patch" in _requirement(got, "intent.non_goals.0")["suggested_test"]
+    assert [(a["id"], a["source"], a["normative"]) for a in assessment["scope"]["assumptions"]] == [
+        ("intent.assumptions.0", "explicit", True), ("intent.assumptions.1", "inferred", False)]
+    assert any("intent.success_checks" in unknown and "names no repository test" in unknown
+               for unknown in assessment["unknowns"])
+    assert runs.calls == [("in_place", (ADD, NEGATIVE)), ("in_place", ("test_calc.py",))]
+    assert check_envelope(got) == []
+
+
+def test_an_intent_stated_in_full_by_the_requirements_can_be_supported_and_is_still_a_qualified_draft(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo, intent={"goal": "Repair addition.", "success_criteria": [r["text"] for r in SUM]})
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+    assert [r["id"] for r in got["assessment"]["requirements"]] == ["R1", "R2"]
+
+
+def test_an_intent_of_assumptions_only_changes_no_decided_field(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    assumed = review(repo, intent={"goal": "Repair addition.", "assumptions": INTENT["assumptions"]})
+    assert _decided(assumed) == _decided(review(repo)) == _decided(review(repo, intent=None))
+    assert len(assumed["assessment"]["scope"]["assumptions"]) == 2
+
+
+@pytest.mark.parametrize("intent, said", [
+    ("repair addition", "object"),
+    ({"success_criteria": ["add sums"]}, "goal"),
+    ({"goal": "g", "non_goal": ["keep the API"]}, "non_goal"),
+    ({"goal": "g", "success_criteria": ["  "]}, "success_criteria"),
+    ({"goal": "g", "assumptions": [{"statement": "s", "source": "certain"}]}, "source"),
+    ({"goal": "g", "success_criteria": ["x" * 20_001]}, "success_criteria"),
+])
+def test_an_invalid_intent_is_refused_before_anything_runs(repo, monkeypatch, intent, said):
+    runs = Recorded(monkeypatch, default=result([ADD]))
+    stored = _stored()
+    got = review(repo, intent=intent)
+    _refused(got, "G6_E_INPUT_VALIDATION")
+    assert "intent" in got["warning_card"]["message"] and said in got["warning_card"]["message"]
+    assert runs.calls == [] and _stored() == stored
+
+
+def test_a_requirement_id_an_intent_item_also_has_is_refused(repo, monkeypatch):
+    Recorded(monkeypatch, default=result([ADD]))
+    clash = [{"id": "intent.non_goals.0", "text": "add sums", "checks": [ADD]}]
+    _refused(review(repo, clash, intent={"goal": "g", "non_goals": ["keep the API"]}), "G6_E_INPUT_VALIDATION")
+
+
 # --- refusals: no outcome, never a detection --------------------------------------------------------------------------
 
 def _stored() -> int:
@@ -1015,6 +1089,64 @@ def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes(repo, m
     assert got["status"] == "completed", got
     assert got["result"]["assessment"]["outcome"] == "supported_within_scope"
     assert [r["id"] for r in got["result"]["assessment"]["requirements"]] == ["R1", "R2"]
+
+
+def test_the_mcp_tool_takes_an_intent_and_refuses_an_invalid_one_with_a_code(repo, monkeypatch):
+    """The intent is additive: the reply keeps the same envelope (completion_state, warning_card, evidence,
+    request_id, run_id, a G6_E_* code) and is never better than qualified-draft. An object that is not an intent
+    contract is a refusal with G6_E_INPUT_VALIDATION; a value that is not an object is refused by the tool's own
+    schema, as any mistyped parameter is, and the server goes on answering."""
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def finished(client, arguments) -> dict:
+        job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                              "requirements": SUM, **arguments}))
+        for _ in range(400):
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+            if got.get("status") in ("completed", "failed"):
+                assert got["status"] == "completed", got
+                return got["result"]
+            await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            plain = await finished(client, {})
+            with_intent = await finished(client, {"intent": INTENT})
+            refused = await finished(client, {"intent": {"goal": "g", "non_goal": ["keep the API"]}})
+            mistyped = await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                                  "intent": "repair addition"}, raise_on_error=False)
+            after = await finished(client, {})
+        return tool, plain, with_intent, refused, mistyped, after
+
+    tool, plain, with_intent, refused, mistyped, after = asyncio.run(flow())
+    assert "intent" in tool.parameters["properties"] and "intent" in tool.description
+    assert with_intent["assessment"]["outcome"] == "insufficient_evidence"
+    assert "intent.non_goals.0" in [r["id"] for r in with_intent["assessment"]["requirements"]]
+    for got in (plain, with_intent):
+        assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+        assert check_envelope(got) == [] and got["request_id"] and "run_id" in got
+    assert set(with_intent) == set(plain)
+    assert [set(item) for item in with_intent["evidence"]] == [set(item) for item in plain["evidence"]]
+    assert refused["completion_state"] == "blocked-escalated" and check_envelope(refused) == []
+    assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "non_goal" in refused["warning_card"]["message"]
+    assert "assessment" not in refused and "Traceback" not in str(refused)
+    assert mistyped.is_error and "Traceback" not in str(mistyped.content)
+    assert after["assessment"]["outcome"] == "supported_within_scope"
 
 
 @pytest.mark.parametrize("raised, code", [
