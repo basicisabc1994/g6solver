@@ -21,26 +21,42 @@ with every requirement ``passed_on_stated_checks``. A refusal or an exception is
 that fails the A5 check (``report_check.py``). G6's model calls are read from its reply
 (``assessment.completion.activities``) when it reports them, and are otherwise counted as zero; the source is recorded.
 
-**Arm 4, the same checks without G6** (``direct_checks``). The deterministic checks G6's frozen review runs, called
-directly, in G6's order and with the same deadline, and accepted only when every check passes (``DIRECT_CHECKS``):
+**Arm 4, the same checks without G6** (``direct_checks``). The deterministic checks G6's frozen review runs (Step 2,
+frozen at commit b3c342b; the line numbers are ``src/g6/harness/patch_review.py``'s there), called directly, in G6's
+order and with the same deadline, and accepted only when every check passes (``DIRECT_CHECKS``):
 
-1. ``test_weakening``: ``g6.workforce.verify.weakened_tests`` over each changed test file's text before and after (a
-   moved file compared with its old text);
-2. ``runner_configuration``: the changed runner files, as ``g6.harness.patch_review._runner_changes`` reads them;
-3. ``ignored_inputs``: ``g6.workforce.repo_tests.ignored_inputs`` finds no git-ignored file a run could load, and
-   finished its scan;
-4. ``patch_changes_files``: the change against ``HEAD`` is not empty;
-5. ``stated_checks``: one confined ``repo_tests.run`` of the cited checks that exist on the tree; every one passes;
+1. ``test_weakening``: ``g6.safety_engine.detect_test_weakening`` over every changed test-related file
+   (``repo_tests.related_texts``: test files, ``conftest.py``, start-up files, any Python file under a test folder; a
+   moved one compared with its old text), as at line 514 (review C2);
+2. ``runner_configuration``: the changed runner files, as ``patch_review._runner_changes`` reads them (lines 179-213,
+   called at 516). Its runner list is ``repo_tests.RUNNER_FILES`` (``pytest.toml`` and ``.pytest.toml`` included,
+   review C1), shared, so it comes through as G6 has it;
+3. ``ignored_inputs``: ``repo_tests.ignored_inputs`` finds no git-ignored file a run could load, and finished its scan
+   (lines 519-527; bytecode, extension modules, links and plugin metadata, review C3, and the folders it does not
+   enter, come through the shared function);
+4. ``patch_changes_files``: the change against ``HEAD`` is not empty (line 528);
+5. ``stated_checks``: one confined ``repo_tests.run`` of the cited checks that exist on the tree; every one passes
+   (lines 531-551), each node id read against the root folder the run reports (``patch_review._in_repository``,
+   lines 275-279; review I9);
 6. ``tests_touching_changed_modules``: when everything before passed and time is left, one confined run of
-   ``repo_tests.derive_tests``'s files not already run; it passes. When it fails, the failing files are replayed at the
-   base commit (``repo_tests.run_before``), as G6 does, within the same budget; the replay is recorded and never turns a
-   failure into a pass;
-7. ``repository_unchanged``: ``repo_tests.snapshot`` is the same after the runs as before.
+   ``repo_tests.derive_tests``'s files not already run; it passes (lines 553-578). When it fails, the failing files
+   (named against the run's root folder) are replayed at the base commit with ``repo_tests.run_before``, as
+   ``patch_review._on_base`` does (lines 667-704), a moved file at its old path (review I6, inside ``run_before``),
+   within the same budget; the replay is recorded and never turns a failure into a pass;
+7. ``repository_unchanged``: ``repo_tests.snapshot`` is the same after the runs as before (line 582);
+8. ``runs_on_the_reviewed_tree``: every in-place run began on the tree under review, its ``source_before`` the digest
+   of the snapshot taken first (lines 469-470 and 584-588; review I4);
+9. ``test_diff_shortcuts``: the coding gate's diff scan (``g6.coding_agent_gate.scan_diff``) finds nothing in the diff
+   against the base of the test, test-runner and continuous-integration files only (``patch_review._test_diff`` over
+   ``repo_tests.diff_text``, lines 409-421 and 589, read as integrity at 600-606; review I8). With no claim, the
+   gate's other shortcut finding cannot occur.
+
+Not mirrored: G6's run of the passing stated checks against the base commit's code (lines 579 and 631-664; review I8).
+It can only add an unknown and a next action, never change G6's outcome, so it cannot change arm 3's acceptance.
 
 What arm 4 leaves out is G6's assessment logic: the outcome order, requirement statuses (a requirement with no check,
 or a stated check that did not run, is G6's insufficient evidence; arm 4 has no rule for it), the unknowns (a test that
-fails at the base too, a check that did not run to a result), the receipts and the coding gate. The gate cannot change
-G6's outcome with this arm's inputs (no claim, and no diff reaches it in this commit), so arm 4 has no counterpart.
+fails at the base too, a check that did not run to a result), and the receipts.
 
 **Time limits of arms 3 and 4.** The study runs each patch's review in its own interpreter (``in_child``: ``python -I
 child.py``, through ``g6.core.component_process.run_process`` inside a call window of the arm's time limit plus
@@ -64,9 +80,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import g6
+from g6.coding_agent_gate import scan_diff
 from g6.core import component_process
+from g6.core.ledger import digest
 from g6.harness import patch_review
-from g6.workforce import repo_tests, verify
+from g6.safety_engine.weakening import detect_test_weakening
+from g6.workforce import repo_tests
 from patch_review.run import row
 from patch_review_utility import contract as review_contract
 from patch_review_utility import report_check
@@ -75,12 +94,15 @@ from patch_review_utility.executor import unrunnable
 
 RUNS = 3
 DIRECT_CHECKS = ("test_weakening", "runner_configuration", "ignored_inputs", "patch_changes_files", "stated_checks",
-                 "tests_touching_changed_modules", "repository_unchanged")
+                 "tests_touching_changed_modules", "repository_unchanged", "runs_on_the_reviewed_tree",
+                 "test_diff_shortcuts")
 #: How long past its time limit an arm's call window stays open, so G6's own deadline gives a reply first.
 KILL_GRACE_S = 60
 KILLED = "killed_at_time_limit"
-#: G6's words for a check its own deadline cut short (``patch_review.py``), read from its reply.
-OUT_OF_TIME = "time budget"
+#: G6's own codes for a review its deadline cut short (review I5, ``patch_review.py`` at b3c342b): the reason code of
+#: a tier 1 run out of time (line 543), and a check's or run's verdict ``timed_out`` (lines 89 and 307). A check
+#: never reached reads ``not_run`` (line 319), which other causes share, so it is read only through the reason code.
+RUN_TIMED_OUT, TIMED_OUT = "run_timed_out", "timed_out"
 MODEL_CALLS_NOT_REPORTED = ("not reported in G6's reply; its review at this commit makes no model call when no claim "
                             "and no sources are given, so counted as 0")
 
@@ -158,17 +180,22 @@ def _task(requirements: list[dict]) -> str:
 
 
 def _ran_out(reply: dict | None) -> bool:
-    """Whether G6's reply says its own deadline cut a check short: a run that timed out, or a check skipped or left
-    unknown because the time budget was spent."""
+    """Whether G6's reply says, in its own codes (``RUN_TIMED_OUT``, ``TIMED_OUT``), that its deadline cut the review
+    short: the tier 1 run's reason code, a stated check's verdict, or a run's verdict. Its words are never read."""
     assessment = (reply or {}).get("assessment") or {}
     scope = assessment.get("scope") or {}
-    return (any(run.get("verdict") == "timed_out" for run in scope.get("checks_run") or [])
-            or any(OUT_OF_TIME in str(skip.get("reason", "")) for skip in scope.get("checks_skipped") or [])
-            or any(OUT_OF_TIME in str(unknown) for unknown in assessment.get("unknowns") or []))
+    return (any(reason.get("code") == RUN_TIMED_OUT for reason in assessment.get("reasons") or [])
+            or any(check.get("verdict") == TIMED_OUT for req in assessment.get("requirements") or []
+                   for check in req.get("checks") or [])
+            or any(run.get("verdict") == TIMED_OUT for run in scope.get("checks_run") or []))
 
 
 def model_calls(reply: dict | None) -> dict:
-    """G6's model calls as its reply reports them (each activity's ``model_calls``), and where the count came from."""
+    """G6's model calls as its reply reports them (each activity's ``model_calls``), and where the count came from.
+
+    TODO(verification search): ``assessment.completion.activities`` and its per-activity ``model_calls`` are a guessed
+    shape: verification search, which will add the field, does not exist yet. Replace this reader with its real fields
+    when it lands; until then every reply at b3c342b lacks the field and the count is 0 (``MODEL_CALLS_NOT_REPORTED``)."""
     completion = ((reply or {}).get("assessment") or {}).get("completion")
     activities = completion.get("activities") if isinstance(completion, dict) else None
     if isinstance(activities, list):
@@ -239,12 +266,14 @@ def _covers(check: str, node: str) -> bool:
 
 
 def _passes(ran: dict, ids: list[str]) -> tuple[bool, str, str]:
-    """Whether one run passed every id: (passed, category when not, detail)."""
+    """Whether one run passed every id: (passed, category when not, detail). Node ids are read against the root folder
+    the run reports, as checks name them (``patch_review._in_repository``; review I9)."""
     verdict = ran.get("verdict")
     if verdict in patch_review.UNTRUSTED:
         return False, INTEGRITY, f"the run's results are not believed: {verdict}"
-    failed = set(ran.get("failed_ids") or []) | set(ran.get("setup_errors") or {})
-    outcomes = ran.get("test_outcomes") or {}
+    full = patch_review._in_repository(ran)
+    failed = {full(node) for node in [*(ran.get("failed_ids") or []), *(ran.get("setup_errors") or {})]}
+    outcomes = {full(node): phases for node, phases in (ran.get("test_outcomes") or {}).items()}
     bad, unrun = [], []
     for check in ids:
         nodes = {node: phases for node, phases in outcomes.items() if _covers(check, node)}
@@ -262,8 +291,10 @@ def _passes(ran: dict, ids: list[str]) -> tuple[bool, str, str]:
 
 def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline: float, run, run_before,
             add, done: list[dict], trace: dict) -> None:
-    """The seven checks in order, each recorded with ``add`` into ``done``; runs go through ``run`` and
-    ``run_before``."""
+    """The nine checks in order (the module docstring gives each one's line in G6's review), each recorded with
+    ``add`` into ``done``; runs go through ``run`` and ``run_before``."""
+    in_place: list[dict] = []
+
     def left() -> int:
         return max(1, int(deadline - time.monotonic()))
 
@@ -272,22 +303,23 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
         ran = _confined(run(root, ids, timeout_s=left()))
         trace["isolation"].append(ran.get("isolation") or {})
         trace["verdicts"].append(ran.get("verdict"))
+        in_place.append(ran)
         return ran
 
     root = repo_tests.checked_repo(root)
     before = repo_tests.snapshot(root)
+    artifact = digest(before)                                                     # lines 469-470
     change = repo_tests.change(root, "HEAD")
-    weakened = verify.weakened_tests({change.renamed.get(rel, rel): text for rel, text in change.before.items()},
-                                     change.after)
+    weakened = list(detect_test_weakening(*repo_tests.related_texts(change)).reasons)   # line 514
     add("test_weakening", not weakened, "; ".join(weakened), INTEGRITY)
-    runner = patch_review._runner_changes(change)
+    runner = patch_review._runner_changes(change)                                 # line 516
     add("runner_configuration", not runner, "; ".join(runner), INTEGRITY)
-    scan = repo_tests.ignored_inputs(root)
+    scan = repo_tests.ignored_inputs(root)                                        # lines 519-527
     add("ignored_inputs", not scan.loadable and scan.complete,
         ", ".join(scan.loadable[:10]) or ("" if scan.complete else "the scan stopped at its limit"), INTEGRITY)
     add("patch_changes_files", bool(change.files), "" if change.files else "no change against HEAD", ABSTAIN)
     ids = list(dict.fromkeys(repo_tests.inside(root, c, "test") for c in checks)) if requirements else []
-    present = [i for i in ids if (root / i.partition("::")[0]).exists()]
+    present = [i for i in ids if (root / i.partition("::")[0]).exists()]          # lines 531-551
     if present:
         passed, category, detail = _passes(execute(present), present)
         missing = [i for i in ids if i not in present]
@@ -296,10 +328,11 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
         add("stated_checks", passed, detail, category)
     else:
         add("stated_checks", not ids, "no cited check is on the tree" if ids else "no check was cited", ABSTAIN)
-    if not all(c["passed"] for c in done):
+    if not all(c["passed"] for c in done):                                        # lines 553-578
         add("tests_touching_changed_modules", None, "not run: an earlier check did not pass")
     elif deadline - time.monotonic() < 1:
-        add("tests_touching_changed_modules", False, f"the {OUT_OF_TIME} is spent", ABSTAIN)
+        add("tests_touching_changed_modules", False, "not run: the arm's time limit was reached", ABSTAIN,
+            out_of_time=True)
     else:
         derived = [rel for rel in repo_tests.derive_tests(change)[0] if rel not in present]
         if not derived:
@@ -308,18 +341,26 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
             second = execute(derived)
             passed, category, detail = _passes(second, derived)
             if second.get("verdict") in (repo_tests.FAILED, "collection_error") and deadline - time.monotonic() >= 1:
-                failing = sorted(({n.partition("::")[0] for n in [*(second.get("failed_ids") or []),
-                                                                  *(second.get("setup_errors") or {})]}
-                                  | patch_review._collection_errors(second.get("output") or "")) & set(derived))
+                full = patch_review._in_repository(second)                        # lines 667-704
+                failing = sorted({full(rel) for rel in {n.partition("::")[0] for n in [
+                    *(second.get("failed_ids") or []), *(second.get("setup_errors") or {})]}
+                    | patch_review._collection_errors(second.get("output") or "")} & set(derived))
                 if failing:
                     texts = {rel: (root / rel).read_text(encoding="utf-8", errors="replace") for rel in failing}
                     replays = run_before(replace(change, before=texts), timeout_s=left())
                     detail += "; at the base commit: " + ", ".join(
                         f"{rel} {(replays.get(rel) or {}).get('verdict')}" for rel in failing)
             add("tests_touching_changed_modules", passed, detail, category)
-    unchanged = repo_tests.snapshot(root) == before
+    unchanged = repo_tests.snapshot(root) == before                               # line 582
     add("repository_unchanged", unchanged, "" if unchanged else "the working tree changed during the checks",
         INTEGRITY)
+    elsewhere = [ran["source_before"] for ran in in_place
+                 if ran.get("source_before") and ran["source_before"] != artifact]   # lines 584-588
+    add("runs_on_the_reviewed_tree", not elsewhere,
+        f"{len(elsewhere)} run(s) began on a working tree other than the one under review" if elsewhere else "",
+        INTEGRITY)
+    hits = scan_diff(patch_review._test_diff(repo_tests.diff_text(change)))       # lines 589 and 600-606
+    add("test_diff_shortcuts", not hits, ", ".join(hits), INTEGRITY)
 
 
 def direct_checks(tree: Path, requirements: list[dict], checks: list[str], *, timeout_s: int, run=repo_tests.run,
@@ -328,8 +369,9 @@ def direct_checks(tree: Path, requirements: list[dict], checks: list[str], *, ti
     done: list[dict] = []
     trace: dict = {"commands": [], "isolation": [], "verdicts": []}
 
-    def add(name: str, passed: bool | None, detail: str = "", category: str = "") -> None:
-        done.append({"name": name, "passed": passed, "detail": detail[:500], "category": "" if passed else category})
+    def add(name: str, passed: bool | None, detail: str = "", category: str = "", *, out_of_time: bool = False) -> None:
+        done.append({"name": name, "passed": passed, "detail": detail[:500], "category": "" if passed else category,
+                     "out_of_time": out_of_time})
 
     def ended(disposition: dict) -> dict:
         return {"checks": done, "trace": {"commands": trace["commands"], "isolation": trace["isolation"]},
@@ -350,7 +392,7 @@ def direct_checks(tree: Path, requirements: list[dict], checks: list[str], *, ti
     except (OSError, ValueError, TypeError) as exc:
         return ended(make(ERROR, f"{type(exc).__name__}: {exc}"[:300], error_kind="tool_error"))
     failing = [c for c in done if c["passed"] is False]
-    ran_out = "timed_out" in trace["verdicts"] or any(OUT_OF_TIME in c["detail"] for c in failing)
+    ran_out = TIMED_OUT in trace["verdicts"] or any(c["out_of_time"] for c in failing)
     cost = _cost(start)
     if not failing and cost["seconds"] > timeout_s:
         disposition = make(ABSTAIN, "the checks finished after their time limit", time_or_cap=True)

@@ -166,6 +166,20 @@ def test_a_study_level_refuses_an_unconfined_executor_or_an_arm_input_inside_the
                     "--output", str(root / "r.json")])
 
 
+def test_the_cited_checks_are_the_patchs_test_files_still_on_the_tree(tmp_path):
+    root = tmp_path / "r"
+    for rel in ("test_gone.py", "test_kept.py", "calc.py"):
+        write(root / rel, "def test_x():\n    pass\n")
+    git(root, "init", "-q")
+    git(root, "add", ".")
+    git(root, "-c", "user.name=F", "-c", "user.email=f@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm",
+        "base")
+    (root / "test_gone.py").unlink()
+    write(root / "test_kept.py", "def test_x():\n    assert 1\n")
+    write(root / "tests" / "test_new.py", "def test_y():\n    pass\n")
+    assert study.cited_checks(root) == ["test_kept.py", "tests/test_new.py"]
+
+
 def test_the_research_flag_is_the_persons_decision(layout, monkeypatch):
     root, manifest_path, _ = layout
     monkeypatch.delenv("G6_ECHA_RESEARCH")

@@ -24,6 +24,7 @@ GOOD = "def add(a, b):\n    return a + b\n"
 TEST = ("from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n\n\n"
         "def test_negative():\n    assert add(-2, -3) == -5\n")
 MORE = "from calc import add\n\n\ndef test_more():\n    assert add(1, 1) == 2\n"
+HELPER = "def assert_sum(got, want):\n    assert got == want\n"
 CONTRACT = contract.split("Addition returns the sum.", "- The sum of two positive integers.\n"
                                                        "- The sum of two negative integers.")
 MORE_ID, ADD, NEGATIVE = "test_more.py::test_more", "test_calc.py::test_add", "test_calc.py::test_negative"
@@ -39,6 +40,8 @@ def repo(tmp_path):
     root.mkdir()
     (root / "calc.py").write_text(BAD, encoding="utf-8")
     (root / "test_calc.py").write_text(TEST, encoding="utf-8")
+    (root / "tests").mkdir()
+    (root / "tests" / "helpers.py").write_text(HELPER, encoding="utf-8")   # a helper the tests could check through
     git(root, "init", "-q")
     git(root, "add", ".")
     git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
@@ -46,16 +49,21 @@ def repo(tmp_path):
     return root
 
 
-def patch(root: Path, files: dict[str, str]) -> list[str]:
-    """Write the patch into the working tree; the test files it adds or changes, which every requirement cites."""
+def patch(root: Path, files: dict[str, str | None]) -> list[str]:
+    """Write the patch into the working tree (``None`` deletes a file); the test files it adds or changes that are on
+    the patched tree, which every requirement cites."""
     for rel, text in files.items():
+        if text is None:
+            (root / rel).unlink()
+            continue
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    return contract.patch_tests(list(files))
+    return contract.patch_tests([rel for rel, text in files.items() if text is not None])
 
 
-def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic-unit-fixture", network=False):
-    """One recorded ``repo_tests.run`` result."""
+def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic-unit-fixture", network=False,
+           source_before="", rootdir=""):
+    """One recorded ``repo_tests.run`` result; ``source_before`` "" leaves the digest unreported."""
     outcomes = {**{n: {"setup": "passed", "call": "passed", "teardown": "passed"} for n in passed},
                 **{n: {"setup": "passed", "call": "failed", "teardown": "passed"} for n in failed},
                 **{n: {"setup": "skipped", "teardown": "passed"} for n in skipped}}
@@ -65,14 +73,21 @@ def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic
             "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": "", "seconds": 0.2,
             "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
             "isolation": {"backend": backend, "why": "", "network": network}, "failed_ids": list(failed),
-            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": ""}
+            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": "",
+            "source_before": source_before, "rootdir": rootdir}
+
+
+#: What G6's run of the passing stated checks against the base commit's code reports when a test records none.
+NOT_AT_BASE = {"verdict": "not_run", "said": "not recorded by this test"}
 
 
 class Runs:
-    """Recorded test runs for both arms: in place by the ids asked for (or ``default``); at the base commit by file."""
+    """Recorded test runs for both arms: in place by the ids asked for (or ``default``); at the base commit by file;
+    and, for G6's review only, the stated checks against the base commit's code (``at_base``)."""
 
-    def __init__(self, in_place=None, *, default=None, on_base=None):
+    def __init__(self, in_place=None, *, default=None, on_base=None, at_base=None):
         self.in_place, self.default, self.on_base, self.calls = dict(in_place or {}), default, dict(on_base or {}), []
+        self.at_base = at_base or NOT_AT_BASE
 
     def run(self, repo, tests, *, timeout_s, receipt=False):
         self.calls.append(("in_place", tuple(tests)))
@@ -85,13 +100,18 @@ class Runs:
         return {rel: self.on_base[rel] for rel in change.before}
 
     def into(self, monkeypatch):
-        """Stand in for G6's review's runs too (``patch_review._execute``)."""
+        """Stand in for G6's review's runs too (``patch_review._execute`` and ``_execute_at_base``)."""
         def execute(root, ids, *, timeout_s, change=None):
             if change is None:
                 return self.run(root, ids, timeout_s=timeout_s)
             self.calls.append(("base", tuple(ids)))
             return {rel: self.on_base[rel] for rel in ids}
+
+        def at_base(change, ids, *, timeout_s):
+            self.calls.append(("at_base", tuple(ids)))
+            return self.at_base
         monkeypatch.setattr(patch_review, "_execute", execute)
+        monkeypatch.setattr(patch_review, "_execute_at_base", at_base)
         return self
 
 
@@ -169,8 +189,23 @@ def test_a_review_stopped_at_its_wall_clock_limit_without_a_reply_is_a_tool_erro
 def test_a_reply_that_says_g6_ran_out_of_time_is_tallied_as_time_reached(repo, monkeypatch):
     checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
     Runs(default=result(verdict="timed_out")).into(monkeypatch)
-    found = g6(repo, checks)["disposition"]
+    got = g6(repo, checks)
+    found = got["disposition"]
     assert found["accepted"] is False and found["time_or_cap_reached"] is True and found["error_kind"] == ""
+    assert found["category"] == "insufficient_evidence"                 # review I5: a run out of time is no defect
+    assert "evidence:run_timed_out" in got["row"]["reason_codes"]
+
+
+def test_only_g6s_own_codes_say_it_ran_out_of_time_never_the_words_in_its_reply(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": BAD + "\n", "test_more.py": MORE})
+    Runs({("test_more.py",): result(failed=[MORE_ID])}).into(monkeypatch)
+
+    def worded(*args, **kwargs):
+        reply = patch_review.review_patch(*args, **kwargs)
+        reply["assessment"]["unknowns"].append("something else; the time budget was spent")
+        return reply
+    found = g6(repo, checks, review=worded)["disposition"]
+    assert found["category"] == "defect_found" and found["time_or_cap_reached"] is False
 
 
 def test_g6s_model_calls_come_from_its_reply_when_it_reports_them(repo, monkeypatch):
@@ -254,6 +289,12 @@ def test_direct_checks_stopped_at_their_limit_are_a_tool_error_and_a_timed_out_r
     assert (found["error_kind"], found["time_or_cap_reached"]) == ("killed_at_time_limit", True)
     slow = direct(repo, checks, Runs(default=result(verdict="timed_out")))["disposition"]
     assert slow["accepted"] is False and slow["time_or_cap_reached"] is True and slow["error_kind"] == ""
+    spent = arms.direct_checks(repo, CONTRACT, checks, timeout_s=1,
+                               run=lambda *a, **k: (time.sleep(1.1), result([MORE_ID]))[1],
+                               run_before=Runs().run_before)
+    tier_2 = next(c for c in spent["checks"] if c["name"] == "tests_touching_changed_modules")
+    assert tier_2["passed"] is False and tier_2["out_of_time"] is True
+    assert spent["disposition"]["time_or_cap_reached"] is True
 
 
 # --- what arm 4 isolates: the parity of arms 3 and 4, and their two designed differences -----------------------------------
@@ -277,6 +318,59 @@ def test_arm_4_runs_g6s_checks_and_differs_only_where_g6s_assessment_logic_decid
     runs = Runs(in_place, default=result([ADD, NEGATIVE, MORE_ID]), on_base=on_base).into(monkeypatch)
     assert g6(repo, checks)["disposition"]["accepted"] is g6_accepts
     assert direct(repo, checks, runs)["disposition"]["accepted"] is direct_accepts
+
+
+MOVED = ["test_addition.py::test_add", "test_addition.py::test_negative"]
+PASSING = {("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}
+
+
+@pytest.mark.parametrize("name, files, in_place, at_base, accepts", [
+    # C2: every changed test-related file through the weakening detector, a helper under tests/ included
+    ("C2 helper gutted", {"calc.py": GOOD, "test_more.py": MORE, "tests/helpers.py": "def assert_sum(got, want):\n"
+                          "    return None\n"}, PASSING, None, False),
+    ("C2 and I6 moved and weakened", {"calc.py": GOOD, "test_calc.py": None,
+                                      "test_addition.py": "from calc import add\n\n\ndef test_add():\n"
+                                                          "    assert add(2, 3) == 5\n"},
+     {("test_addition.py",): result(["test_addition.py::test_add"])}, None, False),
+    # I6: a moved test file is compared with its old text, never read as one deleted and another added
+    ("I6 moved unchanged", {"calc.py": GOOD, "test_calc.py": None, "test_addition.py": TEST},
+     {("test_addition.py",): result(MOVED)}, None, True),
+    # I4: a run that began on a tree other than the one under review
+    ("I4 other tree", {"calc.py": GOOD, "test_more.py": MORE},
+     {**PASSING, ("test_more.py",): result([MORE_ID], source_before="0" * 64)}, None, False),
+    # I8: the gate's diff scan, limited to test, runner and continuous-integration files
+    ("I8 shortcut in a workflow", {"calc.py": GOOD, "test_more.py": MORE,
+                                   ".github/workflows/ci.yml": "jobs:\n  test:\n    continue-on-error: true\n"},
+     PASSING, None, False),
+    ("I8 the same words in source", {"calc.py": GOOD + "SKIP_CHECKS = True\n", "test_more.py": MORE}, PASSING, None,
+     True),
+    # I8: the stated checks pass against the base commit's code too, which is an unknown for G6, never an outcome
+    ("I8 passes at the base too", {"calc.py": GOOD, "test_more.py": MORE}, PASSING, result([MORE_ID]), True),
+    # I9: node ids are read against the root folder the run reports
+    ("I9 rootdir below the top", {"calc.py": GOOD, "pkg/test_more.py": MORE},
+     {("pkg/test_more.py",): result([MORE_ID], rootdir="pkg"), ("test_calc.py",): result([ADD, NEGATIVE])}, None,
+     True),
+    # C1 and C3 come through the shared lists and repo_tests.ignored_inputs
+    ("C1 pytest.toml", {"calc.py": GOOD, "test_more.py": MORE, "pytest.toml": "[pytest]\n"}, PASSING, None, False),
+    ("C3 ignored bytecode", {"calc.py": GOOD, "test_more.py": MORE, ".gitignore": "*.pyc\n", "calc.pyc": "x"},
+     PASSING, None, False),
+])
+def test_arm_4_mirrors_every_check_the_frozen_review_added(repo, monkeypatch, name, files, in_place, at_base,
+                                                          accepts):
+    checks = patch(repo, files)
+    runs = Runs(in_place, default=result([ADD, NEGATIVE, MORE_ID]), at_base=at_base).into(monkeypatch)
+    assert g6(repo, checks)["disposition"]["accepted"] is accepts, name
+    assert direct(repo, checks, runs)["disposition"]["accepted"] is accepts, name
+
+
+def test_arm_4_does_not_run_the_stated_checks_at_the_base_commit(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    runs = Runs(PASSING, at_base=result([MORE_ID]))
+    assert direct(repo, checks, runs)["disposition"]["accepted"] is True
+    assert [call for call in runs.calls if call[0] == "at_base"] == []
+    runs.into(monkeypatch)
+    g6(repo, checks)
+    assert ("at_base", ("test_more.py",)) in runs.calls                # G6 does, and it changed nothing
 
 
 # --- arm 1, tests and continuous integration -----------------------------------------------------------------------------

@@ -7,9 +7,11 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
 
 1. **Which checks a requirement cites.** The review contract carries no checks, and G6's review needs stated checks
    for each requirement. Every requirement cites the same checks: the test files the patch adds or changes (pytest's
-   default names, `test_*.py` and `*_test.py`). A patch that adds or changes no test leaves G6 with insufficient
-   evidence. The repository's existing tests reach G6 through its own run of the tests that touch the changed modules.
-   Accepted by the coordinator.
+   default names, `test_*.py` and `*_test.py`) that are on the patched tree; a test file the patch deletes is not
+   cited, since no check can run from it, and a test file it moves is cited at its new path. A patch that adds or
+   changes no test leaves G6 with insufficient evidence. The repository's existing tests reach G6 through its own run
+   of the tests that touch the changed modules. Accepted by the coordinator; the rule for deleted and moved files was
+   added with the re-sync to Step 2's frozen commit.
 
 2. **When arm 1 says a test fails or passes.** Across the three runs on the patched tree, a test fails when pytest
    reports it failed in at least two runs, and passes when pytest reports it passed in at least two. A run that could
@@ -54,8 +56,10 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
 10. **Time limits and the token cap.** An arm stopped at its wall-clock limit, or at its token cap, with no reply is a
     tool error and counts toward the feasibility limit of 10% tool errors. A reply the arm produced itself is not: the
     agent's answer cut short or given after its limit, or G6 replying after its limit, is an abstention; G6's or the
-    direct checks' own outcome stands when their deadline cut checks short (a run that timed out, or a check skipped or
-    left unknown because the time budget was spent). Every disposition the time limit or the token cap shaped is
+    direct checks' own outcome stands when their deadline cut checks short. G6's reply says so only in its own codes:
+    the reason code `run_timed_out`, or the verdict `timed_out` on a stated check or a run; its wording is never read.
+    For the direct checks it is a run's verdict `timed_out`, or their run of the tests that touch the changed modules
+    left out because the time limit was reached. Every disposition the time limit or the token cap shaped is
     tallied apart as "time or cap reached", whatever its category; an acceptance is never one. For arm 1, a base run
     killed at its limit is a tool error. When the base runs completed and the patched tree's runs were killed at the
     limit in at least two of the three, the patch caused it: arm 1 does not accept, as a defect found, marked "time or
@@ -88,6 +92,12 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     under `assessment.completion.activities`. When the reply has no such field they are counted as zero, since G6's
     review at this commit makes no model call when no claim and no sources are given. The results record which source
     was used. Ruled by the coordinator.
+
+16. **What the direct checks run.** Arm 4 runs every deterministic check G6's frozen review (Step 2, commit b3c342b)
+    runs whose result can change G6's outcome, and accepts only when each passes; `arms.py` lists them with their
+    lines in G6's review. G6's run of the passing stated checks against the base commit's code is left out: it can
+    only add an unknown and a next action, never change G6's outcome, so it cannot change arm 3's acceptance. Ruled
+    by the coordinator.
 
 Two readings are mechanics rather than rulings, recorded so the hash covers them. The executor runs the files of the
 test ids asked for, as the benchmark's own procedure runs test files, so a test id that no longer exists is missing

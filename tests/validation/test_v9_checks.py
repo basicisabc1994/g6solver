@@ -38,6 +38,8 @@ def reply(tmp_path, monkeypatch):
         subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
     (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
     monkeypatch.setattr(patch_review, "_execute", lambda root, ids, *, timeout_s, change=None: recorded([ADD]))
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda change, ids, *, timeout_s: {"verdict": "not_run", "said": "not recorded by this test"})
     requirements = [{"id": "R1", "text": "add returns the sum", "checks": [ADD]},
                     {"id": "R2", "text": "add documents itself", "checks": []}]
     return patch_review.review_patch(tmp_path, task="Repair addition.", requirements=requirements)

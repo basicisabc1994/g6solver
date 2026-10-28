@@ -224,6 +224,12 @@ def _arm_inputs(manifest: dict) -> list[Path]:
     return paths
 
 
+def cited_checks(tree: Path) -> list[str]:
+    """The checks every requirement cites: the test files the patch adds or changes that are on the patched tree (a
+    test file the patch deletes is no check of it)."""
+    return [rel for rel in contract.patch_tests(trees.changed_files(tree)) if (Path(tree) / rel).is_file()]
+
+
 def _review_task(manifest, task, index, work, calibration, run_with, markers, findings, a5) -> dict:
     task_id, repository = task["task_id"], task["repository"]
     patch = _at(manifest, task["patch"]).read_text(encoding="utf-8")
@@ -245,7 +251,7 @@ def _review_task(manifest, task, index, work, calibration, run_with, markers, fi
     row["patch"] = trees.apply(probe, patch)
     if row["patch"] != "non_empty":
         return row
-    checks = contract.patch_tests(trees.changed_files(probe))
+    checks = cited_checks(probe)
     row["checks_cited"] = checks
 
     def fresh(name: str) -> Path:
