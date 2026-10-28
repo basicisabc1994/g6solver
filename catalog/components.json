@@ -805,13 +805,15 @@
     "name": "coding_agent_gate",
     "summary": "Coding-agent gate: deterministic checks a coding agent runs before it acts and before it reports work as done.",
     "maturity": "beta",
-    "maturity_reason": "deterministic checks over caller-declared evidence; text shortcut detector is a tripwire; never verified",
+    "maturity_reason": "deterministic checks over caller-declared evidence and G6's own test receipts; text shortcut detector is a tripwire; never verified",
     "surface": "python + cli + mcp",
     "ops": [
       "preflight",
       "verify_answer"
     ],
-    "requires": [],
+    "requires": [
+      "workforce"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },

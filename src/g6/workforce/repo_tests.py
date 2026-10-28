@@ -64,13 +64,14 @@ import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 
 from g6.core import component_process, confine, git_env
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
-from g6.workforce import verify
+from g6.workforce import test_receipts, verify
 
 DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 1800
@@ -838,14 +839,22 @@ def _said(verdict: str, *, seconds: int, python: str) -> str:
 
 
 def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
-        network: bool = False, mutant: tuple[str, str] | None = None) -> dict:
+        network: bool = False, mutant: tuple[str, str] | None = None, receipt: bool = False) -> dict:
     """Run ``tests`` (files, folders or ``file::test`` ids, relative to ``repo``) against the working tree, in place,
     and say what pytest found. A run under which a tracked file, HEAD or the index changed is ``changed_tracked_files``
     with the paths, whatever the tests said, and so is one after which git cannot read the repository (with that
     said). ``mutant`` (path, source): that module is imported from the source given instead of its file, which is
     never written (the changed-lines mutation check). ``interpreter_source`` says whose Python ran the tests
     ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path. Raises
-    ``RepoRefused`` before anything runs when the request cannot run."""
+    ``RepoRefused`` before anything runs when the request cannot run.
+
+    ``receipt=True``: a run that started confined (its ``isolation`` names a backend) and whose repository git could
+    read after it is written to G6's test-receipt store (``g6.workforce.test_receipts``), and ``receipt`` is the
+    receipt's id; every other run, an unconfined one included, has ``receipt`` "" (and ``receipt_error`` when the store
+    could not take the receipt). A mutant is not the artifact under review: ``receipt=True`` with ``mutant`` raises
+    ``ValueError``."""
+    if receipt and mutant is not None:
+        raise ValueError("a mutant run is not the artifact under review, so it is never given a test receipt")
     repo = checked_repo(repo)
     if mutant is not None:
         deadline = time.monotonic() + max(1, min(int(timeout_s), MAX_TIMEOUT_S))
@@ -855,12 +864,12 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
                             copied=True, python=interpreter(repo), scratch_dir=copy.parent, deadline=deadline)
         except CopyNotRun as exc:
             raise RepoRefused("G6_E_TESTS_DID_NOT_RUN", str(exc)) from exc
-    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network)
+    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network, receipt=receipt)
 
 
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
-         scratch_dir: Path | None = None, deadline: float | None = None) -> dict:
+         scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata."""
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
@@ -876,6 +885,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     untracked = [] if copied else _untracked(repo)
     take_snapshot = (lambda: _copy_snapshot(repo, deadline=deadline)) if copied else (lambda: snapshot(repo, untracked))
     before, started = take_snapshot(), time.monotonic()
+    began = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip() if receipt else ""
     command = f"pytest {len(ids)} test id(s) in place"
     isolation = confine.summary([])
 
@@ -892,7 +903,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "python": python, "interpreter_source": whose, "command": command, "isolation": isolation,
                 "failed_ids": list(tally.get("failed_ids", [])), "setup_errors": tally.get("setup_errors", {}),
                 "degraded": verdict not in RAN or ("expected" in tally and
-                    (tally["expected"] is None or tally["expected"] != tally.get("finished")))}
+                    (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": ""}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
@@ -946,12 +957,13 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         if counts is not None:
             counts = progress
     try:
-        moved = _moved(before, take_snapshot())
+        after = take_snapshot()
     except CopyNotRun as exc:
         return {**result("timed_out", progress, output, []), "said": str(exc)}
     except RepoRefused:  # git cannot read the repository after the run (review I5): nothing the tests said is believed
         moved = [SAID["git_unreadable_name"]]
         return {**result(CHANGED, counts, output, moved), "said": SAID["git_unreadable"]}
+    moved = _moved(before, after)
     component_process.checkpoint()
     verdict = _judge(code, counts, output, moved)
     found = {**result(verdict, progress, output, moved),
@@ -959,6 +971,13 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
              and progress["expected"] == progress.get("finished")}
     if verdict == FAILED and isolation.get("backend") and "PermissionError" in output:
         found["said"] = SAID["confined_write"]   # the operating system refused a test something an owner's run allows
+    if receipt and isolation.get("backend"):   # only a run G6 confined and watched start is given a receipt
+        try:
+            found["receipt"] = test_receipts._record(test_receipts._body(
+                started_at=began, finished_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                before=before, after=after, base_commit=head, python=python, requested=ids, found=found))
+        except (OSError, ValueError) as exc:
+            found["receipt_error"] = f"the test receipt could not be recorded ({type(exc).__name__})"
     return found
 
 

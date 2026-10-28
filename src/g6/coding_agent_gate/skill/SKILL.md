@@ -58,6 +58,12 @@ A declared `risk_tier` can raise the computed tier, never lower it, and an unkno
 gate checks structure; it does not open a file, run a test or check that a reviewer exists. Declare only what you
 ran or read.
 
+The one exception is a test receipt, which G6 writes only after its own confined test run
+(`repo_tests.run(..., receipt=True)`). An item with `"receipt": "<id>"`, sent with the reviewed tree's
+`artifact_digest`, becomes that run, `observed_by: "g6"`, whatever else the item says; the result's `receipts` gives
+each item's `receipt_status` (`verified`, `unknown`, `artifact_mismatch` or `not_supplied`). Any other item stays
+caller-declared. A receipt shows that G6 ran those tests on those files, not that the code is correct.
+
 For protected changes, supply a host-owned `ProtectedPathsPolicy(protected=("rules/**",), exemptions=...)`
 to the block constructor, or `protected_paths_policy=` to either Python gate, and pass `touched_paths`.
 Policy and exemption objects forbid unknown fields. Supplying paths without a policy blocks
@@ -87,6 +93,8 @@ Composed:
   workflow, so, in a profile that adds it, a change whose diff shows a shortcut `scan_diff` reads fails that run.
 - `safety_engine`: `detect_test_weakening` reads the test files before and after a change; this gate sees only
   the diff text you send. Run both on a change that touches tests.
+- `workforce`: `g6.workforce.repo_tests.run(..., receipt=True)` writes the test receipts this gate reads
+  (`g6.workforce.test_receipts`).
 
 ## Failure modes it catches
 
@@ -100,6 +108,8 @@ Composed:
 ## Blind spots
 
 - Ordinary evidence is caller-declared. Protected-path review requires host provenance, but the host remains responsible for authenticating the reviewer, checking the review and binding it to the current change.
+- The receipt store is a file owned by the same user as G6: it stops a caller's JSON from claiming that G6 ran a
+  test, not code running as that user.
 - Paths are lexical: no filesystem reads, symlink resolution, diff discovery or review revision tracking. Hosts must supply all changed paths; omitted paths can hide protected changes.
 - The text shortcut detector is a tripwire fitted to known phrasings, and a fresh paraphrase passes it; silence proves
   nothing.

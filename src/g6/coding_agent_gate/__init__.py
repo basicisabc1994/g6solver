@@ -22,7 +22,10 @@ environment or writes a file.
 
 What it does not establish (audit 004): it reads what the caller sends. It does not open a file, run a test or check
 that a reviewer exists. Evidence is ``observed_by="caller"`` unless a G6 component produced it, and everything
-through the registry or MCP door is caller-declared. The shortcut text detector is a tripwire fitted to known
+through the registry or MCP door is caller-declared, except a test run whose ``receipt`` id G6's own store holds for
+the ``artifact_digest`` sent (``g6.workforce.test_receipts``: only G6's confined runs write receipts; the store is a
+file owned by the same user, so it defends against what a caller sends, not against code running as that user).
+The shortcut text detector is a tripwire fitted to known
 phrasings (it caught none of the audit's fresh paraphrases); a supplied diff is scanned for its structure, but
 semantic shortcuts (a snapshot pinned to wrong output, a test made to return True) are out of reach. So a pass is
 ``qualified-draft``, never ``verified``, and the gate is advisory unless its caller obeys it. Its effect on agent
@@ -44,7 +47,7 @@ from g6.coding_agent_gate.gate import (
 
 __g6_component__ = True
 __g6_block__ = "CodingAgentGateBlock"
-__g6_requires__: tuple[str, ...] = ()
+__g6_requires__: tuple[str, ...] = ("workforce",)   # the test-receipt store, read when an item cites a receipt
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = ("hallucinated_success", "unapproved_protected_change")
 __g6_introduces__: tuple[str, ...] = ()
