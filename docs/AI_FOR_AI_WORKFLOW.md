@@ -126,6 +126,12 @@ anything under `.git/modules`) is refused, `G6_E_GIT_SUBMODULE_REFUSED`. The cop
 keep a tracked link only when it is relative and resolves inside the copy; each run lists the links it left
 out.
 
+The tests run with the Python that `G6_REPO_PYTHON` names where you start G6 (a full path: a Poetry or conda
+environment, or a system Python that holds the repository's dependencies), else the repository's own `.venv`
+or `venv`, else G6's own; `scope.environment.interpreter_source` says which (`setting`, `repository` or
+`g6`). Only G6's own environment sets it, never a request, and a setting that names no Python is a refusal
+(`G6_E_REPO_PYTHON_INVALID`).
+
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
 under review; over `g6_invoke` the gate has no binding and every receipt stays caller-declared. A run gets
