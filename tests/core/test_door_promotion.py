@@ -382,6 +382,7 @@ def test_a_failed_recheck_is_blocked_over_mcp(tmp_path: Path, planted_block) -> 
     found = _mcp("integrity_check", None, registry=_EntryRegistry(record, planted_block),
                  params={"root": str(root), "expected_manifest_sha256": pin})
     assert found["completion_state"] == "blocked-escalated" and found["result"]["completion_state"] == "blocked-escalated"
+    assert found["ok"] is False   # a re-check that blocks the result leaves nothing to use
 
 
 def test_a_producers_witness_is_ignored_over_mcp(tmp_path: Path, planted_block) -> None:
@@ -409,14 +410,14 @@ def test_a_transferred_witness_is_held_over_mcp(tmp_path: Path, planted_block) -
 # --------------------------------------------------------------------------------------------------------------------
 
 def _cli(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], component: str, registry,
-         params: dict | None = None) -> dict:
+         params: dict | None = None, *, code: int = 0) -> dict:
     import json
 
     from g6.cli import main as cli
     from g6.core import registry as registry_module
 
     monkeypatch.setattr(registry_module, "get_registry", lambda: registry)
-    assert cli(["invoke", component, "op", json.dumps(params or {})]) == 0
+    assert cli(["invoke", component, "op", json.dumps(params or {})]) == code
     return json.loads(capsys.readouterr().out)
 
 
@@ -430,8 +431,11 @@ def test_cli_and_mcp_give_the_same_outcome(monkeypatch: pytest.MonkeyPatch, caps
                                            value: dict) -> None:
     import json
 
-    printed = _cli(monkeypatch, capsys, "demo", _Registry(value))
-    assert printed == json.loads(json.dumps(_mcp("demo", value)["result"], default=str))
+    reply = _mcp("demo", value)
+    assert reply["ok"] is (reply["completion_state"] != "blocked-escalated")
+    # g6 invoke prints the same result, and exits 1 exactly when g6_invoke says the reply may not be used
+    printed = _cli(monkeypatch, capsys, "demo", _Registry(value), code=0 if reply["ok"] else 1)
+    assert printed == json.loads(json.dumps(reply["result"], default=str))
 
 
 def test_cli_holds_a_components_own_verified(monkeypatch: pytest.MonkeyPatch,

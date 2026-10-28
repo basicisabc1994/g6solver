@@ -45,7 +45,7 @@ def act(**params) -> dict:
 
 def mcp(op: str, **params) -> dict:
     reply = invoke_reply("cog_arch_actr", op, json.dumps(params))
-    assert reply["ok"], reply
+    assert "result" in reply and reply["ok"] is (reply["completion_state"] != "blocked-escalated"), reply
     return reply["result"]
 
 

@@ -225,5 +225,5 @@ def test_d6_over_mcp() -> None:
         {"text": "Ref: AB-12.", "backend": "regex", "patterns": {"ref": "[A-Z]{2}-[0-9]+"}}))
     assert regex["ok"] and regex["result"]["fields"][0]["value"] == "AB-12"
     model = invoke_reply("ctx_langextract", "extract", json.dumps({"text": "Ref: AB-12.", "fields": {"ref": ""}}))
-    assert model["ok"] and model["result"]["code"] == "G6_E_LANGEXTRACT_NO_MODEL"
+    assert not model["ok"] and model["result"]["code"] == "G6_E_LANGEXTRACT_NO_MODEL"
     assert re.fullmatch(r"G6_E_[A-Z_]+", model["warning_card"]["code"])

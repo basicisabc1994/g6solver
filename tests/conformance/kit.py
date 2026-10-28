@@ -1303,7 +1303,7 @@ def _reply_problems(path: Path, gate: str, op: str, reply: Mapping[str, Any]) ->
     out = []
     if reply.get("completion_state") not in STATES:
         out.append(_runtime(path, gate, f"{op}: the reply's completion_state is {reply.get('completion_state')!r}"))
-    if not reply.get("ok"):
+    if "result" not in reply:   # no result: the refusal's own error carries the code (a blocked result has ok false too)
         if not OWN_CODE.match(str(reply.get("error", ""))):
             out.append(_runtime(path, gate, f"{op}: refusal carries no stable G6_E_ code of its own: "
                                             f"{str(reply.get('error', ''))[:160]}"))
@@ -1587,6 +1587,7 @@ else:
             with contextlib.redirect_stdout(io.StringIO()):
                 reply = invoke_reply(name, op, json.dumps(params))
             entry["reply"] = {k: reply.get(k) for k in ("ok", "error", "completion_state")}
+            entry["reply"]["has_result"] = "result" in reply
             entry["reply"]["result_state"] = (reply.get("result") or {}).get("completion_state") if isinstance(reply.get("result"), dict) else None
             card = (reply.get("result") or {}).get("warning_card") if isinstance(reply.get("result"), dict) else None
             entry["reply"]["own_code"] = isinstance(card, dict) and str(card.get("code", "")).startswith("G6_E_")
@@ -1657,9 +1658,10 @@ def _run_child(t: Target, extra: str, blocked: tuple[str, ...], families: list[s
             continue
         reply = entry["reply"]
         honest = any(word in entry["said"] for word in HONEST)
-        refused = not reply["ok"] or reply["result_state"] == "blocked-escalated"
+        # no result (the error carries the code), or a result that is blocked (its own card carries it)
+        refused = not reply["has_result"] or reply["result_state"] == "blocked-escalated"
         if refused:
-            coded = OWN_CODE.match(str(reply["error"] or "")) if not reply["ok"] else reply["own_code"]
+            coded = reply["own_code"] if reply["has_result"] else OWN_CODE.match(str(reply["error"] or ""))
             if not coded:
                 out.append(_runtime(where, "D9", f"without g6[{extra}], {op} refuses with no G6_E_ code of its own"))
             elif entry["fired"] and not honest:

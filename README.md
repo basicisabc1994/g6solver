@@ -18,14 +18,15 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
 - **The rule for labels.** `verified` should need independent evidence: a check the producer did not write, frozen
   before the work, that G6 has seen fail a planted wrong answer. A check you or your agent wrote is not independent,
   so its result is `qualified-draft` at best, and a combined result takes the weakest label. At every door (the MCP
-  server, `g6 invoke`, an agent's tool calls, a navigator plan's steps, a pipeline of steps, a bundle and the
-  harness) a `verified` stands only when G6's own code re-runs a check there, against what you gave it, and
-  reproduces it; any other is held at `qualified-draft`, a re-check that finds a mismatch blocks, and the reply says
-  what was claimed. No component you can reach through those doors has such a re-check yet, so nothing that comes
+  server, `g6 invoke`, `g6.invoke` in Python, an agent's tool calls, a navigator plan's steps, a pipeline of steps, a
+  bundle and the harness) a `verified` stands only when G6's own code re-runs a check there, against what you gave
+  it, and reproduces it; any other is held at `qualified-draft`, a re-check that finds a mismatch blocks, and the
+  reply says what was claimed. No component you can reach through those doors has such a re-check yet, so nothing that comes
   through them is `verified` today; the one path that can be is G6's file-integrity check (`g6.integrity`) called
   from Python with your own pin. `get_registry().invoke` is the raw library call beneath the doors: it returns a
-  component's own answer, unchecked. G6 re-checks artifacts with its own code; it does not defend against malicious
-  code in its own process.
+  component's own answer, unchecked. From the MCP server, `g6 invoke` and `g6.invoke`, `ok` is false whenever the
+  state is `blocked-escalated`; a blocked result keeps its answer in `result`. G6 re-checks artifacts with its own
+  code; it does not defend against malicious code in its own process.
 - **Checks are hashed first.** In the harness, each check's source text is hashed before the work runs, so editing a
   check afterwards is caught. The hash covers the source only, not values the check reads from outside it, and the
   check runs in the same process as the work: it catches mistakes, not code written to defeat it.

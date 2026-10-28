@@ -255,7 +255,7 @@ def test_a_record_for_another_scope_s_bytes_is_refused() -> None:
 def test_d6_the_block_takes_a_typed_scope_and_refuses_claims_in_it() -> None:
     reply = invoke_reply("action_gating", "evaluate", json.dumps({"action": WRITE,
                                                                   "scope": scope().model_dump(mode="json")}))
-    assert reply["ok"] and "G6_E_SCOPE_OUTSIDE" in reply["result"]["gate_decision"]["reason_codes"]
+    assert not reply["ok"] and "G6_E_SCOPE_OUTSIDE" in reply["result"]["gate_decision"]["reason_codes"]
     claimed = {**scope().model_dump(mode="json"), "allow_autonomous": True}
     refused = get_registry().invoke("action_gating", "evaluate", {"action": READ, "scope": claimed})
     assert str(refused.failure()).startswith("[G6_E_INPUT_VALIDATION]")

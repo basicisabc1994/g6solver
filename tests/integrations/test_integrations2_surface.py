@@ -29,5 +29,6 @@ def test_declarations_and_mcp_surface(name, mode):
     for op, params in skills.skill_examples(info["skill"]):
         if op not in info["sensitive_ops"]:
             reply = invoke_reply(name, op, json.dumps(params))
-            assert reply["ok"] and reply["completion_state"] in {"qualified-draft", "blocked-escalated"}
+            assert "result" in reply and reply["completion_state"] in {"qualified-draft", "blocked-escalated"}
+            assert reply["ok"] is (reply["completion_state"] != "blocked-escalated")
     # Removal of declarations, discovery metadata or sensitive-op guards makes this test fail.

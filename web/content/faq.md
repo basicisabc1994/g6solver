@@ -357,7 +357,8 @@ held-out evidence.
 
 ### Can my coding agent use it? Can my agent approve a change?
 Your agent can propose, measure and read decisions over MCP. It cannot approve: `metaharness_approve` asks you
-directly through your client, and the session that proposed a change can never approve it.
+directly through your client, even in the session that proposed the change. G6 records the name you type as given;
+it does not check who you are.
 
 ### Can I share a tuned setup?
 Yes, as a profile pack. Whoever imports it gets a candidate that must win on their own held-out examples first; the

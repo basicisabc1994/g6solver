@@ -184,7 +184,7 @@ def test_block_through_the_registry_and_mcp_door():
     assert discovery.describe("coding_agent_gate")["maturity"] == "beta"
     reply = invoke_reply("coding_agent_gate", "preflight", '{"task": "Deploy to production", "proposed_action": '
                          '"force push to main"}')
-    assert reply["ok"] and reply["completion_state"] == "blocked-escalated"
+    assert not reply["ok"] and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == "G6_E_CODING_AGENT_GATE_BLOCK"
     bad = invoke_reply("coding_agent_gate", "verify_answer", '{"task": "x", "claims": null}')
     assert not bad["ok"] and bad["completion_state"] == "blocked-escalated"

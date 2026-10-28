@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Meta-harness Phase 6: the MCP surface (envelope parity with Python; approval only from a person, through the
-client, and never from the session that proposed)."""
+client, including in the session that proposed; the name is recorded as given, not authenticated)."""
 from __future__ import annotations
 
 import asyncio

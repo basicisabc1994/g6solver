@@ -302,7 +302,7 @@ def test_g5_prove_runs_lean_so_it_is_sensitive_and_sketch_is_not(no_lean) -> Non
     refused = invoke_reply("lean", "prove", json.dumps({"statement": "2 + 2 = 4"}))
     assert refused["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
     sketched = invoke_reply("lean", "sketch", json.dumps({"statement": "2 + 2 = 4"}))
-    assert sketched["ok"] and sketched["result"]["code"] == NO_MODEL and check_envelope(sketched) == []
+    assert not sketched["ok"] and sketched["result"]["code"] == NO_MODEL and check_envelope(sketched) == []
     payload = get_registry().invoke("lean", "prove", {"statement": "2 + 2 = 4"}).unwrap()
     assert payload["code"] == LEAN_MISSING and payload["op"] == "prove"
 

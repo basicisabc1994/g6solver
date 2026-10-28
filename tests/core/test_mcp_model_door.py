@@ -48,13 +48,13 @@ def test_an_op_that_needs_a_model_runs_on_the_one_the_person_configured(configur
     assert result["code"] != "G6_E_GPS_NO_MODEL" and result["plan"] == ["walk"], result
     assert len(configured.calls) == 1 and "Get from home to the shop" in configured.calls[0][1]
     assert reply["completion_state"] == "qualified-draft"   # a model's encoding is a draft, never more
-    # Removing the llm hand-over in invoke_reply, or the __g6_model__ branch in ComponentRegistry.invoke, makes this
+    # Removing the llm hand-over in door.invoke_checked, or the __g6_model__ branch in ComponentRegistry.invoke, makes this
     # fail with G6_E_GPS_NO_MODEL.
 
 
 def test_with_no_model_configured_the_refusal_says_how_to_configure_one(none_configured) -> None:
     reply = invoke_reply("cog_arch_gps", "encode", ENCODE)
-    assert reply["ok"] and reply["result"]["code"] == "G6_E_GPS_NO_MODEL"
+    assert not reply["ok"] and reply["result"]["code"] == "G6_E_GPS_NO_MODEL"   # a block: ok is false, the answer stays
     said = json.dumps(reply["result"])
     assert "none over MCP" not in said
     assert "G6_LLM_PROVIDER=claude_code" in said and "G6_LLM_PROVIDER=codex" in said and "ollama" in said
@@ -66,12 +66,12 @@ def test_a_setting_g6_cannot_use_is_said_when_the_model_is_asked(key_file, monke
     key_file("")
     monkeypatch.setenv("G6_LLM_PROVIDER", "claude_code")   # an agent's environment, not the key file
     reply = invoke_reply("cog_arch_gps", "encode", ENCODE)
-    assert reply["ok"] and reply["result"]["code"] == "G6_E_GPS_MODEL_FAILED"
+    assert not reply["ok"] and reply["result"]["code"] == "G6_E_GPS_MODEL_FAILED"
     assert "G6_LLM_PROVIDER=claude_code" in json.dumps(reply["result"])
     monkeypatch.setenv("G6_LLM_PROVIDER", "no-such-provider")
     reply = invoke_reply("cog_arch_gps", "encode", ENCODE)
-    assert reply["ok"] and "unknown G6_LLM_PROVIDER" in json.dumps(reply["result"])
-    # Letting provider_from_env's LLMError escape invoke_reply (no try in _person_model) makes the second half fail.
+    assert not reply["ok"] and "unknown G6_LLM_PROVIDER" in json.dumps(reply["result"])
+    # Letting provider_from_env's LLMError escape invoke_reply (no try in door.person_model) makes the second half fail.
 
 
 def test_a_sensitive_op_is_still_refused_over_mcp_with_a_model(configured: llm.FakeLLM) -> None:
@@ -135,6 +135,6 @@ def test_ctx_vision_says_plainly_that_a_model_that_takes_no_images_was_not_shown
     monkeypatch.setattr(llm, "provider_from_env", lambda *args, **kwargs: TextOnly())
     png = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
     reply = invoke_reply("ctx_vision", "describe", json.dumps({"image_base64": png}))
-    assert reply["ok"] and reply["result"]["code"] == "G6_E_VISION_NO_IMAGES", reply
+    assert not reply["ok"] and reply["result"]["code"] == "G6_E_VISION_NO_IMAGES", reply
     assert "takes no images" in json.dumps(reply["result"])
     # Restoring the old NO_IMAGES wording ("cannot send images to its model") makes this fail.

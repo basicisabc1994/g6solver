@@ -179,7 +179,10 @@ def door_reply(component: str, op: str, outcome: Any, *, caller: Mapping[str, An
                registry: Any = None, request_id: str = "") -> dict[str, Any]:
     """The reply for ``component.op``'s registry ``outcome`` (a ``Success`` or a ``Failure``): ``ok``, the library
     envelope, and ``result``, a copy of the component's answer that claims no more than the door decided. ``caller``
-    is the caller's own input to the op (what a re-check compares against); ``registry`` says which code answered."""
+    is the caller's own input to the op (what a re-check compares against); ``registry`` says which code answered.
+
+    ``ok`` says whether the reply may be used: it is false when there is no result (``error`` says why) and when the
+    door's state for the result is ``blocked-escalated`` (the card says why, and ``result`` keeps the answer)."""
     request_id = request_id or uuid.uuid4().hex[:12]
     if outcome.__class__.__name__ != "Success":
         return blocked_reply(str(outcome.failure()), request_id=request_id)
@@ -201,8 +204,70 @@ def door_reply(component: str, op: str, outcome: Any, *, caller: Mapping[str, An
     producer = producer_of(component, registry) if said == "verified" else None
     envelope = door_envelope(said, who=who, producer=producer, value=value, caller=caller, evidence=evidence,
                              warning_card=found, request_id=request_id, run_id=run_id)
-    return {"ok": True, "result": corrected_result(value, envelope["completion_state"]), **envelope}
+    state = envelope["completion_state"]
+    return {"ok": state != "blocked-escalated", "result": corrected_result(value, state), **envelope}
 
 
-__all__ = ["HELD_NEXT_STEP", "THREAT_STATEMENT", "blocked_reply", "card", "corrected_result", "door_envelope", "door_reply",
-           "held_copy", "producer_of", "said_state", "state_of"]
+#: The person's own setting: the sensitive components or ops (``component.op``) they allow, comma-separated, no
+#: wildcard. G6 reads it from the environment it was started in; an agent's call cannot set it.
+SENSITIVE_ENV = "G6_MCP_SENSITIVE"
+_DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
+
+
+def allowed_sensitive(setting: str | None = None) -> frozenset[str]:
+    """The names listed in ``G6_MCP_SENSITIVE`` (or ``setting``): components or ``component.op``, no wildcard."""
+    import os
+
+    raw = os.environ.get(SENSITIVE_ENV, "") if setting is None else setting
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
+def is_allowed(component: str, op: str, allow: frozenset[str]) -> bool:
+    return component in allow or f"{component}.{op}" in allow
+
+
+def person_model() -> Any:
+    """The model the person configured for G6 (``g6.core.llm.provider_from_env``: ``G6_LLM_PROVIDER`` in their key
+    file), or ``None`` when they configured none. A setting G6 cannot use gives a caller that says why when it is
+    asked, so only an op that needs a model hears of it."""
+    from g6.core import llm
+
+    try:
+        caller = llm.provider_from_env()
+    except llm.LLMError as exc:
+        return llm.UnusableModel(str(exc))
+    return None if isinstance(caller, llm.NoModel) else caller
+
+
+def invoke_checked(component: str, op: str, params: Any, *, allow: frozenset[str], how_to_allow: str,
+                   registry: Any = None, request_id: str = "") -> dict[str, Any]:
+    """The one checked call the MCP server, ``g6 invoke`` and ``g6.invoke`` share: ``component.op`` on ``params``
+    (a mapping), replied through :func:`door_reply`. A sensitive op runs only when ``allow`` (what the person granted
+    on that surface) lists it or its component; the refusal ends with ``how_to_allow``. A component whose block takes
+    a model (``__g6_model__``) is given the one the person configured, built once for the call."""
+    request_id = request_id or uuid.uuid4().hex[:12]
+    if not isinstance(params, Mapping):
+        return blocked_reply("[G6_E_INPUT_VALIDATION] the op's parameters must be a JSON object (a mapping)",
+                             request_id=request_id)
+    params = dict(params)
+    if registry is None:
+        from g6.core.registry import get_registry
+
+        registry = get_registry()
+    model = person_model()
+    result = registry.invoke(component, op, params, block_sensitive=not is_allowed(component, op, allow),
+                             **({"llm": model} if model is not None else {}))
+    if result.__class__.__name__ != "Success":
+        error = str(result.failure())
+        if error.startswith(_DENIED):
+            from g6.core.confine import UNCONFINED_WARNING
+
+            error += f": it runs a program on your machine, reaches the network or changes it. {how_to_allow} " + (
+                UNCONFINED_WARNING)
+        return blocked_reply(error, request_id=request_id)
+    return door_reply(component, op, result, caller=params, registry=registry, request_id=request_id)
+
+
+__all__ = ["HELD_NEXT_STEP", "SENSITIVE_ENV", "THREAT_STATEMENT", "allowed_sensitive", "blocked_reply", "card",
+           "corrected_result", "door_envelope", "door_reply", "held_copy", "invoke_checked", "is_allowed",
+           "person_model", "producer_of", "said_state", "state_of"]

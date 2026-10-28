@@ -41,7 +41,7 @@ it never merges code. Source text remains caller-supplied and its freshness is n
 Use `metaharness_start` to create a data-only application with a task, labelled cases, frozen checks and baseline
 Python code. Confirm the workflow digest through `metaharness_confirm`. Then diagnose, propose_code with a hypothesis,
 evaluate_start, poll `metaharness_job`, decide, present the client's approval prompt, and run the approved version.
-The full tool names begin `metaharness_`. This is Propose ? Test ? Gate ? Approve, with explicit recovery after failure.
+The full tool names begin `metaharness_`. This is Propose -> Test -> Gate -> Approve, with explicit recovery after failure.
 
 Below 30 held-out cases is exploration only. A split of answers the proposer already saw is not independent evidence.
 Generated-code activation also requires a host-configured safety/injection evaluator. Never invent its observations.

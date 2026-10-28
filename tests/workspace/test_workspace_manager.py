@@ -345,7 +345,7 @@ def test_the_typed_input_refuses_unknown_ops_and_fields_and_says_what_is_missing
     assert "G6_E_INPUT_VALIDATION" in _invoke("delete_everything")["error"]
     assert "G6_E_INPUT_VALIDATION" in _invoke("read", task_id="t1", path="a", folder="C:/")["error"]
     missing = _invoke("read", task_id="t1")
-    assert missing["ok"] and missing["result"]["code"] == E.INPUT_INVALID
+    assert not missing["ok"] and missing["result"]["code"] == E.INPUT_INVALID
     listed = get_registry().invoke("workspace_manager", "ops").unwrap()
     assert listed["ops"] == OPS and listed["sensitive"] == SENSITIVE
     assert len(get_registry().invoke("workspace_manager", "help").unwrap()["help"]) == len(OPS)

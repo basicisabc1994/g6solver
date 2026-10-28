@@ -194,7 +194,9 @@ def test_a_users_profile_for_a_provider_the_table_lacks_is_routed_and_called_thr
 def test_over_mcp_every_provider_g6_core_llm_builds_is_accepted():
     for provider in llm.PROVIDERS:
         reply = invoke_reply("llm_router", "route", json.dumps({"task": "code_review", "providers": [provider]}))
-        assert reply["ok"], (provider, reply.get("error"))
+        # accepted: a result, never a refusal; with no profile for the provider the result is a block, whose ok is false
+        assert "result" in reply, (provider, reply.get("error"))
+        assert reply["ok"] is (reply["completion_state"] != "blocked-escalated"), provider
     none = invoke_reply("llm_router", "route", json.dumps({"task": "code_review", "providers": ["openai"]}))
     assert none["result"]["code"] == env.NO_MODEL      # the committed table holds no OpenAI profile
 

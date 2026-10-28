@@ -305,4 +305,4 @@ def test_d6_over_mcp() -> None:
     info = describe_reply("ctx_vision")
     assert info["skill"] and info["outside"][0]["name"] == "tesseract" and info["extras"][0]["extra"] == "image"
     reply = invoke_reply("ctx_vision", "describe", json.dumps({"image_base64": b64(png())}))
-    assert reply["ok"] and reply["result"]["code"] == "G6_E_VISION_NO_MODEL"
+    assert not reply["ok"] and reply["result"]["code"] == "G6_E_VISION_NO_MODEL"

@@ -124,7 +124,7 @@ def test_ops_and_help_answer_with_or_without_z3(op: str, monkeypatch: pytest.Mon
 ])
 def test_a_refused_program_is_blocked_over_mcp_with_where_it_failed(params: dict, code: str, says: str) -> None:
     reply = invoke_reply("datalog", "evaluate", json.dumps(params))
-    assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "blocked-escalated"
+    assert check_envelope(reply) == [] and reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == code and says in reply["result"]["reason"]
     assert reply["result"]["problems"] and reply["result"]["relations"] == {}
 

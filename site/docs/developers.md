@@ -89,8 +89,8 @@ simulated executor and an approval queue a person decides). `g6.research` is off
 claude mcp add g6 -- g6-mcp
 ```
 
-Five discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke`, plus seven `metaharness_*`
-tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
+Six discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_review_patch`;
+and thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
 marks sensitive is refused over MCP unless the person who runs the server lists it in `G6_MCP_SENSITIVE`.

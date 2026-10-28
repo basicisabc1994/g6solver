@@ -110,7 +110,7 @@ def test_without_dowhy_every_graph_op_still_answers_over_mcp(op: str, no_dowhy) 
 
 def test_without_dowhy_estimation_is_blocked_over_mcp_and_says_what_to_install(no_dowhy) -> None:
     reply = invoke_reply("causal", "estimate_effect", json.dumps(CALLS["estimate_effect"]))
-    assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "blocked-escalated"
+    assert check_envelope(reply) == [] and reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == ENGINE_UNAVAILABLE
     assert "pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'" in reply["warning_card"]["suggested_action"]
     assert reply["result"]["estimate"] is None and check_envelope(reply["result"]) == []
@@ -151,7 +151,7 @@ def test_unknown_ops_unknown_fields_and_bad_parameters_are_refused(op: str, para
 def test_a_refused_graph_is_blocked_over_mcp_with_its_own_code() -> None:
     reply = invoke_reply("causal", "identify", json.dumps({"graph": "digraph { T -> Y -> T }", "treatment": "T",
                                                            "outcome": "Y"}))
-    assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "blocked-escalated"
+    assert check_envelope(reply) == [] and reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == "G6_E_CAUSAL_GRAPH_CYCLE" and reply["result"]["answer"] == {}
 
 

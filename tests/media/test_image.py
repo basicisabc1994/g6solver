@@ -314,7 +314,7 @@ def test_g3_allow_paid_and_the_operators_listing_open_nothing_the_action_gate_de
     assert not denied["ok"] and denied["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED" and wire.sent == []
     listed = invoke_reply("adapt_image", "generate_paid", json.dumps(PAID),
                           allow_sensitive=frozenset({"adapt_image.generate_paid"}))
-    assert listed["ok"] and listed["completion_state"] == "blocked-escalated" and wire.sent == []
+    assert not listed["ok"] and listed["completion_state"] == "blocked-escalated" and wire.sent == []
     assert listed["result"]["code"] == PAID_NOT_ALLOWED and check_envelope(listed) == []
 
 

@@ -87,11 +87,13 @@ it is deliberately below the evidence floor for successful tuning.
 | Install and registration errors / manual repairs | Pending | Pending |
 | Discovery and composition result | Pending | Pending |
 | Can you explain the checked claim and unresolved scope? | Pending | Pending |
-| Prompt shows correct digest and consequences | Pending | Pending |
-| Decline leaves workflow unconfirmed | Pending | Pending |
-| Accept confirms only the displayed workflow | Pending | Pending |
+| Prompt shows correct digest and consequences | Form seen; what it displayed was not recorded | Pending |
+| Decline leaves workflow unconfirmed | No Decline control was visible; Esc cancelled and left the workflow unconfirmed | Pending |
+| Accept confirms only the displayed workflow | Acceptance recorded the expected workflow digest at version 0, with no evaluation or decision; the name is not authenticated | Pending |
 | Missing prompt refuses / terminal fallback works | Pending | Pending |
 | Minutes spent / confusing wording | Pending | Pending |
+
+The Codex entries are the owner's report in [UAT round 1](UAT_ROUND_1.md). Claude Code is untested.
 
 Share the observations without credentials or personal information. This pilot does
 not satisfy the broader 8/10 unfamiliar-user gate or establish improved task outcomes.

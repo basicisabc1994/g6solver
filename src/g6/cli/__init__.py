@@ -244,16 +244,19 @@ def main(argv: list[str] | None = None) -> int:
     except json.JSONDecodeError as exc:
         print(f"params is not JSON: {exc}", file=sys.stderr)
         return 2
-    registry = get_registry()
-    result = registry.invoke(args.component, args.op, params)
-    if result.__class__.__name__ == "Success":
-        from g6.core.door import door_reply
+    from g6.core.door import SENSITIVE_ENV, allowed_sensitive, invoke_checked
 
-        # The same door as g6_invoke: a verified stands only when G6's own re-check reproduces it.
-        _print(door_reply(args.component, args.op, result, caller=params, registry=registry)["result"])
-        return 0
-    print(result.failure(), file=sys.stderr)
-    return 1
+    # The same checked call as g6_invoke and g6.invoke: a verified stands only when G6's own re-check reproduces it, a
+    # sensitive op runs only when the person lists it in G6_MCP_SENSITIVE, and a blocked reply exits 1.
+    name = f"{args.component}.{args.op}"
+    reply = invoke_checked(args.component, args.op, params, allow=allowed_sensitive(),
+                           how_to_allow=f"Only the person who runs G6 can allow it, by listing {name} (or "
+                                        f"{args.component}) in {SENSITIVE_ENV} where they run g6.")
+    if "result" not in reply:
+        print(reply["error"], file=sys.stderr)
+        return 1
+    _print(reply["result"])
+    return 0 if reply["ok"] else 1
 
 
 if __name__ == "__main__":

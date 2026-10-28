@@ -390,7 +390,7 @@ and changes nothing until you approve. See the [meta-harness](../metaharness.md)
 flowchart TD
     propose["metaharness_propose: a candidate change"] --> evaluate["metaharness_evaluate: paired, on held-out tasks, at equal compute"]
     evaluate --> gate{"metaharness_decide"}
-    gate -->|recommend| approve["metaharness_approve: a person, never the session that proposed it"]:::approve
+    gate -->|recommend| approve["metaharness_approve: a person, asked through the client"]:::approve
     gate -->|refuse or block| diagnose["metaharness_diagnose: why, and what to try next"]
     diagnose -->|a remedy to try| propose
     diagnose -->|only a person can lift it| you(["You"])

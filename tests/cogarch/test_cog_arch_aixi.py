@@ -211,7 +211,7 @@ def test_revert_and_extend_leave_the_tree_as_it_was() -> None:
 
 def mcp(op: str, **params) -> dict:
     reply = invoke_reply("cog_arch_aixi", op, json.dumps(params))
-    assert reply["ok"], reply
+    assert "result" in reply and reply["ok"] is (reply["completion_state"] != "blocked-escalated"), reply
     return reply["result"]
 
 
@@ -264,7 +264,8 @@ def test_g5_run_episode_is_sensitive_and_refused_over_mcp() -> None:
     allowed = invoke_reply("cog_arch_aixi", "run_episode", json.dumps({"environment": "coin-flip", "cycles": 5,
                                                                        "seeds": [1], "playouts": 10}),
                            allow_sensitive=frozenset({"cog_arch_aixi.run_episode"}))
-    assert allowed["ok"] and allowed["result"]["episodes"][0]["seed"] == 1
+    assert "result" in allowed and allowed["result"]["episodes"][0]["seed"] == 1   # it ran
+    assert allowed["ok"] is (allowed["completion_state"] != "blocked-escalated")
 
 
 # --- caps and the gates ---------------------------------------------------------------------------------------------------

@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
-Five discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke`` and ``g6_components``; and seven
-meta-harness tools (``metaharness_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``,
-``_rollback``) for the workflows declared in the file ``G6_METAHARNESS`` names, where approval and rollback ask the
-person through the client, including in the proposing session, and a failed attempt carries its recovery
-(``g6.metaharness.surface``). Install
+Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
+``g6_review_patch``, which runs a repository's selected tests and a review composition as a job; and thirteen
+meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
+``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
+declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and rollback ask the person through the
+client, including in the proposing session, and a failed attempt carries its recovery (``g6.metaharness.surface``).
+Install
 with ``pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"`` and register with ``claude mcp add g6 -- g6-mcp`` (or, for Codex,
 ``codex mcp add g6 -- g6-mcp``). There is no account, key or network service.
 
@@ -30,29 +32,22 @@ Every ``g6_invoke`` reply carries the library envelope (``completion_state``, ``
 never raises a state: a failure is ``blocked-escalated`` with its ``G6_E_*`` code; a result is the state its
 component reported, ``qualified-draft`` when it reported none, and ``verified`` only when G6's own code re-runs a
 check at the door and reproduces it. Any other ``verified`` is held at ``qualified-draft`` with a
-``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``, and the ``result`` copy says the same. G6 re-checks
-artifacts with its own code; it does not defend against malicious code in its own process.
+``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``, and the ``result`` copy says the same. ``ok`` is false
+whenever the reply's state is ``blocked-escalated``: with no result, ``error`` says why; with a blocked result, its card
+does. G6 re-checks artifacts with its own code; it does not defend against malicious code in its own process.
 """
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from typing import Any
 
-#: The server's own setting: the sensitive components or ops (``component.op``) the person allows over MCP.
-SENSITIVE_ENV = "G6_MCP_SENSITIVE"
+# The server's own setting, the sensitive components or ops (``component.op``) the person allows: the same setting,
+# read the same way, as ``g6 invoke`` and ``g6.invoke`` (``g6.core.door``).
+from g6.core.door import SENSITIVE_ENV, allowed_sensitive
+from g6.core.door import is_allowed as _allowed
+
 _DENIED = "[G6_E_SENSITIVE_COMPONENT_DENIED]"
-
-
-def allowed_sensitive(setting: str | None = None) -> frozenset[str]:
-    """The names listed in ``G6_MCP_SENSITIVE`` (or ``setting``): components or ``component.op``, no wildcard."""
-    raw = os.environ.get(SENSITIVE_ENV, "") if setting is None else setting
-    return frozenset(name.strip() for name in raw.split(",") if name.strip())
-
-
-def _allowed(component: str, op: str, allow: frozenset[str]) -> bool:
-    return component in allow or f"{component}.{op}" in allow
 
 
 def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
@@ -68,55 +63,26 @@ def describe_reply(component: str, *, allow_sensitive: frozenset[str] | None = N
     return info
 
 
-def _person_model() -> Any:
-    """The model the person configured for G6 (``g6.core.llm.provider_from_env``: ``G6_LLM_PROVIDER`` in their key
-    file), or ``None`` when they configured none. A setting G6 cannot use gives a caller that says why when it is
-    asked, so only an op that needs a model hears of it."""
-    from g6.core import llm
-
-    try:
-        caller = llm.provider_from_env()
-    except llm.LLMError as exc:
-        return llm.UnusableModel(str(exc))
-    return None if isinstance(caller, llm.NoModel) else caller
-
-
 def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: Any = None,
                  allow_sensitive: frozenset[str] | None = None) -> dict[str, Any]:
-    """The ``g6_invoke`` reply: the component's answer (or why there is none) inside the library envelope. A
-    sensitive op runs only when ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A
-    component whose block takes a model (``__g6_model__``) is given the one the person configured, built once for
-    the call; with none configured, nothing is passed."""
-    from g6.core.door import blocked_reply, door_reply
-    from g6.core.registry import get_registry
+    """The ``g6_invoke`` reply: the component's answer (or why there is none) inside the library envelope, through the
+    checked call ``g6 invoke`` and ``g6.invoke`` share (``g6.core.door.invoke_checked``). A sensitive op runs only when
+    ``allow_sensitive`` (by default ``G6_MCP_SENSITIVE``) lists it or its component. A component whose block takes a
+    model (``__g6_model__``) is given the one the person configured, built once for the call; with none configured,
+    nothing is passed."""
+    from g6.core.door import blocked_reply, invoke_checked
 
     request_id = uuid.uuid4().hex[:12]
-
-    def failed(error: str) -> dict[str, Any]:
-        return blocked_reply(error, request_id=request_id)
-
     try:
         params = json.loads(params_json or "{}")
     except json.JSONDecodeError as exc:
-        return failed(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}")
+        return blocked_reply(f"[G6_E_INPUT_VALIDATION] params_json is not JSON: {exc}", request_id=request_id)
     if not isinstance(params, dict):
-        return failed("[G6_E_INPUT_VALIDATION] params_json must be a JSON object")
+        return blocked_reply("[G6_E_INPUT_VALIDATION] params_json must be a JSON object", request_id=request_id)
     allow = allowed_sensitive() if allow_sensitive is None else allow_sensitive
-    model = _person_model()
-    registry = registry or get_registry()
-    result = registry.invoke(component, op, params,
-                                                 block_sensitive=not _allowed(component, op, allow),
-                                                 **({"llm": model} if model is not None else {}))
-    if result.__class__.__name__ != "Success":
-        error = str(result.failure())
-        if error.startswith(_DENIED):
-            from g6.core.confine import UNCONFINED_WARNING
-
-            error += (f": it runs a program on your machine, reaches the network or changes it. Only the person who "
-                      f"runs this server can allow it, by adding {component}.{op} (or {component}) to {SENSITIVE_ENV} "
-                      f"where the server is registered. {UNCONFINED_WARNING}")
-        return failed(error)
-    return door_reply(component, op, result, caller=params, registry=registry, request_id=request_id)
+    return invoke_checked(component, op, params, allow=allow, registry=registry, request_id=request_id,
+                          how_to_allow=f"Only the person who runs this server can allow it, by adding {component}.{op} "
+                                       f"(or {component}) to {SENSITIVE_ENV} where the server is registered.")
 
 
 def build_server(surface: Any = None) -> Any:

@@ -17,10 +17,14 @@ It does not think for you, and it never makes your result more certain than the 
    stands only when G6's own code re-runs a check at the door, against what you gave it, and reproduces it.
    Any other is held at `qualified-draft` with a `G6_E_PROMOTION_LAW` card and `claimed_completion_state`
    (a re-check that finds a mismatch blocks), and `result` says the same. No component you can reach
-   through a door has such a re-check yet, so nothing that comes through them is `verified` today. G6 re-checks artifacts with
-   its own code; it does not defend against malicious code in its own process.
+   through a door has such a re-check yet, so nothing that comes through them is `verified` today. `ok` is false
+   whenever the state is `blocked-escalated`: with no result, `error` says why; a blocked result keeps its answer in
+   `result`, and its card says why. G6 re-checks artifacts with its own code; it does not defend against malicious
+   code in its own process.
 
-From Python, `g6.core.discovery.find / describe` work the same way. `g6.core.registry.get_registry().invoke(...)`
+From Python, `g6.invoke(component, op, params)` is the same door as `g6_invoke`: the same label rule, the same `ok`,
+and a sensitive op refused unless your user allowed it (`G6_MCP_SENSITIVE`, or `allow=("component.op",)` in their
+own code). `g6.core.discovery.find / describe` work the same way. `g6.core.registry.get_registry().invoke(...)`
 is the raw library call beneath the doors: it returns the component's own answer, unchecked, so read its state
 as the component's claim. Or import the component directly.
 

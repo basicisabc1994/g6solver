@@ -84,7 +84,8 @@ def test_g6_find_ranks_model_checking_first_for_a_model_checking_task() -> None:
 def test_every_symbolic_op_answers_through_g6_invoke_inside_the_envelope(op: str) -> None:
     params, state, card = CALLS[op]
     reply = invoke_reply("model_checking", op, json.dumps({**params, "request_id": "req-1", "run_id": "run-1"}))
-    assert check_envelope(reply) == [] and reply["ok"] is True, reply.get("error")
+    assert check_envelope(reply) == [] and "result" in reply, reply.get("error")
+    assert reply["ok"] is (reply["completion_state"] != "blocked-escalated")
     result = reply["result"]
     assert check_envelope(result) == [] and (result["component"], result["op"]) == ("model_checking", op)
     assert result["completion_state"] == reply["completion_state"] == state, (result["code"], result["reason"])

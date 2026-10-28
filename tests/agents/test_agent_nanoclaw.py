@@ -193,7 +193,7 @@ def test_g3_an_approval_or_an_owner_cannot_be_written_into_the_input() -> None:
 def test_an_op_without_what_it_needs_is_refused_with_its_own_code() -> None:
     for op in ("create_group", "send", "receive", "ack", "history", "delete_group"):
         reply = invoke_reply("agent_nanoclaw", op, "{}", allow_sensitive=OWNER_ALLOWS)
-        assert reply["ok"] and reply["result"]["completion_state"] == "blocked-escalated", op
+        assert not reply["ok"] and reply["result"]["completion_state"] == "blocked-escalated", op
         assert reply["result"]["code"].startswith("G6_E_MAILBOX_"), op
 
 

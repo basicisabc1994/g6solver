@@ -241,7 +241,7 @@ def test_every_op_round_trips_over_mcp(home) -> None:  # noqa: ANN001
 def test_the_typed_input_refuses_unknown_ops_and_says_what_is_missing() -> None:
     assert "G6_E_INPUT_VALIDATION" in _invoke("delete")["error"]
     missing = _invoke("put", kind="prompt", name="x")
-    assert missing["ok"] and missing["result"]["code"] == E.LIBRARY_INPUT_INVALID
+    assert not missing["ok"] and missing["result"]["code"] == E.LIBRARY_INPUT_INVALID
     listed = get_registry().invoke("align_prompt_library", "ops").unwrap()
     assert listed["ops"] == OPS and listed["sensitive"] == SENSITIVE
     assert len(get_registry().invoke("align_prompt_library", "help").unwrap()["help"]) == len(OPS)

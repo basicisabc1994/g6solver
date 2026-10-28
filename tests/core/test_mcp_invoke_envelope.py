@@ -74,6 +74,25 @@ def test_a_blocked_result_keeps_its_own_card() -> None:
     assert found["completion_state"] == "blocked-escalated" and found["warning_card"]["code"] == "G6_E_POLICY_BLOCKED"
 
 
+@pytest.mark.parametrize("value", [
+    {"completion_state": "blocked-escalated", "answer": 42},
+    {"reliability_label": "blocked", "answer": 42},
+    {"completion_state": "qualified-draft", "reliability_label": "failed", "answer": 42},
+])
+def test_ok_is_false_when_the_result_is_blocked(value: dict) -> None:
+    """``ok`` says whether the reply may be used: a component that answered with a block has not been (plan Step
+    1). Its answer is still there to read; ``error`` stays for a reply with no result."""
+    found = _reply(Success(value))
+    assert found["ok"] is False and found["completion_state"] == "blocked-escalated"
+    assert found["result"]["answer"] == 42 and "error" not in found
+
+
+@pytest.mark.parametrize("value", [{"answer": 42}, {"completion_state": "qualified-draft"},
+                                   {"completion_state": "verified", "evidence": [{"kind": "test"}]}])
+def test_ok_stays_true_for_a_result_that_is_not_blocked(value: dict) -> None:
+    assert _reply(Success(value))["ok"] is True
+
+
 def test_the_promotion_law_demotion_carries_its_card(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "off")   # no switch turns the law off
     found = _reply(Success({"completion_state": "verified", "evidence": [{"kind": "test"}]}))
