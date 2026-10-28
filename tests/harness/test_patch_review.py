@@ -447,6 +447,23 @@ def test_a_run_out_of_time_is_insufficient_evidence_and_a_check_it_never_reached
     assert "check_failed" not in _reasons(got) and "run_timed_out" in _reasons(got)
 
 
+def test_test_ids_are_read_against_the_root_folder_pytest_used(repo, monkeypatch):
+    """Review I9(a) (probe S5): a pytest.ini in tests/ makes that folder pytest's root, and pytest names each test
+    relative to it, so the stated check tests/test_calc.py::test_add read as not collected though it passed."""
+    _git(repo, "rm", "-q", "test_calc.py")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "pytest.ini").write_text("[pytest]\n")
+    (repo / "tests" / "test_calc.py").write_text(TEST)
+    _commit(repo, "tests in a folder with their own pytest.ini")
+    (repo / "calc.py").write_text(GOOD)
+    ids = ["tests/test_calc.py::test_add", "tests/test_calc.py::test_negative"]
+    ran = {**result(["test_calc.py::test_add", "test_calc.py::test_negative"]), "rootdir": "tests"}
+    Recorded(monkeypatch, default=ran)
+    got = review(repo, [{**req, "checks": [ident]} for req, ident in zip(SUM, ids)])
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert [c["verdict"] for req in got["assessment"]["requirements"] for c in req["checks"]] == ["passed", "passed"]
+
+
 def test_a_stated_check_the_environment_cannot_collect_is_not_established(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
     lacking = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "collection_error"}
@@ -951,6 +968,22 @@ def test_confined_a_failing_test_moved_out_of_the_stated_folder_is_a_regression(
     assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
     assert any(r["code"] == "derived_test_regressed" and "tests/.off/test_neg.py" in r["detail"]
                for r in got["assessment"]["reasons"])
+
+
+def test_confined_a_test_folder_with_its_own_pytest_config_is_read_against_that_root(repo, bwrap_backend):
+    _git(repo, "rm", "-q", "test_calc.py")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "pytest.ini").write_text("[pytest]\n")
+    (repo / "tests" / "test_calc.py").write_text(TEST)
+    _commit(repo, "tests in a folder with their own pytest.ini")
+    (repo / "calc.py").write_text(GOOD)
+    ids = ["tests/test_calc.py::test_add", "tests/test_calc.py::test_negative"]
+    got = review(repo, [{**req, "checks": [ident]} for req, ident in zip(SUM, ids)])
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]
+    (repo / "calc.py").write_text(POSITIVE_ONLY)   # survival: a failure is still named under that root
+    found = review(repo, [{**req, "checks": [ident]} for req, ident in zip(SUM, ids)])
+    assert found["assessment"]["outcome"] == "defect_detected", found["assessment"]
+    assert _requirement(found, "R2")["status"] == "failed"
 
 
 def test_confined_a_check_pytest_cannot_find_is_not_collected(repo, bwrap_backend):

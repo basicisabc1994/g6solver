@@ -256,14 +256,22 @@ def _not_found(check: str, output: str) -> bool:
     return False
 
 
+def _in_repository(ran: dict):
+    """A function from a test id or file as pytest named it in ``ran``, relative to its root folder, to the same id
+    relative to the repository's top, as checks name them (review I9: a pytest config below the top moves the root)."""
+    prefix = (ran.get("rootdir") or "").strip("/")
+    return (lambda node: f"{prefix}/{node}") if prefix else (lambda node: node)
+
+
 def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     """Each check's own verdict in one run, read from pytest's per-test outcomes."""
     run, said, output = ran["verdict"], ran.get("said") or "", ran.get("output") or ""
-    outcomes = ran.get("test_outcomes") or {}
-    failed = set(ran.get("failed_ids") or []) | set(ran.get("setup_errors") or {})
-    omitted = set(ran.get("omitted_ids") or [])
+    full = _in_repository(ran)
+    outcomes = {full(node): phases for node, phases in (ran.get("test_outcomes") or {}).items()}
+    failed = {full(node) for node in [*(ran.get("failed_ids") or []), *(ran.get("setup_errors") or {})]}
+    omitted = {full(node) for node in ran.get("omitted_ids") or []}
     missing = {check for check in ids if _not_found(check, output)}
-    broken = _collection_errors(output)
+    broken = {full(rel) for rel in _collection_errors(output)}
     found: dict[str, dict] = {}
     for check in ids:
         nodes = {node: _node(phases, node in failed) for node, phases in outcomes.items() if _covers(check, node)}
@@ -528,9 +536,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
 def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) -> None:
     """Replay each failing derived test file, and each one pytest could not collect, at the base commit: a defect only
     when it passed there."""
-    failing = sorted(({node.partition("::")[0] for node in [*second.get("failed_ids", []),
-                                                            *second.get("setup_errors", {})]}
-                      | _collection_errors(second.get("output") or "")) & set(derived))
+    full = _in_repository(second)
+    failing = sorted({full(rel) for rel in {node.partition("::")[0] for node in [*second.get("failed_ids", []),
+                                                                              *second.get("setup_errors", {})]}
+                      | _collection_errors(second.get("output") or "")} & set(derived))
     if not failing:
         unknowns.append(f"the tests that touch the changed modules failed without a test G6 can name: "
                         f"{second.get('said') or 'read their output'}")

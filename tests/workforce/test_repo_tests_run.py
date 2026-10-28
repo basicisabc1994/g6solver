@@ -712,6 +712,14 @@ def test_i6_a_moved_test_file_is_replayed_at_its_old_path_at_the_base_commit(rep
     assert found["failed_ids"] == [f"{rel}::test_neg"]
 
 
+def test_i9_a_run_says_the_root_folder_pytest_named_its_tests_against(repo):
+    """Review I9(a): pytest names each test relative to its root folder, which a config below the top moves."""
+    assert rt.run(repo, ["tests/test_calc.py"])["rootdir"] == ""
+    _write(repo, "tests/pytest.ini", "[pytest]\n")
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert found["rootdir"] == "tests" and found["failed_ids"] == ["test_calc.py::test_add"]
+
+
 def test_m9_a_repository_path_with_the_path_separator_in_it_runs(tmp_path):
     """M9: the import path was one string joined with os.pathsep, so a ';' (':' on POSIX) in the path split it."""
     repo = make_repo(tmp_path, f"a{os.pathsep}b")

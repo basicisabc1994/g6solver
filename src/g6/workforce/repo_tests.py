@@ -514,12 +514,14 @@ class _Counted:
         self.collected, self.deselected, self.started, self.finished = None, 0, set(), set()
         self.failed, self.setup_errors = [], {}
         self.test_outcomes, self.collected_ids, self.omitted_ids = {}, set(), set()
+        self.rootdir = ""
     def pytest_itemcollected(self, item):
         self.collected_ids.add(item.nodeid)
     def pytest_deselected(self, items):
         self.deselected += len(items)
         self.omitted_ids.update(item.nodeid for item in items)
     def pytest_collection_finish(self, session):
+        self.rootdir = str(getattr(session.config, "rootpath", None) or session.config.rootdir)
         self.collected = len(session.items) + self.deselected
         self.omitted_ids.update(self.collected_ids - {item.nodeid for item in session.items})
         self.write()
@@ -544,7 +546,8 @@ class _Counted:
                 json.dump({"collected": self.collected, "deselected": self.deselected, "started": len(self.started),
                            "finished": len(self.finished), "failed_ids": self.failed,
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
-                           "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids)}, handle)
+                           "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
+                           "rootdir": self.rootdir}, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -859,7 +862,18 @@ def _progress(counts: dict[str, int], counted: Path) -> dict[str, int]:
             "test_outcomes": found.get("test_outcomes"), "collected_ids": found.get("collected_ids", []),
             "omitted_ids": found.get("omitted_ids", []),
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
+            "rootdir": found.get("rootdir") or "",
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
+
+
+def _root(repo: Path, rootdir: str) -> str:
+    """pytest's root folder, which it names each test relative to, as a path inside ``repo`` ("" for its top, and when
+    the run did not say or named a folder outside it)."""
+    try:
+        rel = Path(rootdir).resolve().relative_to(repo.resolve()).as_posix() if rootdir else ""
+    except (OSError, ValueError):
+        return ""
+    return "" if rel == "." else rel
 
 
 def _said(verdict: str, *, seconds: int, python: str) -> str:
@@ -883,7 +897,9 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     never written (the changed-lines mutation check). ``interpreter_source`` says whose Python ran the tests
     ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path, and
     ``source_before`` the digest of the ``snapshot`` the run began on (the digest the patch review calls its
-    ``artifact_digest``). Raises ``RepoRefused`` before anything runs when the request cannot run.
+    ``artifact_digest``), and ``rootdir`` the folder pytest named the tests relative to ("" for the repository's top;
+    a pytest configuration below the top moves it). Raises ``RepoRefused`` before anything runs when the request
+    cannot run.
 
     ``receipt=True``: a run that started confined (its ``isolation`` names a backend), whose repository git could
     read after it, and beside which ``ignored_inputs`` found no git-ignored file the run could load, is written to
@@ -942,7 +958,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "failed_ids": list(tally.get("failed_ids", [])), "setup_errors": tally.get("setup_errors", {}),
                 "degraded": verdict not in RAN or ("expected" in tally and
                     (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
-                "source_before": ledger.digest(before)}
+                "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or "")}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
