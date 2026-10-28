@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -114,4 +115,5 @@ def test_the_check_writes_its_report_and_fails_loudly_when_a_required_group_is_m
     every = freeze_check.evaluate(report["features"], parity, list(freeze_check.GROUPS))
     assert any(p.startswith("pool: shadowed") for p in every) and any("search: check limits" in p for p in every)
     assert any("parity fixture test_g6_and_the_direct_checks_read_a_submodule_folder_alike" in p for p in every)
-    assert "drdan" not in out.read_text(encoding="utf-8")
+    text = out.read_text(encoding="utf-8")
+    assert str(Path.home()) not in text and str(freeze_check.REPOSITORY) not in text      # no local path is recorded
