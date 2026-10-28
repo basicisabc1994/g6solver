@@ -184,7 +184,7 @@
     }
   ],
   "reviewed": {
-    "artifact_sha256": "20cd2313a0e1fd654e0a4c9fb6bb6175dcd6e1c3f4772b71624ba53a7d9474e8",
+    "artifact_sha256": "d5004020032e30a01adb95bc7e853f6f580d63307ed00ce9206284be89c4f00a",
     "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
     "sources_sha256": {
       "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
@@ -577,6 +577,110 @@
         "independently_run": "tests/metaharness/test_uat_diagnostics.py tests/metaharness/test_phase6_mcp.py tests/core/test_kernel_promotion_law.py",
         "result": "34 passed, 1 dependency deprecation warning in 3.88s",
         "limits": "Focused local tests and static delta review; this reader did not independently perform the parent-reported Codex client probes or broad test runs. Full held-source/quote issuance gates remain required."
+      }
+    },
+    {
+      "kind": "independent-step1-door-delta-review",
+      "reviewer": "Claude Opus 5.5 independent certificate-renewal reader (fresh session; did not write commit 4151fed)",
+      "date": "2026-10-28",
+      "base_commit": "5733be2f0fd5719bf881d7f4a57b27f9e651490f",
+      "reviewed_commit": "02aa544be48283f68c4f81edc723479e15f9b997",
+      "prior_review_sha256": "7581fd9bba79a4eeb08166c7b539b038572c725067bf2250475ee4bab9474443",
+      "prior_reviewed": {
+        "artifact_sha256": "20cd2313a0e1fd654e0a4c9fb6bb6175dcd6e1c3f4772b71624ba53a7d9474e8",
+        "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
+        "sources_sha256": {
+          "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
+          "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
+          "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
+          "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+          "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98",
+          "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
+          "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
+          "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
+          "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
+          "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
+          "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd"
+        },
+        "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+        "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+        "refusals": [
+          "MLError"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "d5004020032e30a01adb95bc7e853f6f580d63307ed00ce9206284be89c4f00a",
+        "rules_sha256": "cb215efd7b9e62ee3a000815c4e1ed130c2a1d063cc6c4426f34974bec97009f",
+        "sources_sha256": {
+          "sklearn-1.9-cv-3.1": "d4c2c30941f324fab1b9ed2c4aefca169ff0b5c0d04e89b5f995de7aa792476a",
+          "sklearn-1.9-cv-3.1.2.2": "3389c24d47437448581e82f54de97e8d8ad5a54cc4427517d9a6354a0601ead2",
+          "sklearn-1.9-cv-3.1.2.4": "e167928c0cc973a7162aa22760e70fb7394b8194782163f887c4bac7812035f7",
+          "sklearn-1.9-pitfalls-12.2": "508e0300a88426f0b3f3cc4fd5b0000beaa755ba74bf634f4e9bee9ab5d1ce62",
+          "sklearn-1.9-pitfalls-12.3.3.1": "042f4807af2a1bb38b5240f615399bcaa59ad7b71a1668bbe17470e752474a98",
+          "sklearn-1.9-metrics-3.4.4.2": "80ba637181c0657a89c5ad9910b30e0417221b3579daac314a63f38455b5883c",
+          "sklearn-1.9-metrics-3.4.4.4": "f6551a5f445ec23e71cb8e68a65f013481285aef4aec2ea80da487bf8b61859b",
+          "sklearn-1.9-metrics-3.4.6.1": "afbc658db3bae63ac677929be082f77c91d56771ed6ec1986b60ccaa241a1665",
+          "sklearn-1.9-metrics-3.4.6.2": "69f1d814cc5a6ce88e8c4a46b3f079c8df56f3bffd3afa03da24001ce70b3795",
+          "sklearn-1.9-metrics-3.4.6.3": "2ad65ce63291a608d9fee22f226813cd38d7776d6585ff4915d38cd840fb6349",
+          "sklearn-1.9-metrics-3.4.8": "e0c420f21cd04cc11e5b6ae89bf8a01aefedbacb68070177b7600edc887e5dbd"
+        },
+        "cases_sha256": "1a51d74097080e121fbb154649e437e224beb00407b1dcdc0c44b9e046db197e",
+        "adapter_sha256": "266121d6767e551c90d34fa65b6eb092a2d95815849c3de290d2919af9955ed8",
+        "refusals": [
+          "MLError"
+        ]
+      },
+      "scope": "Supplement to prior independent delta attestations: the Step 1 door delta in bound shared code (door_reply's ok, the shared checked call door.invoke_checked behind g6_invoke, g6 invoke and the new g6.invoke, and block_contract wording) and the unchanged modules it newly binds. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses, held source bytes or private quotes were read; no new medical, legal, safety or domain endorsement, qualified-person approval, authenticated identity or cryptographic signature is asserted.",
+      "method": "Read git diff 5733be2..4151fed for core/door.py, g6/__init__.py, core/block_contract.py, cli/__init__.py, mcp/__init__.py, core/discovery.py and tests/conformance/kit.py, and every caller of door_reply and every reader of a door reply's ok in src. Compared ASTs with the base, docstrings stripped: block_contract.py is identical; door.py changes only door_reply's return and __all__ and adds functions; the helpers moved out of g6.mcp are identical to their base bodies. Then re-read the two corrections to core/block_contract.py's wording since 4151fed (5275b8a and 02aa544; 4051730 changed only a test): its AST is still identical to 5733be2 and 4151fed, each statement was checked against core/compose.py, core/registry.py and a search of src for precondition, stop-condition and detector dispatch, and in-memory blocks were composed in both modes (per-op required inputs, wiring and evidence kinds refused with or without strict; preconditions, declared outputs and stop conditions only with strict). Recomputed reviewed() for the base in an extracted 5733be2 src tree (equal to the existing reviewed record) and for the 02aa544 tree (equal to tools/issue_certificate.py --reviewed), diffed the two code manifests, and compared every bound file with 4151fed: core/block_contract.py is the only one changed since.",
+      "finding": "Only artifact_sha256 differs; rules, canonical source entries, cases, adapter and refusal hashes are unchanged. Changed bound inputs: core/door.py (door_reply's ok is now false when the door's state is blocked-escalated, while completion_state, the warning card and the result copy are computed exactly as before; it adds allowed_sensitive, is_allowed and person_model, moved unchanged from g6.mcp, and invoke_checked), g6/__init__.py (adds g6.invoke, a lazy wrapper over invoke_checked whose allow is a per-call set nothing retains) and core/block_contract.py (docstrings and comments only). Newly bound through door.py's function-level imports, byte-identical to 5733be2 and already bound there by adapt_bayesian's certificate: core/host_models.py, core/llm.py, core/model_calls.py, core/stop.py. No covered implementing function, adapter or ai_block path calls door_reply, invoke_checked or person_model; ai_block uses only door_envelope and corrected_result, which are unchanged. The sensitive-op policy is the same on all three surfaces, and over MCP only G6_MCP_SENSITIVE in the server's own environment can grant one. ok is derived from the state and never feeds it, so the delta raises no label and leaves the door rule as it was. block_contract's wording was corrected twice after this reader's first pass over 4151fed, which found it untrue: 5275b8a stopped crediting the registry with per-op required inputs (ComponentRegistry.invoke checks only the block's typed input; only composition reads inputs_required_per_op), and 02aa544 stopped calling evidence kinds strict-only (composition checks them in either mode). Its module docstring, BlockContract docstring and field comments are now true of core/compose.py and core/registry.py. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "previous_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec",
+          "current_sha256": "911d7b90db99b90c2f26563d38686738396e9ae876b263f65fc142254cacfacb",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/block_contract.py",
+          "previous_sha256": "4b0652f16e30c3c206abb0a5af28bb8088e226cfb403c04fbec64ec1d5578f59",
+          "current_sha256": "a60d4375d92695667f6eb8e197599aafa8e4317757f6932378de7022e74805d0",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/door.py",
+          "previous_sha256": "2ca96c8cfa10912336fdc8ab35e8cce0bca8114569c76a21d27ecf31a22f52f7",
+          "current_sha256": "966d6a03976e66d0c883226067f998c2f40faa5d3f5002dca62454523762a9b0",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/host_models.py",
+          "previous_sha256": null,
+          "current_sha256": "acf17194c35bd9839e2a94ffd7113053f35edeb289c68d154a1ecc75ee323512",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/llm.py",
+          "previous_sha256": null,
+          "current_sha256": "f7e091e8dd34707dd68a8d8a1c9a99dad01286e539a5ddd79bd8cecd57976d12",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/model_calls.py",
+          "previous_sha256": null,
+          "current_sha256": "a03dfea18dd92a0d8fde59b2f836f47e8986c8845eae96717267578b26523a47",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/stop.py",
+          "previous_sha256": null,
+          "current_sha256": "e4667bdb128f656882f754c607131273360db3be59044f5f60f4e42a99cdcb5d",
+          "binding_change": "added"
+        }
+      ],
+      "validation": {
+        "independently_run": "At 02aa544: tests/core/test_contract_wording.py tests/core/test_compose.py; then those two with tests/core/test_invoke_parity.py tests/core/test_mcp_invoke_envelope.py tests/core/test_door_promotion.py tests/core/test_mcp_model_door.py tests/core/test_contract_serialization.py tests/jobs/test_duty_of_care_block.py; then tests/ml/test_sklearn.py tests/ml/test_automl.py tests/ml/test_bayesian.py tests/embodied/test_adapt_physical_ai.py tests/embodied/test_motion_grasp.py tests/embodied/test_embodied_merges.py tests/jobs/test_care_guards.py",
+        "result": "12 passed in 0.31s; 244 passed, 1 skipped, 1 dependency warning in 4.38s; then 192 passed, 16 skipped, 3 failed in 13.59s: test_sklearn's g5 test refused with G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued. At 4151fed the focused set without test_compose.py gave 232 passed, 1 skipped, and the component set gave the same 192, 16 and 3.",
+        "limits": "Static delta review and focused local tests on Windows only. The scikit-learn and FLAML extras are not installed (16 skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The composition probes used in-memory blocks, not the certified components. The reader is a fresh Claude session, not a different model from the commits' author. Full held-source and quote issuance gates remain required."
       }
     }
   ]
