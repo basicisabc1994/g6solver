@@ -431,9 +431,9 @@ def arm_e(*, ask, patched_tree: Path, base_tree: Path, patch: str, contract: str
                            "fails_at_base": _most(base, FAILED, frozen.runs)}
     found.update(kept=[{key: one[key] for key in ("file", "placed", "sha256", "call", "tests")} for one in kept],
                  discarded=discarded, tests=tests,
-                 findings=[{"file": tests[test]["file"], "node": test, "call": tests[test]["call"],
-                            "sha256": next(one["sha256"] for one in kept if one["placed"] == tests[test]["file"])}
-                           for test in tests if tests[test]["finding"]],
+                 findings=[{"file": one["placed"], "text": one["text"], "node": test, "call": one["call"],
+                            "sha256": one["sha256"]}
+                           for one in kept for test in one["tests"] if tests[test]["finding"]],
                  counts={"no_test_file": not files_seen, "none_kept": files_seen and not kept,
                          "kept_files": len(kept), "kept_tests": len(tests), "discarded": len(discarded),
                          "errors": sum(one["error"] for one in tests.values()),

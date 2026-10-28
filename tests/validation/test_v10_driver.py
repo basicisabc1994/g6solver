@@ -1,0 +1,185 @@
+# SPDX-License-Identifier: Apache-2.0
+"""V10's study driver over patches (PROTOCOL.md on the verification search branch, "For all arms of this study" and
+"Reruns"). The arms are fakes: no model is called and G6's review is never run."""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from patch_review_search import driver
+from patch_review_utility import dispositions
+from patch_review_utility.dispositions import ABSTAIN, ACCEPT, DEFECT, ERROR, make
+
+ACCEPTED, DEFECTIVE = make(ACCEPT), make(DEFECT, "a stated check failed")
+
+
+def patches(*arm_a, start=0):
+    return [{"id": f"p{index}", "draw_index": start + index, "arm_a": disposition}
+            for index, disposition in enumerate(arm_a)]
+
+
+class Arm:
+    """A fake arm: its replies by patch id (a dict, or an exception to raise, once per attempt), and every call."""
+
+    def __init__(self, name, replies=None, default=None):
+        self.name, self.replies, self.calls = name, {k: list(v) for k, v in (replies or {}).items()}, []
+        self.default = default or {"own": ACCEPTED, "model_calls": 1, "spent_cents": 1.0}
+
+    def __call__(self, patch, **kwargs):
+        self.calls.append((patch["id"], kwargs))
+        queue = self.replies.get(patch["id"])
+        found = queue.pop(0) if queue else self.default
+        if isinstance(found, BaseException):
+            raise found
+        return found
+
+
+def e_arm(replies=None):
+    return Arm("E", replies, default={"disposition": ACCEPTED, "findings": [], "spent_cents": 1.0,
+                                      "calls": {"due": 1, "made": 1}})
+
+
+def study(items, c=None, t=None, e=None, *, cap=300.0, rerun=None, record=None):
+    c, t, e = c or Arm("C"), t or Arm("T"), e or e_arm()
+    order = []
+    for arm in (c, t, e):
+        original = arm.__call__
+
+        def logged(patch, _original=original, _name=arm.name, **kwargs):
+            order.append((patch["id"], _name))
+            return _original(patch, **kwargs)
+        arm.logged = logged
+    got = driver.study(items, arm_c=c.logged, arm_t=t.logged, arm_e=e.logged, spending=driver.Spending(cap),
+                       record=record or driver.Record(), rerun=rerun or (lambda patch, arm, reproduction: {}))
+    return got, order, (c, t, e)
+
+
+def test_arms_c_t_and_e_all_run_on_one_patch_before_the_next_in_draw_order():
+    got, order, _ = study(patches(ACCEPTED, ACCEPTED))
+    assert order == [("p0", "C"), ("p0", "T"), ("p0", "E"), ("p1", "C"), ("p1", "T"), ("p1", "E")]
+    assert [row["patch"] for row in got["patches"]] == ["p0", "p1"]
+    with pytest.raises(ValueError, match="draw order"):
+        driver.study(list(reversed(patches(ACCEPTED, ACCEPTED))), arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(),
+                     spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {})
+    with pytest.raises(ValueError, match="arm A"):
+        driver.study([{"id": "p0", "draw_index": 0}], arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(),
+                     spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {})
+
+
+def test_g6s_arms_get_their_search_configuration_as_data_and_e_the_calls_c_and_t_made():
+    c = Arm("C", {"p0": [{"own": ACCEPTED, "model_calls": 3, "spent_cents": 1.0}]})
+    t = Arm("T", {"p0": [{"own": ACCEPTED, "model_calls": 5, "spent_cents": 1.0}]})
+    _, _, (c, t, e) = study(patches(ACCEPTED), c, t)
+    assert c.calls[0][1]["search"] == {"templates": False}
+    assert t.calls[0][1]["search"] == {"templates": True, "test_adequacy": True}
+    assert (e.calls[0][1]["c_calls"], e.calls[0][1]["t_calls"]) == (3, 5)
+    c.calls[0][1]["search"]["templates"] = True
+    assert driver.SEARCH["C"] == {"templates": False}              # each call gets its own copy
+
+
+@pytest.mark.parametrize("arm_a, own, category, error_kind", [
+    (ACCEPTED, ACCEPTED, ACCEPT, ""), (ACCEPTED, DEFECTIVE, DEFECT, ""), (DEFECTIVE, ACCEPTED, DEFECT, ""),
+    (make(ABSTAIN, "no check"), make(DEFECT, "x"), ABSTAIN, ""),
+    (ACCEPTED, make(ERROR, "refused", error_kind="refusal"), ERROR, "refusal"),
+    (make(ERROR, "x", error_kind="tool_error"), ACCEPTED, ERROR, driver.ARM_A)])
+def test_a_search_arm_accepts_only_when_arm_a_and_its_own_review_accept(arm_a, own, category, error_kind):
+    c = Arm("C", {"p0": [{"own": own, "model_calls": 1, "spent_cents": 1.0}]})
+    got, _, _ = study(patches(arm_a), c)
+    row = got["patches"][0]["arms"]["C"]
+    assert row["disposition"]["category"] == category and row["disposition"]["error_kind"] == error_kind
+    assert row["own"] == own
+
+
+def test_each_arm_runs_under_a_third_of_the_spending_cap_and_a_patch_past_its_share_is_a_counted_tool_error():
+    c = Arm("C", {"p0": [{"own": ACCEPTED, "model_calls": 2, "spent_cents": 100.0}]})
+    got, order, (c, t, e) = study(patches(ACCEPTED, ACCEPTED), c, cap=300.0)
+    assert [patch for patch, _ in c.calls] == ["p0"] and ("p1", "C") not in order
+    second = got["patches"][1]["arms"]
+    assert second["C"]["disposition"]["error_kind"] == driver.SPEND_SHARE and second["T"]["disposition"]["accepted"]
+    assert got["spending"] == {"cap_cents": 300.0, "share_cents": 100.0, "spent_cents": {"C": 100.0, "T": 2.0,
+                                                                                         "E": 2.0}}
+    assert got["tallies"]["C"][ERROR] == 1 and got["tallies"]["C"]["error_kinds"] == {driver.SPEND_SHARE: 1}
+    assert e.calls[1][1]["c_calls"] == 0                            # C made no call on p1
+    assert t.calls[0][1]["share_left"]() is True
+
+
+def test_a_run_that_failed_from_infrastructure_before_its_first_call_is_retried_once_and_logged():
+    broken = driver.InfrastructureFailure("the container did not start")
+    c = Arm("C", {"p0": [broken, {"own": ACCEPTED, "model_calls": 1, "spent_cents": 1.0}], "p1": [broken, broken]})
+    t = Arm("T", {"p0": [RuntimeError("a bug in the arm")]})
+    record = driver.Record()
+    got, _, (c, t, _) = study(patches(ACCEPTED, ACCEPTED), c, t, record=record)
+    first, second = got["patches"][0]["arms"], got["patches"][1]["arms"]
+    assert first["C"]["disposition"]["accepted"] is True and first["C"]["attempts"] == 2
+    assert second["C"]["disposition"]["error_kind"] == driver.INFRASTRUCTURE and second["C"]["attempts"] == 2
+    assert first["T"]["disposition"]["error_kind"] == driver.TOOL_ERROR and first["T"]["attempts"] == 1
+    assert [(r["patch"], r["arm"]) for r in got["retries"]] == [("p0", "C"), ("p1", "C")]
+    assert sum(entry["kind"] == "retry" for entry in record.entries) == 2
+
+
+def test_every_tool_error_is_counted_and_no_patch_is_dropped():
+    e = e_arm({"p1": [{"disposition": make(ERROR, "unparseable", error_kind="unparseable_reply"), "findings": [],
+                       "spent_cents": 0.0, "calls": {"due": 1, "made": 1}}]})
+    t = Arm("T", {"p0": [{"model_calls": 1}]})                          # a reply without its own review's disposition
+    got, _, _ = study(patches(ACCEPTED, ACCEPTED, DEFECTIVE), t=t, e=e)
+    assert all(set(row["arms"]) == {"C", "T", "E"} for row in got["patches"]) and len(got["patches"]) == 3
+    assert got["tallies"]["E"][ERROR] == 1 and got["tallies"]["T"][ERROR] == 1
+    assert got["tallies"]["C"]["missing"] == 0 and sum(got["tallies"]["C"][k] for k in dispositions.CATEGORIES) == 3
+
+
+def test_a_difference_from_arm_a_is_attributed_to_search_only_by_its_reasons_or_its_deadline():
+    found = make(ABSTAIN, "unconfirmed")
+    c = Arm("C", {"p0": [{"own": found, "model_calls": 1, "spent_cents": 1.0,
+                          "reasons": ["evidence:unconfirmed_counterexample"]}],
+                  "p1": [{"own": found, "model_calls": 1, "spent_cents": 1.0, "reasons": ["evidence:no_test_ran"]}],
+                  "p2": [{"own": found, "model_calls": 1, "spent_cents": 1.0, "reasons": [],
+                          "deadline_in_search": True}]})
+    got, _, _ = study(patches(ACCEPTED, ACCEPTED, ACCEPTED), c)
+    assert [row["arms"]["C"]["attribution"] for row in got["patches"]] == [
+        driver.TO_SEARCH, driver.BETWEEN_RUNS, driver.TO_SEARCH]
+    assert got["patches"][0]["arms"]["T"]["attribution"] is None
+
+
+def test_a_failed_proposer_is_listed_with_g6s_reason_beside_its_disposition():
+    c = Arm("C", {"p0": [{"own": make(ABSTAIN, "x"), "model_calls": 0, "spent_cents": 0.0,
+                          "proposer_failure": "the model's reply named no check"}]})
+    got, _, _ = study(patches(ACCEPTED), c)
+    assert got["proposer_failures"] == [{"patch": "p0", "arm": "C", "reason": "the model's reply named no check",
+                                         "category": ABSTAIN}]
+
+
+def test_every_finding_is_rerun_after_every_arm_has_run_on_every_patch():
+    repro = {"file": "tests/g6_check_0123456789ab/test_a.py", "text": "def test_a():\n    assert 0\n",
+             "node": "tests/g6_check_0123456789ab/test_a.py::test_a"}
+    c = Arm("C", {"p0": [{"own": make(ABSTAIN, "x"), "model_calls": 1, "spent_cents": 1.0, "findings": [repro]}]})
+    e = e_arm({"p1": [{"disposition": DEFECTIVE, "spent_cents": 1.0, "calls": {"due": 1, "made": 1},
+                       "findings": [{"file": repro["file"], "text": repro["text"], "node": repro["node"],
+                                     "sha256": "0" * 64, "call": 1}]}]})
+    seen = []
+
+    def rerun(patch, arm, reproduction):
+        seen.append((patch["id"], arm, reproduction["node"]))
+        return {"reproducible": True}
+
+    record = driver.Record()
+    got, _, _ = study(patches(ACCEPTED, ACCEPTED), c, e=e, rerun=rerun, record=record)
+    assert seen == [("p0", "C", repro["node"]), ("p1", "E", repro["node"])]
+    kinds = [entry["kind"] for entry in record.entries]
+    assert kinds.index("rerun") > max(i for i, kind in enumerate(kinds) if kind == "arm")
+    assert got["reruns"][0]["result"] == {"reproducible": True}
+
+
+def test_the_record_is_append_only_each_entry_chained_to_the_one_before(tmp_path):
+    path = tmp_path / "record.jsonl"
+    record = driver.Record(path)
+    first = record.add("arm", {"patch": "p0", "arm": "C", "output": {"x": 1}})
+    final = record.add("rerun", {"patch": "p0", "result": {"reproducible": False}})
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [line["chain"] for line in lines] == [first, final] and record.final == final
+    assert lines[1]["previous"] == first and len(final) == 64
+    other = driver.Record()
+    other.add("arm", {"patch": "p0", "arm": "C", "output": {"x": 2}})
+    assert other.final != first
+    with pytest.raises(FileExistsError):
+        driver.Record(path)

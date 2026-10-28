@@ -84,6 +84,25 @@ def test_arm_es_mirrors_are_compared_with_g6s_rules_and_a_difference_is_named(mo
     assert probe("check file rule")["folder"] == arm_e.FOLDER
 
 
+def test_g6s_search_must_take_each_search_arms_configuration_as_the_driver_gives_it(monkeypatch):
+    fake = types.ModuleType("g6.harness.verification_search")
+    fake.SEARCH_SETTINGS = {"templates": True}
+
+    def config(value):
+        unknown = [key for key in value if key not in fake.SEARCH_SETTINGS]
+        if unknown:
+            raise ValueError("search holds setting(s) G6 does not have: " + ", ".join(unknown))
+        return {**fake.SEARCH_SETTINGS, **value}
+
+    fake.search_config = config
+    monkeypatch.setitem(sys.modules, "g6.harness.verification_search", fake)
+    with pytest.raises(freeze_check.Missing, match="arm T"):
+        probe("search settings")
+    fake.SEARCH_SETTINGS = {"templates": True, "test_adequacy": False}
+    assert probe("search settings")["arms"] == {"C": {"templates": False},
+                                                "T": {"templates": True, "test_adequacy": True}}
+
+
 def test_the_check_writes_its_report_and_fails_loudly_when_a_required_group_is_missing(tmp_path, capsys):
     out = tmp_path / "report.json"
     assert freeze_check.main(["--g6-src", str(freeze_check.REPOSITORY), "--require", "base", "--output", str(out)]) == 0

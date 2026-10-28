@@ -230,10 +230,21 @@
       "name": "search settings",
       "group": "search",
       "present": true,
-      "read": [
-        "templates",
-        "test_adequacy"
-      ]
+      "read": {
+        "settings": [
+          "templates",
+          "test_adequacy"
+        ],
+        "arms": {
+          "C": {
+            "templates": false
+          },
+          "T": {
+            "templates": true,
+            "test_adequacy": true
+          }
+        }
+      }
     },
     {
       "name": "review_patch's search setting",

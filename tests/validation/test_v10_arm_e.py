@@ -185,6 +185,7 @@ def test_a_kept_test_that_fails_in_its_body_is_a_finding_and_e_does_not_accept(t
     got = run(trees, Model(reply(("tests/test_wrong.py", FAILS))), runner)
     assert got["disposition"]["accepted"] is False and got["disposition"]["category"] == dispositions.DEFECT
     assert [f["node"] for f in got["findings"]] == [file + "::test_wrong"] and got["findings"][0]["file"] == file
+    assert got["findings"][0]["text"] == FAILS                     # a reproduction the reruns can run on its own
     assert got["e_filtered"]["accepted"] is True               # it fails at the base too, so it is set aside
     assert got["a_and_e"]["accepted"] is False
 

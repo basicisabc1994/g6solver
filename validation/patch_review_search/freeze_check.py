@@ -14,7 +14,8 @@ Each feature belongs to a group:
   refuses, ``repo_tests.shadowed`` and the ``changed_code_not_loaded`` code, the submodule folders and their reasons,
   ``_moved``'s reading of a folder not hashed);
 - ``search``: verification search, whose rules arm E mirrors (the check file rule, the size and count limits, the
-  placement rule and ``placements``, R and each run's own limit) and whose settings arms C and T are given.
+  placement rule and ``placements``, R and each run's own limit) and whose settings arms C and T are given (each
+  configuration the driver gives, ``driver.SEARCH``, read back through G6's ``search_config``).
 
 A feature is read by importing G6 from the tree in a separate interpreter and probing it: a value compared with the
 study's own, a function called on fixed inputs, or a signature. The parity fixtures (``PARITY``, in
@@ -261,10 +262,17 @@ def _probes() -> list[tuple[str, str, object]]:
         return arm_e.g6_parameters(g6("g6.harness.verification_search"))
 
     def settings():
+        from patch_review_search import driver
         vs = g6("g6.harness.verification_search")
         need("templates" in vs.SEARCH_SETTINGS, "G6's search has no templates setting")
-        need(vs.search_config({"templates": False})["templates"] is False, "search_config does not take templates")
-        return sorted(vs.SEARCH_SETTINGS)
+        for arm, config in driver.SEARCH.items():
+            try:
+                got = vs.search_config(dict(config))
+            except ValueError as exc:
+                raise Missing(f"G6's search does not take arm {arm}'s configuration {config}: {exc}") from exc
+            need(all(got.get(key) == value for key, value in config.items()),
+                 f"G6's search reads arm {arm}'s configuration {config} as {got}")
+        return {"settings": sorted(vs.SEARCH_SETTINGS), "arms": driver.SEARCH}
 
     def search_parameter():
         need("search" in inspect.signature(g6("g6.harness.patch_review").review_patch).parameters,

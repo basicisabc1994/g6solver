@@ -3,6 +3,8 @@
 (docs/validation/patch_review_search/PROTOCOL.md, registered on the verification search branch).
 
 Built and tested on development fixtures only. Nothing here calls a model, starts an agent session or reads a dataset.
-So far it holds arm E's run mechanics (``arm_e.py``); the model call, E's prompt and the repository context wait for
-verification search's proposer interface (VS-5).
+It holds arm E's run mechanics (``arm_e.py``), the study driver over patches (``driver.py``), the reruns of every
+finding (``reruns.py``) and the freeze-readiness check of G6 (``freeze_check.py``). The model call, E's prompt, the
+repository context and G6's arms C and T wait for verification search's proposer interface (VS-5): the driver takes
+the arms as callables.
 """

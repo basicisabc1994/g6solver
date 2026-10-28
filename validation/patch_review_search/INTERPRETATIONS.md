@@ -95,3 +95,56 @@ E's prompt and the repository context wait for verification search's proposer in
 
 14. **The call count.** The larger of arms C's and T's calls on the patch, at least one, and never above the frozen
     model-call cap, which C and T share. Ruled by the coordinator: accepted as written.
+
+Items 15 to 24 cover the study driver (`driver.py`), the reruns (`reruns.py`) and the freeze-readiness check
+(`freeze_check.py`).
+
+15. **C's and T's search configurations.** C is `{"templates": false}`: free-form checks only, with test adequacy
+    off (G6's default). T is `{"templates": true, "test_adequacy": true}`: test adequacy is on for T because the
+    protocol's test adequacy measure (arm T) reads its mutation runs; in this version of G6 test adequacy changes no
+    outcome. G6's search on its branch has no setting of its own for the formal path: templates use it. Each arm gets
+    its configuration as data, a fresh copy on every call. For the coordinator's ruling.
+
+16. **A run that failed from infrastructure before its first model call.** The arm says so by raising
+    `InfrastructureFailure`. The run is retried once, and the retry is logged in the record and the report. A second
+    such failure is a tool error (`infrastructure_before_first_call`). Any other exception, or a reply without a
+    disposition, is a tool error and is not retried. For the coordinator's ruling.
+
+17. **Spending.** The cap is in cents, and each of C, T and E has a third of it. Each reply says what the arm spent
+    on the patch (`spent_cents`), priced by the study script from the provider's token counts and the frozen price
+    list, which wait for VS-5. An arm whose spending reaches its share has none left. What an arm reports spending on
+    the patch where its share ran out is charged in full. For the coordinator's ruling.
+
+18. **C's and T's dispositions.** Their own review's tool error is theirs. When arm A has no disposition (a tool
+    error), they have none either: a tool error of the kind `arm_a_without_disposition`. When arm A does not accept,
+    they take arm A's category; when it accepts, their own review's. For the coordinator's ruling.
+
+19. **E's calls after a tool error of C or T.** E gets the calls C and T made (none for an arm that was not run or
+    failed before its first call), so E makes at least one. For the coordinator's ruling.
+
+20. **Reruns.** A reproduction is `{file, text, node}`: the test file's path, its text and the node id to run. For C
+    and T it is the file and text G6 reports in its next actions; VS-5 must give the text and the node id in that
+    form. A rerun reads its outcome as arm E reads a run: a failure in the body fails, a pass passes, and anything else
+    (it could not be collected, set up or finished in time, it was skipped, or nothing was recorded) is an error. A
+    reproduction that cannot be run that way is not reproducible and is not run. The reruns start once every arm has
+    run on every patch. For the coordinator's ruling.
+
+21. **Attribution to search.** The reason codes are read with or without their stage (`evidence:unconfirmed_failure`
+    or `unconfirmed_failure`). Whether the deadline was reached during the search stage is what the arm reports
+    (`deadline_in_search`), from G6's report once VS-5 says where it is. For the coordinator's ruling.
+
+22. **The record.** Each arm's output on each patch, each retry and each rerun result is one entry. An entry carries
+    the SHA-256 of its data (JSON with sorted keys) and a chain hash, the SHA-256 of the previous chain hash and its
+    own, and is written as a JSON line to a file that must be new. The final chain hash is the record's; committing it
+    to G6's public repository happens outside the driver. For the coordinator's ruling.
+
+23. **Draw order and inputs.** The driver takes the non-empty patches V9 reviewed, each with its draw index and arm
+    A's disposition (V9's arm 3 result); empty and non-applying patches are left out before it, as V9 handles them.
+    Patches out of draw order, or without arm A's disposition, are refused before anything runs. For the
+    coordinator's ruling.
+
+24. **The freeze-readiness check's groups.** Every feature the scripts detect or mirror belongs to one group: `base`
+    (what G6's frozen review at b3c342b gives), `pool` (the pool-compatibility change) or `search` (verification
+    search). All are required unless the check is told fewer; a parity fixture is required with its group. A group not
+    required is reported, never a failure. A tree from the pool-compatibility branch alone (8b5364c) has no
+    verification search, so it can never pass with every group required. For the coordinator's ruling.
