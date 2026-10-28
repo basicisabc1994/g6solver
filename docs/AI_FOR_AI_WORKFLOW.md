@@ -123,7 +123,8 @@ commit (a moved test file at its old path), and counts as a defect only if it pa
 far found a problem, the stated checks that passed also run against the base commit's code, in a copy: one
 that passes there too may not exercise the change, and is listed as an unknown with a next action, never an
 outcome (a requirement to keep behaviour passes at the base by design). Tier 3 (mutation, old-against-new
-probes) is not run yet.
+probes) runs only when you ask: mutation for test adequacy, and old-against-new probes as `differential.v1`
+template instances (below).
 
 `proposed_checks` is optional: at most 20 test files you propose, each `{id, requirement_id, intent, file,
 source, test}`. `intent` is `preserve` (behaviour the patch must keep) or `change` (behaviour it must bring);
@@ -155,11 +156,57 @@ repository has none), which needs no G6, the interpreter and boundary each run h
 copies it ran in. The check is code you wrote: G6 ran it only inside its boundary with no network, so read it
 before you run it, or run it in a container.
 
+`template_instances` is optional too: instances of G6's reviewed templates, counted with `proposed_checks`
+within the same 20, each `{id, template, requirement_id, intent, bindings}`. A template is G6's own code; an
+instance is data. The templates:
+
+- `example.v1`: a stated input gives a stated result, error or effect. Bindings: `function` and `cases`, each
+  with `args` and `kwargs` and exactly one of `returns` (compared as JSON writes both: 2 and 2.0 differ, a
+  tuple reads as a list), `raises` (an exception type) or `effect` (`{argument, equals}`: an argument's value
+  after the call);
+- `relation.v1`: a relation over at most 32 `inputs`, each the function's one argument: `round_trip` (with
+  `inverse`), `idempotence`, `invariance` (with `transformation`) or `monotonicity` (inputs in ascending order;
+  `order` `increasing` or `decreasing`, `strict` true or false);
+- `access_rule.v1`: who may perform an `operation` on a resource: `cases` with `who`, `resource`, the call's
+  `args` and `kwargs`, and `expected` `allowed` or `refused`, at least one of each; `refusal` is `exception`
+  (with the `exception` type it raises) or `falsy_return`. One call per case;
+- `differential.v1`: outside the change's declared scope, the base commit and the patch agree on the `calls`
+  you state, on outputs or on exceptions only (`mode`). A difference is a counterexample when the instance's
+  `intent` is `preserve`, and a question (`behaviour_changed`) when it is `change`;
+- `forbidden_dependency.v1` (intent `preserve`): the patch adds no import that breaks a layer rule. With
+  `contract: "repository"`, the rule is the repository's own import-linter configuration (`.importlinter`,
+  `setup.cfg` or `pyproject.toml`; layers and forbidden contracts, with their `ignore_imports`) as the base
+  commit declares it, so the patch cannot loosen it; otherwise `package` and a `contract` of `layers` (highest
+  first) and `forbidden` pairs (`{source, forbidden}`) you state. G6 reads the imports from the package's files
+  before and after and runs no code; it sees direct imports only, not dynamic ones. A part of a contract that
+  matches no module, and a module outside the package, are reported as out of scope, never as violations.
+
+Bindings are data. A name is a dotted name of the letters A to Z (either case), digits and `_`, a module and
+then a top-level name in it (`package.module.function`), with no keyword and no double-underscore name; an
+exception is a built-in exception's name or such a name; a literal is JSON data, at most 16 levels deep and 32
+kilobytes in all. Anything else is refused, and so is the review, before anything runs. G6 then finds each name by reading the files, never importing them: a module in the top folder
+or in `src` and a top-level definition in it, on the working tree for an instance whose intent is `change` and
+at the base commit for one that keeps behaviour; each call's arguments must fit the function's parameters. An
+instance the repository gives nothing to apply to is refused alone, listed in the activities with the reason;
+the review goes on. G6 writes each check from the template's fixed text, with your bindings in it as one
+literal and nowhere else, and runs it as it runs a proposed check: it never passes a requirement, and a
+counterexample or a failure gives at most insufficient evidence, with its reproduction (the text names its
+template). A forbidden import against the repository's contract or yours is a failed check, so
+`defect_detected`; a structural check that finds none counts for its requirement as a stated check does.
+
+`search` is optional: `{"templates": false}` runs your free-form checks only, and lists each template instance
+as skipped; `{"test_adequacy": true}` also measures test adequacy. The configuration is in `scope.search`.
+
 Every reply has `assessment.completion`, built from what ran: `demonstrated` (requirements passed on their
 stated checks, with the receipts), `not_established` (with what would settle each), `defects_reproduced`
 (failed stated and repository checks apart from unconfirmed proposed ones, each with its reproduction),
-`preservation`, `test_adequacy` (empty in this version), at most three `open_questions` showing the competing
-behaviours, and `activities`: every run and every skip, with its result, seconds and model calls (none).
+`preservation`, `test_adequacy`, at most three `open_questions` showing the competing behaviours, and
+`activities`: every run and every skip, with its result, seconds and model calls (none). With `test_adequacy`
+asked for, G6 makes small changes to the changed lines (at most 6 in each of at most 3 files: `<` to `<=`, `+`
+to `-`, a number plus one, a returned value to `None`), runs each requirement's stated checks against each one,
+confined in a copy, and reports how many changes they caught and which survived, with every change not run and
+why. That changes no outcome: a change can behave as the original does, so a survivor is a question about the
+checks, not a defect.
 
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
@@ -179,7 +226,7 @@ does everything the task needs. Each requirement reads `passed_on_stated_checks`
 the requirements with their evidence, `requirements_without_adequate_check`, and `specification_note`,
 which says the task's specification may be incomplete. Its `scope` records the digest, base commit,
 changed files, environment, each check run (tier, command, verdict, seconds), the checks skipped and why,
-and the total time; `unknowns` and `next_actions` follow.
+the search configuration, and the total time; `unknowns` and `next_actions` follow.
 
 A stale supplied artifact digest, invalid input, a git error, or a run no operating-system boundary
 confined is a refusal: `blocked-escalated`, with no outcome. Merging is separate: `merge.status` is always
