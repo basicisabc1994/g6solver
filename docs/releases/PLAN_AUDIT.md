@@ -9,7 +9,8 @@ at each step, and a row changes only with new evidence.
 
 - **Audited commit:** `a2df4fd` (branch `claude/step2`), on 28 October 2026. Later commits are named only where a row
   says so. The Step 2 rows (S2-12 onward, and the fix-pass table) were checked again on 29 October 2026 against the
-  frozen Step 2 commit `b3c342b`, and VS-0 against `cd52d48` on branch `claude/vs`.
+  frozen Step 2 commit `b3c342b`, and VS-0 against `cd52d48` on branch `claude/vs`. Rows S2-16, S2-18 and S2-19
+  were checked on 29 October 2026 against `8b5364c` on branch `claude/pool-compat`.
 - **Sources:** the plans are kept outside this repository, and their items are described here in plain words. The
   Phase 0 usability ledger is also kept outside this repository; its identifiers (P0-01 to P0-32) are used below. It
   was recorded on 27 October 2026 by following each public journey literally from a fresh clone of public `main` at
@@ -58,9 +59,14 @@ exists.
 
 ### Launch blockers that look most important
 
-1. **The study's repositories cannot be checked yet.** Step 2 is frozen at `b3c342b` (row S2-12), but G6 refuses
-   openlibrary, about a third of the study pool, because of its submodule folders, and its scratch copies leave out
-   the tracked link that openlibrary imports through (row S2-16).
+1. **The study's repositories cannot all be checked yet.** Step 2 is frozen at `b3c342b` (row S2-12). At that
+   commit:
+   - G6 refuses openlibrary, about a third of the study pool, because of its submodule folders (row S2-16);
+   - on ansible's images it tests the installed copy of the package instead of the patch (row S2-18).
+
+   A branch fixes both and passes planted-change controls on development images of both repositories. It is not yet
+   merged and has no continuous-integration run. qutebrowser, the third repository, still cannot be checked (row
+   S2-19).
 2. **The site still makes claims the plans retired.** The homepage shows per-task-set winners chosen after the fact,
    counts a person's hand prompt as G6's own option, and gives V6b a badge that is not its verdict. There is no
    honesty test, and several site tests require the old claims (rows E25 to E34).
@@ -70,10 +76,7 @@ exists.
    things.** The clone line uses `&&`. Get started installs `.[mcp]` where the README installs `.[all]`. Eight places
    in the docs and the code still register a bare `g6-mcp` at the client's default scope, and so does every client
    snippet on Get started (P0-01, P0-12, P0-13, P0-14).
-5. **The repository check is unproven on two of the study's three repositories.** Probes of openlibrary's
-   development images found git 2.39 (above the 2.31 floor) and no history beyond the base commit, and led to row
-   S2-16. ansible and qutebrowser have not been probed (row E74).
-6. **Client consent and every human trial are still to run** (rows S5-1 to S5-5), and **the verification search is
+5. **Client consent and every human trial are still to run** (rows S5-1 to S5-5), and **the verification search is
    at its first phase** (table 4), while go-live waits for V10.
 
 ## Counts
@@ -82,7 +85,7 @@ exists.
 |---|---|---|---|---|---|
 | 1. Earlier plan items | 37 | 14 | 27 | 12 | 90 |
 | 2. Phase 0 findings | 6 | 2 | 20 | 1 | 29 |
-| 3. Revision 3 steps and amendments | 35 | 5 | 16 | 8 | 64 |
+| 3. Revision 3 steps and amendments | 35 | 7 | 16 | 8 | 66 |
 | 4. Verification search | 1 | 1 | 8 | 0 | 10 |
 
 ## 1. Earlier plan items
@@ -332,7 +335,9 @@ Three ledger rows recorded steps that worked and need nothing: P0-03 (the instal
 | S2-13 | Public wording that claimed too much, and the missing same-user limit | implemented and verified | `3ba5dcd`. Test: `::test_the_docs_say_what_the_integrity_checks_and_the_receipts_cannot_show`, and the description of `g6_review_patch` states the same-user limit | — |
 | S2-14b | On Windows, test files are recognised regardless of letter case | implemented and verified | `1f3de4e`, `b3c342b`. Tests: `test_repo_tests.py::test_14b_a_test_file_is_named_with_the_case_pytest_matches_on_this_system` and `::test_14b_the_tests_a_change_touches_name_a_test_file_with_the_case_pytest_matches` (each failed on Windows before its change) | — |
 | S2-15 | The gate's diff scan reads only test, runner and continuous-integration files, so a correct change to source code is not accused | implemented and verified | `4441684`. Tests: `test_patch_review.py::test_a_source_change_the_diff_scan_would_flag_is_not_an_integrity_problem` and `::test_the_diff_is_split_by_file_whatever_the_names_and_the_lines`, with controls that still find a shortcut in a test or workflow file | — |
-| S2-16 | The study pool's repositories can be checked: openlibrary's unregistered submodule folders and its tracked links | missing | Probing development images found that G6 refuses any repository with a gitlink, and that its scratch copies leave out every link, including the tracked `infogami` link openlibrary imports through | pool compatibility, before the study freeze |
+| S2-16 | The study pool's repositories can be checked: openlibrary's unregistered submodule folders and its tracked links | implemented, not verified | At `b3c342b` this is missing: G6 refuses any repository with a gitlink, and its scratch copies leave out every link, including the tracked `infogami` link openlibrary imports through. On branch `claude/pool-compat` (`771b2ca` to `8b5364c`), not yet on the line of record: <br>– a gitlink folder with no `.git` inside is accepted, and G6 hashes its files itself (bytecode folders left out); <br>– an initialised submodule is still refused; <br>– a change inside such a folder gives `insufficient_evidence` (`change_inside_submodule`); <br>– a tracked relative link whose target stays inside the copy is recreated in the copy, and any other link is left out and listed. <br>A file edited inside such a folder before G6 sees the repository cannot be detected, because git keeps no copy of it. The reply says so, and an expected-fail test records the limit. Tests: `tests/workforce/test_repo_tests_gitlinks.py`. So far only local Docker runs with bubblewrap (`tests/workforce`: 1607 passed, 47 skipped); no continuous-integration run yet. On the four openlibrary development images, the review accepts a harmless change and catches a planted break | merge into the verification-search branch, then continuous integration |
+| S2-18 | A review tests the patched code, not a copy of the package installed outside the repository | implemented, not verified | At `b3c342b` this is missing. Where an environment installs the repository's own package outside the repository, as ansible's development images do, the tests load the installed, unpatched copy, so a defective patch can be accepted. On branch `claude/pool-compat`: <br>– G6 records which file each module was loaded from; <br>– a run that loaded a changed module from outside the tree, or cannot say what it loaded, is no evidence of the patch (`changed_code_not_loaded`: the outcome is at most `insufficient_evidence`, and the run gets no receipt); <br>– an `import_roots` parameter names the folders that make the patched code importable. <br>Tests: `tests/harness/test_patch_review_imports.py`. Local Docker runs only so far. On ansible's development image, the review with `import_roots=["lib"]` catches a planted break, and without it reports `changed_code_not_loaded` | as S2-16 |
+| S2-19 | qutebrowser, the study's third repository, can be checked | missing | Under bubblewrap a confined run has no `/tmp`, and with the network off no `/etc/hosts`. qutebrowser's test plugin starts a display server that needs `/tmp`, so every run waits until its deadline. The fix changes `src/g6/core/confine.py`, which five certificates bind, so it needs an independent review and a normal reissue of those certificates. After pytest finishes, qutebrowser's test process also exits with an error from the display library. How G6 should read that is decided once it has been observed under G6 | the one certificate reissue before the study freeze |
 | S2-17 | A deep adversarial review of patch review, for escapes and for correct patches accused | deferred | Moved by the owner to the security gate before go-live (see S2-12) | go-live security gate |
 | S2-M | The deferred minor findings 10, 11, 12 and 14a | deferred | Ledgered, not fixed in this pass | after the fix pass |
 
