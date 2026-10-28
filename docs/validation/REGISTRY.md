@@ -467,3 +467,29 @@ as a draft order, not a frozen scored study. No task statements, patches or hidd
 The model candidate is the actual V7 runner's claude-sonnet-5-5, high effort, subject to availability and pricing
 calibration. Two-arm feasibility/effect estimation does not isolate composition's causal contribution.
 No paid execution or improvement claim is authorized until the protocol's outstanding gates are satisfied.
+
+## V9 (protocol registered 2026-10-28; not run) — useful patch review
+
+The evidence page lists a study once it has run; V9 gets its tile when its first outcome is appended.
+
+- **Protocol:** `docs/validation/patch_review_utility/PROTOCOL.md`, version 1,
+  `1f2f74c6151d2de2aa693fa1a8ec12de65416ab2b095e42fde5a117cf20f692d`. It tests objective 1 only (less human
+  verification effort without an unacceptable increase in accepted defects), for AI-written Python patches.
+- **Plan:** `docs/validation/VALIDATION_PLAN.md` `054a92de4483964c9118c72e27846817e9a33e351f04b6885aecd6de454bee1d`
+  (§0 governs, except the deviations the protocol lists).
+- **Exclusions, frozen:** every ID in `docs/validation/results/V7/splits.json`
+  `469e6f3dfac15ce1a492779c5c474d336cab4715a9da038db905f4858d174fc2` and in
+  `docs/validation/results/V8/splits.draft.json` `7aa7f025a297798e066c8e83641d973bb3511fe504edc5181961c0e0e1271e6b`.
+- **Pool:** the Python tasks of SWE-bench Pro, revision `2d52cb3df914a3fcf80c7f66738b3a88ae37fc50`, test parquet
+  `1067f72c1f43bbc578276888625db3b836cebb535546c9eaf824c5d5dd104a7f`, as V8 prepared it. Not read for this entry.
+- **Frozen by this entry:** the arms and their acceptance rules; the label and review contracts; the label, oracle-control
+  and audit rules; the draw rule and the seed formula; the three hypotheses with their margins (+5, +5 and +15 points);
+  Experiment 2's 75% target and safety constraint; the analysis; the order of verdicts. The owner may tighten a margin
+  or threshold before the feasibility freeze. Nothing is loosened.
+- **Left to the feasibility entry:** G6's frozen commit (the scoped assessment of Step 2 is not written yet), the agent
+  and its model, the scripts, the test commands, the time limits and caps, the auditor and the reviewers.
+- **State:** no task drawn, no patch generated, no arm run. The seed cannot be computed before G6's feasibility commit
+  exists.
+- **Review:** a fresh, read-only agent session reviewed the draft against the plan's amendments A2–A5 and §0. It
+  found 2 blocking, 10 important and 5 minor problems, and this version addresses each. No person has reviewed this
+  version yet.
