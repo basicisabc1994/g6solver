@@ -151,9 +151,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     @server.tool()
     def g6_review_patch(repo: str, task: str, requirements: list[dict] | None = None, tests: list[str] | None = None,
                         claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
-                        expected_artifact_digest: str = "", timeout_s: int = 300) -> dict:
+                        expected_artifact_digest: str = "", timeout_s: int = 300,
+                        import_roots: list[str] | None = None) -> dict:
         """Assess the working tree's Python patch against base on stated requirements [{id, text, checks: [pytest
-        node ids]}] plus extra tests, in confined runs. Poll metaharness_job for the result. assessment.outcome is one
+        node ids]}] plus extra tests, in confined runs. import_roots (at most 8 folders inside the repository, such as
+        "lib") go first on the import path of every run. Poll metaharness_job for the result. assessment.outcome is one
         of: test_integrity_compromised (a sign of a weakened test or test helper that G6's static comparison finds, a
         changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
@@ -177,7 +179,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             try:
                 return review_patch(repo, task=task, requirements=requirements or [], tests=tests or [], claim=claim,
                                     sources=sources, base=base, expected_artifact_digest=expected_artifact_digest,
-                                    timeout_s=timeout_s)
+                                    timeout_s=timeout_s, import_roots=import_roots or [])
             except component_process.ExecutionInterrupted as exc:
                 if exc.stopped:
                     return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")

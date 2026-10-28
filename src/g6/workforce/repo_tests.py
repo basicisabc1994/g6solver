@@ -81,6 +81,10 @@ DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 1800
 #: The most test files "the tests the change touches" may be; more are counted and said, never run silently.
 MAX_DERIVED = 25
+#: The most modules a run lists as loaded from outside the tree it tested (``shadowed``), and the most bytes of that
+#: list G6 reads; past either, the list is incomplete and says so.
+LOADED_LIMIT = 10_000
+LOADED_BYTES = 16 * 1024 * 1024
 #: The changed-lines mutation check: at most this many changed source files, within this many seconds in all.
 MUTATED_FILES = 3
 MUTATION_BUDGET_S = 600
@@ -528,7 +532,9 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: deselected, and how many started and finished (a setup and a teardown reported), so a run that stops part-way with
 #: exit code 0 is not read as a pass (review I3). Another turns pytest's "fd" capture, its default, into "sys" before
 #: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
-#: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays.
+#: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays. A third, as the
+#: session ends, writes each module loaded from outside the tree under test (the working folder) and outside the
+#: standard library, name to file, at most ``LOADED_LIMIT`` of them (``shadowed``). Written for Python 3.8 and later.
 _BOOT = r'''
 import json, os, socket, sys
 sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
@@ -537,8 +543,9 @@ with open(sys.argv[6], encoding="utf-8") as _g6_env:
 del _g6_env
 import pytest
 entries, network, target, source, counted = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
-args = sys.argv[7:]
-del sys.argv[1:7]
+loaded, limit = sys.argv[7], int(sys.argv[8])
+args = sys.argv[9:]
+del sys.argv[1:9]
 sys.path[:0] = [p for p in entries if p]
 if network != "1":
     _connect, _connect_ex = socket.socket.connect, socket.socket.connect_ex
@@ -637,7 +644,30 @@ class _Capture:
         if getattr(early_config.known_args_namespace, "capture", None) == "fd":
             early_config.known_args_namespace.capture = "sys"
         yield
-sys.exit(pytest.main(args, plugins=[_Counted(), _Capture()]))
+class _Loaded:
+    def pytest_sessionfinish(self, session):
+        import sysconfig
+        def real(path):
+            return os.path.normcase(os.path.realpath(path))
+        def below(path, top):
+            return path == top or path.startswith(top.rstrip(os.sep) + os.sep)
+        tree, std = real(os.getcwd()), real(sysconfig.get_paths()["stdlib"])
+        found, complete = {}, True
+        for name, module in sorted(sys.modules.items(), key=lambda item: item[0]):
+            path = getattr(module, "__file__", None)
+            if not isinstance(path, str) or not path:
+                continue
+            here = real(path)
+            installed = {"site-packages", "dist-packages"} & set(here.split(os.sep))
+            if below(here, tree) or (below(here, std) and not installed):
+                continue
+            if len(found) >= limit:
+                complete = False
+                break
+            found[name] = os.path.realpath(path)
+        with open(loaded, "w", encoding="utf-8") as handle:
+            json.dump({"modules": found, "complete": complete}, handle)
+sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
 _BOOT = confine.CHILD_PRELUDE + _BOOT
 
@@ -1124,6 +1154,39 @@ def _progress(counts: dict[str, int], counted: Path) -> dict[str, int]:
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
 
 
+def _loaded(path: Path) -> tuple[dict[str, str], bool]:
+    """The bootstrap's list of the modules a run loaded from outside the tree it tested (name to file), and whether it
+    is whole: ({}, False) when it is missing, larger than ``LOADED_BYTES`` or cannot be read."""
+    try:
+        if path.stat().st_size > LOADED_BYTES:
+            return {}, False
+        found = json.loads(path.read_text(encoding="utf-8"))
+        return {str(name): str(file) for name, file in found["modules"].items()}, found["complete"] is True
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}, False
+
+
+def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[str, str]] | None:
+    """The changed source files (``sources``: a change's) whose module ``ran`` loaded from outside the tree it tested
+    under the same name, an installed copy in place of the file the patch changed: each path to the module's name and
+    the file it came from. {} when none was, or when ``ran`` records nothing of what it loaded (a recorded run); None
+    when it cannot say (its list was cut at ``LOADED_LIMIT``, or never written). A changed module that was never
+    loaded, or a standard-library module named like a changed file, is not one."""
+    if "loaded_outside" not in ran:
+        return {}
+    if not ran.get("loaded_complete"):
+        return None
+    found: dict[str, dict[str, str]] = {}
+    for name, file in sorted((ran.get("loaded_outside") or {}).items()):
+        if name.startswith("__"):
+            continue
+        tail = name.replace(".", "/") + ("/__init__.py" if os.path.basename(file).startswith("__init__.") else ".py")
+        for rel in sources:
+            if rel not in found and (rel == tail or rel.endswith("/" + tail)):
+                found[rel] = {"module": name, "file": file}
+    return found
+
+
 def _root(repo: Path, rootdir: str) -> str:
     """pytest's root folder, which it names each test relative to, as a path inside ``repo`` ("" for its top, and when
     the run did not say or named a folder outside it)."""
@@ -1201,6 +1264,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     python = python or interpreter(repo)
     person = _repo_env()
     set_by_g6 = [] if HYPOTHESIS_STORAGE in person else [HYPOTHESIS_STORAGE]
+    seen: list = [{}, False]   # the modules the run loaded from outside the tree, and whether that list is whole
     whose = ("setting" if python == _chosen_python() else
              "repository" if any(Path(python).is_relative_to(repo / folder) for folder in (".venv", "venv")) else "g6")
     untracked = [] if copied else _untracked(repo)
@@ -1226,7 +1290,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "degraded": verdict not in RAN or ("expected" in tally and
                     (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
-                "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6), **(links or {})}
+                "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6),
+                "loaded_outside": dict(seen[0]), "loaded_complete": seen[1], **(links or {})}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
@@ -1253,7 +1318,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
         cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
-               target, source, str(counted), str(variables), *ids, "-q", "-p", "no:cacheprovider",
+               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), *ids, "-q",
+               "-p", "no:cacheprovider",
                f"--junitxml={report}", *_config_args(repo, ids, own), f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
         mine = confine.owned(repo)
@@ -1286,6 +1352,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 isolation = {**isolation, "cleanup": left}
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
         progress = _progress(counts or {}, counted)
+        seen[:] = _loaded(own / "loaded.json")
         if counts is not None:
             counts = progress
     try:
