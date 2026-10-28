@@ -185,17 +185,21 @@ class Compiled:
 
     def __init__(self, monkeypatch, outcomes, *, advance=0.0):
         self.calls: list[tuple[str, bool]] = []
+        self.roots: list[tuple[str, ...]] = []   # the import roots each run was given
         clock = [verification_search._clock()]
         monkeypatch.setattr(verification_search, "_clock", lambda: clock[0])
         self.clock = clock
 
-        def run_check(change, placed, source, node, *, at_base, timeout_s):
+        def run_check(change, placed, source, node, *, at_base, timeout_s, **given):
             found = re.search(r"^TEMPLATE = '([^']+)'$", source, re.MULTILINE)
             key = found.group(1) if found else source
             self.calls.append((key, at_base))
+            self.roots.append(tuple(given.get("roots", ())))
             clock[0] += advance
             spec = outcomes[key]["base" if at_base else "patch"]
             digest = ("b" if at_base else "p") * 64
+            if callable(spec):
+                return spec(node)
             if isinstance(spec, dict):
                 return spec
             if isinstance(spec, list):
@@ -868,15 +872,17 @@ class Mutants:
     """Stands in for each mutant's run (``verification_search._run_mutant``): a mutant whose source holds ``kills`` fails
     the checks; the others pass them. ``advance`` seconds pass on G6's clock with each run."""
 
-    def __init__(self, monkeypatch, kills="return None", *, advance=0.0):
+    def __init__(self, monkeypatch, kills="return None", *, advance=0.0, extra=None):
         self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.roots: list[tuple[str, ...]] = []
         clock = [verification_search._clock()]
         monkeypatch.setattr(verification_search, "_clock", lambda: clock[0])
 
-        def run(change, rel, source, ids, timeout_s):
+        def run(change, rel, source, ids, timeout_s, **given):
             self.calls.append((rel, tuple(ids)))
+            self.roots.append(tuple(given.get("roots", ())))
             clock[0] += advance
-            return result(failed=list(ids)) if kills in source else result(list(ids))
+            return {**(result(failed=list(ids)) if kills in source else result(list(ids))), **(extra or {})}
 
         monkeypatch.setattr(verification_search, "_run_mutant", run)
 
@@ -927,6 +933,89 @@ def test_test_adequacy_measures_only_requirements_whose_stated_checks_passed(tmp
     assert found["R2"]["result"] == "not_run" and "did not all pass" in found["R2"]["reason"]
     assert found["R3"]["result"] == "not_run" and "no stated check" in found["R3"]["reason"]
     assert got["assessment"]["outcome"] == "defect_detected"
+
+
+# --- the review's import roots, and a run that loaded the changed code from elsewhere -----------------------------------
+
+#: A run's record that it loaded the changed module from outside the tree it tested: an installed copy (``repo_tests``).
+SHADOWED = {"loaded_outside": {"textcodec": "/usr/lib/python3/dist-packages/textcodec.py"}, "loaded_complete": True}
+FREE_KEEP = {"id": "p-keep", "requirement_id": "R1", "intent": "preserve", "file": "test_keep_codec.py",
+             "source": "from textcodec import decode, encode\n\n\ndef test_keep():\n    assert decode(encode('a,b')) == 'a,b'\n"}
+
+
+def _ran(passed=True, **extra):
+    return lambda node: {**(result([node]) if passed else result(failed=[node], output=f"FAILED {node} - Failed: x\n",
+                                                                  messages={node: "Failed: x"})), **extra}
+
+
+@pytest.mark.parametrize("side, seen", [("patch", SHADOWED), ("base", SHADOWED),
+                                        ("patch", {"loaded_outside": {}, "loaded_complete": False})],
+                         ids=["patch-loaded-elsewhere", "base-loaded-elsewhere", "patch-cannot-say"])
+@pytest.mark.parametrize("passed", [True, False], ids=["passing", "failing"])
+def test_a_proposed_or_compiled_check_whose_run_loaded_the_changed_code_elsewhere_is_a_check_error(
+        tmp_path, monkeypatch, side, seen, passed):
+    """Pool compatibility's guard, applied to verification search: a run that loaded a module the patch changed from
+    outside the tree it tested (an installed copy), or cannot say what it loaded, tested code the patch did not change.
+    Its pass is never not_refuted and its failure never a counterexample: a check_error, with that reason."""
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    runs = {"patch": _ran(passed, **(seen if side == "patch" else {})),
+            "base": _ran(True, **(seen if side == "base" else {}))}
+    Compiled(monkeypatch, {"relation.v1": runs, FREE_KEEP["source"]: runs})
+    got = review(root, STATED["CODEC"], template_instances=[ROUND_TRIP], proposed_checks=[FREE_KEEP])
+    for ident in ("t-codec", "p-keep"):
+        found = _activity(got, ident)
+        assert found["result"] == "check_error", found
+        assert "loaded" in found["detail"] and "import_roots" in found["detail"], found["detail"]
+    assert not _codes(got) & {"unconfirmed_counterexample", "unconfirmed_failure"}
+    assert got["assessment"]["completion"]["defects_reproduced"]["proposed_checks"] == []
+
+
+def test_a_run_that_loaded_only_other_modules_from_outside_keeps_its_result(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    other = {"loaded_outside": {"requests": "/usr/lib/python3/dist-packages/requests/__init__.py"},
+             "loaded_complete": True}
+    Compiled(monkeypatch, {"relation.v1": {"patch": _ran(False, **other), "base": _ran(True, **other)}})
+    got = review(root, STATED["CODEC"], template_instances=[ROUND_TRIP])
+    assert _activity(got, "t-codec")["result"] == "counterexample"
+
+
+LIB_CODEC = {"lib/textcodec.py": CODEC_BASE, "lib/README.txt": "the package lives here\n",
+             "tests/test_textcodec.py": CODEC_TESTS}
+
+
+def test_compiled_and_proposed_checks_and_mutants_run_with_the_reviews_import_roots(tmp_path, monkeypatch):
+    """The checks verification search runs see the code as the stated checks do: the review's import roots first on
+    the import path; and a template's names resolve where those runs import from."""
+    root = _patch(_repo(tmp_path, LIB_CODEC), {"lib/textcodec.py": CODEC_PATCH})
+    rule = [{"id": "R1", "text": "text survives encoding", "checks": ["tests/test_textcodec.py::test_plain"]}]
+    Tiers(monkeypatch)
+    runs = Compiled(monkeypatch, {"relation.v1": {"patch": "passed", "base": "passed"},
+                                  FREE_KEEP["source"]: {"patch": "passed", "base": "passed"}})
+    mutants = Mutants(monkeypatch)
+    unrooted = review(root, rule, template_instances=[ROUND_TRIP])
+    assert _activity(unrooted, "t-codec")["result"] == "refused"   # textcodec is found only through the root
+    assert "no module textcodec" in _activity(unrooted, "t-codec")["reason"]
+    got = review(root, rule, template_instances=[ROUND_TRIP], proposed_checks=[FREE_KEEP], import_roots=["lib"],
+                 search={"test_adequacy": True})
+    assert _activity(got, "t-codec")["result"] == "not_refuted" and _activity(got, "p-keep")["result"] == "not_refuted"
+    assert runs.roots[-4:] == [("lib",)] * 4, runs.roots
+    assert mutants.calls and all(roots == ("lib",) for roots in mutants.roots), mutants.roots
+    assert got["assessment"]["scope"]["import_roots"] == ["lib"]
+
+
+def test_a_mutant_run_that_loaded_the_changed_code_elsewhere_is_not_counted(tmp_path, monkeypatch):
+    """A mutant G6 put in the copy's file was never loaded when the run took the module from an installed copy, so it
+    would read as a survivor: it is listed as not run, with why."""
+    root = _patch(_repo(tmp_path, CLAMP), CLAMP_PATCH)
+    Tiers(monkeypatch)
+    Mutants(monkeypatch, extra={"loaded_outside": {"clamp": "/usr/lib/python3/dist-packages/clamp.py"},
+                                "loaded_complete": True})
+    got = review(root, CLAMP_RULE, search={"test_adequacy": True})
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    assert (adequacy["killed"], adequacy["survived"]) == (0, 0), adequacy
+    assert len(adequacy["skipped"]) == 3 and all("loaded" in s["reason"] for s in adequacy["skipped"])
 
 
 # --- the MCP surface ------------------------------------------------------------------------------------------------------
@@ -1044,6 +1133,59 @@ def test_confined_forbidden_dependency_reads_imports_only_and_runs_no_code(tmp_p
     assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"
     assert _requirement(got, "R2")["status"] == "failed"
     assert _activity(got, "t-layers")["ran_code"] is False
+
+
+CALC_BASE = "def add(a, b):\n    return a + b\n"
+CALC_BROKEN = "def add(a, b):\n    return a - b\n"
+
+
+def _installed(tmp_path: Path, monkeypatch) -> Path:
+    """A repository in a lib/ layout (lib/calc), committed, with calc also installed (the base code) in a virtual
+    environment outside it that G6_REPO_PYTHON names, as tests/harness/test_patch_review_imports.py builds one; then
+    the defective patch to lib/calc. The stated check is one the patch does not touch."""
+    root = _repo(tmp_path, {"lib/calc/__init__.py": CALC_BASE,
+                            "tests/test_other.py": "def test_other():\n    assert True\n"}, "app")
+    env = tmp_path / "installed-env"
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(env)], check=True,
+                   capture_output=True, timeout=180)
+    python = env / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    site = Path(subprocess.run([str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+                               check=True, capture_output=True, text=True).stdout.strip())
+    (site / "calc").mkdir(parents=True)
+    (site / "calc" / "__init__.py").write_text(CALC_BASE, encoding="utf-8")
+    (site / "g6_test_pytest.pth").write_text(str(Path(pytest.__file__).resolve().parents[1]) + "\n", encoding="utf-8")
+    monkeypatch.setenv(repo_tests.REPO_PYTHON, str(python))
+    (root / "lib" / "calc" / "__init__.py").write_text(CALC_BROKEN, encoding="utf-8")
+    return root
+
+
+def test_confined_proposed_and_compiled_checks_see_the_patch_through_import_roots_never_the_installed_copy(
+        tmp_path, bwrap_backend, monkeypatch):
+    """Without import roots the proposed check imports the installed copy, which the patch did not change: a check
+    error that says so, never not_refuted. With import_roots=["lib"] the same check, and a compiled example, find the
+    defect, run by the Python G6_REPO_PYTHON names and with the variables G6_REPO_ENV gives."""
+    root = _installed(tmp_path, monkeypatch)
+    monkeypatch.setenv(repo_tests.REPO_ENV, json.dumps({"VS_FLAG": "on"}))
+    rule = [{"id": "R1", "text": "add returns the sum", "checks": ["tests/test_other.py::test_other"]}]
+    keep = {"id": "p-add", "requirement_id": "R1", "intent": "preserve", "file": "tests/test_keep_add.py",
+            "source": "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"}
+    env = {"id": "p-env", "requirement_id": "R1", "intent": "preserve", "file": "tests/test_env_seen.py",
+           "source": "import os\n\n\ndef test_env():\n    assert os.environ.get('VS_FLAG') == 'on'\n"}
+    example = instance("t-add", "example.v1", {"function": "calc.add", "cases": [{"args": [2, 3], "returns": 5}]})
+    plain = review(root, rule, proposed_checks=[keep, env], template_instances=[example])
+    found = _activity(plain, "p-add")
+    assert found["result"] == "check_error" and "loaded" in found["detail"], found
+    assert _activity(plain, "t-add")["result"] == "refused"   # calc is in lib/, which no run imports from
+    assert _activity(plain, "p-env")["result"] == "not_refuted", _activity(plain, "p-env")
+    rooted = review(root, rule, proposed_checks=[keep, env], template_instances=[example], import_roots=["lib"])
+    for ident in ("p-add", "t-add"):
+        assert _activity(rooted, ident)["result"] == "counterexample", _activity(rooted, ident)
+    assert all(run["interpreter_source"] == "setting" for run in _activity(rooted, "p-add")["runs"])
+    assert rooted["assessment"]["outcome"] == "insufficient_evidence"
+    assert _codes(rooted) >= {"unconfirmed_counterexample"}
+    [reproduction] = [d["reproduction"] for d in rooted["assessment"]["completion"]["defects_reproduced"][
+        "proposed_checks"] if d["check"] == "p-add"]
+    assert reproduction["environment"]["PYTHONPATH"].split(os.pathsep)[0] == "lib"
 
 
 def test_confined_surviving_mutants_are_reported_and_change_no_outcome(tmp_path, bwrap_backend):

@@ -240,6 +240,12 @@ the package in `import_roots` (at most 8 folders inside the repository, such as 
 import path of every run of the review, before the repository's top, and are recorded in `scope.import_roots`.
 Such a run, or one whose list is incomplete, gets no test receipt.
 
+Proposed checks, the checks G6 compiles from template instances, and test adequacy's mutant runs run the same
+way as the stated checks: the same import roots first, the same Python and the same variables. One of their
+runs that loaded a changed module from outside the tree, or cannot say what it loaded, tested code the patch
+did not change: it is a `check_error` (a mutant: not run), with that reason, never `not_refuted` and never a
+counterexample. A template's names are found in the import roots first, as those runs import them.
+
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
 under review; over `g6_invoke` the gate has no binding and every receipt stays caller-declared. A run gets

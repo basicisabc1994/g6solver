@@ -37,7 +37,7 @@ there is no keyword and no double-underscore name in either. A literal is JSON
 data (no tuple, set, bytes, number that is not finite, or key that is not text), at most ``MAX_DEPTH`` levels deep and
 ``MAX_BINDINGS_CHARS`` characters as JSON. Anything else is refused, and so is the whole review, before anything runs.
 ``prepare`` then checks each instance against the tree (``Tree``), reading files and never importing them in G6's
-process: each name must resolve to a module file in the top folder or in ``src`` and a top-level definition in it (a
+process: each name must resolve to a module file in an import root, the top folder or ``src`` and a top-level definition in it (a
 star import is not followed), on the working tree for an instance whose intent is ``change``, and at the base commit
 for one that keeps behaviour (``preserve``, and every ``differential.v1``); a function's parameters must take each
 call's arguments, read from its definition. One that does not apply is refused for that instance and listed in
@@ -344,12 +344,20 @@ class Tree:
     _texts: dict = field(default_factory=dict)
     #: The review's deadline (``_clock``'s time), past which the structural check reads and parses nothing more.
     deadline: float | None = None
+    #: The review's import roots: the runs import from them first, then from the top folder and ``src``.
+    roots: tuple[str, ...] = ()
 
     @classmethod
-    def read(cls, root: Path, change: repo_tests.Change, deadline: float | None = None) -> Tree:
+    def read(cls, root: Path, change: repo_tests.Change, deadline: float | None = None,
+             roots: tuple[str, ...] = ()) -> Tree:
         known = repo_tests._paths(repo_tests._git(root, "ls-files", "-co", "--exclude-standard", "-z"))
         at_base = repo_tests._paths(repo_tests._git(root, "ls-tree", "-r", "-z", "--name-only", change.base_commit))
-        return cls(root, change, frozenset(known), frozenset(at_base), deadline=deadline)
+        return cls(root, change, frozenset(known), frozenset(at_base), deadline=deadline, roots=tuple(roots))
+
+    def folders(self) -> tuple[str, ...]:
+        """The folders a module is found in, in the order the runs' import path has them: the import roots, the top
+        folder, ``src``; each as a prefix of a path."""
+        return (*(root.rstrip("/") + "/" for root in self.roots), "", "src/")
 
     def in_time(self) -> None:
         """An ``Inapplicable`` once the review's deadline has passed."""
@@ -395,11 +403,11 @@ class Target:
 
 
 def _module_file(tree: Tree, parts: list[str], side: str) -> str:
-    """The file of the module ``parts`` names on ``side``, as the runs' import path finds it: the top folder, then
-    ``src``; a package's ``__init__.py`` before a module of the same name. "" when none."""
+    """The file of the module ``parts`` names on ``side``, as the runs' import path finds it: the import roots, the
+    top folder, then ``src``; a package's ``__init__.py`` before a module of the same name. "" when none."""
     if any(part in _LEFT_OUT for part in parts):
         return ""
-    for folder in ("", "src/"):
+    for folder in tree.folders():
         stem = folder + "/".join(parts)
         for rel in (stem + "/__init__.py", stem + ".py"):
             if tree.has(rel, side):
@@ -463,8 +471,8 @@ def resolve(tree: Tree, dotted: str, side: str) -> Target:
     module, attribute = ".".join(parts[:-1]), parts[-1]
     rel = _module_file(tree, parts[:-1], side)
     if not rel:
-        raise Inapplicable(f"{dotted}: no module {module} {WHERE[side]} (G6 looks for it in the top folder and in "
-                           "src, as the runs' import path has them)")
+        raise Inapplicable(f"{dotted}: no module {module} {WHERE[side]} (G6 looks for it in the import roots, the top "
+                           "folder and src, as the runs' import path has them)")
     try:
         found, star = _top_level(ast.parse(tree.text(rel, side)), attribute)
     except (SyntaxError, ValueError, RecursionError, OSError, repo_tests.RepoRefused) as exc:
@@ -897,7 +905,7 @@ class TemplateDefinition:
         return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
 
-_CALLED = ("the names resolve to the code the runs import: a module in the top folder or in src, and a top-level name "
+_CALLED = ("the names resolve to the code the runs import: a module in an import root, the top folder or src, and a top-level name "
            "defined in it")
 TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for definition in (
     TemplateDefinition(
@@ -1054,18 +1062,18 @@ def _compiled(root: Path, tree: Tree, one: TemplateInstance) -> tuple[vs.Propose
 
 
 def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInstance], *,
-            enabled: bool = True, deadline: float | None = None) -> Prepared:
+            enabled: bool = True, deadline: float | None = None, roots: tuple[str, ...] = ()) -> Prepared:
     """Each instance checked against the tree and, where it applies, compiled and placed (or, for the structural
     template, checked): reading files only, before anything runs, and the structural check no further than
-    ``deadline`` (the review's, on ``_clock``). ``enabled`` false (``search.templates``): none is run, each listed as
-    skipped."""
+    ``deadline`` (the review's, on ``_clock``); names resolve in the review's import ``roots`` first, as the runs
+    import. ``enabled`` false (``search.templates``): none is run, each listed as skipped."""
     found = Prepared(instances=len(instances))
     if not instances:
         return found
     if not enabled:
         found.activities = [{**_listing(one), "result": "skipped", "reason": TEMPLATES_OFF} for one in instances]
         return found
-    tree = Tree.read(root, change, deadline)
+    tree = Tree.read(root, change, deadline, roots)
     for one in instances:
         definition = TEMPLATES[one.template]
         try:
@@ -1229,7 +1237,7 @@ def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str],
 
     stem = package.replace(".", "/")
     listed = tree.at_base if side == BASE else tree.known
-    for folder in ("", "src/"):
+    for folder in tree.folders():
         names = sorted(rel for rel in listed if rel.endswith(".py") and (
             rel.startswith(folder + stem + "/") or rel == folder + stem + ".py")
             and graph.module_of(rel[len(folder):]) is not None)

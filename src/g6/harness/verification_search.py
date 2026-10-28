@@ -118,6 +118,7 @@ from g6.harness.patch_review import (
     _collection_errors,
     _covers,
     _in_repository,
+    _loaded_elsewhere,
     _verdicts,
 )
 from g6.intent_engine.schema import Assumption, IntentContract
@@ -400,19 +401,23 @@ def reproduce(node: str, ran: dict) -> dict:
 
 
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,
-               timeout_s: int) -> dict:
+               timeout_s: int, roots: tuple[str, ...] = ()) -> dict:
     """One run of a proposed check, confined, with no network, in a fresh scratch copy with no git metadata and only
     that check overlaid at ``placed``: of the patched tree, or at the base commit's code (``repo_tests.run_at_base``).
-    A run no backend confines is refused (raised), never run unconfined."""
+    It runs as the stated checks do: ``roots`` (the review's import roots) first on the import path, the Python
+    ``repo_tests.interpreter`` chooses (``G6_REPO_PYTHON``, else the repository's own), and the variables
+    ``G6_REPO_ENV`` gives. A run no backend confines is refused (raised), never run unconfined."""
     overlay = {placed: source}
     if at_base:
-        return repo_tests.run_at_base(change, [node], timeout_s=timeout_s, overlay=overlay, require_isolation=True)
+        return repo_tests.run_at_base(change, [node], roots=roots, timeout_s=timeout_s, overlay=overlay,
+                                      require_isolation=True)
     deadline = time.monotonic() + timeout_s
     try:
-        with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay) as copy:
-            return repo_tests._run(copy, [node], roots=(), timeout_s=timeout_s, network=False, copied=True,
+        report: dict = {}
+        with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay, report=report) as copy:
+            return repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                    python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
-                                   deadline=deadline, require_isolation=True)
+                                   deadline=deadline, require_isolation=True, links=report)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except repo_tests.RepoRefused as exc:
@@ -667,12 +672,19 @@ def _bound(left: float) -> int:
 
 
 def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[str, str], *, deadline: float,
-           artifact: str, origins: dict[str, Origin] | None = None) -> Search:
-    """Run each proposed check on the patch and at the base commit (``_run_check``), classify it, and say what it
-    found; the stage stops when the review's deadline would be passed. ``origins``: the checks G6 compiled from
-    template instances, by id (the others are free-form proposals)."""
+           artifact: str, origins: dict[str, Origin] | None = None, roots: tuple[str, ...] = ()) -> Search:
+    """Run each proposed check on the patch and at the base commit (``_run_check``, with the review's import
+    ``roots``), classify it, and say what it found; the stage stops when the review's deadline would be passed.
+    ``origins``: the checks G6 compiled from template instances, by id (the others are free-form proposals)."""
     done = Search()
     stopped = False
+    rooted = {"roots": tuple(roots)} if roots else {}
+
+    def read(at_base: bool) -> dict:
+        ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,
+                         timeout_s=_bound(deadline - _clock()), **rooted)
+        return _guarded(change, ran, reading(ran, node))
+
     for one in checks:
         origin = (origins or {}).get(one.id, FREE_FORM)
         activity = _activity(one, placed[one.id], origin)
@@ -682,8 +694,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             activity.update(result="skipped", reason=OUT_OF_TIME)
             continue
         node = activity["node"]
-        on_patch = reading(_run_check(change, activity["placed"], one.source, node, at_base=False,
-                                      timeout_s=_bound(deadline - _clock())), node)
+        on_patch = read(at_base=False)
         activity["runs"].append({"on": "patch", **_summary(on_patch)})
         at_base, skip = None, ""
         if on_patch["result"] == "error":
@@ -691,8 +702,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         elif deadline - _clock() < MIN_RUN_S:
             skip = OUT_OF_TIME
         else:
-            at_base = reading(_run_check(change, activity["placed"], one.source, node, at_base=True,
-                                         timeout_s=_bound(deadline - _clock())), node)
+            at_base = read(at_base=True)
             activity["runs"].append({"on": "base commit", **_summary(at_base)})
         if skip:
             activity["runs"].append({"on": "base commit", "result": "skipped", "reason": skip})
@@ -708,6 +718,22 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
         _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)
     return done
+
+
+#: Pool compatibility's guard (``patch_review._loaded_elsewhere``), as a check's run reads it.
+LOADED_ELSEWHERE = ("the run loaded changed code from outside the tree it tested, or cannot say what it loaded ({}), "
+                    "so its result says nothing about the patch: name the folder that holds the package in "
+                    "import_roots, or install the repository in editable mode, and review again")
+
+
+def _guarded(change: repo_tests.Change, ran: dict, found: dict) -> dict:
+    """A run's reading (``reading``), or an error when the run loaded a module the change touches from outside the
+    tree it tested (an installed copy), or cannot say what it loaded: it tested code the patch did not change."""
+    elsewhere = _loaded_elsewhere(change, ran)
+    if not elsewhere:
+        return found
+    return {key: value for key, value in found.items() if key != "observations"} | {
+        "result": "error", "detail": LOADED_ELSEWHERE.format(elsewhere)}
 
 
 #: What a differential counterexample is, in its reason, and how its reproduction is read.
@@ -819,15 +845,18 @@ ADEQUACY_NOTE = ("reported only: it changes no outcome, and a mutant that surviv
 _KILLED = frozenset({repo_tests.FAILED, "timed_out"})
 
 
-def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str], timeout_s: int) -> dict:
+def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str], timeout_s: int,
+                roots: tuple[str, ...] = ()) -> dict:
     """``ids`` run confined, with no network, in a fresh scratch copy of the patched tree in which ``rel`` is imported
-    from ``source`` (``repo_tests``'s mutant hook; the file is never written). A run no backend confines is not run."""
+    from ``source`` (``repo_tests``'s mutant hook; the file is never written), as the stated checks run (the import
+    ``roots``, ``G6_REPO_PYTHON``, ``G6_REPO_ENV``). A run no backend confines is not run."""
     deadline = time.monotonic() + timeout_s
     try:
-        with repo_tests.repository_copy(change.repo, deadline=deadline) as copy:
-            return repo_tests._run(copy, ids, roots=(), timeout_s=timeout_s, network=False, mutant=(rel, source),
+        report: dict = {}
+        with repo_tests.repository_copy(change.repo, deadline=deadline, report=report) as copy:
+            return repo_tests._run(copy, ids, roots=roots, timeout_s=timeout_s, network=False, mutant=(rel, source),
                                    copied=True, python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
-                                   deadline=deadline, require_isolation=True)
+                                   deadline=deadline, require_isolation=True, links=report)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except repo_tests.RepoRefused as exc:
@@ -839,7 +868,8 @@ def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str]
 
 
 def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, str], verdicts: dict[str, dict], *,
-                  deadline: float, base_seconds: float, skip: str = "") -> tuple[list[dict], list[dict]]:
+                     deadline: float, base_seconds: float, skip: str = "",
+                     roots: tuple[str, ...] = ()) -> tuple[list[dict], list[dict]]:
     """``assessment.completion.test_adequacy`` and its mutation runs, from what ran: for each requirement whose stated
     checks all passed on the patch, how many mutants of the changed lines (``mutation_check``'s operators, at most
     ``ADEQUACY_MUTANTS`` in each of at most ``ADEQUACY_FILES`` files) those checks killed and how many survived, each
@@ -871,9 +901,16 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
         text = (change.repo / rel).read_text(encoding="utf-8", errors="replace")
         lines = repo_tests.changed_lines(change, rel)
         runs: dict[str, dict] = {}
+        why_stopped = [""]   # the guard's reason, for the mutants the check did not reach after it
 
-        def run(source: str, timeout_s: int, rel: str = rel, runs: dict = runs) -> SimpleNamespace:
-            ran = runs[source] = _run_mutant(change, rel, source, ids, timeout_s)
+        def run(source: str, timeout_s: int, rel: str = rel, runs: dict = runs,
+                why_stopped: list = why_stopped) -> SimpleNamespace:
+            ran = runs[source] = _run_mutant(change, rel, source, ids, timeout_s,
+                                             **({"roots": tuple(roots)} if roots else {}))
+            elsewhere = _loaded_elsewhere(change, ran)
+            if elsewhere:   # the mutant in the copy's file was never loaded: no result, and why
+                why_stopped[0] = LOADED_ELSEWHERE.format(elsewhere)
+                ran = runs[source] = {"verdict": "not_run", "said": why_stopped[0]}
             executed = ran.get("verdict") in repo_tests.RAN
             return SimpleNamespace(execution_id="ran" if executed else "", passed=int(ran.get("passed") or 0),
                                    failed=int(ran.get("failed") or 0), not_passed=int(ran.get("not_passed") or 0),
@@ -887,7 +924,8 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
             activities.append(activity)
             ran = runs.get(mutant.source)
             if ran is None or ran.get("verdict") not in (*repo_tests.RAN, "timed_out"):
-                reason = (ran or {}).get("said") or record["stopped"] or "the mutation check stopped before it"
+                reason = ((ran or {}).get("said") or why_stopped[0] or record["stopped"]
+                          or "the mutation check stopped before it")
                 activity.update(result="skipped", reason=reason)
                 for entry in measured:
                     entry["skipped"].append({"file": rel, "mutant": mutant.describe(), "reason": reason})

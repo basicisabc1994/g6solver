@@ -72,6 +72,9 @@ which never pass a requirement; ``forbidden_dependency.v1`` reads imports only, 
 or the caller states it counts for its requirement as a stated check does. Optional ``search``: ``templates`` false
 runs free-form checks only; ``test_adequacy`` true reports, for each requirement, the mutants of the changed lines its
 stated checks killed and those that survived, which decides nothing. The configuration is in ``scope.search``.
+Proposed checks, compiled checks and mutant runs run as the stated checks do (the import roots, ``G6_REPO_PYTHON``,
+``G6_REPO_ENV``); one of their runs that loaded a changed module from outside the tree, or cannot say what it loaded,
+is a ``check_error`` (a mutant: not run), never ``not_refuted`` or a counterexample.
 Every reply carries ``assessment.completion``, built from what ran; with no proposed checks, no template instance and
 no search setting, every decided field is as before.
 
@@ -670,7 +673,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if instances:   # read from files only, before anything runs: an instance that does not apply is refused alone
             from g6.harness import verification_templates
             prepared = verification_templates.prepare(root, change, instances, enabled=config["templates"],
-                                                      deadline=started + timeout_s)
+                                                      deadline=started + timeout_s, roots=roots)
         # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
         listed = [req for req in stated if req.provenance not in NORMATIVE]
         stated = [req for req in stated if req.provenance in NORMATIVE]
@@ -837,7 +840,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
             search = verification_search.search(change, checks, where, deadline=deadline, artifact=artifact,
-                                                origins=origins)
+                                                origins=origins, roots=roots)
         for code, detail in search.reasons:
             reason("evidence", code, detail)
         follow_ups = [*follow_ups, *search.next_actions]
@@ -847,7 +850,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         integrity = any(r["stage"] == "integrity" for r in reasons)
         adequacy = verification_search.measure_adequacy(
             change, stated, norm, verdicts, deadline=deadline, base_seconds=float(first.get("seconds") or 1.0),
-            skip=INTEGRITY_SKIP if integrity else "")
+            skip=INTEGRITY_SKIP if integrity else "", roots=roots)
     skipped.append({"tier": 3, "check": "mutation and old-against-new probes",
                     "reason": TIER_3_ADEQUACY if adequacy is not None else TIER_3})
 
