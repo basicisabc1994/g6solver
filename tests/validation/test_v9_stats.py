@@ -94,6 +94,16 @@ def test_the_bootstrap_resamples_within_each_repository_and_is_fixed_by_its_seed
     assert stats.stratified_bootstrap([], seed=1) is None
 
 
+def test_the_bootstrap_gives_a_95_percent_interval_when_asked_and_v9s_90_percent_one_otherwise():
+    pairs = [("r1", True, False)] * 6 + [("r1", False, False)] * 4 + [("r2", True, True)] * 5
+    ninety = stats.stratified_bootstrap(pairs, seed=7)
+    assert stats.stratified_bootstrap(pairs, seed=7, confidence=0.90) == ninety
+    low, high = stats.stratified_bootstrap(pairs, seed=7, confidence=0.95)
+    assert low <= ninety[0] and high >= ninety[1] and (low, high) != ninety
+    with pytest.raises(ValueError):
+        stats.stratified_bootstrap(pairs, seed=7, confidence=1.0)
+
+
 def test_mcnemar_exact_and_clopper_pearson():
     assert stats.mcnemar_exact(0, 0) == 1.0 and stats.mcnemar_exact(1, 1) == 1.0
     assert stats.mcnemar_exact(5, 0) == pytest.approx(0.0625) and stats.mcnemar_exact(0, 5) == pytest.approx(0.0625)

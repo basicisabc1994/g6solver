@@ -251,6 +251,17 @@ def test_every_finding_is_rerun_after_every_arm_has_run_on_every_patch():
     assert got["reruns"][0]["result"] == {"reproducible": True}
 
 
+def test_arm_as_findings_are_rerun_too_and_every_arm_run_is_timed():
+    repro = {"file": "tests/test_calc.py", "text": "def test_add():\n    assert 0\n", "node": "tests/test_calc.py::test_add"}
+    items = [{"id": "p0", "draw_index": 0, "arm_a": DEFECTIVE, "arm_a_findings": [repro]}]
+    seen = []
+    got, _, _ = study(items, rerun=lambda patch, arm, reproduction: seen.append((patch["id"], arm)) or {})
+    assert seen == [("p0", "A")] and got["reruns"][0]["arm"] == "A"
+    for arm in ("C", "T", "E"):
+        row = got["patches"][0]["arms"][arm]
+        assert row["seconds"] >= 0 and row["processor_seconds"] >= 0
+
+
 def test_the_record_is_append_only_each_entry_chained_to_the_one_before(tmp_path):
     path = tmp_path / "record.jsonl"
     record = driver.Record(path)

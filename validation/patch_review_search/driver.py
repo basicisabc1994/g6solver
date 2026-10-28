@@ -5,7 +5,9 @@
 **Order** (``study``). The non-empty patches of V9's draw, in draw order; the empty and non-applying ones are
 counted and recorded with their reason first (``excluded``), never dropped. On each, arms C, T and E run, all three on
 the patch before the next; arm A is V9's arm 3 result on the patch, reused, never rerun. When every patch is done,
-every finding of C, T and E is rerun (``rerun``, before any label is read). Every arm's output, every retry and every
+every finding of C, T and E is rerun (``rerun``, before any label is read), and so is every finding of arm A the patch
+carries (``arm_a_findings``: its failed stated checks, as reproductions). Each arm run is timed, wall-clock and
+processor seconds (children included). Every arm's output, every retry and every
 rerun result goes into an append-only record (``Record``), each entry's SHA-256 chained to the one before it.
 
 **The arms are injected.** G6's arms C and T are callables, ``arm(patch, *, search, share_left, meter)``, given the arm's
@@ -50,6 +52,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -188,12 +191,14 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         record.add("excluded", dict(item))
     rows, retries, failures, differences = [], [], [], []
 
-    def once(patch: dict, arm: str, call, meter=None) -> tuple[dict | None, int, str, dict]:
-        """The arm's reply, the attempts made, the tool error's kind when there is no usable reply, and the meter's
-        reading. The arm is charged what its meter counted, read after it returns and after it raises."""
+    def once(patch: dict, arm: str, call, meter=None) -> tuple[dict | None, int, str, dict, dict]:
+        """The arm's reply, the attempts made, the tool error's kind when there is no usable reply, the meter's
+        reading, and the run's wall-clock and processor seconds (its process tree's, children included). The arm is
+        charged what its meter counted, read after it returns and after it raises."""
         if not spending.left(arm):
-            return None, 0, SPEND_SHARE, dict(NOTHING)
+            return None, 0, SPEND_SHARE, dict(NOTHING), {"seconds": 0.0, "processor_seconds": 0.0}
         meter = meter if meter is not None else meters(arm)
+        started, cpu = time.monotonic(), os.times()
 
         def share_left() -> bool:   # what the arm has spent so far on this patch counts against its share
             return spending.spent[arm] + meter.reading()["cents"] < spending.share
@@ -223,6 +228,9 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         finally:
             reading = meter.reading()
             spending.charge(arm, reading["cents"])
+            now = os.times()
+            timing = {"seconds": round(time.monotonic() - started, 3),
+                      "processor_seconds": round(sum(now[:4]) - sum(cpu[:4]), 3)}
         reported = {"cents": (reply or {}).get("spent_cents"),
                     "calls": (reply or {}).get("model_calls", ((reply or {}).get("calls") or {}).get("made"))}
         if any(isinstance(reported[key], (int, float)) and abs(float(reported[key]) - reading[key]) > 1e-6
@@ -232,7 +240,7 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                      "reported_calls": reported["calls"]}
             differences.append(found)
             record.add("spending_difference", found)
-        return reply, attempt, kind, reading
+        return reply, attempt, kind, reading, timing
 
     def errored(kind: str, reply: dict | None) -> dict:
         said = {SPEND_SHARE: "the arm's share of the spending cap was spent before this patch",
@@ -240,7 +248,7 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         return make(ERROR, (said or (reply or {}).get("error") or "no disposition")[:300], error_kind=kind,
                     time_or_cap=kind == TIME_OUT)
 
-    def search_arm(patch: dict, arm: str) -> tuple[dict | None, int, str, dict]:
+    def search_arm(patch: dict, arm: str) -> tuple[dict | None, int, str, dict, dict]:
         search, run = copy.deepcopy(SEARCH[arm]), arm_c if arm == "C" else arm_t
         if not isinstance(run, ChildArm):
             return once(patch, arm, lambda share_left, meter: run(patch, search=search, share_left=share_left,
@@ -254,20 +262,21 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
     for patch in patches:
         arm_a, arms = patch["arm_a"], {}
         for arm in ("C", "T"):
-            reply, attempts, kind, reading = search_arm(patch, arm)
+            reply, attempts, kind, reading, timing = search_arm(patch, arm)
             if not kind and not _valid((reply or {}).get("own")):
                 kind = TOOL_ERROR
             reply = reply or {}
             own = errored(kind, reply) if kind else reply["own"]
             arms[arm] = {"disposition": _search_disposition(arm_a, own), "own": own, "attempts": attempts,
-                         "model_calls": reading["calls"], "meter": reading, "spent_cents": reply.get("spent_cents"),
+                         "model_calls": reading["calls"], "meter": reading, **timing,
+                         "spent_cents": reply.get("spent_cents"),
                          "reasons": list(reply.get("reasons") or []), "findings": list(reply.get("findings") or []),
                          "attribution": _attribution(arm_a, own, reply),
                          "proposer_failure": reply.get("proposer_failure")}
             if reply.get("proposer_failure"):
                 failures.append({"patch": patch["id"], "arm": arm, "reason": reply["proposer_failure"],
                                  "category": arms[arm]["disposition"]["category"]})
-        reply, attempts, kind, reading = once(patch, "E", lambda share_left, meter: arm_e(
+        reply, attempts, kind, reading, timing = once(patch, "E", lambda share_left, meter: arm_e(
             patch, c_calls=arms["C"]["model_calls"], t_calls=arms["T"]["model_calls"], share_left=share_left,
             meter=meter))
         if not kind and not _valid((reply or {}).get("disposition")):
@@ -275,15 +284,18 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         reply = reply or {}
         arms["E"] = {**{key: value for key, value in reply.items() if key not in ("disposition", "findings")},
                      "disposition": errored(kind, reply) if kind else reply["disposition"], "attempts": attempts,
-                     "model_calls": reading["calls"], "meter": reading, "findings": list(reply.get("findings") or [])}
+                     "model_calls": reading["calls"], "meter": reading, **timing,
+                     "findings": list(reply.get("findings") or [])}
         for arm in ARMS:
             record.add("arm", {"patch": patch["id"], "arm": arm, "output": arms[arm]})
         rows.append({"patch": patch["id"], "draw_index": patch["draw_index"], "arm_a": arm_a, "arms": arms})
 
     reruns = []
     for patch, row in zip(patches, rows):
-        for arm in ARMS:
-            for reproduction in row["arms"][arm]["findings"]:
+        found_by = {"A": list(patch.get("arm_a_findings") or []),
+                    **{arm: row["arms"][arm]["findings"] for arm in ARMS}}
+        for arm, findings in found_by.items():
+            for reproduction in findings:
                 found = {"patch": patch["id"], "arm": arm, "node": reproduction.get("node"),
                          "result": rerun(patch, arm, reproduction)}
                 reruns.append(found)

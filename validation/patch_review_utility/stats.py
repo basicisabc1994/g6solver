@@ -108,10 +108,13 @@ def _quantile(ordered: list[float], q: float) -> float:
     return ordered[lo] + weight * (ordered[hi] - ordered[lo])
 
 
-def stratified_bootstrap(pairs: list[tuple[str, bool, bool]], *, seed: int,
-                         resamples: int = RESAMPLES) -> tuple[float, float] | None:
-    """The 90% percentile interval of mean(x) - mean(y), resampling ``(repository, x, y)`` within each repository
-    (repositories in name order, each keeping its size); None when there is nothing to resample."""
+def stratified_bootstrap(pairs: list[tuple[str, bool, bool]], *, seed: int, resamples: int = RESAMPLES,
+                         confidence: float = 0.90) -> tuple[float, float] | None:
+    """The percentile interval of mean(x) - mean(y) at ``confidence`` (V9's 90% unless another study asks for its
+    own, as V10 does for 95%), resampling ``(repository, x, y)`` within each repository (repositories in name order,
+    each keeping its size); None when there is nothing to resample."""
+    if not 0 < confidence < 1:
+        raise ValueError("the confidence is a share between 0 and 1")
     if not pairs:
         return None
     strata: dict[str, list[int]] = {}
@@ -120,7 +123,8 @@ def stratified_bootstrap(pairs: list[tuple[str, bool, bool]], *, seed: int,
     groups = [strata[name] for name in sorted(strata)]
     rng, n = random.Random(seed), len(pairs)
     values = sorted(sum(sum(rng.choices(group, k=len(group))) for group in groups) / n for _ in range(resamples))
-    return _quantile(values, 0.05), _quantile(values, 0.95)
+    tail = round((1 - confidence) / 2, 12)   # 0.05 exactly for V9's 90%, as before
+    return _quantile(values, tail), _quantile(values, 1 - tail)
 
 
 def mcnemar_exact(b: int, c: int) -> float:
