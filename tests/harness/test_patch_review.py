@@ -331,6 +331,23 @@ def test_an_ignored_start_up_or_test_file_compromises_integrity(repo, monkeypatc
                for r in got["assessment"]["reasons"])
 
 
+@pytest.mark.parametrize("pattern, rel, text", [
+    ("*.pyc", "tests/calc.pyc", "bytecode Python imports in place of calc.py\n"),            # review C3, probe S6
+    ("*.egg-info/", "zz.egg-info/entry_points.txt", "[pytest11]\nzz = zz_absent_plugin\n"),  # probe S7
+])
+def test_an_ignored_bytecode_file_or_plugin_declaration_compromises_integrity(repo, monkeypatch, pattern, rel, text):
+    (repo / "calc.py").write_text(GOOD)
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text(pattern + "\n")
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(text)
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "ignored_file_can_change_tests" and rel in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
 def test_an_ignored_file_scan_that_reaches_its_limit_is_insufficient_evidence(repo, monkeypatch):
     from g6.workforce import repo_tests
 

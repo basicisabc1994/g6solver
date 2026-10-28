@@ -53,6 +53,7 @@ invoked here.
 from __future__ import annotations
 
 import hashlib
+import importlib.machinery
 import json
 import os
 import re
@@ -1034,15 +1035,37 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
 #: Git-ignored files that can change a run (review I2): runner configuration, start-up and path files.
 _LOADABLE = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "setup.cfg",
                        "tox.ini", "pyproject.toml", "sitecustomize.py", "usercustomize.py"})
-#: Folders the ignored-file scan does not enter: environments, caches and build output.
-_UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "__pycache__",
-                        ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
+#: Folders the ignored-file scan does not enter: environments, caches and build output; and any folder holding a
+#: ``pyvenv.cfg``, a virtual environment whatever its name (review I9).
+_UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", ".direnv", ".eggs", "__pypackages__", ".conda",
+                        "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
+#: An installed package's metadata folder: pytest loads, at start-up, every plugin one declares (an entry point in its
+#: ``pytest11`` group) when the folder's parent is on the import path (review C3).
+_METADATA = (".egg-info", ".dist-info")
+_PLUGIN_GROUP = re.compile(r"^\s*\[\s*pytest11\s*\]\s*$", re.MULTILINE)
+#: Compiled extension modules: Python imports one in place of a ``.py`` file of the same name (review C3).
+_EXTENSIONS = tuple(suffix.lower() for suffix in importlib.machinery.EXTENSION_SUFFIXES)
 #: The most entries the ignored-file scan reads; past it, the scan is incomplete and says so.
 IGNORED_SCAN_LIMIT = 20_000
 
 
-def _unscanned(rel: str) -> bool:
-    return any(part in _UNSCANNED or part.endswith(".egg-info") for part in PurePosixPath(rel).parts)
+def _unscanned(repo: Path, rel: str) -> bool:
+    """Whether ``rel`` is, or is inside, a folder the scan does not enter (``_UNSCANNED``, or a virtual environment)."""
+    parts = PurePosixPath(rel).parts
+    return any(part in _UNSCANNED for part in parts) or any(
+        (repo.joinpath(*parts[:end]) / "pyvenv.cfg").is_file() for end in range(1, len(parts) + 1))
+
+
+def _linked(path: Path) -> bool:
+    """A symbolic link or, on Windows, a junction: it can put any file or folder under the name it has."""
+    return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+
+
+def _declares_plugin(entry_points: Path) -> bool:
+    try:
+        return bool(_PLUGIN_GROUP.search(entry_points.read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        return True   # unread, it may declare one
 
 
 @dataclass(frozen=True)
@@ -1066,11 +1089,19 @@ def ignored_inputs(repo: Path) -> Ignored:
     """The git-ignored files in ``repo`` a test run could load. Loadable (``Ignored.loadable``): an ignored
     ``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``,
     ``pyproject.toml``,
-    ``sitecustomize.py``, ``usercustomize.py`` or ``.pth`` file; a test-named file (``test_*.py``, ``*_test.py``); and
-    a ``.py`` file whose module name (its stem, or its package's) is a tracked module's anywhere in the repository,
-    which it could shadow on the import path. Every other ignored ``.py`` file is listed with its SHA-256
-    (``Ignored.other``). Environments, caches and build output (``_UNSCANNED``, ``*.egg-info``) are not entered.
-    Installed packages and stale bytecode are not covered."""
+    ``sitecustomize.py``, ``usercustomize.py`` or ``.pth`` file; a test-named file (``test_*.py``, ``*_test.py``); a
+    ``.py`` file whose module name (its stem, or its package's) is a tracked module's anywhere in the repository,
+    which it could shadow on the import path; bytecode outside ``__pycache__`` (``.pyc``: Python imports it when no
+    source is beside it, in place of a source further down the path) and a compiled extension module
+    (``importlib.machinery.EXTENSION_SUFFIXES``: Python prefers one to a ``.py`` file of the same name); a symbolic
+    link or junction, which can put any code under any name (the scan never follows one); and an ``.egg-info`` or
+    ``.dist-info`` folder whose ``entry_points.txt`` declares a pytest plugin (the ``pytest11`` group), which pytest
+    loads at start-up (review C3). Every other ignored ``.py`` file is listed with its SHA-256 (``Ignored.other``).
+    Environments, caches and build output (``_UNSCANNED``, and any folder holding a ``pyvenv.cfg``) are not entered,
+    nor is a metadata folder past its ``entry_points.txt``. Not covered: the packages and plugins installed in the
+    interpreter's own environment, outside the repository or in a virtual environment inside it; stale bytecode in
+    ``__pycache__``; and ignored files of any other kind (data the tests read, say), which are neither judged nor
+    bound."""
     listed = _paths(_git(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"))
     modules = {_module(PurePosixPath(rel)) for rel in _paths(_git(repo, "ls-files", "-z")) if rel.endswith(".py")}
     loadable: list[str] = []
@@ -1080,11 +1111,27 @@ def ignored_inputs(repo: Path) -> Ignored:
     def judge(rel: str) -> None:
         path = PurePosixPath(rel)
         name = path.name.lower()
-        if name in _LOADABLE or path.suffix == ".pth" or (path.suffix == ".py" and (
-                name.startswith("test_") or name.endswith("_test.py") or _module(path) in modules)):
+        inside = next((index for index, part in enumerate(path.parts[:-1]) if part.endswith(_METADATA)), None)
+        if inside is not None:   # a metadata folder's files: only its own entry_points.txt can load code
+            if inside == len(path.parts) - 2 and name == "entry_points.txt" and _declares_plugin(repo / rel):
+                loadable.append(rel)
+        elif _linked(repo / rel) or name in _LOADABLE or name.endswith((".pth", ".pyc", *_EXTENSIONS)) or (
+                path.suffix == ".py" and (
+                    name.startswith("test_") or name.endswith("_test.py") or _module(path) in modules)):
             loadable.append(rel)
         elif path.suffix == ".py":
             other[rel] = _digest(repo / rel)
+
+    def folder(rel: str) -> bool:
+        """Judge a folder the scan would enter: True when its files are to be read."""
+        if _linked(repo / rel):
+            loadable.append(rel)
+        elif rel.endswith(_METADATA):
+            if (repo / rel / "entry_points.txt").is_file():
+                judge(f"{rel}/entry_points.txt")
+        else:
+            return True
+        return False
 
     def found(complete: bool) -> Ignored:
         return Ignored(tuple(sorted(loadable)), dict(sorted(other.items())), complete)
@@ -1093,18 +1140,23 @@ def ignored_inputs(repo: Path) -> Ignored:
         seen += 1
         if seen > IGNORED_SCAN_LIMIT:
             return found(False)
-        if _unscanned(entry):
+        rel = entry.rstrip("/")
+        if _unscanned(repo, rel):
             continue
         if not entry.endswith("/"):
-            judge(entry)
+            judge(rel)
             continue
-        for folder, dirs, files in os.walk(repo / entry):
-            dirs[:] = sorted(name for name in dirs if not _unscanned(name))
+        if not folder(rel):
+            continue
+        for top, dirs, files in os.walk(repo / rel):   # never through a link: os.walk does not follow one
+            here = Path(top).relative_to(repo).as_posix()
+            dirs[:] = sorted(name for name in dirs if name not in _UNSCANNED
+                             and not (Path(top) / name / "pyvenv.cfg").is_file() and folder(f"{here}/{name}"))
             for name in sorted(files):
                 seen += 1
                 if seen > IGNORED_SCAN_LIMIT:
                     return found(False)
-                judge((Path(folder) / name).relative_to(repo).as_posix())
+                judge(f"{here}/{name}")
     return found(True)
 
 
