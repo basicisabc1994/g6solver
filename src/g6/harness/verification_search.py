@@ -78,9 +78,20 @@ behaviours, at most ``MAX_QUESTIONS``.
 
 ``completion`` builds ``assessment.completion`` for every reply, from what ran only: the requirements demonstrated on
 their stated checks with the receipts, those not established with the activity that would settle them, the defects
-reproduced kept apart by authority, each preservation obligation and what was checked for it, test adequacy (empty in
-this version), the open questions, and every activity with its result, seconds and model calls (none). With no
-proposed checks, nothing of part 2 runs but that report, and every decided field is as before.
+reproduced kept apart by authority, each preservation obligation and what was checked for it, test adequacy, the open
+questions, and every activity with its result, seconds and model calls (none). With no proposed checks, no template
+instance and no search setting, nothing of part 2 or 3 runs but that report, and every decided field is as before.
+
+Part 3. Template instances (``g6.harness.verification_templates``) compile to checks this executor runs exactly as it
+runs a proposed check; each carries its ``Origin`` (the template, and how its activity, reasons and reproduction say
+so). For a ``differential.v1`` instance whose intent is ``preserve``, observations that differ are a
+``counterexample``, not a question. ``search_config`` reads the review's ``search``: ``templates`` (true unless set
+false, which runs free-form checks only) and ``test_adequacy`` (false unless set). ``measure_adequacy`` (report only,
+plan Part 4): for each requirement whose stated checks all passed on the patch, the mutants of the changed lines
+(``mutation_check``'s operators, at most ``ADEQUACY_MUTANTS`` in each of at most ``ADEQUACY_FILES`` files), each run
+once confined with no network in a fresh copy against every such requirement's stated checks, within the review's
+deadline: how many each requirement's checks killed and how many survived, and each mutant not run with why. It changes
+no outcome.
 """
 from __future__ import annotations
 
@@ -92,6 +103,7 @@ import shlex
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -106,9 +118,10 @@ from g6.harness.patch_review import (
     _collection_errors,
     _covers,
     _in_repository,
+    _verdicts,
 )
 from g6.intent_engine.schema import Assumption, IntentContract
-from g6.workforce import repo_tests
+from g6.workforce import mutation_check, repo_tests
 
 #: The intent fields mapped to requirements, with the kind each item becomes.
 MAPPED = (("success_criteria", "requirement"), ("non_goals", "preserve"), ("failure_criteria", "preserve"))
@@ -610,17 +623,37 @@ class Search:
     questions: list[dict] = field(default_factory=list)
 
 
-def _activity(one: ProposedCheck, placed: str) -> dict:
+@dataclass(frozen=True)
+class Origin:
+    """Where a check ``search`` runs came from: by default a caller's free-form proposal; or a template instance G6
+    compiled from the caller's bindings (``g6.harness.verification_templates``), which names its ``template``, says so
+    in its activity, its reasons and its reproduction's caution, and, for a differential instance that keeps behaviour
+    (``refuted_by_difference``), reads a difference between its observations as a counterexample."""
+    activity: str = "proposed check"
+    proposed_by: str = PROPOSED_BY
+    about: dict = field(default_factory=dict)
+    label: str = "proposed"
+    unconfirmed: str = "the caller proposed it, a proposed check decides no requirement"
+    caution: str = CAUTION
+    template: str = ""
+    refuted_by_difference: bool = False
+
+
+FREE_FORM = Origin()
+
+
+def _activity(one: ProposedCheck, placed: str, origin: Origin = FREE_FORM) -> dict:
     node = _node(one, placed)
-    return {"activity": "proposed check", "check": one.id, "requirement": one.requirement_id, "intent": one.intent,
-            "provenance": PROPOSED, "proposed_by": PROPOSED_BY, "file": one.file, "placed": placed, "node": node,
-            "sha256": _sha(one.source), "runs": [], "seconds": 0.0, "model_calls": 0}
+    return {"activity": origin.activity, "check": one.id, "requirement": one.requirement_id, "intent": one.intent,
+            "provenance": PROPOSED, "proposed_by": origin.proposed_by, "file": one.file, "placed": placed, "node": node,
+            "sha256": _sha(one.source), "runs": [], "seconds": 0.0, "model_calls": 0, **origin.about}
 
 
-def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str) -> Search:
+def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str,
+            origins: dict[str, Origin] | None = None) -> Search:
     """The stage, not run: every check listed as skipped, with why."""
-    return Search(activities=[{**_activity(one, placed[one.id]), "result": "skipped", "reason": why}
-                              for one in checks])
+    return Search(activities=[{**_activity(one, placed[one.id], (origins or {}).get(one.id, FREE_FORM)),
+                               "result": "skipped", "reason": why} for one in checks])
 
 
 def _summary(found: dict) -> dict:
@@ -634,13 +667,15 @@ def _bound(left: float) -> int:
 
 
 def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[str, str], *, deadline: float,
-           artifact: str) -> Search:
+           artifact: str, origins: dict[str, Origin] | None = None) -> Search:
     """Run each proposed check on the patch and at the base commit (``_run_check``), classify it, and say what it
-    found; the stage stops when the review's deadline would be passed."""
+    found; the stage stops when the review's deadline would be passed. ``origins``: the checks G6 compiled from
+    template instances, by id (the others are free-form proposals)."""
     done = Search()
     stopped = False
     for one in checks:
-        activity = _activity(one, placed[one.id])
+        origin = (origins or {}).get(one.id, FREE_FORM)
+        activity = _activity(one, placed[one.id], origin)
         done.activities.append(activity)
         if stopped or deadline - _clock() < 2 * MIN_RUN_S:
             stopped = True
@@ -664,21 +699,33 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         verdict = classify(one.intent, on_patch, at_base)
         if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR:   # only where the base run would have decided
             verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
+        if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:
+            # the differential rule: the instance declares this behaviour must not change, so a difference refutes it
+            verdict = {"result": COUNTEREXAMPLE, "differences": verdict["differences"],
+                       "detail": f"observes {len(verdict['differences'])} input(s) differently at the base commit "
+                                 "and on the patch, where the instance declares that behaviour must not change"}
         activity.update(verdict)
         activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
-        _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit)
+        _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)
     return done
 
 
+#: What a differential counterexample is, in its reason, and how its reproduction is read.
+DIFFERS = ("observes behaviour that differs between the base commit and the patch, which the instance declares must "
+           "not change")
+COMPARE = ("the check passes on both trees: run it on each and compare the G6-OBSERVATION lines it prints (it prints "
+           "them inside capsys.disabled, so they reach the output); the differences are listed here")
+
+
 def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_base: dict | None, verdict: dict,
-           artifact: str, base_commit: str) -> None:
+           artifact: str, base_commit: str, origin: Origin = FREE_FORM) -> None:
     """A finding's reason, reproduction and next action; a question for a check that fails at the base commit too or a
     probe whose observations differ."""
-    result, about = verdict["result"], f"{one.id} (proposed for {one.requirement_id}, intent {one.intent})"
+    result, about = verdict["result"], f"{one.id} ({origin.label} for {one.requirement_id}, intent {one.intent})"
     if result in REASONS:
         node = activity["node"]
         reproduction = {"check": one.id, "file": activity["placed"], "text": one.source, "sha256": activity["sha256"],
-                        "node": node, **reproduce(node, on_patch), "how": HOW, "caution": CAUTION,
+                        "node": node, **reproduce(node, on_patch), "how": HOW, "caution": origin.caution,
                         "patched_tree_digest": on_patch["tree_digest"],
                         "base_tree_digest": at_base["tree_digest"] if at_base else "",
                         "artifact_digest": artifact, "base_commit": base_commit,
@@ -686,18 +733,24 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
                         "at_base": f"{at_base['result']}: {at_base['detail']}" if at_base else "not run"}
         if at_base is not None:
             reproduction["at_base_command"] = reproduce(node, at_base)["command"]
+        if origin.template:
+            reproduction["template"] = origin.template
+        if "differences" in verdict:
+            reproduction.update(differences=verdict["differences"], compare=COMPARE)
+        shape = DIFFERS if "differences" in verdict else SHAPE[result]
         # review 10: in G6's own words only; what the check printed or failed with stays in assessment.completion
-        done.reasons.append((REASONS[result], f"{about}: {SHAPE[result]}; unconfirmed: the caller proposed it, a "
-                                              "proposed check decides no requirement, and what it failed with is in "
-                                              "assessment.completion"))
+        said = "observed" if "differences" in verdict else "failed with"
+        done.reasons.append((REASONS[result], f"{about}: {shape}; unconfirmed: {origin.unconfirmed}, and what it "
+                                              f"{said} is in assessment.completion"))
         done.defects.append({"check": one.id, "requirement": one.requirement_id, "provenance": PROPOSED,
                              "result": result, "code": REASONS[result], "detail": verdict["detail"],
-                             "reproduction": reproduction})
+                             "reproduction": reproduction,
+                             **({"template": origin.template} if origin.template else {})})
         done.next_actions.append(
             f"{about}: {result.replace('_', ' ')}, not confirmed. To reproduce it, copy the tree without its .git "
             f"folder, write the check's text (sha256 {activity['sha256']}) to {activity['placed']}, and run "
             f"{reproduction['command']} from the copy's top folder; the text and the digests of the trees it ran on "
-            f"are in assessment.completion.defects_reproduced. {CAUTION}")
+            f"are in assessment.completion.defects_reproduced. {origin.caution}")
     elif result == BEHAVIOUR_CHANGED:
         first = verdict["differences"][0]
         more = len(verdict["differences"]) - 1
@@ -731,13 +784,141 @@ def annotate(evaluated: list[dict], done: Search) -> None:
                                 "never passes a requirement" + (f" ({', '.join(others)})" if others else ""))
 
 
+# --- the search configuration -------------------------------------------------------------------------------------------
+
+#: What ``search`` may set, and each setting's default: template instances run (``templates``; false runs free-form
+#: checks only), and test adequacy is measured (``test_adequacy``, off unless asked: it adds mutation runs).
+SEARCH_SETTINGS = {"templates": True, "test_adequacy": False}
+
+
+def search_config(value) -> dict:
+    """``value`` (the review's ``search``) as its settings, each a bool, or a ``ValueError`` that says what is wrong;
+    None gives the defaults."""
+    if value is None:
+        return dict(SEARCH_SETTINGS)
+    if not isinstance(value, dict):
+        raise ValueError('search must be an object: {"templates": true or false, "test_adequacy": true or false}')
+    unknown = [str(key)[:40] for key in value if key not in SEARCH_SETTINGS]
+    if unknown:
+        raise ValueError("search holds setting(s) G6 does not have: " + ", ".join(unknown) + " (it takes "
+                         + ", ".join(SEARCH_SETTINGS) + ")")
+    for key, given in value.items():
+        if not isinstance(given, bool):
+            raise ValueError(f"search.{key} must be true or false")
+    return {**SEARCH_SETTINGS, **value}
+
+
+# --- test adequacy: mutants of the changed lines against each requirement's stated checks (report only) ------------------
+
+#: At most this many changed files are mutated, and this many mutants of each (plan rule 7), by ``mutation_check``.
+ADEQUACY_FILES = repo_tests.MUTATED_FILES
+ADEQUACY_MUTANTS = mutation_check.MAX_MUTANTS
+ADEQUACY_NOTE = ("reported only: it changes no outcome, and a mutant that survives may behave as the original does (an "
+                 "equivalent change), so a survivor is a question about the checks, not a defect of the patch")
+#: A stated check's verdicts on a mutant that say it caught the mutant.
+_KILLED = frozenset({repo_tests.FAILED, "timed_out"})
+
+
+def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str], timeout_s: int) -> dict:
+    """``ids`` run confined, with no network, in a fresh scratch copy of the patched tree in which ``rel`` is imported
+    from ``source`` (``repo_tests``'s mutant hook; the file is never written). A run no backend confines is not run."""
+    deadline = time.monotonic() + timeout_s
+    try:
+        with repo_tests.repository_copy(change.repo, deadline=deadline) as copy:
+            return repo_tests._run(copy, ids, roots=(), timeout_s=timeout_s, network=False, mutant=(rel, source),
+                                   copied=True, python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
+                                   deadline=deadline, require_isolation=True)
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except repo_tests.RepoRefused as exc:
+        if exc.code == ISOLATION_UNAVAILABLE:
+            return {"verdict": "refused", "said": "no operating-system boundary can confine it, so it was not run"}
+        return {"verdict": "not_run", "said": str(exc)}
+    except (OSError, repo_tests.CopyNotRun) as exc:
+        return {"verdict": "not_run", "said": str(exc)}
+
+
+def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, str], verdicts: dict[str, dict], *,
+                  deadline: float, base_seconds: float, skip: str = "") -> tuple[list[dict], list[dict]]:
+    """``assessment.completion.test_adequacy`` and its mutation runs, from what ran: for each requirement whose stated
+    checks all passed on the patch, how many mutants of the changed lines (``mutation_check``'s operators, at most
+    ``ADEQUACY_MUTANTS`` in each of at most ``ADEQUACY_FILES`` files) those checks killed and how many survived, each
+    mutant run once against every such requirement's checks, confined; the mutants not run, with why. ``skip``: none
+    is run, with that reason. It changes no outcome."""
+    entries, measured = [], []
+    for req in requirements:
+        checks = list(dict.fromkeys(norm[raw] for raw in req.checks))
+        why = skip or ("no stated check names it, so no check could fail a mutant" if not checks else
+                       "its stated checks did not all pass on the patch, so a mutant they fail says nothing of them"
+                       if any(verdicts[check]["verdict"] != "passed" for check in checks) else "")
+        if why:
+            entries.append({"requirement": req.id, "result": "not_run", "reason": why})
+            continue
+        entry = {"requirement": req.id, "checks": checks, "killed": 0, "survived": 0, "survivors": [],
+                 "undecided": [], "skipped": [], "note": ADEQUACY_NOTE}
+        entries.append(entry)
+        measured.append(entry)
+    if not measured:
+        return entries, []
+    ids = list(dict.fromkeys(check for entry in measured for check in entry["checks"]))
+    files = [rel for rel in change.sources if repo_tests.changed_lines(change, rel)]
+    activities = []
+    for rel in files[ADEQUACY_FILES:]:
+        for entry in measured:
+            entry["skipped"].append({"file": rel, "mutant": "", "reason": f"test adequacy mutates at most "
+                                                                          f"{ADEQUACY_FILES} changed files"})
+    for rel in files[:ADEQUACY_FILES]:
+        text = (change.repo / rel).read_text(encoding="utf-8", errors="replace")
+        lines = repo_tests.changed_lines(change, rel)
+        runs: dict[str, dict] = {}
+
+        def run(source: str, timeout_s: int, rel: str = rel, runs: dict = runs) -> SimpleNamespace:
+            ran = runs[source] = _run_mutant(change, rel, source, ids, timeout_s)
+            executed = ran.get("verdict") in repo_tests.RAN
+            return SimpleNamespace(execution_id="ran" if executed else "", passed=int(ran.get("passed") or 0),
+                                   failed=int(ran.get("failed") or 0), not_passed=int(ran.get("not_passed") or 0),
+                                   reason="" if executed else str(ran.get("verdict") or ""))
+
+        record = mutation_check.check(text, run, budget_s=max(0.0, deadline - _clock()), base_duration_s=base_seconds,
+                                      limit=ADEQUACY_MUTANTS, clock=_clock, lines=lines)
+        for mutant in mutation_check.mutants(text, ADEQUACY_MUTANTS, lines):
+            activity = {"activity": "mutation run", "file": rel, "mutant": mutant.describe(), "seconds": 0.0,
+                        "model_calls": 0}
+            activities.append(activity)
+            ran = runs.get(mutant.source)
+            if ran is None or ran.get("verdict") not in (*repo_tests.RAN, "timed_out"):
+                reason = (ran or {}).get("said") or record["stopped"] or "the mutation check stopped before it"
+                activity.update(result="skipped", reason=reason)
+                for entry in measured:
+                    entry["skipped"].append({"file": rel, "mutant": mutant.describe(), "reason": reason})
+                continue
+            per = _verdicts(ids, ran)
+            activity.update(result="ran", verdict=ran["verdict"], seconds=float(ran.get("seconds") or 0.0),
+                            killed_for=[], survived_for=[])
+            for entry in measured:
+                states = [per[check]["verdict"] for check in entry["checks"]]
+                if any(state in _KILLED for state in states):
+                    entry["killed"] += 1
+                    activity["killed_for"].append(entry["requirement"])
+                elif all(state == repo_tests.PASSED for state in states):
+                    entry["survived"] += 1
+                    entry["survivors"].append({"file": rel, "mutant": mutant.describe()})
+                    activity["survived_for"].append(entry["requirement"])
+                else:
+                    entry["undecided"].append({"file": rel, "mutant": mutant.describe(),
+                                               "verdicts": dict(zip(entry["checks"], states))})
+    return entries, activities
+
+
 #: The patch review's tier 2 run of the tests that touch the changed modules (``patch_review._assess``).
 _DERIVED_RUN = "tests that touch the changed modules"
 
 
 def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], skipped: list[dict], defects: list[dict],
-               done: Search | None, *, artifact: str, base_commit: str) -> dict:
-    """``assessment.completion``, from what ran only (the module's rules)."""
+               done: Search | None, *, artifact: str, base_commit: str, templates=None,
+               adequacy: tuple[list[dict], list[dict]] | None = None) -> dict:
+    """``assessment.completion``, from what ran only (the module's rules). ``templates``: the review's prepared
+    template instances (``verification_templates.Prepared``); ``adequacy``: test adequacy and its mutation runs."""
     tier_one = [found for found in receipts if found.get("tier") == 1]
     demonstrated = [{"requirement": req["id"], "text": req["text"], "kind": req["kind"],
                      "checks": [c["id"] for c in req["checks"]], "receipts": tier_one}
@@ -749,15 +930,24 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
     stated = []
     for found in defects:
         named = found["code"] == "check_failed"
-        stated.append({"check": found["node"], "provenance": "stated" if named else "derived",
+        reproduction = ({**found["reproduction"], "artifact_digest": artifact, "base_commit": base_commit}
+                        if "reproduction" in found else   # a structural check's: the imports, read from the files
+                        {"node": found["node"], **reproduce(found["node"], found.get("ran") or {}),
+                         "on": "the working tree under review" + ("" if named else "; it passes at the base commit"),
+                         "artifact_digest": artifact, "base_commit": base_commit})
+        stated.append({"check": found["node"], "provenance": found.get("provenance") or ("stated" if named
+                                                                                          else "derived"),
+                       **({"contract_provenance": found["contract_provenance"]} if "contract_provenance" in found
+                          else {}),
                        "requirements": [req["id"] for req in evaluated
                                         if any(c["id"] == found["node"] for c in req["checks"])],
-                       "code": found["code"], "detail": found["detail"],
-                       "reproduction": {"node": found["node"], **reproduce(found["node"], found.get("ran") or {}),
-                                        "on": "the working tree under review" + (
-                                            "" if named else "; it passes at the base commit"),
-                                        "artifact_digest": artifact, "base_commit": base_commit}})
+                       "code": found["code"], "detail": found["detail"], "reproduction": reproduction})
     proposed = done.activities if done else []
+    structural = list(templates.structural) if templates is not None else []
+    unconfirmed = [{"check": s["id"], "requirement": s["requirement"], "provenance": s["contract_provenance"],
+                    "result": s["verdict"], "code": REASONS[COUNTEREXAMPLE], "detail": s["detail"],
+                    "reproduction": {**s["reproduction"], "artifact_digest": artifact, "base_commit": base_commit}}
+                   for s in structural if s["verdict"] == COUNTEREXAMPLE]
     preservation = [{"obligation": req["id"], "text": req["text"], "provenance": req["provenance"],
                      "status": req["status"], "stated_checks": [{"id": c["id"], "verdict": c["verdict"]}
                                                                 for c in req["checks"]],
@@ -771,9 +961,12 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
                          if passed_over else "not run",
                          "regressions": [d["node"] for d in defects if d["code"] == "derived_test_regressed"]})
     kinds = {req["id"]: req["kind"] for req in evaluated}
-    preservation += [{"obligation": f"behaviour {a['requirement']} keeps, as proposed check {a['check']} states it",
+    preservation += [{"obligation": f"behaviour {a['requirement']} keeps, as {a['activity']} {a['check']} states it",
                       "provenance": PROPOSED, "check": a["check"], "result": a["result"]}
                      for a in proposed if a["intent"] == "preserve" and kinds.get(a["requirement"]) != "preserve"]
+    preservation += [{"obligation": f"the layer rules of {s['activity'].get('contract_source') or 'its contract'}",
+                      "provenance": s["contract_provenance"], "check": s["id"], "requirement": s["requirement"],
+                      "result": s["activity"]["result"]} for s in structural]
     status = {req["id"]: req["status"] for req in evaluated}
     questions = sorted(done.questions if done else [],   # open obligations first, then behaviour to keep (safety)
                        key=lambda q: (status.get(q["requirement"]) == PASSED_ON_CHECKS, q["intent"] != "preserve"))
@@ -782,8 +975,10 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
                    "model_calls": 0} for run in runs]
     activities += [{"activity": "check run", "tier": s["tier"], "what": s["check"], "result": "skipped",
                     "reason": s["reason"], "seconds": 0.0, "model_calls": 0} for s in skipped]
+    measured, mutations = adequacy or ([], [])
     return {"demonstrated": demonstrated, "not_established": not_established,
             "defects_reproduced": {"stated_and_repository_checks": stated,
-                                   "proposed_checks": list(done.defects) if done else []},
-            "preservation": preservation, "test_adequacy": [], "open_questions": questions[:MAX_QUESTIONS],
-            "activities": [*activities, *proposed]}
+                                   "proposed_checks": [*(done.defects if done else []), *unconfirmed]},
+            "preservation": preservation, "test_adequacy": list(measured), "open_questions": questions[:MAX_QUESTIONS],
+            "activities": [*activities, *proposed, *(templates.activities if templates is not None else []),
+                           *mutations]}

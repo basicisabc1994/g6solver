@@ -152,7 +152,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     def g6_review_patch(repo: str, task: str, requirements: list[dict] | None = None, tests: list[str] | None = None,
                         claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
                         expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
-                        proposed_checks: list[dict] | None = None) -> dict:
+                        proposed_checks: list[dict] | None = None, template_instances: list[dict] | None = None,
+                        search: dict | None = None) -> dict:
         """Assess the working tree's Python patch against base on stated requirements [{id, text, checks: [pytest
         node ids]}] plus extra tests, in confined runs. Optional intent, an intent contract {goal, success_criteria,
         non_goals, failure_criteria, assumptions}: each success criterion becomes a stated requirement, and each
@@ -166,15 +167,29 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         behaviour_changed or check_error). A proposed check never passes a requirement: a counterexample or a failure
         of the change gives at most insufficient_evidence, with a reproduction in next_actions: the command G6's run
         amounted to (PYTHONPATH=src where G6 put src on the path, an empty configuration where the repository has
-        none). Anything else, a conftest or a pytest configuration say, is refused. Every reply has
-        assessment.completion: what was demonstrated, what is not established, the defects reproduced, preservation,
-        open questions and every activity. Poll metaharness_job for the result.
+        none). Anything else, a conftest or a pytest configuration say, is refused. Optional template_instances,
+        counted with proposed_checks within the 20, [{id, template, requirement_id, intent, bindings}], fill G6's
+        reviewed templates: example.v1 (a stated input gives a stated result, error or effect), relation.v1 (a round
+        trip, idempotence, invariance or monotonicity over at most 32 inputs), access_rule.v1 (allowed and refused
+        cases of an operation), differential.v1 (the base and the patch agree on stated calls; a difference is a
+        counterexample when intent is preserve, a question when it is change) and forbidden_dependency.v1 (the patch
+        adds no import that breaks the repository's own import-linter contract, as the base commit declares it, or
+        one the bindings state; read from the files, no code runs). Bindings are data: names are dotted names
+        (module.attribute) G6 finds in the files, literals are JSON; anything else refuses the review. G6 compiles
+        each instance into a test from the template's fixed text, run like a proposed check, which never passes a
+        requirement; an instance the repository gives nothing to apply to is refused and reported in activities. A
+        forbidden import against the repository's or your contract is defect_detected. Optional search: {"templates":
+        false} runs free-form checks only; {"test_adequacy": true} also mutates the changed lines and reports how many
+        mutants each requirement's stated checks killed and how many survived, which changes no outcome. Every reply
+        has assessment.completion: what was demonstrated, what is not established, the defects reproduced,
+        preservation, test adequacy, open questions and every activity. Poll metaharness_job for the result.
         assessment.outcome is one of: test_integrity_compromised (a sign of a weakened test or test helper that G6's
         static comparison finds, a changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
-        on the patch and passed at the base commit); insufficient_evidence (no requirement, a requirement with no
-        check, a check that did not run or ran out of time, a shortcut only the claim reports, or a proposed check's
-        unconfirmed_counterexample or unconfirmed_failure);
+        on the patch and passed at the base commit, or the patch adds an import a stated contract forbids);
+        insufficient_evidence (no requirement, a requirement with no check, a check that did not run or ran out of
+        time, a shortcut only the claim reports, or a proposed or compiled check's unconfirmed_counterexample or
+        unconfirmed_failure);
         supported_within_scope (every requirement passed its stated checks: support on those checks only, never proof
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
@@ -193,7 +208,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             try:
                 return review_patch(repo, task=task, requirements=requirements or [], tests=tests or [], claim=claim,
                                     sources=sources, base=base, expected_artifact_digest=expected_artifact_digest,
-                                    timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks)
+                                    timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks,
+                                    template_instances=template_instances, search=search)
             except component_process.ExecutionInterrupted as exc:
                 if exc.stopped:
                     return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")

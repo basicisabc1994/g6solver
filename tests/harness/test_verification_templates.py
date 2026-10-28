@@ -1,0 +1,1041 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Verification search, part 3: templates (``g6.harness.verification_templates``), the search configuration and test
+adequacy.
+
+A template is trusted code: its fixed text is G6's own. An instance is data: the caller names functions and literals in
+the repository under review; G6 checks each name against the files of the tree (never importing them) and each literal
+as JSON data, refuses anything else before anything runs, and compiles the instance into a test whose only part that
+comes from the caller is one literal. Compiled checks run through verification search's executor as proposed checks
+do, and never pass a requirement. The structural template reads imports only: against a contract the repository or the
+caller states, an import the patch adds that breaks it is a defect. Test adequacy is reported and decides nothing.
+
+Development fixtures only, each from a different kind of application (a library function, a command-line tool's
+parser, a web-style handler with an ownership check, a data-pipeline transform, a layered package); none is V9 or V10
+evaluation data, and no model is called. Tests that take ``bwrap_backend`` run real confined runs (Linux bubblewrap)
+and skip elsewhere; the others replace G6's runs with recorded results, or run a compiled check with plain pytest on
+G6's own fixtures."""
+from __future__ import annotations
+
+import ast
+import hashlib
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tokenize
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from g6.harness import patch_review, verification_search, verification_templates
+from g6.harness.patch_review import review_patch
+from g6.invariants import check_envelope
+from g6.workforce import mutation_check, repo_tests
+
+TEMPLATE_IDS = ("example.v1", "relation.v1", "access_rule.v1", "differential.v1", "forbidden_dependency.v1")
+
+# --- development fixtures: five kinds of application, each with a base commit and a patch that plants a defect --------
+
+# A library function: a text codec. The patch escapes newlines too, and decodes in the wrong order.
+CODEC_BASE = ('def encode(text):\n    return text.replace("%", "%25").replace(",", "%2C")\n\n\n'
+              'def decode(text):\n    return text.replace("%2C", ",").replace("%25", "%")\n')
+CODEC_PATCH = ('def encode(text):\n    return text.replace("%", "%25").replace(",", "%2C").replace("\\n", "%0A")\n\n\n'
+               'def decode(text):\n    return text.replace("%25", "%").replace("%2C", ",").replace("%0A", "\\n")\n')
+CODEC_TESTS = 'from textcodec import decode, encode\n\n\ndef test_plain():\n    assert decode(encode("plain")) == "plain"\n'
+CODEC = {"textcodec.py": CODEC_BASE, "test_textcodec.py": CODEC_TESTS}
+
+# A command-line tool's parser. The patch adds --verbose, and changes the default count.
+CLI_BASE = ('import argparse\n\n\ndef parse_args(argv):\n    parser = argparse.ArgumentParser(prog="count")\n'
+            '    parser.add_argument("--count", type=int, default=1)\n    return vars(parser.parse_args(argv))\n')
+CLI_PATCH = ('import argparse\n\n\ndef parse_args(argv):\n    parser = argparse.ArgumentParser(prog="count")\n'
+             '    parser.add_argument("--count", type=int, default=0)\n'
+             '    parser.add_argument("--verbose", action="store_true")\n    return vars(parser.parse_args(argv))\n')
+CLI_TESTS = 'from cli import parse_args\n\n\ndef test_count():\n    assert parse_args(["--count", "3"])["count"] == 3\n'
+CLI = {"cli.py": CLI_BASE, "test_cli.py": CLI_TESTS}
+
+# A web-style handler with an ownership check. The patch, meant to let editors in, drops the owner check.
+NOTES_BASE = ('class Forbidden(Exception):\n    pass\n\n\ndef update_note(user, note, text):\n'
+              '    if user != note["owner"]:\n        raise Forbidden(user)\n    return {**note, "text": text}\n')
+NOTES_PATCH = ('class Forbidden(Exception):\n    pass\n\n\ndef update_note(user, note, text):\n'
+               '    if not user:\n        raise Forbidden(user)\n    return {**note, "text": text}\n')
+NOTES_TESTS = ('from notes import update_note\n\n\ndef test_owner():\n'
+               '    assert update_note("ann", {"owner": "ann"}, "x")["text"] == "x"\n')
+NOTES = {"notes.py": NOTES_BASE, "test_notes.py": NOTES_TESTS}
+
+# A data-pipeline transform. The patch dedupes by name ignoring case, and rounds amounts to one place, outside its scope.
+PIPE_BASE = ('def normalise(row):\n    return {"name": row["name"].strip().lower(), "amount": round(row["amount"], 2)}\n'
+             '\n\ndef dedupe(rows):\n    seen, out = set(), []\n    for row in rows:\n        if row["name"] not in seen:\n'
+             '            seen.add(row["name"])\n            out.append(row)\n    return out\n')
+PIPE_PATCH = ('def normalise(row):\n    return {"name": row["name"].strip().lower(), "amount": round(row["amount"], 1)}\n'
+              '\n\ndef dedupe(rows):\n    seen, out = set(), []\n    for row in rows:\n'
+              '        if row["name"].lower() not in seen:\n            seen.add(row["name"].lower())\n'
+              '            out.append(row)\n    return out\n')
+PIPE_TESTS = ('from pipeline import dedupe\n\n\ndef test_dedupe():\n'
+              '    assert dedupe([{"name": "a"}, {"name": "a"}]) == [{"name": "a"}]\n')
+PIPE = {"pipeline.py": PIPE_BASE, "test_pipeline.py": PIPE_TESTS}
+
+# A layered package with its own import-linter contract. The patch makes the data layer import the api layer.
+LAYERS_TOML = ('[tool.importlinter]\nroot_package = "shop"\n\n[[tool.importlinter.contracts]]\nname = "shop layers"\n'
+               'type = "layers"\nlayers = ["shop.api", "shop.service", "shop.data"]\n')
+SHOP = {"shop/__init__.py": "", "shop/api.py": "from shop import service\n\n\ndef handle(x):\n    return service.run(x)\n",
+        "shop/service.py": "from shop import data\n\n\ndef run(x):\n    return data.load(x)\n",
+        "shop/data.py": "def load(x):\n    return x\n",
+        "tests/test_shop.py": "from shop.api import handle\n\n\ndef test_handle():\n    assert handle(1) == 1\n"}
+DATA_IMPORTS_API = "def load(x):\n    from shop import api\n    return x\n"
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
+def _repo(tmp_path: Path, files: dict[str, str], name: str = "repo") -> Path:
+    """A git repository whose base commit holds ``files``."""
+    root = tmp_path / name
+    root.mkdir(parents=True)
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "add", ".")
+    _git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "base")
+    return root
+
+
+def _patch(root: Path, files: dict[str, str]) -> Path:
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    return root
+
+
+def instance(ident, template, bindings, intent="preserve", requirement="R1"):
+    return {"id": ident, "template": template, "requirement_id": requirement, "intent": intent, "bindings": bindings}
+
+
+ROUND_TRIP = instance("t-codec", "relation.v1", {"relation": "round_trip", "function": "textcodec.encode",
+                                                 "inverse": "textcodec.decode",
+                                                 "inputs": ["plain", "a,b", "100%", "%2C", "x\ny"]})
+CLI_EXAMPLE = instance("t-cli", "example.v1", {"function": "cli.parse_args", "cases": [
+    {"args": [["--verbose"]], "returns": {"count": 1, "verbose": True}},
+    {"args": [["--count", "3"]], "returns": {"count": 3, "verbose": False}},
+    {"args": [["--count", "x"]], "raises": "SystemExit"}]}, intent="change")
+OWNER_RULE = instance("t-owner", "access_rule.v1", {"operation": "notes.update_note", "refusal": "exception",
+                                                    "exception": "notes.Forbidden", "cases": [
+    {"who": "the owner", "resource": "ann's note", "args": ["ann", {"owner": "ann"}, "x"], "expected": "allowed"},
+    {"who": "a stranger", "resource": "ann's note", "args": ["bob", {"owner": "ann"}, "x"], "expected": "refused"}]})
+KEEP_NORMALISE = instance("t-normalise", "differential.v1", {"function": "pipeline.normalise", "mode": "outputs", "calls": [
+    {"args": [{"name": " Ann ", "amount": 1.234}]}, {"args": [{"name": "Bo", "amount": 2.0}]}]})
+SHOP_LAYERS = instance("t-layers", "forbidden_dependency.v1", {"contract": "repository"})
+STATED = {"CODEC": [{"id": "R1", "text": "text survives encoding", "checks": ["test_textcodec.py::test_plain"]}],
+          "CLI": [{"id": "R1", "text": "the parser reads --count and --verbose", "checks": ["test_cli.py::test_count"]}],
+          "NOTES": [{"id": "R1", "text": "only the owner updates a note", "checks": ["test_notes.py::test_owner"]}],
+          "PIPE": [{"id": "R1", "text": "dedupe ignores case", "checks": ["test_pipeline.py::test_dedupe"]}],
+          "SHOP": [{"id": "R1", "text": "the layers hold", "checks": ["tests/test_shop.py::test_handle"]}]}
+
+
+def review(repo, requirements, **kwargs):
+    return review_patch(repo, task="Make the change the requirements state.", requirements=requirements, **kwargs)
+
+
+def result(passed=(), failed=(), *, verdict=None, output="", seconds=0.25, digest="", messages=None):
+    """One recorded ``repo_tests`` run result (as ``tests/harness/test_proposed_checks.py`` records them)."""
+    outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
+                **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed}}
+    verdict = verdict or ("failed" if failed else "passed")
+    return {"verdict": verdict, "said": "", "passed": len(passed), "failed": len(failed), "not_passed": 0,
+            "total": len(passed) + len(failed), "deselected": 0, "test_outcomes": outcomes,
+            "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [], "output": output,
+            "seconds": seconds, "python": sys.executable, "interpreter_source": "g6", "command": "pytest",
+            "isolation": {"backend": "synthetic-unit-fixture", "why": ""}, "failed_ids": list(failed),
+            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": "", "rootdir": "",
+            **({"source_before": digest} if digest else {}), **({"failure_messages": messages} if messages else {})}
+
+
+class Tiers:
+    """Stands in for the review's own runs: every in-place run passes what it was asked; the stated checks at the base
+    commit did not run."""
+
+    def __init__(self, monkeypatch, failing=()):
+        self.calls: list[tuple[str, ...]] = []
+
+        def execute(root, ids, *, timeout_s, change=None, **_):
+            self.calls.append(tuple(ids))
+            bad = [i for i in ids if i in failing]
+            return result([i for i in ids if i not in bad], bad, output="".join(f"FAILED {i} - AssertionError\n"
+                                                                            for i in bad))
+
+        monkeypatch.setattr(patch_review, "_execute", execute)
+        monkeypatch.setattr(patch_review, "_execute_at_base",
+                            lambda change, ids, *, timeout_s, **_: {"verdict": "not_run", "said": "not recorded"})
+
+
+def _observed(node, observations) -> dict:
+    return result([node], output="".join(f"G6-OBSERVATION {json.dumps(o)}\n" for o in observations))
+
+
+class Compiled:
+    """Stands in for each compiled check's run (``verification_search._run_check``): ``outcomes`` maps a template id
+    to what its run on the patch and at the base commit gives ("passed", "failed", a list of observations, or a
+    recorded result). Records each run asked for; ``advance`` seconds pass on G6's clock with each run."""
+
+    def __init__(self, monkeypatch, outcomes, *, advance=0.0):
+        self.calls: list[tuple[str, bool]] = []
+        clock = [verification_search._clock()]
+        monkeypatch.setattr(verification_search, "_clock", lambda: clock[0])
+        self.clock = clock
+
+        def run_check(change, placed, source, node, *, at_base, timeout_s):
+            found = re.search(r"^TEMPLATE = '([^']+)'$", source, re.MULTILINE)
+            key = found.group(1) if found else source
+            self.calls.append((key, at_base))
+            clock[0] += advance
+            spec = outcomes[key]["base" if at_base else "patch"]
+            digest = ("b" if at_base else "p") * 64
+            if isinstance(spec, dict):
+                return spec
+            if isinstance(spec, list):
+                return {**_observed(node, spec), "source_before": digest}
+            if spec == "passed":
+                return result([node], digest=digest)
+            return result(failed=[node], output=f"FAILED {node} - Failed: case 0: returned 1, expected 2\n",
+                          messages={node: "Failed: case 0: returned 1, expected 2"}, digest=digest)
+
+        monkeypatch.setattr(verification_search, "_run_check", run_check)
+
+
+def _codes(got) -> set[str]:
+    return {reason["code"] for reason in got["assessment"]["reasons"]}
+
+
+def _requirement(got, ident) -> dict:
+    return next(r for r in got["assessment"]["requirements"] if r["id"] == ident)
+
+
+def _activity(got, ident) -> dict:
+    return next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == ident)
+
+
+def _refused(got, code="G6_E_INPUT_VALIDATION") -> None:
+    assert got["ok"] is False and got["completion_state"] == "blocked-escalated", got
+    assert got["warning_card"]["code"] == code and check_envelope(got) == []
+    assert "assessment" not in got and "merge" not in got
+
+
+# --- the registry ------------------------------------------------------------------------------------------------------
+
+def test_the_registry_holds_the_five_templates_with_their_families_obligations_and_assumptions():
+    families = {"example.v1": "requirement_satisfaction", "relation.v1": "requirement_satisfaction",
+                "access_rule.v1": "requirement_satisfaction", "differential.v1": "regression_preservation",
+                "forbidden_dependency.v1": "safety_structural"}
+    assert set(verification_templates.TEMPLATES) == set(TEMPLATE_IDS)
+    for ident, family in families.items():
+        definition = verification_templates.TEMPLATES[ident]
+        assert (definition.id, definition.family) == (ident, family)
+        assert definition.obligation and definition.assumptions and definition.bindings is not None
+        assert re.fullmatch(r"[a-z_]+\.v[0-9]+", definition.id)
+    # four compile to a test from a fixed text; the structural one runs no code
+    assert verification_templates.TEMPLATES["forbidden_dependency.v1"].text == ""
+    assert all(verification_templates.TEMPLATES[i].text for i in TEMPLATE_IDS[:4])
+
+
+# --- refusals before anything runs --------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", [
+    "os.system('x')", "__import__", "builtins.__import__", "cli.parse_args\nimport os", "cli.parse_args;import os",
+    "cli.parse_args()", "cli", "cli..parse_args", ".cli.parse_args", "cli.parse_args ", "cli.class", "cli.__dict__",
+    "c\u00e4li.parse_args", "cli.parse_args#x", "", 123, None, ["cli", "parse_args"],
+])
+def test_a_binding_with_code_in_a_name_refuses_the_review_before_anything_runs(tmp_path, monkeypatch, name):
+    root = _patch(_repo(tmp_path, CLI), {"cli.py": CLI_PATCH})
+    tiers, runs = Tiers(monkeypatch), Compiled(monkeypatch, {})
+    bad = instance("t1", "example.v1", {"function": name, "cases": [{"args": [[]], "returns": {}}]}, intent="change")
+    got = review(root, STATED["CLI"], template_instances=[bad])
+    _refused(got)
+    assert "function" in got["warning_card"]["message"]
+    assert tiers.calls == [] and runs.calls == []
+
+
+@pytest.mark.parametrize("name", ["ValueError('x')", "NotAnError", "os.system", "builtins.ValueError ", "len"])
+def test_an_exception_binding_must_be_a_builtin_exception_or_a_dotted_name(tmp_path, monkeypatch, name):
+    root = _patch(_repo(tmp_path, CLI), {"cli.py": CLI_PATCH})
+    tiers = Tiers(monkeypatch)
+    bad = instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [{"args": [[]], "raises": name}]},
+                   intent="change")
+    got = review(root, STATED["CLI"], template_instances=[bad])
+    if name == "os.system":   # a dotted name is checked against the tree, where os is not a module: not applicable
+        assert got["ok"] is True and _activity(got, "t1")["result"] == "refused"
+    else:
+        _refused(got)
+        assert tiers.calls == []
+
+
+class _Int(int):
+    pass
+
+
+@pytest.mark.parametrize("value", [(1, 2), {1, 2}, b"x", float("nan"), float("inf"), object(), {1: "a"}, _Int(3),
+                                   Decimal("1.5"), Path("x"), [[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]],
+                                   "x" * (64 * 1024)])
+def test_a_literal_that_is_not_json_data_refuses_the_review(tmp_path, monkeypatch, value):
+    root = _patch(_repo(tmp_path, CLI), {"cli.py": CLI_PATCH})
+    tiers = Tiers(monkeypatch)
+    bad = instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [{"args": [value], "returns": 1}]},
+                   intent="change")
+    got = review(root, STATED["CLI"], template_instances=[bad])
+    _refused(got)
+    assert "JSON" in got["warning_card"]["message"] or "characters" in got["warning_card"]["message"]
+    assert tiers.calls == []
+
+
+def _case(**fields):
+    return {"args": [[]], **fields}
+
+
+@pytest.mark.parametrize("items, said", [
+    ([{k: v for k, v in CLI_EXAMPLE.items() if k != "intent"}], "intent"),
+    ([{**CLI_EXAMPLE, "intent": "keep"}], "intent"),
+    ([{**CLI_EXAMPLE, "template": "example.v9"}], "template"),
+    ([{**CLI_EXAMPLE, "template": "state_invariant.v1"}], "template"),
+    ([{**CLI_EXAMPLE, "weight": 2}], "weight"),
+    ([{**CLI_EXAMPLE, "provenance": "stated"}], "provenance"),
+    ([{**CLI_EXAMPLE, "requirement_id": "R9"}], "R9"),
+    ([{**CLI_EXAMPLE, "bindings": "cli.parse_args"}], "bindings"),
+    ([CLI_EXAMPLE, {**CLI_EXAMPLE, "intent": "preserve"}], "unique"),
+    ([{**CLI_EXAMPLE, "id": f"t{i}"} for i in range(21)], "20"),
+    ([instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [_case(returns=1)] * 33})], "32"),
+    ([instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [_case(returns=1, raises="ValueError")]})],
+     "one of"),
+    ([instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [_case()]})], "one of"),
+    ([instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [{"args": [], "kwargs": {"no t": 1},
+                                                                             "returns": 1}]})], "kwargs"),
+    ([instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [_case(returns=1)], "extra": 1})], "extra"),
+    ([instance("t1", "relation.v1", {"relation": "round_trip", "function": "textcodec.encode", "inputs": ["a"]})],
+     "inverse"),
+    ([instance("t1", "relation.v1", {"relation": "idempotence", "function": "textcodec.encode",
+                                     "inverse": "textcodec.decode", "inputs": ["a"]})], "inverse"),
+    ([instance("t1", "relation.v1", {"relation": "monotonicity", "function": "cli.parse_args", "inputs": [3, 1]})],
+     "ascending"),
+    ([instance("t1", "relation.v1", {"relation": "monotonicity", "function": "cli.parse_args", "inputs": [1, "a"]})],
+     "ascending"),
+    ([instance("t1", "relation.v1", {"relation": "symmetry", "function": "cli.parse_args", "inputs": [1]})], "relation"),
+    ([instance("t1", "access_rule.v1", {"operation": "notes.update_note", "refusal": "falsy_return", "cases": [
+        {"args": [], "expected": "allowed", "who": "a", "resource": "r"}]})], "refused"),
+    ([instance("t1", "access_rule.v1", {"operation": "notes.update_note", "refusal": "exception", "cases": [
+        {"args": [], "expected": "allowed", "who": "a", "resource": "r"},
+        {"args": [], "expected": "refused", "who": "b", "resource": "r"}]})], "exception"),
+    ([instance("t1", "differential.v1", {"function": "pipeline.normalise", "mode": "everything", "calls": [{}]})],
+     "mode"),
+    ([instance("t1", "differential.v1", {"function": "pipeline.normalise", "mode": "outputs",
+                                         "calls": [{"args": ["x" * 400]}]})], "characters"),
+    ([instance("t1", "forbidden_dependency.v1", {"contract": "repository"}, intent="change")], "preserve"),
+    ([instance("t1", "forbidden_dependency.v1", {"contract": {"layers": ["shop.api"]}})], "package"),
+    ([instance("t1", "forbidden_dependency.v1", {"package": "shop", "contract": {}})], "layers"),
+    ([instance("t1", "forbidden_dependency.v1", {"package": "shop", "contract": {"layers": ["shop.api; x"]}})],
+     "dotted"),
+    ("cli.parse_args", "list"),
+])
+def test_an_invalid_template_instance_refuses_the_review_before_anything_runs(tmp_path, monkeypatch, items, said):
+    root = _patch(_repo(tmp_path, CLI), {"cli.py": CLI_PATCH})
+    tiers, runs = Tiers(monkeypatch), Compiled(monkeypatch, {})
+    got = review(root, STATED["CLI"], template_instances=items)
+    _refused(got)
+    assert said in got["warning_card"]["message"], got["warning_card"]["message"]
+    assert tiers.calls == [] and runs.calls == []
+
+
+def test_template_instances_and_proposed_checks_share_the_limit_of_twenty_and_their_ids(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CLI), {"cli.py": CLI_PATCH})
+    tiers = Tiers(monkeypatch)
+    proposed = [{"id": f"p{i}", "requirement_id": "R1", "intent": "change", "file": f"test_p{i}.py",
+                 "source": "def test_a():\n    pass\n"} for i in range(15)]
+    got = review(root, STATED["CLI"], proposed_checks=proposed,
+                 template_instances=[{**CLI_EXAMPLE, "id": f"t{i}"} for i in range(6)])
+    _refused(got)
+    assert "20" in got["warning_card"]["message"]
+    got = review(root, STATED["CLI"], proposed_checks=proposed[:1], template_instances=[{**CLI_EXAMPLE, "id": "p0"}])
+    _refused(got)
+    assert "unique" in got["warning_card"]["message"]
+    assert tiers.calls == []
+
+
+@pytest.mark.parametrize("value, said", [({"proposer": True}, "proposer"), ({"templates": "yes"}, "templates"),
+                                         ({"test_adequacy": 1}, "test_adequacy"), ("templates", "search")])
+def test_an_invalid_search_configuration_refuses_the_review(tmp_path, monkeypatch, value, said):
+    root = _patch(_repo(tmp_path, CLI), {"cli.py": CLI_PATCH})
+    tiers = Tiers(monkeypatch)
+    got = review(root, STATED["CLI"], search=value)
+    _refused(got)
+    assert said in got["warning_card"]["message"]
+    assert tiers.calls == []
+
+
+# --- applicability: an instance that does not apply is refused and reported, and the review goes on -------------------
+
+@pytest.mark.parametrize("bad, said", [
+    (instance("t1", "example.v1", {"function": "nomodule.parse_args", "cases": [_case(returns=1)]}, "change"),
+     "no module"),
+    (instance("t1", "example.v1", {"function": "cli.parse", "cases": [_case(returns=1)]}, "change"), "no top-level"),
+    (instance("t1", "example.v1", {"function": "cli.argparse.ArgumentParser", "cases": [_case(returns=1)]}, "change"),
+     "no module"),
+    (instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [{"args": [1, 2], "returns": 1}]}, "change"),
+     "arguments"),
+    (instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [{"kwargs": {"args": 1}, "returns": 1}]},
+              "change"), "arguments"),
+    (instance("t1", "example.v1", {"function": "cli.parse_args", "cases": [_case(raises="cli.NoSuchError")]},
+              "change"), "no top-level"),
+    (instance("t1", "relation.v1", {"relation": "idempotence", "function": "cli.two", "inputs": [1]}, "change"),
+     "arguments"),
+    (instance("t1", "example.v1", {"function": "cli.added", "cases": [{"args": [], "returns": 1}]}, "preserve"),
+     "base commit"),
+    (instance("t1", "differential.v1", {"function": "cli.added", "mode": "outputs", "calls": [{}]}, "preserve"),
+     "base commit"),
+    (instance("t1", "example.v1", {"function": "cli.removed", "cases": [{"args": [], "returns": 1}]}, "change"),
+     "working tree"),
+    (instance("t1", "example.v1", {"function": "cli.later", "cases": [{"args": [], "returns": 1}]}, "change"),
+     "asynchronous"),
+    (instance("t1", "example.v1", {"function": "star.anything", "cases": [{"args": [], "returns": 1}]}, "change"),
+     "star"),
+    (instance("t1", "forbidden_dependency.v1", {"contract": "repository"}), "contract"),
+    (instance("t1", "forbidden_dependency.v1", {"package": "nopackage", "contract": {"layers": ["nopackage.a"]}}),
+     "package"),
+])
+def test_a_template_that_does_not_apply_is_refused_and_reported_and_never_errors_the_review(tmp_path, monkeypatch,
+                                                                                           bad, said):
+    base = {**CLI, "cli.py": CLI_BASE + "\n\ndef removed():\n    return 1\n", "star.py": "from cli import *\n"}
+    root = _repo(tmp_path, base)
+    _patch(root, {"cli.py": CLI_PATCH + "\n\ndef two(a, b):\n    return a\n\n\ndef added():\n    return 1\n"
+                                        "\n\nasync def later():\n    return 1\n"})
+    Tiers(monkeypatch)
+    runs = Compiled(monkeypatch, {})
+    got = review(root, STATED["CLI"], template_instances=[bad])
+    assert got["ok"] is True and got["completion_state"] == "qualified-draft", got
+    if bad["template"] == "forbidden_dependency.v1":
+        # a structural check of a stated contract counts for its requirement, as a stated check does: one that could
+        # not be applied leaves the requirement not established
+        assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+        assert _codes(got) == {"check_did_not_run"}
+        assert _requirement(got, "R1")["status"] == "not_established"
+    else:   # a compiled check never decides a requirement, so one that does not apply changes nothing
+        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    found = _activity(got, "t1")
+    assert (found["activity"], found["result"], found["template"]) == ("template instance", "refused", bad["template"])
+    assert said in found["reason"], found["reason"]
+    assert found["model_calls"] == 0 and found["seconds"] == 0.0
+    assert runs.calls == []
+    assert "proposed_checks" not in _requirement(got, "R1")
+
+
+# --- the compiler: generated code comes only from the template's fixed text ----------------------------------------------
+
+HOSTILE = ["'); import os; os.system('touch /tmp/g6-pwned') #", "\"\"\"\nimport os\n\"\"\"", "\\x00\u202e\u0000",
+           "{BINDINGS}", "__import__('os').system('x')"]
+
+
+def _bindings_segment(source: str) -> str:
+    """The text of the one literal the compiled check assigns to ``BINDINGS``."""
+    [node] = [n for n in ast.parse(source).body if isinstance(n, ast.Assign)
+              and [t.id for t in n.targets if isinstance(t, ast.Name)] == ["BINDINGS"]]
+    return ast.get_source_segment(source, node.value)
+
+
+def _prepared(tmp_path, files, patch, items, name="repo"):
+    root = _patch(_repo(tmp_path, files, name), patch)
+    change = repo_tests.change(root)
+    return verification_templates.prepare(root, change, verification_templates.template_instances(items, {"R1"}))
+
+
+COMPILED = {
+    "example.v1": (CLI, {"cli.py": CLI_PATCH}, lambda strings: instance("t", "example.v1", {
+        "function": "cli.parse_args", "cases": [{"args": [strings], "returns": {s: s for s in strings}},
+                                                {"args": [strings[:1]], "raises": "SystemExit"},
+                                                {"args": [list(strings)], "effect": {"argument": 0, "equals": strings}}]},
+        intent="change")),
+    "relation.v1": (CODEC, {"textcodec.py": CODEC_PATCH}, lambda strings: instance("t", "relation.v1", {
+        "relation": "round_trip", "function": "textcodec.encode", "inverse": "textcodec.decode", "inputs": strings})),
+    "access_rule.v1": (NOTES, {"notes.py": NOTES_PATCH}, lambda strings: instance("t", "access_rule.v1", {
+        "operation": "notes.update_note", "refusal": "exception", "exception": "notes.Forbidden", "cases": [
+            {"who": strings[0][:90], "resource": "r", "args": [strings[1], {"owner": strings[2]}, "x"],
+             "expected": "allowed"},
+            {"who": "b", "resource": strings[3][:90], "args": ["b", {"owner": "a"}, strings[4]],
+             "expected": "refused"}]})),
+    "differential.v1": (PIPE, {"pipeline.py": PIPE_PATCH}, lambda strings: instance("t", "differential.v1", {
+        "function": "pipeline.normalise", "mode": "outputs",
+        "calls": [{"args": [{"name": s[:60], "amount": 1}]} for s in strings]})),
+}
+
+
+@pytest.mark.parametrize("template", list(COMPILED))
+def test_a_compiled_check_holds_the_callers_text_only_inside_its_one_literal(tmp_path, template):
+    files, patch, build = COMPILED[template]
+    plain = _prepared(tmp_path, files, patch, [build(["a", "b", "c", "d", "e"])], "plain")
+    hostile = _prepared(tmp_path, files, patch, [build(HOSTILE)], "hostile")
+    [one], [other] = plain.checks, hostile.checks
+    for check in (one, other):
+        source = check.source
+        assert source.isascii() and len(source.encode("utf-8")) <= verification_search.MAX_SOURCE_BYTES
+        assert f"\nTEMPLATE = {template!r}\n" in source
+        compile(source, "<compiled>", "exec")
+    segment = _bindings_segment(other.source)
+    # the literal is a literal: no name, call or operator in it
+    data = ast.literal_eval(segment)
+    assert isinstance(data, dict)
+    # everything but the literal is the template's fixed text, whatever the bindings
+    assert other.source.replace(segment, "BINDINGS_LITERAL") == one.source.replace(_bindings_segment(one.source),
+                                                                                    "BINDINGS_LITERAL")
+    assert other.source.replace(segment, "") == verification_templates.TEMPLATES[template].text.replace(
+        verification_templates.SLOT, "")
+    rest = other.source.replace(segment, "")
+    for text in HOSTILE:
+        assert text not in rest and text[:20] not in rest
+    for word in ("touch", "pwned", "system", "__import__"):
+        assert word not in rest
+    # the names reach the check as text in the literal, never as source
+    tokens = [t for t in tokenize.generate_tokens(io.StringIO(rest).readline) if t.type == tokenize.NAME]
+    names = {t.string for t in tokens}
+    assert not names & {"cli", "parse_args", "textcodec", "encode", "decode", "notes", "update_note", "Forbidden",
+                        "pipeline", "normalise"}
+
+
+def test_the_template_id_and_version_enter_every_digest_that_cites_an_instance(tmp_path, monkeypatch):
+    first = _prepared(tmp_path, CLI, {"cli.py": CLI_PATCH}, [CLI_EXAMPLE], "one")
+    renamed = verification_templates.TEMPLATES["example.v1"]
+    v2 = verification_templates.TemplateDefinition(**{**renamed.__dict__, "id": "example.v2",
+                                                      "text": renamed.text.replace("'example.v1'", "'example.v2'")})
+    monkeypatch.setitem(verification_templates.TEMPLATES, "example.v2", v2)
+    second = _prepared(tmp_path, CLI, {"cli.py": CLI_PATCH}, [{**CLI_EXAMPLE, "template": "example.v2"}], "two")
+    [a], [b] = first.checks, second.checks
+    assert _bindings_segment(a.source) == _bindings_segment(b.source)
+    assert hashlib.sha256(a.source.encode()).hexdigest() != hashlib.sha256(b.source.encode()).hexdigest()
+    assert first.origins["t-cli"].about["instance_sha256"] != second.origins["t-cli"].about["instance_sha256"]
+    assert first.origins["t-cli"].about["template"] == "example.v1"
+    same = verification_templates.instance_digest(verification_templates.template_instances([CLI_EXAMPLE], {"R1"})[0])
+    assert same == first.origins["t-cli"].about["instance_sha256"]
+
+
+# --- the compiled checks do what their templates say (plain pytest on G6's own fixtures, unconfined) ---------------------
+
+def _plain_run(tree: Path, placed: str, source: str) -> subprocess.CompletedProcess:
+    (tree / placed).parent.mkdir(parents=True, exist_ok=True)
+    (tree / placed).write_text(source, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "SYSTEMROOT", "TMP", "TEMP", "HOME", "USERPROFILE")}
+    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir=.", placed],
+                          cwd=tree, env={**env, "PYTHONPATH": str(tree)}, capture_output=True, text=True, timeout=120)
+
+
+@pytest.mark.parametrize("files, patch, item", [
+    (CODEC, {"textcodec.py": CODEC_PATCH}, ROUND_TRIP),
+    (NOTES, {"notes.py": NOTES_PATCH}, OWNER_RULE),
+    (CLI, {"cli.py": CLI_PATCH}, instance("t-keep", "example.v1", {"function": "cli.parse_args", "cases": [
+        {"args": [[]], "returns": {"count": 1}}, {"args": [["--count", "x"]], "raises": "SystemExit"}]})),
+], ids=["relation", "access_rule", "example"])
+def test_each_compiled_check_passes_on_the_base_and_fails_on_the_planted_defect(tmp_path, files, patch, item):
+    prepared = _prepared(tmp_path, files, {}, [item], "base")
+    [check] = prepared.checks
+    base = _plain_run(tmp_path / "base", prepared.placed[item["id"]], check.source)
+    assert base.returncode == 0, base.stdout + base.stderr
+    patched = _patch(tmp_path / "base", patch)
+    after = _plain_run(patched, prepared.placed[item["id"]], check.source)
+    assert after.returncode == 1 and "1 failed" in after.stdout, after.stdout + after.stderr
+
+
+def test_a_compiled_differential_probe_observes_each_call_and_the_planted_change(tmp_path):
+    item = instance("t-normalise", "differential.v1", {"function": "pipeline.normalise", "mode": "outputs", "calls": [
+        {"args": [{"name": " Ann ", "amount": 1.234}]}, {"args": [{"name": None, "amount": 1}]}]})
+    exceptions = instance("t-raises", "differential.v1", {"function": "pipeline.normalise", "mode": "exceptions",
+                                                          "calls": [{"args": [{"name": None, "amount": 1}]}]})
+    prepared = _prepared(tmp_path, PIPE, {}, [item, exceptions], "base")
+    seen = {}
+    for side in ("base", "patch"):
+        if side == "patch":
+            _patch(tmp_path / "base", {"pipeline.py": PIPE_PATCH})
+        for check in prepared.checks:
+            ran = _plain_run(tmp_path / "base", prepared.placed[check.id], check.source)
+            assert ran.returncode == 0, ran.stdout + ran.stderr
+            found = verification_search.reading({**result([prepared.placed[check.id]]), "output": ran.stdout},
+                                                prepared.placed[check.id])
+            seen[side, check.id] = found["observations"]
+    assert seen["base", "t-normalise"][0] == {"input": {"args": [{"name": " Ann ", "amount": 1.234}], "kwargs": {}},
+                                              "output": {"returned": {"amount": 1.23, "name": "ann"}}}
+    assert seen["base", "t-normalise"][1]["output"] == {"raised": "AttributeError"}
+    assert seen["patch", "t-normalise"][0]["output"] == {"returned": {"amount": 1.2, "name": "ann"}}
+    assert seen["base", "t-raises"] == seen["patch", "t-raises"] == [
+        {"input": {"args": [{"amount": 1, "name": None}], "kwargs": {}}, "output": {"raised": "AttributeError"}}]
+
+
+# --- the compiled checks through the review, with recorded runs ---------------------------------------------------------
+
+def test_a_compiled_check_runs_like_a_proposed_check_and_never_passes_a_requirement(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    runs = Compiled(monkeypatch, {"relation.v1": {"patch": "passed", "base": "passed"}})
+    unchecked = [*STATED["CODEC"], {"id": "R2", "text": "newlines survive encoding", "checks": []}]
+    got = review(root, unchecked, template_instances=[{**ROUND_TRIP, "requirement_id": "R2", "intent": "change"}])
+    assert runs.calls == [("relation.v1", False), ("relation.v1", True)]
+    second = _requirement(got, "R2")
+    assert second["status"] == "not_established"
+    assert second["proposed_checks"] == [{"id": "t-codec", "intent": "change", "result": "not_refuted"}]
+    assert "not refuted by 1 proposed check" in second["proposed_note"]
+    found = _activity(got, "t-codec")
+    assert (found["activity"], found["template"], found["provenance"], found["result"]) == (
+        "template instance", "relation.v1", "proposed", "not_refuted")
+    assert found["node"].startswith("g6_check_") and found["family"] == "requirement_satisfaction"
+    assert "G6" in found["proposed_by"] and "bindings" in found["proposed_by"]
+    assert got["assessment"]["outcome"] == "insufficient_evidence" and _codes(got) == {"requirement_without_check"}
+    assert got["completion_state"] == "qualified-draft"
+
+
+def test_a_compiled_counterexample_is_unconfirmed_evidence_with_its_reproduction(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    Compiled(monkeypatch, {"relation.v1": {"patch": "failed", "base": "passed"}})
+    got = review(root, STATED["CODEC"], template_instances=[ROUND_TRIP])
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("evidence", "unconfirmed_counterexample")]
+    assert "relation.v1" in assessment["reasons"][0]["detail"] and "compiled" in assessment["reasons"][0]["detail"]
+    assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"
+    [defect] = assessment["completion"]["defects_reproduced"]["proposed_checks"]
+    assert (defect["check"], defect["result"], defect["provenance"]) == ("t-codec", "counterexample", "proposed")
+    reproduction = defect["reproduction"]
+    assert "TEMPLATE = 'relation.v1'" in reproduction["text"]
+    assert reproduction["sha256"] == hashlib.sha256(reproduction["text"].encode("utf-8")).hexdigest()
+    assert reproduction["template"] == "relation.v1" and "fixed text" in reproduction["caution"]
+    assert any(reproduction["command"] in action for action in assessment["next_actions"])
+
+
+def test_a_differential_difference_is_a_counterexample_when_the_behaviour_must_be_kept(tmp_path, monkeypatch):
+    """The differential rule: a difference between base and patch on a call outside the change's declared scope is a
+    counterexample when the instance's intent is preserve (so at most insufficient evidence), and a question when it
+    is change."""
+    root = _patch(_repo(tmp_path, PIPE), {"pipeline.py": PIPE_PATCH})
+    Tiers(monkeypatch)
+    call = {"args": [{"name": " Ann ", "amount": 1.234}], "kwargs": {}}
+    Compiled(monkeypatch, {"differential.v1": {"base": [{"input": call, "output": {"returned": 1.23}}],
+                                               "patch": [{"input": call, "output": {"returned": 1.2}}]}})
+    kept = review(root, STATED["PIPE"], template_instances=[KEEP_NORMALISE])
+    assert kept["assessment"]["outcome"] == "insufficient_evidence", kept["assessment"]["reasons"]
+    assert _codes(kept) == {"unconfirmed_counterexample"}
+    found = _activity(kept, "t-normalise")
+    assert found["result"] == "counterexample" and found["family"] == "regression_preservation"
+    assert found["differences"] == [{"input": json.dumps(call, sort_keys=True), "base": '{"returned": 1.23}',
+                                     "patch": '{"returned": 1.2}'}]
+    [defect] = kept["assessment"]["completion"]["defects_reproduced"]["proposed_checks"]
+    assert defect["reproduction"]["differences"] == found["differences"]
+    assert "G6-OBSERVATION" in defect["reproduction"]["compare"]
+    assert kept["assessment"]["completion"]["open_questions"] == []
+    changed = review(root, STATED["PIPE"], template_instances=[{**KEEP_NORMALISE, "intent": "change"}])
+    assert changed["assessment"]["outcome"] == "supported_within_scope", changed["assessment"]["reasons"]
+    [question] = changed["assessment"]["completion"]["open_questions"]
+    assert question["result"] == "behaviour_changed" and "1.23" in question["question"]
+
+
+def test_templates_off_runs_free_form_checks_only_and_the_scope_records_the_configuration(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    free = {"id": "p1", "requirement_id": "R1", "intent": "preserve", "file": "test_free.py",
+            "source": "def test_free():\n    pass\n"}
+    runs = Compiled(monkeypatch, {free["source"]: {"patch": "passed", "base": "passed"},
+                                  "relation.v1": {"patch": "failed", "base": "passed"}})
+    got = review(root, STATED["CODEC"], template_instances=[ROUND_TRIP], proposed_checks=[free],
+                 search={"templates": False})
+    assert runs.calls == [(free["source"], False), (free["source"], True)]
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    skipped = _activity(got, "t-codec")
+    assert skipped["result"] == "skipped" and "templates" in skipped["reason"]
+    assert got["assessment"]["scope"]["search"] == {"templates": False, "test_adequacy": False,
+                                                    "template_instances": 1, "proposed_checks": 1, "model_calls": 0}
+    both = review(root, STATED["CODEC"], template_instances=[ROUND_TRIP], proposed_checks=[free])
+    assert both["assessment"]["scope"]["search"]["templates"] is True
+    assert [key for key, _ in runs.calls[2:]] == ["relation.v1", "relation.v1", free["source"], free["source"]]
+    assert both["assessment"]["outcome"] == "insufficient_evidence"
+    plain = review(root, STATED["CODEC"])
+    assert plain["assessment"]["scope"]["search"] == {"templates": True, "test_adequacy": False,
+                                                      "template_instances": 0, "proposed_checks": 0, "model_calls": 0}
+
+
+def test_compiled_checks_are_skipped_when_test_integrity_is_compromised(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH, "conftest.py": "import pytest\n"})
+    Tiers(monkeypatch)
+    runs = Compiled(monkeypatch, {})
+    got = review(root, STATED["CODEC"], template_instances=[ROUND_TRIP])
+    assert got["assessment"]["outcome"] == "test_integrity_compromised"
+    assert runs.calls == [] and _activity(got, "t-codec")["result"] == "skipped"
+
+
+def test_with_no_template_instances_and_no_search_every_decided_field_is_unchanged(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    runs = Compiled(monkeypatch, {})
+    plain = review(root, STATED["CODEC"])
+    for extra in ({"template_instances": None}, {"template_instances": []}, {"search": None}):
+        got = review(root, STATED["CODEC"], **extra)
+        for key in ("outcome", "reasons", "requirements", "unknowns", "next_actions"):
+            assert got["assessment"][key] == plain["assessment"][key], key
+        assert set(got) == set(plain) and got["evidence"] == plain["evidence"]
+        assert got["assessment"]["completion"]["test_adequacy"] == []
+    assert runs.calls == []
+    assert "verification_templates" not in " ".join(json.dumps(a) for a in plain["assessment"]["completion"][
+        "activities"])
+
+
+# --- forbidden_dependency.v1: static, against the repository's own contract or the caller's ----------------------------
+
+SHOP_RULE = [{"id": "R1", "text": "the layers hold", "checks": ["tests/test_shop.py::test_handle"]},
+             {"id": "R2", "text": "the data layer imports no higher layer", "checks": []}]
+
+
+def _shop(tmp_path, extra=None, patch=None, name="repo"):
+    root = _repo(tmp_path, {**SHOP, **(extra or {})}, name)
+    return _patch(root, patch if patch is not None else {"shop/data.py": DATA_IMPORTS_API})
+
+
+def test_forbidden_dependency_against_the_repositorys_own_contract_is_a_defect(tmp_path, monkeypatch):
+    root = _shop(tmp_path, {"pyproject.toml": LAYERS_TOML})
+    Tiers(monkeypatch)
+    runs = Compiled(monkeypatch, {})
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "defect_detected", assessment["reasons"]
+    [why] = [r for r in assessment["reasons"] if r["code"] == "forbidden_dependency_added"]
+    assert why["stage"] == "tier_1" and "shop.data" in why["detail"] and "shop.api" in why["detail"]
+    second = _requirement(got, "R2")
+    assert second["status"] == "failed"
+    assert [(c["id"], c["provenance"], c["verdict"]) for c in second["checks"]] == [("t-layers", "structural",
+                                                                                     "failed")]
+    found = _activity(got, "t-layers")
+    assert (found["result"], found["provenance"], found["contract_provenance"], found["ran_code"]) == (
+        "failed", "structural", "repository_stated", False)
+    assert "pyproject.toml" in found["contract_source"] and "base commit" in found["contract_source"]
+    [violation] = found["violations"]
+    assert (violation["from"], violation["to"], violation["file"], violation["line"]) == (
+        "shop.data", "shop.api", "shop/data.py", 2)
+    [stated] = assessment["completion"]["defects_reproduced"]["stated_and_repository_checks"]
+    assert (stated["check"], stated["provenance"], stated["code"]) == ("t-layers", "structural",
+                                                                       "forbidden_dependency_added")
+    assert stated["reproduction"]["imports"][0]["text"] == "from shop import api"
+    assert runs.calls == [] and got["completion_state"] == "qualified-draft"
+    assert any(e["obligation"].startswith("the layer rules") for e in assessment["completion"]["preservation"])
+
+
+@pytest.mark.parametrize("config", [
+    {".importlinter": "[importlinter]\nroot_package = shop\n\n[importlinter:contract:layers]\nname = shop layers\n"
+                      "type = layers\nlayers =\n    shop.api\n    shop.service\n    shop.data\n"},
+    {"setup.cfg": "[metadata]\nname = shop\n\n[importlinter]\nroot_package = shop\n\n[importlinter:contract:one]\n"
+                  "name = no upward import\ntype = forbidden\nsource_modules =\n    shop.data\nforbidden_modules =\n"
+                  "    shop.api\n"},
+], ids=["importlinter-file", "setup-cfg-forbidden"])
+def test_the_repositorys_contract_is_read_from_its_import_linter_configuration(tmp_path, monkeypatch, config):
+    root = _shop(tmp_path, config)
+    Tiers(monkeypatch)
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]["reasons"]
+    assert _activity(got, "t-layers")["violations"][0]["to"] == "shop.api"
+
+
+def test_forbidden_dependency_against_a_contract_the_caller_states_is_a_defect(tmp_path, monkeypatch):
+    root = _shop(tmp_path)
+    Tiers(monkeypatch)
+    stated = instance("t-mine", "forbidden_dependency.v1", {"package": "shop", "contract": {
+        "forbidden": [{"source": "shop.data", "forbidden": "shop.api"}]}}, requirement="R2")
+    got = review(root, SHOP_RULE, template_instances=[stated])
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]["reasons"]
+    found = _activity(got, "t-mine")
+    assert (found["contract_provenance"], found["result"]) == ("stated", "failed")
+    assert found["contract_source"] == "the instance's bindings"
+    assert _requirement(got, "R2")["status"] == "failed"
+
+
+def test_forbidden_dependency_against_a_contract_a_model_proposed_is_at_most_insufficient_evidence(tmp_path,
+                                                                                                    monkeypatch):
+    """Provenance ``model_hypothesis`` is set only by G6's own code (the proposer, VS-5); a request cannot carry it."""
+    root = _shop(tmp_path)
+    Tiers(monkeypatch)
+    proposed = verification_templates.TemplateInstance(
+        id="t-model", template="forbidden_dependency.v1", requirement_id="R1", intent="preserve",
+        bindings={"package": "shop", "contract": {"layers": ["shop.api", "shop.service", "shop.data"]}},
+        provenance="model_hypothesis")
+    got = review(root, SHOP_RULE[:1], template_instances=[proposed])
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("evidence", "unconfirmed_counterexample")]
+    assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"
+    assert [c["provenance"] for c in _requirement(got, "R1")["checks"]] == ["stated"]
+    found = _activity(got, "t-model")
+    assert (found["contract_provenance"], found["result"]) == ("model_hypothesis", "counterexample")
+    [defect] = assessment["completion"]["defects_reproduced"]["proposed_checks"]
+    assert defect["provenance"] == "model_hypothesis"
+    assert assessment["completion"]["defects_reproduced"]["stated_and_repository_checks"] == []
+
+
+def test_unmatched_contract_parts_and_imports_outside_the_package_are_out_of_scope_never_violations(tmp_path,
+                                                                                                     monkeypatch):
+    root = _shop(tmp_path, patch={"shop/data.py": "import requests\nimport json\n\n\ndef load(x):\n    return x\n"})
+    Tiers(monkeypatch)
+    stated = instance("t-scope", "forbidden_dependency.v1", {"package": "shop", "contract": {
+        "layers": ["shop.api", "shop.missing", "shop.service", "shop.data"],
+        "forbidden": [{"source": "shop.data", "forbidden": "requests"}, {"source": "shop.gone", "forbidden": "shop.api"}]}},
+        requirement="R2")
+    got = review(root, SHOP_RULE, template_instances=[stated])
+    found = _activity(got, "t-scope")
+    assert found["result"] == "passed" and found["violations"] == [], found
+    scope = " ".join(found["out_of_scope"])
+    assert "shop.missing" in scope and "shop.gone" in scope and "requests" in scope
+    assert "outside the package" in scope and "G6_E_DESIGN_CONTRACT_UNMATCHED" not in json.dumps(got["assessment"]
+                                                                                                ["reasons"])
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert _requirement(got, "R2")["status"] == "passed_on_stated_checks"
+    assert [d["requirement"] for d in got["assessment"]["completion"]["demonstrated"]] == ["R1", "R2"]
+    assert any("dynamic" in limit for limit in found["limits"])
+    nothing = instance("t-none", "forbidden_dependency.v1", {"package": "shop", "contract": {
+        "layers": ["shop.missing"]}}, requirement="R2")
+    got = review(root, SHOP_RULE, template_instances=[nothing])
+    assert _activity(got, "t-none")["result"] == "refused" and "matches no module" in _activity(got, "t-none")["reason"]
+
+
+def test_a_violation_the_base_commit_already_had_is_not_one_the_patch_adds(tmp_path, monkeypatch):
+    already = {"shop/data.py": DATA_IMPORTS_API, "pyproject.toml": LAYERS_TOML}
+    root = _shop(tmp_path, already, patch={"shop/data.py": DATA_IMPORTS_API + "\n\ndef more():\n    return 2\n"})
+    Tiers(monkeypatch)
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    found = _activity(got, "t-layers")
+    assert found["result"] == "passed" and found["violations"] == [] and found["already_at_base"], found
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
+def test_the_repositorys_contract_is_read_at_the_base_commit_so_the_patch_cannot_loosen_it(tmp_path, monkeypatch):
+    loosened = LAYERS_TOML.replace('"shop.api", "shop.service", "shop.data"', '"shop.service", "shop.data"')
+    root = _shop(tmp_path, {"pyproject.toml": LAYERS_TOML},
+                 patch={"shop/data.py": DATA_IMPORTS_API, "pyproject.toml": loosened})
+    Tiers(monkeypatch)
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    found = _activity(got, "t-layers")
+    assert found["result"] == "failed" and any("pyproject.toml" in limit for limit in found["limits"]), found
+    added = _shop(tmp_path, patch={"shop/data.py": DATA_IMPORTS_API, "pyproject.toml": LAYERS_TOML}, name="added")
+    got = review(added, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    assert _activity(got, "t-layers")["result"] == "refused" and "base commit" in _activity(got, "t-layers")["reason"]
+
+
+def test_the_repositorys_ignored_imports_are_honoured(tmp_path, monkeypatch):
+    ignoring = LAYERS_TOML + 'ignore_imports = ["shop.data -> shop.api"]\n'
+    root = _shop(tmp_path, {"pyproject.toml": ignoring})
+    Tiers(monkeypatch)
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    assert _activity(got, "t-layers")["result"] == "passed", _activity(got, "t-layers")
+
+
+def test_an_unsupported_repository_contract_is_out_of_scope(tmp_path, monkeypatch):
+    independence = ('[tool.importlinter]\nroot_package = "shop"\n\n[[tool.importlinter.contracts]]\nname = "apart"\n'
+                    'type = "independence"\nmodules = ["shop.api", "shop.data"]\n')
+    root = _shop(tmp_path, {"pyproject.toml": independence})
+    Tiers(monkeypatch)
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    found = _activity(got, "t-layers")
+    assert found["result"] == "refused" and "independence" in found["reason"], found
+    # a stated check the template could not apply leaves its requirement not established
+    assert _requirement(got, "R2")["status"] == "not_established"
+    assert "check_did_not_run" in _codes(got)
+
+
+# --- test adequacy: reported only ----------------------------------------------------------------------------------------
+
+CLAMP = {"clamp.py": "def clamp(x):\n    return x\n",
+         "test_clamp.py": "from clamp import clamp\n\n\ndef test_middle():\n    assert clamp(5) == 5\n"}
+CLAMP_PATCH = {"clamp.py": "def clamp(x):\n    return max(0, min(x, 10))\n"}
+CLAMP_RULE = [{"id": "R1", "text": "clamp keeps a value inside 0 to 10", "checks": ["test_clamp.py::test_middle"]}]
+
+
+class Mutants:
+    """Stands in for each mutant's run (``verification_search._run_mutant``): a mutant whose source holds ``kills`` fails
+    the checks; the others pass them. ``advance`` seconds pass on G6's clock with each run."""
+
+    def __init__(self, monkeypatch, kills="return None", *, advance=0.0):
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+        clock = [verification_search._clock()]
+        monkeypatch.setattr(verification_search, "_clock", lambda: clock[0])
+
+        def run(change, rel, source, ids, timeout_s):
+            self.calls.append((rel, tuple(ids)))
+            clock[0] += advance
+            return result(failed=list(ids)) if kills in source else result(list(ids))
+
+        monkeypatch.setattr(verification_search, "_run_mutant", run)
+
+
+def test_surviving_mutants_are_reported_in_test_adequacy_and_change_no_outcome(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CLAMP), CLAMP_PATCH)
+    Tiers(monkeypatch)
+    mutants = Mutants(monkeypatch)
+    plain = review(root, CLAMP_RULE)
+    got = review(root, CLAMP_RULE, search={"test_adequacy": True})
+    for key in ("outcome", "reasons", "requirements", "unknowns"):
+        assert got["assessment"][key] == plain["assessment"][key], key
+    assert got["assessment"]["outcome"] == "supported_within_scope"
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    expected = mutation_check.mutants(CLAMP_PATCH["clamp.py"], 6, {2})
+    assert (adequacy["requirement"], adequacy["killed"], adequacy["survived"]) == ("R1", 1, len(expected) - 1)
+    assert adequacy["checks"] == ["test_clamp.py::test_middle"]
+    assert {s["mutant"] for s in adequacy["survivors"]} == {m.describe() for m in expected
+                                                            if "return None" not in m.source}
+    assert all(s["file"] == "clamp.py" for s in adequacy["survivors"]) and "changes no outcome" in adequacy["note"]
+    assert mutants.calls == [("clamp.py", ("test_clamp.py::test_middle",))] * len(expected)
+    runs = [a for a in got["assessment"]["completion"]["activities"] if a["activity"] == "mutation run"]
+    assert len(runs) == len(expected) and all(a["model_calls"] == 0 for a in runs)
+    assert got["assessment"]["scope"]["search"]["test_adequacy"] is True
+    assert plain["assessment"]["completion"]["test_adequacy"] == []
+
+
+def test_test_adequacy_stops_at_the_deadline_and_lists_the_mutants_it_skipped(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CLAMP), CLAMP_PATCH)
+    Tiers(monkeypatch)
+    mutants = Mutants(monkeypatch, advance=9.0)
+    got = review(root, CLAMP_RULE, timeout_s=22, search={"test_adequacy": True})
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    assert 1 <= len(mutants.calls) < 3
+    assert adequacy["skipped"] and all(s["reason"] for s in adequacy["skipped"])
+    assert adequacy["killed"] + adequacy["survived"] + len(adequacy["skipped"]) == 3
+    assert got["assessment"]["outcome"] == "supported_within_scope"
+
+
+def test_test_adequacy_measures_only_requirements_whose_stated_checks_passed(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, {**CLAMP, "test_more.py": "def test_more():\n    assert True\n"}), CLAMP_PATCH)
+    Tiers(monkeypatch, failing=("test_more.py::test_more",))
+    Mutants(monkeypatch)
+    rules = [*CLAMP_RULE, {"id": "R2", "text": "more", "checks": ["test_more.py::test_more"]},
+             {"id": "R3", "text": "no check", "checks": []}]
+    got = review(root, rules, search={"test_adequacy": True})
+    found = {entry["requirement"]: entry for entry in got["assessment"]["completion"]["test_adequacy"]}
+    assert found["R2"]["result"] == "not_run" and "did not all pass" in found["R2"]["reason"]
+    assert found["R3"]["result"] == "not_run" and "no stated check" in found["R3"]["reason"]
+    assert got["assessment"]["outcome"] == "defect_detected"
+
+
+# --- the MCP surface ------------------------------------------------------------------------------------------------------
+
+def test_the_mcp_tool_takes_template_instances_and_search_and_keeps_its_envelope_and_codes(tmp_path, monkeypatch):
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    root = _patch(_repo(tmp_path, CODEC), {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    Compiled(monkeypatch, {"relation.v1": {"patch": "failed", "base": "passed"}})
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def finished(client, arguments) -> dict:
+        job = data(await client.call_tool("g6_review_patch", {"repo": str(root), "task": "Escape newlines.",
+                                                              "requirements": STATED["CODEC"], **arguments}))
+        for _ in range(400):
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+            if got.get("status") in ("completed", "failed"):
+                assert got["status"] == "completed", got
+                return got["result"]
+            await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            plain = await finished(client, {})
+            searched = await finished(client, {"template_instances": [ROUND_TRIP], "search": {"templates": True}})
+            refused = await finished(client, {"template_instances": [{**ROUND_TRIP, "bindings": {
+                "relation": "round_trip", "function": "os.system('x')", "inverse": "textcodec.decode",
+                "inputs": ["a"]}}]})
+        return tool, plain, searched, refused
+
+    tool, plain, searched, refused = asyncio.run(flow())
+    for name in ("template_instances", "search"):
+        assert name in tool.parameters["properties"] and name in tool.description
+    assert plain["assessment"]["outcome"] == "supported_within_scope"
+    assert searched["assessment"]["outcome"] == "insufficient_evidence"
+    assert "unconfirmed_counterexample" in _codes(searched)
+    for got in (plain, searched):
+        assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+        assert check_envelope(got) == [] and got["request_id"] and "run_id" in got
+    assert set(searched) == set(plain)
+    assert [set(item) for item in searched["evidence"]] == [set(item) for item in plain["evidence"]]
+    assert refused["completion_state"] == "blocked-escalated"
+    assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "assessment" not in refused
+
+
+# --- real confined runs (Linux bubblewrap; run in Docker on Windows) ------------------------------------------------------
+
+@pytest.mark.parametrize("kind, item, expected, code", [
+    ("CODEC", ROUND_TRIP, "counterexample", "unconfirmed_counterexample"),
+    ("CLI", CLI_EXAMPLE, "unconfirmed_failure", "unconfirmed_failure"),
+    ("NOTES", OWNER_RULE, "counterexample", "unconfirmed_counterexample"),
+    ("PIPE", KEEP_NORMALISE, "counterexample", "unconfirmed_counterexample"),
+], ids=["library-round-trip", "cli-parser-example", "handler-ownership-rule", "pipeline-differential"])
+def test_confined_each_template_catches_its_planted_defect_on_its_kind_of_application(tmp_path, bwrap_backend, kind,
+                                                                                       item, expected, code):
+    files = {"CODEC": (CODEC, {"textcodec.py": CODEC_PATCH}), "CLI": (CLI, {"cli.py": CLI_PATCH}),
+             "NOTES": (NOTES, {"notes.py": NOTES_PATCH}), "PIPE": (PIPE, {"pipeline.py": PIPE_PATCH})}[kind]
+    root = _patch(_repo(tmp_path, files[0]), files[1])
+    before = patch_review.digest(repo_tests.snapshot(root))
+    got = review(root, STATED[kind], template_instances=[item])
+    assessment = got["assessment"]
+    found = _activity(got, item["id"])
+    assert found["result"] == expected, found
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("evidence", code)]
+    assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"
+    assert got["completion_state"] == "qualified-draft"
+    assert got["artifact_digest"] == before == patch_review.digest(repo_tests.snapshot(root))
+    # on the base commit's code alone, nothing is found
+    clean = _repo(tmp_path, files[0], "clean")
+    _patch(clean, {"NOTES_CHANGELOG.txt": "a change with no code\n"})
+    quiet = review(clean, STATED[kind], template_instances=[item])
+    assert _activity(quiet, item["id"])["result"] in ("not_refuted", "unconfirmed_failure"), _activity(quiet, item["id"])
+
+
+def test_confined_a_compiled_reproduction_runs_with_plain_pytest_without_g6(tmp_path, bwrap_backend):
+    root = _patch(_repo(tmp_path, NOTES), {"notes.py": NOTES_PATCH})
+    got = review(root, STATED["NOTES"], template_instances=[OWNER_RULE])
+    [defect] = got["assessment"]["completion"]["defects_reproduced"]["proposed_checks"]
+    reproduction = defect["reproduction"]
+    patched = tmp_path / "patched"
+    base = _repo(tmp_path, NOTES, "base-copy")
+    import shutil
+    shutil.copytree(root, patched, ignore=shutil.ignore_patterns(".git"))
+    for tree in (patched, base):
+        (tree / reproduction["file"]).parent.mkdir(parents=True, exist_ok=True)
+        (tree / reproduction["file"]).write_text(reproduction["text"], encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if key in ("PATH", "HOME")}
+    boot = ("import sys; sys.modules['g6'] = None; import pytest; "
+            f"raise SystemExit(pytest.main({reproduction['arguments']!r}))")
+    on_patch = subprocess.run([sys.executable, "-c", boot], cwd=patched, env={**env, **reproduction["environment"]},
+                              capture_output=True, text=True, timeout=120)
+    at_base = subprocess.run([sys.executable, "-c", boot], cwd=base, env={**env, **reproduction["environment"]},
+                             capture_output=True, text=True, timeout=120)
+    assert on_patch.returncode == 1 and "1 failed" in on_patch.stdout, on_patch.stdout + on_patch.stderr
+    assert at_base.returncode == 0 and "1 passed" in at_base.stdout, at_base.stdout + at_base.stderr
+
+
+def test_confined_forbidden_dependency_reads_imports_only_and_runs_no_code(tmp_path, bwrap_backend):
+    root = _shop(tmp_path, {"pyproject.toml": LAYERS_TOML})
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]["reasons"]
+    assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"
+    assert _requirement(got, "R2")["status"] == "failed"
+    assert _activity(got, "t-layers")["ran_code"] is False
+
+
+def test_confined_surviving_mutants_are_reported_and_change_no_outcome(tmp_path, bwrap_backend):
+    root = _patch(_repo(tmp_path, CLAMP), CLAMP_PATCH)
+    got = review(root, CLAMP_RULE, search={"test_adequacy": True})
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    assert (adequacy["killed"], adequacy["survived"]) == (1, 2), adequacy
+    assert all(run["verdict"] in ("passed", "failed") for run in got["assessment"]["completion"]["activities"]
+               if run["activity"] == "mutation run")
+    assert got["artifact_digest"] == patch_review.digest(repo_tests.snapshot(root))

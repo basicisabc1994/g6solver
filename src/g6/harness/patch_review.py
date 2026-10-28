@@ -18,13 +18,15 @@
 2. ``defect_detected``: a stated check or extra test failed, or failed to collect because of the repository's own
    code; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the base
    commit (a moved test file runs there at its old path). One that does not pass at the base commit either, or could
-   not be run there, is not counted against the patch: an unknown;
+   not be run there, is not counted against the patch: an unknown. Or the patch adds an import that a contract the
+   repository declares (its import-linter configuration at the base commit) or the caller states forbids
+   (``forbidden_dependency_added``, a ``forbidden_dependency.v1`` template instance, read from the files);
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
    run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
    by the time limit, never reached before it), the tier 1 run out of time, a shortcut only the claim's text reports
    (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at its
-   limit, or a proposed check finding a counterexample or a failure of the change, neither confirmed
-   (``unconfirmed_counterexample``, ``unconfirmed_failure``);
+   limit, or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure
+   of the change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
    support on the checks named, never a claim that the patch does everything the task needs.
 
@@ -34,7 +36,7 @@ the stated checks with the extra tests in one confined run; tier 2, the tests th
 only when tier 1 found no integrity problem and no defect, and then, when nothing so far found a problem, the stated
 checks that passed run against the base commit's code in a copy: one that passes there too may not exercise the
 change, an unknown with a next action and never an outcome (review I8); tier 3 (mutation, old-against-new probes)
-is not run here.
+is not run here, except mutation for test adequacy and old-against-new probes as template instances, when asked.
 
 Each requirement and each check says where it came from (``provenance``). A request's requirements are ``stated``, of
 kind ``requirement``; only a ``stated``, ``repository_stated`` or ``person_confirmed`` one is assessed. An ``inferred``
@@ -53,8 +55,18 @@ requirement and never gives ``defect_detected`` or ``test_integrity_compromised`
 change gives a reason with stage ``evidence`` (so at most ``insufficient_evidence``) and its reproduction in the next
 actions. A reason says what the check found in G6's own words; what the check printed or failed with, which is the
 caller's text, stays in ``assessment.completion``. Where no operating-system boundary can confine those runs the review is refused, whatever the person allowed.
-Every reply carries ``assessment.completion``, built from what ran; with no proposed checks every decided field is as
-before.
+
+Optional ``template_instances`` (``g6.harness.verification_templates``): instances of G6's reviewed templates, each
+naming a requirement, an intent and bindings that are data (dotted names G6 finds in the files, JSON literals), counted
+with the proposed checks within 20 and checked before anything runs (an invalid one refuses the review; one the tree
+gives nothing to apply to is refused alone and reported). G6 compiles ``example.v1``, ``relation.v1``,
+``access_rule.v1`` and ``differential.v1`` from each template's fixed text into checks run as proposed checks are,
+which never pass a requirement; ``forbidden_dependency.v1`` reads imports only, and against a contract the repository
+or the caller states it counts for its requirement as a stated check does. Optional ``search``: ``templates`` false
+runs free-form checks only; ``test_adequacy`` true reports, for each requirement, the mutants of the changed lines its
+stated checks killed and those that survived, which decides nothing. The configuration is in ``scope.search``.
+Every reply carries ``assessment.completion``, built from what ran; with no proposed checks, no template instance and
+no search setting, every decided field is as before.
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -137,7 +149,15 @@ NORMATIVE = frozenset({"stated", "repository_stated", "person_confirmed"})
 #: check the caller proposes is ``proposed`` (``assessment.completion``). ``structural`` and ``adopted_proposal`` are
 #: kept for verification search's later phases; no check has them yet.
 CheckProvenance = Literal["stated", "derived", "structural", "proposed", "adopted_proposal"]
-STATED, DERIVED = "stated", "derived"
+STATED, DERIVED, STRUCTURAL = "stated", "derived", "structural"
+#: A structural check of a stated contract that found an import the patch adds and the contract forbids: a defect.
+STRUCTURAL_DEFECT = "forbidden_dependency_added"
+DEFECT_CODES = frozenset({"check_failed", "derived_test_regressed", STRUCTURAL_DEFECT})
+INTEGRITY_SKIP = ("the review found an integrity problem, so the checks would run under tests or a test runner that "
+                  "may be weakened")
+TIER_3_ADEQUACY = ("tier 3: mutation of the changed lines ran only for test adequacy (assessment.completion."
+                   "test_adequacy), which changes no outcome; old-against-new probes run only as differential template "
+                   "instances")
 #: The fields only G6, or Python code that builds a ``Requirement``, sets: a request's requirements cannot carry them.
 SET_BY_G6 = ("provenance", "kind", "merged_from")
 
@@ -263,10 +283,11 @@ def _names(check: str, files: set[str]) -> bool:
     return any(path == head or path.startswith(head + "/") for path in files)
 
 
-def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None,
-            proposed_checks=None) -> tuple[list[Requirement], list, list, list]:
-    """The requirements (with an intent's items mapped in), the intent's assumptions and its unknowns, and the proposed
-    checks; a refusal for any invalid input."""
+def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None, proposed_checks=None,
+            template_instances=None, search=None) -> tuple[list[Requirement], list, list, list, list, dict | None]:
+    """The requirements (with an intent's items mapped in), the intent's assumptions and its unknowns, the proposed
+    checks, the template instances and the search configuration (None when no search setting or instance was given);
+    a refusal for any invalid input."""
     def bad(message: str) -> _Refused:
         return _Refused("G6_E_INPUT_VALIDATION", message)
 
@@ -301,14 +322,33 @@ def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None,
     if len({r.id for r in stated}) != len(stated):
         raise bad("requirement ids must be unique")
     proposed = []
+    assessed = {req.id for req in stated if req.provenance in NORMATIVE}
     if proposed_checks is not None and proposed_checks != []:
         from g6.harness import verification_search   # only for proposed checks
         try:
-            proposed = verification_search.proposed_checks(
-                proposed_checks, {req.id for req in stated if req.provenance in NORMATIVE})
+            proposed = verification_search.proposed_checks(proposed_checks, assessed)
         except ValueError as exc:
             raise bad(str(exc)) from exc
-    return stated, assumed, unmapped, proposed
+    instances, config = [], None
+    if search is not None:
+        from g6.harness import verification_search   # only for a search setting
+        try:
+            config = verification_search.search_config(search)
+        except ValueError as exc:
+            raise bad(str(exc)) from exc
+    if template_instances is not None and template_instances != []:
+        from g6.harness import verification_search, verification_templates   # only for template instances
+        try:
+            instances = verification_templates.template_instances(template_instances, assessed)
+        except ValueError as exc:
+            raise bad(str(exc)) from exc
+        if len(instances) + len(proposed) > verification_search.MAX_CHECKS:
+            raise bad(f"at most {verification_search.MAX_CHECKS} checks in all, proposed checks and template "
+                      f"instances together; {len(proposed) + len(instances)} were given")
+        if {one.id for one in instances} & {one.id for one in proposed}:
+            raise bad("check ids must be unique across proposed checks and template instances")
+        config = config or verification_search.search_config(None)
+    return stated, assumed, unmapped, proposed, instances, config
 
 
 def _covers(check: str, node: str) -> bool:
@@ -395,9 +435,12 @@ def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", 
             "receipt": ran.get("receipt", ""), "provenance": provenance}
 
 
-def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str]) -> dict:
+def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str], structural=()) -> dict:
+    """A requirement's status from its stated checks, and from ``structural``: the structural checks of a stated
+    contract that name it (verification search's ``forbidden_dependency.v1``), which count as stated checks do."""
     checks = [{"id": check, "provenance": STATED, **verdicts[check]}
               for check in dict.fromkeys(norm[raw] for raw in req.checks)]
+    checks += list(structural)
     out = {"id": req.id, "text": req.text, "provenance": req.provenance, "kind": req.kind, "checks": checks}
     if req.merged_from:
         out["merged_from"] = list(req.merged_from)
@@ -523,7 +566,8 @@ def _grounding(claim: str, sources: dict[str, str] | None) -> dict:
 def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests: list[str] | tuple[str, ...] = (),
                  claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
                  expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
-                 proposed_checks: list[dict] | None = None) -> dict:
+                 proposed_checks: list[dict] | None = None, template_instances: list[dict] | None = None,
+                 search: dict | None = None) -> dict:
     """Assess the working tree's patch against ``base`` on the stated requirements (``[{id, text, checks}]``, checks
     being pytest node ids) and the extra ``tests``. Never accepts claimed test results; never authorises a merge.
 
@@ -533,11 +577,15 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
     Optional ``proposed_checks`` (``[{id, requirement_id, intent, file, source, test}]``, at most 20) run in confined
     copies of the patch and of the base commit's code and never pass a requirement
     (``g6.harness.verification_search``); an invalid one is refused before anything runs.
+    Optional ``template_instances`` (``[{id, template, requirement_id, intent, bindings}]``, counted with the
+    proposed checks within the 20) fill G6's templates (``g6.harness.verification_templates``); an invalid one is
+    refused before anything runs, and one the tree gives nothing to apply to is refused and reported only. Optional
+    ``search`` (``{"templates": bool, "test_adequacy": bool}``) runs free-form checks only, or measures test adequacy.
     """
     started = time.monotonic()
     try:
-        stated, assumed, unmapped, proposed = _inputs(task, claim, tests, sources, timeout_s, requirements, intent,
-                                                      proposed_checks)
+        stated, assumed, unmapped, proposed, instances, config = _inputs(
+            task, claim, tests, sources, timeout_s, requirements, intent, proposed_checks, template_instances, search)
         root = repo_tests.checked_repo(repo)
         before = repo_tests.snapshot(root)
         artifact = digest(before)
@@ -551,6 +599,10 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                 placed = verification_search.placements(root, proposed)
             except ValueError as exc:
                 raise _Refused("G6_E_INPUT_VALIDATION", str(exc)) from exc
+        prepared = None
+        if instances:   # read from files only, before anything runs: an instance that does not apply is refused alone
+            from g6.harness import verification_templates
+            prepared = verification_templates.prepare(root, change, instances, enabled=config["templates"])
         # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
         listed = [req for req in stated if req.provenance not in NORMATIVE]
         stated = [req for req in stated if req.provenance in NORMATIVE]
@@ -560,7 +612,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         ids = list(dict.fromkeys([*stated_ids, *(norm[raw] for raw in tests)]))
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
                        deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
-                       unmapped=unmapped, proposed=proposed, placed=placed)
+                       unmapped=unmapped, proposed=proposed, placed=placed, prepared=prepared, config=config)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -584,7 +636,8 @@ def _untrusted(tier: int, ran: dict) -> str:
 
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
-            started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None) -> dict:
+            started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, prepared=None,
+            config=None) -> dict:
     reasons: list[dict] = []
     unknowns: list[str] = list(unmapped)   # what an intent held that is not a check of this patch
     runs: list[dict] = []
@@ -637,6 +690,19 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                    node=check, ran=first)
         elif verdicts[check]["verdict"] != "passed" and check not in stated_ids:
             unknowns.append(f"extra test {check} did not run to a pass: {verdicts[check]['verdict']}")
+    # Verification search's structural checks (forbidden_dependency.v1), read from the files before anything ran: one
+    # against a stated contract counts for its requirement as a stated check does; a model's contract decides nothing.
+    structural = list(prepared.structural) if prepared is not None else []
+    for found in structural:
+        if found["verdict"] == FAILED:
+            reasons.append({"stage": "tier_1", "code": STRUCTURAL_DEFECT, "detail": found["detail"]})
+            defects.append({"code": STRUCTURAL_DEFECT, "node": found["id"], "detail": found["detail"],
+                            "provenance": STRUCTURAL, "contract_provenance": found["contract_provenance"],
+                            "reproduction": found["reproduction"]})
+        elif found["verdict"] == "counterexample":
+            reason("evidence", "unconfirmed_counterexample", f"{found['id']} (an instance of forbidden_dependency.v1 "
+                   "for a contract a model proposed): the patch adds an import that contract forbids; unconfirmed: "
+                   "a model's contract decides no requirement, and the imports are in assessment.completion")
 
     # Tier 2: the tests that touch the changed modules, only when tier 1 found no integrity problem and no defect.
     second: dict = {}
@@ -666,17 +732,28 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                                 f"({second['verdict']}): {second.get('said', '')}")
     follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns)
     search = None
-    if proposed:   # verification search: the caller's proposed checks, each on the patch and at the base commit
-        from g6.harness import verification_search
+    compiled = list(prepared.checks) if prepared is not None else []
+    if proposed or compiled:   # verification search: compiled template instances first, then the caller's proposed
+        from g6.harness import verification_search   # checks, each on the patch and at the base commit
+        checks, where = [*compiled, *proposed], {**(prepared.placed if prepared else {}), **(placed or {})}
+        origins = prepared.origins if prepared is not None else {}
         if any(r["stage"] == "integrity" for r in reasons):
-            search = verification_search.not_run(proposed, placed, "the review found an integrity problem, so the "
-                                                 "checks would run under tests or a test runner that may be weakened")
+            search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
-            search = verification_search.search(change, proposed, placed, deadline=deadline, artifact=artifact)
+            search = verification_search.search(change, checks, where, deadline=deadline, artifact=artifact,
+                                                origins=origins)
         for code, detail in search.reasons:
             reason("evidence", code, detail)
         follow_ups = [*follow_ups, *search.next_actions]
-    skipped.append({"tier": 3, "check": "mutation and old-against-new probes", "reason": TIER_3})
+    adequacy = None
+    if config is not None and config["test_adequacy"]:   # report only: it changes no outcome
+        from g6.harness import verification_search
+        integrity = any(r["stage"] == "integrity" for r in reasons)
+        adequacy = verification_search.measure_adequacy(
+            change, stated, norm, verdicts, deadline=deadline, base_seconds=float(first.get("seconds") or 1.0),
+            skip=INTEGRITY_SKIP if integrity else "")
+    skipped.append({"tier": 3, "check": "mutation and old-against-new probes",
+                    "reason": TIER_3_ADEQUACY if adequacy is not None else TIER_3})
 
     if repo_tests.snapshot(root) != before:
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
@@ -706,7 +783,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         else:
             merge_reasons.append(finding.get("message", ""))
 
-    evaluated = [_requirement(req, verdicts, norm) for req in stated]
+    normative = [found for found in structural if found["normative"]]
+    evaluated = [_requirement(req, verdicts, norm, [_structural_check(found) for found in normative
+                                                    if found["requirement"] == req.id]) for req in stated]
     if search is not None:
         verification_search.annotate(evaluated, search)
     if not stated:
@@ -718,10 +797,25 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if verdicts[check]["verdict"] not in DEFECTS and verdicts[check]["verdict"] != "passed":
             reason("evidence", "check_did_not_run", f"{check}: {verdicts[check]['verdict']} "
                                                     f"({verdicts[check]['detail']})")
+    for found in normative:
+        if found["verdict"] == "not_run":
+            reason("evidence", "check_did_not_run", f"{found['id']}: forbidden_dependency.v1 could not be applied or "
+                                                    "could not read every file, so this check did not run (why is in "
+                                                    "assessment.completion.activities)")
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
-                  artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects)
+                  artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
+                  prepared=prepared, adequacy=adequacy, config=config,
+                  counts={"template_instances": prepared.instances if prepared is not None else 0,
+                          "proposed_checks": len(proposed)})
+
+
+def _structural_check(found: dict) -> dict:
+    """A structural check of a stated contract, as its requirement lists it."""
+    return {"id": found["id"], "provenance": STRUCTURAL, "verdict": found["verdict"],
+            "detail": found["activity"].get("reason") or found.get("detail", ""), "template": "forbidden_dependency.v1",
+            "contract_provenance": found["contract_provenance"]}
 
 
 AT_BASE = "stated checks at the base commit"
@@ -841,13 +935,14 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
-           sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=()) -> dict:
+           sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
+           adequacy=None, config=None, counts=None) -> dict:
     from g6.harness import verification_search   # the completion report, in every reply
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
     if "integrity" in stages:
         outcome, why = INTEGRITY, [r["detail"] for r in reasons if r["stage"] == "integrity"]
-    elif codes & {"check_failed", "derived_test_regressed"}:
+    elif codes & DEFECT_CODES:
         outcome, why = DEFECT, [r["detail"] for r in reasons if r["stage"] in ("tier_1", "tier_2")]
     elif "evidence" in stages:
         outcome, why = INSUFFICIENT, [r["detail"] for r in reasons if r["stage"] == "evidence"]
@@ -877,10 +972,15 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
         "specification_note": SPECIFICATION_NOTE, "proposals": proposals,
         "scope": {"artifact_digest": artifact, "base_commit": change.base_commit, "changed_files": list(change.files),
                   "environment": environment, "checks_run": runs, "checks_skipped": skipped, "receipts": receipts,
-                  "assumptions": assumptions, "seconds": round(time.monotonic() - started, 3)},
+                  "assumptions": assumptions,
+                  # the search configuration (protocol item 1): what ran besides the stated checks, and no model call
+                  "search": {**(config or verification_search.search_config(None)),
+                             **(counts or {"template_instances": 0, "proposed_checks": 0}), "model_calls": 0},
+                  "seconds": round(time.monotonic() - started, 3)},
         "unknowns": unknowns, "next_actions": next_actions, "not_checked": list(NOT_CHECKED),
         "completion": verification_search.completion(evaluated, receipts, runs, skipped, list(defects), search,
-                                                     artifact=artifact, base_commit=change.base_commit)}
+                                                     artifact=artifact, base_commit=change.base_commit,
+                                                     templates=prepared, adequacy=adequacy)}
     card = warning_card(CODE, summary, next_actions[0])
     return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                               request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]),

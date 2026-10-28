@@ -58,8 +58,10 @@ def _golden() -> dict:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]
 
 
-@pytest.mark.parametrize("extra", [{}, {"intent": None}, {"proposed_checks": None}, {"proposed_checks": []}],
-                         ids=["as-the-trial-calls", "intent-none", "proposed-checks-none", "proposed-checks-empty"])
+@pytest.mark.parametrize("extra", [{}, {"intent": None}, {"proposed_checks": None}, {"proposed_checks": []},
+                                   {"template_instances": None}, {"template_instances": []}, {"search": None}],
+                         ids=["as-the-trial-calls", "intent-none", "proposed-checks-none", "proposed-checks-empty",
+                              "template-instances-none", "template-instances-empty", "search-none"])
 def test_with_search_off_and_no_intent_every_decided_field_is_unchanged(bwrap_backend, extra):
     assert replies(**extra) == _golden()
 
