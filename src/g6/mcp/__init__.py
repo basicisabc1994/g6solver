@@ -164,11 +164,26 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")
+        from g6.core import component_process
+        from g6.core.stop import STOPPED
         from g6.harness.patch_review import review_patch
-        return jobs.start(lambda: review_patch(repo, task=task, requirements=requirements or [], tests=tests or [],
-                                               claim=claim, sources=sources, base=base,
-                                               expected_artifact_digest=expected_artifact_digest,
-                                               timeout_s=timeout_s))
+
+        def review() -> dict:
+            # review_patch lets these reach an enclosing door; this job has none, so it names them here
+            try:
+                return review_patch(repo, task=task, requirements=requirements or [], tests=tests or [], claim=claim,
+                                    sources=sources, base=base, expected_artifact_digest=expected_artifact_digest,
+                                    timeout_s=timeout_s)
+            except component_process.ExecutionInterrupted as exc:
+                if exc.stopped:
+                    return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")
+                return blocked_reply(f"[G6_E_PATCH_REVIEW_INTERRUPTED] the patch review's time allowance ended before "
+                                     f"it finished, so it has no outcome: {exc}")
+            except component_process.ContainmentFailure as exc:
+                return blocked_reply("[G6_E_PATCH_REVIEW_INTERRUPTED] G6 could not confirm that the review's test "
+                                     f"processes ended, so nothing from it is used: {exc}")
+
+        return jobs.start(review)
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))

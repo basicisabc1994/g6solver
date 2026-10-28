@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from g6.core import confine
+from g6.core import component_process, confine
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.harness import patch_review
 from g6.harness.patch_review import review_patch
@@ -51,7 +51,8 @@ def review(repo, requirements=SUM, **kwargs):
                         **kwargs)
 
 
-def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic-unit-fixture", said="", output=""):
+def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic-unit-fixture", said="", output="",
+           receipt=""):
     """One recorded ``repo_tests.run`` result: these node ids passed, failed or were skipped."""
     outcomes = {**{node: {"setup": "passed", "call": "passed", "teardown": "passed"} for node in passed},
                 **{node: {"setup": "passed", "call": "failed", "teardown": "passed"} for node in failed},
@@ -62,7 +63,7 @@ def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic
             "test_outcomes": outcomes, "collected_ids": sorted(outcomes), "omitted_ids": [], "changed": [],
             "output": output, "seconds": 0.25, "python": sys.executable, "interpreter_source": "g6",
             "command": "pytest", "isolation": {"backend": backend, "why": ""}, "failed_ids": list(failed),
-            "setup_errors": {}, "degraded": verdict not in ("passed", "failed")}
+            "setup_errors": {}, "degraded": verdict not in ("passed", "failed"), "receipt": receipt}
 
 
 class Recorded:
@@ -185,6 +186,35 @@ def test_a_changed_runner_configuration_compromises_test_integrity(repo, monkeyp
                for r in got["assessment"]["reasons"])
 
 
+def test_a_git_ignored_file_pytest_could_load_compromises_test_integrity(repo, monkeypatch):
+    """I2: an ignored conftest.py is outside git's view, so outside the artifact digest, yet pytest loads it."""
+    (repo / "calc.py").write_text(GOOD)
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("conftest.py\n")
+    (repo / "conftest.py").write_text("def pytest_runtest_setup(item):\n    pass\n")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised"
+    assert any(r["code"] == "ignored_file_can_change_tests" and "conftest.py" in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
+def test_an_ignored_file_scan_that_reaches_its_limit_is_insufficient_evidence(repo, monkeypatch):
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(GOOD)
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("logs/\n")
+    (repo / "logs").mkdir()
+    for index in range(5):
+        (repo / "logs" / f"run{index}.log").write_text("x\n")
+    monkeypatch.setattr(repo_tests, "IGNORED_SCAN_LIMIT", 2)
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence"
+    assert "ignored_files_not_checked" in _reasons(got)
+
+
 @pytest.mark.parametrize("verdict", ["changed_tracked_files", "inconsistent_report", "incomplete"])
 def test_a_run_that_cannot_be_believed_compromises_test_integrity(repo, monkeypatch, verdict):
     (repo / "calc.py").write_text(GOOD)
@@ -225,13 +255,73 @@ def test_a_defect_inside_the_declared_coverage_is_detected_and_named(repo, monke
     assert runs.calls == [("in_place", (ADD, NEGATIVE))]   # tier 2 skipped after a defect
 
 
-@pytest.mark.parametrize("verdict", ["collection_error", "timed_out"])
-def test_a_stated_check_that_fails_to_collect_or_times_out_is_a_defect(repo, monkeypatch, verdict):
+@pytest.mark.parametrize("verdict", ["failed", "timed_out"])
+def test_a_stated_check_that_times_out_or_fails_to_collect_in_the_repositorys_code_is_a_defect(repo, monkeypatch,
+                                                                                                  verdict):
+    """``failed`` with no test run is a collection error G6 places in the repository's own code."""
     (repo / "calc.py").write_text(GOOD)
     Recorded(monkeypatch, default=result(verdict=verdict, said="the run stopped"))
     got = review(repo)
     assert got["assessment"]["outcome"] == "defect_detected"
     assert _requirement(got, "R1")["checks"][0]["verdict"] == verdict
+
+
+def test_a_stated_check_the_environment_cannot_collect_is_not_established(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    lacking = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "collection_error"}
+    Recorded(monkeypatch, default=result(verdict="collection_error", output="ERROR test_calc.py\n"),
+             on_base={"test_calc.py": lacking})   # the environment lacks the dependency at the base commit too
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence"
+    first = _requirement(got, "R1")
+    assert first["status"] == "not_established" and "could not be collected in this environment" in first["reason"]
+    assert "check_failed" not in _reasons(got)
+
+
+def test_only_the_check_whose_file_failed_to_collect_is_named(repo, monkeypatch):
+    (repo / "test_more.py").write_text("import calc\n\n\ndef test_more():\n    assert calc.add(0, 0) == 0\n")
+    (repo / "calc.py").write_text(GOOD)
+    more = [*SUM, {"id": "R3", "text": "add sums zeros", "checks": ["test_more.py::test_more"]}]
+    Recorded(monkeypatch, default=result(verdict="failed", output="ERROR collecting test_more.py\nERROR test_more.py"))
+    got = review(repo, more)
+    assert got["assessment"]["outcome"] == "defect_detected"
+    assert _requirement(got, "R3")["checks"][0]["verdict"] == "failed"
+    assert _requirement(got, "R1")["checks"][0]["verdict"] == "not_run"
+
+
+PYPROJECT = '[project]\nname = "calc"\nversion = "1.0"\ndependencies = []\n'
+SETUP_CFG = "[metadata]\nname = calc\nversion = 1.0\n"
+TOX = "[tox]\nenvlist = py313\n\n[testenv]\ncommands = pytest\n"
+
+
+@pytest.mark.parametrize("name, before, after, section", [
+    ("pyproject.toml", PYPROJECT, PYPROJECT.replace("[]", '["requests"]'), ""),
+    ("pyproject.toml", PYPROJECT, PYPROJECT + '\n[tool.pytest.ini_options]\naddopts = "-q"\n', "[tool.pytest]"),
+    ("pyproject.toml", None, PYPROJECT, ""),
+    ("pyproject.toml", None, PYPROJECT + '\n[tool.pytest.ini_options]\naddopts = "-q"\n', "[tool.pytest]"),
+    ("setup.cfg", SETUP_CFG, SETUP_CFG.replace("1.0", "1.1"), ""),
+    ("setup.cfg", SETUP_CFG, SETUP_CFG + "\n[tool:pytest]\naddopts = -q\n", "[tool:pytest]"),
+    ("tox.ini", TOX, TOX.replace("py313", "py312"), ""),
+    ("tox.ini", TOX, TOX + "\n[pytest]\naddopts = -q\n", "[pytest]"),
+])
+def test_a_project_file_counts_only_when_its_test_runner_settings_change(repo, monkeypatch, name, before, after,
+                                                                         section):
+    if before is not None:
+        (repo / name).write_text(before)
+        _git(repo, "add", name)
+        _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+             "commit", "-qm", "project file")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / name).write_text(after)
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    runner = [r["detail"] for r in got["assessment"]["reasons"] if r["code"] == "runner_configuration_changed"]
+    if section:
+        assert got["assessment"]["outcome"] == "test_integrity_compromised"
+        assert runner and name in runner[0] and section in runner[0]
+    else:
+        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+        assert runner == []
 
 
 def test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect(repo, monkeypatch):
@@ -258,6 +348,49 @@ def test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect(r
     assert found["assessment"]["outcome"] == "defect_detected"
     assert any(r["stage"] == "tier_2" and r["code"] == "derived_test_regressed" and "test_legacy.py" in r["detail"]
                for r in found["assessment"]["reasons"])
+
+
+@pytest.mark.parametrize("verdict, output", [("failed", "ERROR test_legacy.py\n"),
+                                             ("collection_error", "____ ERROR collecting test_legacy.py ____\n")])
+def test_a_derived_file_that_fails_to_collect_on_the_patch_and_passes_at_the_base_is_a_defect(repo, monkeypatch,
+                                                                                               verdict, output):
+    (repo / "test_legacy.py").write_text("import calc\n\n\ndef test_legacy():\n    assert calc.add(1, 1) == 2\n")
+    _git(repo, "add", "test_legacy.py")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "legacy")
+    (repo / "calc.py").write_text(GOOD)
+    collected_at_base = {"verdict": "not_run", "said": "the tests could not be collected", "baseline": "passed",
+                         "patched": verdict}
+    runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
+                                  ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
+                    on_base={"test_legacy.py": collected_at_base})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
+    assert any(r["code"] == "derived_test_regressed" and "test_legacy.py" in r["detail"]
+               and "collect" in r["detail"] for r in got["assessment"]["reasons"])
+    assert runs.calls[-1] == ("base", ("test_legacy.py",))
+    # survival: when it did not pass at the base commit either, it stays an unknown
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
+                           ("test_calc.py", "test_legacy.py"): result(verdict=verdict, output=output)},
+             on_base={"test_legacy.py": {"verdict": "not_run", "said": "no", "baseline": "failed"}})
+    unknown = review(repo)
+    assert unknown["assessment"]["outcome"] == "supported_within_scope"
+    assert any("test_legacy.py" in u for u in unknown["assessment"]["unknowns"])
+
+
+def test_each_run_carries_its_receipt_to_the_scope_and_the_gate(repo, monkeypatch):
+    """Recorded runs cite receipts the store does not hold: the gate reads them as unknown, so caller-declared."""
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE], receipt="a" * 64),
+                           ("test_calc.py",): result([ADD, NEGATIVE], receipt="b" * 64)})
+    got = review(repo)
+    receipts = got["assessment"]["scope"]["receipts"]
+    assert [(r["tier"], r["receipt"], r["receipt_status"]) for r in receipts] == [(1, "a" * 64, "unknown"),
+                                                                                  (2, "b" * 64, "unknown")]
+    assert [run["receipt"] for run in got["assessment"]["scope"]["checks_run"]] == ["a" * 64, "b" * 64]
+    assert got["gate"]["evidence_basis"] == "caller-declared"
+    assert [r["receipt_status"] for r in got["gate"]["receipts"]] == ["unknown", "unknown"]
+    assert any("receipt" in unknown for unknown in got["assessment"]["unknowns"])
 
 
 def test_an_empty_patch_is_insufficient_evidence(repo, monkeypatch):
@@ -315,17 +448,33 @@ def test_grounding_is_reported_and_does_not_decide_the_outcome(repo, monkeypatch
 
 # --- refusals: no outcome, never a detection --------------------------------------------------------------------------
 
+def _stored() -> int:
+    from g6.workforce import receipt_store
+
+    path = receipt_store.store_path()
+    return len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
+
+
 def _refused(got, code) -> None:
     assert got["ok"] is False and got["completion_state"] == "blocked-escalated", got
     assert got["warning_card"]["code"] == code and check_envelope(got) == []
     assert "assessment" not in got and "merge" not in got
 
 
+def _no_boundary(got) -> None:
+    """The refusal says how to get a boundary, and that allowing unconfined runs does not help a review."""
+    _refused(got, ISOLATION_UNAVAILABLE)
+    said = got["warning_card"]["message"]
+    assert "bubblewrap" in said and "g6 doctor" in said and "does not change this" in said
+    assert "choose it once with g6 setup" not in said
+
+
 def test_a_stale_digest_is_a_refusal_with_no_outcome(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
     runs = Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    stored = _stored()
     _refused(review(repo, expected_artifact_digest="old"), "G6_E_PATCH_STALE")
-    assert runs.calls == []
+    assert runs.calls == [] and _stored() == stored
 
 
 def test_unavailable_confinement_is_a_refusal_with_no_outcome(repo, monkeypatch):
@@ -333,13 +482,19 @@ def test_unavailable_confinement_is_a_refusal_with_no_outcome(repo, monkeypatch)
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
     monkeypatch.delenv(confine.ALLOW, raising=False)
     monkeypatch.setenv(confine.REQUIRE, "1")
-    _refused(review(repo), ISOLATION_UNAVAILABLE)
+    stored = _stored()
+    _no_boundary(review(repo))
+    monkeypatch.delenv(confine.REQUIRE)
+    _no_boundary(review(repo))   # refused by the run itself: nobody allowed unconfined runs
+    assert _stored() == stored
 
 
-def test_an_allowed_unconfined_run_is_a_refusal_too(repo, monkeypatch, unconfined):
+def test_an_allowed_unconfined_run_is_a_refusal_too_and_writes_no_receipt(repo, monkeypatch, unconfined):
     (repo / "calc.py").write_text(GOOD)
     monkeypatch.delenv(confine.REQUIRE, raising=False)
-    _refused(review(repo), ISOLATION_UNAVAILABLE)
+    stored = _stored()
+    _no_boundary(review(repo))
+    assert _stored() == stored
 
 
 @pytest.mark.parametrize("requirements", [
@@ -351,8 +506,9 @@ def test_an_allowed_unconfined_run_is_a_refusal_too(repo, monkeypatch, unconfine
 ])
 def test_invalid_requirements_are_refused(repo, monkeypatch, requirements):
     runs = Recorded(monkeypatch, default=result([ADD]))
+    stored = _stored()
     _refused(review(repo, requirements), "G6_E_INPUT_VALIDATION")
-    assert runs.calls == []
+    assert runs.calls == [] and _stored() == stored
 
 
 def test_the_composition_contracts_connect(repo, monkeypatch):
@@ -400,6 +556,47 @@ def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes(repo, m
     assert [r["id"] for r in got["result"]["assessment"]["requirements"]] == ["R1", "R2"]
 
 
+@pytest.mark.parametrize("raised, code", [
+    (component_process.ContainmentFailure("cleanup unconfirmed"), "G6_E_PATCH_REVIEW_INTERRUPTED"),
+    (component_process.ExecutionInterrupted("allowance ended"), "G6_E_PATCH_REVIEW_INTERRUPTED"),
+    (component_process.ExecutionInterrupted("stop", stopped=True), "G6_E_STOPPED"),
+])
+def test_an_interrupted_review_over_mcp_ends_with_a_code_not_a_traceback(repo, monkeypatch, raised, code):
+    """review_patch re-raises these so an enclosing door sees them; the MCP job, which has none, names them."""
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+
+    def interrupted(*args, **kwargs):
+        raise raised
+
+    monkeypatch.setattr(patch_review, "review_patch", interrupted)
+    server = build_server()
+
+    async def flow():
+        async with Client(server) as client:
+            reply = await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                               "requirements": SUM})
+            job = reply.data if isinstance(reply.data, dict) else reply.structured_content
+            for _ in range(200):
+                reply = await client.call_tool("metaharness_job", {"job_id": job["job_id"]})
+                got = reply.data if isinstance(reply.data, dict) else reply.structured_content
+                if got.get("status") in ("completed", "failed"):
+                    return got
+                await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    got = asyncio.run(flow())
+    assert got["status"] == "completed", got
+    assert got["result"]["warning_card"]["code"] == code
+    assert got["result"]["completion_state"] == "blocked-escalated" and "Traceback" not in str(got)
+
+
 # --- the engineering trial's counts -----------------------------------------------------------------------------------
 
 def _trial():
@@ -438,6 +635,82 @@ def test_confined_a_correct_patch_is_supported_and_a_defect_is_named(repo, bwrap
     found = review(repo)
     assert found["assessment"]["outcome"] == "defect_detected"
     assert _requirement(found, "R2")["status"] == "failed" and _requirement(found, "R1")["status"] != "failed"
+
+
+def test_confined_receipts_make_the_gate_g6_observed_and_a_forged_one_does_not(repo, bwrap_backend, monkeypatch):
+    from g6.workforce import receipt_store
+
+    (repo / "calc.py").write_text(GOOD)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]
+    receipts = got["assessment"]["scope"]["receipts"]
+    assert [r["tier"] for r in receipts] == [1, 2] and all(r["receipt_status"] == "matched" for r in receipts)
+    assert all(r["receipt_status"] == "matched" for r in got["gate"]["receipts"])   # it survived the composition
+    assert got["gate"]["evidence_basis"] == "g6-observed"
+    for found in receipts:
+        assert receipt_store.check(found["receipt"], artifact_digest=got["artifact_digest"])[0] == "matched"
+    real = patch_review._execute
+
+    def forged(*args, **kwargs):
+        ran = real(*args, **kwargs)
+        return {**ran, "receipt": "0" * 64} if "receipt" in ran else ran
+
+    monkeypatch.setattr(patch_review, "_execute", forged)
+    faked = review(repo)
+    assert [r["receipt_status"] for r in faked["gate"]["receipts"]] == ["unknown", "unknown"]
+    assert faked["gate"]["evidence_basis"] == "caller-declared"
+
+
+HOOK = ("import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n"
+        "    outcome = yield\n    rep = outcome.get_result()\n    if rep.failed:\n"
+        "        rep.outcome = 'passed'\n        rep.longrepr = None\n")
+
+
+def test_confined_a_conftest_hidden_from_git_compromises_integrity_and_gets_no_receipt(repo, bwrap_backend):
+    """I2, the reviewer's probe: the buggy tree with a conftest.py that turns failures into passes, hidden from git's
+    view through .git/info/exclude, so the artifact digest is the same as without it."""
+    from g6.core.ledger import digest
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(BAD + "\n")   # a change, still the bug
+    clean = digest(repo_tests.snapshot(repo))
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("conftest.py\n")
+    (repo / "conftest.py").write_text(HOOK)
+    assert digest(repo_tests.snapshot(repo)) == clean   # the hidden file is outside the digest
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]
+    assert any(r["code"] == "ignored_file_can_change_tests" and "conftest.py" in r["detail"]
+               for r in got["assessment"]["reasons"])
+    assert all(r["receipt"] == "" for r in got["assessment"]["scope"]["receipts"])
+    assert got["gate"]["evidence_basis"] != "g6-observed"
+
+
+def test_confined_an_environment_collection_failure_is_not_a_defect(repo, bwrap_backend):
+    (repo / "test_env.py").write_text("import g6_dependency_absent_for_this_test\n\n\ndef test_env():\n    assert True\n")
+    _git(repo, "add", "test_env.py")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "a test that needs a dependency this environment lacks")
+    (repo / "calc.py").write_text(GOOD)
+    got = review(repo, [*SUM, {"id": "R3", "text": "it runs where the dependency is", "checks": ["test_env.py"]}])
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]
+    third = _requirement(got, "R3")
+    assert third["status"] == "not_established" and "could not be collected in this environment" in third["reason"]
+
+
+def test_confined_a_derived_file_the_patch_stops_collecting_is_a_defect(repo, bwrap_backend):
+    (repo / "helpers.py").write_text("def double(x):\n    return 2 * x\n")
+    (repo / "test_helpers.py").write_text("from helpers import double\n\n\ndef test_double():\n"
+                                          "    assert double(2) == 4\n")
+    _git(repo, "add", ".")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "helpers")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "helpers.py").write_text("def double(x)\n    return 2 * x\n")   # a syntax error
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]
+    assert any(r["code"] == "derived_test_regressed" and "test_helpers.py" in r["detail"]
+               for r in got["assessment"]["reasons"])
 
 
 def test_confined_a_check_pytest_cannot_find_is_not_collected(repo, bwrap_backend):

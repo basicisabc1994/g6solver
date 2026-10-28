@@ -83,11 +83,23 @@ with the repository root, the task, `requirements` (a list of `{id, text, checks
 pytest node IDs and may be empty), optional extra `tests`, and a base ref (default `HEAD`). A `claim` and
 `sources` are optional: their lexical support is reported and decides nothing. Poll its job.
 
-The checks adapt to cost. Tier 1 always runs: the working-tree digest, test integrity (a moved test file
-is compared with its old text; any changed test-runner file counts), and the stated checks with the extra
-tests in one confined run. Tier 2, the other tests that touch the changed modules, runs only when tier 1
-found no integrity problem and no defect; one that fails on the patch is replayed at the base commit, and
-counts as a defect only if it passed there. Tier 3 (mutation, old-against-new probes) is not run yet.
+The checks adapt to cost. Tier 1 always runs: the working-tree digest, test integrity, and the stated
+checks with the extra tests in one confined run. Integrity covers a weakened test (a moved test file is
+compared with its old text), a changed `conftest.py`, `pytest.ini` or `.pytest.ini`, a changed pytest
+section in `pyproject.toml`, `setup.cfg` or `tox.ini` (a dependency or metadata change does not count),
+and a git-ignored file pytest could load, such as a `conftest.py` hidden through `.git/info/exclude`. A
+stated check the environment cannot collect (a dependency it lacks) is not established; one whose own code
+fails to collect is a defect. Tier 2, the other tests that touch the changed modules, runs only when tier 1
+found no integrity problem and no defect; one that fails, or fails to collect, on the patch is replayed at
+the base commit, and counts as a defect only if it passed there. Tier 3 (mutation, old-against-new probes)
+is not run yet.
+
+Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
+gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
+under review; over `g6_invoke` the gate has no binding and every receipt stays caller-declared. A run gets
+no receipt when it was unconfined or when git ignores a file it could load. A receipt does not bind the
+packages and pytest plugins installed in the interpreter's environment, or stale bytecode left beside the
+sources.
 
 `assessment.outcome` is exactly one of, in this order: `test_integrity_compromised`, `defect_detected`,
 `insufficient_evidence`, `supported_within_scope`. All four are `qualified-draft`. Supported within scope
