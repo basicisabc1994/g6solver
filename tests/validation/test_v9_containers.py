@@ -108,13 +108,35 @@ def test_the_arms_that_run_g6_mount_the_toolchain_read_only_with_bubblewrap_flag
     assert not any("G6_ECHA_RESEARCH" in word for word in command)
 
 
-def test_a_repositorys_test_environment_is_set_in_both_containers():
+def test_one_frozen_test_environment_reaches_arm_1_directly_and_g6_through_its_setting():
     env = {"QUTE_QT_WRAPPER": "PyQt6", "QT_QPA_PLATFORM": "offscreen"}
-    for command in (containers.tests_command(IMAGE, python="python", env=env),
-                    containers.g6_command(IMAGE, toolchain="t", study=Path("/s"), repo_python="python", env=env)):
-        before = command[:command.index(IMAGE)]
-        assert "QT_QPA_PLATFORM=offscreen" in before and "QUTE_QT_WRAPPER=PyQt6" in before
-        assert before[before.index("QUTE_QT_WRAPPER=PyQt6") - 1] == "-e"
+    tests = containers.tests_command(IMAGE, python="python", env=env)
+    before = tests[:tests.index(IMAGE)]
+    assert "QT_QPA_PLATFORM=offscreen" in before and before[before.index("QUTE_QT_WRAPPER=PyQt6") - 1] == "-e"
+    g6 = containers.g6_command(IMAGE, toolchain="t", study=Path("/s"), repo_python="python", env=env)
+    setting = next(word for word in g6 if word.startswith("G6_REPO_ENV="))
+    assert json.loads(setting.removeprefix("G6_REPO_ENV=")) == env
+    assert "QUTE_QT_WRAPPER=PyQt6" not in g6                                # G6 applies it inside its confined runs
+    assert not any(word.startswith("G6_REPO_ENV=") for word in containers.g6_command(
+        IMAGE, toolchain="t", study=Path("/s"), repo_python="python"))
+
+
+@pytest.mark.parametrize("name", ["PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH", "LD_PRELOAD", "PATH", "HOME",
+                                  "G6_ALLOW_UNCONFINED"])
+def test_a_test_environment_that_names_a_runner_or_interpreter_setting_is_refused(name):
+    assert containers.test_env_problems({name: "x"}) and not containers.test_env_problems({"QT_QPA_PLATFORM": "x"})
+
+
+def test_every_container_clears_the_images_own_pytest_settings_before_anything_runs():
+    script = containers.APPLY
+    assert "PYTEST_" in script and "unset" in script
+    assert script.index("unset") < script.index("exec ")
+
+
+def test_an_image_is_named_by_digest():
+    digest = "registry.invalid/task@sha256:" + "a" * 64
+    assert containers.pinned(digest) and not containers.pinned(IMAGE)
+    assert not containers.pinned("registry.invalid/task:tag@sha256:short")
 
 
 def test_staging_writes_the_change_against_head_and_the_script_that_applies_it_without_touching_the_tree(tree,

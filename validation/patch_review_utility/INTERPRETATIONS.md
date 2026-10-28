@@ -107,11 +107,20 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     them. Arms 3 and 4 run in the same image with G6's pinned toolchain mounted read-only (a Python 3.12, G6 from a
     wheel built at the frozen commit, git 2.31 or newer, and bubblewrap; the images carry neither G6's Python nor,
     in ansible's case, a git G6 accepts), while the repository's tests still run with the image's own interpreter,
-    named by `G6_REPO_PYTHON`. A repository's test environment (its entry freezes the variables, such as
-    qutebrowser's choice of Qt binding) is set in both containers; arm 1's tests get it, together with whatever the
-    image itself sets, while G6 decides what of it reaches its own test runs. The toolchain's sources are pinned by
-    hash in `environment/toolchain.json`, and a toolchain is used only when it matches its lock. Ruled by the
-    coordinator.
+    named by `G6_REPO_PYTHON`. The toolchain's sources are pinned by hash in `environment/toolchain.json`, and a
+    toolchain is used only when it matches its lock. Every task image is named by its digest, never by a tag. Ruled
+    by the coordinator.
+
+18. **One test environment per repository, and the image's pytest settings cleared.** Each repository's test
+    environment is declared once in the manifest (qutebrowser's choice of Qt binding, for example) and is the same
+    for arm 1, the labels and G6's arms: set in the container where the study runs the tests itself, and passed to G6
+    through `G6_REPO_ENV`, which G6 applies inside its confined runs. It may not name a pytest, Python or library
+    loader setting, `PATH`, `HOME` or a G6 setting, the names G6 refuses. Every container also clears the image's own
+    `PYTEST_ADDOPTS` and any other `PYTEST_*` variable the image sets, before anything runs. This departs from the
+    images: qutebrowser's sets `PYTEST_ADDOPTS` to rerun failing tests three times and to go on past collection
+    errors. The reason: G6 refuses runner settings from the environment, so leaving them for arm 1 and the labels
+    would make one side more lenient than the other, and V9's own rules of three runs are what handle checks that do
+    not give the same result each time. Ruled by the coordinator.
 
 Two readings are mechanics rather than rulings, recorded so the hash covers them. The executor runs the files of the
 test ids asked for, as the benchmark's own procedure runs test files, so a test id that no longer exists is missing

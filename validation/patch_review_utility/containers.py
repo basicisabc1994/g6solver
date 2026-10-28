@@ -8,14 +8,21 @@ tests, in its working tree) is turned into one binary diff against ``HEAD``, rea
 tree itself is never touched, beside ``apply.sh``. In the container, ``apply.sh`` checks that ``/app`` is at the
 same commit, applies the diff (``git apply``, else ``patch``), then runs the arm's command.
 
-**Arm 1 and the labels** (``tests_command``): the pristine image, with no toolchain, the network closed, and pytest
-run by the image's own Python with the study's outcome plugin (``executor.PLUGIN``) from ``/v9``.
+**One test environment.** Each repository has one frozen test environment (its manifest declares it once), the same
+for arm 1, the labels and G6's arms; it may not name a runner, interpreter or loader setting (``test_env_problems``).
+Every container first clears the image's own ``PYTEST_*`` variables, ``PYTEST_ADDOPTS`` included
+(INTERPRETATIONS.md item 18). Images are named by digest (``pinned``).
+
+**Arm 1 and the labels** (``tests_command``): the pristine image, with no toolchain, the network closed, the test
+environment set in the container, and pytest run by the image's own Python with the study's outcome plugin
+(``executor.PLUGIN``) from ``/v9``.
 
 **The arms that run G6** (``g6_command``: arm 3, arm 4): the same image with G6's pinned toolchain mounted read-only at
 ``/opt/g6`` (``environment/toolchain.py``), the study's scripts read-only at ``/opt/v9``, ``PATH`` with the
 toolchain's ``bin`` (git and bubblewrap only) first, ``G6_REPO_PYTHON`` naming the image's Python for the
-repository's tests, ``G6_EXPECT_BACKEND=bubblewrap``, and the flags bubblewrap needs inside a container. The research
-flag is never passed. G6's own Python runs ``child.py`` on ``/app``.
+repository's tests, ``G6_REPO_ENV`` carrying the test environment for G6 to apply inside its confined runs,
+``G6_EXPECT_BACKEND=bubblewrap``, and the flags bubblewrap needs inside a container. The research flag is never
+passed. G6's own Python runs ``child.py`` on ``/app``.
 
 Both run only an image already on the computer (`--pull never`): an image is never fetched during a study.
 
@@ -25,7 +32,9 @@ Placeholders, filled per run: ``{container}`` (a name new to each run, so a run 
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -39,10 +48,15 @@ SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #: What bubblewrap needs inside a container (the flags G6's confined tests use), for the arms that run G6 only.
 CONFINED_FLAGS = ("--network", "none", "--cap-add", "SYS_ADMIN", "--security-opt", "seccomp=unconfined",
                   "--security-opt", "apparmor=unconfined")
-#: Run first in every container: the repository must be at the base commit; then the change; then the arm's command.
+#: Run first in every container: the image's own pytest settings cleared (``PYTEST_ADDOPTS`` and every other
+#: ``PYTEST_*`` variable it sets: one frozen test environment for every arm, INTERPRETATIONS.md item 18); the
+#: repository must be at the base commit; then the change; then the arm's command.
 APPLY = """\
 #!/bin/sh
 set -eu
+for name in $(env | sed -n 's/^\\(PYTEST_[A-Za-z0-9_]*\\)=.*/\\1/p'); do
+    unset "$name"
+done
 cd /app
 here=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 if [ "$here" != "$V9_BASE" ]; then
@@ -78,8 +92,33 @@ def stage(tree: str | Path, folder: str | Path) -> str:
     return base
 
 
+#: Names a repository's test environment may not set, as G6's ``G6_REPO_ENV`` refuses them: runner and interpreter
+#: settings, the library loader's, the search path, the home folder, and G6's own.
+REFUSED_PREFIXES = ("PYTEST_", "PYTHON", "LD_", "G6_")
+REFUSED_NAMES = frozenset({"PATH", "HOME"})
+_DIGEST = re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}")
+
+
+def test_env_problems(env: dict[str, str] | None) -> list[str]:
+    """Why ``env`` cannot be a repository's frozen test environment: each name it may not set."""
+    return [f"{name} may not be set in a repository's test environment" for name in sorted(env or {})
+            if name.upper() in REFUSED_NAMES or name.upper().startswith(REFUSED_PREFIXES)]
+
+
+def pinned(image: str) -> bool:
+    """Whether ``image`` is named by its digest (``name@sha256:<64 hexadecimal digits>``), never by a tag."""
+    return bool(_DIGEST.fullmatch(image))
+
+
+def repo_env_flag(env: dict[str, str]) -> str:
+    """G6's setting for the repository's test environment, which G6 applies inside its confined runs: one JSON
+    object, names in order. (The encoding is this study's; it is re-synced when G6's ``G6_REPO_ENV`` lands.)"""
+    return "G6_REPO_ENV=" + json.dumps(dict(sorted(env.items())), separators=(",", ":"))
+
+
 def _env(env: dict[str, str] | None) -> list[str]:
-    """The repository's own test environment (its entry freezes it), as ``-e`` flags in name order."""
+    """The repository's frozen test environment as ``-e`` flags in name order, for a container that runs the tests
+    itself (arm 1, the labels)."""
     return [word for name in sorted(env or {}) for word in ("-e", f"{name}={env[name]}")]
 
 
@@ -96,9 +135,11 @@ def g6_command(image: str, *, toolchain: str, study: str | Path, repo_python: st
                env: dict[str, str] | None = None) -> list[str]:
     """The command template for the arms that run G6: ``toolchain`` is the toolchain's volume, ``study`` the folder
     holding the study's scripts (``validation/``), ``repo_python`` the image's own interpreter, ``env`` the
-    repository's test environment (set in the container; G6 decides what of it its own test runs pass on)."""
+    repository's frozen test environment, passed to G6 through ``G6_REPO_ENV`` (``repo_env_flag``), never set in the
+    container itself."""
     return ["docker", "run", "--rm", "--pull", "never", "--name", "{container}", *CONFINED_FLAGS,
             "-v", f"{toolchain}:{TOOLCHAIN_MOUNT}:ro", "-v", f"{study}:{STUDY_MOUNT}:ro", "-v", f"{{job}}:{WORK}",
-            *_env(env), "-e", f"PATH={TOOLCHAIN_MOUNT}/bin:{SYSTEM_PATH}", "-e", f"G6_REPO_PYTHON={repo_python}",
+            *(["-e", repo_env_flag(env)] if env else []),
+            "-e", f"PATH={TOOLCHAIN_MOUNT}/bin:{SYSTEM_PATH}", "-e", f"G6_REPO_PYTHON={repo_python}",
             "-e", "G6_EXPECT_BACKEND=bubblewrap", "-e", "V9_BASE={base}", image, "sh", f"{WORK}/apply.sh",
             G6_PYTHON, "-I", f"{STUDY_MOUNT}/patch_review_utility/child.py", f"{WORK}/job.json", f"{WORK}/reply.json"]

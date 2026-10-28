@@ -38,7 +38,12 @@ def test_qutebrowser_is_checked_with_its_qt_wrapper_and_the_probe_is_told_which_
     assert check["env"] == {"QUTE_QT_WRAPPER": "PyQt6", "QT_QPA_PLATFORM": "offscreen"}
     probe = dev_check.probe_command("img", python="python", folder="tests/unit/api", volume="tc", seconds=60,
                                     env=check["env"])
-    assert "V9_PROBE_TEST_ENV=QT_QPA_PLATFORM,QUTE_QT_WRAPPER" in probe and "QUTE_QT_WRAPPER=PyQt6" in probe
+    assert containers.repo_env_flag(check["env"]) in probe and not any("V9_PROBE" in word for word in probe)
+
+
+def test_the_check_reads_what_is_left_of_the_images_pytest_settings_after_the_apply_script():
+    command = dev_check.settings_left_command("img", python="/usr/bin/python", env={"QT_QPA_PLATFORM": "offscreen"})
+    assert command[-3:] == ["sh", "/v9/apply.sh", "env"] and "QT_QPA_PLATFORM=offscreen" in command
 
 
 def test_the_probe_runs_in_the_same_container_as_g6s_arms_and_arm_1_in_the_pristine_image():

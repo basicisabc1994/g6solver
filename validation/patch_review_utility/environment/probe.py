@@ -6,9 +6,10 @@ the image's own interpreter. Only counts, verdicts and reasons are written, neve
     /opt/g6/python/bin/python3 -I probe.py <out.json> <test folder> <seconds>
 
 ``G6_REPO_PYTHON`` names the image's interpreter. Where the G6 under test does not read that setting yet, this probe
-supplies it to ``repo_tests.interpreter`` itself, and says so (``g6_reads_repo_python``). ``V9_PROBE_TEST_ENV`` names
-the variables the repository's tests need; when G6 does not pass them on to its test runs (``g6_passes_test_env``),
-the probe runs the folder once more with them passed on, as a diagnostic it labels as simulated.
+supplies it to ``repo_tests.interpreter`` itself, and says so (``g6_reads_repo_python``); once G6 reads it, the probe
+leaves it alone. ``G6_REPO_ENV`` carries the repository's test environment; when G6 does not apply it to its test runs
+(``g6_passes_test_env``), the probe runs the folder once more with it applied, as a diagnostic it labels as
+simulated, and once G6 applies it, the probe runs nothing more.
 """
 from __future__ import annotations
 
@@ -49,16 +50,15 @@ def main(argv: list[str]) -> int:
         found["confined_run"] = {"result": "refused", "code": exc.code, "reason": str(exc)[:500]}
         return write()
     found["confined_run"] = _summary(ran, folder)
-    names = [n for n in os.environ.get("V9_PROBE_TEST_ENV", "").split(",") if n]
+    extra = json.loads(os.environ.get("G6_REPO_ENV") or "{}")
     passed_on = repo_tests.child_env(Path("/tmp"), network=False)
-    found["g6_passes_test_env"] = {name: name in passed_on for name in names}
-    if names and not all(found["g6_passes_test_env"].values()):
-        # Diagnostic only: what the run gives when G6 passes the repository's test variables on, which it does not.
-        # Two layers drop them: the tests' environment (repo_tests.child_env) and the confined spawn's own list
-        # (confine.child_environment).
+    found["g6_passes_test_env"] = {name: passed_on.get(name) == value for name, value in extra.items()}
+    if extra and not all(found["g6_passes_test_env"].values()):
+        # Diagnostic only: what the run gives when G6 applies G6_REPO_ENV, which the G6 under test does not yet.
+        # Two layers drop the variables: the tests' environment (repo_tests.child_env) and the confined spawn's own
+        # list (confine.child_environment).
         from g6.core import confine
 
-        extra = {n: os.environ[n] for n in names if n in os.environ}
         tests_env, spawn_env = repo_tests.child_env, confine.child_environment
         repo_tests.child_env = lambda scratch, *, network: {**tests_env(scratch, network=network), **extra}
         confine.child_environment = lambda env=None, *, confinement=None: {

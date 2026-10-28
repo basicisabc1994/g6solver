@@ -76,7 +76,7 @@
       "env": {},
       "g6_container": {
         "exit_code": 0,
-        "seconds": 1.2,
+        "seconds": 1.3,
         "stderr_tail": []
       },
       "g6": {
@@ -98,7 +98,7 @@
           "failed": 0,
           "skipped": 0,
           "deselected": 0,
-          "seconds": 0.26,
+          "seconds": 0.259,
           "python": "/usr/bin/python",
           "interpreter_source": "g6",
           "backend": "bubblewrap",
@@ -113,6 +113,7 @@
         "seconds": 0.5,
         "stderr_tail": []
       },
+      "pytest_settings_left": [],
       "arm_1": {
         "pytest_exit": 0,
         "collection_errors": 0,
@@ -134,7 +135,7 @@
       },
       "g6_container": {
         "exit_code": 0,
-        "seconds": 2.0,
+        "seconds": 2.1,
         "stderr_tail": []
       },
       "g6": {
@@ -156,7 +157,7 @@
           "failed": 0,
           "skipped": 0,
           "deselected": 0,
-          "seconds": 0.562,
+          "seconds": 0.588,
           "python": "/usr/bin/python",
           "interpreter_source": "g6",
           "backend": "bubblewrap",
@@ -180,7 +181,7 @@
           "failed": 0,
           "skipped": 0,
           "deselected": 0,
-          "seconds": 0.757,
+          "seconds": 0.827,
           "python": "/usr/bin/python",
           "interpreter_source": "g6",
           "backend": "bubblewrap",
@@ -200,6 +201,7 @@
           "      after 32 requests (32 known processed) with 0 events remaining."
         ]
       },
+      "pytest_settings_left": [],
       "arm_1": {
         "pytest_exit": 0,
         "collection_errors": 0,
@@ -218,7 +220,7 @@
       "env": {},
       "g6_container": {
         "exit_code": 0,
-        "seconds": 0.4,
+        "seconds": 0.5,
         "stderr_tail": []
       },
       "g6": {
@@ -231,9 +233,10 @@
       },
       "arm_1_container": {
         "exit_code": 0,
-        "seconds": 1.2,
+        "seconds": 1.3,
         "stderr_tail": []
       },
+      "pytest_settings_left": [],
       "arm_1": {
         "pytest_exit": 0,
         "collection_errors": 0,
@@ -265,9 +268,10 @@
       },
       "arm_1_container": {
         "exit_code": 0,
-        "seconds": 0.9,
+        "seconds": 1.0,
         "stderr_tail": []
       },
+      "pytest_settings_left": [],
       "arm_1": {
         "pytest_exit": 0,
         "collection_errors": 0,
@@ -286,7 +290,7 @@
       "env": {},
       "g6_container": {
         "exit_code": 0,
-        "seconds": 0.4,
+        "seconds": 0.5,
         "stderr_tail": []
       },
       "g6": {
@@ -302,6 +306,7 @@
         "seconds": 1.0,
         "stderr_tail": []
       },
+      "pytest_settings_left": [],
       "arm_1": {
         "pytest_exit": 0,
         "collection_errors": 0,
@@ -333,9 +338,10 @@
       },
       "arm_1_container": {
         "exit_code": 0,
-        "seconds": 1.2,
+        "seconds": 1.3,
         "stderr_tail": []
       },
+      "pytest_settings_left": [],
       "arm_1": {
         "pytest_exit": 0,
         "collection_errors": 0,

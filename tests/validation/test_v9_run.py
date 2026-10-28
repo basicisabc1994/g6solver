@@ -171,7 +171,8 @@ def test_a_container_environment_runs_each_task_in_its_own_image_with_g6s_toolch
     commit = "0123456789abcdef0123456789abcdef01234567"
     environment = {"kind": "containers", "toolchain": {"volume": "g6-v9-toolchain-x", "lock": "toolchain.lock.json"},
                    "python": {"fixture/calc": "/usr/bin/python"}}
-    tasks = [{**task, "image": f"registry.invalid/calc:{task['task_id']}"} for task in manifest["tasks"]]
+    tasks = [{**task, "image": f"registry.invalid/calc@sha256:{index:064x}"}
+             for index, task in enumerate(manifest["tasks"])]
     feasibility = {**manifest, "level": "feasibility", "g6_commit": commit, "environment": environment, "tasks": tasks}
     feasibility.pop("executor")
     write(manifest_path, json.dumps(feasibility))
@@ -183,11 +184,20 @@ def test_a_container_environment_runs_each_task_in_its_own_image_with_g6s_toolch
     g6 = study.g6_command(loaded, task)
     assert g6 == study.containers.g6_command(task["image"], toolchain="g6-v9-toolchain-x", study=study.VALIDATION,
                                              repo_python="/usr/bin/python")
-    with_env = {**feasibility, "environment": {**environment, "env": {"fixture/calc": {"QT_QPA_PLATFORM": "offscreen"}}}}
+    frozen = {"QT_QPA_PLATFORM": "offscreen"}
+    with_env = {**feasibility, "environment": {**environment, "env": {"fixture/calc": frozen}}}
     write(manifest_path, json.dumps(with_env))
     loaded = study.load_manifest(manifest_path)
-    assert "QT_QPA_PLATFORM=offscreen" in study.task_executor(loaded, task).command
-    assert "QT_QPA_PLATFORM=offscreen" in study.g6_command(loaded, task)
+    assert "QT_QPA_PLATFORM=offscreen" in study.task_executor(loaded, task).command       # arm 1 and the labels
+    assert study.containers.repo_env_flag(frozen) in study.g6_command(loaded, task)       # G6, through its setting
+    runner = {**feasibility, "environment": {**environment, "env": {"fixture/calc": {"PYTEST_ADDOPTS": "-x"}}}}
+    write(manifest_path, json.dumps(runner))
+    with pytest.raises(study.Refused, match="PYTEST_ADDOPTS"):
+        study.load_manifest(manifest_path)
+    tagged = {**feasibility, "tasks": [{**tasks[0], "image": "registry.invalid/calc:latest"}, *tasks[1:]]}
+    write(manifest_path, json.dumps(tagged))
+    with pytest.raises(study.Refused, match="digest"):
+        study.load_manifest(manifest_path)
     missing = {**feasibility, "tasks": [{k: v for k, v in t.items() if k != "image"} for t in tasks]}
     write(manifest_path, json.dumps(missing))
     with pytest.raises(study.Refused, match="image"):

@@ -70,15 +70,18 @@ def tests_command(image: str, *, python: str, env: dict[str, str] | None = None)
 
 def probe_command(image: str, *, python: str, folder: str, volume: str, seconds: int,
                   env: dict[str, str] | None = None) -> list[str]:
-    """G6's arms' container with ``probe.py`` in place of the arm's child; ``V9_PROBE_TEST_ENV`` tells the probe the
-    names of the variables the repository's tests need."""
+    """G6's arms' container with ``probe.py`` in place of the arm's child."""
     command = containers.g6_command(image, toolchain=volume, study=VALIDATION, repo_python=python, env=env)
     cut = command.index(containers.G6_PYTHON)
-    told = ["-e", "V9_PROBE_TEST_ENV=" + ",".join(sorted(env))] if env else []
-    image_at = command.index(image)
-    return [*command[:image_at], *told, *command[image_at:cut], containers.G6_PYTHON, "-I",
+    return [*command[:cut], containers.G6_PYTHON, "-I",
             f"{containers.STUDY_MOUNT}/patch_review_utility/environment/probe.py", f"{containers.WORK}/probe.json",
             folder, str(seconds)]
+
+
+def settings_left_command(image: str, *, python: str, env: dict[str, str] | None = None) -> list[str]:
+    """Arm 1's container with ``env`` in place of the tests: what it shows after ``apply.sh`` has run."""
+    command = tests_command(image, python=python, env=env)
+    return [*command[:command.index(python, command.index(image))], "env"]
 
 
 def _fill(command: list[str], words: dict[str, str], tests: list[str]) -> list[str]:
@@ -133,6 +136,11 @@ def check_image(check: dict, image: str, *, volume: str, seconds: int = SECONDS)
         command = _fill(tests_command(image, python=check["python"], env=check["env"]),
                         {"{container}": name, "{support}": support, "{base}": base}, [check["folder"]])
         found["arm_1_container"] = _run(command, name, seconds)
+        listed = subprocess.run(_fill(settings_left_command(image, python=check["python"], env=check["env"]),
+                                      {"{container}": f"{name}-env", "{support}": support, "{base}": base}, []),
+                                capture_output=True, text=True)
+        found["pytest_settings_left"] = sorted(line.split("=", 1)[0] for line in listed.stdout.splitlines()
+                                               if line.startswith("PYTEST_"))
         report = Path(support) / "outcomes.json"
         if report.is_file():
             raw = json.loads(report.read_text(encoding="utf-8"))

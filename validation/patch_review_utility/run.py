@@ -115,8 +115,15 @@ def load_manifest(path: str | Path) -> dict:
         for task in manifest["tasks"]:
             if not task.get("image"):
                 raise Refused(f"task {task['task_id']} names no image: each task runs in its own benchmark image")
+            if not containers.pinned(task["image"]):
+                raise Refused(f"task {task['task_id']} names its image by a tag: an image is named by its digest "
+                              "(name@sha256:...)")
             if task["repository"] not in (environment.get("python") or {}):
                 raise Refused(f"the environment names no Python of the image for {task['repository']}")
+        for repository, env in (environment.get("env") or {}).items():
+            problems = containers.test_env_problems(env)
+            if problems:
+                raise Refused(f"{repository}'s test environment: " + "; ".join(problems))
     manifest["_path"], manifest["_folder"] = path, path.parent
     return manifest
 
