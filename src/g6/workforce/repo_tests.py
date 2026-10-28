@@ -155,6 +155,9 @@ SAID = {
     # receipt.
     "submodule_name": "{path} (files in a submodule folder git does not look into; G6 hashed them itself)",
     "submodule_withheld": "no test receipt: G6 could not hash the files inside {paths}, so the digest does not bind them",
+    # PENDING copy (pool compatibility): a G6_REPO_PYTHON that names no Python.
+    "repo_python": ("{setting} {problem}: {value!r}. Set it, where you start G6, to the full path of the Python that "
+                    "has your repository's dependencies, or unset it"),
 }
 
 
@@ -785,9 +788,53 @@ def child_env(scratch: Path, *, network: bool) -> dict[str, str]:
     return env
 
 
+#: The setting, in G6's own environment only, that names the Python for a repository's tests: a full path the person
+#: chose (a Poetry or conda environment, or a system Python holding the dependencies). No request names it: an agent
+#: cannot point G6 at an interpreter.
+REPO_PYTHON = "G6_REPO_PYTHON"
+REPO_PYTHON_INVALID = "G6_E_REPO_PYTHON_INVALID"
+#: How a Python's file is named: python, python3, python3.11, python.exe, pypy3.
+_PYTHON_NAME = re.compile(r"(?:python|pypy)[0-9.]*(?:\.exe)?", re.IGNORECASE)
+
+
+def _chosen_python() -> str:
+    """The Python ``REPO_PYTHON`` names ("" when it is not set, or set to nothing), or a refusal
+    (``G6_E_REPO_PYTHON_INVALID``) when it names none: not a full path, nothing there, not a file this user may run, or
+    a file not named as a Python is. Never a quiet fall back to another interpreter."""
+    value = (os.environ.get(REPO_PYTHON) or "").strip()
+    if not value:
+        return ""
+    path = Path(value)
+    problem = ("is not a full path" if _control(value) or not path.is_absolute() else
+               "names no file" if not path.is_file() else
+               "names a file this user cannot run" if not os.access(path, os.X_OK) else
+               "names a file that is not named as a Python (python, python3, python3.11, ...)"
+               if not _PYTHON_NAME.fullmatch(path.name) else "")
+    if problem:
+        raise RepoRefused(REPO_PYTHON_INVALID, SAID["repo_python"].format(setting=REPO_PYTHON, problem=problem,
+                                                                          value=value))
+    return value
+
+
+def _environment_of(python: str) -> tuple[str, ...]:
+    """The virtual environment ``python`` belongs to (the folder holding its ``pyvenv.cfg``, beside it or above its
+    ``bin``), which a confined run reads too: ``confine.interpreter_paths`` takes an environment made from the Python
+    running G6, whose ``python`` links to that same file, for G6's own interpreter and leaves its folder out."""
+    folder = Path(python).parent   # never resolved: an environment's python is a link to its base interpreter
+    for cfg in (folder / "pyvenv.cfg", folder.parent / "pyvenv.cfg"):
+        if cfg.is_file():
+            return (os.path.realpath(cfg.parent),)
+    return ()
+
+
 def interpreter(repo: Path) -> str:
-    """The Python that runs the repository's tests: its own virtual environment (``.venv`` or ``venv`` at its top),
-    else the one running G6 (``python`` on PATH in a frozen build, which has no interpreter of its own)."""
+    """The Python that runs the repository's tests: the one ``G6_REPO_PYTHON`` names in G6's own environment
+    (``_chosen_python``: a refusal when it names none), else the repository's own virtual environment (``.venv`` or
+    ``venv`` at its top), else the one running G6 (``python`` on PATH in a frozen build, which has no interpreter of
+    its own)."""
+    chosen = _chosen_python()
+    if chosen:
+        return chosen
     for folder in (".venv", "venv"):
         for exe in (repo / folder / "Scripts" / "python.exe", repo / folder / "bin" / "python"):
             if exe.is_file():
@@ -1052,7 +1099,8 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     with the paths, whatever the tests said, and so is one after which git cannot read the repository (with that
     said). ``mutant`` (path, source): that module is imported from the source given instead of its file, which is
     never written (the changed-lines mutation check). ``interpreter_source`` says whose Python ran the tests
-    ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path, and
+    ("setting": the one ``G6_REPO_PYTHON`` names; "repository": its own ``.venv`` or ``venv``; "g6": the one running
+    G6; ``interpreter``), ``python`` its path, and
     ``source_before`` the digest of the ``snapshot`` the run began on (the digest the patch review calls its
     ``artifact_digest``), and ``rootdir`` the folder pytest named the tests relative to ("" for the repository's top;
     a pytest configuration below the top moves it). Raises ``RepoRefused`` before anything runs when the request
@@ -1067,17 +1115,17 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     if receipt and mutant is not None:
         raise ValueError("a mutant run is not the artifact under review, so it is never given a test receipt")
     repo = checked_repo(repo)
+    python = interpreter(repo)   # a setting that names no Python is refused before anything is copied or run
     if mutant is not None:
         deadline = time.monotonic() + max(1, min(int(timeout_s), MAX_TIMEOUT_S))
         report: dict = {}
         try:
             with repository_copy(repo, deadline=deadline, report=report) as copy:
                 return _run(copy, tests, roots=roots, timeout_s=timeout_s, network=network, mutant=mutant,
-                            copied=True, python=interpreter(repo), scratch_dir=copy.parent, deadline=deadline,
-                            links=report)
+                            copied=True, python=python, scratch_dir=copy.parent, deadline=deadline, links=report)
         except CopyNotRun as exc:
             raise RepoRefused("G6_E_TESTS_DID_NOT_RUN", str(exc)) from exc
-    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network, receipt=receipt)
+    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network, receipt=receipt, python=python)
 
 
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
@@ -1096,7 +1144,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                *(str(repo / inside(repo, root, "import root")) for root in roots)]
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     python = python or interpreter(repo)
-    whose = "repository" if any(Path(python).is_relative_to(repo / folder) for folder in (".venv", "venv")) else "g6"
+    whose = ("setting" if python == _chosen_python() else
+             "repository" if any(Path(python).is_relative_to(repo / folder) for folder in (".venv", "venv")) else "g6")
     untracked = [] if copied else _untracked(repo)
     take_snapshot = (lambda: _copy_snapshot(repo, deadline=deadline)) if copied else (lambda: snapshot(repo, untracked))
     before, started = take_snapshot(), time.monotonic()
@@ -1145,9 +1194,12 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                f"--junitxml={report}", *_config_args(repo, ids, own), f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
         mine = confine.owned(repo)
+        reads = confine.interpreter_paths(python)
+        environment = tuple(path for path in _environment_of(python) if not any(
+            Path(path).is_relative_to(os.path.realpath(folder)) for folder in (*reads, str(repo))))
         confined = confine.plan(confine.Confinement(
             read_write=(str(work), str(own), *([str(repo)] if mine else [])),
-            read_only=(*confine.interpreter_paths(python), *([] if mine else [str(repo)]), top), network=network),
+            read_only=(*reads, *environment, *([] if mine else [str(repo)]), top), network=network),
             python)
         isolation = confined.record()
         said = confine.refused(confined)
