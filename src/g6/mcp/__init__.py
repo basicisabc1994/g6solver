@@ -160,18 +160,21 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         with the same text states its checks; each assumption is listed with its source (explicit, inferred or
         fallback) and decides nothing. An invalid intent is refused. Optional proposed_checks, at most 20 test files
         you propose, [{id, requirement_id, intent: preserve|change, file: a relative path named test_*.py, source: its
-        text, at most 64 KB, test: an optional node id in it}]: each runs confined, with no network, in a copy of the
-        patch and one of the base commit's code, and is classified (counterexample, fails_on_base_too, not_refuted,
-        unconfirmed_failure, behaviour_changed or check_error). A proposed check never passes a requirement: a
-        counterexample or a failure of the change gives at most insufficient_evidence, with a reproduction in
-        next_actions. Anything else, a conftest or a pytest configuration say, is refused. Every reply has
+        text, at most 64 kilobytes, test: an optional node identifier in it}]: each runs confined, with no network, in a
+        copy of the patch and one of the base commit's code, and is classified (counterexample, fails_on_base_too,
+        not_refuted, unconfirmed_failure for a change check that fails on the patch whatever the base gives,
+        behaviour_changed or check_error). A proposed check never passes a requirement: a counterexample or a failure
+        of the change gives at most insufficient_evidence, with a reproduction in next_actions: the command G6's run
+        amounted to (PYTHONPATH=src where G6 put src on the path, an empty configuration where the repository has
+        none). Anything else, a conftest or a pytest configuration say, is refused. Every reply has
         assessment.completion: what was demonstrated, what is not established, the defects reproduced, preservation,
         open questions and every activity. Poll metaharness_job for the result.
         assessment.outcome is one of: test_integrity_compromised (a sign of a weakened test or test helper that G6's
         static comparison finds, a changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
         on the patch and passed at the base commit); insufficient_evidence (no requirement, a requirement with no
-        check, a check that did not run or ran out of time, or a shortcut only the claim reports);
+        check, a check that did not run or ran out of time, a shortcut only the claim reports, or a proposed check's
+        unconfirmed_counterexample or unconfirmed_failure);
         supported_within_scope (every requirement passed its stated checks: support on those checks only, never proof
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the

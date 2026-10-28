@@ -42,29 +42,39 @@ when both its runs could have ``MIN_RUN_S``, and the stage stops at the first th
 skipped. A run no operating-system backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it
 starts, whatever the person allowed: never run unconfined. The repository is never written.
 
-``classify`` (plan rule 3), from what each run says (``reading``): a run that did not finish in time, changed its copy,
-could not be believed, collected or set up, was skipped, or failed on an operating-system error (inside the boundary
-that is what a refused access looks like: a file outside the copy, the network, a name lookup) or without its output
-saying how is a ``check_error``, counted and never a finding. Otherwise:
+``classify`` (plan rule 3), from what each run says (``reading``, which reads each failure from the message the run
+recorded in full, ``repo_tests``'s ``failure_messages``, before pytest's output): a run that did not finish in time,
+changed its copy, could not be believed, collected or set up, was skipped, or failed on an operating-system error or a
+refusal a client library wrapped (G6's network refusal, a name that could not be looked up, an unreachable network:
+inside the boundary that is what a refused access looks like), or without saying how, is a ``check_error``, counted
+and never a finding. A check whose own file could not be collected (an import the patch broke) has failed, as tier 2
+reads a test file, and its run at the base commit decides. Otherwise:
 
 - ``preserve``: passes at the base commit and fails on the patch, ``counterexample``; fails on both,
   ``fails_on_base_too`` (nobody is accused); passes on the patch, ``not_refuted``;
-- ``change``: fails on the patch, ``unconfirmed_failure`` (the incomplete fix a filter at the base would hide); passes
-  on both, ``not_refuted``, noted as not exercising the change; fails at the base commit and passes on the patch,
-  ``not_refuted``;
+- ``change``: fails on the patch, ``unconfirmed_failure`` (the incomplete fix a filter at the base would hide),
+  whatever the base gives (a new function cannot even be imported there), unless its file could not be collected for a
+  reason outside the repository's own code, a ``check_error``; passes on both, ``not_refuted``, noted as not exercising
+  the change; fails at the base commit and passes on the patch, ``not_refuted``;
 - a probe, a check that records observations instead of asserting: each observation is one line of its output,
   ``G6-OBSERVATION`` and a space then a JSON object ``{"input": ..., "output": ...}``, printed to the real output (in a
-  test, ``with capsys.disabled(): print(...)``), at most ``MAX_OBSERVATIONS``, all within the output G6 keeps of a run.
-  When both runs pass and their observations differ, ``behaviour_changed``: a question only.
+  test, ``with capsys.disabled(): print(...)``), at most ``MAX_OBSERVATIONS``, all within the output G6 keeps of a run,
+  each at most ``MAX_OBSERVATION_CHARS`` characters and ``MAX_OBSERVATION_DEPTH`` levels deep. When both runs pass and
+  their observations differ, ``behaviour_changed``: a question only. The inputs and outputs that differ are reported as
+  canonical JSON text, so nothing nested reaches the reply.
 
 A proposed check never passes a requirement (plan rule 2): the requirement keeps its status from its stated checks, and
 the reply says how many proposed checks did not refute it. A ``counterexample`` gives the reason
 ``unconfirmed_counterexample`` and an ``unconfirmed_failure`` the reason ``unconfirmed_failure``, both with stage
 ``evidence``, so the patch review's precedence makes the outcome at most ``insufficient_evidence``; never
-``defect_detected`` or ``test_integrity_compromised``. Each finding's reproduction is the check's text, its SHA-256, the
-path and node id, a command the repository's own pytest runs without G6, and the digests of the two copies it ran in
-(each as the run began, the check included). ``fails_on_base_too`` and ``behaviour_changed`` become questions that show
-the competing behaviours, at most ``MAX_QUESTIONS``.
+``defect_detected`` or ``test_integrity_compromised``; the reason says what was found in G6's own words, and what the
+check printed or failed with, the caller's text, stays in ``assessment.completion``. Each finding's reproduction is the
+check's text, its SHA-256, the path and node identifier, the plain pytest run G6's run amounted to (``reproduce``:
+``PYTHONPATH=src`` where G6 put ``src`` on the import path, G6's empty configuration where the repository has none),
+which needs no G6, the interpreter and boundary each run had, the digests of the two copies it ran in (each as the run
+began, the check included), and ``CAUTION``: the check is the caller's code. A stated check's reproduction is derived
+from its run the same way. ``fails_on_base_too`` and ``behaviour_changed`` become questions that show the competing
+behaviours, at most ``MAX_QUESTIONS``.
 
 ``completion`` builds ``assessment.completion`` for every reply, from what ran only: the requirements demonstrated on
 their stated checks with the receipts, those not established with the activity that would settle them, the defects
@@ -76,6 +86,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
 import time
@@ -92,6 +103,7 @@ from g6.harness.patch_review import (
     NOT_ESTABLISHED,
     PASSED_ON_CHECKS,
     Requirement,
+    _collection_errors,
     _covers,
     _in_repository,
 )
@@ -185,6 +197,13 @@ RUN_S = 60
 MIN_RUN_S = 5
 MAX_QUESTIONS = 3
 MAX_OBSERVATIONS = 32
+#: An observation line holds at most this many characters, and its JSON object at most this many levels of nesting
+#: (the object itself is one level, and so is a value inside it); beyond either, the probe is not read.
+MAX_OBSERVATION_CHARS = 1000
+MAX_OBSERVATION_DEPTH = 16
+#: Said with every reproduction: G6 hands back code it did not write.
+CAUTION = ("The check is code the caller wrote: G6 ran it only inside its operating-system boundary, with no network. "
+           "Read it before you run it, or run it in a container.")
 #: How a probe's observation line begins.
 OBSERVATION = "G6-OBSERVATION"
 FOLDER = "g6_check_"
@@ -193,13 +212,18 @@ PROPOSED = "proposed"
 PROPOSED_BY = "the caller: a calling agent's proposal, never assumed independent of the patch's author"
 COUNTEREXAMPLE, FAILS_ON_BASE_TOO, NOT_REFUTED = "counterexample", "fails_on_base_too", "not_refuted"
 UNCONFIRMED_FAILURE, BEHAVIOUR_CHANGED, CHECK_ERROR = "unconfirmed_failure", "behaviour_changed", "check_error"
-#: The reason each finding gives, always with stage ``evidence`` (plan rule 4).
+#: The reason each finding gives, always with stage ``evidence`` (plan rule 4), and what the reason says of it.
 REASONS = {COUNTEREXAMPLE: "unconfirmed_counterexample", UNCONFIRMED_FAILURE: "unconfirmed_failure"}
+SHAPE = {COUNTEREXAMPLE: "passes at the base commit and fails on the patch",
+         UNCONFIRMED_FAILURE: "fails on the patch, where the change should make it pass"}
 OUT_OF_TIME = "the review's time budget would be passed"
 HOW = ("copy the tree without its .git folder (the working tree under review, or the base commit's tree to see the "
-       "other result), write text to file inside the copy, and run command from the copy's top folder; it needs the "
-       "repository's own pytest, not G6. The two tree digests are of the copies G6 ran it in, each as its run began, "
-       "the check included")
+       "other result), write text to file inside the copy, and run command from the copy's top folder (python -m "
+       "pytest with arguments, and environment set): that is what G6's run amounted to, and it needs the repository's "
+       "own pytest, not G6. The two tree digests are of the copies G6 ran it in, each as its run began, the check "
+       "included")
+#: The arguments that stand for the empty configuration G6 names, rooted at the copy's top, when none applies.
+OWN_CONFIG = ("--rootdir=.", "--confcutdir=.", "-c", "/dev/null")
 _NAME = re.compile(r"test_[A-Za-z0-9_]+\.py")
 _PART = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 #: Folders a check is never placed in: G6's copy leaves them out (any whose name begins with a dot, ``__pycache__``,
@@ -211,11 +235,19 @@ _FAILED_LINE = re.compile(r"^FAILED (\S+)(?: - (.*))?$", re.MULTILINE)
 _RAISED_LINE = re.compile(r"^E\s+(\S.*)$", re.MULTILINE)
 #: A failure on an operating-system error: inside the boundary a refused access (a file outside the copy, the network,
 #: a name lookup) raises one, so G6 cannot tell it from a failure of the code. A check error, never a finding.
-_OS_ERROR = re.compile(r"^(?:E\s+|FAILED \S+ - )(?:[\w.]+\.)?(?:OSError|IOError|EnvironmentError|PermissionError|"
-                       r"FileNotFoundError|FileExistsError|IsADirectoryError|NotADirectoryError|ConnectionError|"
-                       r"ConnectionRefusedError|ConnectionResetError|ConnectionAbortedError|BrokenPipeError|"
-                       r"TimeoutError|BlockingIOError|InterruptedError|ChildProcessError|ProcessLookupError|gaierror|"
-                       r"herror|timeout|URLError|SSLError)\b", re.MULTILINE)
+_OS_NAME = (r"(?:[\w.]+\.)?(?:OSError|IOError|EnvironmentError|PermissionError|FileNotFoundError|FileExistsError|"
+            r"IsADirectoryError|NotADirectoryError|ConnectionError|ConnectionRefusedError|ConnectionResetError|"
+            r"ConnectionAbortedError|BrokenPipeError|TimeoutError|BlockingIOError|InterruptedError|ChildProcessError|"
+            r"ProcessLookupError|gaierror|herror|timeout|URLError|SSLError)\b")
+#: In pytest's output, on an ``E`` line or the summary line; in a message the run recorded, on any line.
+_OS_ERROR = re.compile(rf"^(?:E\s+|FAILED \S+ - ){_OS_NAME}", re.MULTILINE)
+_OS_RAISED = re.compile(rf"^(?:E\s+)?{_OS_NAME}", re.MULTILINE)
+#: The same seen through a client library that wraps it in an exception of its own (review E12): G6's own network
+#: refusal, a name that could not be looked up, an unreachable network, or the private loopback's refusal.
+_REFUSED = re.compile("|".join([re.escape(repo_tests.SAID["network_off"]), "Temporary failure in name resolution",
+                                "Name or service not known", "No address associated with hostname",
+                                "nodename nor servname", "getaddrinfo failed", "Network is unreachable",
+                                "Connection refused"]))
 #: ``repo_tests._output``'s mark where it cut a run's output.
 _CUT = re.compile(r"^\.\.\. \[\d+ bytes of output omitted\] \.\.\.$", re.MULTILINE)
 _OBSERVED = re.compile(rf"{OBSERVATION} (.*)$", re.MULTILINE)
@@ -259,7 +291,7 @@ def _source_problem(source: str) -> str:
         size = len(source.encode("utf-8"))
     except UnicodeEncodeError:
         return "source must be text UTF-8 can hold"
-    return (f"source holds {size} bytes; a proposed check holds at most {MAX_SOURCE_BYTES} (64 KB)"
+    return (f"source holds {size} bytes; a proposed check holds at most {MAX_SOURCE_BYTES} (64 kilobytes)"
             if size > MAX_SOURCE_BYTES else "")
 
 
@@ -335,8 +367,23 @@ def _node(check: ProposedCheck, placed: str) -> str:
     return placed + (f"::{check.test}" if check.test else "")
 
 
-def _command(node: str) -> str:
-    return "python -m pytest -p no:cacheprovider " + shlex.quote(node)
+#: What a run says about the interpreter, the boundary and what G6 gave pytest, kept with each run's reading.
+RAN_WITH = ("python", "interpreter_source", "isolation", "import_path", "own_config")
+
+
+def reproduce(node: str, ran: dict) -> dict:
+    """The plain pytest run that stands for G6's run ``ran`` of ``node``, from the top of a copy of the tree:
+    ``environment`` (``PYTHONPATH`` for each folder G6 put on the import path besides the top, which ``python -m``
+    puts there itself), ``arguments`` (after ``python -m pytest``: G6's empty configuration, rooted at the top, when
+    the repository had none) and the ``command`` that runs it in a POSIX shell. A run that does not say is read as one
+    with the top alone on the path and the repository's own configuration."""
+    folders = [rel for rel in ran.get("import_path") or ["."] if rel != "."]
+    environment = {"PYTHONPATH": os.pathsep.join(folders)} if folders else {}
+    arguments = ["-p", "no:cacheprovider", *(OWN_CONFIG if ran.get("own_config") else ()), node]
+    command = (f"PYTHONPATH={shlex.quote(environment['PYTHONPATH'])} " if environment else "") + "python -m pytest " + \
+        " ".join(shlex.quote(argument) for argument in arguments)
+    return {"environment": environment, "arguments": arguments, "command": command,
+            **{key: ran[key] for key in ("python", "interpreter_source") if key in ran}}
 
 
 def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *, at_base: bool,
@@ -363,13 +410,53 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
         return {"verdict": "not_run", "said": str(exc)}
 
 
-def _failure(output: str) -> str:
-    """How a check failed, as pytest's summary or its last ``E`` line says it ("" when neither does)."""
+def _messages(ran: dict, node: str) -> list[str]:
+    """The failure messages the run recorded in full (``failure_messages``) for the tests of ``node`` or its file."""
+    full, file = _in_repository(ran), node.partition("::")[0]
+    return [text for named, text in (ran.get("failure_messages") or {}).items()
+            if _covers(node, full(named)) or full(named) == file]
+
+
+def _failure(ran: dict, node: str) -> str:
+    """How a check failed: its recorded message (a collection's: its last ``E`` line), else pytest's summary or its
+    last ``E`` line in the output ("" when none says)."""
+    for text in _messages(ran, node):
+        raised = _RAISED_LINE.findall(text)
+        line = raised[-1] if raised else next((part for part in text.splitlines() if part.strip()), "")
+        if line.strip():
+            return line.strip()[:300]
+    output = ran.get("output") or ""
     for match in _FAILED_LINE.finditer(output):
         if match.group(2):
             return match.group(2).strip()[:300]
     raised = _RAISED_LINE.findall(output)
     return raised[-1].strip()[:300] if raised else ""
+
+
+def _refused_access(ran: dict, node: str) -> bool:
+    """Whether the failure is an operating-system error or a refusal seen through a library (``_REFUSED``)."""
+    output = ran.get("output") or ""
+    return bool(_OS_ERROR.search(output) or _REFUSED.search(output) or any(
+        _OS_RAISED.search(text) or _REFUSED.search(text) for text in _messages(ran, node)))
+
+
+def _uncollected(ran: dict, node: str) -> bool:
+    """Whether pytest could not collect the check's own file (a collection error named after it)."""
+    full, file = _in_repository(ran), node.partition("::")[0]
+    return file in {full(rel) for rel in _collection_errors(ran.get("output") or "")} or any(
+        full(named) == file for named in ran.get("failure_messages") or {})
+
+
+def _depth(value) -> int:
+    """Levels of nesting, counted without recursion: a value is one level, and each list or object around it adds one;
+    counting stops past ``MAX_OBSERVATION_DEPTH``."""
+    deepest, pending = 0, [(value, 1)]
+    while pending and deepest <= MAX_OBSERVATION_DEPTH:
+        item, level = pending.pop()
+        deepest = max(deepest, level)
+        children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
+        pending.extend((child, level + 1) for child in children)
+    return deepest
 
 
 def _observations(output: str) -> list[dict] | None | str:
@@ -383,37 +470,57 @@ def _observations(output: str) -> list[dict] | None | str:
         return f"it recorded {len(lines)} observations; a probe records at most {MAX_OBSERVATIONS}"
     found = []
     for line in lines:
+        if len(line) > MAX_OBSERVATION_CHARS:
+            return f"an observation holds more than {MAX_OBSERVATION_CHARS} characters"
         try:
             item = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             return f"an observation is not JSON: {line[:80]!r}"
         if not (isinstance(item, dict) and set(item) == {"input", "output"}):
             return f"an observation is not {{\"input\": ..., \"output\": ...}}: {line[:80]!r}"
+        if _depth(item) > MAX_OBSERVATION_DEPTH:
+            return f"an observation is nested more than {MAX_OBSERVATION_DEPTH} levels deep"
         found.append(item)
     return found
 
 
 def reading(ran: dict, node: str) -> dict:
     """What one run of a check says: ``result`` ``passed`` (every test of the check passed its call), ``failed`` (one
-    failed its call, other than on an operating-system error, and its output says how) or ``error`` (anything else:
-    not finished in time, its copy changed, its report not believed, nothing collected, a setup that failed or a skip,
-    an operating-system error, a failure whose output does not say how); with the run's ``verdict``, ``detail``, ``seconds``, ``tree_digest`` (its copy as the run began) and, for a
-    pass, its ``observations`` (None when it recorded none)."""
+    failed its call, or the check's own file could not be collected, ``collection`` true; either way not on an
+    operating-system error or a refusal, and its messages or output say how) or ``error`` (anything else: not finished
+    in time, its copy changed, its report not believed, nothing collected, a setup that failed or a skip, an
+    operating-system error, a failure that does not say how); with the run's ``verdict``, ``detail``, ``seconds``,
+    ``tree_digest`` (its copy as the run began), what it ran with (``RAN_WITH``) and, for a pass, its ``observations``
+    (None when it recorded none)."""
     verdict, output = ran.get("verdict"), ran.get("output") or ""
-    found = {"verdict": verdict, "seconds": float(ran.get("seconds") or 0.0), "tree_digest": ran.get("source_before") or ""}
+    found = {"verdict": verdict, "seconds": float(ran.get("seconds") or 0.0),
+             "tree_digest": ran.get("source_before") or "", **{key: ran[key] for key in RAN_WITH if key in ran}}
 
     def error(why: str) -> dict:
         return {**found, "result": "error", "detail": why}
+
+    def failed(how: str, **extra) -> dict:
+        if not how:   # the repository's options hid it (--tb=no -rN, say): a refused access cannot be ruled out
+            return error("it failed, and nothing it recorded says how, so G6 cannot tell a failure of the code from "
+                         "an access the boundary refused")
+        if _refused_access(ran, node):
+            return error("it failed on an operating-system error, which is how a boundary refuses an access (a file "
+                         f"outside its copy, the network, a name lookup), or on such a refusal: {how}")
+        return {**found, "result": "failed", "detail": how, **extra}
 
     if verdict == "timed_out":
         return error(f"it did not finish within its time limit ({ran.get('said') or 'timed out'})")
     if verdict == repo_tests.CHANGED:
         return error("it changed files in its copy, so its result is not believed: "
                      + ", ".join((ran.get("changed") or [])[:5]))
-    if verdict not in repo_tests.RAN:
-        return error(f"{verdict}: {ran.get('said') or 'no result'}")
     full = _in_repository(ran)
     mine = {full(n): phases for n, phases in (ran.get("test_outcomes") or {}).items() if _covers(node, full(n))}
+    if not mine and verdict in (repo_tests.FAILED, "collection_error") and _uncollected(ran, node):
+        # review 5, as tier 2 reads a test file: an import the patch broke fails the check where it is collected
+        how = _failure(ran, node)
+        return failed(f"could not be collected: {how}" if how else "", collection=True)
+    if verdict not in repo_tests.RAN:
+        return error(f"{verdict}: {ran.get('said') or 'no result'}")
     if not mine:
         return error("pytest ran no test of the check: it could not be collected, or names no test")
     if any(phases.get("setup") != "passed" or phases.get("teardown") == "failed" for phases in mine.values()):
@@ -425,14 +532,7 @@ def reading(ran: dict, node: str) -> dict:
             return error(observed)
         return {**found, "result": "passed", "detail": f"{len(mine)} test(s) passed", "observations": observed}
     if "failed" in calls and verdict == repo_tests.FAILED:
-        how = _failure(output)
-        if not how:   # the repository's options hid it (--tb=no -rN, say): a refused access cannot be ruled out
-            return error("it failed, and its output does not say how, so G6 cannot tell a failure of the code from "
-                         "an access the boundary refused")
-        if _OS_ERROR.search(output):
-            return error("it failed on an operating-system error, which is how a boundary refuses an access (a file "
-                         f"outside its copy, the network, a name lookup): {how}")
-        return {**found, "result": "failed", "detail": how}
+        return failed(_failure(ran, node))
     return error(f"its tests did not run to a pass or a fail ({verdict})")
 
 
@@ -440,16 +540,20 @@ def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True)
 
 
+NOT_OBSERVED = "(not observed)"
+
+
 def _differences(base: list[dict] | None, patch: list[dict] | None) -> list[dict]:
-    """The inputs a probe observed differently at the base commit and on the patch, with both outputs."""
+    """The inputs a probe observed differently at the base commit and on the patch, with both outputs, each as
+    canonical JSON text (``NOT_OBSERVED`` where one run did not observe it), so nothing nested reaches the reply."""
     before = {_canonical(item["input"]): item for item in base or []}
     after = {_canonical(item["input"]): item for item in patch or []}
     found = []
     for key in dict.fromkeys([*before, *after]):
         old, new = before.get(key), after.get(key)
         if old is None or new is None or _canonical(old["output"]) != _canonical(new["output"]):
-            found.append({"input": (old or new)["input"], "base": old["output"] if old else "(not observed)",
-                          "patch": new["output"] if new else "(not observed)"})
+            found.append({"input": key, "base": _canonical(old["output"]) if old else NOT_OBSERVED,
+                          "patch": _canonical(new["output"]) if new else NOT_OBSERVED})
     return found
 
 
@@ -458,6 +562,17 @@ def classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
     ``note`` or the probe's ``differences`` where they apply."""
     if on_patch["result"] == "error":
         return {"result": CHECK_ERROR, "detail": f"on the patch: {on_patch['detail']}"}
+    if intent == "change" and on_patch["result"] == "failed":
+        # review 1: what the change must bring fails on the patch, whatever the base gives (a new function cannot
+        # even be imported there); the base result is detail only
+        if on_patch.get("collection") and on_patch["verdict"] != repo_tests.FAILED:
+            return {"result": CHECK_ERROR, "detail": "on the patch: it could not be collected for a reason G6 places "
+                                                     "outside the repository's own code (a module this environment "
+                                                     f"lacks, say), so it says nothing of the change: "
+                                                     f"{on_patch['detail']}"}
+        base = (f"at the base commit it {'passed' if at_base['result'] == 'passed' else 'gave ' + at_base['result']}"
+                f" ({at_base['detail']})" if at_base else "it was not run at the base commit")
+        return {"result": UNCONFIRMED_FAILURE, "detail": f"fails on the patch ({on_patch['detail']}); {base}"}
     if at_base is None or at_base["result"] == "error":
         return {"result": CHECK_ERROR,
                 "detail": "at the base commit: " + (at_base["detail"] if at_base else "it did not run")}
@@ -472,10 +587,7 @@ def classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
         if intent == "change":
             found["note"] = "does not exercise the change: it passes at the base commit too"
         return found
-    if intent == "change":
-        if patch == "failed":
-            return {"result": UNCONFIRMED_FAILURE,
-                    "detail": f"fails on the patch ({on_patch['detail']}), and {base} at the base commit"}
+    if intent == "change":   # it passes on the patch and fails at the base commit: what the change should do
         return {"result": NOT_REFUTED, "detail": "fails at the base commit and passes on the patch"}
     if patch == "failed" and base == "passed":
         return {"result": COUNTEREXAMPLE,
@@ -512,7 +624,9 @@ def not_run(checks: list[ProposedCheck], placed: dict[str, str], why: str) -> Se
 
 
 def _summary(found: dict) -> dict:
-    return {key: found[key] for key in ("result", "verdict", "detail", "seconds", "tree_digest")}
+    """A run as its activity lists it: its result, and the interpreter, boundary and import path it ran with."""
+    return {key: found[key] for key in ("result", "verdict", "detail", "seconds", "tree_digest", *RAN_WITH)
+            if key in found}
 
 
 def _bound(left: float) -> int:
@@ -548,7 +662,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
         if skip:
             activity["runs"].append({"on": "base commit", "result": "skipped", "reason": skip})
         verdict = classify(one.intent, on_patch, at_base)
-        if skip == OUT_OF_TIME:
+        if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR:   # only where the base run would have decided
             verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
         activity.update(verdict)
         activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
@@ -562,15 +676,20 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
     probe whose observations differ."""
     result, about = verdict["result"], f"{one.id} (proposed for {one.requirement_id}, intent {one.intent})"
     if result in REASONS:
+        node = activity["node"]
         reproduction = {"check": one.id, "file": activity["placed"], "text": one.source, "sha256": activity["sha256"],
-                        "node": activity["node"], "command": _command(activity["node"]), "how": HOW,
+                        "node": node, **reproduce(node, on_patch), "how": HOW, "caution": CAUTION,
                         "patched_tree_digest": on_patch["tree_digest"],
                         "base_tree_digest": at_base["tree_digest"] if at_base else "",
                         "artifact_digest": artifact, "base_commit": base_commit,
                         "on_patch": f"{on_patch['result']}: {on_patch['detail']}",
                         "at_base": f"{at_base['result']}: {at_base['detail']}" if at_base else "not run"}
-        done.reasons.append((REASONS[result], f"{about}: {verdict['detail']}; unconfirmed: the caller proposed it, and "
-                                              "a proposed check decides no requirement"))
+        if at_base is not None:
+            reproduction["at_base_command"] = reproduce(node, at_base)["command"]
+        # review 10: in G6's own words only; what the check printed or failed with stays in assessment.completion
+        done.reasons.append((REASONS[result], f"{about}: {SHAPE[result]}; unconfirmed: the caller proposed it, a "
+                                              "proposed check decides no requirement, and what it failed with is in "
+                                              "assessment.completion"))
         done.defects.append({"check": one.id, "requirement": one.requirement_id, "provenance": PROPOSED,
                              "result": result, "code": REASONS[result], "detail": verdict["detail"],
                              "reproduction": reproduction})
@@ -578,14 +697,14 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
             f"{about}: {result.replace('_', ' ')}, not confirmed. To reproduce it, copy the tree without its .git "
             f"folder, write the check's text (sha256 {activity['sha256']}) to {activity['placed']}, and run "
             f"{reproduction['command']} from the copy's top folder; the text and the digests of the trees it ran on "
-            "are in assessment.completion.defects_reproduced")
+            f"are in assessment.completion.defects_reproduced. {CAUTION}")
     elif result == BEHAVIOUR_CHANGED:
         first = verdict["differences"][0]
         more = len(verdict["differences"]) - 1
         done.questions.append({
             "check": one.id, "requirement": one.requirement_id, "intent": one.intent, "result": result,
-            "question": f"For input {_canonical(first['input'])} the base commit's code gives "
-                        f"{_canonical(first['base'])} and the patch gives {_canonical(first['patch'])}"
+            "question": f"For input {first['input']} the base commit's code gives {first['base']} and the patch gives "
+                        f"{first['patch']}"
                         + (f" ({more} more input(s) differ)" if more else "")
                         + f", observed by {about}. Which is intended for {one.requirement_id}?",
             "behaviours": {"differences": verdict["differences"]}})
@@ -634,7 +753,7 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
                        "requirements": [req["id"] for req in evaluated
                                         if any(c["id"] == found["node"] for c in req["checks"])],
                        "code": found["code"], "detail": found["detail"],
-                       "reproduction": {"node": found["node"], "command": _command(found["node"]),
+                       "reproduction": {"node": found["node"], **reproduce(found["node"], found.get("ran") or {}),
                                         "on": "the working tree under review" + (
                                             "" if named else "; it passes at the base commit"),
                                         "artifact_digest": artifact, "base_commit": base_commit}})

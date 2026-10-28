@@ -22,8 +22,9 @@
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
    run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
    by the time limit, never reached before it), the tier 1 run out of time, a shortcut only the claim's text reports
-   (``claim_reports_shortcut``), no test ran, no change against the base, or the scan for ignored files stopping at
-   its limit;
+   (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at its
+   limit, or a proposed check finding a counterexample or a failure of the change, neither confirmed
+   (``unconfirmed_counterexample``, ``unconfirmed_failure``);
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
    support on the checks named, never a claim that the patch does everything the task needs.
 
@@ -50,7 +51,8 @@ invalid one refuses the review). After tier 2, unless integrity is already in do
 of the patched tree and in one at the base commit's code, and is classified. A proposed check never passes a
 requirement and never gives ``defect_detected`` or ``test_integrity_compromised``: a counterexample or a failure of the
 change gives a reason with stage ``evidence`` (so at most ``insufficient_evidence``) and its reproduction in the next
-actions. Where no operating-system boundary can confine those runs the review is refused, whatever the person allowed.
+actions. A reason says what the check found in G6's own words; what the check printed or failed with, which is the
+caller's text, stays in ``assessment.completion``. Where no operating-system boundary can confine those runs the review is refused, whatever the person allowed.
 Every reply carries ``assessment.completion``, built from what ran; with no proposed checks every decided field is as
 before.
 
@@ -589,10 +591,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     skipped: list[dict] = []
     defects: list[dict] = []   # each stated or derived check that failed, for the completion report's reproductions
 
-    def reason(stage: str, code: str, detail: str, node: str = "") -> None:
+    def reason(stage: str, code: str, detail: str, node: str = "", ran: dict | None = None) -> None:
         reasons.append({"stage": stage, "code": code, "detail": detail})
-        if node:
-            defects.append({"code": code, "node": node, "detail": detail})
+        if node:   # ``ran``: the run it failed in, from which its reproduction is derived
+            defects.append({"code": code, "node": node, "detail": detail, "ran": ran or {}})
 
     # Integrity, before anything runs: every changed test-related file through G6's weakening detector (review C2); a
     # moved one is compared with its old text, never read as deleted.
@@ -632,7 +634,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     for check in ids:
         if verdicts[check]["verdict"] in DEFECTS:
             reason("tier_1", "check_failed", f"{check}: {verdicts[check]['verdict']} ({verdicts[check]['detail']})",
-                   node=check)
+                   node=check, ran=first)
         elif verdicts[check]["verdict"] != "passed" and check not in stated_ids:
             unknowns.append(f"extra test {check} did not run to a pass: {verdicts[check]['verdict']}")
 
@@ -786,10 +788,10 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) ->
                             provenance=DERIVED))
         if out.get("verdict") == repo_tests.FAILED:
             reason("tier_2", "derived_test_regressed", f"{rel} passed at the base commit and fails on the patch: "
-                   + ", ".join(out.get("failed_ids", [])[:5]), node=rel)
+                   + ", ".join(out.get("failed_ids", [])[:5]), node=rel, ran=out)
         elif out.get("baseline") == "passed" and out.get("patched") in (repo_tests.FAILED, "collection_error"):
             reason("tier_2", "derived_test_regressed", f"{rel} collects and passes at the base commit, and fails to "
-                   f"collect or run on the patch ({out.get('said') or out.get('patched')})", node=rel)
+                   f"collect or run on the patch ({out.get('said') or out.get('patched')})", node=rel, ran=out)
         elif out.get("verdict") == "passed":
             unknowns.append(f"{rel} failed in place on the patch but passed when replayed in a copy")
         elif out.get("baseline") == "passed":

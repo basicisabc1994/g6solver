@@ -446,7 +446,8 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: ``-n0 --dist=no`` come after the repository's own options and win: the tests run in this one process, where the
 #: guard and the hook apply (review I8). A small plugin writes, as the session ends, how many tests were collected and
 #: deselected, and how many started and finished (a setup and a teardown reported), so a run that stops part-way with
-#: exit code 0 is not read as a pass (review I3). Another turns pytest's "fd" capture, its default, into "sys" before
+#: exit code 0 is not read as a pass (review I3), and the message of each failure, a collection's included, in full
+#: (``failure_messages``: pytest's summary line is cut to the terminal's width). Another turns pytest's "fd" capture, its default, into "sys" before
 #: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
 #: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays.
 _BOOT = r'''
@@ -515,6 +516,7 @@ class _Counted:
         self.failed, self.setup_errors = [], {}
         self.test_outcomes, self.collected_ids, self.omitted_ids = {}, set(), set()
         self.rootdir = ""
+        self.messages = {}
     def pytest_itemcollected(self, item):
         self.collected_ids.add(item.nodeid)
     def pytest_deselected(self, items):
@@ -528,11 +530,15 @@ class _Counted:
     def pytest_collectreport(self, report):
         if report.skipped:
             self.test_outcomes[report.nodeid] = {"collection": "skipped"}
+        elif report.failed:
+            self.messages[report.nodeid] = str(report.longrepr)[-2000:]
     def pytest_runtest_logreport(self, report):
         self.test_outcomes.setdefault(report.nodeid, {})[report.when] = report.outcome
         if report.when in ("setup", "teardown"):
             (self.started if report.when == "setup" else self.finished).add(report.nodeid)
         if report.failed:
+            crash = getattr(report.longrepr, "reprcrash", None)
+            self.messages.setdefault(report.nodeid, str(getattr(crash, "message", "") or report.longrepr)[-2000:])
             if type(report.longrepr).__name__ == "FixtureLookupErrorRepr":
                 self.setup_errors[report.nodeid] = str(report.longrepr)
             elif report.nodeid not in self.failed:
@@ -547,7 +553,7 @@ class _Counted:
                            "finished": len(self.finished), "failed_ids": self.failed,
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
-                           "rootdir": self.rootdir}, handle)
+                           "rootdir": self.rootdir, "messages": self.messages}, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -862,7 +868,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict[str, int]:
             "test_outcomes": found.get("test_outcomes"), "collected_ids": found.get("collected_ids", []),
             "omitted_ids": found.get("omitted_ids", []),
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
-            "rootdir": found.get("rootdir") or "",
+            "rootdir": found.get("rootdir") or "", "failure_messages": found.get("messages") or {},
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
 
 
@@ -898,8 +904,11 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path, and
     ``source_before`` the digest of the ``snapshot`` the run began on (the digest the patch review calls its
     ``artifact_digest``), and ``rootdir`` the folder pytest named the tests relative to ("" for the repository's top;
-    a pytest configuration below the top moves it). Raises ``RepoRefused`` before anything runs when the request
-    cannot run.
+    a pytest configuration below the top moves it). ``failure_messages`` holds each failure's message in full, by node
+    id; ``import_path`` the folders the run put first on the import path, relative to the repository ("." and, when it
+    is a folder, "src"); ``own_config`` whether G6 named its own empty pytest configuration, rooted at the repository's
+    top, because none applied (``_config_args``). Raises ``RepoRefused`` before anything runs when the request cannot
+    run.
 
     ``receipt=True``: a run that started confined (its ``isolation`` names a backend), whose repository git could
     read after it, and beside which ``ignored_inputs`` found no git-ignored file the run could load, is written to
@@ -946,6 +955,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
     head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip() if receipt else ""
     command = f"pytest {len(ids)} test id(s) in place"
     isolation = confine.summary([])
+    own_config: list[str] = []   # the arguments of the empty configuration G6 names when the repository has none
 
     def result(verdict: str, counts: dict | None, output: str, moved: list[str]) -> dict:
         tally = counts or {}
@@ -961,7 +971,10 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "failed_ids": list(tally.get("failed_ids", [])), "setup_errors": tally.get("setup_errors", {}),
                 "degraded": verdict not in RAN or ("expected" in tally and
                     (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
-                "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or "")}
+                "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
+                "failure_messages": tally.get("failure_messages") or {},
+                "import_path": [Path(entry).relative_to(repo).as_posix() for entry in entries],
+                "own_config": bool(own_config)}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
@@ -981,9 +994,10 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
             Path(source).write_text(mutant[1], encoding="utf-8")
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
+        own_config[:] = _config_args(repo, ids, own)
         cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
                target, source, str(counted), *ids, "-q", "-p", "no:cacheprovider",
-               f"--junitxml={report}", *_config_args(repo, ids, own), f"--log-file={own / 'pytest.log'}",
+               f"--junitxml={report}", *own_config, f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
         mine = confine.owned(repo)
         confined = confine.plan(confine.Confinement(
