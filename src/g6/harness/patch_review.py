@@ -602,7 +602,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         prepared = None
         if instances:   # read from files only, before anything runs: an instance that does not apply is refused alone
             from g6.harness import verification_templates
-            prepared = verification_templates.prepare(root, change, instances, enabled=config["templates"])
+            prepared = verification_templates.prepare(root, change, instances, enabled=config["templates"],
+                                                      deadline=started + timeout_s)
         # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
         listed = [req for req in stated if req.provenance not in NORMATIVE]
         stated = [req for req in stated if req.provenance in NORMATIVE]

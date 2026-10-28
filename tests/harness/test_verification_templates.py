@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import tokenize
 from decimal import Decimal
 from pathlib import Path
@@ -825,6 +826,21 @@ def test_the_repositorys_ignored_imports_are_honoured(tmp_path, monkeypatch):
     Tiers(monkeypatch)
     got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
     assert _activity(got, "t-layers")["result"] == "passed", _activity(got, "t-layers")
+
+
+def test_the_structural_check_stops_reading_the_package_when_the_reviews_time_is_spent(tmp_path, monkeypatch):
+    """The structural check reads and parses the package before anything runs; it stops at the review's deadline, and
+    the instance is refused with that reason rather than holding the review past its time."""
+    root = _shop(tmp_path, {"pyproject.toml": LAYERS_TOML})
+    items = verification_templates.template_instances([SHOP_LAYERS], {"R1"})
+    prepared = verification_templates.prepare(root, repo_tests.change(root), items, deadline=time.monotonic() - 1)
+    [activity] = prepared.activities
+    assert activity["result"] == "refused" and "time" in activity["reason"], activity
+    assert prepared.structural[0]["verdict"] == "not_run"
+    Tiers(monkeypatch)
+    monkeypatch.setattr(verification_templates, "_clock", lambda: float("inf"))   # G6's clock for the deadline
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    assert _activity(got, "t-layers")["result"] == "refused" and "time" in _activity(got, "t-layers")["reason"]
 
 
 def test_an_unsupported_repository_contract_is_out_of_scope(tmp_path, monkeypatch):

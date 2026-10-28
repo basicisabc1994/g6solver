@@ -31,8 +31,9 @@ the five of this version:
   included), not dynamic ones.
 
 An instance is data, never code: ``{id, template, requirement_id, intent, bindings}`` (``template_instances``). A name
-in the bindings is a dotted name of ASCII letters, digits and ``_``, a module path and then a top-level attribute
-(``package.module.function``); an exception is a built-in exception's name or such a dotted name. A literal is JSON
+in the bindings is a dotted name of the letters A to Z (either case), digits and ``_``, a module path and then a
+top-level attribute (``package.module.function``); an exception is a built-in exception's name or such a dotted name;
+there is no keyword and no double-underscore name in either. A literal is JSON
 data (no tuple, set, bytes, number that is not finite, or key that is not text), at most ``MAX_DEPTH`` levels deep and
 ``MAX_BINDINGS_CHARS`` characters as JSON. Anything else is refused, and so is the whole review, before anything runs.
 ``prepare`` then checks each instance against the tree (``Tree``), reading files and never importing them in G6's
@@ -62,6 +63,7 @@ import json
 import keyword
 import math
 import re
+import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -104,6 +106,9 @@ BUILTIN_ERRORS = frozenset(name for name, value in vars(builtins).items()
                            if isinstance(value, type) and issubclass(value, BaseException))
 #: Folders G6's copies leave out: a module in one is not in the copy that runs.
 _LEFT_OUT = frozenset({"venv"})
+#: G6's clock for the review's deadline (a test replaces it).
+_clock = time.monotonic
+OUT_OF_TIME = "the review's time budget was spent before G6 had read and parsed the package's files"
 
 
 class Inapplicable(Exception):
@@ -114,7 +119,7 @@ class Inapplicable(Exception):
 
 def _dotted(value: str, *, attribute: bool) -> str:
     if len(value) > MAX_NAME or not _DOTTED.fullmatch(value):
-        raise ValueError("must be a dotted name of ASCII letters, digits and _ only, such as package.module.function")
+        raise ValueError("must be a dotted name of the letters A to Z (either case), digits and _ only, such as package.module.function")
     parts = value.split(".")
     if attribute and len(parts) < 2:
         raise ValueError("must name module.attribute: the module's dotted path, then a top-level name in it")
@@ -183,7 +188,7 @@ class Call(_Strict):
     @classmethod
     def _keywords(cls, value: dict) -> dict:
         if any(not key.isascii() or not key.isidentifier() or keyword.iskeyword(key) for key in value):
-            raise ValueError("each key of kwargs must be a parameter's name: ASCII letters, digits and _")
+            raise ValueError("each key of kwargs must be a parameter's name: the letters A to Z (either case), digits and _")
         return value
 
 
@@ -337,12 +342,19 @@ class Tree:
     known: frozenset[str]
     at_base: frozenset[str]
     _texts: dict = field(default_factory=dict)
+    #: The review's deadline (``_clock``'s time), past which the structural check reads and parses nothing more.
+    deadline: float | None = None
 
     @classmethod
-    def read(cls, root: Path, change: repo_tests.Change) -> Tree:
+    def read(cls, root: Path, change: repo_tests.Change, deadline: float | None = None) -> Tree:
         known = repo_tests._paths(repo_tests._git(root, "ls-files", "-co", "--exclude-standard", "-z"))
         at_base = repo_tests._paths(repo_tests._git(root, "ls-tree", "-r", "-z", "--name-only", change.base_commit))
-        return cls(root, change, frozenset(known), frozenset(at_base))
+        return cls(root, change, frozenset(known), frozenset(at_base), deadline=deadline)
+
+    def in_time(self) -> None:
+        """An ``Inapplicable`` once the review's deadline has passed."""
+        if self.deadline is not None and _clock() >= self.deadline:
+            raise Inapplicable(OUT_OF_TIME)
 
     def has(self, rel: str, side: str) -> bool:
         return rel in (self.at_base if side == BASE else self.known)
@@ -1042,17 +1054,18 @@ def _compiled(root: Path, tree: Tree, one: TemplateInstance) -> tuple[vs.Propose
 
 
 def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInstance], *,
-            enabled: bool = True) -> Prepared:
+            enabled: bool = True, deadline: float | None = None) -> Prepared:
     """Each instance checked against the tree and, where it applies, compiled and placed (or, for the structural
-    template, checked): reading files only, before anything runs. ``enabled`` false (``search.templates``): none is
-    run, each listed as skipped."""
+    template, checked): reading files only, before anything runs, and the structural check no further than
+    ``deadline`` (the review's, on ``_clock``). ``enabled`` false (``search.templates``): none is run, each listed as
+    skipped."""
     found = Prepared(instances=len(instances))
     if not instances:
         return found
     if not enabled:
         found.activities = [{**_listing(one), "result": "skipped", "reason": TEMPLATES_OFF} for one in instances]
         return found
-    tree = Tree.read(root, change)
+    tree = Tree.read(root, change, deadline)
     for one in instances:
         definition = TEMPLATES[one.template]
         try:
@@ -1228,6 +1241,7 @@ def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str],
         raise Inapplicable(f"{package} holds more than {MAX_PACKAGE_FILES} files {WHERE[side]}")
     files, size = {}, 0
     for rel in names:
+        tree.in_time()
         files[rel[len(folder):]] = text = tree.text(rel, side)
         size += len(text)
         if size > MAX_PACKAGE_CHARS:
@@ -1321,7 +1335,9 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
     for contract in scoped:
         for side in (BASE, PATCH):
             if (contract.package, side) not in graphs:
+                tree.in_time()
                 files = _package_files(tree, contract.package, side)
+                tree.in_time()
                 graphs[contract.package, side] = (graph.build(files[0], contract.package), files[1]) if files else (
                     None, "")
         (before, _), (after, folder) = graphs[contract.package, BASE], graphs[contract.package, PATCH]
