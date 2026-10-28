@@ -41,7 +41,6 @@ import hashlib
 import json
 import os
 import platform
-import shutil
 import sys
 import uuid
 from collections.abc import Iterator
@@ -50,6 +49,7 @@ from pathlib import Path
 from time import monotonic, sleep
 
 from g6.core.ledger import ChainLedger, digest
+from g6.core.outside import find_program
 from g6.core.storage import state_path
 
 SCHEMA = "g6.test_receipt/1"
@@ -149,7 +149,7 @@ def _executable(python: str) -> dict:
     """The interpreter that ran the tests: its path as run; its version, G6's own when it is the interpreter running
     G6, else as its virtual environment's ``pyvenv.cfg`` records it (it is never started to ask: "" when neither
     says); and the SHA-256 of its file ("" when that cannot be read)."""
-    exe = python if os.path.isabs(python) else (shutil.which(python) or python)   # "python" in a frozen build
+    exe = python if os.path.isabs(python) else (find_program(python) or python)   # "python" in a frozen build
     real = os.path.realpath(exe)
     version = ""
     if os.path.normcase(real) == os.path.normcase(os.path.realpath(sys.executable)):
