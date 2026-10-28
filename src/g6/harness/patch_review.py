@@ -24,9 +24,16 @@
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
    run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
    by the time limit, never reached before it), the tier 1 run out of time, a shortcut only the claim's text reports
-   (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at its
-   limit, or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure
-   of the change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
+   (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at
+   its limit, a changed entry of a submodule git does not look into (``change_inside_submodule``: git cannot check
+   the files a submodule holds), or such a submodule folder G6 could not hash (``submodule_not_hashed``). Each such
+   folder is an unknown too: G6 hashes it into the digest, but cannot tell whether the patch changed its files. Also a
+   tier 1 or tier 2 run that loaded a changed module from outside the tree it tested, an installed copy of the code
+   in place of the file the patch changed, or that cannot say what it loaded (``changed_code_not_loaded``): its
+   passes and its failures are not used, the requirements it checks are not established, and an unknown names the
+   module, where it came from, and the import root (``import_roots``) or editable install that would load the patch.
+   Or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure of the
+   change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
 4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
    support on the checks named, never a claim that the patch does everything the task needs.
 
@@ -160,6 +167,26 @@ TIER_3_ADEQUACY = ("tier 3: mutation of the changed lines ran only for test adeq
                    "instances")
 #: The fields only G6, or Python code that builds a ``Requirement``, sets: a request's requirements cannot carry them.
 SET_BY_G6 = ("provenance", "kind", "merged_from")
+# PENDING copy (pool compatibility): a submodule folder git does not look into (``repo_tests._gitlinks``).
+SUBMODULE_UNKNOWN = ("git cannot check the files inside {path}, a submodule that was never set up here: G6 hashed them "
+                     "itself, so a change made while the tests ran is seen, but not whether the patch changed them "
+                     "since the base commit")
+SUBMODULE_CHANGED = ("{path}: the patch changes this submodule's entry (the commit it names, or whether it is there), "
+                     "and git cannot check the files a submodule holds")
+SUBMODULE_NOT_HASHED = "{path}: G6 could not hash the files inside this submodule folder ({why}), so a change there is not seen"
+#: The most ``import_roots`` a review takes.
+MAX_IMPORT_ROOTS = 8
+# PENDING copy (review C1): a run that loaded a changed module from outside the tree it tested (an installed copy).
+NOT_LOADED = "changed_code_not_loaded"
+NOT_LOADED_DETAIL = ("the run loaded a changed module from outside the tree it tested, or cannot say what it loaded, so "
+                     "its result says nothing about the patch")
+SHADOW_REASON = "tier {tier} run: {path} is changed, but the tests loaded {module} from {file}"
+SHADOW_UNKNOWN = ("{path} is changed, but the tier {tier} run loaded its module {module} from {file}, outside the tree "
+                  "it tested: those tests ran code the patch did not change. Name the folder that holds the package as "
+                  "an import root (import_roots, such as 'lib'), or install the repository in editable mode, and review "
+                  "again")
+SHADOW_UNCHECKED = ("tier {tier} run: G6 could not check that the tests loaded the changed code (more than {n} modules "
+                    "came from outside the tree, or the run did not say which), so its result is not used")
 
 
 class Requirement(BaseModel):
@@ -210,20 +237,47 @@ class _Refused(repo_tests.RepoRefused):
     pass
 
 
-def _execute(root: Path, ids: list[str], *, timeout_s: int, change: repo_tests.Change | None = None) -> dict:
-    """Every test run of a review. In place on the patched tree (``repo_tests.run``); or, given ``change``, each test
-    file of ``ids`` replayed at the base commit and then on the patch, in a copy (``repo_tests.run_before``), as
-    ``{file: result}``: a file that did not pass at the base commit reads ``not_run``."""
+def _execute(root: Path, ids: list[str], *, timeout_s: int, change: repo_tests.Change | None = None,
+             roots: tuple[str, ...] = ()) -> dict:
+    """Every test run of a review, with ``roots`` (the review's ``import_roots``) first on the import path. In place on
+    the patched tree (``repo_tests.run``); or, given ``change``, each test file of ``ids`` replayed at the base commit
+    and then on the patch, in a copy (``repo_tests.run_before``), as ``{file: result}``: a file that did not pass at
+    the base commit reads ``not_run``."""
     if change is not None:
         texts = {rel: (root / rel).read_text(encoding="utf-8", errors="replace") for rel in ids}
-        return repo_tests.run_before(replace(change, before=texts), timeout_s=timeout_s)
-    return repo_tests.run(root, ids, timeout_s=timeout_s, receipt=True)
+        return repo_tests.run_before(replace(change, before=texts), roots=roots, timeout_s=timeout_s)
+    return repo_tests.run(root, ids, roots=roots, timeout_s=timeout_s, receipt=True)
 
 
-def _execute_at_base(change: repo_tests.Change, ids: list[str], *, timeout_s: int) -> dict:
+def _execute_at_base(change: repo_tests.Change, ids: list[str], *, timeout_s: int, roots: tuple[str, ...] = ()) -> dict:
     """The stated checks that passed, as their test files are now, run against the base commit's code in a copy
     (``repo_tests.run_at_base``; review I8)."""
-    return repo_tests.run_at_base(change, ids, timeout_s=timeout_s)
+    return repo_tests.run_at_base(change, ids, roots=roots, timeout_s=timeout_s)
+
+
+def _rooted(roots: tuple[str, ...]) -> dict:
+    """The keyword that passes the review's ``import_roots`` to every run, when it names any."""
+    return {"roots": roots} if roots else {}
+
+
+def _import_roots(root: Path, values) -> tuple[str, ...]:
+    """``import_roots`` as folders inside the repository, or a refusal (``G6_E_INPUT_VALIDATION``): a list of at most
+    ``MAX_IMPORT_ROOTS``, each a path ``repo_tests.inside`` accepts that names a folder below the top, with no link on
+    the way."""
+    if not isinstance(values, (list, tuple)) or len(values) > MAX_IMPORT_ROOTS or not all(
+            isinstance(value, str) for value in values):
+        raise _Refused("G6_E_INPUT_VALIDATION", f"import_roots must be a list of at most {MAX_IMPORT_ROOTS} folders "
+                                                "inside the repository")
+    found = []
+    for value in values:
+        rel = repo_tests.inside(root, value, "import root").rstrip("/")
+        parts = PurePosixPath(rel).parts
+        if ("::" in value or not parts or not (root / rel).is_dir()
+                or any(repo_tests._linked(root.joinpath(*parts[:end])) for end in range(1, len(parts) + 1))):
+            raise _Refused("G6_E_INPUT_VALIDATION", f"import root {value!r} must name a folder inside the repository, "
+                                                    "with no link on the way")
+        found.append(rel)
+    return tuple(dict.fromkeys(found))
 
 
 def _confined(ran: dict) -> dict:
@@ -428,11 +482,21 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
     return found
 
 
+#: What a run says of what it could not see, kept in the reply's record of it when it says anything (review M1): the
+#: links its copy left out or copied in place, the modules it loaded from outside the tree, the submodule folders G6
+#: could not hash.
+_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed")
+
+
 def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:
-    return {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(ids), "tests": list(ids),
-            "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
-            "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
-            "receipt": ran.get("receipt", ""), "provenance": provenance}
+    found = {"tier": tier, "check": kind, "command": command or "pytest " + " ".join(ids), "tests": list(ids),
+             "verdict": ran.get("verdict"), "seconds": ran.get("seconds", 0.0), "passed": ran.get("passed", 0),
+             "failed": ran.get("failed", 0), "skipped": ran.get("not_passed", 0), "said": ran.get("said", ""),
+             "receipt": ran.get("receipt", ""), "provenance": provenance}
+    found.update({key: ran[key] for key in _SEEN_KEYS if ran.get(key)})
+    if ran.get("loaded_complete") is False:
+        found["loaded_complete"] = False
+    return found
 
 
 def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str], structural=()) -> dict:
@@ -567,7 +631,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                  claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
                  expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
                  proposed_checks: list[dict] | None = None, template_instances: list[dict] | None = None,
-                 search: dict | None = None) -> dict:
+                 search: dict | None = None, import_roots: list[str] | tuple[str, ...] = ()) -> dict:
     """Assess the working tree's patch against ``base`` on the stated requirements (``[{id, text, checks}]``, checks
     being pytest node ids) and the extra ``tests``. Never accepts claimed test results; never authorises a merge.
 
@@ -581,12 +645,15 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
     proposed checks within the 20) fill G6's templates (``g6.harness.verification_templates``); an invalid one is
     refused before anything runs, and one the tree gives nothing to apply to is refused and reported only. Optional
     ``search`` (``{"templates": bool, "test_adequacy": bool}``) runs free-form checks only, or measures test adequacy.
+    Optional ``import_roots`` (at most ``MAX_IMPORT_ROOTS`` folders inside the repository, such as ``lib``) go first on
+    the import path of every run of the review, in place and in copies, and are recorded in its scope.
     """
     started = time.monotonic()
     try:
         stated, assumed, unmapped, proposed, instances, config = _inputs(
             task, claim, tests, sources, timeout_s, requirements, intent, proposed_checks, template_instances, search)
         root = repo_tests.checked_repo(repo)
+        roots = _import_roots(root, import_roots)
         before = repo_tests.snapshot(root)
         artifact = digest(before)
         if expected_artifact_digest and artifact != expected_artifact_digest:
@@ -613,7 +680,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         ids = list(dict.fromkeys([*stated_ids, *(norm[raw] for raw in tests)]))
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
                        deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
-                       unmapped=unmapped, proposed=proposed, placed=placed, prepared=prepared, config=config)
+                       unmapped=unmapped, proposed=proposed, placed=placed, prepared=prepared, config=config,
+                       roots=roots)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -638,7 +706,7 @@ def _untrusted(tier: int, ran: dict) -> str:
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, prepared=None,
-            config=None) -> dict:
+            config=None, roots=()) -> dict:
     reasons: list[dict] = []
     unknowns: list[str] = list(unmapped)   # what an intent held that is not a check of this patch
     runs: list[dict] = []
@@ -649,6 +717,22 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         reasons.append({"stage": stage, "code": code, "detail": detail})
         if node:   # ``ran``: the run it failed in, from which its reproduction is derived
             defects.append({"code": code, "node": node, "detail": detail, "ran": ran or {}})
+
+    def unusable(tier: int, ran: dict) -> bool:
+        """Whether a run that ran is no evidence of the patch (review C1): it loaded a changed module from outside the
+        tree it tested (an installed copy), or cannot say what it loaded."""
+        if ran.get("verdict") not in repo_tests.RAN:
+            return False
+        found = repo_tests.shadowed(change.sources, ran)
+        if found is None:
+            said = SHADOW_UNCHECKED.format(tier=tier, n=repo_tests.LOADED_LIMIT)
+            reason("evidence", "changed_code_not_loaded", said)
+            unknowns.append(said)
+            return True
+        for rel, where in found.items():
+            reason("evidence", "changed_code_not_loaded", SHADOW_REASON.format(tier=tier, path=rel, **where))
+            unknowns.append(SHADOW_UNKNOWN.format(tier=tier, path=rel, **where))
+        return bool(found)
 
     # Integrity, before anything runs: every changed test-related file through G6's weakening detector (review C2); a
     # moved one is compared with its old text, never read as deleted.
@@ -668,6 +752,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                f"at its limit of {repo_tests.IGNORED_SCAN_LIMIT} entries")
     if not change.files:
         reason("evidence", "no_change", f"the working tree shows no change against {change.base}")
+    # A submodule folder git does not look into: G6 hashes it into the digest, but nothing says what it held at the
+    # base. A changed gitlink entry, or a folder G6 could not hash, leaves the evidence short; neither is an accusation.
+    for rel in change.submodule_changes:
+        reason("evidence", "change_inside_submodule", SUBMODULE_CHANGED.format(path=rel))
+    unknowns.extend(SUBMODULE_UNKNOWN.format(path=rel) for rel in change.submodules)
+    for rel, why in repo_tests.submodules_not_hashed(before).items():
+        reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=rel, why=why))
 
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
@@ -675,13 +766,15 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                 if i not in present}
     first: dict = {}
     if present:
-        first = _confined(_execute(root, present, timeout_s=max(1, _left(deadline))))
+        first = _confined(_execute(root, present, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
         runs.append(_record(1, "stated checks and extra tests", present, first))
         verdicts.update(_verdicts(present, first))
         if first["verdict"] in UNTRUSTED:
             reason("integrity", "run_not_trusted", _untrusted(1, first))
         elif first["verdict"] == "timed_out":
             reason("evidence", "run_timed_out", f"the tier 1 run did not finish: {first.get('said') or 'timed out'}")
+        elif unusable(1, first):   # a pass or a failure of code the patch did not change says nothing of the patch
+            verdicts.update({check: {"verdict": NOT_LOADED, "detail": NOT_LOADED_DETAIL} for check in present})
     else:
         skipped.append({"tier": 1, "check": "stated checks and extra tests",
                         "reason": "no check was stated" if not ids else "no stated check names a file on the tree"})
@@ -722,16 +815,18 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             skipped.append({"tier": 2, "check": "tests that touch the changed modules",
                             "reason": "no other test file names a changed module"})
         else:
-            second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline))))
+            second = _confined(_execute(root, derived, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
             runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
             if second["verdict"] in UNTRUSTED:
                 reason("integrity", "run_not_trusted", _untrusted(2, second))
+            elif unusable(2, second):
+                pass   # its failures, and its passes, are of code the patch did not change
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):
-                _on_base(root, change, derived, second, deadline, runs, unknowns, reason)
+                _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots)
             elif second["verdict"] not in repo_tests.RAN:
                 unknowns.append(f"the tests that touch the changed modules did not run to a result "
                                 f"({second['verdict']}): {second.get('said', '')}")
-    follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns)
+    follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)
     search = None
     compiled = list(prepared.checks) if prepared is not None else []
     if proposed or compiled:   # verification search: compiled template instances first, then the caller's proposed
@@ -756,8 +851,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     skipped.append({"tier": 3, "check": "mutation and old-against-new probes",
                     "reason": TIER_3_ADEQUACY if adequacy is not None else TIER_3})
 
-    if repo_tests.snapshot(root) != before:
+    final = repo_tests.snapshot(root)
+    if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
         reason("integrity", "repository_changed_during_review", "the working tree changed while G6 reviewed it")
+    for rel, why in repo_tests.submodules_not_hashed(final).items():
+        if rel not in repo_tests.submodules_not_hashed(before):
+            reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=rel, why=why))
     in_place = [(tier, ran) for tier, ran in ((1, first), (2, second)) if ran]
     for tier, ran in in_place:   # review I4: changed and changed back around a run, the snapshots above still match
         if ran.get("source_before") and ran["source_before"] != artifact:
@@ -809,7 +908,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": prepared.instances if prepared is not None else 0,
-                          "proposed_checks": len(proposed)})
+                          "proposed_checks": len(proposed)}, roots=roots)
 
 
 def _structural_check(found: dict) -> dict:
@@ -824,7 +923,19 @@ AT_BASE = "stated checks at the base commit"
 _READABLE_AT_BASE = frozenset({*repo_tests.RAN, "collection_error", "no_tests_collected"})
 
 
-def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns) -> list[str]:
+def _loaded_elsewhere(change, ran) -> str:
+    """What a copy run that loaded a changed module from outside its copy (``repo_tests.shadowed``), or cannot say,
+    loaded: "" when neither."""
+    if ran.get("verdict") not in repo_tests.RAN:
+        return ""
+    found = repo_tests.shadowed(change.sources, ran)
+    if found is None:
+        return "G6 cannot say which code it loaded"
+    return "; ".join(f"{rel} is changed, but it loaded {where['module']} from {where['file']}"
+                     for rel, where in found.items())
+
+
+def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots=()) -> list[str]:
     """Review I8, the owner's ruling: the stated checks that passed, as their test files are now, run against the
     base commit's code, only when nothing so far found a problem. One that passes there too may not exercise the
     change: an unknown, and a next action for each requirement it checks; never an outcome, since a requirement to
@@ -841,10 +952,14 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
         unknowns.append("whether the stated checks pass against the base commit's code too was not checked: the "
                         "time budget was spent")
         return []
-    ran = _confined(_execute_at_base(change, passing, timeout_s=max(1, _left(deadline))))
+    ran = _confined(_execute_at_base(change, passing, timeout_s=max(1, _left(deadline)), **_rooted(roots)))
     if "isolation" in ran:   # it ran, in a copy
         runs.append(_record(2, AT_BASE, passing, ran, command=f"pytest {' '.join(passing)} against the base "
                                                               "commit's code, in a copy"))
+    elsewhere = _loaded_elsewhere(change, ran)
+    if elsewhere:   # review C1: it ran code other than the base commit's, so it says nothing of it
+        unknowns.append(f"the run against the base commit's code is not read: {elsewhere}")
+        return []
     if ran.get("verdict") not in _READABLE_AT_BASE:
         unknowns.append(f"whether the stated checks pass against the base commit's code too was not established "
                         f"({ran.get('verdict')}: {ran.get('said') or 'no result'})")
@@ -860,7 +975,7 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
     return actions
 
 
-def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) -> None:
+def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots=()) -> None:
     """Replay each failing derived test file, and each one pytest could not collect, at the base commit: a defect only
     when it passed there."""
     full = _in_repository(second)
@@ -875,13 +990,16 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) ->
         unknowns.extend(f"{rel} fails on the patch; the time budget was spent before it ran at the base commit"
                         for rel in failing)
         return
-    replays = _execute(root, failing, timeout_s=max(1, _left(deadline)), change=change)
+    replays = _execute(root, failing, timeout_s=max(1, _left(deadline)), change=change, **_rooted(roots))
     for rel in failing:
         out = _confined(replays.get(rel) or {"verdict": "not_run", "said": "not replayed"})
         runs.append(_record(2, "base-commit comparison", [rel], out, command=f"pytest {rel} at the base commit "
                                                                               "and on the patch, in a copy",
                             provenance=DERIVED))
-        if out.get("verdict") == repo_tests.FAILED:
+        elsewhere = _loaded_elsewhere(change, out)
+        if elsewhere:   # review C1: a replay of code the patch did not change says nothing of the patch
+            unknowns.append(f"{rel} fails on the patch, and its replay in a copy is not read: {elsewhere}")
+        elif out.get("verdict") == repo_tests.FAILED:
             reason("tier_2", "derived_test_regressed", f"{rel} passed at the base commit and fails on the patch: "
                    + ", ".join(out.get("failed_ids", [])[:5]), node=rel, ran=out)
         elif out.get("baseline") == "passed" and out.get("patched") in (repo_tests.FAILED, "collection_error"):
@@ -937,7 +1055,7 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
-           adequacy=None, config=None, counts=None) -> dict:
+           adequacy=None, config=None, counts=None, roots=()) -> dict:
     from g6.harness import verification_search   # the completion report, in every reply
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
@@ -958,6 +1076,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
         next_actions.append("Look into the unknowns yourself: G6 does not count them for or against the patch.")
     environment = {"isolation": ran.get("isolation"), "python": ran.get("python"),
                    "interpreter_source": ran.get("interpreter_source"),
+                   # the variables G6_REPO_ENV gave the tests, each with the SHA-256 of its value (never the value)
+                   "repo_env": ran.get("repo_env"), "env_set_by_g6": ran.get("env_set_by_g6"),
                    "host_python_version": platform.python_version(), "platform": platform.platform()}
     # the envelope's evidence items are as they were before checks carried a provenance (in scope.checks_run)
     evidence = [{"source": "g6.workforce.repo_tests", "summary": f"tier {run['tier']}: {run['command']}: "
@@ -977,7 +1097,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                   # the search configuration (protocol item 1): what ran besides the stated checks, and no model call
                   "search": {**(config or verification_search.search_config(None)),
                              **(counts or {"template_instances": 0, "proposed_checks": 0}), "model_calls": 0},
-                  "seconds": round(time.monotonic() - started, 3)},
+                  "import_roots": list(roots), "seconds": round(time.monotonic() - started, 3)},
         "unknowns": unknowns, "next_actions": next_actions, "not_checked": list(NOT_CHECKED),
         "completion": verification_search.completion(evaluated, receipts, runs, skipped, list(defects), search,
                                                      artifact=artifact, base_commit=change.base_commit,

@@ -8,6 +8,7 @@ confined pytest runs (Linux bubblewrap) and skip elsewhere; the others replace G
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -1237,6 +1238,134 @@ def test_the_trial_counts_acceptances_from_the_outcome(repo, monkeypatch):
     assert (fewer["g6_acceptances"], fewer["g6_tool_errors"]) == (0, 1)
 
 
+# --- a submodule folder git never set up (openlibrary's shape in the study pool) -------------------------------------
+
+#: The commit a gitlink names: made up, so git holds no copy of it, as in the study pool's images.
+GITLINK = "0123456789abcdef0123456789abcdef01234567"
+LIB_TEST = "from lib import VALUE\n\n\ndef test_value():\n    assert VALUE == 7\n"
+
+
+def _with_submodule(repo, *, link: bool = False) -> None:
+    """vendor/lib populated and committed as a gitlink with no .git inside; with ``link``, openlibrary's tracked link
+    ``lib -> vendor/lib/lib`` and test_lib.py, which imports through it (a skip where links cannot be made)."""
+    (repo / "vendor" / "lib" / "lib").mkdir(parents=True)
+    (repo / "vendor" / "lib" / "lib" / "__init__.py").write_text("VALUE = 7\n")
+    (repo / "vendor" / "lib" / "x.py").write_text("X = 1\n")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{GITLINK},vendor/lib")
+    if link:
+        try:
+            os.symlink("vendor/lib/lib", repo / "lib", target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"this system cannot make a symbolic link ({exc})")
+        (repo / "test_lib.py").write_text(LIB_TEST)
+    _commit(repo, "a submodule folder")   # git add . leaves the gitlink entry as it is
+
+
+def _submodule_unknowns(got) -> list[str]:
+    return [unknown for unknown in got["assessment"]["unknowns"] if "vendor/lib" in unknown]
+
+
+def test_a_correct_patch_beside_a_submodule_folder_keeps_its_outcome(repo, monkeypatch):
+    """The patch and runs of test_a_correct_patch_is_supported_within_its_stated_scope, beside openlibrary's shape,
+    which the review refused before: the same outcome, and an unknown saying git cannot check the folder's files."""
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "supported_within_scope", assessment
+    assert assessment["scope"]["changed_files"] == ["calc.py"]
+    [unknown] = _submodule_unknowns(got)
+    assert unknown.startswith("git cannot check the files inside vendor/lib"), unknown
+
+
+@pytest.mark.parametrize("how", ["pointed at another commit", "removed"])
+def test_a_patch_that_changes_the_submodule_entry_is_insufficient_evidence_not_an_integrity_problem(repo, monkeypatch,
+                                                                                                    how):
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    if how == "removed":
+        _git(repo, "rm", "-q", "--cached", "vendor/lib")
+    else:
+        _git(repo, "update-index", "--cacheinfo", f"160000,{'f' * 40},vendor/lib")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"] if "vendor/lib" in r["detail"]] == [
+        ("evidence", "change_inside_submodule")], assessment["reasons"]
+    assert not any(r["stage"] == "integrity" for r in assessment["reasons"]), assessment["reasons"]
+    assert any(unknown.startswith("git cannot check the files inside vendor/lib") for unknown in
+               _submodule_unknowns(got))
+
+
+@pytest.mark.xfail(strict=True, reason="a known limit: git holds no copy of this submodule's commit (as in every "
+                                       "openlibrary image of the pool), so nothing here says what its files were at "
+                                       "the base commit; the review says so as an unknown and cannot see this change")
+def test_a_patch_changing_a_file_inside_a_submodule_folder_is_insufficient_evidence(repo, monkeypatch):
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "vendor" / "lib" / "x.py").write_text("X = 2\n")
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]
+    assert "change_inside_submodule" in _reasons(got)
+
+
+def test_a_submodule_folder_g6_could_not_hash_is_insufficient_evidence(repo, monkeypatch):
+    from g6.workforce import repo_tests
+
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 1)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]
+    assert _reasons(got) == {"submodule_not_hashed"}
+    assert any("vendor/lib" in r["detail"] for r in got["assessment"]["reasons"])
+
+
+def _during_the_review(monkeypatch, act) -> None:
+    """Every run of the review passes, and ``act`` happens while each runs (someone running the code in their own
+    shell, say)."""
+    def execute(root, ids, *, timeout_s, change=None, roots=()):
+        act()
+        return {rel: result([ADD, NEGATIVE]) for rel in ids} if change is not None else result([ADD, NEGATIVE])
+
+    monkeypatch.setattr(patch_review, "_execute", execute)
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda *args, **kwargs: {"verdict": "not_run", "said": "no run was recorded"})
+
+
+def test_bytecode_written_in_a_submodule_folder_during_the_review_is_no_accusation(repo, monkeypatch):
+    """Review I2 (the reviewer's P2): Python writes vendor/lib/lib/__pycache__ when the vendored code runs once in
+    someone's shell while the review runs; the patch itself is correct."""
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+
+    def bytecode() -> None:
+        cache = repo / "vendor" / "lib" / "lib" / "__pycache__"
+        cache.mkdir(exist_ok=True)
+        (cache / "__init__.cpython-312.pyc").write_bytes(b"\0" * 16)
+
+    _during_the_review(monkeypatch, bytecode)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
+def test_a_submodule_folder_g6_stops_hashing_during_the_review_is_insufficient_evidence_not_a_change(repo,
+                                                                                                    monkeypatch):
+    """Review I2: hashed at the start, over a cap at the end, is a folder G6 did not hash, never one that changed."""
+    from g6.workforce import repo_tests
+
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    _during_the_review(monkeypatch, lambda: monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 1))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert _reasons(got) == {"submodule_not_hashed"}
+
+
 # --- real confined runs (Linux bubblewrap; run in Docker on Windows) ---------------------------------------------------
 
 def test_confined_a_correct_patch_is_supported_and_a_defect_is_named(repo, bwrap_backend):
@@ -1418,3 +1547,18 @@ def test_confined_a_derived_regression_is_a_defect_and_a_pre_existing_failure_is
     assert found["assessment"]["outcome"] == "defect_detected", found["assessment"]
     assert any(r["code"] == "derived_test_regressed" and "test_zero.py" in r["detail"]
                for r in found["assessment"]["reasons"])
+
+
+def test_confined_a_correct_patch_beside_a_submodule_imported_through_a_link_is_supported(repo, bwrap_backend):
+    """openlibrary's shape end to end: the tests import the vendored package through the tracked link, in place and,
+    for the run against the base commit's code, in a copy."""
+    _with_submodule(repo, link=True)
+    (repo / "calc.py").write_text(GOOD)
+    got = review(repo, [*SUM, {"id": "R3", "text": "the vendored package gives its value",
+                               "checks": ["test_lib.py::test_value"]}])
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "supported_within_scope", assessment
+    assert [r["receipt_status"] for r in assessment["scope"]["receipts"]] == ["matched", "matched"]
+    # the copy made for the base commit's run held the link and the folder: the check passed there too
+    assert ("test_lib.py::test_value passes against the base commit's code too, so it may not exercise the change"
+            in assessment["unknowns"]), assessment["unknowns"]

@@ -153,9 +153,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                         claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
                         expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
                         proposed_checks: list[dict] | None = None, template_instances: list[dict] | None = None,
-                        search: dict | None = None) -> dict:
+                        search: dict | None = None, import_roots: list[str] | None = None) -> dict:
         """Assess the working tree's Python patch against base on stated requirements [{id, text, checks: [pytest
-        node ids]}] plus extra tests, in confined runs. Optional intent, an intent contract {goal, success_criteria,
+        node ids]}] plus extra tests, in confined runs. import_roots (at most 8 folders inside the repository, such as
+        "lib") go first on the import path of every run. Optional intent, an intent contract {goal, success_criteria,
         non_goals, failure_criteria, assumptions}: each success criterion becomes a stated requirement, and each
         non-goal or failure criterion a stated obligation to keep behaviour, not established until a requirement
         with the same text states its checks; each assumption is listed with its source (explicit, inferred or
@@ -209,7 +210,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                 return review_patch(repo, task=task, requirements=requirements or [], tests=tests or [], claim=claim,
                                     sources=sources, base=base, expected_artifact_digest=expected_artifact_digest,
                                     timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks,
-                                    template_instances=template_instances, search=search)
+                                    template_instances=template_instances, search=search,
+                                    import_roots=import_roots or [])
             except component_process.ExecutionInterrupted as exc:
                 if exc.stopped:
                     return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")

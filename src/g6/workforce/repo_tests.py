@@ -20,8 +20,10 @@ How it runs (``run``), and what that does and does not protect:
   the bytes of each untracked file that existed before the run); a run that changed any of it is
   ``changed_tracked_files``, with the paths, and so is a run after which git cannot read the repository. Ignored
   files, files the run created, files outside the repository, and anything changed and changed back within the run
-  are not covered. A repository holding a submodule (a gitlink) is refused before anything runs: git would run inside
-  it under the submodule's own config;
+  are not covered. A submodule (a gitlink) that was never set up here, with no .git in its folder, is a folder git
+  does not look into: git never enters it, and G6 hashes its files itself into the snapshot (``_submodule``), so a
+  change there is covered too. A repository holding a submodule that was set up is refused before anything runs: git
+  would run inside it under the submodule's own config;
 * ``python -I -B -X utf8``, with the real pytest imported before the repository joins the path (``venture.truth``'s
   pattern); the repository's own pytest configuration is read as it is, and a parent folder's never is; pytest-xdist,
   when installed, runs the tests in the one process, where the guards below apply;
@@ -58,6 +60,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -66,7 +69,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from xml.etree import ElementTree
 
 from g6.core import component_process, confine, git_env, ledger
@@ -78,6 +81,10 @@ DEFAULT_TIMEOUT_S = 300
 MAX_TIMEOUT_S = 1800
 #: The most test files "the tests the change touches" may be; more are counted and said, never run silently.
 MAX_DERIVED = 25
+#: The most modules a run lists as loaded from outside the tree it tested (``shadowed``), and the most bytes of that
+#: list G6 reads; past either, the list is incomplete and says so.
+LOADED_LIMIT = 10_000
+LOADED_BYTES = 16 * 1024 * 1024
 #: The changed-lines mutation check: at most this many changed source files, within this many seconds in all.
 MUTATED_FILES = 3
 MUTATION_BUDGET_S = 600
@@ -92,6 +99,22 @@ COPY_TIME_CAP = "the time budget for the repository copy was exhausted"
 COPY_NO_OUTSIDE = "copy checks not run: no scratch location outside the repository is available"
 # COPY: replay needs a passing old-code baseline with the same identities.
 OLD_BASELINE_NOT_RUN = "old tests not run: the old-code baseline did not pass with the same test identities"
+#: The most time one snapshot spends hashing the submodule folders git does not look into (``_submodule``): the time
+#: git gets for a listing of its own. They share ``COPY_MAX_FILES`` and ``COPY_MAX_BYTES`` too.
+SUBMODULE_HASH_S = GIT_TIMEOUT_S
+#: A snapshot's value for a submodule folder it did not hash, followed by why (``submodules_not_hashed``).
+NOT_HASHED = "not hashed: "
+# PENDING copy (pool compatibility): why a submodule folder was not hashed, and why a copy left a link out.
+HASH_FILES = "it holds more than {n} files, the most G6 hashes"
+HASH_BYTES = "it holds more than {n} bytes, the most G6 hashes"
+HASH_TIME = "hashing it took longer than {n} seconds"
+HASH_UNREADABLE = "G6 could not read {path}"
+LINK_ABSOLUTE = "left out of the copy: the link names an absolute path"
+LINK_OUTSIDE = "left out of the copy: the link resolves outside the repository"
+LINK_NOT_MADE = "left out of the copy: the link could not be made ({error})"
+LINK_NO_TARGET = "left out of the copy: nothing is at the link's target to copy in its place"
+LINK_LOOP = "left out of the copy: the link names a folder that holds it, which cannot be copied in its place"
+LINK_FOLDER = "left out of the copy: the submodule folder is a link, or inside one"
 #: The ``sandbox`` label of a run in place: the isolation that actually ran.
 SANDBOX = "repository_in_place"
 #: A run's verdicts. Only ``passed`` and ``failed`` mean the tests ran to a result.
@@ -132,6 +155,23 @@ SAID = {
     "confined_write": ("the tests ran confined by the operating system, where your repository is read only and the "
                        "network is closed: a test was refused an access (PermissionError) that a run with your "
                        "permissions would have had"),
+    # PENDING copy (pool compatibility): a submodule folder git does not look into, as a changed name and a withheld
+    # receipt.
+    "submodule_name": "{path} (files in a submodule folder git does not look into; G6 hashed them itself)",
+    "submodule_withheld": "no test receipt: G6 could not hash the files inside {paths}, so the digest does not bind them",
+    # PENDING copy (pool compatibility): a G6_REPO_PYTHON that names no Python.
+    "repo_python": ("{setting} {problem}: {value!r}. Set it, where you start G6, to the full path of the Python that "
+                    "has your repository's dependencies, or unset it"),
+    # PENDING copy (review M1): why a run that loaded the tree's code from elsewhere, or cannot say, gets no receipt.
+    "shadowed_withheld": ("no test receipt: the run loaded the repository's own modules from outside it, an installed "
+                          "copy in place of its files ({modules})"),
+    "loaded_unknown_withheld": ("no test receipt: G6 cannot say which code the run loaded (its list of the modules "
+                                "loaded from outside the repository is incomplete)"),
+    # PENDING copy (pool compatibility): a G6_REPO_ENV G6 cannot use. It never repeats a value.
+    "repo_env": ("{setting} {problem}. Set it, where you start G6, to a JSON object of the variables your tests need, "
+                 "names to text, without the names that would change how G6 runs them (PYTHON..., LD_..., DYLD_..., "
+                 "PYTEST_..., G6_..., COV_CORE_..., TMP..., PATH, HOME, USERPROFILE, TEMP) and those G6 sets itself "
+                 "(OPENROUTER_API_KEY, the HTTP proxies, NO_PROXY), or unset it"),
 }
 
 
@@ -189,14 +229,46 @@ def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,), timeout_s: float = 
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git {args[0]} failed ({type(exc).__name__})") from exc
 
 
-def _no_gitlinks(repo: Path, index: bytes | None = None) -> None:
-    """A refusal (``G6_E_GIT_SUBMODULE_REFUSED``) when the index (``index``: its ``ls-files --stage -z`` listing, when
-    already read) or HEAD holds a gitlink: git would run inside the submodule under its own config (review B2-C1)."""
+def _gitlinks(repo: Path, index: bytes | None = None) -> tuple[str, ...]:
+    """The gitlinks (mode 160000) the index (``index``: its ``ls-files --stage -z`` listing, when already read) or HEAD
+    holds, each a submodule that was never set up here: a folder git does not enter (each status and diff skips
+    submodules, ``git_env.safe_git_args``, and ``submodule.recurse`` is off) and G6 hashes itself (``_submodule``). A
+    refusal (``G6_E_GIT_SUBMODULE_REFUSED``) when one was set up, a .git file or folder in its folder or anything under
+    the repository's .git/modules: git would run inside it under that submodule's own config (review B2-C1)."""
     listed, head = git_env.GITLINK_QUERIES
+    records = [record for listing in (_git(repo, *listed) if index is None else index, _git(repo, *head, ok=(0, 128)))
+               for record in listing.split(b"\0") if record.startswith(b"160000 ")]
+    if not records:
+        return ()
+    paths = {record: record.partition(b"\t")[2].decode("utf-8", "surrogateescape") for record in records}
+    folders = _git(repo, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir").decode(
+        "utf-8", "surrogateescape").splitlines()
+    modules = any(_holds_anything(Path(folder) / "modules") for folder in folders if folder)
+    set_up = [record for record, rel in paths.items() if modules or os.path.lexists(repo / rel / ".git")]
+    if set_up:
+        try:
+            git_env.refuse_gitlinks(b"\0".join(set_up))
+        except git_env.UnsafeGitConfig as exc:
+            raise RepoRefused(git_env.SUBMODULE_REFUSED, str(exc)) from exc
+    return tuple(sorted(set(paths.values())))
+
+
+def _holds_anything(folder: Path) -> bool:
+    """Whether ``folder`` has an entry; one that cannot be read may (True)."""
     try:
-        git_env.refuse_gitlinks(_git(repo, *listed) if index is None else index, _git(repo, *head, ok=(0, 128)))
-    except git_env.UnsafeGitConfig as exc:
-        raise RepoRefused(git_env.SUBMODULE_REFUSED, str(exc)) from exc
+        return folder.is_dir() and any(folder.iterdir())
+    except OSError:
+        return True
+
+
+def _gitlink_entries(listing: bytes, field: int) -> dict[str, str]:
+    """Each gitlink of a ``ls-files --stage`` (``field`` 1) or ``ls-tree`` (``field`` 2) listing: path to commit."""
+    found = {}
+    for record in _paths(listing):
+        meta, _, rel = record.partition("\t")
+        if meta.startswith("160000 "):
+            found[rel] = meta.split()[field]
+    return found
 
 
 def _paths(raw: bytes) -> list[str]:
@@ -302,6 +374,10 @@ class Change:
     #: text at the base, not read as one test file deleted and another added (review D3). ``files``, ``before`` and
     #: ``after`` still hold both paths.
     renamed: dict[str, str] = field(default_factory=dict)
+    #: The submodule folders git does not look into (``_gitlinks``), so git cannot check their files against the base.
+    submodules: tuple[str, ...] = ()
+    #: Those whose gitlink entry differs from the base commit's: added, removed, or naming another commit.
+    submodule_changes: tuple[str, ...] = ()
 
 
 def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
@@ -309,12 +385,14 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
     """The change in ``repo`` against ``base``: changed tracked files (staged or not, and committed since ``base``) and
     untracked ones, within ``paths`` when given; each changed test file's text at the base (absent when it is new) and
     now (absent when it was deleted), both with the line endings ``Path.read_text`` gives; the changed Python files
-    that are not tests; the runner files it touches; and the test files it moved. A repository whose index or HEAD
-    holds a gitlink is refused (``G6_E_GIT_SUBMODULE_REFUSED``)."""
+    that are not tests; the runner files it touches; the test files it moved; and the submodule folders git does not
+    look into, with those whose gitlink entry differs from the base commit's (git's own diff skips submodules). A
+    repository holding a submodule that was set up is refused (``G6_E_GIT_SUBMODULE_REFUSED``)."""
     if not isinstance(base, str) or not base.strip() or base.startswith("-") or _control(base):
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["bad_base"].format(base=base))
-    _no_gitlinks(repo)
-    spec = ["--", *(inside(repo, path, "paths") for path in paths)] if paths else []
+    gitlinks = _gitlinks(repo)
+    wanted = [inside(repo, path, "paths") for path in paths]
+    spec = ["--", *wanted] if paths else []
     try:
         commit = _git(repo, "rev-parse", "--verify", "-q", f"{base}^{{commit}}").decode().strip()
     except RepoRefused as refused:
@@ -336,7 +414,17 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
     runner = tuple(rel for rel in files if PurePosixPath(rel).name.lower() in RUNNER_FILES or rel.endswith(".pth"))
     gone, new = [rel for rel in before if rel not in after], [rel for rel in after if rel not in before]
     moved = _moves(repo, commit, gone, new, before, after) if gone and new else {}
-    return Change(repo, base, commit, head, files, before, after, sources, runner, moved)
+    then, now = (_gitlink_entries(_git(repo, "ls-tree", "-r", "-z", commit), 2),
+                 _gitlink_entries(_git(repo, "ls-files", "--stage", "-z"), 1))
+
+    def ours(rel: str) -> bool:   # within ``paths``, or ``paths`` within it
+        return not paths or any(rel == path or rel.startswith(path.rstrip("/") + "/") or path.startswith(rel + "/")
+                                for path in wanted)
+
+    links = tuple(rel for rel in sorted(set(gitlinks) | set(then) | set(now)) if ours(rel))
+    return Change(repo, base, commit, head, files, before, after, sources, runner, moved,
+                  submodules=tuple(rel for rel in links if rel in gitlinks),
+                  submodule_changes=tuple(rel for rel in links if then.get(rel) != now.get(rel)))
 
 
 def _moves(repo: Path, commit: str, gone: list[str], new: list[str], before: dict[str, str],
@@ -439,7 +527,9 @@ _MODEL_BLOCK = {"G6_LLM_BACKEND_OVERRIDE": "ollama", "OPENROUTER_API_KEY": "sk-o
 _NOWHERE = "http://127.0.0.1:9"
 _PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
-#: The runner's bootstrap (``venture.truth._ISOLATED_BOOT``'s pattern): the real pytest is imported before the
+#: The runner's bootstrap (``venture.truth._ISOLATED_BOOT``'s pattern): first the variables of the run's own file are
+#: set (``G6_REPO_ENV``'s, and the folder Hypothesis keeps its database in), which the operating system's boundary
+#: would not pass on and which never appear on a command line; the real pytest is imported after them and before the
 #: repository joins the path (its folders arrive as one JSON list, so a ';' or ':' in a path never splits it); then
 #: the network guard, unless allowed; then the mutant's import hook, when given. Its own arguments are taken off
 #: ``sys.argv`` before the tests run. When pytest would load pytest-xdist (its ``pytest11`` entry point is installed),
@@ -449,14 +539,23 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: exit code 0 is not read as a pass (review I3), and the message of each failure, a collection's included, in full
 #: (``failure_messages``: pytest's summary line is cut to the terminal's width). Another turns pytest's "fd" capture, its default, into "sys" before
 #: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
-#: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays.
+#: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays. A third, as the
+#: session ends, writes each module the pytest process has loaded from outside the tree under test (the working
+#: folder; an environment inside it, below ``site-packages`` or ``dist-packages``, is outside) and outside the standard
+#: library, name to file, at most ``LOADED_LIMIT`` of them (``shadowed``): read from each module's own dictionary,
+#: never through its attributes (a lazily loaded module would load), and any error makes the list incomplete, never the
+#: run fail. Modules of a subprocess or a forked child are not seen. Written for Python 3.8 and later.
 _BOOT = r'''
 import json, os, socket, sys
 sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
+with open(sys.argv[6], encoding="utf-8") as _g6_env:
+    os.environ.update(json.load(_g6_env))
+del _g6_env
 import pytest
 entries, network, target, source, counted = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
-args = sys.argv[6:]
-del sys.argv[1:6]
+loaded, limit = sys.argv[7], int(sys.argv[8])
+args = sys.argv[9:]
+del sys.argv[1:9]
 sys.path[:0] = [p for p in entries if p]
 if network != "1":
     _connect, _connect_ex = socket.socket.connect, socket.socket.connect_ex
@@ -560,7 +659,47 @@ class _Capture:
         if getattr(early_config.known_args_namespace, "capture", None) == "fd":
             early_config.known_args_namespace.capture = "sys"
         yield
-sys.exit(pytest.main(args, plugins=[_Counted(), _Capture()]))
+class _Loaded:
+    def pytest_sessionfinish(self, session):
+        found, complete = {}, True
+        try:
+            import sysconfig
+            def real(path):
+                return os.path.normcase(os.path.realpath(path))
+            def within(path, top):
+                # below top, with no installed packages' folder between: an environment inside the tree is not it
+                if not (path == top or path.startswith(top.rstrip(os.sep) + os.sep)):
+                    return False
+                return not {"site-packages", "dist-packages"} & set(path[len(top):].split(os.sep))
+            tree, std = real(os.getcwd()), real(sysconfig.get_paths()["stdlib"])
+            for name, module in sorted(list(sys.modules.items()), key=lambda item: item[0]):
+                if module is None:
+                    continue
+                try:
+                    try:   # never through the module's own attributes: a lazily loaded one would load now
+                        attributes = object.__getattribute__(module, "__dict__")
+                    except AttributeError:
+                        continue
+                    path = attributes.get("__file__")
+                    if not isinstance(path, str) or not path:
+                        continue
+                    here = real(path)
+                    if within(here, tree) or within(here, std):
+                        continue
+                    if len(found) >= limit:
+                        complete = False
+                        break
+                    found[name] = os.path.realpath(path)
+                except Exception:
+                    complete = False
+        except Exception:
+            complete = False
+        try:
+            with open(loaded, "w", encoding="utf-8") as handle:
+                json.dump({"modules": found, "complete": complete}, handle)
+        except Exception:
+            pass
+sys.exit(pytest.main(args, plugins=[_Counted(), _Capture(), _Loaded()]))
 '''.replace("NETWORK_OFF", repr(SAID["network_off"]))
 _BOOT = confine.CHILD_PRELUDE + _BOOT
 
@@ -599,12 +738,14 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
     """What a run may not change, as git sees it: HEAD, the index (the staged files), git's assume-unchanged and
     skip-worktree marks, and the bytes (``_digest``) of every tracked file that differs from the index (a deleted one
     reads ""), of every file so marked (git's own diff skips them; review M4), and of each of ``untracked`` (default:
-    the untracked files that are not ignored now; ``run`` passes the ones that existed before it, review I7). A
-    repository whose index or HEAD holds a gitlink is refused (``G6_E_GIT_SUBMODULE_REFUSED``: git would run inside the
-    submodule under its own config, review B2-C1), before a run and after one alike. Ignored files, and files created
-    after ``untracked`` was read, are not part of it. Raises ``RepoRefused`` when git cannot read the repository."""
+    the untracked files that are not ignored now; ``run`` passes the ones that existed before it, review I7). Also,
+    as git cannot see them, each submodule folder git does not look into (``_gitlinks``), as G6 hashes it
+    (``_submodule``: every file in it, untracked and ignored ones included). A repository holding a submodule that was
+    set up is refused (``G6_E_GIT_SUBMODULE_REFUSED``: git would run inside it under its own config, review B2-C1),
+    before a run and after one alike. Ignored files elsewhere, and files created after ``untracked`` was read, are not
+    part of it. Raises ``RepoRefused`` when git cannot read the repository."""
     marks, index = _git(repo, "ls-files", "-v", "-z"), _git(repo, "ls-files", "--stage", "-z")
-    _no_gitlinks(repo, index)
+    gitlinks = _gitlinks(repo, index)
     found = {_HEAD: hashlib.sha256(_git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1))).hexdigest(),
              _INDEX: hashlib.sha256(index).hexdigest(), _MARKS: hashlib.sha256(marks).hexdigest()}
     # ``ls-files -v``: a lowercase tag is assume-unchanged, "S" skip-worktree.
@@ -612,14 +753,107 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
     for rel in (*_paths(_git(repo, "diff", "--name-only", "-z")), *held,
                 *(_untracked(repo) if untracked is None else untracked)):
         found[rel] = _digest(repo / rel)
+    budget = {"files": 0, "bytes": 0, "until": time.monotonic() + SUBMODULE_HASH_S}
+    for rel in gitlinks:
+        found[_SUBMODULE + rel] = _submodule(repo, rel, budget)
     return found
+
+
+#: A snapshot's key for a submodule folder git does not look into, before its path.
+_SUBMODULE = "\0submodule\0"
+
+
+class _OverCap(Exception):
+    """A submodule folder holds more than one snapshot may hash."""
+
+
+def _submodule(repo: Path, rel: str, budget: dict) -> str:
+    """The SHA-256 of a submodule folder git does not look into: every file and link in it, untracked and ignored ones
+    included (but not ``__pycache__`` folders, the bytecode Python writes as the code runs), by sorted path, with each
+    file's bytes and each link's own text, never followed (nor is a link on the way to the folder); "" when nothing is
+    there. ``NOT_HASHED`` and why, never a hash of part of it, when this
+    snapshot's submodule folders together (``budget``) hold more than ``COPY_MAX_FILES`` files or ``COPY_MAX_BYTES``
+    bytes, take longer than ``SUBMODULE_HASH_S`` seconds, or cannot be read."""
+    parts = PurePosixPath(rel).parts
+    top = repo.joinpath(*parts)
+    entries: list[tuple[str, str, str]] = []
+
+    def counted(size: int) -> None:
+        component_process.checkpoint()
+        budget["bytes"] += size
+        if budget["bytes"] > COPY_MAX_BYTES:
+            raise _OverCap(HASH_BYTES.format(n=COPY_MAX_BYTES))
+        if time.monotonic() >= budget["until"]:
+            raise _OverCap(HASH_TIME.format(n=SUBMODULE_HASH_S))
+
+    def failed(error: OSError) -> None:
+        raise error
+
+    try:
+        for end in range(1, len(parts) + 1):
+            here = repo.joinpath(*parts[:end])
+            if _linked(here):
+                return hashlib.sha256(json.dumps(["link", "/".join(parts[:end]), os.readlink(here)]).encode()).hexdigest()
+        if not top.is_dir():
+            return _digest(top)
+        for folder, dirs, files in os.walk(top, onerror=failed):
+            here = Path(folder)
+            names = sorted(files) + sorted(name for name in dirs if _linked(here / name))
+            # review I2: the bytecode Python writes when the code runs is not the folder's content (a .pyc elsewhere,
+            # which Python can load in place of a source, still is)
+            dirs[:] = sorted(name for name in dirs if not _linked(here / name) and name != "__pycache__")
+            for name in names:
+                path = here / name
+                budget["files"] += 1
+                if budget["files"] > COPY_MAX_FILES:
+                    raise _OverCap(HASH_FILES.format(n=COPY_MAX_FILES))
+                counted(0)
+                key = path.relative_to(top).as_posix()
+                if _linked(path):
+                    entries.append((key, "link", os.readlink(path)))
+                elif not stat.S_ISREG(os.lstat(path).st_mode):
+                    entries.append((key, "other", ""))
+                else:
+                    digest = hashlib.sha256()
+                    with open(path, "rb") as handle:
+                        for block in iter(lambda: handle.read(1 << 20), b""):
+                            counted(len(block))
+                            digest.update(block)
+                    entries.append((key, "file", digest.hexdigest()))
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except _OverCap as cap:
+        return NOT_HASHED + str(cap)
+    except OSError as exc:
+        where = Path(exc.filename).relative_to(repo).as_posix() if exc.filename and Path(exc.filename).is_relative_to(
+            repo) else rel
+        return NOT_HASHED + HASH_UNREADABLE.format(path=where)
+    return hashlib.sha256(json.dumps(sorted(entries)).encode("utf-8")).hexdigest()
+
+
+def submodules_not_hashed(found: dict[str, str]) -> dict[str, str]:
+    """The submodule folders a ``snapshot`` did not hash (``_submodule``), path to why: a change there is not seen."""
+    return {key[len(_SUBMODULE):]: value[len(NOT_HASHED):] for key, value in found.items()
+            if key.startswith(_SUBMODULE) and value.startswith(NOT_HASHED)}
 
 
 def _moved(before: dict[str, str], after: dict[str, str]) -> list[str]:
     # PENDING copy: the name for _MARKS is a proposal (the fix pass after the review of Tasks 4-5).
     names = {_HEAD: "the commit checked out (HEAD)", _INDEX: "the staged files (the index)",
              _MARKS: "git's assume-unchanged and skip-worktree marks"}
-    return [names.get(key, key) for key in sorted(set(before) | set(after)) if before.get(key) != after.get(key)]
+
+    def name(key: str) -> str:
+        if key.startswith(_SUBMODULE):
+            return SAID["submodule_name"].format(path=key[len(_SUBMODULE):])
+        return names.get(key, key)
+
+    def differs(key: str) -> bool:
+        # review I2: a folder G6 did not hash on either side is not hashed (submodules_not_hashed), never changed
+        if key.startswith(_SUBMODULE) and any(str(side.get(key, "")).startswith(NOT_HASHED) for side in (before, after)):
+            return False
+        return before.get(key) != after.get(key)
+
+    return [name(key) for key in sorted(set(before) | set(after)) if differs(key)]
 
 
 def child_env(scratch: Path, *, network: bool) -> dict[str, str]:
@@ -634,9 +868,104 @@ def child_env(scratch: Path, *, network: bool) -> dict[str, str]:
     return env
 
 
+#: The setting, in G6's own environment only, that names the Python for a repository's tests: a full path the person
+#: chose (a Poetry or conda environment, or a system Python holding the dependencies). No request names it: an agent
+#: cannot point G6 at an interpreter.
+REPO_PYTHON = "G6_REPO_PYTHON"
+REPO_PYTHON_INVALID = "G6_E_REPO_PYTHON_INVALID"
+#: How a Python's file is named: python, python3, python3.11, python.exe, pypy3.
+_PYTHON_NAME = re.compile(r"(?:python|pypy)[0-9.]*(?:\.exe)?", re.IGNORECASE)
+
+
+def _chosen_python() -> str:
+    """The Python ``REPO_PYTHON`` names ("" when it is not set, or set to nothing), or a refusal
+    (``G6_E_REPO_PYTHON_INVALID``) when it names none: not a full path, nothing there, not a file this user may run, or
+    a file not named as a Python is. Never a quiet fall back to another interpreter."""
+    value = (os.environ.get(REPO_PYTHON) or "").strip()
+    if not value:
+        return ""
+    path = Path(value)
+    problem = ("is not a full path" if _control(value) or not path.is_absolute() else
+               "names no file" if not path.is_file() else
+               "names a file this user cannot run" if not os.access(path, os.X_OK) else
+               "names a file that is not named as a Python (python, python3, python3.11, ...)"
+               if not _PYTHON_NAME.fullmatch(path.name) else "")
+    if problem:
+        raise RepoRefused(REPO_PYTHON_INVALID, SAID["repo_python"].format(setting=REPO_PYTHON, problem=problem,
+                                                                          value=value))
+    return value
+
+
+#: The setting, in G6's own environment only, that names the variables a repository's tests need (a JSON object of
+#: names to text: qutebrowser's ``QUTE_QT_WRAPPER``, say). G6's bootstrap sets them in the test process before pytest
+#: and the repository are imported; the operating system's boundary passes nothing else of G6's environment on.
+REPO_ENV = "G6_REPO_ENV"
+REPO_ENV_INVALID = "G6_E_REPO_ENV_INVALID"
+#: Names the setting may not give: they could change the interpreter, the runner, the libraries loaded, G6's own
+#: settings, or where the run may write; and every name G6's own environment for the tests sets (``child_env``: the
+#: paid-model block, whose dummy key no real one may replace, and the proxies that point nowhere; review M2).
+_RUNNER_NAMES = re.compile(r"(?:PYTHON|LD_|DYLD_|PYTEST_|G6_|COV_CORE_|TMP).*|PATH|HOME|USERPROFILE|TEMP",
+                           re.IGNORECASE)
+_G6_SETS = frozenset(name.upper() for name in (*_MODEL_BLOCK, *_PROXIES, "NO_PROXY"))
+
+
+def _runner_name(name: str) -> bool:
+    """Whether the setting may not give ``name`` (``_RUNNER_NAMES``, ``_G6_SETS``, or not a name at all)."""
+    return not name or "=" in name or "\0" in name or bool(_RUNNER_NAMES.fullmatch(name)) or name.upper() in _G6_SETS
+#: A writable folder Hypothesis keeps its database in (it would write ``.hypothesis`` beside the tests, in a
+#: repository a confined run keeps read only): the run's own, unless the setting names one.
+HYPOTHESIS_STORAGE = "HYPOTHESIS_STORAGE_DIRECTORY"
+
+
+def _repo_env() -> dict[str, str]:
+    """The variables ``REPO_ENV`` names ({} when it is not set, or set to nothing), or a refusal
+    (``G6_E_REPO_ENV_INVALID``) that names no value: not a JSON object of names to text, a value holding a NUL, or a
+    name that is empty, holds ``=`` or a NUL, or could change the runner (``_RUNNER_NAMES``)."""
+    raw = os.environ.get(REPO_ENV) or ""
+    if not raw.strip():
+        return {}
+    try:
+        found = json.loads(raw)
+    except ValueError:
+        found = None
+    if not isinstance(found, dict) or not all(isinstance(key, str) and isinstance(value, str)
+                                              for key, value in found.items()):
+        problem = "is not a JSON object of variable names to text"
+    elif any("\0" in value for value in found.values()):
+        problem = "gives a value that holds a NUL character"
+    else:
+        refused = sorted(repr(name) for name in found if _runner_name(name))
+        problem = "may not set " + ", ".join(refused) if refused else ""
+    if problem:
+        raise RepoRefused(REPO_ENV_INVALID, SAID["repo_env"].format(setting=REPO_ENV, problem=problem))
+    return found
+
+
+def _digests(values: dict[str, str]) -> dict[str, str]:
+    """Each variable's name with the SHA-256 of its value, never the value (it may be a secret)."""
+    return {name: hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()
+            for name, value in sorted(values.items())}
+
+
+def _environment_of(python: str) -> tuple[str, ...]:
+    """The virtual environment ``python`` belongs to (the folder holding its ``pyvenv.cfg``, beside it or above its
+    ``bin``), which a confined run reads too: ``confine.interpreter_paths`` takes an environment made from the Python
+    running G6, whose ``python`` links to that same file, for G6's own interpreter and leaves its folder out."""
+    folder = Path(python).parent   # never resolved: an environment's python is a link to its base interpreter
+    for cfg in (folder / "pyvenv.cfg", folder.parent / "pyvenv.cfg"):
+        if cfg.is_file():
+            return (os.path.realpath(cfg.parent),)
+    return ()
+
+
 def interpreter(repo: Path) -> str:
-    """The Python that runs the repository's tests: its own virtual environment (``.venv`` or ``venv`` at its top),
-    else the one running G6 (``python`` on PATH in a frozen build, which has no interpreter of its own)."""
+    """The Python that runs the repository's tests: the one ``G6_REPO_PYTHON`` names in G6's own environment
+    (``_chosen_python``: a refusal when it names none), else the repository's own virtual environment (``.venv`` or
+    ``venv`` at its top), else the one running G6 (``python`` on PATH in a frozen build, which has no interpreter of
+    its own)."""
+    chosen = _chosen_python()
+    if chosen:
+        return chosen
     for folder in (".venv", "venv"):
         for exe in (repo / folder / "Scripts" / "python.exe", repo / folder / "bin" / "python"):
             if exe.is_file():
@@ -872,6 +1201,44 @@ def _progress(counts: dict[str, int], counted: Path) -> dict[str, int]:
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
 
 
+def _loaded(path: Path) -> tuple[dict[str, str], bool]:
+    """The bootstrap's list of the modules a run loaded from outside the tree it tested (name to file), and whether it
+    is whole: ({}, False) when it is missing, larger than ``LOADED_BYTES`` or cannot be read."""
+    try:
+        if path.stat().st_size > LOADED_BYTES:
+            return {}, False
+        found = json.loads(path.read_text(encoding="utf-8"))
+        return {str(name): str(file) for name, file in found["modules"].items()}, found["complete"] is True
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}, False
+
+
+def shadowed(sources: tuple[str, ...] | list[str], ran: dict) -> dict[str, dict[str, str]] | None:
+    """The source files (``sources``: a change's, or every Python file of the tree) whose module ``ran`` loaded from
+    outside the tree it tested under the same name, an installed copy in place of the tree's own file: each path to the
+    module's name and the file it came from. {} when none was, or when ``ran`` records nothing of what it loaded (a
+    recorded run); None when it cannot say (its list was cut at ``LOADED_LIMIT``, or never written). What a run lists
+    is the modules its pytest process had loaded when the session ended: a subprocess's, or a forked child's, are not
+    seen. A module that was never loaded, or a standard-library module named like a source file, is not one."""
+    if "loaded_outside" not in ran:
+        return {}
+    if not ran.get("loaded_complete"):
+        return None
+    ends: dict[str, list[str]] = {}   # each source by every tail of its path, for one look-up per module
+    for rel in sources:
+        parts = rel.split("/")
+        for start in range(len(parts)):
+            ends.setdefault("/".join(parts[start:]), []).append(rel)
+    found: dict[str, dict[str, str]] = {}
+    for name, file in sorted((ran.get("loaded_outside") or {}).items()):
+        if name.startswith("__"):
+            continue
+        tail = name.replace(".", "/") + ("/__init__.py" if os.path.basename(file).startswith("__init__.") else ".py")
+        for rel in ends.get(tail, ()):
+            found.setdefault(rel, {"module": name, "file": file})
+    return dict(sorted(found.items()))
+
+
 def _root(repo: Path, rootdir: str) -> str:
     """pytest's root folder, which it names each test relative to, as a path inside ``repo`` ("" for its top, and when
     the run did not say or named a folder outside it)."""
@@ -901,12 +1268,13 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     with the paths, whatever the tests said, and so is one after which git cannot read the repository (with that
     said). ``mutant`` (path, source): that module is imported from the source given instead of its file, which is
     never written (the changed-lines mutation check). ``interpreter_source`` says whose Python ran the tests
-    ("repository": its own ``.venv`` or ``venv``; "g6": the one running G6), ``python`` its path, and
+    ("setting": the one ``G6_REPO_PYTHON`` names; "repository": its own ``.venv`` or ``venv``; "g6": the one running
+    G6; ``interpreter``), ``python`` its path, and
     ``source_before`` the digest of the ``snapshot`` the run began on (the digest the patch review calls its
     ``artifact_digest``), and ``rootdir`` the folder pytest named the tests relative to ("" for the repository's top;
     a pytest configuration below the top moves it). ``failure_messages`` holds each failure's message in full, by node
-    id; ``import_path`` the folders the run put first on the import path, relative to the repository ("." and, when it
-    is a folder, "src"); ``own_config`` whether G6 named its own empty pytest configuration, rooted at the repository's
+    id; ``import_path`` the folders the run put first on the import path, relative to the repository (the import roots
+    given, then "." and, when it is a folder, "src"); ``own_config`` whether G6 named its own empty pytest configuration, rooted at the repository's
     top, because none applied (``_config_args``). Raises ``RepoRefused`` before anything runs when the request cannot
     run.
 
@@ -919,35 +1287,45 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     if receipt and mutant is not None:
         raise ValueError("a mutant run is not the artifact under review, so it is never given a test receipt")
     repo = checked_repo(repo)
+    python = interpreter(repo)   # a setting that names no Python is refused before anything is copied or run
+    _repo_env()                  # and so is a G6_REPO_ENV G6 cannot use
     if mutant is not None:
         deadline = time.monotonic() + max(1, min(int(timeout_s), MAX_TIMEOUT_S))
+        report: dict = {}
         try:
-            with repository_copy(repo, deadline=deadline) as copy:
+            with repository_copy(repo, deadline=deadline, report=report) as copy:
                 return _run(copy, tests, roots=roots, timeout_s=timeout_s, network=network, mutant=mutant,
-                            copied=True, python=interpreter(repo), scratch_dir=copy.parent, deadline=deadline)
+                            copied=True, python=python, scratch_dir=copy.parent, deadline=deadline, links=report)
         except CopyNotRun as exc:
             raise RepoRefused("G6_E_TESTS_DID_NOT_RUN", str(exc)) from exc
-    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network, receipt=receipt)
+    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network, receipt=receipt, python=python)
 
 
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
          mutant: tuple[str, str] | None = None, copied: bool = False, python: str = "",
          scratch_dir: Path | None = None, deadline: float | None = None, receipt: bool = False,
-         require_isolation: bool = False) -> dict:
+         require_isolation: bool = False, links: dict | None = None) -> dict:
     """The shared execution path; only old-test replay uses a copy without git metadata. ``require_isolation``: a run
     no backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it starts, even where the person allowed
-    unconfined runs (verification search's proposed checks)."""
+    unconfined runs (verification search's proposed checks). ``links``: what the copy (``repository_copy``'s
+    ``report``) left out or copied in a link's place, added to the result as it is."""
     if not tests:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["no_tests"])
     ids = [inside(repo, test, "test") for test in tests]
     missing = [test for test in ids if not (repo / test.partition("::")[0]).exists()]
     if missing:
         raise RepoRefused("G6_E_INPUT_VALIDATION", SAID["missing"].format(value=missing[0]))
-    entries = [str(repo), *([str(repo / "src")] if (repo / "src").is_dir() else []),
-               *(str(repo / inside(repo, root, "import root")) for root in roots)]
+    # the import roots first, then the top and src: a package in a root wins over one of the same name at the top
+    entries = [*(str(repo / inside(repo, root, "import root")) for root in roots), str(repo),
+               *([str(repo / "src")] if (repo / "src").is_dir() else [])]
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     python = python or interpreter(repo)
-    whose = "repository" if any(Path(python).is_relative_to(repo / folder) for folder in (".venv", "venv")) else "g6"
+    # a second line after _repo_env's check: no name G6 sets itself, or that could change the runner, is ever taken
+    person = {name: value for name, value in _repo_env().items() if not _runner_name(name)}
+    set_by_g6 = [] if HYPOTHESIS_STORAGE in person else [HYPOTHESIS_STORAGE]
+    seen: list = [{}, False]   # the modules the run loaded from outside the tree, and whether that list is whole
+    whose = ("setting" if python == _chosen_python() else
+             "repository" if any(Path(python).is_relative_to(repo / folder) for folder in (".venv", "venv")) else "g6")
     untracked = [] if copied else _untracked(repo)
     take_snapshot = (lambda: _copy_snapshot(repo, deadline=deadline)) if copied else (lambda: snapshot(repo, untracked))
     before, started = take_snapshot(), time.monotonic()
@@ -974,7 +1352,9 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
                 "failure_messages": tally.get("failure_messages") or {},
                 "import_path": [Path(entry).relative_to(repo).as_posix() for entry in entries],
-                "own_config": bool(own_config)}
+                "own_config": bool(own_config),
+                "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6),
+                "loaded_outside": dict(seen[0]), "loaded_complete": seen[1], **(links or {})}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
@@ -992,17 +1372,27 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         if mutant is not None:
             target, source = str(repo / inside(repo, mutant[0], "module")), str(own / "mutant.py")
             Path(source).write_text(mutant[1], encoding="utf-8")
+        # the variables the bootstrap sets, in a file only this user may read: values never go on a command line
+        store = work / "hypothesis"
+        store.mkdir()
+        variables = own / "env.json"
+        with os.fdopen(os.open(variables, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as sink:
+            json.dump({**dict.fromkeys(set_by_g6, str(store)), **person}, sink)
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
         own_config[:] = _config_args(repo, ids, own)
         cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
-               target, source, str(counted), *ids, "-q", "-p", "no:cacheprovider",
+               target, source, str(counted), str(variables), str(own / "loaded.json"), str(LOADED_LIMIT), *ids, "-q",
+               "-p", "no:cacheprovider",
                f"--junitxml={report}", *own_config, f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
         mine = confine.owned(repo)
+        reads = confine.interpreter_paths(python)
+        environment = tuple(path for path in _environment_of(python) if not any(
+            Path(path).is_relative_to(os.path.realpath(folder)) for folder in (*reads, str(repo))))
         confined = confine.plan(confine.Confinement(
             read_write=(str(work), str(own), *([str(repo)] if mine else [])),
-            read_only=(*confine.interpreter_paths(python), *([] if mine else [str(repo)]), top), network=network),
+            read_only=(*reads, *environment, *([] if mine else [str(repo)]), top), network=network),
             python)
         isolation = confined.record()
         said = confine.refused(confined)
@@ -1028,6 +1418,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 isolation = {**isolation, "cleanup": left}
         output, counts = _output(log), _counts(report, repo, tuple(Path(entry) for entry in entries))
         progress = _progress(counts or {}, counted)
+        seen[:] = _loaded(own / "loaded.json")
         if counts is not None:
             counts = progress
     try:
@@ -1045,6 +1436,12 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
              and progress["expected"] == progress.get("finished")}
     if verdict == FAILED and isolation.get("backend") and "PermissionError" in output:
         found["said"] = SAID["confined_write"]   # the operating system refused a test something an owner's run allows
+    unhashed = {**submodules_not_hashed(before), **submodules_not_hashed(after)}
+    if unhashed:   # a change in these folders would not be seen
+        found["submodules_not_hashed"] = unhashed
+    if receipt and isolation.get("backend") and unhashed:
+        found["receipt_withheld"] = SAID["submodule_withheld"].format(paths=", ".join(sorted(unhashed)))
+        return found
     if receipt and isolation.get("backend"):   # only a run G6 confined and watched start is given a receipt
         try:
             scan = ignored_inputs(repo)
@@ -1057,6 +1454,16 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "no test receipt: git ignores files that could change this run, " + ", ".join(scan.loadable[:10])
                 if scan.loadable else
                 f"no test receipt: the scan for git-ignored files stopped at its limit of {IGNORED_SCAN_LIMIT} entries")
+            return found
+        # review M1: receipts are reusable evidence, so none vouches for a run that loaded the tree's own modules from
+        # elsewhere (an installed copy), or that cannot say what it loaded
+        elsewhere = shadowed([rel for rel in _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z"))
+                              if rel.endswith(".py")], found)
+        if elsewhere is None or elsewhere:
+            found["receipt_withheld"] = (SAID["loaded_unknown_withheld"] if elsewhere is None else
+                                         SAID["shadowed_withheld"].format(modules=", ".join(
+                                             f"{where['module']} from {where['file']}"
+                                             for where in list(elsewhere.values())[:5])))
             return found
         try:
             found["receipt"] = receipt_store._record(receipt_store._body(
@@ -1206,12 +1613,108 @@ def read_at(repo: Path, commit: str, rel: str) -> str | None:
     return _text(_git(repo, "show", f"{commit}:{rel}"))
 
 
+#: The names a copy never takes: git's own folder, secrets, environments and caches.
+_SKIPPED = shutil.ignore_patterns(".git", ".env*", "__pycache__", ".pytest_cache", "*.pyc", ".venv", "venv")
+
+
 def _copy_ignored(folder: str, names: list[str]) -> set[str]:
-    """Bench-style copy, without secrets, environments or links back into the caller's tree."""
-    ignored = shutil.ignore_patterns(".git", ".env*", "__pycache__", ".pytest_cache", "*.pyc", ".venv", "venv")(
-        folder, names)
-    return set(ignored) | {name for name in names if (Path(folder) / name).is_symlink()
-                           or getattr(Path(folder) / name, "is_junction", lambda: False)()}
+    """Bench-style copy, without secrets, environments or links back into the caller's tree (``repository_copy``
+    makes the links it allows itself, ``_copy_links``)."""
+    return set(_SKIPPED(folder, names)) | {name for name in names if (Path(folder) / name).is_symlink()
+                                           or getattr(Path(folder) / name, "is_junction", lambda: False)()}
+
+
+#: Windows' ERROR_PRIVILEGE_NOT_HELD: making a symbolic link needs a privilege (or developer mode).
+_PRIVILEGE_NOT_HELD = 1314
+#: The most links one resolution follows: past it, a loop.
+_MAX_HOPS = 40
+
+
+def _absolute(text: str) -> bool:
+    """Whether a link's text names an absolute path, on this system or on Windows (a drive, a share, a root)."""
+    return text.startswith(("/", "\\")) or bool(PureWindowsPath(text).drive)
+
+
+def _link_of(path: Path) -> tuple[str, bool]:
+    """A link's own text, and whether Windows made it a folder's link (a link is never followed to ask)."""
+    return os.readlink(path), bool(getattr(os.lstat(path), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_DIRECTORY)
+
+
+def _resolve_inside(root: Path, rel: str, virtual: dict[str, str]) -> list[str] | None:
+    """The components below ``root`` that ``rel`` resolves to, one component at a time: each link on the way is
+    replaced by its own text (read from the disk below ``root``, or from ``virtual`` for a link that is not there), so
+    nothing outside ``root`` is ever read. None when the path leaves ``root`` (a ``..`` above it, a link naming an
+    absolute path) or follows more than ``_MAX_HOPS`` links (a loop)."""
+    pending, done, hops = list(PurePosixPath(rel).parts), [], 0
+    while pending:
+        part = pending.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not done:
+                return None
+            done.pop()
+            continue
+        here, path = "/".join([*done, part]), root.joinpath(*done, part)
+        text = virtual[here] if here in virtual else os.readlink(path) if _linked(path) else None
+        if text is None:
+            done.append(part)
+            continue
+        hops += 1
+        if hops > _MAX_HOPS or _absolute(text):
+            return None
+        pending[:0] = PurePosixPath(text.replace("\\", "/")).parts
+    return done
+
+
+def _copy_links(copy: Path, links: dict[str, tuple[str, bool]], left: dict[str, str],
+                put: Callable[[Path, Path], None]) -> dict[str, str]:
+    """Make each of ``links`` (a path in the copy to its link's text, and whether it is a folder's) in ``copy``, then
+    keep those that resolve inside the copy, judged on the copy itself after all are made (``_resolve_inside``): one
+    that names an absolute path or resolves outside is removed and named in ``left`` with why. Where this system
+    refuses to make a link for want of the privilege (Windows), its target, resolved the same way, is copied in its
+    place with ``put``: returned, path to the target copied."""
+    deferred: dict[str, str] = {}
+    for rel, (text, folder) in sorted(links.items()):
+        if _absolute(text):
+            left[rel] = LINK_ABSOLUTE
+            continue
+        (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(text, copy / rel, target_is_directory=folder)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == _PRIVILEGE_NOT_HELD:
+                deferred[rel] = text
+            else:
+                left[rel] = LINK_NOT_MADE.format(error=type(exc).__name__)
+    outside = [rel for rel in sorted(links)
+               if rel not in left and rel not in deferred and _resolve_inside(copy, rel, deferred) is None]
+    for rel in outside:   # judged all together first: a link may resolve through another
+        os.unlink(copy / rel)
+        left[rel] = LINK_OUTSIDE
+    materialised: dict[str, str] = {}
+    for rel in sorted(deferred):
+        resolved = _resolve_inside(copy, rel, deferred)
+        source = copy.joinpath(*resolved) if resolved is not None else copy
+        if resolved is None:
+            left[rel] = LINK_OUTSIDE
+        elif tuple(resolved) == PurePosixPath(rel).parts[:len(resolved)]:
+            left[rel] = LINK_LOOP
+        elif source.is_file() and not _linked(source):
+            put(source, copy / rel)
+            materialised[rel] = "/".join(resolved)
+        elif source.is_dir() and not _linked(source):
+            (copy / rel).mkdir(parents=True, exist_ok=True)
+            for folder, dirs, files in os.walk(source):
+                here = Path(folder)
+                dirs[:] = sorted(name for name in dirs if not _linked(here / name))
+                for name in sorted(files):
+                    if not _linked(here / name) and (here / name).is_file():
+                        put(here / name, copy / rel / here.relative_to(source) / name)
+            materialised[rel] = "/".join(resolved)
+        else:
+            left[rel] = LINK_NO_TARGET
+    return materialised
 
 
 class CopyNotRun(ValueError):
@@ -1248,52 +1751,102 @@ def _copy_caps(files: int, size: int, deadline: float | None) -> None:
 
 
 @contextmanager
-def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | None = None):
-    """Copy git's tracked and non-ignored untracked files, with bounded reads and old-test overlays."""
+def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | None = None,
+                    report: dict | None = None):
+    """Copy git's tracked and non-ignored untracked files, with bounded reads and old-test overlays; every file of each
+    submodule folder git does not look into (``_gitlinks``); and each tracked link (git's mode 120000) and each link in
+    such a folder as ``_copy_links`` allows. ``report``, when given, receives ``links_left_out`` (path to why) and
+    ``links_materialised`` (path to the target copied in its place), each only when it names one. A repository
+    holding a submodule that was set up is refused (``G6_E_GIT_SUBMODULE_REFUSED``)."""
     before = before or {}
+    stage = _git(repo, "ls-files", "--stage", "-z", timeout_s=min(GIT_TIMEOUT_S, _copy_remaining(deadline)))
+    gitlinks = _gitlinks(repo, stage)
+    tracked_links = {entry.partition("\t")[2] for entry in _paths(stage) if entry.startswith("120000 ")}
     known = _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z",
                         timeout_s=min(GIT_TIMEOUT_S, _copy_remaining(deadline))))
     with confine.run_folder(prefix="g6_repo_copy_", dir=outside_temp(repo), ignore_cleanup_errors=True) as scratch:
         copy = Path(scratch) / "repo"
         copy.mkdir()
-        count, size = 0, 0
+        tally = [0, 0]   # files and bytes copied
+
+        def put(source: Path, target: Path, data: bytes | None = None) -> None:
+            """One file into the copy within the caps: ``data``, else ``source``'s bytes, read in blocks."""
+            tally[0] += 1
+            _copy_caps(tally[0], tally[1] + (len(data) if data is not None else source.stat().st_size), deadline)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if data is not None:
+                target.write_bytes(data)
+                tally[1] += len(data)
+                return
+            with source.open("rb") as src, target.open("wb") as dst:
+                while True:
+                    _copy_caps(*tally, deadline)
+                    block = src.read(min(1 << 20, COPY_MAX_BYTES - tally[1] + 1))
+                    if not block:
+                        break
+                    tally[1] += len(block)
+                    _copy_caps(*tally, deadline)
+                    dst.write(block)
+            shutil.copymode(source, target)
+
+        def failed(error: OSError) -> None:
+            raise error
+
+        links: dict[str, tuple[str, bool]] = {}
+        left: dict[str, str] = {}
         for rel in sorted(set(known) | set(before)):
-            _copy_caps(count, size, deadline)
+            _copy_caps(*tally, deadline)
             parts = PurePosixPath(rel).parts
-            if any(part in _copy_ignored(str(repo.joinpath(*parts[:index])), [part])
-                   for index, part in enumerate(parts)):
+            skipped = [part in _copy_ignored(str(repo.joinpath(*parts[:index])), [part])
+                       for index, part in enumerate(parts)]
+            if (rel in tracked_links and rel not in before and not any(skipped[:-1])
+                    and not _SKIPPED(str(repo.joinpath(*parts[:-1])), [parts[-1]]) and _linked(repo / rel)):
+                links[rel] = _link_of(repo / rel)
+                continue
+            if any(skipped) or rel in gitlinks:   # a submodule folder is copied below
                 continue
             source = repo / inside(repo, rel, "file")
             if rel not in before and not source.is_file():
                 continue
-            data = before[rel].encode("utf-8") if rel in before else None
-            count += 1
-            _copy_caps(count, size + (len(data) if data is not None else source.stat().st_size), deadline)
-            target = copy / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if data is not None:
-                target.write_bytes(data)
-                size += len(data)
-            else:
-                with source.open("rb") as src, target.open("wb") as dst:
-                    while True:
-                        _copy_caps(count, size, deadline)
-                        block = src.read(min(1 << 20, COPY_MAX_BYTES - size + 1))
-                        if not block:
-                            break
-                        size += len(block)
-                        _copy_caps(count, size, deadline)
-                        dst.write(block)
-                shutil.copymode(source, target)
-        _copy_caps(count, size, deadline)
+            put(source, copy / rel, before[rel].encode("utf-8") if rel in before else None)
+        for rel in gitlinks:
+            parts = PurePosixPath(rel).parts
+            if any(_linked(repo.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
+                left[rel] = LINK_FOLDER
+                continue
+            if any(part in _copy_ignored(str(repo.joinpath(*parts[:index])), [part])
+                   for index, part in enumerate(parts)) or not (repo / rel).is_dir():
+                continue
+            for folder, dirs, files in os.walk(repo / rel, onerror=failed):
+                here = Path(folder)
+                at = here.relative_to(repo).as_posix()
+                skipped_here = _copy_ignored(folder, dirs + files)
+                for name in sorted(skipped_here):
+                    if _linked(here / name) and not _SKIPPED(folder, [name]):
+                        links[f"{at}/{name}"] = _link_of(here / name)
+                dirs[:] = sorted(name for name in dirs if name not in skipped_here)
+                for name in sorted(files):
+                    if name not in skipped_here and (here / name).is_file():
+                        put(here / name, copy / at / name)
+        materialised = _copy_links(copy, links, left, put)
+        if report is not None:
+            report.update({key: value for key, value in (("links_left_out", dict(sorted(left.items()))),
+                                                         ("links_materialised", materialised)) if value})
+        _copy_caps(*tally, deadline)
         yield copy
 
 
 def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, str]:
+    """A copy's own record of its files, read before and after a run in it: each file's SHA-256, and each link the copy
+    holds (``_copy_links``) as its own text, never followed."""
     found, size = {}, 0
     for folder, dirs, files in os.walk(repo):
         _copy_caps(len(found), size, deadline)
         ignored = _copy_ignored(folder, dirs + files)
+        for name in sorted(ignored):
+            if _linked(Path(folder) / name):
+                _copy_caps(len(found) + 1, size, deadline)
+                found[(Path(folder) / name).relative_to(repo).as_posix()] = "link:" + os.readlink(Path(folder) / name)
         dirs[:] = [name for name in dirs if name not in ignored]
         for name in files:
             if name not in ignored:
@@ -1314,9 +1867,12 @@ def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, st
 
 
 @contextmanager
-def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[str] = frozenset()):
+def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[str] = frozenset(),
+                   materialised: dict[str, str] | None = None):
     """Temporarily restore all base-revision differences in the bounded replay copy, except the files and folders
-    ``keep`` names, which stay as the copy has them."""
+    ``keep`` names, which stay as the copy has them. A changed link (at the base or in the copy), or a change at a
+    link the copy holds as its target's copy (``materialised``: the copy's ``links_materialised``), or below its
+    target, cannot be put back as it was: ``CopyNotRun`` (``OLD_BASELINE_NOT_RUN``)."""
     from contextlib import ExitStack
 
     changed = set(_paths(_git(change.repo, "diff", "--name-only", "--no-renames", "-z", change.base_commit)))
@@ -1330,8 +1886,12 @@ def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[
         if rel in changed:
             base[rel] = (mode, kind, oid, size)
     count, size = 0, 0
+    copied_in = [path for pair in (materialised or {}).items() for path in pair]
     with ExitStack() as restore:
         for rel in sorted(changed):
+            if (base.get(rel, ("",))[0] == "120000" or _linked(copy / rel)
+                    or any(rel == path or rel.startswith(path + "/") for path in copied_in)):
+                raise CopyNotRun(OLD_BASELINE_NOT_RUN)
             parts = PurePosixPath(rel).parts
             if any(part in _copy_ignored(str(change.repo.joinpath(*parts[:index])), [part])
                    for index, part in enumerate(parts)):
@@ -1388,11 +1948,12 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
             results[rel] = {"verdict": "not_run", "said": SAID["timed_out"].format(seconds=bound)}
             continue
         try:
-            with repository_copy(change.repo, deadline=started + bound, before=change.before) as copy:
-                with _base_revision(change, copy, started + bound):
+            report: dict = {}
+            with repository_copy(change.repo, deadline=started + bound, before=change.before, report=report) as copy:
+                with _base_revision(change, copy, started + bound, materialised=report.get("links_materialised")):
                     baseline = _run(copy, [old_path.get(rel, rel)], roots=roots, timeout_s=bound, network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
-                                    deadline=started + bound)
+                                    deadline=started + bound, links=report)
                 if (baseline["verdict"] != PASSED or baseline.get("degraded") or baseline.get("not_passed")
                         or baseline.get("deselected") or not baseline.get("test_outcomes")):
                     reason = baseline.get("said") or "; ".join(baseline.get("setup_errors", {}).values())
@@ -1405,7 +1966,7 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                     continue
                 results[rel] = _run(copy, [rel], roots=roots, timeout_s=int(remaining), network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
-                                    deadline=started + bound)
+                                    deadline=started + bound, links=report)
                 if moved(baseline["test_outcomes"], old_path.get(rel, rel), rel) != set(
                         results[rel].get("test_outcomes") or {}):
                     reason = results[rel].get("said") or (SAID["collection_error"] if results[rel]["verdict"] == FAILED
@@ -1436,11 +1997,12 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
     deadline = time.monotonic() + bound
     try:
         keep = frozenset(inside(change.repo, test, "test").partition("::")[0].rstrip("/") for test in tests)
-        with repository_copy(change.repo, deadline=deadline, before=overlay) as copy:
-            with _base_revision(change, copy, deadline, keep=keep):
+        report: dict = {}
+        with repository_copy(change.repo, deadline=deadline, before=overlay, report=report) as copy:
+            with _base_revision(change, copy, deadline, keep=keep, materialised=report.get("links_materialised")):
                 return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
                             python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline,
-                            require_isolation=require_isolation)
+                            require_isolation=require_isolation, links=report)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise
     except (OSError, RepoRefused, CopyNotRun) as exc:

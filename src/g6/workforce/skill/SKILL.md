@@ -120,11 +120,12 @@ Composed:
 
 - **git** (the `git` command on PATH; one older than 2.31 is refused): missions, the bench's in-place runs and the
   repository tests read and reset a working tree with it, with a clean environment, every config key that would start
-  a program switched off, and no transport. A repository with submodules is refused (`G6_E_GIT_SUBMODULE_REFUSED`).
+  a program switched off, and no transport. A repository with submodules is refused (`G6_E_GIT_SUBMODULE_REFUSED`),
+  except that `repo_tests` accepts a submodule never set up (no `.git` in its folder) and hashes its files itself.
 - **pytest**, in the Python running G6 (found by importing it with `-I`): the mission bench runs
   every test with G6's own interpreter, so the repository's imports must resolve there too; `repo_tests.run` and
-  in-place runs use the repository's own `.venv` or `venv` first. Not one of G6's own dependencies: `pip install
-  pytest`. No network and no account.
+  in-place runs use the Python `G6_REPO_PYTHON` names where you start G6 (a full path), then the repository's own
+  `.venv` or `venv`. Not one of G6's own dependencies: `pip install pytest`. No network and no account.
 
 ## Examples
 

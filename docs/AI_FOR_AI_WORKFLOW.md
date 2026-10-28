@@ -208,6 +208,38 @@ confined in a copy, and reports how many changes they caught and which survived,
 why. That changes no outcome: a change can behave as the original does, so a survivor is a question about the
 checks, not a defect.
 
+A submodule that was never set up here (a gitlink with no `.git` in its folder, as some repositories ship
+their vendored code) is accepted: git never enters its folder, and G6 hashes the folder's files itself into
+the digest, so a run that changes one of them is caught as a tracked file would be. Git holds nothing to
+compare that folder with, so whether the patch changed its files is listed as an unknown. A patch that changes
+the gitlink entry itself, or a folder too large for G6 to hash, is insufficient evidence
+(`change_inside_submodule`, `submodule_not_hashed`). A submodule that was set up (a `.git` in its folder, or
+anything under `.git/modules`) is refused, `G6_E_GIT_SUBMODULE_REFUSED`. The copies the base-commit runs use
+keep a tracked link only when it is relative and resolves inside the copy; each run lists the links it left
+out.
+
+The tests run with the Python that `G6_REPO_PYTHON` names where you start G6 (a full path: a Poetry or conda
+environment, or a system Python that holds the repository's dependencies), else the repository's own `.venv`
+or `venv`, else G6's own; `scope.environment.interpreter_source` says which (`setting`, `repository` or
+`g6`). Only G6's own environment sets it, never a request, and a setting that names no Python is a refusal
+(`G6_E_REPO_PYTHON_INVALID`). The tests see none of your environment but what `G6_REPO_ENV` gives them, a
+JSON object of variable names to text set where you start G6 (`{"QT_QPA_PLATFORM": "offscreen"}`, say);
+names that would change how G6 runs them (`PYTHON...`, `LD_...`, `DYLD_...`, `PYTEST_...`, `G6_...`,
+`COV_CORE_...`, `PATH`, `HOME`, `USERPROFILE`, `TMP`, `TEMP`, `TMPDIR`) are refused (`G6_E_REPO_ENV_INVALID`).
+The run, `scope.environment` and the receipt record each name with the SHA-256 of its value, never the value.
+Hypothesis keeps its database in the run's own folder (`HYPOTHESIS_STORAGE_DIRECTORY`, unless `G6_REPO_ENV`
+names it), since the repository is read only to a confined run; `env_set_by_g6` says so.
+
+Each run lists the modules its pytest process had loaded from outside the tree it tested when the session ended
+(an environment inside the repository, below `site-packages`, counts as outside; a subprocess's or a forked
+child's modules are not seen). When a module the patch changed came from
+there instead, an installed copy such as a package installed without `-e` beside a `lib/` layout, the run tested
+code the patch did not change: its passes and failures are not used, the outcome is at most insufficient evidence
+(`changed_code_not_loaded`), and an unknown names the module and where it came from. Name the folder that holds
+the package in `import_roots` (at most 8 folders inside the repository, such as `["lib"]`): they go first on the
+import path of every run of the review, before the repository's top, and are recorded in `scope.import_roots`.
+Such a run, or one whose list is incomplete, gets no test receipt.
+
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
 under review; over `g6_invoke` the gate has no binding and every receipt stays caller-declared. A run gets
