@@ -8,7 +8,8 @@ at each step, and a row changes only with new evidence.
 **Status:** Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
 
 - **Audited commit:** `a2df4fd` (branch `claude/step2`), on 28 October 2026. Later commits are named only where a row
-  says so.
+  says so. The Step 2 rows (S2-12 onward, and the fix-pass table) were checked again on 29 October 2026 against the
+  frozen Step 2 commit `b3c342b`, and VS-0 against `cd52d48` on branch `claude/vs`.
 - **Sources:** the plans are kept outside this repository, and their items are described here in plain words. The
   Phase 0 usability ledger is also kept outside this repository; its identifiers (P0-01 to P0-32) are used below. It
   was recorded on 27 October 2026 by following each public journey literally from a fresh clone of public `main` at
@@ -44,21 +45,22 @@ exists.
 
 | Gate | Required evidence | State at `a2df4fd` |
 |---|---|---|
-| Software | Split regression suites, built-wheel install smoke, supported dependency versions | **Open.** Met at `94d99ee` (run 40644090822; the wheel smoke for `6654b19` is recorded in `docs/validation/results/release_0_1_1/wheel.json`). Not met at the Step 2 tip: run 40654008114 failed (row S2-12). |
+| Software | Split regression suites, built-wheel install smoke, supported dependency versions | **Open.** Met at `94d99ee` (run 40644090822; the wheel smoke for `6654b19` is recorded in `docs/validation/results/release_0_1_1/wheel.json`). Not met at `a2df4fd`: run 40654008114 failed. Met again at the frozen Step 2 commit `b3c342b` (run 40699680573, all nine jobs; row S2-12); its wheel smoke is not recorded yet. |
 | Isolation | Actual Windows and Linux adversarial probes; skips do not count as passes | **Open.** Linux: the bubblewrap boundary tests run in continuous integration (rows E13, E14). Windows: the AppContainer boundary tests are on record only as local runs (row E15). macOS has no boundary (row E23). |
 | Client consent | Real supported Claude Code and Codex behaviour, including decline and missing elicitation | **Open.** In Codex the owner saw the form: Esc cancelled it, an acceptance was recorded, and no Decline control was visible (`docs/releases/UAT_ROUND_1.md:61-65`). Claude Code is untested (row S5-1). |
 | Usability | Fresh-user install, discover, invoke, compose and read journey without manual debugging | **Open.** No fresh-user journey has run. 20 of the 29 rows of table 2 are still missing. |
 | Utility | Correctness, false assurances, failure recovery, cost and time against a stated baseline | **Open.** V9 is registered and has not run (row S4-3). The six-case engineering trial is synthetic, and its committed result is from the earlier version of the review (row S2-11). |
 | Broader usability | Later ten-journey trial: 8 of 10 usable, zero unexplained errors | **Open.** Not run (row S5-5). |
 | Artifacts | Docs and bundles match the tested commit; stale certificates regenerated through their normal checks | **Open.** The certificates are current (conformance passed in run 40654008114). The recorded wheel was built at `6654b19`, before Step 2. The bundles were last built at `30ab0cf`. The site and docs still differ from the code (tables 1 and 2). |
-| V10 feasibility report (current plan) | The verification-search study's feasibility report | **Open.** Nothing in table 4 has started. |
+| V10 feasibility report (current plan) | The verification-search study's feasibility report | **Open.** The V10 protocol is registered (row VS-0); VS-1 onward is being built. |
 | Step 5 trial (current plan) | The owner pilot and the fresh-user trial | **Open.** Rows S5-1 to S5-7. |
-| Security reviews (current plan) | A fresh reviewer for each security-sensitive change, with its findings fixed | **Open.** The second review of Step 2 found three critical and six important problems, and the fix pass is under way (rows S2-C1 to S2-14b). |
+| Security reviews (current plan) | A fresh reviewer for each security-sensitive change, with its findings fixed | **Open.** The second review of Step 2 found three critical and six important problems; the fix pass fixed each with a test that failed first (rows S2-C1 to S2-15). The review of the fix pass itself was thin, and a deep adversarial review is owed before go-live (rows S2-12, S2-17). |
 
 ### Launch blockers that look most important
 
-1. **Step 2 is not frozen.** Its tip fails continuous integration (row S2-12), and the fix pass for the second review's
-   critical findings has only begun (rows S2-C1 to S2-C3).
+1. **The study's repositories cannot be checked yet.** Step 2 is frozen at `b3c342b` (row S2-12), but G6 refuses
+   openlibrary, about a third of the study pool, because of its submodule folders, and its scratch copies leave out
+   the tracked link that openlibrary imports through (row S2-16).
 2. **The site still makes claims the plans retired.** The homepage shows per-task-set winners chosen after the fact,
    counts a person's hand prompt as G6's own option, and gives V6b a badge that is not its verdict. There is no
    honesty test, and several site tests require the old claims (rows E25 to E34).
@@ -68,10 +70,11 @@ exists.
    things.** The clone line uses `&&`. Get started installs `.[mcp]` where the README installs `.[all]`. Eight places
    in the docs and the code still register a bare `g6-mcp` at the client's default scope, and so does every client
    snippet on Get started (P0-01, P0-12, P0-13, P0-14).
-5. **The repository check is unproven on the study's own repositories.** Git older than 2.31 and submodules are
-   refused, not supported, and no probe has been run against the three Python repositories' images (row E74).
-6. **Client consent and every human trial are still to run** (rows S5-1 to S5-5), and **the verification search has
-   not started** (table 4), while go-live waits for V10.
+5. **The repository check is unproven on two of the study's three repositories.** Probes of openlibrary's
+   development images found git 2.39 (above the 2.31 floor) and no history beyond the base commit, and led to row
+   S2-16. ansible and qutebrowser have not been probed (row E74).
+6. **Client consent and every human trial are still to run** (rows S5-1 to S5-5), and **the verification search is
+   at its first phase** (table 4), while go-live waits for V10.
 
 ## Counts
 
@@ -79,8 +82,8 @@ exists.
 |---|---|---|---|---|---|
 | 1. Earlier plan items | 37 | 14 | 27 | 12 | 90 |
 | 2. Phase 0 findings | 6 | 2 | 20 | 1 | 29 |
-| 3. Revision 3 steps and amendments | 22 | 6 | 26 | 7 | 61 |
-| 4. Verification search | 0 | 1 | 9 | 0 | 10 |
+| 3. Revision 3 steps and amendments | 35 | 5 | 16 | 8 | 64 |
+| 4. Verification search | 1 | 1 | 8 | 0 | 10 |
 
 ## 1. Earlier plan items
 
@@ -311,23 +314,26 @@ Three ledger rows recorded steps that worked and need nothing: P0-03 (the instal
 | S2-9 | A block for any other reason is never recorded as a detection | implemented and verified | Tests: `::test_a_stale_digest_is_a_refusal_with_no_outcome` and `::test_unavailable_confinement_is_a_refusal_with_no_outcome` | — |
 | S2-10 | Trial records keep each stage's reason codes, the checks run and the cost; acceptance is counted from the outcome | implemented and verified | `validation/patch_review/run.py:51-75`. Test: `test_patch_review.py::test_the_trial_counts_acceptances_from_the_outcome` | — |
 | S2-11 | The six engineering cases under bubblewrap, with the four-outcome review | implemented, not verified | No result file from this version is committed. `docs/validation/results/release_0_1_1/patch-review-engineering.json` dates from the earlier version (`c1773b8`) | Step 2 exit |
-| S2-12 | Step 2's exit: continuous integration green on all nine jobs, then the freeze and the fast-forward | missing | Run 40654008114: all six test jobs fail `tests/core/test_outside.py::test_programs_are_found_only_through_this_module`, because `receipt_store.py:151` calls `shutil.which` instead of G6's module for outside programs | Step 2 fix pass |
+| S2-12 | Step 2's exit: continuous integration green on all nine jobs, then the freeze and the fast-forward | implemented and verified | Run 40699680573 on `b3c342b`: all nine jobs pass. The earlier failure (run 40654008114, `receipt_store.py` calling `shutil.which`) is fixed in `f62e254`. `codex/ai-for-ai-continuation` was fast-forwarded from `94d99ee` to `b3c342b`. The independent security review of the fix pass was thin: a review by another model family reported nothing after five commands, and a fresh adversarial review was stopped by a safety filter before it ran any probe. The owner chose to freeze on that, together with the 14 probes of the second review rerun under bubblewrap | — |
 
 ### Step 2 fix pass (the second independent review)
 
 | # | Item | Status | Evidence | Owned by |
 |---|---|---|---|---|
-| S2-C1 | `pytest.toml` and `.pytest.toml` are treated as runner configuration everywhere it matters | implemented, not verified | Commit `673876b`, after the audited commit; its run 40680871370 had not finished when this audit was written | fix pass |
-| S2-C2 | Weakening is detected in every changed test-related file, not only in the asserts of `test_*.py` | missing | The second review reproduced the gap at `a2df4fd` | fix pass |
-| S2-C3 | Ignored bytecode, plugin entry points in packaging folders, links and compiled extensions count as loadable | missing | As above | fix pass |
-| S2-I4 | A tree swapped between the snapshot and the run is reported as an integrity problem | missing | As above | fix pass |
-| S2-I5 | A check that never started, or a whole review that ran out of time, is not reported as a defect | missing | `test_patch_review.py::test_a_stated_check_that_times_out_or_fails_to_collect_in_the_repositorys_code_is_a_defect` pins the meaning to be corrected | fix pass |
-| S2-I6 | A test moved with `git mv` is replayed at its old path | missing | The second review reproduced an escape at `a2df4fd` | fix pass |
-| S2-I7 | An empty `[pytest]` section is still a section | missing | As above | fix pass |
-| S2-I8 | The diff reaches the gate, and a check that also passes at the base becomes an unknown with a next step | missing | As above | fix pass |
-| S2-I9 | Correct patches are not given a worse outcome (test identifiers matched against pytest's root folder, more unscanned folders, a shortcut found only in the claim) | missing | As above | fix pass |
-| S2-13 | Public wording that claimed too much, and the missing same-user limit | missing | As above | fix pass |
-| S2-14b | On Windows, test files are recognised regardless of letter case | missing | As above | fix pass |
+| S2-C1 | `pytest.toml` and `.pytest.toml` are treated as runner configuration everywhere it matters | implemented and verified | `673876b`. Tests: `test_patch_review.py::test_every_configuration_file_pytest_reads_is_one_g6_checks` (compares G6's lists with the installed pytest's names) and the `pytest.toml` cases of `::test_a_changed_runner_configuration_compromises_test_integrity`; run 40699680573 | — |
+| S2-C2 | Weakening is detected in every changed test-related file, not only in the asserts of `test_*.py` | implemented and verified | `1f3de4e`. Tests: `test_patch_review.py::test_every_changed_test_file_and_test_helper_is_compared_for_weakening` and `::test_a_moved_test_helper_is_compared_with_its_old_text_not_read_as_deleted` | — |
+| S2-C3 | Ignored bytecode, plugin entry points in packaging folders, links and compiled extensions count as loadable | implemented and verified | `a9b8ead`. Tests: `test_patch_review.py::test_an_ignored_bytecode_file_or_plugin_declaration_compromises_integrity`, six cases in `tests/workforce/test_receipt_store.py`, and `::test_a_git_ignored_link_can_change_the_run` (confined, Linux) | — |
+| S2-I4 | A tree swapped between the snapshot and the run is reported as an integrity problem | implemented and verified | `4c4aef3`. Tests: `test_patch_review.py::test_a_run_that_began_on_another_tree_compromises_integrity_whatever_the_gate_says` and `test_receipt_store.py::test_a_run_says_the_digest_of_the_tree_it_began_on` | — |
+| S2-I5 | A check that never started, or a whole review that ran out of time, is not reported as a defect | implemented and verified | `2c525d2`. Test: `test_patch_review.py::test_a_run_out_of_time_is_insufficient_evidence_and_a_check_it_never_reached_did_not_run`; the earlier expectation that pinned the wrong meaning was corrected in the same commit, as the plan's ruling allowed | — |
+| S2-I6 | A test moved with `git mv` is replayed at its old path | implemented and verified | `9e5ee0a`. Tests: `test_patch_review.py::test_a_failing_derived_file_g6_could_not_run_at_the_base_commit_is_said_so_not_called_pre_existing` and, confined, `test_repo_tests_run.py::test_i6_a_moved_test_file_is_replayed_at_its_old_path_at_the_base_commit` | — |
+| S2-I7 | An empty `[pytest]` section is still a section | implemented and verified | `d96d686`. Three cases in `test_patch_review.py::test_a_project_file_counts_only_when_its_test_runner_settings_change`, with an empty `[tool.pytest]` table as the control | — |
+| S2-I8 | The diff reaches the gate, and a check that also passes at the base becomes an unknown with a next step | implemented and verified | `05bd0f7`, `2bc3b5b`. Tests: `test_patch_review.py::test_a_shortcut_in_the_diff_compromises_integrity_with_or_without_the_claim` and `::test_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknown_with_a_next_action` | — |
+| S2-I9 | Correct patches are not given a worse outcome (test identifiers matched against pytest's root folder, more unscanned folders, a shortcut found only in the claim) | implemented and verified | `5d4950e`, `a9b8ead`, `05bd0f7`. Tests: `test_patch_review.py::test_test_ids_are_read_against_the_root_folder_pytest_used`, five cases in `::test_ignored_environments_caches_and_other_files_do_not_withhold_the_receipt`, and `::test_only_integrity_class_gate_findings_change_the_outcome` | — |
+| S2-13 | Public wording that claimed too much, and the missing same-user limit | implemented and verified | `3ba5dcd`. Test: `::test_the_docs_say_what_the_integrity_checks_and_the_receipts_cannot_show`, and the description of `g6_review_patch` states the same-user limit | — |
+| S2-14b | On Windows, test files are recognised regardless of letter case | implemented and verified | `1f3de4e`, `b3c342b`. Tests: `test_repo_tests.py::test_14b_a_test_file_is_named_with_the_case_pytest_matches_on_this_system` and `::test_14b_the_tests_a_change_touches_name_a_test_file_with_the_case_pytest_matches` (each failed on Windows before its change) | — |
+| S2-15 | The gate's diff scan reads only test, runner and continuous-integration files, so a correct change to source code is not accused | implemented and verified | `4441684`. Tests: `test_patch_review.py::test_a_source_change_the_diff_scan_would_flag_is_not_an_integrity_problem` and `::test_the_diff_is_split_by_file_whatever_the_names_and_the_lines`, with controls that still find a shortcut in a test or workflow file | — |
+| S2-16 | The study pool's repositories can be checked: openlibrary's unregistered submodule folders and its tracked links | missing | Probing development images found that G6 refuses any repository with a gitlink, and that its scratch copies leave out every link, including the tracked `infogami` link openlibrary imports through | pool compatibility, before the study freeze |
+| S2-17 | A deep adversarial review of patch review, for escapes and for correct patches accused | deferred | Moved by the owner to the security gate before go-live (see S2-12) | go-live security gate |
 | S2-M | The deferred minor findings 10, 11, 12 and 14a | deferred | Ledgered, not fixed in this pass | after the fix pass |
 
 ### Steps 3 to 6 and the theory documents
@@ -375,7 +381,7 @@ whether it preserved what it must not break, and whether it is tested enough. Go
 | # | Item | Status | Evidence | Owned by |
 |---|---|---|---|---|
 | VS-pre | The existing parts the workstream builds on are present | implemented, not verified | `IntentContract` (`src/g6/intent_engine/schema.py:105`), `IntentElicitor` (`elicitor.py:42`), `detect_test_weakening` (`src/g6/safety_engine/weakening.py:142`), `check_invariant` and `prove_invariant` (`src/g6/model_checking/symbolic.py:202-212`), `check_contract` (`src/g6/formal/contract.py:22`), `check_equivalence` (`src/g6/formal/z3_depth.py:541`), `Z3Verifier` (`src/g6/cegis/z3_verifier.py:201`) and `layer_violations` (`src/g6/code/design_governance/graph.py:259`). Their fitness for this use is untested | — |
-| VS-0 | Register the V10 protocol before any verification-search code | missing | No V10 entry in `docs/validation/REGISTRY.md` | VS-0 |
+| VS-0 | Register the V10 protocol before any verification-search code | implemented and verified | `cd52d48` on `claude/vs` adds `docs/validation/patch_review_search/PROTOCOL.md` and its registry entry; the file's hash with Unix line endings (`2573c84e…`) matches the entry, and no verification-search code exists before it. `tests/site/test_evidence.py` passes against it. Not yet on `codex/ai-for-ai-continuation` | — |
 | VS-1 | Intent modelling: requirements from an intent contract, the provenance of every requirement, and an optional `intent` parameter | missing | `g6_review_patch` takes no `intent` (`src/g6/mcp/__init__.py:152-154`) | VS-1 |
 | VS-2 | The executor, the classifier and the completion report for checks the caller supplies | missing | `src/g6/harness/verification_search.py` does not exist | VS-2 |
 | VS-3 | The template registry and compiler, five templates, and test adequacy through mutation | missing | `src/g6/harness/verification_templates.py` does not exist | VS-3 |
