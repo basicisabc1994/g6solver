@@ -192,7 +192,11 @@ the review goes on. G6 writes each check from the template's fixed text, with yo
 literal and nowhere else, and runs it as it runs a proposed check: it never passes a requirement, and a
 counterexample or a failure gives at most insufficient evidence, with its reproduction (the text names its
 template). A forbidden import against the repository's contract or yours is a failed check, so
-`defect_detected`; a structural check that finds none counts for its requirement as a stated check does.
+`defect_detected`. A structural check that finds none never passes a requirement (the owner's ruling, R-C1):
+the requirement keeps the status its stated checks give it, `not_established` when it has none, and the
+contract holding is reported in the activity and under `completion.preservation`. When the patch could not
+have broken the contract (it has fewer than two layers and no forbidden pair, or the patch adds no import
+from a module the contract covers), the check reads `vacuous`: "does not exercise the change".
 
 The formal path searches multi-step behaviour, and never lets a result about a model read as one about the
 code. `state_invariant.v1` takes an abstract state model you state, in the closed grammar of G6's model

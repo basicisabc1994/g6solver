@@ -273,6 +273,32 @@ def test_a_changed_runner_configuration_compromises_test_integrity(repo, monkeyp
                for r in got["assessment"]["reasons"])
 
 
+def test_a_weakened_test_file_marked_skip_worktree_still_compromises_test_integrity(repo, monkeypatch):
+    """The VS-3 review's fix pass, C2: git's skip-worktree mark hides the weakened file from git's own diff; G6 compares
+    it with the base commit's text, as every other tracked file."""
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_calc.py").write_text(TEST.replace("assert add(-2, -3) == -5", "assert True"))
+    _git(repo, "update-index", "--skip-worktree", "test_calc.py")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "test_weakened" and "test_negative" in r["detail"] for r in got["assessment"]["reasons"])
+
+
+def test_a_changed_runner_configuration_marked_assume_unchanged_still_compromises_test_integrity(repo, monkeypatch):
+    """The VS-3 review's fix pass, C2: git's assume-unchanged mark hides the changed pytest.ini from git's own diff."""
+    (repo / "pytest.ini").write_text("[pytest]\naddopts = -q\n")
+    _commit(repo, "a runner configuration")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "pytest.ini").write_text("[pytest]\naddopts = -q -k 'not negative'\n")
+    _git(repo, "update-index", "--assume-unchanged", "pytest.ini")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "runner_configuration_changed" and "pytest.ini" in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
 def _pytest_config_names() -> set[str]:
     """The configuration files the installed pytest looks for by name: its ``CONFIG_LOADERS_BY_NAME`` (pytest 9.2 on),
     else the file names ``locate_config`` holds as constants (earlier versions); a skip that says so when neither

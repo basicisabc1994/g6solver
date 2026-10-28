@@ -6,7 +6,9 @@
 workforce bench's ``run_tests_in_place`` op runs the same function, so the census measures what verify_task uses.
 
 What it reads (``change``): the files changed against a base ref (default ``HEAD``: the working tree's change) as git
-reports them, plus untracked files that are not ignored; each changed test file's text at the base and now, both read
+reports them, plus untracked files that are not ignored, plus each file git's assume-unchanged or skip-worktree mark
+hides from its diff whose text differs from the base's (``_held``; one so marked that is not in the working tree is
+listed apart, ``Change.unseen``, never read as unchanged); each changed test file's text at the base and now, both read
 with the same line endings, and the test files moved since the base; the changed source files and the changed lines in
 each (``changed_lines``); and the tests the change touches (``derive_tests``: its changed test files, then every test
 file that names a changed module, ``verify.run_set``'s rule, at most ``MAX_DERIVED``). Git is asked with the owner's
@@ -54,6 +56,7 @@ invoked here.
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import importlib.machinery
 import json
@@ -378,6 +381,12 @@ class Change:
     submodules: tuple[str, ...] = ()
     #: Those whose gitlink entry differs from the base commit's: added, removed, or naming another commit.
     submodule_changes: tuple[str, ...] = ()
+    #: The tracked files git's assume-unchanged or skip-worktree mark hides from its own diff that differ from the
+    #: base commit's blob (``_held``): changed files like any other, in ``files`` too.
+    held: tuple[str, ...] = ()
+    #: The files so marked that are not in the working tree (a sparse checkout): G6 cannot compare them with the base
+    #: commit, so whether the patch changed them is unknown, never "unchanged".
+    unseen: tuple[str, ...] = ()
 
 
 def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
@@ -400,9 +409,11 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
             raise
         raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["bad_base"].format(base=base)) from refused
     head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip()
+    held, unseen = _held(repo, commit, spec, set(gitlinks))
     files = tuple(sorted(set(_paths(_git(repo, "diff", "--name-only", "-z", "--no-renames", "--no-textconv", commit,
                                          *spec)))
-                         | set(_paths(_git(repo, "ls-files", "--others", "--exclude-standard", "-z", *spec)))))
+                         | set(_paths(_git(repo, "ls-files", "--others", "--exclude-standard", "-z", *spec)))
+                         | set(held)))
     tests = [rel for rel in files if is_test_file(rel)]
     existed = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", *tests))) if tests else set()
     before = {rel: _text(_git(repo, "show", f"{commit}:{rel}")) for rel in sorted(existed)}
@@ -424,7 +435,28 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
     links = tuple(rel for rel in sorted(set(gitlinks) | set(then) | set(now)) if ours(rel))
     return Change(repo, base, commit, head, files, before, after, sources, runner, moved,
                   submodules=tuple(rel for rel in links if rel in gitlinks),
-                  submodule_changes=tuple(rel for rel in links if then.get(rel) != now.get(rel)))
+                  submodule_changes=tuple(rel for rel in links if then.get(rel) != now.get(rel)),
+                  held=tuple(sorted(held)), unseen=unseen)
+
+
+def _held(repo: Path, commit: str, spec: list[str], gitlinks: set[str]) -> tuple[set[str], tuple[str, ...]]:
+    """The tracked files git's assume-unchanged or skip-worktree mark (``ls-files -v``: a lowercase tag, or "S") hides
+    from its own diff, compared by content with ``commit``'s blob as every other tracked file is (review C2): those
+    that differ, or that ``commit`` does not hold, or that are a link; and, apart, those not in the working tree (a
+    sparse checkout), which cannot be compared. Change detection never depends on git's index flags."""
+    marked = [entry[2:] for entry in _paths(_git(repo, "ls-files", "-v", "-z", *spec))
+              if (entry[:1].islower() or entry[:1] == "S") and entry[2:] not in gitlinks]
+    if not marked:
+        return set(), ()
+    unseen = tuple(sorted(rel for rel in marked if not os.path.lexists(repo / rel)))
+    present = [rel for rel in marked if rel not in unseen]
+    then = texts_at(repo, commit, present, limit=None)
+    changed = set()
+    for rel in present:
+        path = repo / rel
+        if then.get(rel) is None or _linked(path) or not path.is_file() or _text(path.read_bytes()) != then[rel]:
+            changed.add(rel)
+    return changed, unseen
 
 
 def _moves(repo: Path, commit: str, gone: list[str], new: list[str], before: dict[str, str],
@@ -476,6 +508,11 @@ def changed_lines(change: Change, rel: str) -> set[int]:
     file's own, never a ``textconv`` filter's (review M7)."""
     if rel not in change.sources:
         return set()
+    if rel in change.held:   # git's diff does not see it (review C2): the lines differ from the base commit's
+        old = (read_at(change.repo, change.base_commit, rel) or "").splitlines()
+        new = (change.repo / rel).read_text(encoding="utf-8", errors="replace").splitlines()
+        return {line + 1 for tag, _, _, start, end in difflib.SequenceMatcher(None, old, new, autojunk=False)
+                .get_opcodes() if tag in ("replace", "insert") for line in range(start, end)}
     text = _git(change.repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", change.base_commit, "--",
                 rel).decode("utf-8", "replace")
     if not text.strip():  # untracked: new since the base
@@ -514,6 +551,12 @@ def diff_text(change: Change) -> str:
     for rel in sorted(untracked & set(change.files)):
         lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS].splitlines()
         text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+    for rel in change.held:   # changed, though git's index flags hide them from its diff (review C2)
+        path = change.repo / rel
+        now = path.read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS] if path.is_file() else ""
+        then = (read_at(change.repo, change.base_commit, rel) or "")[:DIFF_FILE_CHARS]
+        text += "".join(f"{line}\n" for line in difflib.unified_diff(then.splitlines(), now.splitlines(),
+                                                                     f"a/{rel}", f"b/{rel}", lineterm=""))
     return text
 
 
@@ -1613,6 +1656,37 @@ def read_at(repo: Path, commit: str, rel: str) -> str | None:
     return _text(_git(repo, "show", f"{commit}:{rel}"))
 
 
+#: The most paths one ``texts_at`` git call names.
+_TEXTS_AT_BATCH = 100
+
+
+def texts_at(repo: Path, commit: str, rels: list[str], *, limit: int | None) -> dict[str, str]:
+    """``read_at`` for many files in a few git calls: each of ``rels`` that ``commit`` holds as a regular file of at
+    most ``limit`` bytes (any size when None), by path, with the line endings ``Path.read_text`` gives. The sizes come
+    from git's tree before any blob is read; the blobs, from one ``git show`` per batch, are cut by those sizes."""
+    found: dict[str, str] = {}
+    for start in range(0, len(rels), _TEXTS_AT_BATCH):
+        batch = [inside(repo, rel, "path") for rel in rels[start:start + _TEXTS_AT_BATCH]]
+        sizes: dict[str, int] = {}
+        for entry in _paths(_git(repo, "ls-tree", "-r", "-l", "-z", commit, "--", *batch)):
+            meta, _, rel = entry.partition("\t")
+            mode, kind, _, size = meta.split()
+            if kind == "blob" and mode in ("100644", "100755") and (limit is None or int(size) <= limit):
+                sizes[rel] = int(size)
+        wanted = [rel for rel in batch if rel in sizes]
+        if not wanted:
+            continue
+        raw = _git(repo, "show", "--no-textconv", *(f"{commit}:{rel}" for rel in wanted))
+        if len(raw) != sum(sizes[rel] for rel in wanted):   # never cut a text G6 cannot account for
+            found.update({rel: text for rel in wanted if (text := read_at(repo, commit, rel)) is not None})
+            continue
+        offset = 0
+        for rel in wanted:
+            found[rel] = _text(raw[offset:offset + sizes[rel]])
+            offset += sizes[rel]
+    return found
+
+
 #: The names a copy never takes: git's own folder, secrets, environments and caches.
 _SKIPPED = shutil.ignore_patterns(".git", ".env*", "__pycache__", ".pytest_cache", "*.pyc", ".venv", "venv")
 
@@ -1877,6 +1951,7 @@ def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[
 
     changed = set(_paths(_git(change.repo, "diff", "--name-only", "--no-renames", "-z", change.base_commit)))
     changed.update(_untracked(change.repo))
+    changed.update(change.held)   # changed, though git's index flags hide them from its diff (review C2)
     changed = {rel for rel in changed if not any(rel == kept or rel.startswith(kept + "/") for kept in keep)}
     entries = _paths(_git(change.repo, "ls-tree", "-r", "-l", "-z", change.base_commit))
     base = {}

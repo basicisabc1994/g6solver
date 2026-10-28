@@ -27,7 +27,10 @@
    (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at
    its limit, a changed entry of a submodule git does not look into (``change_inside_submodule``: git cannot check
    the files a submodule holds), or such a submodule folder G6 could not hash (``submodule_not_hashed``). Each such
-   folder is an unknown too: G6 hashes it into the digest, but cannot tell whether the patch changed its files. Also a
+   folder is an unknown too: G6 hashes it into the digest, but cannot tell whether the patch changed its files. Or a
+   tracked file git's assume-unchanged or skip-worktree mark hides that is not in the working tree, a sparse checkout
+   (``file_not_in_working_tree``): one so marked that is there is compared with the base commit's text, as every other
+   tracked file is, so the marks never hide a change (``repo_tests.change``). Also a
    tier 1 or tier 2 run that loaded a changed module from outside the tree it tested, an installed copy of the code
    in place of the file the patch changed, or that cannot say what it loaded (``changed_code_not_loaded``): its
    passes and its failures are not used, the requirements it checks are not established, and an unknown names the
@@ -68,8 +71,10 @@ naming a requirement, an intent and bindings that are data (dotted names G6 find
 with the proposed checks within 20 and checked before anything runs (an invalid one refuses the review; one the tree
 gives nothing to apply to is refused alone and reported). G6 compiles ``example.v1``, ``relation.v1``,
 ``access_rule.v1`` and ``differential.v1`` from each template's fixed text into checks run as proposed checks are,
-which never pass a requirement; ``forbidden_dependency.v1`` reads imports only, and against a contract the repository
-or the caller states it counts for its requirement as a stated check does. Optional ``search``: ``templates`` false
+which never pass a requirement; ``forbidden_dependency.v1`` reads imports only: against a contract the repository or
+the caller states, an import the patch adds that the contract forbids fails its requirement, and a contract that holds
+passes none (the owner's ruling R-C1), reported in ``completion.preservation``, as ``vacuous`` when the patch could
+not have broken it. Optional ``search``: ``templates`` false
 runs free-form checks only; ``test_adequacy`` true reports, for each requirement, the mutants of the changed lines its
 stated checks killed and those that survived, which decides nothing. The configuration is in ``scope.search``.
 The formal path (``g6.harness.verification_formal``): ``state_invariant.v1``, and access_rule.v1's multi-step form
@@ -183,6 +188,10 @@ SUBMODULE_UNKNOWN = ("git cannot check the files inside {path}, a submodule that
 SUBMODULE_CHANGED = ("{path}: the patch changes this submodule's entry (the commit it names, or whether it is there), "
                      "and git cannot check the files a submodule holds")
 SUBMODULE_NOT_HASHED = "{path}: G6 could not hash the files inside this submodule folder ({why}), so a change there is not seen"
+#: Review C2: a tracked file git's assume-unchanged or skip-worktree mark hides that is not in the working tree.
+UNSEEN_REASON = ("git is told not to look at {paths} (assume-unchanged or skip-worktree, as a sparse checkout leaves "
+                 "files), and it is not in the working tree, so G6 cannot compare it with the base commit")
+UNSEEN_UNKNOWN = "whether the patch changed {path} is unknown: git is told not to look at it, and it is not on the disk"
 #: The most ``import_roots`` a review takes.
 MAX_IMPORT_ROOTS = 8
 # PENDING copy (review C1): a run that loaded a changed module from outside the tree it tested (an installed copy).
@@ -510,7 +519,8 @@ def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", 
 
 def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str], structural=()) -> dict:
     """A requirement's status from its stated checks, and from ``structural``: the structural checks of a stated
-    contract that name it (verification search's ``forbidden_dependency.v1``), which count as stated checks do."""
+    contract that name it and found an import the patch adds and the contract forbids (verification search's
+    ``forbidden_dependency.v1``), which fail it. The owner's ruling R-C1: a structural check never passes one."""
     checks = [{"id": check, "provenance": STATED, **verdicts[check]}
               for check in dict.fromkeys(norm[raw] for raw in req.checks)]
     checks += list(structural)
@@ -768,6 +778,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     unknowns.extend(SUBMODULE_UNKNOWN.format(path=rel) for rel in change.submodules)
     for rel, why in repo_tests.submodules_not_hashed(before).items():
         reason("evidence", "submodule_not_hashed", SUBMODULE_NOT_HASHED.format(path=rel, why=why))
+    if change.unseen:   # review C2: a file git's index flags hide that is not on the disk is never "unchanged"
+        shown = ", ".join(change.unseen[:10]) + (f" and {len(change.unseen) - 10} more" if len(change.unseen) > 10
+                                                 else "")
+        reason("evidence", "file_not_in_working_tree", UNSEEN_REASON.format(paths=shown))
+        unknowns.extend(UNSEEN_UNKNOWN.format(path=rel) for rel in change.unseen[:10])
 
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
@@ -793,8 +808,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                    node=check, ran=first)
         elif verdicts[check]["verdict"] != "passed" and check not in stated_ids:
             unknowns.append(f"extra test {check} did not run to a pass: {verdicts[check]['verdict']}")
-    # Verification search's structural checks (forbidden_dependency.v1), read from the files before anything ran: one
-    # against a stated contract counts for its requirement as a stated check does; a model's contract decides nothing.
+    # Verification search's structural checks (forbidden_dependency.v1), read from the files: one against a stated
+    # contract that finds an import the patch adds and the contract forbids fails its requirement; one that finds none
+    # passes no requirement (the owner's ruling R-C1); a model's contract decides nothing.
     structural = list(prepared.structural) if prepared is not None else []
     for found in structural:
         if found["verdict"] == FAILED:
@@ -902,7 +918,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
 
     normative = [found for found in structural if found["normative"]]
     evaluated = [_requirement(req, verdicts, norm, [_structural_check(found) for found in normative
-                                                    if found["requirement"] == req.id]) for req in stated]
+                                                    if found["requirement"] == req.id and found["verdict"] == FAILED])
+                 for req in stated]
     if search is not None:
         verification_search.annotate(evaluated, search)
     if formal is not None:
@@ -916,11 +933,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if verdicts[check]["verdict"] not in DEFECTS and verdicts[check]["verdict"] != "passed":
             reason("evidence", "check_did_not_run", f"{check}: {verdicts[check]['verdict']} "
                                                     f"({verdicts[check]['detail']})")
-    for found in normative:
+    for found in normative:   # it would not have passed its requirement, so it leaves it as its stated checks did
         if found["verdict"] == "not_run":
-            reason("evidence", "check_did_not_run", f"{found['id']}: forbidden_dependency.v1 could not be applied or "
-                                                    "could not read every file, so this check did not run (why is in "
-                                                    "assessment.completion.activities)")
+            unknowns.append(f"{found['id']}: forbidden_dependency.v1 could not be applied or could not read every "
+                            "file, so the contract was not checked (why is in assessment.completion.activities)")
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,

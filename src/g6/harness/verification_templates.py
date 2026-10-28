@@ -24,8 +24,11 @@ the five of this version:
   code runs). The contract is the repository's own, an import-linter configuration (``.importlinter``, ``setup.cfg``
   or ``pyproject.toml``) as the base commit declares it, so the patch cannot loosen it (provenance
   ``repository_stated``), or one the instance states (``stated``); against either, a new forbidden import is a failed
-  check, so ``defect_detected``, and a check that finds none counts for its requirement as a stated check does. A
-  contract a model proposed (``model_hypothesis``, which only G6's own code sets) gives at most insufficient evidence.
+  check, so ``defect_detected``. The owner's ruling R-C1: a check that finds none never passes its requirement, which
+  keeps the status its stated checks give it; the contract holding is reported in the activity and in
+  ``completion.preservation``, and as ``vacuous`` ("does not exercise the change") when the patch could not have
+  broken it (``_unexercised``). A contract a model proposed (``model_hypothesis``, which only G6's own code sets) gives
+  at most insufficient evidence.
   A part of a contract that matches no module of the package, and a module outside the package, are reported as out
   of scope, never as violations. It sees direct imports only (those inside functions and under ``TYPE_CHECKING``
   included), not dynamic ones.
@@ -110,6 +113,8 @@ _LEFT_OUT = frozenset({"venv"})
 #: G6's clock for the review's deadline (a test replaces it).
 _clock = time.monotonic
 OUT_OF_TIME = "the review's time budget was spent before G6 had read and parsed the package's files"
+#: A structural check whose contract the patch could not have broken (the owner's ruling R-C1).
+VACUOUS = "vacuous"
 
 
 class Inapplicable(Exception):
@@ -527,12 +532,23 @@ class Tree:
     def has(self, rel: str, side: str) -> bool:
         return rel in (self.at_base if side == BASE else self.known)
 
+    def preload(self, rels: list[str]) -> None:
+        """The base commit's texts of ``rels``, read in a few git calls (``repo_tests.texts_at``); one git does not
+        hold as a file of at most ``MAX_MODULE_BYTES`` reads as unreadable."""
+        wanted = [rel for rel in rels if (rel, BASE) not in self._texts]
+        if wanted:
+            found = repo_tests.texts_at(self.root, self.change.base_commit, wanted, limit=MAX_MODULE_BYTES)
+            self._texts.update({(rel, BASE): found.get(rel) for rel in wanted})
+
     def text(self, rel: str, side: str) -> str:
-        """``rel``'s text on ``side`` (a ``ValueError`` when it cannot be read): from the working tree when it is
-        there and unchanged since the base commit, else from git at the base commit."""
+        """``rel``'s text on ``side`` (a ``ValueError`` when it cannot be read): on the working tree, from the disk;
+        at the base commit, always from git's blob, never from the working tree, whatever git's index flags say
+        (review C2)."""
         key = (rel, side)
+        if self._texts.get(key, "") is None:
+            raise ValueError(f"{rel} is not a file of at most {MAX_MODULE_BYTES} bytes at the base commit")
         if key not in self._texts:
-            if side == PATCH or (rel in self.known and rel not in self.change.files):
+            if side == PATCH:
                 parts = Path(rel).parts
                 if any(repo_tests._linked(self.root.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
                     raise ValueError(f"{rel} is a link")
@@ -1665,6 +1681,8 @@ def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str],
     if len(names) > MAX_PACKAGE_FILES:
         raise Inapplicable(f"{package} holds more than {MAX_PACKAGE_FILES} files {WHERE[side]}")
     files, size = {}, 0
+    if side == BASE:
+        tree.preload(names)
     for rel in names:
         tree.in_time()
         files[rel[len(folder):]] = text = tree.text(rel, side)
@@ -1687,12 +1705,9 @@ def _ignored(violation: dict, ignore: tuple[str, ...]) -> bool:
     return False
 
 
-def _breaches(found, contract: _Contract) -> tuple[list[dict], set[str]]:
-    """The contract's breaches in the graph ``found``, with what no module of it is in left out; and the prefixes it
-    left out."""
-    from g6.code._types import CodeRefused
-    from g6.code.design_governance import graph
-
+def _matched(found, contract: _Contract) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], set[str]]:
+    """The contract's layers and forbidden pairs that match a module of the graph ``found``, and the prefixes that
+    match none (left out)."""
     def rank(module: str) -> int | None:
         hits = [i for i, prefix in enumerate(contract.layers) if _in(module, prefix)]
         return max(hits, key=lambda i: len(contract.layers[i])) if hits else None
@@ -1703,6 +1718,16 @@ def _breaches(found, contract: _Contract) -> tuple[list[dict], set[str]]:
     pairs = tuple(pair for pair in contract.forbidden if matched(pair[0]) and matched(pair[1]))
     missing = {layer for layer in contract.layers if layer not in layers} | {
         prefix for pair in contract.forbidden if pair not in pairs for prefix in pair if not matched(prefix)}
+    return layers, pairs, missing
+
+
+def _breaches(found, contract: _Contract) -> tuple[list[dict], set[str]]:
+    """The contract's breaches in the graph ``found``, with what no module of it is in left out; and the prefixes it
+    left out."""
+    from g6.code._types import CodeRefused
+    from g6.code.design_governance import graph
+
+    layers, pairs, missing = _matched(found, contract)
     if not layers and not pairs:
         return [], missing
     try:
@@ -1710,6 +1735,27 @@ def _breaches(found, contract: _Contract) -> tuple[list[dict], set[str]]:
     except CodeRefused:
         return [], missing
     return [item for item in breaches if not _ignored(item, contract.ignore)], missing
+
+
+def _unexercised(before, after, contract: _Contract) -> str:
+    """Why the patch could not have broken ``contract`` (the owner's ruling R-C1: such a contract is reported as
+    vacuous, "does not exercise the change"), or "" when it could: the contract, as G6 can check it on the package,
+    has two layers or a forbidden pair, and the patch adds an import inside the package from a module the contract
+    covers (a module in a layer, or a pair's source), one the contract's ignored imports allow included. A change that
+    leaves every module's imports as they were is not one a structural check sees; only an added import can break a
+    contract."""
+    layers, pairs, _ = _matched(after, contract)
+    if len(layers) < 2 and not pairs:
+        return ("a contract of fewer than two layers and no forbidden pair, as G6 can check it on the package, can "
+                "never be broken")
+    def edges(found) -> set[tuple[str, str]]:   # noqa: E306
+        return {(edge.source, edge.target) for edge in found.edges} if found is not None else set()
+
+    added = edges(after) - edges(before)
+    if not any(_in(source, prefix) for source, _ in added for prefix in (*layers, *(pair[0] for pair in pairs))):
+        return ("the patch adds no import inside the package from a module the contract covers, so it could not have "
+                "broken it")
+    return ""
 
 
 def structural(tree: Tree, one: TemplateInstance) -> dict:
@@ -1756,7 +1802,7 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
         raise Inapplicable("no contract G6 can read applies to the package: " + "; ".join(out[:5]) if out else
                            "the contract names nothing G6 can check")
     graphs: dict[tuple[str, str], tuple] = {}
-    new, already, unparsed, checked = [], [], [], 0
+    new, already, unparsed, checked, vacuous = [], [], [], 0, []
     for contract in scoped:
         for side in (BASE, PATCH):
             if (contract.package, side) not in graphs:
@@ -1777,6 +1823,9 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
         if named <= missing_before & missing_after:
             continue
         checked += 1
+        why = _unexercised(before, after, contract)
+        if why:
+            vacuous.append(f"{contract.name}: {why}")
         seen = {(item["rule"], item["from"], item["to"]) for item in old}
         for item in found:
             located = {**item, "file": folder + item["file"], "contract": contract.name}
@@ -1804,8 +1853,12 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
         verdict = "not_run"
         limits.append(f"{len(unparsed)} file(s) of the package do not parse {WHERE[PATCH]}, so their imports are "
                       f"not seen: {', '.join(unparsed[:5])}")
+    elif len(vacuous) == checked:   # no contract the patch could have broken: it does not exercise the change
+        verdict = VACUOUS
     else:
         verdict = "passed" if normative else "not_refuted"
+    if vacuous and verdict != VACUOUS:
+        limits += [f"{item}; it does not exercise the change" for item in vacuous]
     shown = "; ".join(f"{v['from']} imports {v['to']} ({v['file']}:{v['line']})" for v in violations[:5])
     detail = (f"{one.id}: the patch adds {len(violations)} import(s) that {source} forbids: {shown}" if violations
               else f"{one.id}: no import the patch adds breaks {source}")
@@ -1814,7 +1867,8 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
                 "violations": violations, "already_at_base": [{key: item[key] for key in ("from", "to", "file",
                                                                                           "line")}
                                                               for item in already],
-                "out_of_scope": list(dict.fromkeys(out)), "limits": list(dict.fromkeys(limits)), "ran_code": False}
+                "out_of_scope": list(dict.fromkeys(out)), "limits": list(dict.fromkeys(limits)), "ran_code": False,
+                **({"note": "does not exercise the change: " + "; ".join(vacuous)} if verdict == VACUOUS else {})}
     reproduction = {"kind": "static", "imports": violations, "contract": source, "contract_provenance": provenance,
                     "how": "read each file at its line on the working tree: the import is there, and the base "
                            "commit's tree has no import between those modules; nothing needs to run",

@@ -418,14 +418,13 @@ def test_a_template_that_does_not_apply_is_refused_and_reported_and_never_errors
     runs = Compiled(monkeypatch, {})
     got = review(root, STATED["CLI"], template_instances=[bad])
     assert got["ok"] is True and got["completion_state"] == "qualified-draft", got
+    # the owner's ruling R-C1: a structural check never passes a requirement, so one that cannot be applied leaves the
+    # requirement as its stated checks left it, and says so in an unknown; a compiled check never decides one either
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
     if bad["template"] == "forbidden_dependency.v1":
-        # a structural check of a stated contract counts for its requirement, as a stated check does: one that could
-        # not be applied leaves the requirement not established
-        assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
-        assert _codes(got) == {"check_did_not_run"}
-        assert _requirement(got, "R1")["status"] == "not_established"
-    else:   # a compiled check never decides a requirement, so one that does not apply changes nothing
-        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+        assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"
+        assert [c["provenance"] for c in _requirement(got, "R1")["checks"]] == ["stated"]
+        assert any("t1" in u and "could not be applied" in u for u in got["assessment"]["unknowns"])
     found = _activity(got, "t1")
     assert (found["activity"], found["result"], found["template"]) == ("template instance", "refused", bad["template"])
     assert said in found["reason"], found["reason"]
@@ -786,14 +785,18 @@ def test_unmatched_contract_parts_and_imports_outside_the_package_are_out_of_sco
         requirement="R2")
     got = review(root, SHOP_RULE, template_instances=[stated])
     found = _activity(got, "t-scope")
-    assert found["result"] == "passed" and found["violations"] == [], found
+    # the patch adds no import between the package's modules, so the contract cannot have been broken (ruling R-C1)
+    assert found["result"] == "vacuous" and found["violations"] == [], found
+    assert "does not exercise the change" in found["note"]
     scope = " ".join(found["out_of_scope"])
     assert "shop.missing" in scope and "shop.gone" in scope and "requests" in scope
     assert "outside the package" in scope and "G6_E_DESIGN_CONTRACT_UNMATCHED" not in json.dumps(got["assessment"]
                                                                                                 ["reasons"])
-    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
-    assert _requirement(got, "R2")["status"] == "passed_on_stated_checks"
-    assert [d["requirement"] for d in got["assessment"]["completion"]["demonstrated"]] == ["R1", "R2"]
+    # a structural check never passes a requirement (ruling R-C1): R2 has no stated check
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert _codes(got) == {"requirement_without_check"}
+    assert _requirement(got, "R2")["status"] == "not_established"
+    assert [d["requirement"] for d in got["assessment"]["completion"]["demonstrated"]] == ["R1"]
     assert any("dynamic" in limit for limit in found["limits"])
     nothing = instance("t-none", "forbidden_dependency.v1", {"package": "shop", "contract": {
         "layers": ["shop.missing"]}}, requirement="R2")
@@ -807,8 +810,10 @@ def test_a_violation_the_base_commit_already_had_is_not_one_the_patch_adds(tmp_p
     Tiers(monkeypatch)
     got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
     found = _activity(got, "t-layers")
-    assert found["result"] == "passed" and found["violations"] == [] and found["already_at_base"], found
-    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert found["result"] == "vacuous" and found["violations"] == [] and found["already_at_base"], found
+    # nothing new is reported against the patch; R2 has no stated check, and a structural check passes none (R-C1)
+    assert not _codes(got) & {"forbidden_dependency_added", "check_failed"}
+    assert _requirement(got, "R2")["status"] == "not_established"
 
 
 def test_the_repositorys_contract_is_read_at_the_base_commit_so_the_patch_cannot_loosen_it(tmp_path, monkeypatch):
@@ -855,9 +860,131 @@ def test_an_unsupported_repository_contract_is_out_of_scope(tmp_path, monkeypatc
     got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
     found = _activity(got, "t-layers")
     assert found["result"] == "refused" and "independence" in found["reason"], found
-    # a stated check the template could not apply leaves its requirement not established
+    # R2 has no stated check, and a structural check that could not apply decides nothing (ruling R-C1)
     assert _requirement(got, "R2")["status"] == "not_established"
-    assert "check_did_not_run" in _codes(got)
+    assert _codes(got) == {"requirement_without_check"}
+
+
+# --- the VS-3 review's fix pass: C1, a structural check never passes a requirement (ruling R-C1) -------------------------
+
+CALC_REVIEW = {"calc/__init__.py": "", "calc/ops.py": "def add(a, b):\n    return a + b\n",
+               "calc/fmt.py": "def show(x):\n    return str(x)\n",
+               "tests/test_smoke.py": "def test_smoke():\n    assert True\n"}
+CALC_RULE = [{"id": "R1", "text": "add returns the sum of its two arguments", "checks": []},
+             {"id": "R2", "text": "the smoke test passes", "checks": ["tests/test_smoke.py::test_smoke"]}]
+
+
+@pytest.mark.parametrize("contract", [{"layers": ["calc.ops"]}, {"layers": ["calc.fmt", "calc"]}],
+                         ids=["one-layer", "two-layers-the-patch-never-imports-across"])
+def test_review_c1_a_structural_check_never_passes_a_behavioural_requirement_and_a_vacuous_one_says_so(
+        tmp_path, monkeypatch, contract):
+    """The reviewer's input: R1 is about behaviour, has no stated check, and the patch breaks it (a - b); the caller
+    attaches a forbidden_dependency.v1 instance to it whose contract the patch cannot break."""
+    root = _patch(_repo(tmp_path, CALC_REVIEW), {"calc/ops.py": "def add(a, b):\n    return a - b\n"})
+    Tiers(monkeypatch)
+    got = review(root, CALC_RULE, template_instances=[instance("dep", "forbidden_dependency.v1", {
+        "package": "calc", "contract": contract})])
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    first = _requirement(got, "R1")
+    assert first["status"] == "not_established" and first["checks"] == []
+    found = _activity(got, "dep")
+    assert found["result"] == "vacuous" and "does not exercise the change" in found["note"], found
+    kept = [e for e in got["assessment"]["completion"]["preservation"] if e.get("check") == "dep"]
+    assert kept and kept[0]["result"] == "vacuous"
+    assert "R1" not in [d["requirement"] for d in got["assessment"]["completion"]["demonstrated"]]
+
+
+def test_review_c1_a_contract_that_holds_is_reported_and_leaves_the_requirement_to_its_stated_checks(tmp_path,
+                                                                                                    monkeypatch):
+    root = _shop(tmp_path, patch={"shop/api.py": SHOP["shop/api.py"] + "\nfrom shop import data\n"})
+    Tiers(monkeypatch)
+    got = review(root, SHOP_RULE, template_instances=[instance("t-mine", "forbidden_dependency.v1", {
+        "package": "shop", "contract": {"layers": ["shop.api", "shop.service", "shop.data"]}}, requirement="R2")])
+    found = _activity(got, "t-mine")
+    assert found["result"] == "passed" and found["violations"] == [], found   # api importing data is allowed
+    assert _requirement(got, "R2")["status"] == "not_established" and _requirement(got, "R2")["checks"] == []
+    assert [e["result"] for e in got["assessment"]["completion"]["preservation"] if e.get("check") == "t-mine"] == [
+        "passed"]
+
+
+def test_review_c1_a_real_new_violation_is_still_a_defect(tmp_path, monkeypatch):
+    root = _shop(tmp_path, {"pyproject.toml": LAYERS_TOML})
+    Tiers(monkeypatch)
+    got = review(root, SHOP_RULE, template_instances=[{**SHOP_LAYERS, "requirement_id": "R2"}])
+    assert got["assessment"]["outcome"] == "defect_detected"
+    assert _requirement(got, "R2")["status"] == "failed"
+
+
+def test_review_c1_a_contract_of_one_layer_can_never_be_broken_so_it_is_vacuous_even_when_imports_change(
+        tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, CALC_REVIEW), {"calc/ops.py": "from calc import fmt\n\n\ndef add(a, b):\n"
+                                                                "    return a - b\n"})
+    Tiers(monkeypatch)
+    got = review(root, CALC_RULE, template_instances=[instance("dep", "forbidden_dependency.v1", {
+        "package": "calc", "contract": {"layers": ["calc.ops"]}})])
+    found = _activity(got, "dep")
+    assert found["result"] == "vacuous" and "can never be broken" in found["note"], found
+
+
+# --- C2: git's index flags never hide a change ---------------------------------------------------------------------------
+
+IMPORTLINTER = ("[importlinter]\nroot_package = shop\n\n[importlinter:contract:layers]\nname = shop layers\n"
+                "type = layers\nlayers =\n    shop.api\n    shop.service\n    shop.data\n")
+VISIBLE = {"shop/service.py": SHOP["shop/service.py"] + "\n\n# a visible change too\n"}
+ONE_RULE = [{"id": "R1", "text": "the data layer never imports the api layer",
+             "checks": ["tests/test_shop.py::test_handle"]}]
+
+
+@pytest.mark.parametrize("flag, patch", [
+    ("", {"shop/data.py": DATA_IMPORTS_API, **VISIBLE}),
+    ("--skip-worktree shop/data.py", {"shop/data.py": DATA_IMPORTS_API, **VISIBLE}),
+    ("--assume-unchanged .importlinter", {"shop/data.py": DATA_IMPORTS_API, **VISIBLE,
+                                          ".importlinter": IMPORTLINTER.replace("    shop.api\n", "")}),
+], ids=["control", "skip-worktree-import", "assume-unchanged-contract"])
+def test_review_c2_a_file_git_is_told_not_to_look_at_is_compared_with_the_base_commit(tmp_path, monkeypatch, flag,
+                                                                                      patch):
+    """The reviewer's three cases: the patch makes shop.data import shop.api, with the importing file marked
+    skip-worktree, or with the repository's contract loosened in a file marked assume-unchanged."""
+    root = _patch(_repo(tmp_path, {**SHOP, ".importlinter": IMPORTLINTER}), patch)
+    if flag:
+        _git(root, "update-index", *flag.split())
+    Tiers(monkeypatch)
+    got = review(root, ONE_RULE, template_instances=[instance("layers", "forbidden_dependency.v1",
+                                                              {"contract": "repository"})])
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]["reasons"]
+    [violation] = _activity(got, "layers")["violations"]
+    assert (violation["from"], violation["to"]) == ("shop.data", "shop.api")
+    assert "shop/data.py" in got["assessment"]["scope"]["changed_files"]
+    if ".importlinter" in patch:
+        assert ".importlinter" in got["assessment"]["scope"]["changed_files"]
+        assert any(".importlinter" in limit for limit in _activity(got, "layers")["limits"])
+
+
+def test_review_c2_the_base_side_is_read_from_the_base_commit_never_from_the_working_tree(tmp_path):
+    root = _patch(_repo(tmp_path, {**SHOP, ".importlinter": IMPORTLINTER}), {"shop/data.py": DATA_IMPORTS_API})
+    _git(root, "update-index", "--assume-unchanged", "shop/data.py")
+    change = repo_tests.change(root)
+    assert "shop/data.py" in change.files and "shop/data.py" in change.sources
+    tree = verification_templates.Tree.read(root, change)
+    assert "from shop import api" not in tree.text("shop/data.py", verification_templates.BASE)
+    assert "from shop import api" in tree.text("shop/data.py", verification_templates.PATCH)
+
+
+def test_review_c2_a_flagged_file_missing_from_the_working_tree_is_an_unknown_never_unchanged(tmp_path, monkeypatch):
+    """A sparse checkout: git is told not to look at shop/service.py, and it is not on the disk."""
+    root = _patch(_repo(tmp_path, {**SHOP, ".importlinter": IMPORTLINTER}), {"shop/data.py": SHOP["shop/data.py"]
+                                                                              + "\n\ndef more():\n    return 2\n"})
+    _git(root, "update-index", "--skip-worktree", "shop/service.py")
+    (root / "shop" / "service.py").unlink()
+    change = repo_tests.change(root)
+    assert change.unseen == ("shop/service.py",) and "shop/service.py" not in change.files
+    Tiers(monkeypatch)
+    got = review(root, ONE_RULE)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    [why] = [r for r in assessment["reasons"] if r["code"] == "file_not_in_working_tree"]
+    assert why["stage"] == "evidence" and "shop/service.py" in why["detail"]
+    assert any("shop/service.py" in unknown for unknown in assessment["unknowns"])
 
 
 # --- test adequacy: reported only ----------------------------------------------------------------------------------------
