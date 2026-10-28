@@ -95,14 +95,14 @@ def layout(tmp_path, monkeypatch):
 
 def stand_ins(monkeypatch):
     """Arms 3 and 4 replaced by stand-ins that accept exactly when calc.py adds (no confined run is needed)."""
-    def judged(tree, *args, **kwargs):
+    def judged(arm, tree, *args, **kwargs):
+        assert arm in ("g6", "direct_checks")
         good = (Path(tree) / "calc.py").read_text(encoding="utf-8") == GOOD
         disposition = dispositions.make("accept" if good else "defect_found")
         return {"disposition": {**disposition, "cost": {"seconds": 0.1, "processor_seconds": 0.1, "model_calls": 0}},
                 "trace": {"commands": ["pytest"], "isolation": [{"backend": "stand-in", "network": False}]},
                 "a5": {"complete": True, "missing": []}}
-    monkeypatch.setattr(arms, "g6_review", judged)
-    monkeypatch.setattr(arms, "direct_checks", judged)
+    monkeypatch.setattr(arms, "in_child", judged)
 
 
 def test_a_development_study_runs_from_calibration_to_one_results_file(layout, monkeypatch):

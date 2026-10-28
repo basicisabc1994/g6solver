@@ -19,7 +19,7 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
 
 3. **When arm 1's suite cannot be run.** A suite that cannot be collected or run in two of the three patched runs is
    not accepted, as a defect found. A suite that cannot run in any base run is a tool error, since there is nothing to
-   compare with. A run killed at its time limit is ruled under item 10. Accepted by the coordinator.
+   compare with. Runs killed at their time limit are ruled under item 10. Accepted by the coordinator.
 
 4. **How the task statement is split.** The problem statement is requirement R1, whole. Each top-level list item of
    the stated requirements follows, with its indented detail; text before the first item, or text with no list item,
@@ -56,10 +56,15 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     agent's answer cut short or given after its limit, or G6 replying after its limit, is an abstention; G6's or the
     direct checks' own outcome stands when their deadline cut checks short (a run that timed out, or a check skipped or
     left unknown because the time budget was spent). Every disposition the time limit or the token cap shaped is
-    tallied apart as "time or cap reached", whatever its category; an acceptance is never one. For arm 1, a suite run
-    killed at its limit has no reply, so a killed base run, or two killed patched runs, make arm 1 a tool error. G6's
-    arm and the direct checks run inside a G6 call window of their time limit plus 60 seconds, which kills every
-    process they started when it ends. Ruled by the coordinator.
+    tallied apart as "time or cap reached", whatever its category; an acceptance is never one. For arm 1, a base run
+    killed at its limit is a tool error. When the base runs completed and the patched tree's runs were killed at the
+    limit in at least two of the three, the patch caused it: arm 1 does not accept, as a defect found, marked "time or
+    cap reached", since continuous integration reports a time-out as a failure and the label rule counts an over-time
+    check as failing. G6's arm and the direct checks run each patch's review in a fresh interpreter of their own, in
+    isolated mode, killed with its whole process tree when their time limit plus 60 seconds has passed, so no hang
+    inside the review, Python code included, can stall the study; a child killed with no reply is a tool error. The
+    child gets the study's environment without the research flag. Ruled by the coordinator, with the arm 1 reading
+    clarified in a second ruling.
 
 11. **Infrastructure errors in the labels.** A run in which the executor itself failed (the overlay did not apply, the
     command could not start, no outcome report) is run once more. If the error persists, the patch gets no label: it

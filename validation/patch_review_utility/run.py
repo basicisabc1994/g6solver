@@ -261,8 +261,8 @@ def _review_task(manifest, task, index, work, calibration, run_with, markers, fi
     prepared = self_review.prepare(task_id, requirements, patch=patch, time_limit_s=limits["arm_seconds"],
                                    token_cap=limits["token_cap"])
     own = self_review.disposition(prepared, record)
-    reviewed = arms.g6_review(fresh("g6"), requirements, checks, timeout_s=limits["arm_seconds"])
-    direct = arms.direct_checks(fresh("direct"), requirements, checks, timeout_s=limits["arm_seconds"])
+    reviewed = arms.in_child("g6", fresh("g6"), requirements, checks, timeout_s=limits["arm_seconds"])
+    direct = arms.in_child("direct_checks", fresh("direct"), requirements, checks, timeout_s=limits["arm_seconds"])
     if reviewed.get("a5") is not None:
         a5["checked"] += 1
         if not reviewed["a5"]["complete"]:

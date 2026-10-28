@@ -335,15 +335,88 @@ def test_a_base_suite_that_cannot_run_is_a_tool_error():
     assert got["disposition"]["time_or_cap_reached"] is False
 
 
-@pytest.mark.parametrize("base, patched", [
-    ([{OLD: "passed"}, "timeout", {OLD: "passed"}], [{OLD: "passed", NEW: "passed"}] * 3),
-    ([{OLD: "passed"}] * 3, ["timeout", "timeout", {OLD: "passed", NEW: "passed"}]),
-])
-def test_a_suite_run_killed_at_its_limit_is_a_tool_error_tallied_as_time_reached(base, patched):
-    got, _ = run_ci(base, patched)
+def test_a_base_suite_run_killed_at_its_limit_is_a_tool_error_tallied_as_time_reached():
+    got, _ = run_ci([{OLD: "passed"}, "timeout", {OLD: "passed"}], [{OLD: "passed", NEW: "passed"}] * 3)
     found = got["disposition"]
     assert (found["category"], found["error_kind"], found["time_or_cap_reached"]) == (
         "tool_error_or_refusal", "killed_at_time_limit", True)
+
+
+def test_a_patched_suite_killed_at_its_limit_after_the_base_completed_is_a_defect_the_patch_caused():
+    got, _ = run_ci([{OLD: "passed"}] * 3, ["timeout", "timeout", {OLD: "passed", NEW: "passed"}])
+    found = got["disposition"]
+    assert (found["category"], found["error_kind"], found["time_or_cap_reached"]) == ("defect_found", "", True)
+    one, _ = run_ci([{OLD: "passed"}] * 3, ["timeout", {OLD: "passed", NEW: "passed"}, {OLD: "passed", NEW: "passed"}])
+    assert one["disposition"]["accepted"] is True                       # one killed run of three decides nothing
+
+
+# --- arms 3 and 4 in their own process --------------------------------------------------------------------------------
+
+FIXTURE_ARMS = """\
+import os, pathlib, subprocess, sys, time
+
+
+def hangs(tree, requirements, checks, *, timeout_s):
+    beat = pathlib.Path(tree, "heartbeat")
+    subprocess.Popen([sys.executable, "-c", "import pathlib, time\\nwhile True:\\n"
+                      f"    pathlib.Path({str(beat)!r}).write_text(str(time.time()))\\n    time.sleep(0.2)\\n"])
+    while True:
+        time.sleep(1)
+
+
+def crashes(tree, requirements, checks, *, timeout_s):
+    os._exit(3)
+
+
+def replies(tree, requirements, checks, *, timeout_s):
+    return {"disposition": {"accepted": True, "category": "accept", "error_kind": "", "time_or_cap_reached": False,
+                            "detail": "", "cost": {"seconds": 0.0, "processor_seconds": 0.0, "model_calls": 0}},
+            "trace": {"commands": [], "isolation": []},
+            "seen": {"requirements": requirements, "checks": checks, "timeout_s": timeout_s,
+                     "research_flag": os.environ.get("G6_ECHA_RESEARCH"), "isolated": sys.flags.isolated}}
+"""
+
+
+@pytest.fixture
+def fixture_arms(tmp_path):
+    (tmp_path / "v9_fixture_arms.py").write_text(FIXTURE_ARMS, encoding="utf-8")
+    return tmp_path
+
+
+def test_an_arm_in_its_own_isolated_process_replies_without_the_research_flag(fixture_arms, monkeypatch):
+    monkeypatch.setenv("G6_ECHA_RESEARCH", "1")
+    got = arms.in_child("v9_fixture_arms:replies", fixture_arms, CONTRACT, ["test_more.py"], timeout_s=30,
+                        roots=[fixture_arms])
+    assert got["disposition"]["accepted"] is True and got["child"]["exit_code"] == 0
+    assert got["seen"] == {"requirements": CONTRACT, "checks": ["test_more.py"], "timeout_s": 30,
+                           "research_flag": None, "isolated": 1}
+
+
+def test_an_arm_process_that_ends_with_no_reply_is_a_tool_error(fixture_arms):
+    got = arms.in_child("v9_fixture_arms:crashes", fixture_arms, CONTRACT, [], timeout_s=30, roots=[fixture_arms])
+    found = got["disposition"]
+    assert (found["error_kind"], found["time_or_cap_reached"]) == ("tool_error", False) and "exit code 3" in \
+        found["detail"]
+
+
+def test_an_arm_that_never_returns_is_killed_with_its_whole_process_tree_at_its_limit(fixture_arms):
+    started = time.monotonic()
+    got = arms.in_child("v9_fixture_arms:hangs", fixture_arms, CONTRACT, [], timeout_s=1, kill_after_s=8,
+                        roots=[fixture_arms])
+    assert time.monotonic() - started < 30
+    found = got["disposition"]
+    assert (found["category"], found["error_kind"], found["time_or_cap_reached"]) == (
+        "tool_error_or_refusal", "killed_at_time_limit", True)
+    beat = fixture_arms / "heartbeat"
+    assert beat.is_file()                                               # the grandchild did start
+    before = beat.read_text(encoding="utf-8")
+    time.sleep(1.5)
+    assert beat.read_text(encoding="utf-8") == before                   # and died with the tree
+
+
+def test_the_study_runs_arms_3_and_4_only_through_their_own_process():
+    assert set(arms.CHILD_ARMS) == {"g6", "direct_checks"}
+    assert arms.CHILD_ARMS["g6"] is arms.g6_review and arms.CHILD_ARMS["direct_checks"] is arms.direct_checks
 
 
 def test_ci_end_to_end_with_the_real_executor(repo, tmp_path):

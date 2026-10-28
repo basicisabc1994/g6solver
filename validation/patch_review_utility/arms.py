@@ -9,9 +9,10 @@ when no test that passed in all three base runs fails on the patched tree, and e
 or changes passes. "Fails" and "passes" are read as two of the three runs (pytest reports the test failed, or passed);
 a run that could not run counts as failing every test. A test that passed in only some base runs is left out and
 counted. A suite that cannot be collected or run in two of the three patched runs is not accepted (a defect found);
-one that cannot run in any base run is a tool error, since there is no base to compare with. A suite run killed at its
-time limit has no reply: when a base run, or two of the three patched runs, were killed, the arm is a tool error
-(``killed_at_time_limit``).
+one that cannot run in any base run is a tool error, since there is no base to compare with. A base run killed at its
+time limit is a tool error (``killed_at_time_limit``). When the base runs completed and two of the three patched runs
+were killed at the limit, the patch caused it: a defect found, marked ``time_or_cap_reached`` (continuous integration
+reports a time-out as a failure, and the label rule counts an over-time check as failing).
 
 **Arm 3, G6's review** (``g6_review``). ``g6.harness.patch_review.review_patch`` on the tree, against ``HEAD``, with the
 review contract, each requirement citing the checks given, no claim and no sources, and the arm's time limit. The row
@@ -41,19 +42,28 @@ or a stated check that did not run, is G6's insufficient evidence; arm 4 has no 
 fails at the base too, a check that did not run to a result), the receipts and the coding gate. The gate cannot change
 G6's outcome with this arm's inputs (no claim, and no diff reaches it in this commit), so arm 4 has no counterpart.
 
-**Time limits of arms 3 and 4.** Each arm runs inside a G6 call window (``g6.core.component_process.window``) of its
-time limit plus ``KILL_GRACE_S``: every child process G6 starts is killed when the window ends, and the arm then has no
-reply, which is a tool error (``killed_at_time_limit``). An operator stop is never caught. A reply that came after the
-time limit, or one whose own runs timed out or whose checks were cut short by its own deadline, is the arm's reply:
-not accepted when late, its own outcome otherwise, and marked ``time_or_cap_reached`` unless accepted.
+**Time limits of arms 3 and 4.** The study runs each patch's review in its own interpreter (``in_child``: ``python -I
+child.py``, through ``g6.core.component_process.run_process`` inside a call window of the arm's time limit plus
+``KILL_GRACE_S``), so a hang anywhere in the review, Python code included, cannot stall the study: when the window ends,
+the child is killed with its whole process tree, and the arm has no reply, which is a tool error
+(``killed_at_time_limit``). The child gets the study's environment without the research flag. Inside the child, the arm
+runs in a window of the same length, which stops the processes G6 starts. An operator stop is never caught. A reply
+that came after the time limit, or one whose own runs timed out or whose checks were cut short by its own deadline, is
+the arm's reply: not accepted when late, its own outcome otherwise, and marked ``time_or_cap_reached`` unless accepted.
 """
 from __future__ import annotations
 
+import importlib
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
 
+import g6
 from g6.core import component_process
 from g6.harness import patch_review
 from g6.workforce import repo_tests, verify
@@ -120,8 +130,9 @@ def tests_and_ci(base_tree: Path, patched_tree: Path, *, suite: list[str], patch
     passing = {n for n in nodes if all(r["outcomes"].get(n) == "passed" for r in base)}
     found["base_passing"] = len(passing)
     found["base_flaky"] = sorted(n for n in nodes - passing if any(r["outcomes"].get(n) == "passed" for r in base))
-    if found["killed"]["patched"] >= 2:
-        return {**found, "disposition": _with_cost(_killed("the suite on the patched tree"), start)}
+    if found["killed"]["patched"] >= 2:   # the base completed, so the patch made the suite overrun its limit
+        return {**found, "disposition": _with_cost(make(DEFECT, "the suite on the patched tree ran past its time limit "
+                                                                "in two of three runs", time_or_cap=True), start)}
     if found["unrunnable"] >= 2:
         return {**found, "disposition": _with_cost(make(DEFECT, "the suite cannot be collected or run on the patched "
                                                                 "tree"), start)}
@@ -352,3 +363,55 @@ def direct_checks(tree: Path, requirements: list[dict], checks: list[str], *, ti
                            time_or_cap=ran_out)
     return {"checks": done, "trace": {"commands": trace["commands"], "isolation": trace["isolation"]},
             "disposition": {**disposition, "cost": cost}}
+
+
+# --- arms 3 and 4 in their own process --------------------------------------------------------------------------------
+
+#: The two arms the study runs in a child process, by the names its jobs use.
+CHILD_ARMS = {"g6": g6_review, "direct_checks": direct_checks}
+CHILD = Path(__file__).with_name("child.py")
+#: The folders a child imports from: this study's (validation/) and G6's (the folder holding the ``g6`` package).
+ROOTS = (str(Path(__file__).resolve().parents[1]), str(Path(g6.__file__).resolve().parents[1]))
+RESEARCH_FLAG = "G6_ECHA_RESEARCH"
+
+
+def run_job(job: dict) -> dict:
+    """In the child: the arm the job names (one of ``CHILD_ARMS``; a ``module:function`` only in tests) on its inputs."""
+    arm = job["arm"]
+    if arm in CHILD_ARMS:
+        review = CHILD_ARMS[arm]
+    else:
+        module, _, name = arm.partition(":")
+        review = getattr(importlib.import_module(module), name)
+    return review(Path(job["tree"]), job["requirements"], job["checks"], timeout_s=job["timeout_s"])
+
+
+def _no_reply(disposition: dict, start: tuple[float, float], child: dict) -> dict:
+    return {"disposition": _with_cost(disposition, start), "trace": {"commands": [], "isolation": []},
+            "child": child}
+
+
+def in_child(arm: str, tree: Path, requirements: list[dict], checks: list[str], *, timeout_s: int,
+             kill_after_s: float | None = None, roots: list[str | Path] | tuple = ()) -> dict:
+    """``arm``'s review of ``tree`` in a fresh isolated interpreter, killed with its process tree at the limit."""
+    start = _clock()
+    limit = timeout_s + KILL_GRACE_S if kill_after_s is None else kill_after_s
+    with tempfile.TemporaryDirectory(prefix="v9-arm-") as folder:
+        job, reply, log = Path(folder) / "job.json", Path(folder) / "reply.json", Path(folder) / "child.log"
+        job.write_text(json.dumps({"arm": arm, "tree": str(tree), "requirements": requirements, "checks": checks,
+                                   "timeout_s": timeout_s, "roots": [*map(str, roots), *ROOTS]}), encoding="utf-8")
+        env = {key: value for key, value in os.environ.items() if key != RESEARCH_FLAG}
+        try:
+            with open(log, "wb") as sink, component_process.window(limit):
+                code = component_process.run_process([sys.executable, "-I", str(CHILD), str(job), str(reply)],
+                                                     env=env, stdout=sink, stderr=subprocess.STDOUT)
+        except component_process.ExecutionInterrupted as exc:
+            if exc.stopped:
+                raise
+            return _no_reply(_killed(f"the {arm} review"), start, {"killed": True, "limit_s": limit})
+        said = log.read_text(encoding="utf-8", errors="replace")[-600:]
+        if not reply.is_file():
+            return _no_reply(make(ERROR, f"the review's process ended with exit code {code} and no reply: {said}",
+                                  error_kind="tool_error"), start, {"exit_code": code, "limit_s": limit})
+        found = json.loads(reply.read_text(encoding="utf-8"))
+    return {**found, "child": {"exit_code": code, "limit_s": limit, "seconds": _cost(start)["seconds"]}}
