@@ -388,6 +388,12 @@ TOX = "[tox]\nenvlist = py313\n\n[testenv]\ncommands = pytest\n"
     ("setup.cfg", SETUP_CFG, SETUP_CFG + "\n[tool:pytest]\naddopts = -q\n", "[tool:pytest]"),
     ("tox.ini", TOX, TOX.replace("py313", "py312"), ""),
     ("tox.ini", TOX, TOX + "\n[pytest]\naddopts = -q\n", "[pytest]"),
+    # review I7 (probe S14): an empty section is still pytest's config, and outranks the one it read before
+    ("tox.ini", None, "[pytest]\n", "[pytest]"),
+    ("tox.ini", TOX, TOX + "\n[pytest]\n", "[pytest]"),
+    ("setup.cfg", SETUP_CFG, SETUP_CFG + "\n[tool:pytest]\n", "[tool:pytest]"),
+    # ... but pytest reads no configuration from an empty [tool.pytest] table: nothing it does changes
+    ("pyproject.toml", PYPROJECT, PYPROJECT + "\n[tool.pytest]\n", ""),
 ])
 def test_a_project_file_counts_only_when_its_test_runner_settings_change(repo, monkeypatch, name, before, after,
                                                                          section):

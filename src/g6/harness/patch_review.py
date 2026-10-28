@@ -37,6 +37,7 @@ caller assertions; their lexical support is reported and decides nothing.
 """
 from __future__ import annotations
 
+import configparser
 import platform
 import re
 import time
@@ -167,11 +168,22 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
             continue
         reader = "pytest.ini" if name == "tox.ini" else name   # tox.ini's [pytest] section reads as pytest.ini's does
         path = change.repo / rel
+
+        def settings(text: str | None):
+            # An empty section is still the configuration pytest reads (review I7). Read as pytest.ini, a tox.ini with
+            # no [pytest] section reads {}, as an empty one does: it is none. pytest reads nothing from an empty
+            # [tool.pytest] table in pyproject.toml, so that is none too.
+            found = None if text is None else _pytest_settings(reader, text)
+            if found == {} and name == "tox.ini":
+                parser = configparser.ConfigParser(interpolation=None, strict=False)
+                parser.read_string(text)
+                found = {} if parser.has_section("pytest") else None
+            return None if name == "pyproject.toml" and found == {} else found
+
         try:
             before = repo_tests.read_at(change.repo, change.base_commit, rel)
             now = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
-            old = (None if before is None else _pytest_settings(reader, before)) or None
-            new = (None if now is None else _pytest_settings(reader, now)) or None
+            old, new = settings(before), settings(now)
         except ValueError as exc:
             found.append(f"{rel}: could not be read ({exc}), so its {PYTEST_SECTIONS[name]} settings may have changed")
             continue
