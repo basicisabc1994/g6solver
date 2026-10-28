@@ -188,9 +188,14 @@ class Call(_Strict):
     @field_validator("kwargs")
     @classmethod
     def _keywords(cls, value: dict) -> dict:
-        if any(not key.isascii() or not key.isidentifier() or keyword.iskeyword(key) for key in value):
-            raise ValueError("each key of kwargs must be a parameter's name: the letters A to Z (either case), digits and _")
-        return value
+        return _keyword_names(value)
+
+
+def _keyword_names(value: dict) -> dict:
+    if any(not key.isascii() or not key.isidentifier() or keyword.iskeyword(key) for key in value):
+        raise ValueError("each key of kwargs must be a parameter's name: the letters A to Z (either case), digits "
+                         "and _")
+    return value
 
 
 class Effect(_Strict):
@@ -389,6 +394,89 @@ class StateInvariantBindings(_Strict):
         if any(name not in variables or name == self.action for name in self.observe):
             raise ValueError("observe names state variables of the model, other than the action variable")
         return self
+
+
+class AccessStep(CallSpec):
+    """A step of access_rule.v1's multi-step form: an operation call (state first), and its effect on whether the
+    access is allowed: ``allow`` (grant, share), ``refuse`` (revoke), or ``none``."""
+    effect: Literal["allow", "refuse", "none"]
+
+
+class AccessStepsBindings(_Strict):
+    """access_rule.v1's multi-step form: from the constructor's state, any sequence of the named ``steps`` (grant,
+    share, revoke, ...), then the access (``operation`` on the state with ``args``, refused by ``refusal``) allowed
+    exactly when the steps' effects, from ``initially``, say so. It goes through state_invariant.v1's path: G6 builds the
+    model from the steps (``access_model``)."""
+    constructor: CallSpec
+    operation: Name
+    args: list[Any] = Field(default_factory=list, max_length=32)
+    kwargs: dict[str, Any] = Field(default_factory=dict, max_length=32)
+    who: str = Field(min_length=1, max_length=100)
+    resource: str = Field(min_length=1, max_length=100)
+    refusal: Literal["exception", "falsy_return"]
+    exception: ErrorName | None = None
+    steps: dict[str, AccessStep] = Field(min_length=1, max_length=8)
+    initially: Literal["allowed", "refused"]
+    depth: int = Field(default=4, ge=1)
+    traces: int = Field(default=DEFAULT_TRACES, ge=1)
+
+    @field_validator("steps")
+    @classmethod
+    def _names(cls, value: dict) -> dict:
+        if any(not re.fullmatch(_PART, name, re.ASCII) for name in value):
+            raise ValueError("each step's name is a plain name: letters A to Z (either case), digits and _")
+        return value
+
+    @field_validator("kwargs")
+    @classmethod
+    def _keywords(cls, value: dict) -> dict:
+        return _keyword_names(value)
+
+    @model_validator(mode="after")
+    def _refusal(self):
+        if (self.refusal == "exception") != (self.exception is not None):
+            raise ValueError("refusal exception names the exception type the operation raises to refuse (exception); "
+                             "refusal falsy_return names none")
+        return self
+
+
+def access_model(b: AccessStepsBindings) -> dict:
+    """The state_invariant.v1 bindings a multi-step access rule goes through: G6's model, from the steps alone, of
+    whether the access may be allowed (``may``, set by each step's effect), the access as the code answers it
+    (``allowed``, observed on the real state, free in the model) and the step taken (``act``: 1, 2, ... by the steps'
+    names in order); the rule, ``(= allowed may)``."""
+    names = sorted(b.steps)
+    effect = {"allow": "(= next_may true)", "refuse": "(= next_may false)", "none": "(= next_may may)"}
+    moves = [f"(and (= next_act {i}) {effect[b.steps[name].effect]})" for i, name in enumerate(names, 1)]
+    return {"constructor": b.constructor.model_dump(),
+            "model": {"variables": {"act": "Int", "allowed": "Bool", "may": "Bool"},
+                      "init": f"(and (= act 0) (= may {'true' if b.initially == 'allowed' else 'false'}))",
+                      "transition": moves[0] if len(moves) == 1 else "(or " + " ".join(moves) + ")",
+                      "invariants": {"access_rule": "(= allowed may)"}},
+            "action": "act",
+            "actions": {str(i): {"call": b.steps[name].call, "args": b.steps[name].args,
+                                 "kwargs": b.steps[name].kwargs} for i, name in enumerate(names, 1)},
+            "observe": {"allowed": {"call": b.operation, "args": b.args, "kwargs": b.kwargs, "refusal": b.refusal,
+                                    "exception": b.exception}},
+            "depth": b.depth, "traces": b.traces, "search": "bounded"}
+
+
+class _AccessForms:
+    """access_rule.v1's bindings: its single-step form (``AccessBindings``), or, with ``steps``, its multi-step form,
+    checked as the state_invariant.v1 bindings it goes through too."""
+
+    @staticmethod
+    def model_validate(data):
+        if isinstance(data, dict) and "steps" in data:
+            found = AccessStepsBindings.model_validate(data)
+            StateInvariantBindings.model_validate(access_model(found))
+            return found
+        return AccessBindings.model_validate(data)
+
+
+def multi_step(one) -> bool:
+    """Whether an instance is access_rule.v1's multi-step form, which goes through state_invariant.v1's path."""
+    return one.template == "access_rule.v1" and isinstance(one.bindings, dict) and "steps" in one.bindings
 
 
 class TemplateInstance(BaseModel):
@@ -1209,7 +1297,7 @@ TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for defini
     TemplateDefinition(
         "access_rule.v1", REQUIREMENT_SATISFACTION,
         "who may perform which operation on which resource: allowed and refused cases, each with its expected result",
-        AccessBindings,
+        _AccessForms,
         (_CALLED, "single-step: each case is one call, with the state it needs passed in its arguments",
          "a refusal is the exception type the bindings name, or a falsy return; any other exception is a failure",
          "a refusal the run's operating-system boundary makes (a PermissionError, say) reads as the operation's own "
@@ -1305,11 +1393,15 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
 
 def instance_digest(one: TemplateInstance) -> str:
     """The SHA-256 that cites an instance: its template's id and version, the digest of the template's fixed text, and
-    the instance's requirement, intent, bindings and their provenance, as canonical JSON."""
+    the instance's requirement, intent, bindings and their provenance, as canonical JSON; for access_rule.v1's
+    multi-step form, the template it goes through and the digest of that template's fixed text too."""
     definition = REGISTRY[one.template]
     body = {"template": one.template, "template_text_sha256": definition.text_sha256, "id": one.id,
             "requirement_id": one.requirement_id, "intent": one.intent, "bindings": one.bindings,
             "provenance": one.provenance}
+    if multi_step(one):
+        through = FORMAL_TEMPLATES["state_invariant.v1"]
+        body["through"] = {"template": through.id, "template_text_sha256": through.text_sha256}
     return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=True).encode("utf-8")).hexdigest()
 
 
@@ -1339,16 +1431,18 @@ def _listing(one: TemplateInstance) -> dict:
 
 
 def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[str], *, ident: str = "",
+                   definition: TemplateDefinition | None = None,
                    **origin: Any) -> tuple[vs.ProposedCheck, str, vs.Origin]:
-    """``one``'s template's fixed text compiled for ``data`` (``compile_text``), as a check placed in the copies, and
-    the origin its activity, reasons and reproduction name. ``ident``: the check's id when it is not the instance's
-    (a further check of one instance); ``origin``: further fields of its ``Origin``."""
-    definition = REGISTRY[one.template]
+    """``one``'s template's fixed text (or ``definition``'s, the template it goes through) compiled for ``data``
+    (``compile_text``), as a check placed in the copies, and the origin its activity, reasons and reproduction name.
+    ``ident``: the check's id when it is not the instance's (a further check of one instance); ``origin``: further
+    fields of its ``Origin``."""
+    definition = definition or REGISTRY[one.template]
     source = compile_text(definition, data)
     if len(source.encode("utf-8")) > vs.MAX_SOURCE_BYTES:
         raise Inapplicable("its compiled check would hold more than 64 kilobytes")
     check = vs.ProposedCheck(id=ident or one.id, requirement_id=one.requirement_id, intent=one.intent,
-                             file=f"test_g6_{one.template.split('.')[0]}.py", source=source)
+                             file=f"test_g6_{definition.id.split('.')[0]}.py", source=source)
     try:
         placed = vs.placements(root, [check])[check.id]
     except ValueError as exc:
@@ -1390,10 +1484,13 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
     for one in instances:
         definition = REGISTRY[one.template]
         try:
-            if definition.formal:   # its check is compiled from what the model checker finds, in the formal path
-                bindings = definition.bindings.model_validate(one.bindings)
-                found.formal.append({"instance": one, "bindings": bindings, "root": root,
-                                     "applied": definition.applies(tree, bindings, _side(one))})
+            if definition.formal or multi_step(one):   # its check is compiled from what a model checker finds
+                through = FORMAL_TEMPLATES["state_invariant.v1"] if multi_step(one) else definition
+                bindings = through.bindings.model_validate(
+                    access_model(AccessStepsBindings.model_validate(one.bindings)) if multi_step(one) else
+                    one.bindings)
+                found.formal.append({"instance": one, "bindings": bindings, "root": root, "through": through,
+                                     "applied": through.applies(tree, bindings, _side(one))})
             elif definition.text:
                 check, placed, origin = _compiled(root, tree, one)
                 found.checks.append(check)

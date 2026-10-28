@@ -480,6 +480,112 @@ def test_the_compiled_replay_holds_on_the_base_and_breaks_on_the_planted_defect(
                if line.startswith("G6-OBSERVATION "))
 
 
+# --- access_rule.v1's multi-step form, through the state_invariant path --------------------------------------------------
+
+# A multi-user service: an owner shares a document with a user, and may revoke it. The patch, meant to keep a record of
+# who was ever shared a document, checks that record when a user reads: a revoked user can still read.
+DOCS_BASE = ("class Forbidden(Exception):\n    pass\n\n\nclass Docs:\n    def __init__(self):\n        self.shared = set()\n"
+             "        self.ever = set()\n\n\ndef new_docs():\n    return Docs()\n\n\n"
+             "def share(docs, owner, doc, user):\n    docs.shared.add((doc, user))\n    docs.ever.add((doc, user))\n\n\n"
+             "def revoke(docs, owner, doc, user):\n    docs.shared.discard((doc, user))\n\n\n"
+             "def read(docs, user, doc):\n    if (doc, user) not in docs.shared:\n        raise Forbidden(user)\n"
+             "    return 'text'\n")
+DOCS_PATCH = DOCS_BASE.replace("    if (doc, user) not in docs.shared:\n", "    if (doc, user) not in docs.ever:\n")
+DOCS_TESTS = ("from docs import new_docs, read, share\n\n\ndef test_shared_read():\n    d = new_docs()\n"
+              "    share(d, 'ann', 'plan', 'bob')\n    assert read(d, 'bob', 'plan') == 'text'\n")
+DOCS = {"docs.py": DOCS_BASE, "test_docs.py": DOCS_TESTS}
+DOCS_RULE = [{"id": "R1", "text": "a shared user can read", "checks": ["test_docs.py::test_shared_read"]},
+             {"id": "R2", "text": "a revoked user cannot read", "checks": []}]
+STEPS = {"constructor": {"call": "docs.new_docs"}, "operation": "docs.read", "args": ["bob", "plan"], "who": "bob",
+         "resource": "plan", "refusal": "exception", "exception": "docs.Forbidden",
+         "steps": {"share": {"call": "docs.share", "args": ["ann", "plan", "bob"], "effect": "allow"},
+                   "revoke": {"call": "docs.revoke", "args": ["ann", "plan", "bob"], "effect": "refuse"}},
+         "initially": "refused", "depth": 3, "traces": 12}
+
+
+def access(ident="t-access", bindings=None, intent="preserve", requirement="R2", **changes):
+    return {"id": ident, "template": "access_rule.v1", "requirement_id": requirement, "intent": intent,
+            "bindings": {**(bindings or STEPS), **changes}}
+
+
+def _service(side, actions) -> bool:
+    """Whether a trace (1: revoke, 2: share, by the steps' names in order) breaks the rule on that side's real code:
+    the base commit reads the current shares, the patch every share ever made."""
+    shared = ever = False
+    for action in actions:
+        shared = action == 2 or (shared and action != 1)
+        ever = ever or action == 2
+    allowed = ever if side == "patch" else shared
+    return allowed != shared
+
+
+def test_the_multi_step_access_rule_catches_a_read_after_a_revoke_through_the_state_invariant_path(tmp_path,
+                                                                                                  monkeypatch):
+    root = _patch(_repo(tmp_path, DOCS), {"docs.py": DOCS_PATCH})
+    Tiers(monkeypatch)
+    replays = Replays(monkeypatch, _service)
+    got = review(root, DOCS_RULE, template_instances=[access()])
+    found = _instance(got, "t-access")
+    assert (found["template"], found["result"]) == ("access_rule.v1", "counterexample"), found
+    specification = found["formal"]["specification"]
+    assert (specification["template"], specification["form"], specification["through"]) == (
+        "access_rule.v1", "multi_step", "state_invariant.v1")
+    traces = found["formal"]["model"]["traces"]
+    reproduced = [traces[i] for i in found["formal"]["correspondence"]["traces_reproduced"]]
+    assert [2, 1] in reproduced   # share, then revoke: the revoked user still reads
+    assert all(_service("patch", t) and not _service("base", t) for t in reproduced)
+    assert [side for side, _ in replays.calls] == ["patch", "base"]
+    assert "unconfirmed_counterexample" in _codes(got) and got["assessment"]["outcome"] == "insufficient_evidence"
+    assert _requirement(got, "R2")["status"] == "not_established"   # a compiled check decides no requirement
+    # the model G6 built from the steps, and the replay's fixed text, are state_invariant.v1's
+    [defect] = got["assessment"]["completion"]["defects_reproduced"]["proposed_checks"]
+    assert "TEMPLATE = 'state_invariant.v1'" in defect["reproduction"]["text"]
+
+
+def test_the_single_step_access_rule_is_unchanged_and_needs_no_model(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, DOCS), {"docs.py": DOCS_PATCH})
+    Tiers(monkeypatch)
+    single = {"id": "t-one", "template": "access_rule.v1", "requirement_id": "R2", "intent": "preserve",
+              "bindings": {"operation": "docs.read", "refusal": "exception", "exception": "docs.Forbidden", "cases": [
+                  {"who": "bob", "resource": "plan", "args": [{"x": 1}, "bob", "plan"], "expected": "refused"},
+                  {"who": "bob", "resource": "plan", "args": [{"x": 1}, "bob", "plan"], "expected": "allowed"}]}}
+    seen = []
+    monkeypatch.setattr(verification_search, "_run_check", lambda change, placed, source, node, **_: (
+        seen.append(source), result([node]))[1])
+    got = review(root, DOCS_RULE, template_instances=[single])
+    assert seen and all("TEMPLATE = 'access_rule.v1'" in source for source in seen)
+    assert not _activities(got, "model check") and "formal" not in _instance(got, "t-one")
+
+
+@pytest.mark.parametrize("changes, said", [
+    ({"steps": {}}, "steps"),
+    ({"steps": {"share; x": {"call": "docs.share", "args": [], "effect": "allow"}}}, "steps"),
+    ({"steps": {"share": {"call": "docs.share", "args": [], "effect": "grant"}}}, "effect"),
+    ({"exception": None}, "exception"),
+    ({"initially": "maybe"}, "initially"),
+    ({"operation": "docs.read()"}, "operation"),
+])
+def test_an_invalid_multi_step_access_rule_refuses_the_review(tmp_path, monkeypatch, changes, said):
+    root = _patch(_repo(tmp_path, DOCS), {"docs.py": DOCS_PATCH})
+    tiers = Tiers(monkeypatch)
+    got = review(root, DOCS_RULE, template_instances=[access(**changes)])
+    _refused(got)
+    assert said in got["warning_card"]["message"], got["warning_card"]["message"]
+    assert tiers.calls == []
+
+
+def test_confined_the_multi_step_access_rule_catches_the_revoked_reader_on_the_real_service(tmp_path, bwrap_backend):
+    root = _patch(_repo(tmp_path, DOCS), {"docs.py": DOCS_PATCH})
+    got = review(root, DOCS_RULE, template_instances=[access()])
+    found = _instance(got, "t-access")
+    assert found["result"] == "counterexample", found
+    traces = found["formal"]["model"]["traces"]
+    assert [2, 1] in [traces[i] for i in found["formal"]["correspondence"]["traces_reproduced"]]
+    clean = _patch(_repo(tmp_path, DOCS, "clean"), {"NOTES.txt": "no code changed\n"})
+    quiet = review(clean, DOCS_RULE, template_instances=[access()])
+    assert _instance(quiet, "t-access")["formal"]["correspondence"]["reason"] == "model_only"
+
+
 # --- the MCP surface ------------------------------------------------------------------------------------------------------
 
 def test_over_mcp_a_state_invariant_keeps_the_envelope_and_codes(tmp_path, monkeypatch):

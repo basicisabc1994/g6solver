@@ -285,7 +285,12 @@ def run(prepared, *, deadline: float, skip: str = "") -> Formal:
     formal = Formal()
     for item in prepared.formal:
         one, b, applied = item["instance"], item["bindings"], item["applied"]
+        through = item.get("through") or vt.REGISTRY[one.template]
         record = _record(one, b)
+        if through.id != one.template:   # access_rule.v1's multi-step form: G6 built the model from its steps
+            record["specification"].update(form="multi_step", through=through.id,
+                                           model_built_by="G6, from the instance's steps (their effects on whether "
+                                                          "the access may be allowed)")
         formal.runs.append(record)
         started = time.monotonic()
         model = read_model(b.model, need_invariants=True)
@@ -340,7 +345,8 @@ def run(prepared, *, deadline: float, skip: str = "") -> Formal:
         data = {**applied.data, "traces": [{"actions": t["actions"], "ghost": t["ghost"]} for t in replayed]}
         try:
             check, placed, origin = vt.compiled_check(
-                item["root"], one, data, applied.notes, keep_observations=True, patch_only=one.intent == "change",
+                item["root"], one, data, applied.notes, definition=through, keep_observations=True,
+                patch_only=one.intent == "change",
                 judge=functools.partial(_judge, len(replayed)),
                 unconfirmed="G6 compiled its replay from the caller's model and bindings, and a compiled check "
                             "decides no requirement")
