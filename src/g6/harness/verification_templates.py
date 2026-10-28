@@ -1421,6 +1421,10 @@ class Prepared:
     #: Each formal instance that applies, for the formal path (``g6.harness.verification_formal``): the instance, its
     #: bindings, what applying it gave (the literal still without traces), and the root its check is placed in.
     formal: list[dict] = field(default_factory=list)
+    #: Each relation.v1 and differential.v1 instance that compiled, for the formal path's symbolic search; and the
+    #: tree the names were read from.
+    symbolic: list[dict] = field(default_factory=list)
+    tree: Tree | None = None
 
 
 def _listing(one: TemplateInstance) -> dict:
@@ -1462,12 +1466,6 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
     return check, placed, vs.Origin(**fields)
 
 
-def _compiled(root: Path, tree: Tree, one: TemplateInstance) -> tuple[vs.ProposedCheck, str, vs.Origin]:
-    definition = REGISTRY[one.template]
-    applied = definition.applies(tree, definition.bindings.model_validate(one.bindings), _side(one))
-    return compiled_check(root, one, applied.data, applied.notes)
-
-
 def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInstance], *,
             enabled: bool = True, deadline: float | None = None, roots: tuple[str, ...] = ()) -> Prepared:
     """Each instance checked against the tree and, where it applies, compiled and placed (or, for the structural
@@ -1480,7 +1478,7 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
     if not enabled:
         found.activities = [{**_listing(one), "result": "skipped", "reason": TEMPLATES_OFF} for one in instances]
         return found
-    tree = Tree.read(root, change, deadline, roots)
+    tree = found.tree = Tree.read(root, change, deadline, roots)
     for one in instances:
         definition = REGISTRY[one.template]
         try:
@@ -1492,10 +1490,15 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
                 found.formal.append({"instance": one, "bindings": bindings, "root": root, "through": through,
                                      "applied": through.applies(tree, bindings, _side(one))})
             elif definition.text:
-                check, placed, origin = _compiled(root, tree, one)
+                bindings = definition.bindings.model_validate(one.bindings)
+                applied = definition.applies(tree, bindings, _side(one))
+                check, placed, origin = compiled_check(root, one, applied.data, applied.notes)
                 found.checks.append(check)
                 found.placed[one.id] = placed
                 found.origins[one.id] = origin
+                if one.template in ("relation.v1", "differential.v1"):   # the formal path may search it too
+                    found.symbolic.append({"instance": one, "bindings": bindings, "data": applied.data,
+                                           "notes": applied.notes, "root": root})
             else:
                 result = structural(tree, one)
                 found.structural.append(result)

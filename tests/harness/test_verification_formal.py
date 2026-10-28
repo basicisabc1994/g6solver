@@ -586,6 +586,146 @@ def test_confined_the_multi_step_access_rule_catches_the_revoked_reader_on_the_r
     assert _instance(quiet, "t-access")["formal"]["correspondence"]["reason"] == "model_only"
 
 
+# --- symbolic counterexamples for relation.v1 and differential.v1 (Z3Verifier), re-run confined -------------------------
+
+# Integer helpers inside Z3Verifier's subset (one return, int arithmetic, comparisons, a conditional). The patch breaks
+# each at one input inside the caller's range but at neither end of it, so the caller's own inputs miss it.
+MATHX_BASE = ("def double(x):\n    return x * 2\n\n\ndef half(y):\n    return y // 2\n\n\n"
+              "def score(n):\n    return n * 3\n\n\ndef label(n):\n    return 'n' * n\n")
+MATHX_PATCH = MATHX_BASE.replace("    return x * 2\n", "    return x * 2 if x != 7 else 16\n").replace(
+    "    return n * 3\n", "    return n * 3 if n != 11 else 34\n")
+MATHX_TESTS = "from mathx import half\n\n\ndef test_half():\n    assert half(4) == 2\n"
+MATHX = {"mathx.py": MATHX_BASE, "test_mathx.py": MATHX_TESTS}
+MATHX_RULE = [{"id": "R1", "text": "half halves", "checks": ["test_mathx.py::test_half"]}]
+ROUND_TRIP = {"id": "t-trip", "template": "relation.v1", "requirement_id": "R1", "intent": "preserve", "bindings": {
+    "relation": "round_trip", "function": "mathx.double", "inverse": "mathx.half", "inputs": [0, 20]}}
+KEEP_SCORE = {"id": "t-score", "template": "differential.v1", "requirement_id": "R1", "intent": "preserve",
+              "bindings": {"function": "mathx.score", "mode": "outputs", "calls": [{"args": [0]}, {"args": [20]}]}}
+
+
+class Runs:
+    """Stands in for each compiled check's run: ``decide(template, side, data)`` gives "passed", "failed" or a list of
+    observations for the check whose literal is ``data``."""
+
+    def __init__(self, monkeypatch, decide):
+        self.calls: list[tuple[str, str, dict]] = []
+
+        def run_check(change, placed, source, node, *, at_base, timeout_s, **_):
+            named = re.search(r"^TEMPLATE = '([^']+)'$", source, re.MULTILINE)
+            if named is None:   # a free-form proposed check: it passes
+                return result([node])
+            template = named.group(1)
+            side, data = "base" if at_base else "patch", ast.literal_eval(_bindings_segment(source))
+            self.calls.append((template, side, data))
+            spec = decide(template, side, data)
+            if isinstance(spec, list):
+                return result([node], output="".join(f"G6-OBSERVATION {json.dumps(o)}\n" for o in spec),
+                              digest=side[0] * 64)
+            if spec == "failed":
+                return result(failed=[node], output=f"FAILED {node} - Failed: input 0: round_trip gave 8\n",
+                              digest=side[0] * 64)
+            return result([node], digest=side[0] * 64)
+
+        monkeypatch.setattr(verification_search, "_run_check", run_check)
+
+
+def _real(template, side, data):
+    """What the real mathx gives: a round trip breaks only at 7 on the patch; score differs only at 11."""
+    if template == "relation.v1":
+        return "failed" if side == "patch" and 7 in data["inputs"] else "passed"
+    return [{"input": call, "output": {"returned": call["args"][0] * 3 + (1 if side == "patch" and call["args"][0] == 11
+                                                                          else 0)}} for call in data["calls"]]
+
+
+def _searches(got, ident) -> list[dict]:
+    return [a for a in _activities(got, "symbolic search") if a["instance"] == ident]
+
+
+def test_a_z3_counterexample_is_re_run_confined_before_it_is_reported(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    Tiers(monkeypatch)
+    runs = Runs(monkeypatch, _real)
+    got = review(root, MATHX_RULE, template_instances=[ROUND_TRIP])
+    [search] = _searches(got, "t-trip")
+    assert (search["result"], search["counterexample"]) == ("counterexample", {"x": 7}), search
+    assert set(search["formal"]) == THREE and search["formal"]["model"]["source"].startswith("G6's reading")
+    assert search["formal"]["correspondence"]["result"] == "reproduced" and search["model_calls"] == 0
+    # the caller's own inputs miss it; the re-run of Z3's input, on the patch and at the base commit, finds it
+    assert [(c[0], c[1], c[2]["inputs"]) for c in runs.calls] == [
+        ("relation.v1", "patch", [0, 20]), ("relation.v1", "base", [0, 20]), ("relation.v1", "patch", [7]),
+        ("relation.v1", "base", [7])]
+    rerun = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == "t-trip.symbolic")
+    assert rerun["result"] == "counterexample" and rerun["template"] == "relation.v1"
+    assert [(r["stage"], r["code"]) for r in got["assessment"]["reasons"]] == [("evidence", "unconfirmed_counterexample")]
+    assert got["assessment"]["outcome"] == "insufficient_evidence"
+    assert "mathx" not in sys.modules   # the function's source was read as data, never imported here
+
+
+def test_a_z3_counterexample_that_does_not_reproduce_on_the_real_code_is_dropped_and_counted(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    Tiers(monkeypatch)
+    Runs(monkeypatch, lambda template, side, data: "passed")   # the real code keeps the relation at Z3's input
+    got = review(root, MATHX_RULE, template_instances=[ROUND_TRIP])
+    [search] = _searches(got, "t-trip")
+    assert search["result"] == "counterexample" and search["dropped"] == 1, search
+    assert search["formal"]["correspondence"]["result"] == "not_reproduced"
+    assert "does not reproduce on the real code" in search["formal"]["correspondence"]["reason"]
+    assert got["assessment"]["reasons"] == [] and got["assessment"]["outcome"] == "supported_within_scope"
+
+
+def test_a_differential_search_finds_where_base_and_patch_differ_and_the_probe_confirms_it(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    Tiers(monkeypatch)
+    runs = Runs(monkeypatch, _real)
+    got = review(root, MATHX_RULE, template_instances=[KEEP_SCORE])
+    [search] = _searches(got, "t-score")
+    assert (search["result"], search["counterexample"]) == ("counterexample", {"n": 11}), search
+    assert [c[2]["calls"] for c in runs.calls][-2:] == [[{"args": [11], "kwargs": {}}]] * 2
+    rerun = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == "t-score.symbolic")
+    assert rerun["result"] == "counterexample" and "unconfirmed_counterexample" in _codes(got)
+
+
+@pytest.mark.parametrize("item, said", [
+    ({**ROUND_TRIP, "bindings": {"relation": "round_trip", "function": "mathx.label", "inverse": "mathx.half",
+                                 "inputs": [0, 20]}}, "not in the subset"),
+    ({**ROUND_TRIP, "bindings": {"relation": "monotonicity", "function": "mathx.score", "inputs": [0, 20]}},
+     "not in the subset"),
+    ({**ROUND_TRIP, "bindings": {"relation": "idempotence", "function": "mathx.half", "inputs": ["a", "b"]}},
+     "not in the subset"),
+])
+def test_a_function_outside_the_subset_is_an_activity_never_an_error(tmp_path, monkeypatch, item, said):
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    Tiers(monkeypatch)
+    runs = Runs(monkeypatch, lambda template, side, data: "passed")
+    got = review(root, MATHX_RULE, template_instances=[item])
+    [search] = _searches(got, "t-trip")
+    assert search["result"] == "not_in_subset" and said in search["reason"], search
+    assert got["ok"] is True and len(runs.calls) == 2   # the instance's own check only
+
+
+def test_a_symbolic_re_run_counts_within_the_limit_of_twenty_checks(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    Tiers(monkeypatch)
+    Runs(monkeypatch, lambda template, side, data: "passed")
+    proposed = [{"id": f"p{i}", "requirement_id": "R1", "intent": "preserve", "file": f"test_p{i}.py",
+                 "source": "def test_a():\n    pass\n"} for i in range(19)]
+    got = review(root, MATHX_RULE, template_instances=[ROUND_TRIP], proposed_checks=proposed)
+    [search] = _searches(got, "t-trip")
+    assert search["result"] == "skipped" and "20" in search["reason"], search
+
+
+def test_confined_z3_counterexamples_reproduce_on_the_real_code(tmp_path, bwrap_backend):
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    got = review(root, MATHX_RULE, template_instances=[ROUND_TRIP, KEEP_SCORE])
+    for ident, found in (("t-trip", {"x": 7}), ("t-score", {"n": 11})):
+        [search] = _searches(got, ident)
+        assert search["counterexample"] == found and search["formal"]["correspondence"]["result"] == "reproduced"
+        rerun = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == f"{ident}.symbolic")
+        assert rerun["result"] == "counterexample", rerun
+    plain = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == "t-trip")
+    assert plain["result"] == "not_refuted"   # the caller's two inputs alone miss the defect
+
+
 # --- the MCP surface ------------------------------------------------------------------------------------------------------
 
 def test_over_mcp_a_state_invariant_keeps_the_envelope_and_codes(tmp_path, monkeypatch):

@@ -61,8 +61,23 @@ INDEPENDENT = ("the invariants fail on this trace whatever the code shows, given
 
 @dataclass
 class Formal:
-    """What the formal path did: one record per ``state_invariant.v1`` instance, with its three parts."""
+    """What the formal path did: one record per ``state_invariant.v1`` instance, with its three parts; and each symbolic
+    search whose counterexample is re-run on the real code."""
     runs: list[dict] = field(default_factory=list)
+    symbolic: list[dict] = field(default_factory=list)
+
+
+#: The widest range of whole numbers a symbolic search's domain spans (beyond it, the inputs given are its values).
+MAX_SPAN = 10_000
+SUBSET = "not in the subset"
+READING = ("G6's reading of the function's source, as Z3Verifier reads it (parsed as data, never imported or run in "
+           "G6's process)")
+DROPPED = ("the counterexample does not reproduce on the real code, so it is dropped: Z3 decided on G6's reading of "
+           "the source, and the code that ran gave another answer")
+
+
+class _Outside(Exception):
+    """A function or input outside what Z3Verifier reads exactly."""
 
 
 def _int(value: int) -> str:
@@ -276,10 +291,11 @@ def _standalone(prepared, one, record: dict, result: str, seconds: float, reason
                                 "seconds": round(seconds, 3), "formal": parts(record)})
 
 
-def run(prepared, *, deadline: float, skip: str = "") -> Formal:
+def run(prepared, *, deadline: float, skip: str = "", budget: int = 0) -> Formal:
     """The formal path for each ``state_invariant.v1`` instance that applies (``prepared.formal``): the obligations,
-    the search, and each replay compiled and added to ``prepared``'s checks for the executor. ``skip``: none is run,
-    with that reason."""
+    the search, and each replay compiled and added to ``prepared``'s checks for the executor; then the symbolic search
+    of each relation and differential instance (``prepared.symbolic``), with at most ``budget`` re-runs (the checks the
+    limit of 20 leaves). ``skip``: none is run, with that reason."""
     from g6.model_checking.encoding import read_model
 
     formal = Formal()
@@ -359,7 +375,198 @@ def run(prepared, *, deadline: float, skip: str = "") -> Formal:
         prepared.checks.append(check)
         prepared.placed[check.id] = placed
         prepared.origins[check.id] = origin
+    _symbolic(prepared, formal, deadline=deadline, budget=budget, skip=skip)
     return formal
+
+
+# --- symbolic counterexamples for relation.v1 and differential.v1 ----------------------------------------------------------
+
+def _function(tree, dotted: str, side: str) -> tuple[str, str, list[str]]:
+    """A function's source as G6 reads it from the file on ``side`` (one plain ``def``), its name and its parameters."""
+    import ast
+
+    try:
+        target = vt.resolve(tree, dotted, side)
+    except vt.Inapplicable as exc:
+        raise _Outside(str(exc)) from None
+    node = target.node
+    if not isinstance(node, ast.FunctionDef):
+        raise _Outside(f"{dotted} is not one plain def {vt.WHERE[side]}")
+    return ast.unparse(node), node.name, [arg.arg for arg in node.args.args]
+
+
+def _sort(values: list) -> str:
+    if values and all(type(v) is bool for v in values):
+        return "Bool"
+    if values and all(type(v) is int for v in values):
+        return "Int"
+    raise _Outside("Z3Verifier reads int and bool arguments only")
+
+
+def _values(values: list, sort: str) -> list:
+    if sort == "Bool":
+        return [False, True]
+    low, high = min(values), max(values)
+    return list(range(low, high + 1)) if high - low <= MAX_SPAN else sorted(set(values))
+
+
+def _term(source: str, name: str, sorts: dict[str, str]) -> tuple[str, str]:
+    from g6.cegis.z3_verifier import Untranslatable, candidate_term
+
+    try:
+        return candidate_term(source, name, sorts)
+    except Untranslatable as exc:
+        raise _Outside(str(exc)) from None
+
+
+def _one_parameter(params: list[str], dotted: str) -> str:
+    if len(params) != 1:
+        raise _Outside(f"{dotted} takes {len(params)} parameters; a relation's function takes one")
+    return params[0]
+
+
+def _relation_search(tree, item) -> tuple[str, str, str, dict]:
+    """The spec, the candidate's source and name, and the domain, for a relation on the patch's function."""
+    b = item["bindings"]
+    if b.relation == "monotonicity":
+        raise _Outside("a relation over two inputs (monotonicity) is not searched symbolically")
+    sort = _sort(b.inputs)
+    source, name, params = _function(tree, b.function, vt.PATCH)
+    x = _one_parameter(params, b.function)
+    term, result_sort = _term(source, name, {x: sort})
+    if b.relation == "idempotence":
+        if result_sort != sort:
+            raise _Outside(f"{b.function} returns a {result_sort} for a {sort}, so it cannot be applied twice")
+        spec = f"(= (let (({x} result)) {term}) result)"
+    else:
+        other = b.inverse or b.transformation
+        other_source, other_name, other_params = _function(tree, other, vt.PATCH)
+        y = _one_parameter(other_params, other)
+        if b.relation == "round_trip":
+            inverse, inverse_sort = _term(other_source, other_name, {y: result_sort})
+            if inverse_sort != sort:
+                raise _Outside(f"{other} returns a {inverse_sort}, where the round trip needs a {sort}")
+            spec = f"(= (let (({y} result)) {inverse}) {x})"
+        else:   # invariance: function(transformation(x)) = function(x)
+            moved, moved_sort = _term(other_source, other_name, {y: sort})
+            if moved_sort != sort:
+                raise _Outside(f"{other} returns a {moved_sort} for a {sort}")
+            spec = f"(= (let (({x} (let (({y} {x})) {moved}))) {term}) result)"
+    return spec, source, name, {x: _values(b.inputs, sort)}
+
+
+def _differential_search(tree, item) -> tuple[str, str, str, dict]:
+    """The spec (the base commit's function, as the candidate, equals the patch's), and the domain from the calls."""
+    b = item["bindings"]
+    if any(call.kwargs for call in b.calls):
+        raise _Outside("a call with keyword arguments is not searched symbolically")
+    base, base_name, base_params = _function(tree, b.function, vt.BASE)
+    patch, patch_name, patch_params = _function(tree, b.function, vt.PATCH)
+    if len(base_params) != len(patch_params) or any(len(call.args) != len(base_params) for call in b.calls):
+        raise _Outside("the calls do not give each parameter of both versions one positional argument")
+    sorts = [_sort([call.args[i] for call in b.calls]) for i in range(len(base_params))]
+    _, base_sort = _term(base, base_name, dict(zip(base_params, sorts)))
+    term, patch_sort = _term(patch, patch_name, dict(zip(patch_params, sorts)))
+    if base_sort != patch_sort:
+        raise _Outside(f"the base commit's version returns a {base_sort} and the patch's a {patch_sort}")
+    renamed = " ".join(f"({p} {q})" for p, q in zip(patch_params, base_params))
+    spec = f"(= result (let ({renamed}) {term}))" if renamed else f"(= result {term})"
+    return spec, base, base_name, {p: _values([call.args[i] for call in b.calls], sorts[i])
+                                   for i, p in enumerate(base_params)}
+
+
+def _symbolic(prepared, formal: Formal, *, deadline: float, budget: int, skip: str) -> None:
+    """Z3Verifier on each relation or differential instance whose function is in its subset; each counterexample
+    compiled into a further check of the instance, re-run confined on the real code before it is reported."""
+    from g6.cegis.sketch import Sketch
+    from g6.cegis.verify import Counterexample, InputDomain, NoCounterexample
+    from g6.cegis.z3_verifier import Z3Verifier
+
+    for item in prepared.symbolic:
+        one, b = item["instance"], item["bindings"]
+        activity = {"activity": "symbolic search", "instance": one.id, "template": one.template,
+                    "verifier": "Z3Verifier (g6.cegis)", "seconds": 0.0, "model_calls": 0}
+        prepared.activities.append(activity)
+        record = {"id": f"{one.id[:90]}.symbolic", "activity": activity,
+                  "specification": {"template": one.template, "bindings_provenance": one.provenance},
+                  "model": {"verifier": "Z3Verifier", "source": READING},
+                  "correspondence": {"result": "not_searched"}}
+        activity["formal"] = parts(record)
+        if skip or budget <= 0:
+            why = skip or (f"the limit of {vs.MAX_CHECKS} checks in all leaves no room to re-run a counterexample on "
+                           "the real code, so none was searched for")
+            record["correspondence"]["reason"] = why
+            activity.update(result="skipped", reason=why, formal=parts(record))
+            continue
+        started = time.monotonic()
+        try:
+            spec, source, name, values = (_relation_search if one.template == "relation.v1" else
+                                          _differential_search)(prepared.tree, item)
+            try:
+                sketch = Sketch.from_src(source, fn_name=name)
+            except ValueError as exc:
+                raise _Outside(str(exc)) from None
+            left = deadline - time.monotonic() - RESERVE_S
+            if left < 1:
+                raise TimeoutError
+            outcome = Z3Verifier(spec, timeout_s=min(CONTRACT_S, left)).find_counterexample(
+                sketch, {}, InputDomain.of(values))
+        except _Outside as exc:
+            why = f"{SUBSET}: {exc}"
+            record["correspondence"]["reason"] = why
+            activity.update(result="not_in_subset", reason=why, seconds=round(time.monotonic() - started, 3),
+                            formal=parts(record))
+            continue
+        except TimeoutError:
+            activity.update(result="skipped", reason=vs.OUT_OF_TIME, formal=parts(record))
+            continue
+        record["specification"]["spec"] = spec
+        record["model"].update(domain=outcome.evidence.get("encoded_domain"),
+                               candidate_term=outcome.evidence.get("candidate_term"))
+        activity["seconds"] = round(time.monotonic() - started, 3)
+        if isinstance(outcome, NoCounterexample):
+            record["model"]["verdict"] = "no_counterexample"
+            record["correspondence"] = {"result": "not_replayed", "reason": "Z3 found no input of the domain that "
+                                        "breaks it, on G6's reading of the source: about that reading only"}
+            activity.update(result="no_counterexample", formal=parts(record))
+            continue
+        if not isinstance(outcome, Counterexample):
+            reason = getattr(outcome, "degradation_reason", "inconclusive")
+            why = f"{SUBSET}: {outcome.reason}" if reason == "z3_untranslatable" else f"{reason}: {outcome.reason}"
+            record["model"]["verdict"] = "inconclusive"
+            record["correspondence"] = {"result": "not_searched", "reason": why[:300]}
+            activity.update(result="not_in_subset" if reason == "z3_untranslatable" else "inconclusive",
+                            reason=why[:300], formal=parts(record))
+            continue
+        found = dict(outcome.inputs)
+        record["model"]["verdict"] = "counterexample"
+        activity["counterexample"] = found
+        if one.template == "relation.v1":
+            data, known = {**item["data"], "inputs": [*found.values()]}, list(found.values())[0] in b.inputs
+        else:
+            call = {"args": list(found.values()), "kwargs": {}}
+            data, known = {**item["data"], "calls": [call]}, call in [c.model_dump() for c in b.calls]
+        if known:
+            record["correspondence"] = {"result": "not_replayed", "reason": "the counterexample is one of the "
+                                        "instance's own inputs, which its own check runs"}
+            activity.update(result="counterexample", formal=parts(record))
+            continue
+        try:
+            check, placed, origin = vt.compiled_check(
+                item["root"], one, data, item["notes"], ident=record["id"],
+                label=f"a counterexample Z3 found for an instance of {one.template}, which G6 compiled",
+                unconfirmed="Z3 found it on G6's reading of the source and G6 compiled its re-run from the caller's "
+                            "bindings; a compiled check decides no requirement")
+        except vt.Inapplicable as exc:
+            record["correspondence"] = {"result": "not_replayable", "reason": str(exc)}
+            activity.update(result="counterexample", formal=parts(record))
+            continue
+        activity.update(result="counterexample", rerun=check.id, formal=parts(record))
+        prepared.checks.append(check)
+        prepared.placed[check.id] = placed
+        prepared.origins[check.id] = origin
+        formal.symbolic.append(record)
+        budget -= 1
 
 
 def finish(formal: Formal | None, search) -> None:
@@ -379,6 +586,23 @@ def finish(formal: Formal | None, search) -> None:
         record["correspondence"] = correspondence
         activity["formal"] = parts(record)
         for defect in search.defects:
+            if defect["check"] == record["id"]:
+                defect["formal"] = parts(record)
+    for record in formal.symbolic:   # each symbolic counterexample, as its re-run on the real code found it
+        rerun = next((a for a in (search.activities if search else []) if a.get("check") == record["id"]), None)
+        result = rerun.get("result") if rerun else "skipped"
+        if result in (vs.COUNTEREXAMPLE, vs.UNCONFIRMED_FAILURE, vs.FAILS_ON_BASE_TOO, vs.BEHAVIOUR_CHANGED):
+            record["correspondence"] = {"result": "reproduced", "rerun": result}
+        elif result == vs.NOT_REFUTED:
+            record["correspondence"] = {"result": "not_reproduced", "reason": DROPPED}
+            record["activity"]["dropped"] = 1
+        else:
+            record["correspondence"] = {"result": "not_replayable", "reason": (rerun or {}).get("detail") or (
+                rerun or {}).get("reason") or "the re-run did not run"}
+        record["activity"]["formal"] = parts(record)
+        if rerun is not None:
+            rerun["formal"] = parts(record)
+        for defect in (search.defects if search else []):
             if defect["check"] == record["id"]:
                 defect["formal"] = parts(record)
 

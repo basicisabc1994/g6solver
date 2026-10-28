@@ -832,10 +832,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)
     search = None
     formal = None
-    if prepared is not None and prepared.formal:   # the formal path: obligations, search, and each trace's replay
-        from g6.harness import verification_formal
-        formal = verification_formal.run(prepared, deadline=deadline, skip=INTEGRITY_SKIP if any(
-            r["stage"] == "integrity" for r in reasons) else "")
+    if prepared is not None and (prepared.formal or prepared.symbolic):   # the formal path: obligations, search,
+        from g6.harness import verification_formal, verification_search   # each trace's replay, Z3's counterexamples
+        formal = verification_formal.run(
+            prepared, deadline=deadline, skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "",
+            budget=verification_search.MAX_CHECKS - prepared.instances - len(proposed))
     compiled = list(prepared.checks) if prepared is not None else []
     if proposed or compiled:   # verification search: compiled template instances first, then the caller's proposed
         from g6.harness import verification_search   # checks, each on the patch and at the base commit
