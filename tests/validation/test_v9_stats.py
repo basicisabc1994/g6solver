@@ -94,6 +94,20 @@ def test_the_bootstrap_resamples_within_each_repository_and_is_fixed_by_its_seed
     assert stats.stratified_bootstrap([], seed=1) is None
 
 
+#: What V9's bootstrap gave on these inputs before it took a confidence (commit 7ee1fb4), 2,000 resamples each.
+BEFORE_CONFIDENCE = (
+    ([("r1", True, False)] * 6 + [("r1", False, False)] * 4 + [("r2", True, True)] * 5, 7, (0.2, 0.5333333333333333)),
+    ([("a", i % 3 == 0, i % 2 == 0) for i in range(23)] + [("b", i % 5 == 0, False) for i in range(17)], 11,
+     (-0.15, 0.15)),
+    ([("x", True, False), ("x", False, True), ("y", True, True), ("y", False, False), ("z", True, False)] * 4,
+     20261029, (0.0, 0.4)))
+
+
+@pytest.mark.parametrize("pairs, seed, before", BEFORE_CONFIDENCE)
+def test_v9s_90_percent_bootstrap_is_what_it_was_before_it_took_a_confidence(pairs, seed, before):
+    assert stats.stratified_bootstrap(pairs, seed=seed, resamples=2000) == before
+
+
 def test_the_bootstrap_gives_a_95_percent_interval_when_asked_and_v9s_90_percent_one_otherwise():
     pairs = [("r1", True, False)] * 6 + [("r1", False, False)] * 4 + [("r2", True, True)] * 5
     ninety = stats.stratified_bootstrap(pairs, seed=7)

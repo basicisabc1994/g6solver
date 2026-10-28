@@ -185,76 +185,77 @@ Items 27 to 33 cover the analysis of the primary measures (`analysis.py`).
 
 27. **The analysed patches.** V9's non-empty, labelled tasks, paired by task across every arm. An arm with no
     disposition on one of them does not accept it, and is counted as missing. Unlabelled tasks, and the patches the
-    record excludes, are counted and left out of every rate. For the coordinator's ruling.
+    record excludes, are counted and left out of every rate. Ruled by the coordinator: accepted as written.
 
 28. **The exact interval.** The two-sided 95% Clopper–Pearson interval is built from V9's one-sided upper bound at
-    97.5%: the upper limit for the count, and one minus the upper limit for the complementary count. For the
-    coordinator's ruling.
+    97.5%: the upper limit for the count, and one minus the upper limit for the complementary count. Ruled by the
+    coordinator: accepted as written.
 
 29. **Actionable findings, and findings per patch.** A finding is actionable when the reruns before the labels found
     it reproducible and the patch is defective. The compatible and not comparable counts are over the actionable
     findings, from the reruns on the reference fix, with no interval: the shares over findings, with their bootstrap
     over tasks, come with the secondary measures. The findings per patch are reported over every analysed patch: how
-    many patches have any, their mean, and the most on one patch. For the coordinator's ruling.
+    many patches have any, their mean, and the most on one patch. Ruled by the coordinator: accepted as written.
 
 30. **Measure 3 for V9's arms.** Arm 2 gives no finding, by the protocol's table of findings, so its discovery is 0 and
     its differences on measure 3 are computed. The findings of arms 1 and 4 are not rerun by V10's driver, so their
-    discovery, and every difference on measure 3 that involves them, is reported as not computed. For the
-    coordinator's ruling.
+    discovery, and every difference on measure 3 that involves them, is reported as not computed. Ruled by the
+    coordinator: accepted as written.
 
 31. **The bootstrap.** V9's stratified bootstrap, given a 95% confidence (a new argument; V9's 90% stays its default
     and was checked identical to the old one in 200 random cases), with seed V9's feasibility seed plus two for every
     comparison: the same resampled task sets serve every comparison on the same patches. Comparisons on the defective
-    and on the correct patches resample different task sets, since their patches differ. For the coordinator's
-    ruling.
+    and on the correct patches resample different task sets, since their patches differ. Ruled by the coordinator:
+    accepted as written.
 
 32. **Cost.** Arms C, T and E: the meter's calls and cents, and the driver's wall-clock and processor seconds for the
     run. Arm A: V9's arm 3 seconds, processor seconds and model calls; its cents are not reported (with search off it
     makes no model call) and are counted as missing. Dollars are cents divided by 100. Input and output tokens wait for
-    VS-5's meter, and are named as not built. For the coordinator's ruling.
+    VS-5's meter, and are named as not built. Ruled by the coordinator: accepted as written.
 
 33. **Arm A's findings.** Arm A's findings are its failed stated checks. The driver reruns those the patch carries
     (`arm_a_findings`, as reproductions built from V9's arm 3 reply by the study's runner, which is not built yet)
-    with the other arms' findings, so arm A's discovery and its K, K_ref and J are computed the same way. For the
-    coordinator's ruling.
+    with the other arms' findings, so arm A's discovery and its K, K_ref and J are computed the same way. Ruled by the
+    coordinator: accepted as written.
 
 Items 34 to 37 cover the feasibility criteria (`analysis.feasibility`).
 
 34. **Criterion 1** is read over every non-empty patch, labelled or not. An arm with no disposition on one fails it,
-    as does a tool error rate above 10% (V9's limit, `TOOL_ERROR_LIMIT`). For the coordinator's ruling.
+    as does a tool error rate above 10% (V9's limit, `TOOL_ERROR_LIMIT`). Ruled by the coordinator: accepted as written.
 
 35. **Criterion 2.** For each search arm and arm E: its metered cents over the study are at most its share (a third of
     the cap), its most calls on one patch at most the call cap, and its longest run at most the arm's limit plus the
     grace its child is killed after. Runs stopped at a limit are counted by kind (`time_out`, V9's
     `killed_at_time_limit`, `spend_share_reached`, or another disposition marked as shaped by a limit). Without the
-    frozen limits, the criterion is inconclusive. For the coordinator's ruling.
+    frozen limits, the criterion is inconclusive. Ruled by the coordinator: accepted as written.
 
 36. **Criterion 3** reads, for each search arm and patch, whether its search stage ran a check to a pass or a fail
     (`search_stage.ran_to_result`, the field VS-5 settles), over every non-empty patch; an arm with no output on a
     patch did not. When any reply does not say, the criterion is inconclusive. "At least half" is twice the count at
-    least the number of patches. For the coordinator's ruling.
+    least the number of patches. Ruled by the coordinator: accepted as written.
 
 37. **Criteria 4 and 5, and the outcome.** Criterion 4 waits for the report check of arms C and T, and criterion 5 for
     the frozen comparison of stated-check results: both are reported inconclusive, criterion 5 with the patches its
     list must hold (each search arm's own review accepted, arm A did not). Criterion 6 is read from V9's oracle
     controls for every non-empty task. The study is feasible only when all six are met, not feasible when any is not
-    met, and inconclusive otherwise. For the coordinator's ruling.
+    met, and inconclusive otherwise. Ruled by the coordinator: accepted as written.
 
 Items 38 to 41 cover the headline sentences (`analysis.headlines`).
 
 38. **N and R.** N is the number of analysed patches (non-empty and labelled), and R the number of their repositories.
-    For the coordinator's ruling.
+    Ruled by the coordinator: accepted as written.
 
 39. **How the numbers are written.** The sentence text is the protocol's exactly, numbers filled in; the second
     sentence has no closing full stop in the protocol, and has none here. Percentages are written to one decimal place,
     model calls and seconds to one decimal place, dollars to two. Each sentence's intervals are given beside it
-    (`a% to b%`), not inside the sentence, so its text stays the protocol's. For the coordinator's ruling.
+    (`a% to b%`), not inside the sentence, so its text stays the protocol's. Ruled by the coordinator: accepted as
+    written.
 
 40. **Arm C beside arm T.** Arm C's numbers (its K, K_ref and J; its false and correct acceptance; its costs) are given
     in an entry labelled as arm C's beside each sentence, never as a sentence of their own and never in arm T's
-    place. For the coordinator's ruling.
+    place. Ruled by the coordinator: accepted as written.
 
 41. **A sentence not printed.** The first when M is zero (the protocol's rule) or L is zero (J would have no
     interval); the second when any of arm T's and arm A's four rates has no interval, so neither pair is used without
-    the other; the third when arm T's costs were not recorded. Each is listed with its reason. For the coordinator's
-    ruling.
+    the other; the third when arm T's costs were not recorded. Each is listed with its reason. Ruled by the coordinator:
+    accepted as written.

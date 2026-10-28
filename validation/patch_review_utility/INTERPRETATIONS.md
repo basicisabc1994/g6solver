@@ -178,3 +178,10 @@ Two readings are mechanics rather than rulings, recorded so the hash covers them
 test ids asked for, as the benchmark's own procedure runs test files, so a test id that no longer exists is missing
 instead of stopping the whole run. When the executor's command runs a container, each run names its container, and a
 run past its timeout stops the container itself by that name.
+
+A third mechanic, from V10: `stats.stratified_bootstrap` takes a `confidence`, so V10 can ask for its 95% interval.
+V9's 90% stays the default, and gives the same interval as before the argument was added: checked on 200 random
+cases against the earlier code (commit 7ee1fb4), and kept as a test, `tests/validation/test_v9_stats.py`,
+`test_v9s_90_percent_bootstrap_is_what_it_was_before_it_took_a_confidence`, on three fixed cases whose intervals the
+earlier code gave. The executor also reports each test's phases (set-up, call, teardown) beside its outcome, for V10's
+arm E; V9's outcomes are unchanged. Ruled by the coordinator: accepted.
