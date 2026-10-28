@@ -5,9 +5,11 @@
 
 1. ``test_integrity_compromised``: a changed test weakened (a moved test file is compared with its old text), a
    changed test-runner file (``conftest.py``, ``pytest.ini``, ``.pytest.ini`` or a start-up file; ``pyproject.toml``,
-   ``setup.cfg`` and ``tox.ini`` only when their pytest section changed), a git-ignored file pytest could load
-   (``repo_tests.ignored_inputs``: outside git's view, so outside the digest), a run that changed tracked files or
-   whose result cannot be believed, the repository changing during the review, or the coding gate finding a shortcut;
+   ``setup.cfg`` and ``tox.ini`` only when their pytest section changed), a git-ignored file that could change the
+   tests (``repo_tests.ignored_inputs``: a runner, start-up, path or test-named file, or one that could shadow a
+   tracked module; outside git's view, so outside the digest; any other ignored Python file is an unknown, bound into
+   the receipt), a run that changed tracked files or whose result cannot be believed, the repository changing during
+   the review, or the coding gate finding a shortcut;
 2. ``defect_detected``: a stated check or extra test failed, failed to collect because of the repository's own code,
    or timed out; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the
    base commit. One that does not pass at the base commit either is not counted against the patch: an unknown;
@@ -150,14 +152,6 @@ def _confined(ran: dict) -> dict:
     return ran
 
 
-def _at_base(change: repo_tests.Change, rel: str) -> str | None:
-    """``rel``'s text at the base commit (None when it was not there), read with ``repo_tests``'s hardened git call:
-    the repository's own git configuration may be the agent's."""
-    if not repo_tests._git(change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit, "--", rel).strip(b"\0"):
-        return None
-    return repo_tests._text(repo_tests._git(change.repo, "show", f"{change.base_commit}:{rel}"))
-
-
 def _runner_changes(change: repo_tests.Change) -> list[str]:
     """The changed runner files: any change to one that only configures or stands in for the runner; for a project
     file (``PYTEST_SECTIONS``), a change to its pytest section, read as ``g6.safety_engine`` reads it."""
@@ -171,8 +165,8 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
         reader = "pytest.ini" if name == "tox.ini" else name   # tox.ini's [pytest] section reads as pytest.ini's does
         path = change.repo / rel
         try:
-            before, now = _at_base(change, rel), (path.read_text(encoding="utf-8", errors="replace")
-                                                  if path.is_file() else None)
+            before = repo_tests.read_at(change.repo, change.base_commit, rel)
+            now = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
             old = (None if before is None else _pytest_settings(reader, before)) or None
             new = (None if now is None else _pytest_settings(reader, now)) or None
         except ValueError as exc:
@@ -409,11 +403,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     runner = _runner_changes(change)
     if runner:
         reason("integrity", "runner_configuration_changed", "; ".join(runner))
-    hidden, complete = repo_tests.ignored_inputs(root)   # review I2: outside git's view, so outside the digest
-    if hidden:
-        reason("integrity", "ignored_file_can_change_tests", "git ignores files pytest could load: "
+    scan = repo_tests.ignored_inputs(root)   # review I2: outside git's view, so outside the digest
+    if scan.loadable:
+        hidden = scan.loadable
+        reason("integrity", "ignored_file_can_change_tests", "git ignores files that could change the tests: "
                + ", ".join(hidden[:10]) + (f" and {len(hidden) - 10} more" if len(hidden) > 10 else ""))
-    if not complete:
+    unknowns.extend(f"an ignored file G6 did not judge: {rel}" for rel in scan.other)
+    if not scan.complete:
         reason("evidence", "ignored_files_not_checked", "the scan for git-ignored files pytest could load stopped "
                f"at its limit of {repo_tests.IGNORED_SCAN_LIMIT} entries")
     if not change.files:

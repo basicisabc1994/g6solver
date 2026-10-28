@@ -132,6 +132,7 @@ def _a_receipt_binds_the_run(repo, backend: str) -> None:
     assert body["command"] == found["command"] and body["isolation"] == found["isolation"]
     assert body["result"] == {"verdict": rt.PASSED, "passed": 2, "failed": 0, "not_passed": 0, "total": 2,
                               "failed_ids": [], "completed": True, "degraded": False}
+    assert body["ignored_inputs"] == {}
     # lookup gives it back for the tree the run began on, and for nothing else
     assert receipt_store.lookup(found["receipt"], artifact_digest=artifact) == body
     assert receipt_store.lookup(found["receipt"], artifact_digest="0" * 64) is None
@@ -234,8 +235,13 @@ def test_a_torn_store_says_so_and_a_run_says_how_to_recover(repo, fake_boundary)
     ("tox.ini", {"tox.ini": "[pytest]\n"}),
     ("pyproject.toml", {"pyproject.toml": "[tool.pytest.ini_options]\n"}),
     ("hook.pth", {"hook.pth": "import os\n"}),
-    ("calc_local.py", {"calc_local.py": "X = 1\n"}),    # beside the tracked calc.py
-    ("hidden/", {"hidden/conftest.py": "\n"}),          # inside an ignored folder
+    ("sitecustomize.py", {"sitecustomize.py": "import os\n"}),
+    ("usercustomize.py", {"usercustomize.py": "import os\n"}),
+    ("tests/test_extra.py", {"tests/test_extra.py": "def test_x():\n    assert True\n"}),   # test-named
+    ("extra_test.py", {"extra_test.py": "def test_x():\n    assert True\n"}),
+    ("tests/calc.py", {"tests/calc.py": "def add(a, b):\n    return 5\n"}),   # shadows the tracked calc.py
+    ("vendor/", {"vendor/calc/__init__.py": "\n"}),                           # a package that shadows it
+    ("hidden/", {"hidden/conftest.py": "\n"}),                                # inside an ignored folder
 ])
 def test_a_run_a_git_ignored_file_could_change_gets_no_receipt(repo, fake_boundary, ignored, files):
     """I2: git's view leaves ignored files out, so the receipt's digest could not show a file pytest loaded."""
@@ -246,13 +252,12 @@ def test_a_run_a_git_ignored_file_could_change_gets_no_receipt(repo, fake_bounda
         _write(repo, rel, text)
     found = rt.run(repo, TESTS, receipt=True)
     assert found["receipt"] == "" and _entries() == []
-    assert found["ignored_inputs"] == sorted(files) and sorted(files)[0] in found["receipt_withheld"]
+    assert found["ignored_loadable"] == sorted(files) and sorted(files)[0] in found["receipt_withheld"]
 
 
 @pytest.mark.parametrize("files", [
     {".venv/lib/conftest.py": "\n"}, {"build/conftest.py": "\n"}, {"dist/x.pth": "\n"},
-    {"calc.egg-info/conftest.py": "\n"}, {"__pycache__/conftest.py": "\n"},
-    {"notes.txt": "\n"}, {"generated/data.py": "X = 1\n"},   # not loadable: no tracked Python file in generated/
+    {"calc.egg-info/conftest.py": "\n"}, {"__pycache__/conftest.py": "\n"}, {"notes.txt": "\n"},
 ])
 def test_ignored_environments_caches_and_other_files_do_not_withhold_the_receipt(repo, fake_boundary, files):
     (repo / ".git" / "info").mkdir(exist_ok=True)
@@ -262,7 +267,23 @@ def test_ignored_environments_caches_and_other_files_do_not_withhold_the_receipt
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         _write(repo, rel, text)
     found = rt.run(repo, TESTS, receipt=True)
-    assert found["receipt"] and found.get("ignored_inputs", []) == [], found.get("receipt_withheld")
+    assert found["receipt"] and found.get("ignored_loadable", []) == [], found.get("receipt_withheld")
+    assert found["ignored_inputs"] == {} and _entries()[0]["body"]["ignored_inputs"] == {}
+
+
+def test_an_ignored_python_file_g6_does_not_judge_is_bound_into_the_receipt(repo, fake_boundary):
+    """A generated ``_version.py`` (setuptools-scm) beside tracked modules shadows none of them: the receipt is still
+    written, and binds the file's bytes, so its id changes with them."""
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text("_version.py\ngenerated/\n", encoding="utf-8")
+    _write(repo, "_version.py", "version = '1.0'\n")
+    (repo / "generated").mkdir()
+    _write(repo, "generated/data.py", "X = 1\n")
+    found = rt.run(repo, TESTS, receipt=True)
+    bound = {rel: hashlib.sha256((repo / rel).read_bytes()).hexdigest() for rel in ("_version.py", "generated/data.py")}
+    assert found["receipt"] and found["ignored_inputs"] == bound and "ignored_loadable" not in found
+    [entry] = _entries()
+    assert entry["body"]["ignored_inputs"] == bound and entry["id"] == receipt_store.receipt_id(entry["body"])
 
 
 def test_an_ignored_file_scan_that_reaches_its_limit_withholds_the_receipt(repo, fake_boundary, monkeypatch):
@@ -272,8 +293,8 @@ def test_an_ignored_file_scan_that_reaches_its_limit_withholds_the_receipt(repo,
     (repo / "logs").mkdir()
     for index in range(5):
         _write(repo, f"logs/run{index}.log", "x\n")
-    found, complete = rt.ignored_inputs(repo)
-    assert (found, complete) == ([], False)
+    scan = rt.ignored_inputs(repo)
+    assert (scan.loadable, scan.other, scan.complete) == ((), {}, False)
     ran = rt.run(repo, TESTS, receipt=True)
     assert ran["receipt"] == "" and "limit" in ran["receipt_withheld"]
 

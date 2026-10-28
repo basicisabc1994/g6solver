@@ -4,10 +4,12 @@ amendment A6).
 
 ``repo_tests.run(..., receipt=True)`` writes one receipt after a confined run that started, and only then: never for
 a run without an operating-system boundary (whoever allowed it), one that could not start, a mutant's, or one beside
-a git-ignored file pytest or Python could load (``repo_tests.ignored_inputs``: an ignored ``conftest.py``,
-``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml`` or ``.pth`` file, or an ignored
-Python file beside tracked ones), or when that scan stopped at its limit: git's view, which the digest covers, leaves
-ignored files out. A receipt says what ran (the interpreter, with the SHA-256 of its file; the tests asked for,
+a git-ignored file that could change the run (``repo_tests.ignored_inputs``: an ignored ``conftest.py``,
+``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``, ``sitecustomize.py``,
+``usercustomize.py`` or ``.pth`` file, a test-named file, or a Python file named like a tracked module, which could
+shadow it), or when that scan stopped at its limit: git's view, which the digest covers, leaves ignored files out.
+Every other ignored Python file (a generated ``_version.py``, say) is bound into the receipt instead, path to SHA-256,
+as ``ignored_inputs``. A receipt says what ran (the interpreter, with the SHA-256 of its file; the tests asked for,
 collected and left out), on what (the digest of git's view of the repository before and after the run, the digest the
 patch review calls ``artifact_digest``, and the commit checked out), how (the run's isolation record) and what pytest
 found. Each goes into an append-only, hash-chained store, ``$G6_HOME/evidence/test_receipts.jsonl``; its id is the
@@ -171,10 +173,11 @@ def _executable(python: str) -> dict:
 
 
 def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_commit: str, python: str,
-          requested: list[str], found: dict) -> dict:
+          requested: list[str], found: dict, ignored: dict[str, str] | None = None) -> dict:
     """A receipt's body (schema ``g6.test_receipt/1``) for one confined run: ``before`` and ``after`` are the run's
     ``repo_tests.snapshot`` before and after it, digested as the patch review digests its ``artifact_digest``;
-    ``found`` is the run's result."""
+    ``found`` is the run's result; ``ignored`` the git-ignored Python files G6 did not judge, path to SHA-256
+    (``repo_tests.Ignored.other``), bound here because the digest leaves them out."""
     from g6 import __version__
 
     return {"schema": SCHEMA, "execution_id": uuid.uuid4().hex, "started_at": started_at, "finished_at": finished_at,
@@ -183,6 +186,7 @@ def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_
             "tests": {"requested": list(requested), "collected": list(found.get("collected_ids") or []),
                       "deselected": int(found.get("deselected") or 0), "omitted": list(found.get("omitted_ids") or [])},
             "command": found.get("command", ""), "isolation": dict(found.get("isolation") or {}),
+            "ignored_inputs": dict(sorted((ignored or {}).items())),
             "result": {key: found.get(key) for key in ("verdict", "passed", "failed", "not_passed", "total",
                                                        "failed_ids", "completed", "degraded")}}
 

@@ -62,6 +62,16 @@ def test_the_change_is_what_git_reports(repo):
     assert found.base == "HEAD" and len(found.base_commit) == 40 and found.head == found.base_commit
 
 
+def test_read_at_gives_a_files_text_at_a_commit_or_none_when_it_was_not_there(repo):
+    base = git(repo, "rev-parse", "HEAD").strip()
+    (repo / "calc.py").write_text(FIXED, encoding="utf-8")
+    (repo / "new.py").write_text("X = 1\n", encoding="utf-8")
+    assert rt.read_at(repo, base, "calc.py") == BUGGY   # the commit's text, not the disk's
+    assert rt.read_at(repo, base, "new.py") is None and rt.read_at(repo, base, "tests/test_calc.py") == TESTS
+    with pytest.raises(rt.RepoRefused):
+        rt.read_at(repo, base, "../outside.py")
+
+
 def test_a_changed_test_files_text_at_the_base_is_gits_and_now_is_the_disks(repo):
     now = TESTS.replace("assert sub(5, 3) == 2", "assert sub(5, 3)")
     (repo / "tests" / "test_calc.py").write_text(now, encoding="utf-8")

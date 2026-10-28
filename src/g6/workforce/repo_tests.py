@@ -974,27 +974,31 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         found["said"] = SAID["confined_write"]   # the operating system refused a test something an owner's run allows
     if receipt and isolation.get("backend"):   # only a run G6 confined and watched start is given a receipt
         try:
-            loadable, complete = ignored_inputs(repo)
+            scan = ignored_inputs(repo)
         except RepoRefused:   # git could not list them: nothing says the digest covers what the run loaded
-            loadable, complete = [], False
-        if loadable or not complete:   # review I2: the digest leaves git-ignored files out, and pytest may load them
-            found["ignored_inputs"] = loadable
+            scan = Ignored((), {}, False)
+        found["ignored_inputs"] = dict(scan.other)
+        if scan.loadable or not scan.complete:   # review I2: the digest leaves ignored files out, and pytest loads them
+            found["ignored_loadable"] = list(scan.loadable)
             found["receipt_withheld"] = (
-                "no test receipt: git ignores files this run could load, " + ", ".join(loadable[:10]) if loadable else
+                "no test receipt: git ignores files that could change this run, " + ", ".join(scan.loadable[:10])
+                if scan.loadable else
                 f"no test receipt: the scan for git-ignored files stopped at its limit of {IGNORED_SCAN_LIMIT} entries")
             return found
         try:
             found["receipt"] = receipt_store._record(receipt_store._body(
                 started_at=began, finished_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-                before=before, after=after, base_commit=head, python=python, requested=ids, found=found))
+                before=before, after=after, base_commit=head, python=python, requested=ids, found=found,
+                ignored=scan.other))
         except (OSError, ValueError) as exc:
             found["receipt_error"] = (f"the test receipt could not be recorded ({type(exc).__name__}); if the store is "
                                       f"unreadable, move it aside ({receipt_store.RECOVERY})")
     return found
 
 
-#: Git-ignored files pytest or Python could load into a run (review I2): runner configuration and path files.
-_LOADABLE = frozenset({"conftest.py", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"})
+#: Git-ignored files that can change a run (review I2): runner configuration, start-up and path files.
+_LOADABLE = frozenset({"conftest.py", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml",
+                       "sitecustomize.py", "usercustomize.py"})
 #: Folders the ignored-file scan does not enter: environments, caches and build output.
 _UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "__pycache__",
                         ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
@@ -1006,39 +1010,75 @@ def _unscanned(rel: str) -> bool:
     return any(part in _UNSCANNED or part.endswith(".egg-info") for part in PurePosixPath(rel).parts)
 
 
-def ignored_inputs(repo: Path) -> tuple[list[str], bool]:
-    """The git-ignored files in ``repo`` that pytest or Python could load into a test run, which git's view (and so the
-    artifact digest) leaves out: an ignored ``conftest.py``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``,
-    ``tox.ini``, ``pyproject.toml`` or ``.pth`` file, and an ignored ``.py`` file in a folder that holds tracked ones;
-    and whether the scan finished within ``IGNORED_SCAN_LIMIT`` entries. Environments, caches and build output
-    (``_UNSCANNED``, ``*.egg-info``) are not entered. Installed packages and stale bytecode are not covered."""
+@dataclass(frozen=True)
+class Ignored:
+    """What ``ignored_inputs`` found among the files git ignores, which its view (and so the artifact digest) leaves
+    out. ``loadable``: those that can change what a run does, so no receipt is written; ``other``: every other ignored
+    Python file, path to SHA-256, which a receipt binds instead; ``complete``: the scan finished within
+    ``IGNORED_SCAN_LIMIT`` entries (if not, no receipt either)."""
+
+    loadable: tuple[str, ...]
+    other: dict[str, str]
+    complete: bool
+
+
+def _module(path: PurePosixPath) -> str:
+    """The module name a Python file gives on the import path: its stem, or its package's for ``__init__.py``."""
+    return path.parent.name if path.stem == "__init__" else path.stem
+
+
+def ignored_inputs(repo: Path) -> Ignored:
+    """The git-ignored files in ``repo`` a test run could load. Loadable (``Ignored.loadable``): an ignored
+    ``conftest.py``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``,
+    ``sitecustomize.py``, ``usercustomize.py`` or ``.pth`` file; a test-named file (``test_*.py``, ``*_test.py``); and
+    a ``.py`` file whose module name (its stem, or its package's) is a tracked module's anywhere in the repository,
+    which it could shadow on the import path. Every other ignored ``.py`` file is listed with its SHA-256
+    (``Ignored.other``). Environments, caches and build output (``_UNSCANNED``, ``*.egg-info``) are not entered.
+    Installed packages and stale bytecode are not covered."""
     listed = _paths(_git(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"))
-    beside = {PurePosixPath(rel).parent for rel in _paths(_git(repo, "ls-files", "-z")) if rel.endswith(".py")}
-    found: list[str] = []
+    modules = {_module(PurePosixPath(rel)) for rel in _paths(_git(repo, "ls-files", "-z")) if rel.endswith(".py")}
+    loadable: list[str] = []
+    other: dict[str, str] = {}
     seen = 0
 
-    def loadable(rel: str) -> None:
+    def judge(rel: str) -> None:
         path = PurePosixPath(rel)
-        if path.name.lower() in _LOADABLE or path.suffix == ".pth" or (path.suffix == ".py" and path.parent in beside):
-            found.append(rel)
+        name = path.name.lower()
+        if name in _LOADABLE or path.suffix == ".pth" or (path.suffix == ".py" and (
+                name.startswith("test_") or name.endswith("_test.py") or _module(path) in modules)):
+            loadable.append(rel)
+        elif path.suffix == ".py":
+            other[rel] = _digest(repo / rel)
+
+    def found(complete: bool) -> Ignored:
+        return Ignored(tuple(sorted(loadable)), dict(sorted(other.items())), complete)
 
     for entry in listed:
         seen += 1
         if seen > IGNORED_SCAN_LIMIT:
-            return sorted(found), False
+            return found(False)
         if _unscanned(entry):
             continue
         if not entry.endswith("/"):
-            loadable(entry)
+            judge(entry)
             continue
         for folder, dirs, files in os.walk(repo / entry):
             dirs[:] = sorted(name for name in dirs if not _unscanned(name))
             for name in sorted(files):
                 seen += 1
                 if seen > IGNORED_SCAN_LIMIT:
-                    return sorted(found), False
-                loadable((Path(folder) / name).relative_to(repo).as_posix())
-    return sorted(found), True
+                    return found(False)
+                judge((Path(folder) / name).relative_to(repo).as_posix())
+    return found(True)
+
+
+def read_at(repo: Path, commit: str, rel: str) -> str | None:
+    """``rel``'s text at ``commit`` (None when it was not there), with the line endings ``Path.read_text`` gives,
+    read with the hardened git call (``_git``: the repository's own configuration may be the agent's)."""
+    rel = inside(repo, rel, "path")
+    if not _git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", rel).strip(b"\0"):
+        return None
+    return _text(_git(repo, "show", f"{commit}:{rel}"))
 
 
 def _copy_ignored(folder: str, names: list[str]) -> set[str]:

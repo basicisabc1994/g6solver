@@ -87,7 +87,10 @@ The checks adapt to cost. Tier 1 always runs: the working-tree digest, test inte
 checks with the extra tests in one confined run. Integrity covers a weakened test (a moved test file is
 compared with its old text), a changed `conftest.py`, `pytest.ini` or `.pytest.ini`, a changed pytest
 section in `pyproject.toml`, `setup.cfg` or `tox.ini` (a dependency or metadata change does not count),
-and a git-ignored file pytest could load, such as a `conftest.py` hidden through `.git/info/exclude`. A
+and a git-ignored file that could change the tests: a `conftest.py` hidden through `.git/info/exclude`, a
+pytest configuration, start-up, `.pth` or test-named file, or a Python file named like a tracked module,
+which could shadow it. Any other ignored Python file (a generated `_version.py`, say) is listed as an
+unknown and bound into the test receipt, path to SHA-256. A
 stated check the environment cannot collect (a dependency it lacks) is not established; one whose own code
 fails to collect is a defect. Tier 2, the other tests that touch the changed modules, runs only when tier 1
 found no integrity problem and no defect; one that fails, or fails to collect, on the patch is replayed at
@@ -97,7 +100,7 @@ is not run yet.
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree
 under review; over `g6_invoke` the gate has no binding and every receipt stays caller-declared. A run gets
-no receipt when it was unconfined or when git ignores a file it could load. A receipt does not bind the
+no receipt when it was unconfined or when git ignores a file that could change it. A receipt does not bind the
 packages and pytest plugins installed in the interpreter's environment, or stale bytecode left beside the
 sources.
 

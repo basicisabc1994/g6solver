@@ -199,6 +199,48 @@ def test_a_git_ignored_file_pytest_could_load_compromises_test_integrity(repo, m
                for r in got["assessment"]["reasons"])
 
 
+def _ignore(repo, rel: str, text: str) -> None:
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    with open(repo / ".git" / "info" / "exclude", "a", encoding="utf-8") as handle:
+        handle.write(rel + "\n")
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(text)
+
+
+def test_an_ignored_python_file_that_shadows_nothing_is_an_unknown_not_an_integrity_problem(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    _ignore(repo, "_version.py", "version = '1.0'\n")   # setuptools-scm writes one beside the package's modules
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert "an ignored file G6 did not judge: _version.py" in got["assessment"]["unknowns"]
+
+
+def test_an_ignored_module_that_shadows_a_tracked_one_compromises_integrity(repo, monkeypatch):
+    (repo / "src").mkdir()
+    _git(repo, "mv", "calc.py", "src/calc.py")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "src layout")
+    (repo / "src" / "calc.py").write_text(GOOD)
+    _ignore(repo, "tests/calc.py", "def add(a, b):\n    return 5\n")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised"
+    assert any(r["code"] == "ignored_file_can_change_tests" and "tests/calc.py" in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
+@pytest.mark.parametrize("rel", ["sitecustomize.py", "test_extra.py"])
+def test_an_ignored_start_up_or_test_file_compromises_integrity(repo, monkeypatch, rel):
+    (repo / "calc.py").write_text(GOOD)
+    _ignore(repo, rel, "import os\n")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised"
+    assert any(r["code"] == "ignored_file_can_change_tests" and rel in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
 def test_an_ignored_file_scan_that_reaches_its_limit_is_insufficient_evidence(repo, monkeypatch):
     from g6.workforce import repo_tests
 
@@ -684,6 +726,23 @@ def test_confined_a_conftest_hidden_from_git_compromises_integrity_and_gets_no_r
                for r in got["assessment"]["reasons"])
     assert all(r["receipt"] == "" for r in got["assessment"]["scope"]["receipts"])
     assert got["gate"]["evidence_basis"] != "g6-observed"
+
+
+def test_confined_an_ignored_version_file_is_bound_into_the_receipt_and_the_patch_stays_supported(repo,
+                                                                                                   bwrap_backend):
+    import hashlib
+
+    from g6.workforce import receipt_store
+
+    (repo / "calc.py").write_text(GOOD)
+    _ignore(repo, "_version.py", "version = '1.0'\n")
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]
+    assert "an ignored file G6 did not judge: _version.py" in got["assessment"]["unknowns"]
+    [first, *_] = got["assessment"]["scope"]["receipts"]
+    assert first["receipt_status"] == "matched"
+    body = receipt_store.lookup(first["receipt"], artifact_digest=got["artifact_digest"])
+    assert body["ignored_inputs"] == {"_version.py": hashlib.sha256((repo / "_version.py").read_bytes()).hexdigest()}
 
 
 def test_confined_an_environment_collection_failure_is_not_a_defect(repo, bwrap_backend):
