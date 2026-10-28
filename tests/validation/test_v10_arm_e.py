@@ -20,7 +20,7 @@ from patch_review_utility import dispositions, executor
 
 ACCEPTED = dispositions.make(dispositions.ACCEPT)
 DEFECT = dispositions.make(dispositions.DEFECT, "arm 1 found a regression")
-FROZEN = arm_e.Frozen(runs=1, feedback=False, seed=20261029, run_s=60, limit_s=1800, call_cap=8)
+FROZEN = arm_e.Frozen(runs=1, feedback=False, seed=20261029, send_seed=False, run_s=60, limit_s=1800, call_cap=8)
 BAD = "def add(a, b):\n    return a - b\n"
 GOOD = "def add(a, b):\n    return a + b\n"
 PASSES = "from calc import add\n\n\ndef test_sum():\n    assert add(2, 3) == 5\n"
@@ -208,7 +208,7 @@ def test_a_test_with_no_recorded_outcome_does_not_pass(trees):
 
 
 def test_each_kept_test_runs_r_times_and_passes_only_in_more_than_half_of_them(trees):
-    frozen = arm_e.Frozen(runs=3, feedback=False, seed=1, run_s=60, limit_s=1800, call_cap=8)
+    frozen = arm_e.Frozen(runs=3, feedback=False, seed=1, send_seed=False, run_s=60, limit_s=1800, call_cap=8)
     file = placed("tests/test_sum.py", PASSES)
     two = "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n"
     other = placed("tests/test_two.py", two)
@@ -299,12 +299,85 @@ def test_without_feedback_every_call_comes_first_and_no_request_carries_results(
     model = Model(reply(("tests/test_a.py", PASSES)), reply(("tests/test_b.py", FAILS)))
     got = run(trees, model, runner, c_calls=2)
     assert [r["feedback"] for r in model.requests] == [None, None]
-    assert [r["seed"] for r in model.requests] == [FROZEN.seed] * 2 and got["frozen"]["seed"] == FROZEN.seed
     assert [r["call"] for r in model.requests] == [1, 2] and model.requests[0]["context"] == {"files": ["calc.py"]}
+    assert runner.calls[:2] == [("patched", files[0]), ("patched", files[1])] and got["calls"]["made"] == 2
+
+
+def test_the_seed_is_recorded_and_sent_to_the_model_only_when_the_freeze_says_so(trees):
+    model = Model(reply())
+    got = run(trees, model, Recorded({}))
+    assert "seed" not in model.requests[0] and got["frozen"]["seed"] == FROZEN.seed
+    assert got["frozen"]["send_seed"] is False
+    sending = arm_e.Frozen(runs=1, feedback=False, seed=99, send_seed=True, run_s=60, limit_s=1800, call_cap=8)
+    model = Model(reply())
+    run(trees, model, Recorded({}), frozen=sending)
+    assert model.requests[0]["seed"] == 99
+
+
+SEARCH = '''\
+RUN_S = 45
+
+
+def _run_check(change, *, at_base, timeout_s):
+    return {}
+
+
+def search(change, checks):
+    def read(at_base):
+        return _run_check(change, at_base=at_base, timeout_s=RUN_S)
+
+    for one in checks:
+        on_patch = read(at_base=False)
+        {loop}
+        at_base = read(at_base=True)
+'''
+
+
+def g6_search(tmp_path, loop: str = "pass", name: str = "search_fixture"):
+    """A stand-in for G6's verification search module (only what ``g6_parameters`` reads), loaded from a file."""
+    import importlib.util
+    path = tmp_path / f"{name}.py"
+    path.write_text(SEARCH.replace("{loop}", loop), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_r_and_each_runs_limit_are_read_from_g6s_verification_search(tmp_path):
+    module = g6_search(tmp_path)
+    assert arm_e.g6_parameters(module) == {"runs": 1, "run_s": 45}
+    frozen = arm_e.frozen_from_g6(module, feedback=True, seed=3, send_seed=False, limit_s=1800, call_cap=8)
+    assert (frozen.runs, frozen.run_s, frozen.feedback) == (1, 45, True)
+    twice = g6_search(tmp_path, "on_patch = read(at_base=False)", "search_twice")
+    assert arm_e.g6_parameters(twice)["runs"] == 2
+
+
+def test_a_change_in_how_g6_runs_a_check_is_refused_not_guessed(tmp_path):
+    looped = g6_search(tmp_path, "for _ in range(3):\n            read(at_base=False)", "search_looped")
+    with pytest.raises(ValueError, match="shape"):
+        arm_e.g6_parameters(looped)
+    without = g6_search(tmp_path, name="search_without")
+    del without.RUN_S
+    with pytest.raises(ValueError, match="RUN_S"):
+        arm_e.g6_parameters(without)
+
+
+def test_a_file_over_g6s_64_kilobytes_is_discarded_as_g6_refuses_it(trees):
+    head = "def test_big():\n    pass\n"
+    at_limit = head + "#" * (arm_e.MAX_SOURCE_BYTES - len(head) - 1) + "\n"
+    over = at_limit + "#\n"
+    assert len(at_limit.encode()) == arm_e.MAX_SOURCE_BYTES == 64 * 1024
+    kept, discarded = arm_e.keep(trees["patched"], [{"path": "tests/test_limit.py", "text": at_limit, "call": 1},
+                                                    {"path": "tests/test_over.py", "text": over, "call": 1},
+                                                    {"path": "tests/test_odd.py", "text": "\ud800", "call": 1}])
+    assert [k["file"] for k in kept] == ["tests/test_limit.py"]
+    assert [d["file"] for d in discarded] == ["tests/test_over.py", "tests/test_odd.py"]
+    assert "65536" in discarded[0]["why"] or "64 kilobytes" in discarded[0]["why"]
 
 
 def test_with_feedback_each_call_after_the_first_gets_the_results_of_the_tests_kept_so_far(trees):
-    frozen = arm_e.Frozen(runs=1, feedback=True, seed=7, run_s=60, limit_s=1800, call_cap=8)
+    frozen = arm_e.Frozen(runs=1, feedback=True, seed=7, send_seed=False, run_s=60, limit_s=1800, call_cap=8)
     files = [placed("tests/test_a.py", PASSES), placed("tests/test_b.py", FAILS)]
     runner = Recorded({("patched", files[0]): [{"test_sum": "passed"}], ("patched", files[1]): [{"test_wrong": "failed"}],
                        ("base", files[0]): [{}], ("base", files[1]): [{}]})
@@ -320,7 +393,7 @@ def test_with_feedback_each_call_after_the_first_gets_the_results_of_the_tests_k
 def test_frozen_parameters_are_checked():
     for bad in ({"runs": 0}, {"run_s": 0}, {"limit_s": 0}, {"call_cap": 0}):
         with pytest.raises(ValueError):
-            arm_e.Frozen(**{**dict(runs=1, feedback=False, seed=1, run_s=60, limit_s=1800, call_cap=8), **bad})
+            arm_e.Frozen(**{**dict(runs=1, feedback=False, seed=1, send_seed=False, run_s=60, limit_s=1800, call_cap=8), **bad})
 
 
 # --- end to end, with V9's executor ---------------------------------------------------------------------------------------

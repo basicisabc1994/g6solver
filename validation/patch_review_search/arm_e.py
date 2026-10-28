@@ -15,16 +15,19 @@ of these, and takes them as inputs:
   it (INTERPRETATIONS.md);
 - the spending share: ``share_left``, asked before every call; tokens and dollars are counted by whoever implements
   ``ask``;
-- the frozen parameters the freeze entry records (``Frozen``): R, the feedback switch (whether G6's proposer gets the
-  results of its earlier checks between calls), the seed, each run's time limit, the arm's wall-clock limit and the
-  model-call cap.
+- the frozen parameters the freeze entry records (``Frozen``): R and each run's own time limit, read from G6's frozen
+  commit (``g6_parameters``, ``frozen_from_g6``); the feedback switch (whether G6's proposer gets the results of its
+  earlier checks between calls); the seed, always recorded and sent to the model only when the hosted interface takes
+  one and G6's proposer sends it (``send_seed``, which VS-5 decides); the arm's wall-clock limit; and the model-call
+  cap. E's script makes no random choice.
 
 Nothing here calls a model, imports G6 or reads a label.
 
 **One patch** (``arm_e``). E makes ``calls(c, t)`` model calls: as many as the larger of arms C and T made on the patch,
 and at least one, never more than the cap. Each request asks for further tests; with feedback, each after the first
 carries the results of running the tests kept so far. The files of every reply are pooled in call order. The kept tests
-(``keep``): only files G6 would place as free-form checks (``file_problem``, G6's rule for a proposed check's file),
+(``keep``): only files G6 would take as free-form checks (``file_problem`` and ``source_problem``: G6's rule for a
+proposed check's file and its text, at most 64 kilobytes),
 placed where G6 places one in its copy (``placement``: a folder of its own, ``g6_check_`` and the first 12 hexadecimal
 digits of the SHA-256 of its text, inside the folder the file names, never where a path already exists), and at most
 ``MAX_TESTS`` test functions in file order. Everything else is discarded and counted.
@@ -49,9 +52,11 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import os
 import re
+import textwrap
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -60,6 +65,8 @@ from patch_review_utility.dispositions import ABSTAIN, ACCEPT, DEFECT, ERROR, ma
 
 #: At most this many kept test functions: G6's own limit on checks (``verification_search.MAX_CHECKS``).
 MAX_TESTS = 20
+#: At most this many bytes of UTF-8 in a kept file: G6's own limit on a check's text (``MAX_SOURCE_BYTES``).
+MAX_SOURCE_BYTES = 64 * 1024
 #: The folder G6 places each free-form check in begins with this (``verification_search.FOLDER``).
 FOLDER = "g6_check_"
 #: E's tool errors (``error_kind``), and arm 1's or arm A's having no disposition to build on.
@@ -88,13 +95,16 @@ class _OutOfTime(Exception):
 
 @dataclass(frozen=True)
 class Frozen:
-    """The parameters the freeze entry records: ``runs`` (R, the times each kept test runs on each tree),
-    ``feedback`` (whether each call after the first gets the results of the tests kept so far), ``seed`` (passed to
-    every request), ``run_s`` (each run's own time limit), ``limit_s`` (the arm's wall-clock limit, V9's arm 3's) and
-    ``call_cap`` (the model-call cap per patch, the same as arms C and T)."""
+    """The parameters the freeze entry records: ``runs`` (R, the times each kept test runs on each tree, read from
+    G6's frozen commit: ``g6_parameters``), ``feedback`` (whether each call after the first gets the results of the
+    tests kept so far), ``seed`` (always recorded; sent in the requests only when ``send_seed``, which holds when the
+    hosted interface takes a seed and G6's proposer sends one, as VS-5 decides), ``run_s`` (each run's own time limit,
+    G6's per-run limit for a proposed check, read from its frozen commit like R), ``limit_s`` (the arm's wall-clock
+    limit, V9's arm 3's) and ``call_cap`` (the model-call cap per patch, the same as arms C and T)."""
     runs: int
     feedback: bool
     seed: int
+    send_seed: bool
     run_s: int
     limit_s: int
     call_cap: int
@@ -104,8 +114,47 @@ class Frozen:
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 raise ValueError(f"{name} must be a whole number of at least 1")
-        if not isinstance(self.feedback, bool) or not isinstance(self.seed, int) or isinstance(self.seed, bool):
-            raise ValueError("feedback must be true or false, and the seed a whole number")
+        if (not isinstance(self.feedback, bool) or not isinstance(self.send_seed, bool)
+                or not isinstance(self.seed, int) or isinstance(self.seed, bool)):
+            raise ValueError("feedback and send_seed must be true or false, and the seed a whole number")
+
+
+def g6_parameters(search_module) -> dict:
+    """R and each run's own limit, read from G6's verification search module at its frozen commit
+    (``g6.harness.verification_search``, passed in: this module never imports G6): ``runs``, the runs of one proposed
+    check on the patched tree, counted in ``search``'s source as its calls with ``at_base=False`` inside its loop over
+    the checks; and ``run_s``, its ``RUN_S``. A ``ValueError`` when either is not there in that shape: a change in how
+    G6 runs a check is refused, never guessed."""
+    run_s = getattr(search_module, "RUN_S", None)
+    if not isinstance(run_s, int) or isinstance(run_s, bool) or run_s < 1:
+        raise ValueError("G6's verification search has no RUN_S of at least 1 second")
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(search_module.search)))
+    except (AttributeError, OSError, TypeError, SyntaxError) as exc:
+        raise ValueError(f"G6's verification search has no readable search function: {exc}") from exc
+    depths: list[int] = []
+
+    def visit(node, depth: int) -> None:
+        if isinstance(node, ast.Call) and any(
+                word.arg == "at_base" and isinstance(word.value, ast.Constant) and word.value.value is False
+                for word in node.keywords):
+            depths.append(depth)
+        for child in ast.iter_child_nodes(node):
+            inner = isinstance(child, (ast.For, ast.AsyncFor, ast.While))
+            visit(child, depth + inner)
+
+    visit(tree, 0)
+    if not depths or any(depth != 1 for depth in depths):
+        raise ValueError("G6's search no longer runs each check on the patched tree in the shape this script reads "
+                         f"(calls with at_base=False at loop depths {depths}, where one loop over the checks is read)")
+    return {"runs": len(depths), "run_s": run_s}
+
+
+def frozen_from_g6(search_module, *, feedback: bool, seed: int, send_seed: bool, limit_s: int, call_cap: int) -> Frozen:
+    """The frozen parameters, with R and each run's own limit read from G6's frozen commit (``g6_parameters``)."""
+    found = g6_parameters(search_module)
+    return Frozen(runs=found["runs"], feedback=feedback, seed=seed, send_seed=send_seed, run_s=found["run_s"],
+                  limit_s=limit_s, call_cap=call_cap)
 
 
 def calls(c_calls: int, t_calls: int, *, cap: int) -> int:
@@ -142,6 +191,17 @@ def file_problem(file: str) -> str:
         if not _PART.fullmatch(part) or part.lower() in _NOT_A_PLACE or part.lower().endswith(_METADATA):
             return f"it names a folder G6 does not place a check in: {part!r}"
     return ""
+
+
+def source_problem(text: str) -> str:
+    """Why G6 would not take ``text`` as a check's text ("" when it would): text UTF-8 cannot hold, or more than
+    ``MAX_SOURCE_BYTES`` bytes of it, as G6's rule says it."""
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        return "its text is not text UTF-8 can hold"
+    return (f"it holds {size} bytes; a check holds at most {MAX_SOURCE_BYTES} (64 kilobytes)"
+            if size > MAX_SOURCE_BYTES else "")
 
 
 def _sha(text: str) -> str:
@@ -206,7 +266,7 @@ def keep(root: Path, pool: list[dict], *, also: tuple = ()) -> tuple[list[dict],
         def drop(why: str, test: str = "", file=file, call=call) -> None:
             discarded.append({"file": file, "call": call, "test": test, "why": why})
 
-        problem = file_problem(file)
+        problem = file_problem(file) or source_problem(text)
         if problem:
             drop(problem)
             continue
@@ -329,8 +389,8 @@ def arm_e(*, ask, patched_tree: Path, base_tree: Path, patch: str, contract: str
             if frozen.feedback and call > 1:
                 feedback = [{"file": one["file"], "test": test, "outcomes": outcomes[test]}
                             for one in kept_now() for test in one["tests"] if test in outcomes]
-            request = {"call": call, "calls": due, "seed": frozen.seed, "patch": patch, "contract": contract,
-                       "context": context, "feedback": feedback, "timeout_s": left}
+            request = {"call": call, "calls": due, "patch": patch, "contract": contract, "context": context,
+                       "feedback": feedback, "timeout_s": left, **({"seed": frozen.seed} if frozen.send_seed else {})}
             exchange = {"call": call, "request": request}
             exchanges.append(exchange)
             found["calls"]["made"] += 1
