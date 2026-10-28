@@ -15,6 +15,11 @@ def test_the_contract_module_names_no_checker_that_does_not_exist() -> None:
     for gone in ("JobReliabilityOrchestrator", "job_reliability_orchestrator", "verify_output", "test_fleet_drift",
                  "truthfulness harness", "mvp.core"):
         assert gone not in text, gone
+    flat = " ".join(text.split())
+    # Only g6.core.compose reads inputs_required_per_op; the registry checks a block's typed input alone.
+    for false_claim in ("Enforced by the registry invoker", "Registry invocation validates required per-operation",
+                        "the registry checks per-op required inputs"):
+        assert false_claim not in flat, false_claim
     # Restoring any of the old references to an orchestrator, a fleet-drift test or a truthfulness harness makes
     # this fail.
 

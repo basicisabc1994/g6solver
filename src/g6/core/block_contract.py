@@ -5,8 +5,9 @@
 
 A block's self-declared promises about what it can do, what it costs,
 how it fails, and how a caller should verify it. They are declared structural obligations, not evidence that a block's
-output is right: the registry checks per-op required inputs and typed schemas, strict composition (``g6.core.compose``)
-checks wiring, preconditions, outputs and stop conditions, and every other field is description.
+output is right: the registry checks a block's typed input, composition (``g6.core.compose``) checks per-op required
+inputs and wiring, strict composition also checks preconditions, outputs and stop conditions, and every other field is
+description.
 
 Worked example
 --------------
@@ -231,9 +232,10 @@ PreconditionContext = dict[str, Any]
 class BlockContract:
     """Self-declared contract metadata with explicit enforcement points.
 
-    Registry invocation validates required per-operation inputs and typed schemas.
-    Strict compose additionally checks explicit wiring, declared evidence kinds,
-    preconditions, outputs and stop conditions. Plain >> performs no contract checks.
+    Registry invocation validates the block's typed input. Composition checks
+    per-operation required inputs and explicit wiring; strict compose additionally
+    checks declared evidence kinds, preconditions, outputs and stop conditions.
+    Plain >> performs no contract checks.
     Human-review policies, guarantees, failure-mode names, cost and fallback fields
     describe intended behaviour; they are not enforced merely by declaring them.
     Passing structural checks does not validate application utility or correctness.
@@ -245,8 +247,9 @@ class BlockContract:
     purpose: str = ""
     inputs_required: tuple[str, ...] = ()
     inputs_optional: tuple[str, ...] = ()
-    #: Per-op required fields — {op_name: (field, ...)}. Enforced by the
-    #: registry invoker before Pydantic validation. Empty = no enforcement.
+    #: Per-op required fields — {op_name: (field, ...)}. Composition checks them
+    #: before a stage runs (an op not listed falls back to ``inputs_required``);
+    #: registry invocation does not read them.
     inputs_required_per_op: dict[str, tuple[str, ...]] = field(default_factory=dict)
     preconditions: tuple[Callable[[PreconditionContext], bool], ...] = ()
     outputs: tuple[str, ...] = ()
