@@ -175,8 +175,10 @@ def test_a_weakened_test_compromises_test_integrity(repo, monkeypatch):
     assert any(skip["tier"] == 2 for skip in got["assessment"]["scope"]["checks_skipped"])
 
 
-@pytest.mark.parametrize("name", [".pytest.ini", "pytest.ini", "conftest.py"])
+@pytest.mark.parametrize("name", [".pytest.ini", "pytest.ini", "conftest.py", "pytest.toml", ".pytest.toml"])
 def test_a_changed_runner_configuration_compromises_test_integrity(repo, monkeypatch, name):
+    """An empty ``pytest.toml`` is pytest's configuration file whenever it exists (review C1, probe S13): it replaces a
+    ``pyproject.toml`` whose ``filterwarnings = ['error']`` the patch would have failed."""
     (repo / "calc.py").write_text(GOOD)
     (repo / name).write_text("[pytest]\naddopts = -q\n" if name.endswith(".ini") else "\n")
     Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
@@ -184,6 +186,47 @@ def test_a_changed_runner_configuration_compromises_test_integrity(repo, monkeyp
     assert got["assessment"]["outcome"] == "test_integrity_compromised"
     assert any(r["code"] == "runner_configuration_changed" and name in r["detail"]
                for r in got["assessment"]["reasons"])
+
+
+def _pytest_config_names() -> set[str]:
+    """The configuration files the installed pytest looks for by name: its ``CONFIG_LOADERS_BY_NAME`` (pytest 9.2 on),
+    else the file names ``locate_config`` holds as constants (earlier versions); a skip that says so when neither
+    can be read, so a pytest that moves them is noticed rather than read as "no names"."""
+    import re
+
+    from _pytest.config import findpaths
+
+    names = getattr(findpaths, "CONFIG_LOADERS_BY_NAME", None)
+    if isinstance(names, dict) and names:
+        return set(names)
+    found: set[str] = set()
+
+    def walk(value) -> None:
+        if isinstance(value, str) and re.fullmatch(r"\.?[\w-]+\.(?:ini|toml|cfg)", value):
+            found.add(value)
+        elif isinstance(value, (tuple, frozenset)):
+            for item in value:
+                walk(item)
+
+    code = getattr(getattr(findpaths, "locate_config", None), "__code__", None)
+    walk(tuple(code.co_consts) if code is not None else ())
+    if not found:
+        pytest.skip(f"pytest {pytest.__version__} names its configuration files neither in "
+                    "_pytest.config.findpaths.CONFIG_LOADERS_BY_NAME nor as constants of locate_config")
+    return found
+
+
+def test_every_configuration_file_pytest_reads_is_one_g6_checks():
+    """Review C1: G6's lists of pytest's configuration files lacked pytest.toml and .pytest.toml. Read from the
+    installed pytest, so a name a later pytest adds fails here."""
+    from g6.workforce import repo_tests
+
+    names = _pytest_config_names()
+    assert {"pytest.ini", "pyproject.toml"} <= names   # the reading itself works
+    assert names <= patch_review.RUNNER_FILES          # a change to one is an integrity reason
+    assert names <= repo_tests.RUNNER_FILES            # a change to one is a runner file of the change
+    assert names <= {name for name, _ in repo_tests._PYTEST_CONFIG}   # one in the repository is its own config
+    assert names <= repo_tests._LOADABLE               # a git-ignored one withholds the receipt
 
 
 def test_a_git_ignored_file_pytest_could_load_compromises_test_integrity(repo, monkeypatch):

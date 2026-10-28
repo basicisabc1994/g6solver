@@ -4,7 +4,8 @@
 ``review_patch`` gives exactly one technical outcome, decided in this order:
 
 1. ``test_integrity_compromised``: a changed test weakened (a moved test file is compared with its old text), a
-   changed test-runner file (``conftest.py``, ``pytest.ini``, ``.pytest.ini`` or a start-up file; ``pyproject.toml``,
+   changed test-runner file (``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` or a
+   start-up file; ``pyproject.toml``,
    ``setup.cfg`` and ``tox.ini`` only when their pytest section changed), a git-ignored file that could change the
    tests (``repo_tests.ignored_inputs``: a runner, start-up, path or test-named file, or one that could shadow a
    tracked module; outside git's view, so outside the digest; any other ignored Python file is an unknown, bound into
@@ -62,8 +63,10 @@ SUPPORTED, DEFECT = "supported_within_scope", "defect_detected"
 INTEGRITY, INSUFFICIENT = "test_integrity_compromised", "insufficient_evidence"
 PASSED_ON_CHECKS, FAILED, NOT_ESTABLISHED = "passed_on_stated_checks", "failed", "not_established"
 CODE = "G6_E_PATCH_REVIEW"
-#: Files that configure, or could stand in for, the runner: ``repo_tests``'s list and pytest's hidden config file.
-RUNNER_FILES = repo_tests.RUNNER_FILES | {".pytest.ini"}
+#: Files that configure, or could stand in for, the runner: ``repo_tests``'s list, every configuration file pytest
+#: looks for by name among them (``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` and the project
+#: files below; review C1).
+RUNNER_FILES = repo_tests.RUNNER_FILES
 #: Project files that hold more than pytest's settings: only a change to the pytest section named counts.
 PYTEST_SECTIONS = {"pyproject.toml": "[tool.pytest]", "setup.cfg": "[tool:pytest]", "tox.ini": "[pytest]"}
 #: Run verdicts whose results are not believed: an integrity problem, never evidence.

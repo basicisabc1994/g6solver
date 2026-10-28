@@ -231,6 +231,8 @@ def test_a_torn_store_says_so_and_a_run_says_how_to_recover(repo, fake_boundary)
     ("tests/conftest.py", {"tests/conftest.py": "def pytest_runtest_setup(item):\n    pass\n"}),
     ("pytest.ini", {"pytest.ini": "[pytest]\naddopts = -q\n"}),
     (".pytest.ini", {".pytest.ini": "[pytest]\n"}),
+    ("pytest.toml", {"pytest.toml": "[pytest]\n"}),   # review C1
+    (".pytest.toml", {".pytest.toml": "\n"}),
     ("setup.cfg", {"setup.cfg": "[tool:pytest]\naddopts = -q\n"}),
     ("tox.ini", {"tox.ini": "[pytest]\n"}),
     ("pyproject.toml", {"pyproject.toml": "[tool.pytest.ini_options]\n"}),

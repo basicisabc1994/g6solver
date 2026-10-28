@@ -96,10 +96,10 @@ SANDBOX = "repository_in_place"
 #: A run's verdicts. Only ``passed`` and ``failed`` mean the tests ran to a result.
 PASSED, FAILED, CHANGED = "passed", "failed", "changed_tracked_files"
 RAN = frozenset({PASSED, FAILED})
-#: Files that configure, or could stand in for, the runner (the bench's lists, ``bench.py:60-63``): a change to one is
-#: said, not judged.
-RUNNER_FILES = frozenset({"conftest.py", "pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "pytest.py",
-                          "sitecustomize.py", "usercustomize.py"})
+#: Files that configure, or could stand in for, the runner (the bench's lists, ``bench.py:60-63``, and every
+#: configuration file pytest looks for by name): a change to one is said, not judged.
+RUNNER_FILES = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml",
+                          "setup.cfg", "tox.ini", "pytest.py", "sitecustomize.py", "usercustomize.py"})
 #: The census probe's own repository and test (``probe_repo``).
 PROBE_TEST = "tests/test_probe.py::test_probe"
 #: Every sentence this module says to a person: why the tests did not run, or a refusal. PENDING the founder's copy
@@ -771,7 +771,7 @@ def _output(log: Path) -> str:
 
 
 #: The files pytest reads its configuration from, and the section that makes each one count ("": any content).
-_PYTEST_CONFIG = (("pytest.ini", ""), (".pytest.ini", ""),
+_PYTEST_CONFIG = (("pytest.toml", ""), (".pytest.toml", ""), ("pytest.ini", ""), (".pytest.ini", ""),
                   ("pyproject.toml", r"^\s*\[\s*tool\.pytest(?:\.ini_options)?\s*\]"),
                   ("tox.ini", r"^\s*\[pytest\]"), ("setup.cfg", r"^\s*\[tool:pytest\]"))
 
@@ -997,8 +997,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
 
 
 #: Git-ignored files that can change a run (review I2): runner configuration, start-up and path files.
-_LOADABLE = frozenset({"conftest.py", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml",
-                       "sitecustomize.py", "usercustomize.py"})
+_LOADABLE = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "setup.cfg",
+                       "tox.ini", "pyproject.toml", "sitecustomize.py", "usercustomize.py"})
 #: Folders the ignored-file scan does not enter: environments, caches and build output.
 _UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "__pycache__",
                         ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
@@ -1029,7 +1029,8 @@ def _module(path: PurePosixPath) -> str:
 
 def ignored_inputs(repo: Path) -> Ignored:
     """The git-ignored files in ``repo`` a test run could load. Loadable (``Ignored.loadable``): an ignored
-    ``conftest.py``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``,
+    ``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``,
+    ``pyproject.toml``,
     ``sitecustomize.py``, ``usercustomize.py`` or ``.pth`` file; a test-named file (``test_*.py``, ``*_test.py``); and
     a ``.py`` file whose module name (its stem, or its package's) is a tracked module's anywhere in the repository,
     which it could shadow on the import path. Every other ignored ``.py`` file is listed with its SHA-256

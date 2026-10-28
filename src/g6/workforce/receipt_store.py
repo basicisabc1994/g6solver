@@ -5,7 +5,8 @@ amendment A6).
 ``repo_tests.run(..., receipt=True)`` writes one receipt after a confined run that started, and only then: never for
 a run without an operating-system boundary (whoever allowed it), one that could not start, a mutant's, or one beside
 a git-ignored file that could change the run (``repo_tests.ignored_inputs``: an ignored ``conftest.py``,
-``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``, ``sitecustomize.py``,
+``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``, ``pyproject.toml``,
+``sitecustomize.py``,
 ``usercustomize.py`` or ``.pth`` file, a test-named file, or a Python file named like a tracked module, which could
 shadow it), or when that scan stopped at its limit: git's view, which the digest covers, leaves ignored files out.
 Every other ignored Python file (a generated ``_version.py``, say) is bound into the receipt instead, path to SHA-256,

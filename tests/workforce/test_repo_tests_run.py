@@ -682,6 +682,16 @@ def test_m3_the_repositorys_own_config_in_a_test_folder_is_still_read(repo):
     assert (found["verdict"], found["passed"]) == (rt.PASSED, 1)
 
 
+@pytest.mark.parametrize("name", ["pytest.toml", ".pytest.toml"])
+def test_c1_a_pytest_toml_is_the_repositorys_own_config_and_no_empty_one_replaces_it(repo, tmp_path, name):
+    """Review C1: G6 did not know pytest.toml, so it read the folder as unconfigured and ran the tests with an empty
+    config of its own in place of the repository's."""
+    _write(repo, name, '[pytest]\naddopts = ["--deselect=tests/test_calc.py::test_add"]\n')
+    assert rt._config_args(repo, ["tests/test_calc.py"], tmp_path) == []
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert (found["verdict"], found["passed"]) == (rt.PASSED, 1)
+
+
 def test_m9_a_repository_path_with_the_path_separator_in_it_runs(tmp_path):
     """M9: the import path was one string joined with os.pathsep, so a ';' (':' on POSIX) in the path split it."""
     repo = make_repo(tmp_path, f"a{os.pathsep}b")
