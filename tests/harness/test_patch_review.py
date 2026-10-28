@@ -68,10 +68,13 @@ def result(passed=(), failed=(), skipped=(), *, verdict=None, backend="synthetic
 
 class Recorded:
     """Stands in for every test run of a review (``patch_review._execute``): in place, ``in_place[ids]`` (or
-    ``default``); replayed at the base commit, ``on_base[file]``. Records what was asked."""
+    ``default``); replayed at the base commit, ``on_base[file]``. Records what was asked. The stated checks run
+    against the base commit's code (``patch_review._execute_at_base``) give ``at_base``, or, when none was
+    recorded, a run that did not happen; those requests are recorded in ``at_base_calls``."""
 
-    def __init__(self, monkeypatch, in_place=None, *, default=None, on_base=None):
+    def __init__(self, monkeypatch, in_place=None, *, default=None, on_base=None, at_base=None):
         self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.at_base_calls: list[tuple[str, ...]] = []
         in_place, on_base = dict(in_place or {}), dict(on_base or {})
 
         def execute(root, ids, *, timeout_s, change=None):
@@ -82,7 +85,12 @@ class Recorded:
             assert got is not None, f"no recorded result for {ids}"
             return got
 
+        def execute_at_base(change, ids, *, timeout_s):
+            self.at_base_calls.append(tuple(ids))
+            return at_base if at_base is not None else {"verdict": "not_run", "said": "no run was recorded"}
+
         monkeypatch.setattr(patch_review, "_execute", execute)
+        monkeypatch.setattr(patch_review, "_execute_at_base", execute_at_base)
 
 
 def _reasons(got) -> set[str]:
@@ -121,6 +129,35 @@ def test_a_correct_patch_is_supported_within_its_stated_scope(repo, monkeypatch)
     words = set((assessment["summary"] + " " + got["warning_card"]["message"]).lower().replace(".", " ")
                 .replace(",", " ").replace(":", " ").split())
     assert not {"correct", "safe", "complete", "proven", "verified"} & words
+
+
+def test_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknown_with_a_next_action(repo, monkeypatch):
+    """Review I8 (probe S12): a check need not exercise the change; the owner's ruling makes one that passes against
+    the base commit's code too an unknown and a next action, never another outcome (a requirement to keep behaviour
+    passes at the base by design)."""
+    (repo / "calc.py").write_text(GOOD)
+    runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
+                    at_base=result([ADD], [NEGATIVE]))   # R1's check passes on the unpatched code too
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "supported_within_scope", assessment["reasons"]
+    assert runs.at_base_calls == [(ADD, NEGATIVE)]
+    assert [u for u in assessment["unknowns"] if "base commit" in u and "may not exercise" in u] == [
+        f"{ADD} passes against the base commit's code too, so it may not exercise the change"]
+    assert any(action.startswith("R1:") and ADD in action and "fails at the base commit" in action
+               for action in assessment["next_actions"])
+    assert not any(action.startswith("R2:") for action in assessment["next_actions"])
+    scope = assessment["scope"]
+    assert (2, "stated checks at the base commit") in [(run["tier"], run["check"]) for run in scope["checks_run"]]
+    # a run in a copy has no receipt, and no place among the gate's evidence
+    assert [r["tier"] for r in scope["receipts"]] == [1, 2] and len(got["gate"]["receipts"]) == 2
+
+
+def test_the_stated_checks_run_at_the_base_commit_only_when_nothing_else_decided(repo, monkeypatch):
+    (repo / "calc.py").write_text(POSITIVE_ONLY)
+    runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD], [NEGATIVE])})
+    assert review(repo)["assessment"]["outcome"] == "defect_detected"
+    assert runs.at_base_calls == []
 
 
 def test_a_requirement_with_no_check_is_not_established_and_the_outcome_is_insufficient_evidence(repo, monkeypatch):
@@ -1008,6 +1045,23 @@ def test_confined_a_test_folder_with_its_own_pytest_config_is_read_against_that_
     found = review(repo, [{**req, "checks": [ident]} for req, ident in zip(SUM, ids)])
     assert found["assessment"]["outcome"] == "defect_detected", found["assessment"]
     assert _requirement(found, "R2")["status"] == "failed"
+
+
+def test_confined_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknown(repo, bwrap_backend):
+    """Review I8 (probe S12): add left unfixed, and R1 checked by a test of sub, which passes on the base code too."""
+    (repo / "calc.py").write_text(BAD + "\n\ndef sub(a, b):\n    return a - b\n")
+    (repo / "test_sub.py").write_text("from calc import sub\n\n\ndef test_sub():\n    assert sub(5, 3) == 2\n")
+    _commit(repo, "sub")
+    (repo / "calc.py").write_text(BAD + "\n\ndef sub(a, b):\n    return a - b\n# touched\n")
+    got = review(repo, [{"id": "R1", "text": "add returns the sum", "checks": ["test_sub.py::test_sub"]}])
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]   # the ruling: an unknown only
+    assert ("test_sub.py::test_sub passes against the base commit's code too, so it may not exercise the change"
+            in got["assessment"]["unknowns"]), got["assessment"]["unknowns"]
+    # survival: a check that fails on the base code (this patch fixes add) raises no such unknown
+    (repo / "calc.py").write_text(GOOD + "\n\ndef sub(a, b):\n    return a - b\n")
+    fixed = review(repo, [{"id": "R1", "text": "add returns the sum", "checks": [ADD]}])
+    assert fixed["assessment"]["outcome"] == "supported_within_scope", fixed["assessment"]
+    assert not any("may not exercise" in u for u in fixed["assessment"]["unknowns"])
 
 
 def test_confined_a_check_pytest_cannot_find_is_not_collected(repo, bwrap_backend):

@@ -1295,12 +1295,14 @@ def _copy_snapshot(repo: Path, *, deadline: float | None = None) -> dict[str, st
 
 
 @contextmanager
-def _base_revision(change: Change, copy: Path, deadline: float):
-    """Temporarily restore all base-revision differences in the bounded replay copy."""
+def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[str] = frozenset()):
+    """Temporarily restore all base-revision differences in the bounded replay copy, except the files and folders
+    ``keep`` names, which stay as the copy has them."""
     from contextlib import ExitStack
 
     changed = set(_paths(_git(change.repo, "diff", "--name-only", "--no-renames", "-z", change.base_commit)))
     changed.update(_untracked(change.repo))
+    changed = {rel for rel in changed if not any(rel == kept or rel.startswith(kept + "/") for kept in keep)}
     entries = _paths(_git(change.repo, "ls-tree", "-r", "-l", "-z", change.base_commit))
     base = {}
     for entry in entries:
@@ -1400,6 +1402,28 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
 
 # COPY: reason for old tests omitted by the replay's file cap (A1 amendment B).
 OLD_TEST_LIMIT = "the limit of {n} old test file(s) was reached"
+
+
+def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
+                network: bool = False) -> dict:
+    """``tests`` (files, folders or ``file::test`` ids) as they are now, run against the base commit's code: in a copy
+    (``repository_copy``, with its caps), every file the change touched is put back as it was at the base commit
+    (``_base_revision``) except the files and folders ``tests`` name, which keep their text now. A check that passes
+    here does not need the patch to pass (review I8). The repository itself is never written, and the run gets no
+    receipt (it is not the artifact under review). ``{"verdict": "not_run", "said": ...}`` when the copy or the run
+    could not be made."""
+    bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
+    deadline = time.monotonic() + bound
+    try:
+        keep = frozenset(inside(change.repo, test, "test").partition("::")[0].rstrip("/") for test in tests)
+        with repository_copy(change.repo, deadline=deadline) as copy:
+            with _base_revision(change, copy, deadline, keep=keep):
+                return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
+                            python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline)
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+        raise
+    except (OSError, RepoRefused, CopyNotRun) as exc:
+        return {"verdict": "not_run", "said": str(exc)}
 
 
 def probe_repo(scratch: Path) -> Path:

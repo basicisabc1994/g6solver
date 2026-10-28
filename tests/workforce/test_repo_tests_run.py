@@ -720,6 +720,19 @@ def test_i9_a_run_says_the_root_folder_pytest_named_its_tests_against(repo):
     assert found["rootdir"] == "tests" and found["failed_ids"] == ["test_calc.py::test_add"]
 
 
+def test_i8_tests_as_they_are_now_run_against_the_base_commits_code(repo):
+    """Review I8: the stated checks, with the test files' text as it is now, against every other changed file as it
+    was at the base commit, in a copy; the repository itself is not touched."""
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_calc.py", TESTS + "\n\ndef test_new():\n    assert add(1, 1) == 2\n")
+    ids = ["tests/test_calc.py::test_add", "tests/test_calc.py::test_sub", "tests/test_calc.py::test_new"]
+    found = rt.run_at_base(rt.change(repo), ids)
+    assert found["verdict"] == rt.FAILED, found
+    assert sorted(found["failed_ids"]) == ["tests/test_calc.py::test_add", "tests/test_calc.py::test_new"]
+    assert found["test_outcomes"]["tests/test_calc.py::test_sub"]["call"] == "passed"
+    assert (repo / "calc.py").read_text(encoding="utf-8") == FIXED   # the patched tree is as it was
+
+
 def test_m9_a_repository_path_with_the_path_separator_in_it_runs(tmp_path):
     """M9: the import path was one string joined with os.pathsep, so a ';' (':' on POSIX) in the path split it."""
     repo = make_repo(tmp_path, f"a{os.pathsep}b")

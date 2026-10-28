@@ -29,7 +29,10 @@
 Each requirement reads ``passed_on_stated_checks``, ``failed`` or ``not_established`` (with a reason and a suggested
 test in words); G6 never invents a passing test. Checks adapt to cost: tier 1 (always) is the digest, integrity, and
 the stated checks with the extra tests in one confined run; tier 2, the tests that touch the changed modules, runs
-only when tier 1 found no integrity problem and no defect; tier 3 (mutation, old-against-new probes) is not run here.
+only when tier 1 found no integrity problem and no defect, and then, when nothing so far found a problem, the stated
+checks that passed run against the base commit's code in a copy: one that passes there too may not exercise the
+change, an unknown with a next action and never an outcome (review I8); tier 3 (mutation, old-against-new probes)
+is not run here.
 
 Every in-place run asks for a test receipt (``repo_tests.run(..., receipt=True)``): the scope lists each id, and the
 coding gate, which this review builds bound to its own snapshot digest (never a digest from the request), counts a
@@ -153,6 +156,12 @@ def _execute(root: Path, ids: list[str], *, timeout_s: int, change: repo_tests.C
         texts = {rel: (root / rel).read_text(encoding="utf-8", errors="replace") for rel in ids}
         return repo_tests.run_before(replace(change, before=texts), timeout_s=timeout_s)
     return repo_tests.run(root, ids, timeout_s=timeout_s, receipt=True)
+
+
+def _execute_at_base(change: repo_tests.Change, ids: list[str], *, timeout_s: int) -> dict:
+    """The stated checks that passed, as their test files are now, run against the base commit's code in a copy
+    (``repo_tests.run_at_base``; review I8)."""
+    return repo_tests.run_at_base(change, ids, timeout_s=timeout_s)
 
 
 def _confined(ran: dict) -> dict:
@@ -497,6 +506,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             elif second["verdict"] not in repo_tests.RAN:
                 unknowns.append(f"the tests that touch the changed modules did not run to a result "
                                 f"({second['verdict']}): {second.get('said', '')}")
+    follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns)
     skipped.append({"tier": 3, "check": "mutation and old-against-new probes", "reason": TIER_3})
 
     if repo_tests.snapshot(root) != before:
@@ -540,7 +550,48 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
-                  artifact, claim, sources, started)
+                  artifact, claim, sources, started, follow_ups)
+
+
+AT_BASE = "stated checks at the base commit"
+#: The base-commit run's verdicts under which each check's own verdict is read; any other, nothing is said per check.
+_READABLE_AT_BASE = frozenset({*repo_tests.RAN, "collection_error", "no_tests_collected"})
+
+
+def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns) -> list[str]:
+    """Review I8, the owner's ruling: the stated checks that passed, as their test files are now, run against the
+    base commit's code, only when nothing so far found a problem. One that passes there too may not exercise the
+    change: an unknown, and a next action for each requirement it checks; never an outcome, since a requirement to
+    keep behaviour passes at the base by design. Returns those next actions."""
+    passing = [check for check in dict.fromkeys(norm[raw] for req in stated for raw in req.checks)
+               if verdicts[check]["verdict"] == "passed"]
+    if not passing or not change.files:
+        return []
+    if any(r["stage"] in ("integrity", "tier_1", "tier_2") for r in reasons):
+        skipped.append({"tier": 2, "check": AT_BASE, "reason": "an earlier check found a problem"})
+        return []
+    if _left(deadline) < 1:
+        skipped.append({"tier": 2, "check": AT_BASE, "reason": "the time budget is spent"})
+        unknowns.append("whether the stated checks pass against the base commit's code too was not checked: the "
+                        "time budget was spent")
+        return []
+    ran = _confined(_execute_at_base(change, passing, timeout_s=max(1, _left(deadline))))
+    if "isolation" in ran:   # it ran, in a copy
+        runs.append(_record(2, AT_BASE, passing, ran, command=f"pytest {' '.join(passing)} against the base "
+                                                              "commit's code, in a copy"))
+    if ran.get("verdict") not in _READABLE_AT_BASE:
+        unknowns.append(f"whether the stated checks pass against the base commit's code too was not established "
+                        f"({ran.get('verdict')}: {ran.get('said') or 'no result'})")
+        return []
+    actions = []
+    for check, found in _verdicts(passing, ran).items():
+        if found["verdict"] != "passed":
+            continue
+        unknowns.append(f"{check} passes against the base commit's code too, so it may not exercise the change")
+        actions += [f"{req.id}: {check} passes at the base commit as well; if {req.id} asks for new behaviour, state "
+                    "a check that fails at the base commit and passes on the patch (if it asks to keep behaviour, "
+                    "this is expected)" for req in stated if check in {norm[raw] for raw in req.checks}]
+    return actions
 
 
 def _on_base(root, change, derived, second, deadline, runs, unknowns, reason) -> None:
@@ -602,7 +653,7 @@ _NEXT = {
 
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
-           sources, started) -> dict:
+           sources, started, follow_ups=()) -> dict:
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
     if "integrity" in stages:
@@ -617,6 +668,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     next_actions = [_NEXT[outcome]]
     next_actions += [f"{req['id']}: {req['reason']}; suggested: {req['suggested_test']}" for req in evaluated
                      if "suggested_test" in req]
+    next_actions += list(follow_ups)
     if unknowns:
         next_actions.append("Look into the unknowns yourself: G6 does not count them for or against the patch.")
     environment = {"isolation": ran.get("isolation"), "python": ran.get("python"),
