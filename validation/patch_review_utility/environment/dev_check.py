@@ -23,6 +23,10 @@ this computer are used (``--pull never``), only the V7 tasks ``CHECKS`` names, a
 ``NEVER``.
 
     python dev_check.py --volume <toolchain volume> --lock <its lock> --output <results.json>
+        [--g6-arms-volume <volume> --g6-arms-lock <its lock> [--g6-arms-only <task> ...]]
+
+``--g6-arms-only`` reruns only step 5 for the tasks it names, into the existing results file: each result then says
+which G6 commit ran its arms (``g6_arms_commit``), and ``g6_arms_toolchains`` lists every toolchain used.
 """
 from __future__ import annotations
 
@@ -311,6 +315,24 @@ def check_image(check: dict, image: str, *, volume: str, seconds: int = SECONDS,
     return found
 
 
+def merge_g6_arms(found: dict, controls: dict[str, dict], lock: dict) -> dict:
+    """``found`` (a results file) with the G6 arms' controls of the tasks ``controls`` names rerun from the toolchain
+    ``lock`` describes; every other result kept, each saying which G6 commit ran its arms (``g6_arms_commit``)."""
+    found = json.loads(json.dumps(found))
+    earlier = found.pop("g6_arms_toolchain", None)
+    toolchains = found.setdefault("g6_arms_toolchains", [earlier] if earlier else [])
+    unknown = sorted(set(controls) - {r["task"] for r in found["results"]})
+    if unknown:
+        raise ValueError("no earlier result for " + ", ".join(unknown))
+    for result in found["results"]:
+        if result["task"] in controls:
+            result.update(g6_arms_control=controls[result["task"]], g6_arms_commit=lock["commit"])
+        elif "g6_arms_control" in result and earlier:
+            result.setdefault("g6_arms_commit", earlier["commit"])
+    toolchains.append(lock)
+    return found
+
+
 def _image_id(image: str) -> str:
     return subprocess.run(["docker", "image", "inspect", image, "--format", "{{.Id}}"], capture_output=True,
                           text=True).stdout.strip()
@@ -323,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--g6-arms-volume", default="", help="a toolchain to run G6's arms' planted controls with")
     parser.add_argument("--g6-arms-lock", default="", help="that toolchain's lock")
+    parser.add_argument("--g6-arms-only", action="append", default=[], metavar="TASK",
+                        help="rerun only G6's arms' controls of this task, into the existing --output")
     args = parser.parse_args(argv)
     problems = toolchain.check(toolchain.load(), volume=args.volume, lock=Path(args.lock))
     if args.g6_arms_volume:
@@ -331,6 +355,21 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("a toolchain does not match its lock: " + "; ".join(problems))
     listed = subprocess.run(["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], capture_output=True,
                             text=True, check=True).stdout.split()
+    if args.g6_arms_only:
+        if not args.g6_arms_volume:
+            raise SystemExit("--g6-arms-only needs --g6-arms-volume")
+        earlier = json.loads(Path(args.output).read_text(encoding="utf-8"))
+        bases = {r["task"]: r["base"] for r in earlier["results"] if "base" in r}
+        controls = {}
+        for check in CHECKS:
+            if check["task"] in args.g6_arms_only:
+                controls[check["task"]] = g6_arms_control(select(listed, check["task"]), check, bases[check["task"]],
+                                                          volume=args.g6_arms_volume)
+                print(json.dumps({"task": check["task"], "g6_arms_control": "done"}), flush=True)
+        lock = json.loads(Path(args.g6_arms_lock).read_text(encoding="utf-8"))
+        Path(args.output).write_text(json.dumps(merge_g6_arms(earlier, controls, lock), indent=2) + "\n",
+                                     encoding="utf-8")
+        return 0
     results = []
     for check in CHECKS:
         try:

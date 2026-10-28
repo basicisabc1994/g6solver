@@ -77,6 +77,22 @@ def test_the_guard_is_read_from_g6s_reason_codes_and_from_the_direct_checks_deta
     assert dev_check.guard_fired({"row": {"reason_codes": ["tier_1:check_failed"]}, "checks": []}) is False
 
 
+def test_a_rerun_of_g6s_arms_replaces_only_the_named_tasks_controls_and_says_which_g6_ran_each():
+    old = {"g6_arms_toolchain": {"commit": "a" * 40},
+           "results": [{"task": "t1", "arm_1": {"passed": 7}, "g6_arms_control": {"g6": "old"}},
+                       {"task": "t2", "g6_arms_control": {"g6": "kept"}}, {"task": "t3", "skipped": "absent"}]}
+    new = dev_check.merge_g6_arms(old, {"t1": {"g6": "new"}}, {"commit": "b" * 40, "volume": "v"})
+    first, second, third = new["results"]
+    assert first == {"task": "t1", "arm_1": {"passed": 7}, "g6_arms_control": {"g6": "new"},
+                     "g6_arms_commit": "b" * 40}
+    assert second["g6_arms_control"] == {"g6": "kept"} and second["g6_arms_commit"] == "a" * 40
+    assert "g6_arms_commit" not in third and new["g6_arms_toolchains"] == [{"commit": "a" * 40}, {"commit": "b" * 40,
+                                                                                                "volume": "v"}]
+    assert "g6_arms_toolchain" not in new and old["results"][0]["g6_arms_control"] == {"g6": "old"}   # a copy
+    with pytest.raises(ValueError, match="t9"):
+        dev_check.merge_g6_arms(old, {"t9": {}}, {"commit": "b" * 40})
+
+
 def test_the_check_reads_what_is_left_of_the_images_pytest_settings_after_the_apply_script():
     command = dev_check.settings_left_command("img", python="/usr/bin/python", env={"QT_QPA_PLATFORM": "offscreen"})
     assert command[-3:] == ["sh", "/v9/apply.sh", "env"] and "QT_QPA_PLATFORM=offscreen" in command

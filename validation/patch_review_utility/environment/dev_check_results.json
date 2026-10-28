@@ -65,70 +65,6 @@
     },
     "tree_sha256": "64451a0d1f2cb73f31610fbab1296bba8a02318f40cb16f8818637483880556a"
   },
-  "g6_arms_toolchain": {
-    "study": "V9",
-    "commit": "a2161c775abddc5ca8c64503b1e1a5ff56c0f68c",
-    "volume": "g6-v9-toolchain-dev-a2161c7",
-    "manifest_sha256": "d4bc2306192518f8f8f88444966646c3fc9886014c7da0b08b645cb1d863dc0d",
-    "sources": [
-      {
-        "file": "cpython-3.12.15+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
-        "sha256": "5ff9f0602ce964a529ed1e8555d3abab6341926d724402ba9a15e9e877191124"
-      },
-      {
-        "file": "git-2.56.0.tar.xz",
-        "sha256": "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3"
-      },
-      {
-        "file": "bubblewrap-0.13.1.tar.xz",
-        "sha256": "0e85c8702248b8dd64144f594147553650cdd0e4c951690345faace79c217c4d"
-      },
-      {
-        "file": "pydantic-2.14.1-py3-none-any.whl",
-        "sha256": "9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454"
-      },
-      {
-        "file": "pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
-        "sha256": "93ba4e9d8210d941c200431a56b2c0400b131865947903937ed3ec5404307d2e"
-      },
-      {
-        "file": "typing_extensions-4.16.0-py3-none-any.whl",
-        "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
-      },
-      {
-        "file": "annotated_types-0.8.0-py3-none-any.whl",
-        "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
-      },
-      {
-        "file": "typing_inspection-0.4.4-py3-none-any.whl",
-        "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
-      },
-      {
-        "file": "returns-0.30.0-py3-none-any.whl",
-        "sha256": "bc1ab0ec51391a36545acbff43f3abb916d3d3625ec17f93605e15ee60efa687"
-      }
-    ],
-    "scripts_sha256": {
-      "build_static.sh": "54497e3d736795d0c149749d16932580c333b48bba0c28d2b1c271409b9e51d0",
-      "install_python.sh": "854e174121b472d3ef5058b84c0078edae355dd48d31f3c5d32047dcd4bb1f9a",
-      "toolchain.py": "93fdf686248c3a645122cfa17becb0f0b8ffaae7d9095e5ea23a6573aeaccb84"
-    },
-    "builders": {
-      "static": "alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
-      "glibc": "python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db"
-    },
-    "g6_wheel": {
-      "file": "g6-0.1.1-py3-none-any.whl",
-      "sha256": "4ea76a986829b117f7f904e01751e830e32c5d572f2d0f6d118340ec2bdb8c1c"
-    },
-    "versions": {
-      "git": "git version 2.56.0",
-      "bubblewrap": "bubblewrap 0.13.1",
-      "python": "3.12.15",
-      "g6": "0.1.1"
-    },
-    "tree_sha256": "f191b7da140cd2d24dd57b46091bfd0f3718408bdfd9cf49f04d28f2afd36067"
-  },
   "results": [
     {
       "task": "instance_ansible__ansible-1bd7dcf339dd",
@@ -241,7 +177,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 3.8,
+              "seconds": 4.0,
               "stderr_tail": []
             },
             "category": "accept",
@@ -255,7 +191,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.6,
+              "seconds": 1.8,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -271,7 +207,7 @@
           "with_break_without_import_roots": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.9,
+              "seconds": 1.7,
               "stderr_tail": []
             },
             "category": "insufficient_evidence",
@@ -290,7 +226,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.6,
+              "seconds": 1.7,
               "stderr_tail": []
             },
             "category": "accept",
@@ -304,7 +240,7 @@
           "with_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.6,
+              "seconds": 1.8,
               "stderr_tail": []
             },
             "category": "defect_found",
@@ -334,7 +270,8 @@
             "detail": "stated_checks: changed code not loaded: lib/ansible/errors/__init__.py is changed, but the run loaded ansible.errors from /usr/local/lib/python3.9/dist-packages/ansible/errors/__init__.py"
           }
         }
-      }
+      },
+      "g6_arms_commit": "8b5364caff200a1a5084b1030b2fc1bb3322b170"
     },
     {
       "task": "instance_qutebrowser__qutebrowser-5cef49ff3074",
@@ -518,7 +455,8 @@
             "detail": "stated_checks: did not run to a pass (timed_out): tests/unit/api/test_cmdutils.py::TestCheckExclusive::test_bad"
           }
         }
-      }
+      },
+      "g6_arms_commit": "a2161c775abddc5ca8c64503b1e1a5ff56c0f68c"
     },
     {
       "task": "instance_internetarchive__openlibrary-630221ab686c",
@@ -541,360 +479,6 @@
         "container": {
           "exit_code": 0,
           "seconds": 0.5,
-          "stderr_tail": []
-        },
-        "repo_python": "/usr/local/bin/python",
-        "repository_check": {
-          "result": "refused",
-          "code": "G6_E_GIT_SUBMODULE_REFUSED",
-          "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
-        }
-      },
-      "arm_1": {
-        "container": {
-          "exit_code": 0,
-          "seconds": 1.6,
-          "stderr_tail": []
-        },
-        "pytest_exit": 0,
-        "collection_errors": 0,
-        "control_test": "passed",
-        "passed": 178,
-        "failed": 0,
-        "skipped": 0,
-        "pytest_settings_left": []
-      },
-      "planted_control": {
-        "arm_1": {
-          "without_change": "passed",
-          "with_change": "failed",
-          "verdict": "tests the patch"
-        }
-      },
-      "g6_arms_control": {
-        "g6": {
-          "without_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 3.7,
-              "stderr_tail": []
-            },
-            "category": "accept",
-            "accepted": true,
-            "outcome": "supported_within_scope",
-            "reason_codes": [],
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": ""
-          },
-          "with_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 2.0,
-              "stderr_tail": []
-            },
-            "category": "defect_found",
-            "accepted": false,
-            "outcome": "defect_detected",
-            "reason_codes": [
-              "tier_1:check_failed"
-            ],
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": "tier_1:check_failed"
-          }
-        },
-        "direct_checks": {
-          "without_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 1.9,
-              "stderr_tail": []
-            },
-            "category": "accept",
-            "accepted": true,
-            "outcome": null,
-            "reason_codes": null,
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": ""
-          },
-          "with_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 2.0,
-              "stderr_tail": []
-            },
-            "category": "defect_found",
-            "accepted": false,
-            "outcome": null,
-            "reason_codes": null,
-            "guard_fired": false,
-            "failing_checks": [
-              "stated_checks"
-            ],
-            "detail": "stated_checks: failed: openlibrary/utils/tests/test_utils.py::test_str_to_key"
-          }
-        }
-      }
-    },
-    {
-      "task": "instance_internetarchive__openlibrary-6e889f4a733c",
-      "repository": "internetarchive/openlibrary",
-      "image_id": "sha256:208c9774dee362861c7b62519f14a87e5a8a97ab2c95a6711fc9d3a439283edb",
-      "base": "9a9204b43f9ab94601e8664340eb1dd0fca33517",
-      "python": "/usr/local/bin/python",
-      "folder": "openlibrary/utils/tests",
-      "env": {
-        "OL_CONFIG": "/app/conf/openlibrary.yml"
-      },
-      "import_roots": [],
-      "control": {
-        "file": "openlibrary/utils/__init__.py",
-        "old": "for c in s.lower() if c not in to_drop)",
-        "new": "for c in s if c not in to_drop)",
-        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
-      },
-      "g6": {
-        "container": {
-          "exit_code": 0,
-          "seconds": 0.5,
-          "stderr_tail": []
-        },
-        "repo_python": "/usr/local/bin/python",
-        "repository_check": {
-          "result": "refused",
-          "code": "G6_E_GIT_SUBMODULE_REFUSED",
-          "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
-        }
-      },
-      "arm_1": {
-        "container": {
-          "exit_code": 0,
-          "seconds": 1.2,
-          "stderr_tail": []
-        },
-        "pytest_exit": 0,
-        "collection_errors": 0,
-        "control_test": "passed",
-        "passed": 169,
-        "failed": 0,
-        "skipped": 0,
-        "pytest_settings_left": []
-      },
-      "planted_control": {
-        "arm_1": {
-          "without_change": "passed",
-          "with_change": "failed",
-          "verdict": "tests the patch"
-        }
-      },
-      "g6_arms_control": {
-        "g6": {
-          "without_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 3.2,
-              "stderr_tail": []
-            },
-            "category": "accept",
-            "accepted": true,
-            "outcome": "supported_within_scope",
-            "reason_codes": [],
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": ""
-          },
-          "with_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 1.6,
-              "stderr_tail": []
-            },
-            "category": "defect_found",
-            "accepted": false,
-            "outcome": "defect_detected",
-            "reason_codes": [
-              "tier_1:check_failed"
-            ],
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": "tier_1:check_failed"
-          }
-        },
-        "direct_checks": {
-          "without_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 1.5,
-              "stderr_tail": []
-            },
-            "category": "accept",
-            "accepted": true,
-            "outcome": null,
-            "reason_codes": null,
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": ""
-          },
-          "with_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 1.5,
-              "stderr_tail": []
-            },
-            "category": "defect_found",
-            "accepted": false,
-            "outcome": null,
-            "reason_codes": null,
-            "guard_fired": false,
-            "failing_checks": [
-              "stated_checks"
-            ],
-            "detail": "stated_checks: failed: openlibrary/utils/tests/test_utils.py::test_str_to_key"
-          }
-        }
-      }
-    },
-    {
-      "task": "instance_internetarchive__openlibrary-a48fd6ba9482",
-      "repository": "internetarchive/openlibrary",
-      "image_id": "sha256:ea3f234bcfb4985a702b0af849310737f92a525a37e17d33be84c937141e9988",
-      "base": "5e9872c8e19487fbeac11873549275184ce9b817",
-      "python": "/usr/local/bin/python",
-      "folder": "openlibrary/utils/tests",
-      "env": {
-        "OL_CONFIG": "/app/conf/openlibrary.yml"
-      },
-      "import_roots": [],
-      "control": {
-        "file": "openlibrary/utils/__init__.py",
-        "old": "for c in s.lower() if c not in to_drop)",
-        "new": "for c in s if c not in to_drop)",
-        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
-      },
-      "g6": {
-        "container": {
-          "exit_code": 0,
-          "seconds": 0.4,
-          "stderr_tail": []
-        },
-        "repo_python": "/usr/local/bin/python",
-        "repository_check": {
-          "result": "refused",
-          "code": "G6_E_GIT_SUBMODULE_REFUSED",
-          "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
-        }
-      },
-      "arm_1": {
-        "container": {
-          "exit_code": 0,
-          "seconds": 1.1,
-          "stderr_tail": []
-        },
-        "pytest_exit": 0,
-        "collection_errors": 0,
-        "control_test": "passed",
-        "passed": 157,
-        "failed": 0,
-        "skipped": 0,
-        "pytest_settings_left": []
-      },
-      "planted_control": {
-        "arm_1": {
-          "without_change": "passed",
-          "with_change": "failed",
-          "verdict": "tests the patch"
-        }
-      },
-      "g6_arms_control": {
-        "g6": {
-          "without_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 2.9,
-              "stderr_tail": []
-            },
-            "category": "accept",
-            "accepted": true,
-            "outcome": "supported_within_scope",
-            "reason_codes": [],
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": ""
-          },
-          "with_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 1.5,
-              "stderr_tail": []
-            },
-            "category": "defect_found",
-            "accepted": false,
-            "outcome": "defect_detected",
-            "reason_codes": [
-              "tier_1:check_failed"
-            ],
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": "tier_1:check_failed"
-          }
-        },
-        "direct_checks": {
-          "without_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 1.4,
-              "stderr_tail": []
-            },
-            "category": "accept",
-            "accepted": true,
-            "outcome": null,
-            "reason_codes": null,
-            "guard_fired": false,
-            "failing_checks": [],
-            "detail": ""
-          },
-          "with_break": {
-            "container": {
-              "exit_code": 0,
-              "seconds": 1.5,
-              "stderr_tail": []
-            },
-            "category": "defect_found",
-            "accepted": false,
-            "outcome": null,
-            "reason_codes": null,
-            "guard_fired": false,
-            "failing_checks": [
-              "stated_checks"
-            ],
-            "detail": "stated_checks: failed: openlibrary/utils/tests/test_utils.py::test_str_to_key"
-          }
-        }
-      }
-    },
-    {
-      "task": "instance_internetarchive__openlibrary-e010b2a13697",
-      "repository": "internetarchive/openlibrary",
-      "image_id": "sha256:f24841bd9524674578a9cdab896994d8d32241831a1744414fac40c972c80855",
-      "base": "b70f9abab445676042e5c300dcf5dd8eac4afd18",
-      "python": "/usr/local/bin/python",
-      "folder": "openlibrary/utils/tests",
-      "env": {
-        "OL_CONFIG": "/app/conf/openlibrary.yml"
-      },
-      "import_roots": [],
-      "control": {
-        "file": "openlibrary/utils/__init__.py",
-        "old": "for c in s.lower() if c not in to_drop)",
-        "new": "for c in s if c not in to_drop)",
-        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
-      },
-      "g6": {
-        "container": {
-          "exit_code": 0,
-          "seconds": 0.7,
           "stderr_tail": []
         },
         "repo_python": "/usr/local/bin/python",
@@ -962,7 +546,7 @@
           "without_break": {
             "container": {
               "exit_code": 0,
-              "seconds": 1.8,
+              "seconds": 1.9,
               "stderr_tail": []
             },
             "category": "accept",
@@ -990,7 +574,495 @@
             "detail": "stated_checks: failed: openlibrary/utils/tests/test_utils.py::test_str_to_key"
           }
         }
-      }
+      },
+      "g6_arms_commit": "8b5364caff200a1a5084b1030b2fc1bb3322b170"
+    },
+    {
+      "task": "instance_internetarchive__openlibrary-6e889f4a733c",
+      "repository": "internetarchive/openlibrary",
+      "image_id": "sha256:208c9774dee362861c7b62519f14a87e5a8a97ab2c95a6711fc9d3a439283edb",
+      "base": "9a9204b43f9ab94601e8664340eb1dd0fca33517",
+      "python": "/usr/local/bin/python",
+      "folder": "openlibrary/utils/tests",
+      "env": {
+        "OL_CONFIG": "/app/conf/openlibrary.yml"
+      },
+      "import_roots": [],
+      "control": {
+        "file": "openlibrary/utils/__init__.py",
+        "old": "for c in s.lower() if c not in to_drop)",
+        "new": "for c in s if c not in to_drop)",
+        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
+      },
+      "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.5,
+          "stderr_tail": []
+        },
+        "repo_python": "/usr/local/bin/python",
+        "repository_check": {
+          "result": "refused",
+          "code": "G6_E_GIT_SUBMODULE_REFUSED",
+          "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
+        }
+      },
+      "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.2,
+          "stderr_tail": []
+        },
+        "pytest_exit": 0,
+        "collection_errors": 0,
+        "control_test": "passed",
+        "passed": 169,
+        "failed": 0,
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        }
+      },
+      "g6_arms_control": {
+        "g6": {
+          "without_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 2.6,
+              "stderr_tail": []
+            },
+            "category": "accept",
+            "accepted": true,
+            "outcome": "supported_within_scope",
+            "reason_codes": [],
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": ""
+          },
+          "with_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.7,
+              "stderr_tail": []
+            },
+            "category": "defect_found",
+            "accepted": false,
+            "outcome": "defect_detected",
+            "reason_codes": [
+              "tier_1:check_failed"
+            ],
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": "tier_1:check_failed"
+          }
+        },
+        "direct_checks": {
+          "without_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.5,
+              "stderr_tail": []
+            },
+            "category": "accept",
+            "accepted": true,
+            "outcome": null,
+            "reason_codes": null,
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": ""
+          },
+          "with_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.7,
+              "stderr_tail": []
+            },
+            "category": "defect_found",
+            "accepted": false,
+            "outcome": null,
+            "reason_codes": null,
+            "guard_fired": false,
+            "failing_checks": [
+              "stated_checks"
+            ],
+            "detail": "stated_checks: failed: openlibrary/utils/tests/test_utils.py::test_str_to_key"
+          }
+        }
+      },
+      "g6_arms_commit": "8b5364caff200a1a5084b1030b2fc1bb3322b170"
+    },
+    {
+      "task": "instance_internetarchive__openlibrary-a48fd6ba9482",
+      "repository": "internetarchive/openlibrary",
+      "image_id": "sha256:ea3f234bcfb4985a702b0af849310737f92a525a37e17d33be84c937141e9988",
+      "base": "5e9872c8e19487fbeac11873549275184ce9b817",
+      "python": "/usr/local/bin/python",
+      "folder": "openlibrary/utils/tests",
+      "env": {
+        "OL_CONFIG": "/app/conf/openlibrary.yml"
+      },
+      "import_roots": [],
+      "control": {
+        "file": "openlibrary/utils/__init__.py",
+        "old": "for c in s.lower() if c not in to_drop)",
+        "new": "for c in s if c not in to_drop)",
+        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
+      },
+      "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.4,
+          "stderr_tail": []
+        },
+        "repo_python": "/usr/local/bin/python",
+        "repository_check": {
+          "result": "refused",
+          "code": "G6_E_GIT_SUBMODULE_REFUSED",
+          "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
+        }
+      },
+      "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.1,
+          "stderr_tail": []
+        },
+        "pytest_exit": 0,
+        "collection_errors": 0,
+        "control_test": "passed",
+        "passed": 157,
+        "failed": 0,
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        }
+      },
+      "g6_arms_control": {
+        "g6": {
+          "without_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 2.6,
+              "stderr_tail": []
+            },
+            "category": "accept",
+            "accepted": true,
+            "outcome": "supported_within_scope",
+            "reason_codes": [],
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": ""
+          },
+          "with_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.5,
+              "stderr_tail": []
+            },
+            "category": "defect_found",
+            "accepted": false,
+            "outcome": "defect_detected",
+            "reason_codes": [
+              "tier_1:check_failed"
+            ],
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": "tier_1:check_failed"
+          }
+        },
+        "direct_checks": {
+          "without_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.5,
+              "stderr_tail": []
+            },
+            "category": "accept",
+            "accepted": true,
+            "outcome": null,
+            "reason_codes": null,
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": ""
+          },
+          "with_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.4,
+              "stderr_tail": []
+            },
+            "category": "defect_found",
+            "accepted": false,
+            "outcome": null,
+            "reason_codes": null,
+            "guard_fired": false,
+            "failing_checks": [
+              "stated_checks"
+            ],
+            "detail": "stated_checks: failed: openlibrary/utils/tests/test_utils.py::test_str_to_key"
+          }
+        }
+      },
+      "g6_arms_commit": "8b5364caff200a1a5084b1030b2fc1bb3322b170"
+    },
+    {
+      "task": "instance_internetarchive__openlibrary-e010b2a13697",
+      "repository": "internetarchive/openlibrary",
+      "image_id": "sha256:f24841bd9524674578a9cdab896994d8d32241831a1744414fac40c972c80855",
+      "base": "b70f9abab445676042e5c300dcf5dd8eac4afd18",
+      "python": "/usr/local/bin/python",
+      "folder": "openlibrary/utils/tests",
+      "env": {
+        "OL_CONFIG": "/app/conf/openlibrary.yml"
+      },
+      "import_roots": [],
+      "control": {
+        "file": "openlibrary/utils/__init__.py",
+        "old": "for c in s.lower() if c not in to_drop)",
+        "new": "for c in s if c not in to_drop)",
+        "test": "openlibrary/utils/tests/test_utils.py::test_str_to_key"
+      },
+      "g6": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 0.7,
+          "stderr_tail": []
+        },
+        "repo_python": "/usr/local/bin/python",
+        "repository_check": {
+          "result": "refused",
+          "code": "G6_E_GIT_SUBMODULE_REFUSED",
+          "reason": "the repository holds a submodule, or a nested repository added as one (vendor/infogami, vendor/js/wmd): git would run inside it under that repository's own config, which G6 cannot switch off, so git is not run there"
+        }
+      },
+      "arm_1": {
+        "container": {
+          "exit_code": 0,
+          "seconds": 1.6,
+          "stderr_tail": []
+        },
+        "pytest_exit": 0,
+        "collection_errors": 0,
+        "control_test": "passed",
+        "passed": 178,
+        "failed": 0,
+        "skipped": 0,
+        "pytest_settings_left": []
+      },
+      "planted_control": {
+        "arm_1": {
+          "without_change": "passed",
+          "with_change": "failed",
+          "verdict": "tests the patch"
+        }
+      },
+      "g6_arms_control": {
+        "g6": {
+          "without_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 3.2,
+              "stderr_tail": []
+            },
+            "category": "accept",
+            "accepted": true,
+            "outcome": "supported_within_scope",
+            "reason_codes": [],
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": ""
+          },
+          "with_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.9,
+              "stderr_tail": []
+            },
+            "category": "defect_found",
+            "accepted": false,
+            "outcome": "defect_detected",
+            "reason_codes": [
+              "tier_1:check_failed"
+            ],
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": "tier_1:check_failed"
+          }
+        },
+        "direct_checks": {
+          "without_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.7,
+              "stderr_tail": []
+            },
+            "category": "accept",
+            "accepted": true,
+            "outcome": null,
+            "reason_codes": null,
+            "guard_fired": false,
+            "failing_checks": [],
+            "detail": ""
+          },
+          "with_break": {
+            "container": {
+              "exit_code": 0,
+              "seconds": 1.8,
+              "stderr_tail": []
+            },
+            "category": "defect_found",
+            "accepted": false,
+            "outcome": null,
+            "reason_codes": null,
+            "guard_fired": false,
+            "failing_checks": [
+              "stated_checks"
+            ],
+            "detail": "stated_checks: failed: openlibrary/utils/tests/test_utils.py::test_str_to_key"
+          }
+        }
+      },
+      "g6_arms_commit": "8b5364caff200a1a5084b1030b2fc1bb3322b170"
+    }
+  ],
+  "g6_arms_toolchains": [
+    {
+      "study": "V9",
+      "commit": "a2161c775abddc5ca8c64503b1e1a5ff56c0f68c",
+      "volume": "g6-v9-toolchain-dev-a2161c7",
+      "manifest_sha256": "d4bc2306192518f8f8f88444966646c3fc9886014c7da0b08b645cb1d863dc0d",
+      "sources": [
+        {
+          "file": "cpython-3.12.15+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+          "sha256": "5ff9f0602ce964a529ed1e8555d3abab6341926d724402ba9a15e9e877191124"
+        },
+        {
+          "file": "git-2.56.0.tar.xz",
+          "sha256": "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3"
+        },
+        {
+          "file": "bubblewrap-0.13.1.tar.xz",
+          "sha256": "0e85c8702248b8dd64144f594147553650cdd0e4c951690345faace79c217c4d"
+        },
+        {
+          "file": "pydantic-2.14.1-py3-none-any.whl",
+          "sha256": "9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454"
+        },
+        {
+          "file": "pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "sha256": "93ba4e9d8210d941c200431a56b2c0400b131865947903937ed3ec5404307d2e"
+        },
+        {
+          "file": "typing_extensions-4.16.0-py3-none-any.whl",
+          "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+        },
+        {
+          "file": "annotated_types-0.8.0-py3-none-any.whl",
+          "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+        },
+        {
+          "file": "typing_inspection-0.4.4-py3-none-any.whl",
+          "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+        },
+        {
+          "file": "returns-0.30.0-py3-none-any.whl",
+          "sha256": "bc1ab0ec51391a36545acbff43f3abb916d3d3625ec17f93605e15ee60efa687"
+        }
+      ],
+      "scripts_sha256": {
+        "build_static.sh": "54497e3d736795d0c149749d16932580c333b48bba0c28d2b1c271409b9e51d0",
+        "install_python.sh": "854e174121b472d3ef5058b84c0078edae355dd48d31f3c5d32047dcd4bb1f9a",
+        "toolchain.py": "93fdf686248c3a645122cfa17becb0f0b8ffaae7d9095e5ea23a6573aeaccb84"
+      },
+      "builders": {
+        "static": "alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+        "glibc": "python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db"
+      },
+      "g6_wheel": {
+        "file": "g6-0.1.1-py3-none-any.whl",
+        "sha256": "4ea76a986829b117f7f904e01751e830e32c5d572f2d0f6d118340ec2bdb8c1c"
+      },
+      "versions": {
+        "git": "git version 2.56.0",
+        "bubblewrap": "bubblewrap 0.13.1",
+        "python": "3.12.15",
+        "g6": "0.1.1"
+      },
+      "tree_sha256": "f191b7da140cd2d24dd57b46091bfd0f3718408bdfd9cf49f04d28f2afd36067"
+    },
+    {
+      "study": "V9",
+      "commit": "8b5364caff200a1a5084b1030b2fc1bb3322b170",
+      "volume": "g6-v9-toolchain-dev-8b5364c",
+      "manifest_sha256": "d4bc2306192518f8f8f88444966646c3fc9886014c7da0b08b645cb1d863dc0d",
+      "sources": [
+        {
+          "file": "cpython-3.12.15+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+          "sha256": "5ff9f0602ce964a529ed1e8555d3abab6341926d724402ba9a15e9e877191124"
+        },
+        {
+          "file": "git-2.56.0.tar.xz",
+          "sha256": "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3"
+        },
+        {
+          "file": "bubblewrap-0.13.1.tar.xz",
+          "sha256": "0e85c8702248b8dd64144f594147553650cdd0e4c951690345faace79c217c4d"
+        },
+        {
+          "file": "pydantic-2.14.1-py3-none-any.whl",
+          "sha256": "9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454"
+        },
+        {
+          "file": "pydantic_core-2.50.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+          "sha256": "93ba4e9d8210d941c200431a56b2c0400b131865947903937ed3ec5404307d2e"
+        },
+        {
+          "file": "typing_extensions-4.16.0-py3-none-any.whl",
+          "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+        },
+        {
+          "file": "annotated_types-0.8.0-py3-none-any.whl",
+          "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+        },
+        {
+          "file": "typing_inspection-0.4.4-py3-none-any.whl",
+          "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+        },
+        {
+          "file": "returns-0.30.0-py3-none-any.whl",
+          "sha256": "bc1ab0ec51391a36545acbff43f3abb916d3d3625ec17f93605e15ee60efa687"
+        }
+      ],
+      "scripts_sha256": {
+        "build_static.sh": "54497e3d736795d0c149749d16932580c333b48bba0c28d2b1c271409b9e51d0",
+        "install_python.sh": "854e174121b472d3ef5058b84c0078edae355dd48d31f3c5d32047dcd4bb1f9a",
+        "toolchain.py": "93fdf686248c3a645122cfa17becb0f0b8ffaae7d9095e5ea23a6573aeaccb84"
+      },
+      "builders": {
+        "static": "alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+        "glibc": "python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db"
+      },
+      "g6_wheel": {
+        "file": "g6-0.1.1-py3-none-any.whl",
+        "sha256": "66cfc537ee49e362c76a966eb52667d5ada99dd288a95b9d74f7315c98c590b4"
+      },
+      "versions": {
+        "git": "git version 2.56.0",
+        "bubblewrap": "bubblewrap 0.13.1",
+        "python": "3.12.15",
+        "g6": "0.1.1"
+      },
+      "tree_sha256": "6fc1f97c52461bb3d85b1973bc48873f8f6b7372c38406180099b3e21f4d880a"
     }
   ]
 }
