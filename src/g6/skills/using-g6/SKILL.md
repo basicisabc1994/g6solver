@@ -32,9 +32,11 @@ Evidence kinds must match; similar field names do not establish equivalent meani
 reviewed Python adapters. A contract-checked report establishes structural checks, not application correctness.
 Plain `>>` does not check contracts. Read the assurance gaps and preserve all upstream limitations.
 
-For Python patches, `g6_review_patch` runs selected tests and composes grounding, coding review and action gating.
-It requires host permission `patch_review.review`. It reports artifact digests, test outcomes and unresolved issues;
-it never merges code. Source text remains caller-supplied and its freshness is not established.
+For Python patches, `g6_review_patch` takes the task and requirements, each with the pytest ids that check it, and
+runs them confined. It requires host permission `patch_review.review`. Its outcome is one of: test integrity
+compromised, defect detected, insufficient evidence, or supported within scope (every stated requirement passed its
+stated checks; never proof the patch is complete). Relay each requirement's evidence, the requirements with no
+adequate check, and the note that the specification may be incomplete. Merging always needs separate approval.
 
 ## Fit
 

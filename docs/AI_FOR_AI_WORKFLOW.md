@@ -79,15 +79,30 @@ Never supply invented observations to satisfy it.
 ## Reference application: review a Python patch
 
 Register permission with `g6 setup --client codex --allow patch_review.review`. Call `g6_review_patch`
-with the repository root, task, claim, source texts, selected test IDs, and a base ref (default `HEAD`).
-Poll its job. The operation runs tests through workforce confinement, checks changed test integrity,
-and connects grounding, an explicit adapter, coding-agent gate, an action adapter and action gating.
+with the repository root, the task, `requirements` (a list of `{id, text, checks}`, where `checks` are
+pytest node IDs and may be empty), optional extra `tests`, and a base ref (default `HEAD`). A `claim` and
+`sources` are optional: their lexical support is reported and decides nothing. Poll its job.
 
-The report separates host-observed test receipts from caller-supplied source text. It binds the current
-working-tree digest, base commit, test selection and execution environment. Passing tests cannot prove
-the complete patch correct; source support cannot establish freshness. A stale supplied artifact digest,
-weakened tests, changed runner files, failed tests or unconfined execution blocks recommendation.
-Passing selected tests is a scoped observation, not an acceptance decision. The current reference supplies no merge authority or action profile, so the action gate can keep the overall result `blocked` even when tests pass. Inspect `tests`, `executed_checks`, and `composition` for the separate findings; the application never merges code.
+The checks adapt to cost. Tier 1 always runs: the working-tree digest, test integrity (a moved test file
+is compared with its old text; any changed test-runner file counts), and the stated checks with the extra
+tests in one confined run. Tier 2, the other tests that touch the changed modules, runs only when tier 1
+found no integrity problem and no defect; one that fails on the patch is replayed at the base commit, and
+counts as a defect only if it passed there. Tier 3 (mutation, old-against-new probes) is not run yet.
+
+`assessment.outcome` is exactly one of, in this order: `test_integrity_compromised`, `defect_detected`,
+`insufficient_evidence`, `supported_within_scope`. All four are `qualified-draft`. Supported within scope
+means every stated requirement passed its stated checks with integrity intact; it does not show the patch
+does everything the task needs. Each requirement reads `passed_on_stated_checks`, `failed` or
+`not_established` (with a reason and a suggested test in words). The assessment keeps three parts apart:
+the requirements with their evidence, `requirements_without_adequate_check`, and `specification_note`,
+which says the task's specification may be incomplete. Its `scope` records the digest, base commit,
+changed files, environment, each check run (tier, command, verdict, seconds), the checks skipped and why,
+and the total time; `unknowns` and `next_actions` follow.
+
+A stale supplied artifact digest, invalid input, a git error, or a run no operating-system boundary
+confined is a refusal: `blocked-escalated`, with no outcome. Merging is separate: `merge.status` is always
+`requires_separate_approval`, coding-gate findings other than shortcuts are listed as merge reasons, and
+the application never merges code.
 
 ## Boundary and validation status
 
