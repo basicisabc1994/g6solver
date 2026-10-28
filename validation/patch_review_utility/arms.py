@@ -54,6 +54,12 @@ order and with the same deadline, and accepted only when every check passes (``D
 Not mirrored: G6's run of the passing stated checks against the base commit's code (lines 579 and 631-664; review I8).
 It can only add an unknown and a next action, never change G6's outcome, so it cannot change arm 3's acceptance.
 
+**With the pool-compatibility change** (claude/pool-compat, a2161c7; feature-detected, so the same script runs at
+b3c342b): the repository's import roots go first on the import path of every run (``import_roots``), and G6's guard
+is mirrored: a tier 1 or tier 2 run that loaded a changed module from outside the tree, or cannot say what it loaded
+(``repo_tests.shadowed``, applied where ``patch_review.py`` applies it at a2161c7, lines 569-584, 624 and 656), is no
+evidence of the patch, so its check does not pass and the base replay is not run.
+
 What arm 4 leaves out is G6's assessment logic: the outcome order, requirement statuses (a requirement with no check,
 or a stated check that did not run, is G6's insufficient evidence; arm 4 has no rule for it), the unknowns (a test that
 fails at the base too, a check that did not run to a result), and the receipts.
@@ -104,6 +110,8 @@ KILLED = "killed_at_time_limit"
 #: a tier 1 run out of time (line 543), and a check's or run's verdict ``timed_out`` (lines 89 and 307). A check
 #: never reached reads ``not_run`` (line 319), which other causes share, so it is read only through the reason code.
 RUN_TIMED_OUT, TIMED_OUT = "run_timed_out", "timed_out"
+#: How the direct checks say a run is no evidence of the patch: G6's guard (``changed_code_not_loaded``).
+NOT_LOADED = "changed code not loaded"
 MODEL_CALLS_NOT_REPORTED = ("not reported in G6's reply; its review at this commit makes no model call when no claim "
                             "and no sources are given, so counted as 0")
 
@@ -297,6 +305,20 @@ def _passes(ran: dict, ids: list[str]) -> tuple[bool, str, str]:
     return True, "", f"{len(ids)} passed"
 
 
+def _not_loaded(change, ran: dict) -> str:
+    """Why a run that ran is no evidence of the patch, as G6's guard reads it (``repo_tests.shadowed``: a changed
+    module loaded from outside the tree, an installed copy, or a run that cannot say what it loaded); "" when it is
+    evidence, or when this G6 has no such check (before the pool-compatibility change)."""
+    shadowed = getattr(repo_tests, "shadowed", None)
+    if shadowed is None or ran.get("verdict") not in repo_tests.RAN:
+        return ""
+    found = shadowed(change.sources, ran)
+    if found is None:
+        return f"{NOT_LOADED}: the run cannot say which code it loaded"
+    return "; ".join(f"{NOT_LOADED}: {rel} is changed, but the run loaded {where['module']} from {where['file']}"
+                     for rel, where in found.items())
+
+
 def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline: float, run, run_before,
             add, done: list[dict], trace: dict, rooted: dict) -> None:
     """The nine checks in order (the module docstring gives each one's line in G6's review), each recorded with
@@ -329,7 +351,9 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
     ids = list(dict.fromkeys(repo_tests.inside(root, c, "test") for c in checks)) if requirements else []
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]          # lines 531-551
     if present:
-        passed, category, detail = _passes(execute(present), present)
+        first = execute(present)
+        elsewhere = _not_loaded(change, first)
+        passed, category, detail = (False, ABSTAIN, elsewhere) if elsewhere else _passes(first, present)
         missing = [i for i in ids if i not in present]
         if passed and missing:
             passed, category, detail = False, ABSTAIN, "not on the tree: " + ", ".join(missing)
@@ -347,8 +371,10 @@ def _checks(root: Path, requirements: list[dict], checks: list[str], *, deadline
             add("tests_touching_changed_modules", True, "no other test file names a changed module")
         else:
             second = execute(derived)
-            passed, category, detail = _passes(second, derived)
-            if second.get("verdict") in (repo_tests.FAILED, "collection_error") and deadline - time.monotonic() >= 1:
+            elsewhere = _not_loaded(change, second)
+            passed, category, detail = (False, ABSTAIN, elsewhere) if elsewhere else _passes(second, derived)
+            if (not elsewhere and second.get("verdict") in (repo_tests.FAILED, "collection_error")
+                    and deadline - time.monotonic() >= 1):
                 full = patch_review._in_repository(second)                        # lines 667-704
                 failing = sorted({full(rel) for rel in {n.partition("::")[0] for n in [
                     *(second.get("failed_ids") or []), *(second.get("setup_errors") or {})]}

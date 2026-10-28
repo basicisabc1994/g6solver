@@ -239,6 +239,24 @@ def test_the_direct_checks_run_with_the_same_import_roots(repo):
     assert got["disposition"]["accepted"] is True and seen == [("lib",), ("lib",)]
 
 
+@pytest.mark.parametrize("found", [{"calc.py": {"module": "calc", "file": "/usr/lib/python3/dist-packages/calc.py"}},
+                                   None])
+def test_the_direct_checks_do_not_accept_a_run_that_loaded_the_changed_code_from_elsewhere(repo, monkeypatch, found):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    monkeypatch.setattr(repo_tests, "shadowed", lambda sources, ran: found, raising=False)
+    got = direct(repo, checks, Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}))
+    assert got["disposition"]["accepted"] is False and got["disposition"]["category"] == "insufficient_evidence"
+    stated = next(c for c in got["checks"] if c["name"] == "stated_checks")
+    assert stated["passed"] is False and arms.NOT_LOADED in stated["detail"]
+
+
+def test_without_g6s_loaded_code_check_the_direct_checks_run_as_before(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
+    monkeypatch.delattr(repo_tests, "shadowed", raising=False)
+    got = direct(repo, checks, Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}))
+    assert got["disposition"]["accepted"] is True
+
+
 def test_g6s_model_calls_come_from_its_reply_when_it_reports_them(repo, monkeypatch):
     checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
     Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}).into(monkeypatch)

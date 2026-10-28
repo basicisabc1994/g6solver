@@ -59,6 +59,24 @@ def test_a_control_that_does_not_fail_means_the_arm_is_not_testing_the_patch(wit
     assert dev_check.control_verdict(without, with_change) == verdict
 
 
+def test_g6s_arms_get_a_job_that_states_the_control_test_as_the_check_with_the_import_roots():
+    (ansible,) = [c for c in dev_check.CHECKS if c["repository"] == "ansible/ansible"]
+    job = dev_check.arm_job("g6", ansible, roots=True)
+    assert job["arm"] == "g6" and job["tree"] == containers.REPOSITORY and job["roots"] == [containers.STUDY_MOUNT]
+    assert job["checks"] == [ansible["control"]["test"]] and job["import_roots"] == ["lib"]
+    assert dev_check.arm_job("direct_checks", ansible, roots=False)["import_roots"] == []
+    benign = dev_check.benign(ansible["control"])
+    assert benign["old"] == ansible["control"]["old"] and benign["new"].startswith(benign["old"])
+    assert "#" in benign["new"].removeprefix(benign["old"])
+
+
+def test_the_guard_is_read_from_g6s_reason_codes_and_from_the_direct_checks_details():
+    assert dev_check.guard_fired({"row": {"reason_codes": ["evidence:changed_code_not_loaded"]}}) is True
+    assert dev_check.guard_fired({"checks": [{"name": "stated_checks", "passed": False,
+                                              "detail": "changed code not loaded: calc.py"}]}) is True
+    assert dev_check.guard_fired({"row": {"reason_codes": ["tier_1:check_failed"]}, "checks": []}) is False
+
+
 def test_the_check_reads_what_is_left_of_the_images_pytest_settings_after_the_apply_script():
     command = dev_check.settings_left_command("img", python="/usr/bin/python", env={"QT_QPA_PLATFORM": "offscreen"})
     assert command[-3:] == ["sh", "/v9/apply.sh", "env"] and "QT_QPA_PLATFORM=offscreen" in command

@@ -92,10 +92,11 @@ def stage(tree: str | Path, folder: str | Path) -> str:
     return base
 
 
-#: Names a repository's test environment may not set, as G6's ``G6_REPO_ENV`` refuses them: runner and interpreter
-#: settings, the library loader's, the search path, the home folder, and G6's own.
-REFUSED_PREFIXES = ("PYTEST_", "PYTHON", "LD_", "G6_")
-REFUSED_NAMES = frozenset({"PATH", "HOME"})
+#: Names a repository's test environment may not set, as G6's ``G6_REPO_ENV`` refuses them (``repo_tests._RUNNER_NAMES``
+#: at the pool-compatibility commit a2161c7, compared without regard to case): runner, coverage and interpreter
+#: settings, the library loaders', the search path, the home and temporary folders, and G6's own.
+REFUSED_PREFIXES = ("PYTEST_", "PYTHON", "LD_", "DYLD_", "COV_CORE_", "G6_")
+REFUSED_NAMES = frozenset({"PATH", "HOME", "USERPROFILE", "TMP", "TEMP", "TMPDIR"})
 _DIGEST = re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}")
 
 
@@ -128,7 +129,8 @@ def pinned(image: str) -> bool:
 
 def repo_env_flag(env: dict[str, str]) -> str:
     """G6's setting for the repository's test environment, which G6 applies inside its confined runs: one JSON
-    object, names in order. (The encoding is this study's; it is re-synced when G6's ``G6_REPO_ENV`` lands.)"""
+    object of names to text, names in order, as ``repo_tests._repo_env`` reads it at the pool-compatibility commit
+    a2161c7."""
     return "G6_REPO_ENV=" + json.dumps(dict(sorted(env.items())), separators=(",", ":"))
 
 

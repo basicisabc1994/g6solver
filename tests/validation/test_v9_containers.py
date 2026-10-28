@@ -132,7 +132,8 @@ def test_the_import_roots_put_the_patched_code_first_for_arm_1_and_the_labels():
 
 
 @pytest.mark.parametrize("name", ["PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH", "LD_PRELOAD", "PATH", "HOME",
-                                  "G6_ALLOW_UNCONFINED"])
+                                  "G6_ALLOW_UNCONFINED", "DYLD_LIBRARY_PATH", "COV_CORE_SOURCE", "USERPROFILE", "TMP",
+                                  "TEMP", "TMPDIR", "pythonpath"])
 def test_a_test_environment_that_names_a_runner_or_interpreter_setting_is_refused(name):
     assert containers.test_env_problems({name: "x"}) and not containers.test_env_problems({"QT_QPA_PLATFORM": "x"})
 

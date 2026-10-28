@@ -97,7 +97,10 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     runs whose result can change G6's outcome, and accepts only when each passes; `arms.py` lists them with their
     lines in G6's review. G6's run of the passing stated checks against the base commit's code is left out: it can
     only add an unknown and a next action, never change G6's outcome, so it cannot change arm 3's acceptance. Ruled
-    by the coordinator.
+    by the coordinator. Where the G6 under test reads which code a run loaded (the pool-compatibility change), arm 4
+    reads it the same way: a run of the stated checks, or of the tests that touch the changed modules, that loaded a
+    changed module from outside the tree, or cannot say what it loaded, is no evidence of the patch, and that check
+    does not pass. At b3c342b, which has no such reading, arm 4 runs as before.
 
 17. **Where each arm runs.** At a study level, every arm runs in a fresh container of the task's own benchmark image,
     removed when it ends; the image is never changed and never fetched during a study. Inside the container the
@@ -114,8 +117,9 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
 18. **One test environment per repository, and the image's pytest settings cleared.** Each repository's test
     environment is declared once in the manifest (qutebrowser's choice of Qt binding, for example) and is the same
     for arm 1, the labels and G6's arms: set in the container where the study runs the tests itself, and passed to G6
-    through `G6_REPO_ENV`, which G6 applies inside its confined runs. It may not name a pytest, Python or library
-    loader setting, `PATH`, `HOME` or a G6 setting, the names G6 refuses. Every container also clears the image's own
+    through `G6_REPO_ENV` (one JSON object of names to text), which G6 applies inside its confined runs. It may not
+    name a pytest, Python, coverage or library loader setting, `PATH`, the home or temporary folders, or a G6
+    setting: the names G6 refuses. Every container also clears the image's own
     `PYTEST_ADDOPTS` and any other `PYTEST_*` variable the image sets, before anything runs. This departs from the
     images: qutebrowser's sets `PYTEST_ADDOPTS` to rerun failing tests three times and to go on past collection
     errors. The reason: G6 refuses runner settings from the environment, so leaving them for arm 1 and the labels
@@ -139,8 +143,15 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
       Dockerfile). Test environment `QUTE_QT_WRAPPER=PyQt6`, `QT_QPA_PLATFORM=offscreen` and
       `QTWEBENGINE_CHROMIUM_FLAGS=--no-sandbox --disable-dev-shm-usage --disable-gpu` (`run_script.sh`). Its
       `PYTEST_QT_API=pyqt6` is a `PYTEST_*` name, refused and cleared (item 18); PyQt6 is the only binding the image
-      has, so pytest-qt chooses it anyway. Its `DISPLAY` and Xvfb display are not used: the offscreen platform needs
-      none.
+      has, so pytest-qt chooses it anyway. The study sets no `DISPLAY` and starts no Xvfb: the image's pytest-xvfb
+      plugin starts an Xvfb display for every run and sets `DISPLAY` (the repository's `tests/conftest.py` stops every
+      test when there is none), and Qt's offscreen platform connects to that display. When the plugin stops the
+      display at the end of the run, the X library ends the process with exit code 1 after pytest has finished with
+      0 (`XIO: fatal IO error`). Arm 1 and the labels read pytest's own exit status, from the study's outcome plugin,
+      so a run whose tests all passed reads as passing. No test environment setting removes the error without
+      changing a test's outcome: `QT_QPA_OFFSCREEN_NO_GLX=1` keeps Qt off the display, and so removes the error, but
+      fails one of the QtWebEngine backend tests; pytest-xvfb 2.0.0 reads no setting that turns it off (only its
+      `--no-xvfb` option). The test environment is therefore left as the run script sets it.
     - openlibrary: no import roots: the repository's folder is on the import path for every arm, which is what the
       `PYTHONPATH=/app` of two of its four V7 run scripts gives. Test environment
       `OL_CONFIG=/app/conf/openlibrary.yml` (two of its V7 run scripts and Dockerfiles; the file is in all four

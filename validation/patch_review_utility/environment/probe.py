@@ -7,16 +7,15 @@ the image's own interpreter. Only counts, verdicts and reasons are written, neve
 
 ``G6_REPO_PYTHON`` names the image's interpreter. Where the G6 under test does not read that setting yet, this probe
 supplies it to ``repo_tests.interpreter`` itself, and says so (``g6_reads_repo_python``); once G6 reads it, the probe
-leaves it alone. ``G6_REPO_ENV`` carries the repository's test environment; when G6 does not apply it to its test runs
-(``g6_passes_test_env``), the probe runs the folder once more with it applied, as a diagnostic it labels as
-simulated, and once G6 applies it, the probe runs nothing more.
+leaves it alone. ``G6_REPO_ENV`` carries the repository's test environment; when the G6 under test does not read it
+(``g6_applies_repo_env``: it has no ``repo_tests.REPO_ENV``), the probe runs the folder once more with it applied, as
+a diagnostic it labels as simulated, and once G6 reads it, the probe simulates nothing.
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
-from pathlib import Path
 
 
 def main(argv: list[str]) -> int:
@@ -43,7 +42,7 @@ def main(argv: list[str]) -> int:
                                  "ignored_loadable": len(scan.loadable), "ignored_other": len(scan.other),
                                  "scan_complete": scan.complete}
     wanted = found["repo_python"]
-    found["g6_reads_repo_python"] = repo_tests.interpreter(root) == wanted
+    found["g6_reads_repo_python"] = hasattr(repo_tests, "REPO_PYTHON") or repo_tests.interpreter(root) == wanted
     if wanted and not found["g6_reads_repo_python"]:
         repo_tests.interpreter = lambda repo: wanted   # until G6 reads the setting itself
     found["import_roots"] = list(roots)
@@ -56,9 +55,9 @@ def main(argv: list[str]) -> int:
     if control:
         found["control_test"] = _outcome(ran, control)
     extra = json.loads(os.environ.get("G6_REPO_ENV") or "{}")
-    passed_on = repo_tests.child_env(Path("/tmp"), network=False)
-    found["g6_passes_test_env"] = {name: passed_on.get(name) == value for name, value in extra.items()}
-    if extra and not all(found["g6_passes_test_env"].values()):
+    # A G6 that reads G6_REPO_ENV (repo_tests.REPO_ENV) sets the variables in the test process itself
+    found["g6_applies_repo_env"] = hasattr(repo_tests, "REPO_ENV")
+    if extra and not found["g6_applies_repo_env"]:
         # Diagnostic only: what the run gives when G6 applies G6_REPO_ENV, which the G6 under test does not yet.
         # Two layers drop the variables: the tests' environment (repo_tests.child_env) and the confined spawn's own
         # list (confine.child_environment).

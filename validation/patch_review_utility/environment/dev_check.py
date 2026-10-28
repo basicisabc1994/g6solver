@@ -11,7 +11,10 @@ evaluation pool). For each image it records:
 4. the planted-change control: a throwaway change (``plant.py``) breaking a function one chosen unit test
    exercises, applied as a patch would be. Arm 1's command must fail that test with the change and pass it without
    (``control_verdict``); for ansible also without its import roots, to show what they change. The same control runs
-   through G6's runner in the G6 container. A control that does not fail means the arm is not testing the patch.
+   through G6's runner in the G6 container. A control that does not fail means the arm is not testing the patch;
+5. with ``--g6-arms-volume`` (a toolchain built from a G6 commit that takes ``import_roots``), G6's arms themselves
+   (``child.py``: arm 3 through ``review_patch``, arm 4) on the control: the harmless change, the break, and for a
+   repository with import roots the break without them, where G6's guard (``changed_code_not_loaded``) must decide.
 
 Each repository's environment (``REPOSITORIES``) is the one its V7 tasks' own run procedure sets, from the benchmark's
 run scripts and Dockerfiles for these V7 tasks only (INTERPRETATIONS.md item 19). Only counts, verdicts, reasons and the
@@ -36,7 +39,7 @@ VALIDATION = HERE.parents[1]
 if str(VALIDATION) not in sys.path:
     sys.path.insert(0, str(VALIDATION))
 
-from patch_review_utility import containers, executor  # noqa: E402
+from patch_review_utility import arms, containers, executor  # noqa: E402
 from patch_review_utility.environment import toolchain  # noqa: E402
 
 PREFIX = "ghcr.io/scaleapi/swe-bench_pro-v2:"
@@ -206,7 +209,72 @@ def g6_probe(image: str, check: dict, base: str, *, volume: str, folder: str, ch
         return {"container": container, **(json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {})}
 
 
-def check_image(check: dict, image: str, *, volume: str, seconds: int = SECONDS) -> dict:
+CONTROL_REQUIREMENT = "The function the control test exercises keeps its behaviour."
+
+
+def benign(control: dict) -> dict:
+    """The control's change without its break: the same line with a comment added, so G6's arms see a change and
+    run the control test, which must pass."""
+    return {**control, "new": control["old"] + "  # planted control: no change in behaviour"}
+
+
+def arm_job(arm: str, check: dict, *, roots: bool = True) -> dict:
+    """The job ``child.py`` runs in G6's arms' container: the control test stated as the check of one requirement,
+    with the repository's import roots (none when ``roots`` is false)."""
+    return {"arm": arm, "tree": containers.REPOSITORY,
+            "requirements": [{"id": "R1", "text": CONTROL_REQUIREMENT, "source": "statement"}],
+            "checks": [check["control"]["test"]], "timeout_s": 600, "roots": [containers.STUDY_MOUNT],
+            "import_roots": list(check["import_roots"]) if roots else []}
+
+
+def guard_fired(reply: dict) -> bool:
+    """Whether G6's guard (``changed_code_not_loaded``) or the direct checks' mirror of it decided the reply."""
+    codes = (reply.get("row") or {}).get("reason_codes") or []
+    return (any(code.endswith(":changed_code_not_loaded") for code in codes)
+            or any(c.get("passed") is False and arms.NOT_LOADED in (c.get("detail") or "")
+                   for c in reply.get("checks") or []))
+
+
+def g6_arm(image: str, check: dict, base: str, *, volume: str, arm: str, change: str, roots: bool = True,
+           seconds: int = SECONDS) -> dict:
+    """One of G6's arms (``child.py`` in ``containers.g6_command``) on the image's ``/app`` with ``change`` applied."""
+    with tempfile.TemporaryDirectory(prefix="v9-dev-arm-") as job:
+        _work(Path(job), plugin=False, change=change)
+        (Path(job) / "job.json").write_text(json.dumps(arm_job(arm, check, roots=roots)), encoding="utf-8")
+        name = _name()
+        command = containers.g6_command(image, toolchain=volume, study=VALIDATION, repo_python=check["python"],
+                                        env=check["env"])
+        container = _run(_fill(command, {"{container}": name, "{job}": job, "{base}": base}, []), name, seconds + 120)
+        path = Path(job) / "reply.json"
+        reply = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    disposition = reply.get("disposition") or {}
+    return {"container": container, "category": disposition.get("category"), "accepted": disposition.get("accepted"),
+            "outcome": (reply.get("row") or {}).get("g6_outcome"),
+            "reason_codes": (reply.get("row") or {}).get("reason_codes"), "guard_fired": guard_fired(reply),
+            "failing_checks": [c["name"] for c in reply.get("checks") or [] if c.get("passed") is False],
+            "detail": (disposition.get("detail") or "")[:300]}
+
+
+def g6_arms_control(image: str, check: dict, base: str, *, volume: str, seconds: int = SECONDS) -> dict:
+    """G6's arms on the planted control: with the harmless change (the test must pass) and with the break (it must
+    fail); for a repository with import roots, the break once more without them (G6's guard must decide)."""
+    try:
+        quiet, broken = planted(image, {**check, "control": benign(check["control"])}), planted(image, check)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    found = {}
+    for arm in ("g6", "direct_checks"):
+        found[arm] = {"without_break": g6_arm(image, check, base, volume=volume, arm=arm, change=quiet,
+                                              seconds=seconds),
+                      "with_break": g6_arm(image, check, base, volume=volume, arm=arm, change=broken,
+                                           seconds=seconds)}
+        if check["import_roots"]:
+            found[arm]["with_break_without_import_roots"] = g6_arm(image, check, base, volume=volume, arm=arm,
+                                                                   change=broken, roots=False, seconds=seconds)
+    return found
+
+
+def check_image(check: dict, image: str, *, volume: str, seconds: int = SECONDS, g6_arms_volume: str = "") -> dict:
     head = subprocess.run(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "git",
                            image, "-C", containers.REPOSITORY, "rev-parse", "HEAD"], capture_output=True, text=True)
     base = head.stdout.strip()
@@ -238,6 +306,8 @@ def check_image(check: dict, image: str, *, volume: str, seconds: int = SECONDS)
                                 "note": "through G6's runner (repo_tests.run) with the import roots; review_patch "
                                         "takes import_roots once the pool-compatibility change lands"}
     found["planted_control"] = control
+    if g6_arms_volume:
+        found["g6_arms_control"] = g6_arms_control(image, check, base, volume=g6_arms_volume, seconds=seconds)
     return found
 
 
@@ -251,10 +321,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--volume", required=True)
     parser.add_argument("--lock", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--g6-arms-volume", default="", help="a toolchain to run G6's arms' planted controls with")
+    parser.add_argument("--g6-arms-lock", default="", help="that toolchain's lock")
     args = parser.parse_args(argv)
     problems = toolchain.check(toolchain.load(), volume=args.volume, lock=Path(args.lock))
+    if args.g6_arms_volume:
+        problems += toolchain.check(toolchain.load(), volume=args.g6_arms_volume, lock=Path(args.g6_arms_lock))
     if problems:
-        raise SystemExit("the toolchain does not match its lock: " + "; ".join(problems))
+        raise SystemExit("a toolchain does not match its lock: " + "; ".join(problems))
     listed = subprocess.run(["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], capture_output=True,
                             text=True, check=True).stdout.split()
     results = []
@@ -264,11 +338,13 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             results.append({"task": check["task"], "skipped": str(exc)})
             continue
-        results.append(check_image(check, image, volume=args.volume))
+        results.append(check_image(check, image, volume=args.volume, g6_arms_volume=args.g6_arms_volume))
         print(json.dumps({key: results[-1].get(key) for key in ("task", "planted_control")}), flush=True)
+    arms_lock = json.loads(Path(args.g6_arms_lock).read_text(encoding="utf-8")) if args.g6_arms_volume else None
     Path(args.output).write_text(json.dumps({"study": "V9", "kind": "development check on V7's images",
                                              "toolchain": json.loads(Path(args.lock).read_text(encoding="utf-8")),
-                                             "results": results}, indent=2) + "\n", encoding="utf-8")
+                                             "g6_arms_toolchain": arms_lock, "results": results}, indent=2) + "\n",
+                                 encoding="utf-8")
     return 0
 
 
