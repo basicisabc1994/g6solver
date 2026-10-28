@@ -183,8 +183,9 @@ def _isolation() -> Check:
                          confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or, to run "
                                                  "such code without a boundary, choose it once with g6 setup.")
     said = "started" if all(confine.started(python) for python in pythons) else "access list ok; not started"
-    where = ("inside bubblewrap (a private loopback and no other network, only its run folder writable; G6 "
-             "test-starts each interpreter there before its first confined run)" if name == confine.BUBBLEWRAP else
+    where = ("inside bubblewrap (a private loopback and no other network, only its run folder and a /tmp of its own "
+             "writable; G6 test-starts each interpreter there before its first confined run)"
+             if name == confine.BUBBLEWRAP else
              f"in a Windows {name} (no network, only its run folder writable; G6 test-starts each interpreter there "
              "before its first confined run)")
     return Check("isolation", "ok", f"{said}: untrusted code run with {', '.join(pythons)} can run {where}")
