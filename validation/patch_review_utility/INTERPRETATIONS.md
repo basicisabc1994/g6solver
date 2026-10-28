@@ -99,6 +99,20 @@ results file. Changing a reading after a freeze changes the hash and is a deviat
     only add an unknown and a next action, never change G6's outcome, so it cannot change arm 3's acceptance. Ruled
     by the coordinator.
 
+17. **Where each arm runs.** At a study level, every arm runs in a fresh container of the task's own benchmark image,
+    removed when it ends; the image is never changed and never fetched during a study. Inside the container the
+    image's repository must be at the task's base commit, and the patch (for the labels, with the hidden tests) is
+    applied there. Arm 1 and the labels run in the pristine image, with nothing of G6's mounted and the network
+    closed: the repository's tests with the image's own interpreter, as its own continuous integration would run
+    them. Arms 3 and 4 run in the same image with G6's pinned toolchain mounted read-only (a Python 3.12, G6 from a
+    wheel built at the frozen commit, git 2.31 or newer, and bubblewrap; the images carry neither G6's Python nor,
+    in ansible's case, a git G6 accepts), while the repository's tests still run with the image's own interpreter,
+    named by `G6_REPO_PYTHON`. A repository's test environment (its entry freezes the variables, such as
+    qutebrowser's choice of Qt binding) is set in both containers; arm 1's tests get it, together with whatever the
+    image itself sets, while G6 decides what of it reaches its own test runs. The toolchain's sources are pinned by
+    hash in `environment/toolchain.json`, and a toolchain is used only when it matches its lock. Ruled by the
+    coordinator.
+
 Two readings are mechanics rather than rulings, recorded so the hash covers them. The executor runs the files of the
 test ids asked for, as the benchmark's own procedure runs test files, so a test id that no longer exists is missing
 instead of stopping the whole run. When the executor's command runs a container, each run names its container, and a

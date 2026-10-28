@@ -183,6 +183,11 @@ def test_a_container_environment_runs_each_task_in_its_own_image_with_g6s_toolch
     g6 = study.g6_command(loaded, task)
     assert g6 == study.containers.g6_command(task["image"], toolchain="g6-v9-toolchain-x", study=study.VALIDATION,
                                              repo_python="/usr/bin/python")
+    with_env = {**feasibility, "environment": {**environment, "env": {"fixture/calc": {"QT_QPA_PLATFORM": "offscreen"}}}}
+    write(manifest_path, json.dumps(with_env))
+    loaded = study.load_manifest(manifest_path)
+    assert "QT_QPA_PLATFORM=offscreen" in study.task_executor(loaded, task).command
+    assert "QT_QPA_PLATFORM=offscreen" in study.g6_command(loaded, task)
     missing = {**feasibility, "tasks": [{k: v for k, v in t.items() if k != "image"} for t in tasks]}
     write(manifest_path, json.dumps(missing))
     with pytest.raises(study.Refused, match="image"):

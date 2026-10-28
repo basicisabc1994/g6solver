@@ -6,13 +6,16 @@ the image's own interpreter. Only counts, verdicts and reasons are written, neve
     /opt/g6/python/bin/python3 -I probe.py <out.json> <test folder> <seconds>
 
 ``G6_REPO_PYTHON`` names the image's interpreter. Where the G6 under test does not read that setting yet, this probe
-supplies it to ``repo_tests.interpreter`` itself, and says so (``g6_reads_repo_python``).
+supplies it to ``repo_tests.interpreter`` itself, and says so (``g6_reads_repo_python``). ``V9_PROBE_TEST_ENV`` names
+the variables the repository's tests need; when G6 does not pass them on to its test runs (``g6_passes_test_env``),
+the probe runs the folder once more with them passed on, as a diagnostic it labels as simulated.
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
+from pathlib import Path
 
 
 def main(argv: list[str]) -> int:
@@ -45,14 +48,38 @@ def main(argv: list[str]) -> int:
     except repo_tests.RepoRefused as exc:
         found["confined_run"] = {"result": "refused", "code": exc.code, "reason": str(exc)[:500]}
         return write()
-    isolation = ran.get("isolation") or {}
-    found["confined_run"] = {
-        "result": "ran", "folder": folder, "verdict": ran.get("verdict"), "collected": len(ran.get("collected_ids") or []),
-        "passed": ran.get("passed"), "failed": ran.get("failed"), "skipped": ran.get("not_passed"),
-        "deselected": ran.get("deselected"), "seconds": ran.get("seconds"), "python": ran.get("python"),
-        "interpreter_source": ran.get("interpreter_source"), "backend": isolation.get("backend"),
-        "network": isolation.get("network"), "said": (ran.get("said") or "")[:300]}
+    found["confined_run"] = _summary(ran, folder)
+    names = [n for n in os.environ.get("V9_PROBE_TEST_ENV", "").split(",") if n]
+    passed_on = repo_tests.child_env(Path("/tmp"), network=False)
+    found["g6_passes_test_env"] = {name: name in passed_on for name in names}
+    if names and not all(found["g6_passes_test_env"].values()):
+        # Diagnostic only: what the run gives when G6 passes the repository's test variables on, which it does not.
+        # Two layers drop them: the tests' environment (repo_tests.child_env) and the confined spawn's own list
+        # (confine.child_environment).
+        from g6.core import confine
+
+        extra = {n: os.environ[n] for n in names if n in os.environ}
+        tests_env, spawn_env = repo_tests.child_env, confine.child_environment
+        repo_tests.child_env = lambda scratch, *, network: {**tests_env(scratch, network=network), **extra}
+        confine.child_environment = lambda env=None, *, confinement=None: {
+            **spawn_env(env, confinement=confinement), **extra}
+        found["confined_run_with_test_env_simulated"] = _summary(repo_tests.run(root, [folder], timeout_s=seconds),
+                                                                 folder)
     return write()
+
+
+def _summary(ran: dict, folder: str) -> dict:
+    isolation = ran.get("isolation") or {}
+    return {"result": "ran", "folder": folder, "verdict": ran.get("verdict"),
+            "collected": len(ran.get("collected_ids") or []), "passed": ran.get("passed"), "failed": ran.get("failed"),
+            "skipped": ran.get("not_passed"), "deselected": ran.get("deselected"), "seconds": ran.get("seconds"),
+            "python": ran.get("python"), "interpreter_source": ran.get("interpreter_source"),
+            "backend": isolation.get("backend"), "network": isolation.get("network"),
+            "said": (ran.get("said") or "")[:300],
+            # why a run did not run: pytest's last error lines (an exception's message, never a test's name)
+            "error_tail": [] if ran.get("verdict") in ("passed", "failed") else [
+                line.strip()[:200] for line in (ran.get("output") or "").splitlines()
+                if "Error" in line or "error:" in line or line.startswith("E ")][-4:]}
 
 
 if __name__ == "__main__":

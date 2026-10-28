@@ -78,19 +78,27 @@ def stage(tree: str | Path, folder: str | Path) -> str:
     return base
 
 
-def tests_command(image: str, *, python: str = "python") -> list[str]:
-    """Arm 1's and the labels' command template: the pristine image, no toolchain, the network closed."""
+def _env(env: dict[str, str] | None) -> list[str]:
+    """The repository's own test environment (its entry freezes it), as ``-e`` flags in name order."""
+    return [word for name in sorted(env or {}) for word in ("-e", f"{name}={env[name]}")]
+
+
+def tests_command(image: str, *, python: str = "python", env: dict[str, str] | None = None) -> list[str]:
+    """Arm 1's and the labels' command template: the pristine image, no toolchain, the network closed, with the
+    repository's test environment ``env``."""
     return ["docker", "run", "--rm", "--pull", "never", "--name", "{container}", "--network", "none",
-            "-v", f"{{support}}:{WORK}",
+            "-v", f"{{support}}:{WORK}", *_env(env),
             "-e", f"V9_OUTCOMES={WORK}/outcomes.json", "-e", "V9_BASE={base}", image, "sh", f"{WORK}/apply.sh",
             python, "-c", PYTEST_MAIN, "-q", "-p", "no:cacheprovider", "-p", "v9_outcomes", "{tests}"]
 
 
-def g6_command(image: str, *, toolchain: str, study: str | Path, repo_python: str) -> list[str]:
+def g6_command(image: str, *, toolchain: str, study: str | Path, repo_python: str,
+               env: dict[str, str] | None = None) -> list[str]:
     """The command template for the arms that run G6: ``toolchain`` is the toolchain's volume, ``study`` the folder
-    holding the study's scripts (``validation/``), ``repo_python`` the image's own interpreter."""
+    holding the study's scripts (``validation/``), ``repo_python`` the image's own interpreter, ``env`` the
+    repository's test environment (set in the container; G6 decides what of it its own test runs pass on)."""
     return ["docker", "run", "--rm", "--pull", "never", "--name", "{container}", *CONFINED_FLAGS,
             "-v", f"{toolchain}:{TOOLCHAIN_MOUNT}:ro", "-v", f"{study}:{STUDY_MOUNT}:ro", "-v", f"{{job}}:{WORK}",
-            "-e", f"PATH={TOOLCHAIN_MOUNT}/bin:{SYSTEM_PATH}", "-e", f"G6_REPO_PYTHON={repo_python}",
+            *_env(env), "-e", f"PATH={TOOLCHAIN_MOUNT}/bin:{SYSTEM_PATH}", "-e", f"G6_REPO_PYTHON={repo_python}",
             "-e", "G6_EXPECT_BACKEND=bubblewrap", "-e", "V9_BASE={base}", image, "sh", f"{WORK}/apply.sh",
             G6_PYTHON, "-I", f"{STUDY_MOUNT}/patch_review_utility/child.py", f"{WORK}/job.json", f"{WORK}/reply.json"]

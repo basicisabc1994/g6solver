@@ -19,8 +19,9 @@ then the labels, which no arm ever sees. The research flag (``G6_ECHA_RESEARCH=1
 1,800; ``suite_run_seconds`` per arm-1 run; ``calibration_seconds``; ``token_cap``); ``executor`` (``command``,
 ``confined``, ``network``: a study level needs a confined executor with the network closed), or instead
 ``environment`` (``kind`` "containers"; ``toolchain`` ``{volume, lock}``, G6's toolchain checked against its lock
-before anything runs; ``python``, each repository's interpreter in its image; and an ``image`` for every task:
-``containers.py`` says how each arm runs there); ``suites`` (test paths
+before anything runs; ``python``, each repository's interpreter in its image; optionally ``env``, each repository's
+test environment; and an ``image`` for every task: ``containers.py`` says how each arm runs there); ``suites`` (test
+paths
 per repository, for arm 1); ``vault`` (``roots``, ``id``, ``ledger``); ``audit`` (``audited``, ``label_errors``, or
 null); ``registered_size`` (or null); optional ``setup_effort`` and ``deviations``, copied into the results; and
 ``tasks``, each ``{task_id, repository, source (a git repository holding the base commit), base_commit, statement
@@ -150,8 +151,9 @@ def task_executor(manifest: dict, task: dict) -> executor.Executor:
     manifest's executor."""
     environment = _containers(manifest)
     if environment is not None:
-        python = environment["python"][task["repository"]]
-        return executor.Executor(containers.tests_command(task["image"], python=python), confined=True, network=False)
+        python, env = environment["python"][task["repository"]], (environment.get("env") or {}).get(task["repository"])
+        return executor.Executor(containers.tests_command(task["image"], python=python, env=env), confined=True,
+                                 network=False)
     described = manifest["executor"]
     return executor.Executor(described["command"], confined=bool(described.get("confined")),
                              network=described.get("network"))
@@ -163,7 +165,8 @@ def g6_command(manifest: dict, task: dict) -> list[str] | None:
     if environment is None:
         return None
     return containers.g6_command(task["image"], toolchain=environment["toolchain"]["volume"], study=VALIDATION,
-                                 repo_python=environment["python"][task["repository"]])
+                                 repo_python=environment["python"][task["repository"]],
+                                 env=(environment.get("env") or {}).get(task["repository"]))
 
 
 def _toolchain_ready(manifest: dict) -> dict | None:

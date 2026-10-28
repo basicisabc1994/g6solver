@@ -34,11 +34,13 @@ from patch_review_utility.environment import toolchain  # noqa: E402
 
 PREFIX = "ghcr.io/scaleapi/swe-bench_pro-v2:"
 #: V7's development images this check may use, with each repository's interpreter and one small unit-test folder.
-_ANSIBLE = ("ansible/ansible", "/usr/bin/python", "test/units/errors")
-_QUTEBROWSER = ("qutebrowser/qutebrowser", "/usr/bin/python", "tests/unit/api")
-_OPENLIBRARY = ("internetarchive/openlibrary", "/usr/local/bin/python", "openlibrary/utils/tests")
-CHECKS = tuple({"task": task, "repository": repository, "python": python, "folder": folder}
-               for task, (repository, python, folder) in (
+#: qutebrowser chooses its Qt binding from QUTE_QT_WRAPPER (its image has PyQt6 only) and needs a screenless Qt.
+_ANSIBLE = ("ansible/ansible", "/usr/bin/python", "test/units/errors", {})
+_QUTEBROWSER = ("qutebrowser/qutebrowser", "/usr/bin/python", "tests/unit/api",
+                {"QUTE_QT_WRAPPER": "PyQt6", "QT_QPA_PLATFORM": "offscreen"})
+_OPENLIBRARY = ("internetarchive/openlibrary", "/usr/local/bin/python", "openlibrary/utils/tests", {})
+CHECKS = tuple({"task": task, "repository": repository, "python": python, "folder": folder, "env": env}
+               for task, (repository, python, folder, env) in (
                    ("instance_ansible__ansible-1bd7dcf339dd", _ANSIBLE),
                    ("instance_qutebrowser__qutebrowser-5cef49ff3074", _QUTEBROWSER),
                    ("instance_internetarchive__openlibrary-630221ab686c", _OPENLIBRARY),
@@ -62,15 +64,19 @@ def select(listed: list[str], task: str) -> str:
     return found[0]
 
 
-def tests_command(image: str, *, python: str) -> list[str]:
-    return containers.tests_command(image, python=python)
+def tests_command(image: str, *, python: str, env: dict[str, str] | None = None) -> list[str]:
+    return containers.tests_command(image, python=python, env=env)
 
 
-def probe_command(image: str, *, python: str, folder: str, volume: str, seconds: int) -> list[str]:
-    """G6's arms' container with ``probe.py`` in place of the arm's child."""
-    command = containers.g6_command(image, toolchain=volume, study=VALIDATION, repo_python=python)
+def probe_command(image: str, *, python: str, folder: str, volume: str, seconds: int,
+                  env: dict[str, str] | None = None) -> list[str]:
+    """G6's arms' container with ``probe.py`` in place of the arm's child; ``V9_PROBE_TEST_ENV`` tells the probe the
+    names of the variables the repository's tests need."""
+    command = containers.g6_command(image, toolchain=volume, study=VALIDATION, repo_python=python, env=env)
     cut = command.index(containers.G6_PYTHON)
-    return [*command[:cut], containers.G6_PYTHON, "-I",
+    told = ["-e", "V9_PROBE_TEST_ENV=" + ",".join(sorted(env))] if env else []
+    image_at = command.index(image)
+    return [*command[:image_at], *told, *command[image_at:cut], containers.G6_PYTHON, "-I",
             f"{containers.STUDY_MOUNT}/patch_review_utility/environment/probe.py", f"{containers.WORK}/probe.json",
             folder, str(seconds)]
 
@@ -111,19 +117,20 @@ def check_image(check: dict, image: str, *, volume: str, seconds: int = SECONDS)
                            image, "-C", containers.REPOSITORY, "rev-parse", "HEAD"], capture_output=True, text=True)
     base = head.stdout.strip()
     found = {"task": check["task"], "repository": check["repository"], "image_id": _image_id(image), "base": base,
-             "python": check["python"], "folder": check["folder"]}
+             "python": check["python"], "folder": check["folder"], "env": check["env"]}
     with tempfile.TemporaryDirectory(prefix="v9-dev-g6-") as job:
         _work(Path(job), plugin=False)
         name = f"v9-dev-{time.monotonic_ns():x}"
-        command = _fill(probe_command(image, python=check["python"], folder=check["folder"], volume=volume,
-                                      seconds=seconds), {"{container}": name, "{job}": job, "{base}": base}, [])
+        probe = probe_command(image, python=check["python"], folder=check["folder"], volume=volume, seconds=seconds,
+                              env=check["env"])
+        command = _fill(probe, {"{container}": name, "{job}": job, "{base}": base}, [])
         found["g6_container"] = _run(command, name, seconds + 120)
         report = Path(job) / "probe.json"
         found["g6"] = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else None
     with tempfile.TemporaryDirectory(prefix="v9-dev-arm1-") as support:
         _work(Path(support), plugin=True)
         name = f"v9-dev-{time.monotonic_ns():x}"
-        command = _fill(tests_command(image, python=check["python"]),
+        command = _fill(tests_command(image, python=check["python"], env=check["env"]),
                         {"{container}": name, "{support}": support, "{base}": base}, [check["folder"]])
         found["arm_1_container"] = _run(command, name, seconds)
         report = Path(support) / "outcomes.json"

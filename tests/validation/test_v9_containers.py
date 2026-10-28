@@ -108,6 +108,15 @@ def test_the_arms_that_run_g6_mount_the_toolchain_read_only_with_bubblewrap_flag
     assert not any("G6_ECHA_RESEARCH" in word for word in command)
 
 
+def test_a_repositorys_test_environment_is_set_in_both_containers():
+    env = {"QUTE_QT_WRAPPER": "PyQt6", "QT_QPA_PLATFORM": "offscreen"}
+    for command in (containers.tests_command(IMAGE, python="python", env=env),
+                    containers.g6_command(IMAGE, toolchain="t", study=Path("/s"), repo_python="python", env=env)):
+        before = command[:command.index(IMAGE)]
+        assert "QT_QPA_PLATFORM=offscreen" in before and "QUTE_QT_WRAPPER=PyQt6" in before
+        assert before[before.index("QUTE_QT_WRAPPER=PyQt6") - 1] == "-e"
+
+
 def test_staging_writes_the_change_against_head_and_the_script_that_applies_it_without_touching_the_tree(tree,
                                                                                                          tmp_path):
     before = git(tree, "status", "--porcelain")
