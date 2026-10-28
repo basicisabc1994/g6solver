@@ -95,6 +95,12 @@ by describing its task, reads what the component can do and how mature it is, th
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
 marks sensitive is refused over MCP unless the person who runs the server lists it in `G6_MCP_SENSITIVE`.
 
+`g6_review_patch` (allowed with `patch_review.review`) assesses a Python patch against the requirements you state, each
+with the tests that check it, in test runs inside an operating-system boundary. It returns one outcome: test integrity
+compromised, defect detected, insufficient evidence, or supported within scope. Supported within scope means every
+stated requirement passed its stated checks, not that the patch does everything the task needs. Each requirement gets
+its own evidence, and merging always needs a separate approval.
+
 ## Choose a model
 
 Components that call a model take an `LLMCaller`. Pick one explicitly — G6 never guesses a paid provider:
