@@ -130,7 +130,13 @@ The tests run with the Python that `G6_REPO_PYTHON` names where you start G6 (a 
 environment, or a system Python that holds the repository's dependencies), else the repository's own `.venv`
 or `venv`, else G6's own; `scope.environment.interpreter_source` says which (`setting`, `repository` or
 `g6`). Only G6's own environment sets it, never a request, and a setting that names no Python is a refusal
-(`G6_E_REPO_PYTHON_INVALID`).
+(`G6_E_REPO_PYTHON_INVALID`). The tests see none of your environment but what `G6_REPO_ENV` gives them, a
+JSON object of variable names to text set where you start G6 (`{"QT_QPA_PLATFORM": "offscreen"}`, say);
+names that would change how G6 runs them (`PYTHON...`, `LD_...`, `DYLD_...`, `PYTEST_...`, `G6_...`,
+`COV_CORE_...`, `PATH`, `HOME`, `USERPROFILE`, `TMP`, `TEMP`, `TMPDIR`) are refused (`G6_E_REPO_ENV_INVALID`).
+The run, `scope.environment` and the receipt record each name with the SHA-256 of its value, never the value.
+Hypothesis keeps its database in the run's own folder (`HYPOTHESIS_STORAGE_DIRECTORY`, unless `G6_REPO_ENV`
+names it), since the repository is read only to a confined run; `env_set_by_g6` says so.
 
 Each confined run in place gets a test receipt, listed in `scope.receipts`. The review builds the coding
 gate bound to its own snapshot digest, so a receipt counts as G6-observed (`matched`) only for the tree

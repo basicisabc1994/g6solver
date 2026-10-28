@@ -158,6 +158,10 @@ SAID = {
     # PENDING copy (pool compatibility): a G6_REPO_PYTHON that names no Python.
     "repo_python": ("{setting} {problem}: {value!r}. Set it, where you start G6, to the full path of the Python that "
                     "has your repository's dependencies, or unset it"),
+    # PENDING copy (pool compatibility): a G6_REPO_ENV G6 cannot use. It never repeats a value.
+    "repo_env": ("{setting} {problem}. Set it, where you start G6, to a JSON object of the variables your tests need, "
+                 "names to text, without the names that would change how G6 runs them (PYTHON..., LD_..., DYLD_..., "
+                 "PYTEST_..., G6_..., COV_CORE_..., PATH, HOME, USERPROFILE, TMP, TEMP, TMPDIR), or unset it"),
 }
 
 
@@ -513,7 +517,9 @@ _MODEL_BLOCK = {"G6_LLM_BACKEND_OVERRIDE": "ollama", "OPENROUTER_API_KEY": "sk-o
 _NOWHERE = "http://127.0.0.1:9"
 _PROXIES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
-#: The runner's bootstrap (``venture.truth._ISOLATED_BOOT``'s pattern): the real pytest is imported before the
+#: The runner's bootstrap (``venture.truth._ISOLATED_BOOT``'s pattern): first the variables of the run's own file are
+#: set (``G6_REPO_ENV``'s, and the folder Hypothesis keeps its database in), which the operating system's boundary
+#: would not pass on and which never appear on a command line; the real pytest is imported after them and before the
 #: repository joins the path (its folders arrive as one JSON list, so a ';' or ':' in a path never splits it); then
 #: the network guard, unless allowed; then the mutant's import hook, when given. Its own arguments are taken off
 #: ``sys.argv`` before the tests run. When pytest would load pytest-xdist (its ``pytest11`` entry point is installed),
@@ -526,10 +532,13 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 _BOOT = r'''
 import json, os, socket, sys
 sys.path[:] = [p for p in sys.path if p not in ("", os.getcwd())]
+with open(sys.argv[6], encoding="utf-8") as _g6_env:
+    os.environ.update(json.load(_g6_env))
+del _g6_env
 import pytest
 entries, network, target, source, counted = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
-args = sys.argv[6:]
-del sys.argv[1:6]
+args = sys.argv[7:]
+del sys.argv[1:7]
 sys.path[:0] = [p for p in entries if p]
 if network != "1":
     _connect, _connect_ex = socket.socket.connect, socket.socket.connect_ex
@@ -814,6 +823,51 @@ def _chosen_python() -> str:
         raise RepoRefused(REPO_PYTHON_INVALID, SAID["repo_python"].format(setting=REPO_PYTHON, problem=problem,
                                                                           value=value))
     return value
+
+
+#: The setting, in G6's own environment only, that names the variables a repository's tests need (a JSON object of
+#: names to text: qutebrowser's ``QUTE_QT_WRAPPER``, say). G6's bootstrap sets them in the test process before pytest
+#: and the repository are imported; the operating system's boundary passes nothing else of G6's environment on.
+REPO_ENV = "G6_REPO_ENV"
+REPO_ENV_INVALID = "G6_E_REPO_ENV_INVALID"
+#: Names the setting may not give: they could change the interpreter, the runner, the libraries loaded, G6's own
+#: settings, or where the run may write.
+_RUNNER_NAMES = re.compile(r"(?:PYTHON|LD_|DYLD_|PYTEST_|G6_|COV_CORE_).*|PATH|HOME|USERPROFILE|TMP|TEMP|TMPDIR",
+                           re.IGNORECASE)
+#: A writable folder Hypothesis keeps its database in (it would write ``.hypothesis`` beside the tests, in a
+#: repository a confined run keeps read only): the run's own, unless the setting names one.
+HYPOTHESIS_STORAGE = "HYPOTHESIS_STORAGE_DIRECTORY"
+
+
+def _repo_env() -> dict[str, str]:
+    """The variables ``REPO_ENV`` names ({} when it is not set, or set to nothing), or a refusal
+    (``G6_E_REPO_ENV_INVALID``) that names no value: not a JSON object of names to text, a value holding a NUL, or a
+    name that is empty, holds ``=`` or a NUL, or could change the runner (``_RUNNER_NAMES``)."""
+    raw = os.environ.get(REPO_ENV) or ""
+    if not raw.strip():
+        return {}
+    try:
+        found = json.loads(raw)
+    except ValueError:
+        found = None
+    if not isinstance(found, dict) or not all(isinstance(key, str) and isinstance(value, str)
+                                              for key, value in found.items()):
+        problem = "is not a JSON object of variable names to text"
+    elif any("\0" in value for value in found.values()):
+        problem = "gives a value that holds a NUL character"
+    else:
+        refused = sorted(repr(name) for name in found if not name or "=" in name or "\0" in name
+                         or _RUNNER_NAMES.fullmatch(name))
+        problem = "may not set " + ", ".join(refused) if refused else ""
+    if problem:
+        raise RepoRefused(REPO_ENV_INVALID, SAID["repo_env"].format(setting=REPO_ENV, problem=problem))
+    return found
+
+
+def _digests(values: dict[str, str]) -> dict[str, str]:
+    """Each variable's name with the SHA-256 of its value, never the value (it may be a secret)."""
+    return {name: hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()
+            for name, value in sorted(values.items())}
 
 
 def _environment_of(python: str) -> tuple[str, ...]:
@@ -1116,6 +1170,7 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
         raise ValueError("a mutant run is not the artifact under review, so it is never given a test receipt")
     repo = checked_repo(repo)
     python = interpreter(repo)   # a setting that names no Python is refused before anything is copied or run
+    _repo_env()                  # and so is a G6_REPO_ENV G6 cannot use
     if mutant is not None:
         deadline = time.monotonic() + max(1, min(int(timeout_s), MAX_TIMEOUT_S))
         report: dict = {}
@@ -1144,6 +1199,8 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                *(str(repo / inside(repo, root, "import root")) for root in roots)]
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     python = python or interpreter(repo)
+    person = _repo_env()
+    set_by_g6 = [] if HYPOTHESIS_STORAGE in person else [HYPOTHESIS_STORAGE]
     whose = ("setting" if python == _chosen_python() else
              "repository" if any(Path(python).is_relative_to(repo / folder) for folder in (".venv", "venv")) else "g6")
     untracked = [] if copied else _untracked(repo)
@@ -1169,7 +1226,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                 "degraded": verdict not in RAN or ("expected" in tally and
                     (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
-                **(links or {})}
+                "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6), **(links or {})}
 
     # Two folders: the tests' HOME and temp folders, and one they are not pointed at, for the report, the count of
     # tests collected, the output, the mutant's source and an empty config.
@@ -1187,10 +1244,16 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         if mutant is not None:
             target, source = str(repo / inside(repo, mutant[0], "module")), str(own / "mutant.py")
             Path(source).write_text(mutant[1], encoding="utf-8")
+        # the variables the bootstrap sets, in a file only this user may read: values never go on a command line
+        store = work / "hypothesis"
+        store.mkdir()
+        variables = own / "env.json"
+        with os.fdopen(os.open(variables, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as sink:
+            json.dump({**dict.fromkeys(set_by_g6, str(store)), **person}, sink)
         # the run's own log file, empty (truth.no_null_device): with none named, pytest's is the null device, which an
         # AppContainer may be refused; one the repository names could not be written into a repository in place
         cmd = [python, "-I", "-B", "-X", "utf8", "-c", _BOOT, json.dumps(entries), "1" if network else "0",
-               target, source, str(counted), *ids, "-q", "-p", "no:cacheprovider",
+               target, source, str(counted), str(variables), *ids, "-q", "-p", "no:cacheprovider",
                f"--junitxml={report}", *_config_args(repo, ids, own), f"--log-file={own / 'pytest.log'}",
                "--log-file-level=100"]
         mine = confine.owned(repo)

@@ -759,6 +759,8 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
         next_actions.append("Look into the unknowns yourself: G6 does not count them for or against the patch.")
     environment = {"isolation": ran.get("isolation"), "python": ran.get("python"),
                    "interpreter_source": ran.get("interpreter_source"),
+                   # the variables G6_REPO_ENV gave the tests, each with the SHA-256 of its value (never the value)
+                   "repo_env": ran.get("repo_env"), "env_set_by_g6": ran.get("env_set_by_g6"),
                    "host_python_version": platform.python_version(), "platform": platform.platform()}
     evidence = [{"source": "g6.workforce.repo_tests", "summary": f"tier {run['tier']}: {run['command']}: "
                  f"{run['verdict']}"[:200], "authority": "host-observed", "artifact_digest": artifact,
