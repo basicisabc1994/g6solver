@@ -105,6 +105,10 @@ that the tests are as strong as before), then runs the other tests that touch th
 outcome: test integrity compromised, defect detected, insufficient evidence, or supported within scope. Supported
 within scope means every stated requirement passed its stated checks; it does not show that the patch does
 everything the task needs. Each requirement gets its own evidence, and merging always needs a separate approval.
+You can also propose checks of your own (`proposed_checks`, at most 20 test files): G6 runs each inside the same
+boundary on a copy of the patch and on one of the base commit's code, and says whether it found a counterexample.
+A proposed check never passes a requirement, and a failing one gives at most insufficient evidence, with a
+reproduction you can run with plain pytest.
 G6 keeps its record of its own test runs (test receipts) in a file your user account owns: it stops a caller's
 claimed results from counting as G6's, not a program running as you.
 Enable it explicitly with `g6 setup --client codex --allow patch_review.review`.
