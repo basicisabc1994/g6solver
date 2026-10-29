@@ -21,7 +21,7 @@ from pathlib import Path
 
 from g6.core.llm import LLMError
 from g6.harness import verification_proposer
-from g6.harness.patch_review import review_patch
+from g6.harness.patch_review import Requirement, review_patch
 
 MODEL = "claude-haiku-4-5"
 #: Anthropic's published API price for Claude Haiku 4.5, US dollars per million tokens (base input, output), read
@@ -182,8 +182,10 @@ def main() -> int:
         if name not in args.cases:
             continue
         root = repo(base, patch)
+        # a requirement to keep behaviour is built in Python: a request cannot set ``kind`` (G6 sets it)
+        stated = [Requirement(**item) if "kind" in item else item for item in requirements]
         started, before = time.monotonic(), caller.spent
-        got = review_patch(root, task=task, requirements=requirements, search=SETTINGS, llm=caller, timeout_s=600)
+        got = review_patch(root, task=task, requirements=stated, search=SETTINGS, llm=caller, timeout_s=600)
         rows.append(summary(name, got, time.monotonic() - started, before, caller))
         rows[-1]["exchanges"] = (got.get("assessment") or {}).get("completion", {}).get("model_exchanges", [])
         print(json.dumps({k: v for k, v in rows[-1].items() if k != "exchanges"})[:1500], flush=True)
