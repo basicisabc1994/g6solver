@@ -12,6 +12,11 @@ at each step, and a row changes only with new evidence.
   frozen Step 2 commit `b3c342b`, and VS-0 against `cd52d48` on branch `claude/vs`. Rows S2-16, S2-18 and S2-19
   were checked on 29 October 2026 against `8b5364c` on branch `claude/pool-compat`, and rows VS-1 to VS-3 against
   `051b062` and `633f61b` on branch `claude/vs`.
+- **Minimal launch update (29 October 2026, night):** section 5 and the rows of section 4 were checked against the
+  tip of the launch line, `0ce616e` (branch `claude/launch`), merged into this branch by `d42efb4`. They rest on the
+  launch commits' messages, which record each fix with the test that failed first and now passes, and on finding each
+  named test in the merged tree. The suites were not rerun for this update, and no continuous-integration run exists
+  for the launch line's tip (most launch commits carry `[skip ci]`).
 - **Sources:** the plans are kept outside this repository, and their items are described here in plain words. The
   Phase 0 usability ledger is also kept outside this repository; its identifiers (P0-01 to P0-32) are used below. It
   was recorded on 27 October 2026 by following each public journey literally from a fresh clone of public `main` at
@@ -59,6 +64,28 @@ exists.
 | Step 5 trial (current plan) | The owner pilot and the fresh-user trial | **Open.** Rows S5-1 to S5-7. |
 | Security reviews (current plan) | A fresh reviewer for each security-sensitive change, with its findings fixed | **Open.** The second review of Step 2 found three critical and six important problems; the fix pass fixed each with a test that failed first (rows S2-C1 to S2-15). The review of the fix pass itself was thin, and a deep adversarial review is owed before go-live (rows S2-12, S2-17). |
 
+### Release gates at the minimal launch
+
+On 29 October 2026 (night) the owner decided on a minimal launch for Claude Code and Codex. For this first launch it
+supersedes holding go-live for V10, the 8-of-10 fresh-user trial before posts, and venture in Step 5. The table below
+gives each gate above its state at the launch tip `0ce616e`, then the gates the launch adds. The rows behind it are in
+section 5.
+
+| Gate | State at `0ce616e` |
+|---|---|
+| Software | **Open.** No continuous-integration run exists for the tip (row L-G3). Run 40810994710 (`28a2c3b`) failed in the scan job and on one install-message test; both are fixed (rows L-CI1, L-CI2). |
+| Isolation | **Open.** Linux: bubblewrap, as before. Windows: the AppContainer grant is the person's one-time step. macOS: patch review refuses to run (row L-I1). The boundary half of the launch review had no new escape probes (row L-A). |
+| Client consent | **Open.** The owner's pilot in Claude Code and in Codex is pending (row L-G4). |
+| Usability | **Superseded for the first launch** by the owner's decision. Not run. |
+| Utility | **Superseded for the first launch.** No claim is made that G6 finds more defects or saves time (row L-G5). V9 and V10 are registered and have not run. |
+| Broader usability | **Superseded for the first launch.** Not run. |
+| Artifacts | **Not re-checked for this update.** The launch notes leave the version number for the owner to set (row L-G6). |
+| V10 feasibility report | **Deferred** (row L-D1). |
+| Step 5 trial | **Superseded for the first launch;** the owner's pilot remains (row L-G4). |
+| Security reviews | **Open.** Half A and half B of the launch review found problems that are fixed (rows L-A to L-B8). The fresh review of W1 to W5 is in progress (row L-W6). The integrity fix of the VS-4 review has no separate fresh review on record (row L-G1). |
+| CI on the release commit (launch) | **Open, pending** (row L-G3). A red macOS job is acceptable. |
+| Honest copy (launch) | **Open.** The commit messages record the site and honesty tests green; see the caveats in row L-G5. |
+
 ### Launch blockers that look most important
 
 1. **The study's repositories cannot all be checked yet.** Step 2 is frozen at `b3c342b` (row S2-12). At that
@@ -81,6 +108,11 @@ exists.
 5. **Client consent and every human trial are still to run** (rows S5-1 to S5-5), and **the verification search is
    at its first phase** (table 4), while go-live waits for V10.
 
+These five blockers were written on 28 and 29 October. For the minimal launch, blockers 1 and 5 no longer hold the
+release (the study pool and V10 continue after launch), and blocker 2, the site claims, and blocker 4, the install
+steps, are the subject of the launch's copy rows (section 5.6). Blocker 3 is met on the pages the launch ships (row
+L-G5). Client consent remains a launch gate (row L-G4).
+
 ## Counts
 
 | Table | implemented and verified | implemented, not verified | missing | deferred | Rows |
@@ -88,7 +120,8 @@ exists.
 | 1. Earlier plan items | 37 | 14 | 27 | 12 | 90 |
 | 2. Phase 0 findings | 6 | 2 | 20 | 1 | 29 |
 | 3. Revision 3 steps and amendments | 35 | 7 | 16 | 8 | 66 |
-| 4. Verification search | 3 | 2 | 5 | 0 | 10 |
+| 4. Verification search (at `0ce616e`; it was 3, 2, 5, 0 at `051b062`) | 3 | 4 | 0 | 3 | 10 |
+| 5. The minimal launch | 33 | 7 | 5 | 10 | 55 |
 
 ## 1. Earlier plan items
 
@@ -383,20 +416,181 @@ Three ledger rows recorded steps that worked and need nothing: P0-03 (the instal
 ## 4. Verification search
 
 The workstream that adds an independent check that an agent's change completed its task: what it was asked to do,
-whether it preserved what it must not break, and whether it is tested enough. Go-live waits for its study, V10.
+whether it preserved what it must not break, and whether it is tested enough. Go-live waited for its study, V10; for the minimal launch (section 5) V10 and VS-5's
+study continue after launch. The rows give each phase's status at the launch tip `0ce616e`. A row's earlier text is
+kept in the history of this file.
 
 | # | Item | Status | Evidence | Owned by |
 |---|---|---|---|---|
 | VS-pre | The existing parts the workstream builds on are present | implemented, not verified | `IntentContract` (`src/g6/intent_engine/schema.py:105`), `IntentElicitor` (`elicitor.py:42`), `detect_test_weakening` (`src/g6/safety_engine/weakening.py:142`), `check_invariant` and `prove_invariant` (`src/g6/model_checking/symbolic.py:202-212`), `check_contract` (`src/g6/formal/contract.py:22`), `check_equivalence` (`src/g6/formal/z3_depth.py:541`), `Z3Verifier` (`src/g6/cegis/z3_verifier.py:201`) and `layer_violations` (`src/g6/code/design_governance/graph.py:259`). Their fitness for this use is untested | — |
-| VS-0 | Register the V10 protocol before any verification-search code | implemented and verified | `cd52d48` on `claude/vs` adds `docs/validation/patch_review_search/PROTOCOL.md` and its registry entry; the file's hash with Unix line endings (`2573c84e…`) matches the entry, and no verification-search code exists before it. `tests/site/test_evidence.py` passes against it. Not yet on `codex/ai-for-ai-continuation` | — |
-| VS-1 | Intent modelling: requirements from an intent contract, the provenance of every requirement, and an optional `intent` parameter | implemented and verified | `43f0234` on `claude/vs`. `requirements_from_intent` and the `intent` parameter of `review_patch` and `g6_review_patch`. Tests: `tests/harness/test_verification_search.py`, and the identity test `tests/harness/test_patch_review_off_path.py` with its golden file: with no `intent`, every decided field is unchanged. Continuous integration: run 40768957226 on `051b062`, a descendant, passed all nine jobs. Not yet on `codex/ai-for-ai-continuation` | — |
-| VS-2 | The executor, the classifier and the completion report for checks the caller supplies | implemented and verified | `bb218ce` and `ae11694`, then the fix pass after its review, `d8f06c6` and `051b062`, on `claude/vs`. The optional `proposed_checks` run confined on the patched tree and at the base commit, are classified by their declared intent, never pass a requirement, and give at most `insufficient_evidence`; every reply has `assessment.completion`. Tests: `tests/harness/test_proposed_checks.py`. Continuous integration: run 40768957226 on `051b062` passed all nine jobs. Not yet on `codex/ai-for-ai-continuation` | — |
-| VS-3 | The template registry and compiler, five templates, and test adequacy through mutation | implemented, not verified | `51ba696`, `43a85ee` and `633f61b` on `claude/vs` (with the pool-compatibility merge `c8a15c9`). `src/g6/harness/verification_templates.py`, the `template_instances` and `search` parameters, and test adequacy reported only. Tests: `tests/harness/test_verification_templates.py`. So far only local Docker runs with bubblewrap. Its independent review and its continuous-integration run are pending | VS-3 |
-| VS-4 | The formal path, with a three-part report: specification, model, correspondence | missing | Not started | VS-4 |
-| VS-5 | The opt-in proposer through the person's own model, with injection fixtures and one small model smoke on development fixtures | missing | Not started | VS-5 |
-| VS-6 | The ledgers, adoption detection, `g6_confirm_behaviour`, and worked examples from three kinds of application | missing | No `g6_confirm_behaviour` tool | VS-6 |
-| VS-7 | Freeze the workstream's commit, then run V10 together with V9 | missing | Waits for VS-0 to VS-6 | VS-7 |
-| V10 | The V10 feasibility report, which go-live needs | missing | Not started | VS-7 |
+| VS-0 | Register the V10 protocol before any verification-search code | implemented and verified | `cd52d48` on `claude/vs` adds `docs/validation/patch_review_search/PROTOCOL.md` and its registry entry; the file's hash with Unix line endings (`2573c84e…`) matched the entry, and no verification-search code exists before it. `tests/site/test_evidence.py` passes against it. At `0ce616e`: both studies were re-registered as version 2 before any task was drawn (`683308d`, with arm R and broken-task handling), under new registry entries (`docs/validation/REGISTRY.md:529, 552`). The hashes of the two files with Unix line endings were recomputed for this update and match: V9 version 2 `39a7859e…`, V10 version 2 `715dce8a…`. Rows S1b and A2 to A4 cite version 1 of V9 (`1f2f74c6…`), which stays registered | — |
+| VS-1 | Intent modelling: requirements from an intent contract, the provenance of every requirement, and an optional `intent` parameter | implemented and verified | `43f0234` on `claude/vs`. `requirements_from_intent` and the `intent` parameter of `review_patch` and `g6_review_patch`. Tests: `tests/harness/test_verification_search.py`, and the identity test `tests/harness/test_patch_review_off_path.py` with its golden file: with no `intent`, every decided field is unchanged. Continuous integration: run 40768957226 on `051b062`, a descendant, passed all nine jobs. At `0ce616e` it is on the launch line, and the identity test still has its golden file (`tests/harness/test_patch_review_off_path.py`; it needs bubblewrap and skips elsewhere) | — |
+| VS-2 | The executor, the classifier and the completion report for checks the caller supplies | implemented and verified | `bb218ce` and `ae11694`, then the fix pass after its review, `d8f06c6` and `051b062`, on `claude/vs`. The optional `proposed_checks` run confined on the patched tree and at the base commit, are classified by their declared intent, never pass a requirement, and give at most `insufficient_evidence`; every reply has `assessment.completion`. Tests: `tests/harness/test_proposed_checks.py`. Continuous integration: run 40768957226 on `051b062` passed all nine jobs. At `0ce616e` it is on the launch line. Later fixes: a refusal is read only from G6's own record of the run, and a check that errors only on the patch gives `check_error_on_patch` (`7ae5155`, half B's B2) | — |
+| VS-3 | The template registry and compiler, five templates, and test adequacy through mutation | implemented, not verified | `51ba696`, `43a85ee` and `633f61b` on `claude/vs` (with the pool-compatibility merge `c8a15c9`). `src/g6/harness/verification_templates.py`, the `template_instances` and `search` parameters, and test adequacy reported only. Tests: `tests/harness/test_verification_templates.py`. At `0ce616e`: its independent review found three critical, seven important and two minor problems (C1 to C3, I1 to I7, M1, M2); the fixes are `fa42d9d` (R-C1: a structural check never passes a requirement; git's index flags never hide a change), `f786774` (import chains, contract options honoured or refused, one folder per package), `ab7be35` (G6's own errors stay activities, the deadline holds, no link outside is read) and `906a4f1` (a canonical structural form, a stable base), each with tests that failed first. The review's report is not in the repository; this row rests on those commit messages. The runs were local Docker runs with bubblewrap; run 40780356106 failed on two further problems that are fixed (row L-CI3). No green run exists for the launch line's tip | VS-3 |
+| VS-4 | The formal path, with a three-part report: specification, model, correspondence | implemented, not verified | `8653440`, `8a5a1b4`, `644c7e7` and `52544c1`: `state_invariant.v1`, `access_rule.v1`'s multi-step form, Z3 counterexamples re-run confined, and the docs. Tests: `tests/harness/test_verification_formal.py`. Its review found a critical integrity problem (finding 1: a weakened test hidden by git's own index or replace refs read `supported_within_scope`), fixed in `d58e5d1` and `a95525d` (`tests/workforce/test_repo_tests.py::test_the_snapshot_binds_a_changed_files_bytes_whatever_the_repositorys_index_says`), and findings 2 to 6 in `c3d7351`. A fresh review of that fix is a launch gate (row L-G1). Not verified: no green continuous-integration run for the launch line's tip | VS-4 |
+| VS-5 | The opt-in proposer through the person's own model, with injection fixtures and one small model smoke on development fixtures | implemented, not verified | In the code and off by default (`search={"propose": true}`): `34390b2`, `a24b6f2`. Tests: `tests/harness/test_verification_proposer.py` (a fake model; no model called). One paid smoke on six development fixtures: 42 calls, $0.15 of its $10 stop (`df55a78`, `validation/proposer_smoke/record.json`); three of six planted defects came back as unconfirmed findings, one was missed, and every `state_invariant.v1` instance was refused. The request was fixed afterwards (`d7c285c`); the smoke has not been rerun. No study. Its fresh review is half B of the launch review (rows L-B to L-B8) | VS-5 |
+| VS-6 | The ledgers, adoption detection, `g6_confirm_behaviour`, and worked examples from three kinds of application | deferred | No `g6_confirm_behaviour` tool at `0ce616e` | after launch |
+| VS-7 | Freeze the workstream's commit, then run V10 together with V9 | deferred | Waits for VS-6 and the study; V10 continues in parallel after launch | after launch |
+| V10 | The V10 feasibility report, which go-live needed | deferred | Registered as version 2 and not run (row VS-0). The minimal launch does not wait for it | after launch |
+
+## 5. The minimal launch
+
+The owner's decision of 29 October 2026 (night): a minimal launch for Claude Code and Codex. For this first launch it
+supersedes holding go-live for V10, the 8-of-10 fresh-user trial before posts, and venture in Step 5. Audited at
+`0ce616e`, the tip of `claude/launch`. The release notes are `docs/releases/launch.md`.
+
+- **Ships:** G6's local MCP server, installed from the repository and connected by `g6 setup --client claude` or
+  `--client codex`; `g6_review_patch`, with no model calls by G6; the repair loop the agent runs, through the skill;
+  the readable report, which leads with reproduced findings; the install wording and setup's closing lines; the skill
+  text for both clients.
+- **Deferred until after launch:** VS-5's study and V10 (they continue in parallel); B1 and B2; C; E0; E6; the
+  confine `/tmp` change.
+- **Not skipped (the release gates):** the VS-4 review's integrity fix with a fresh review of it; a deep fresh
+  security review of exactly what ships; continuous integration green on the release commit (a red macOS job is
+  acceptable); the owner's pilot in Claude Code and in Codex; honest copy.
+- **The owner's steps:** squash-merge PR #1, tag the release, deploy the site.
+
+How the statuses were set: "implemented and verified" means the commit message records the test failing first and then
+passing and the named test exists in the merged tree. The suites were not rerun for this update. Where a row says
+"unverified", the history does not hold the evidence, and the row says what is missing.
+
+### 5.1 What ships
+
+| # | Item | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-S1 | The local MCP server installs from the repository and connects with `g6 setup --client claude` or `--client codex --allow patch_review.review`. Setup's closing lines print the first review call, or how to allow patch review, and say how to replace an existing `g6` entry | implemented and verified | `39a43d7`, `3a37d1e`, `0f62916`, `28a2c3b`. Tests: `tests/core/test_setup_clients.py` and, in `tests/site/test_launch_copy.py`, `::test_get_started_shows_the_whole_first_journey_for_both_clients_in_order`, `::test_the_readme_shows_the_same_journey` and `::test_every_first_journey_installs_all_and_runs_setup_never_a_bare_mcp_add`. Not covered: the owner's pilot in the two clients (row L-G4) | — |
+| L-S2 | `g6_review_patch` makes no model call by G6 | implemented and verified | Patch review calls no model unless the caller sets `search={"propose": true}`, and then only with a configured model and a boundary (`34390b2`; `docs/releases/launch.md`). Tests: `tests/harness/test_verification_proposer.py` (a fake model throughout). The proposer is in the code, off by default, unused by the launch skill, with one development smoke and no study (row VS-5) | — |
+| L-S3 | The repair loop through the skill: review the patch before saying a task is done, fix what G6 reproduced, add each reproduction as a stated check, review again, stop after three rounds, never call a patch verified, never merge | implemented, not verified | `a2658bc`, `b379a9a`; the skill is `src/g6/skills/using-g6/SKILL.md` (975 words under the 1,000-word cap, and the references file). Tests of the text: `tests/skills/test_using_g6.py` (names are real, templates and parameters exist, stays short). Not verified: the skill's agent trials (`docs/skills/using-g6/TESTING.md`) were not run, because they need model calls, so no evidence shows that an agent follows the loop | — |
+| L-S4 | The readable report, `assessment.report`: at most 40 lines, reproduced findings first, then what is not established, then what the person decides | implemented and verified | `d87ed76`, `db53e43` (the repository's plain command, base evidence in words, no tier names), `6e5de6f`, `759f9fa`. Tests: `tests/harness/test_patch_report.py` | — |
+| L-S5 | A non-zero exit after a session that passed is `run_inconsistent` (insufficient evidence), not an integrity accusation | implemented and verified | `5edb483`, the owner's ruling. Tests: `tests/workforce/test_repo_tests_run.py::test_a_run_that_exits_with_an_error_after_every_test_passed_is_not_counted_as_a_pass`, `tests/harness/test_patch_review.py::test_a_run_that_exits_with_an_error_after_every_test_passed_is_insufficient_evidence` and the verdict table in `tests/harness/test_patch_review_security.py`. The ruling is asymmetric on purpose: exit 0 with a failure shown, or fewer tests finished than collected, stays untrusted | — |
+
+### 5.2 The launch's security review, in two halves
+
+Half A covers isolation, integrity, MCP and setup. Its first reviewer was stopped by a safety classifier before writing
+any probe. The owner chose a fresh reviewer, who read the code in full and ran the project's existing sandbox and
+integrity suites (Docker with bubblewrap included) and **wrote no new escape probes: the boundary half had no new
+escape probes.** Half B covers templates, the verification search, the formal path and the proposer, and also served as
+VS-5's fresh review. Half B's reviewer wrote probes, and its findings are fixed with those probes as tests. Neither
+reviewer's report is in the repository; the rows rest on the commit messages that name the findings and on the owner's
+account.
+
+| # | Item | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-A | Half A: isolation, integrity, MCP, setup. A fresh reviewer, no new escape probes | implemented, not verified | The findings below, fixed in `eb97841` to `f9d769a`, on the reviewed commit `b5c5705`. Unverified: the reviewer's report and the list of suites it ran are not in the repository, and the history records no run of those suites | — |
+| L-C1 | C1 (Critical): a weakened test in a file pytest's default names miss (`app/tests.py`, `testcalc.py`) read `supported_within_scope` | implemented and verified | `eb97841`. Tests: `tests/harness/test_patch_review_security.py::test_a_weakened_test_outside_pytests_default_names_compromises_integrity` and the cases for the repository's `python_files` in seven configuration forms. The development cases' outcomes are unchanged (the identity test) | — |
+| L-I1 | I1: with unconfined runs allowed and no boundary, patch review ran the checks unconfined | implemented and verified | `f41e158`; the copy in `a2b82de`. Patch review now never runs a patch without the boundary. Tests: `test_patch_review_security.py::test_with_unconfined_runs_allowed_and_no_boundary_the_review_starts_nothing` and `::test_each_run_patch_review_makes_is_refused_before_it_starts_without_the_boundary`; `tests/site/test_launch_copy.py::test_patch_review_says_it_needs_the_boundary_whatever_the_person_allowed`. On macOS patch review refuses | — |
+| L-I2 | I2: a visible file the patch adds that could change what the tests load (a plugin declaration, an extension module, bytecode, a link, a module's twin) went past integrity | implemented and verified | `d63f40a`; the follow-up test in `27cd305`. Reason `changed_file_can_change_tests`. Tests: six cases in `test_patch_review_security.py`, with controls for an ordinary new module and a moved module | — |
+| L-I3 | I3: a re-pinned data file or snapshot was never mentioned | implemented and verified | `1e21764`. Tests: `test_patch_review_security.py::test_changed_test_data_or_a_snapshot_is_insufficient_evidence_and_the_person_is_asked` and `::test_a_changed_file_outside_the_test_folders_leaves_the_outcome_as_it_was`. Cost accepted: a correct patch that updates a snapshot reads `insufficient_evidence` until the person looks | — |
+| L-I4 | I4: a touched-module test that fails and is not compared with the base was only an unknown | implemented and verified | `1fcc74c`. Evidence reason `derived_test_not_compared` on nine branches; one test per branch in `test_patch_review_security.py`. One existing test was changed as strictly as the fix required (`test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect`) | — |
+| L-I5 | I5: the patch's own code runs in pytest's own process, so a patch written to defeat the checks can make them pass | implemented and verified | A limit stated, not removed: `a2b82de` adds one sentence to the README, the release notes and the workflow guide. Test: `test_launch_copy.py::test_patch_review_says_the_patch_runs_in_pytests_own_process`. G6 does not catch this case (section 5.9) | — |
+| L-I6 | I6: a module the patch imports that is not installed was blamed on the environment, so an agent following the advice would install whatever the name says | implemented and verified | `c568c30`. Reason `patch_imports_missing_module`; the next action asks the person to check the name before installing anything. Tests: `test_patch_review_security.py::test_a_module_the_patch_imports_that_is_not_installed_is_asked_about_never_blamed_on_the_environment` and a confined case | — |
+| L-M1 | M1: a report that hid a failure G6 had recorded read `run_inconsistent` instead of integrity | implemented and verified | `f9d769a`. Test: `test_patch_review_security.py::test_confined_a_report_that_hides_a_failure_g6_recorded_compromises_integrity` | — |
+| L-M2 | M2 to M5, the deferred minors of half A | deferred | Unverified: no commit or document in the history lists them. The owner's brief for this update names them | after launch |
+| L-B | Half B: templates, the verification search, the formal path and the proposer; also VS-5's fresh review | implemented, not verified | The findings below. Unverified: the reviewer's report is not in the repository. The probes it names are cited in the commit messages (`probe_proposer_repository_contract.py`, `probe_classifier_refusal_text.py`, `probe_proposer_limits_through_default_caller.py`, `probe_ignore_imports_backtracking.py`, `probe_cross_venv_home_bind.py`), and their files were not looked for | — |
+| L-B1 | B1: a proposer reply naming the repository's contract was counted as normative and produced `defect_detected` | implemented and verified | `f3411d1`. Test: `tests/harness/test_patch_review_security_b.py::test_an_instance_a_model_proposed_is_never_normative_whatever_contract_it_names`, a confined case with the reviewer's probe, and the control that the same instance stated by the caller is a defect as before | — |
+| L-B2 | B2: a patch could silence a counterexample by printing words like "Connection refused" | implemented and verified | `7ae5155`. A refusal is read only from G6's own record of the run. Tests: `test_patch_review_security_b.py::test_a_refusal_is_read_from_g6s_own_record_of_the_run_never_from_text_the_code_printed` and the confined `test_confined_the_patch_cannot_silence_a_counterexample`. Cost: section 5.9 | — |
+| L-B3 | B3: the report said the checks came from "you" | implemented and verified | `6e5de6f`. Test: `tests/harness/test_patch_report.py::test_the_report_says_the_checks_were_stated_in_the_request_never_by_you` | — |
+| L-B4 | B4: the proposer's call and token limits did not hold behind G6's own retry | implemented and verified | `0c2a4f9`. Test: `tests/harness/test_verification_proposer.py::test_the_limits_hold_for_every_request_the_provider_receives_behind_g6s_retry` | — |
+| L-B5 | B5: an `ignore_imports` rule could take seconds to match, by backtracking | implemented and verified | `98c45f9`. Tests: `tests/harness/test_verification_templates.py::test_a_rule_of_many_wildcards_against_a_long_module_name_is_matched_in_a_moment` and `::test_ignore_imports_wildcards_mean_what_import_linter_says` | — |
+| L-B6 | B6: a proposed check's reproduction line left out G6's caution | implemented and verified | `759f9fa`. Test: `tests/harness/test_patch_report.py::test_a_proposed_checks_reproduction_carries_g6s_caution` | — |
+| L-B7 | B7: public text that the findings contradicted (the plugin check, the proposer's limits, the reproduction's meaning) | implemented and verified | `d01710d`. Four tests in `test_patch_review_security_b.py`, among them `::test_the_docs_say_what_the_plugin_check_refuses_and_what_it_does_not_detect` | — |
+| L-BC | Half B's Critical: a committed `.venv` whose `pyvenv.cfg` named a folder of the person's (for example the key folder) got that folder bound, read only, into the confined run | implemented and verified | Fixed on the owner's own instruction, `5dad0fe`: `repo_tests.interpreter` takes the repository's environment or `G6_REPO_PYTHON` only when every folder a confined run reads is inside the repository, is one G6's own interpreter reads, or holds a Python standard library; otherwise `G6_E_REPO_PYTHON_INVALID`. `confine.py` is not edited. Tests: `test_patch_review_security.py::test_a_repository_environment_that_would_open_a_folder_of_the_persons_is_refused_before_anything_runs`, `::test_confined_a_repository_environment_never_opens_a_folder_of_the_persons` (the control reads the key out of sight) and two more | — |
+| L-B8 | B8 to B10, the deferred findings of half B | deferred | Unverified: no commit or document in the history lists them. The owner's brief for this update names them | after launch |
+
+### 5.3 The fixes found by the worked examples (W1 to W5), merged as `a923002`
+
+| # | Item | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-W1 | **Security fix.** The server starts with `python -P`, so a project's packages never replace G6's own. Before the fix, in starlette's repository G6 ran the repository's `starlette` outside any boundary | implemented and verified | `1e6aad6`. Tests: `tests/core/test_mcp_registered_command.py` (the exact registered command, started in a project that shadows pydantic, starlette, anyio, mcp and typing_extensions; a plain `-c` start imports all five, as the control; a scan of the docs and code for a bare start) and the pin in `tests/core/test_setup_clients.py`. An entry made before the fix keeps the old command; the release notes say how to replace it. `promotion_custody.py` still starts a `python -m` child (section 5.9) | — |
+| L-W2 | A finished review replies compactly over MCP: the report first, with the full assessment saved and `detail="full"` to read it back | implemented and verified | `ac18373`. Before: 64,000 to 242,000 characters per reply. After: about 8,000. Tests: `tests/core/test_mcp_review_reply.py` (seven tests, with a real reply as the fixture `tests/core/data/worked_example_review_reply.json`). The Python API's reply and every decided field are unchanged | — |
+| L-W3 | Guidance for git-ignored files named like modules: which files, why, and `git add -f <path>` or remove them | implemented and verified | `c9ddf51`. Only the guidance is new; no outcome or decided field changes. Tests: `tests/harness/test_ignored_file_guidance.py` (five tests). The rule itself still errs toward an alarm (section 5.9) | — |
+| L-W4 | A refusal of template bindings names each binding missing or misnamed and gives one valid instance | implemented and verified | `12469f1`. Tests: `tests/harness/test_template_examples.py` (every example is valid against the real schema; the refusal names each binding). The skill's `references/templates.md` gives the same examples | — |
+| L-W5 | **Security fix.** The server makes no network request when it starts or lists its tools, and FastMCP reads no project `.env` | implemented and verified | `755ccba`. FastMCP asked PyPI for its latest version at each start, and read its settings from the project's `.env`, where a line could name a class for FastMCP to import and build. Tests: `tests/core/test_mcp_offline_start.py` (every outbound connection and name lookup recorded and refused; the person's own `FASTMCP_CHECK_FOR_UPDATES` is kept as the survival control) | — |
+| L-W6 | A fresh security review of W1 to W5 | missing (in progress) | In progress. No report exists yet; this row is updated when it does | go-live security gate |
+
+### 5.4 L1: an environment linked to G6's own Python
+
+| # | Item | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-L1 | On Linux, a project environment linked to the same Python as G6's own made almost every review fail with `G6_E_ISOLATION_UNAVAILABLE`. It is now refused up front, before anything runs, and the install copy makes G6's own environment with `python -m venv --copies` | implemented and verified | `2680cc9` (the refusal and the install copy in the README, Get started, the docs index, both guides, the workflow guide and the release notes), `18ae192` (the home page's quick start). Tests: `tests/harness/test_patch_review_security.py::test_an_environment_linked_to_the_same_python_as_g6s_is_refused_before_anything_runs`, the confined positive control (a `--copies` venv reviews and reads `supported_within_scope`), `tests/site/test_launch_copy.py::test_every_install_makes_g6s_own_environment_with_copies_first_and_says_why` and `::test_the_home_pages_quick_start_first_makes_g6s_own_environment_and_links_get_started`. `confine.py` is not edited; its real fix waits for the issuance window (row L-D6). The refusal wording is marked "PENDING copy" in the commit message, and no record shows the owner approved it (section 5.9) | — |
+
+### 5.5 The continuous-integration fixes
+
+| # | Item | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-CI1 | The install message: the study caller said `pip install 'g6[anthropic]'`, which would fetch a package of that name from the index | implemented and verified | `1b32138` (run 40810994710 at `28a2c3b` failed all six test jobs on `tests/tools/test_install_messages.py::test_every_install_command_names_the_repository`). Red then green with that file in its own process | — |
+| L-CI2 | The scan waiver: the scan job flagged the fixture of `tests/test_no_local_paths.py` as a user path | implemented and verified | `76441f5` pins a `SCAN_EXCEPTIONS` entry to the file's SHA-256; `3b963c4` fixes its own comment, which quoted a path. The scan of a clean export went from 1 finding to 0, and a path planted in another file is still flagged. `tests/tools/test_export_public.py` | — |
+| L-CI3 | The failures of run 40780356106: the workforce skill over its word cap (1,829 against 1,800), and Windows link copies. Setup's registration tests on Linux | implemented and verified | `362ac00` (1,796 words), `ab7be35` (item 12, links made with the system's separator), `8426ae3` (setup's tests replace `STEPS` too). Each is reported red then green. No run has confirmed these on the later commits | — |
+
+### 5.6 The copy
+
+| # | Item | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-P1 | The home page's quick start: the headline "Now you can make AI agents check their own work", the subheading with its limit sentence, and the two-command start preceded by the line that makes G6's own environment | implemented and verified | `d2eb51b`, `28a2c3b`, `18ae192`. Tests: `tests/site/test_home_page.py`, `tests/site/test_launch_copy.py` (the install line, no bare `claude mcp add`, no `.[mcp]` in a first journey, the 65-word cap) | — |
+| L-P2 | The `state_invariant.v1` request shows what its binding takes | implemented and verified | `d7c285c`, from the VS-5 smoke, where every such instance was refused. Tests: `tests/harness/test_verification_proposer.py::test_the_state_invariant_request_shows_the_bindings_parts_and_an_example_that_fits` and two more. Not verified: whether a model now fills the binding correctly; the smoke was not rerun (no spend) | — |
+| L-P3 | "G6 maintaining G6, in public": a home page section beside the worked example, the FAQ's "Does G6 now improve itself automatically?" (still "No" for the meta-harness) and a README section with an `aspirational` row. The loop's design is brought into the line | implemented and verified | `0ce616e`. The copy says the loop is being built, a maintainer reviews and merges every change, everything is public, what it shows is reported including a null result, and it works only on G6. Design: `docs/superpowers/specs/2026-10-29-self-improvement-loop-design.md`, with the owner's answers O1 (subscriptions used headless, never exposed to outside users), O2 (no second Windows account, so each study report states the same-user limit) and O3 (a GitHub App and rulesets). Tests: `tests/site/test_loop_in_public.py` (three tests: the page, the FAQ and README with the link, the design's presence) | — |
+| L-P4 | The README, the release notes, Get started and the FAQ, Security and Developers pages: the whole first journey for both clients, the repair loop, and the status line word for word | implemented and verified | `3a37d1e`, `0f62916`, `a2b82de`, `28a2c3b`. Tests: `tests/site/test_launch_copy.py` (the status line on every page and file that ships, the journey in order, no claim of more defects found or time saved, the release notes' parts) | — |
+
+### 5.7 The release gates
+
+| # | Gate | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-G1 | The VS-4 review's integrity fix, with a fresh review of it | implemented, not verified | The fix is `d58e5d1` and `a95525d`: the changed files never come from the repository's index or its replace refs, and the snapshot binds a changed file's bytes whatever the index says. Both are ancestors of `b5c5705`, the commit half A reviewed. Unverified: no commit message or document names a review of these two commits on their own, so it is not shown that the fresh review looked at them | go-live security gate |
+| L-G2a | The deep security review, half A: no new escape probes | implemented, not verified | Rows L-A to L-M2 | go-live security gate |
+| L-G2b | The deep security review, half B | implemented, not verified | Rows L-B to L-B8 | go-live security gate |
+| L-G2c | The deep security review, W1 to W5 | missing (in progress) | Row L-W6 | go-live security gate |
+| L-G3 | Continuous integration green on the release commit (a red macOS job is acceptable) | missing | Pending. The last runs found: 40780356106 (red, fixed) and 40810994710 at `28a2c3b` (red on the scan and one install-message test, fixed). Most launch commits carry `[skip ci]`, so a run must be started on the release commit itself. The macOS job is untested (section 5.9) | owner |
+| L-G4 | The owner's pilot in Claude Code and in Codex: setup, one real review, allow and decline in the dialog | missing | Pending. Earlier: in Codex Esc cancelled the form and no Decline control was visible (`docs/releases/UAT_ROUND_1.md:61-65`); Claude Code is untested (row S5-1) | owner |
+| L-G5 | Honest copy: the status line, never "verified" as a claim, no claim that G6 catches more defects or saves time | implemented, not verified | Pinned by `tests/site/test_launch_copy.py::test_each_page_that_ships_carries_the_status_line_word_for_word`, `::test_the_launch_copy_claims_no_more_defects_found_and_no_time_saved` and `tests/site/test_loop_in_public.py`, which also checks the section never says "experimental" or "verified". Not verified: `tests/site/test_honesty.py` still does not exist (row E34); the word "experimental" still appears in three blog essays (`web/templates/blog/context_window_is_not_memory.html`, `epistemology_of_ai.html`, `two_types_of_thinking.html`; row E33), which no test reads; rows E25 to E32 were not re-read for this update | owner |
+| L-G6 | The owner's steps: squash-merge PR #1, tag the release, deploy the site; set the version number | missing | Pending. `docs/releases/launch.md` carries the placeholder `VERSION-TO-BE-SET-BY-THE-OWNER` in its title, and says the owner sets it | owner |
+
+### 5.8 Deferred until after launch
+
+| # | Item | Status | Evidence | Owned by |
+|---|---|---|---|---|
+| L-D1 | VS-5's study and V10 (they continue in parallel) | deferred | Rows VS-5 and V10. Both studies are registered as version 2 and have not run (`docs/releases/launch.md`) | after launch |
+| L-D2 | B1 and B2: premortem and mission over MCP, and the verification programme | deferred | The owner's decision. Not in the launch's code | after launch |
+| L-D3 | C: the plugins for Claude Code and Codex, and the Stop hook | deferred | `docs/releases/launch.md`, "What does not ship" | after launch |
+| L-D4 | E0: venture, the third work mode | deferred | `docs/releases/launch.md`, "What does not ship" | after launch |
+| L-D5 | E6: the continuous-integration check that runs patch review on a pull request | deferred | `docs/releases/launch.md`, "What does not ship" | after launch |
+| L-D6 | The confine `/tmp` change, and the real fix of the link-resolving comparison in `confine.interpreter_paths` | deferred | Both change `src/g6/core/confine.py`, which certificates bind: they need an independent review and the one certificate reissue (rows S2-19, L-L1). The commit `2680cc9` says the comparison gets its fix "in the post-launch issuance window, with the /tmp change" | after launch |
+| L-D7 | Refining the ignored-file rule from module names anywhere to import roots | deferred | W3's finding (row L-W3). It comes after launch, with a fresh security review | after launch |
+| L-D8 | Holding go-live for V10, the 8-of-10 fresh-user trial before posts, and venture in Step 5 | deferred | Superseded for this first launch by the owner's decision of 29 October 2026 (night); rows S5-5 and V10 keep their own status | after launch |
+
+### 5.9 Known limits and residual risks
+
+These are limits, not rows. None changes a status above.
+
+- **Windows suites.** `tests/workforce/test_repo_tests_run.py` (33 failures) and `tests/workforce/test_receipt_channel.py`
+  (5) fail on a PC without the AppContainer folder grant. They are refusals without a grant, not defects (as at
+  `df55a78`). Unverified: these counts come from the owner's brief; the suites were not rerun, and no commit message
+  gives the counts.
+- **Environments refused.** A `.venv` linked outside the repository, and a Windows Store Python environment, are now
+  refused (L1; `G6_E_REPO_PYTHON_INVALID`). The commit message of `2680cc9` states the Linux case and the
+  environments linked to G6's own Python; the Windows Store case is from the owner's brief and is not in the
+  history.
+- **B2's cost.** A correct patch whose proposed check errors only on the patch reads `insufficient_evidence`
+  (`check_error_on_patch`; `7ae5155`). The same kind of cost is accepted for a patch that updates a snapshot (`1e21764`).
+- **Component-skill examples.** Three fail on Windows for environment reasons (`adapt_healing`, `cegis`,
+  `distillation`); in the `g6-a2-linux` image, `cegis` fails because G6 is installed there through `PYTHONPATH` and
+  its child runs with `-I`. Unverified: from the owner's brief; not in the history.
+- **The ignored-file rule** names files by module name anywhere (W3's finding), which errs toward an alarm: a data
+  fixture called `a.py` can raise test integrity in doubt. Refining it comes after launch.
+- **`core/promotion_custody.py`** starts a `python -m` child. It is certificate-bound and unreachable in this release
+  (its service module is not in this G6, so `custody_configured` raises before any spawn); it waits for the issuance
+  window.
+- **macOS** is untested, and patch review refuses to run there.
+- **The patch's own code runs in pytest's own process** in the repository's environment, which the agent can change
+  (I5). A patch written to defeat the checks can make them report a pass, and G6 does not catch that.
+- **Local settings** assume a trusted host: an agent with the account's unrestricted shell can change them
+  (`docs/releases/launch.md`).
+- **The skill's agent tests** (`docs/skills/using-g6/TESTING.md`) were not run, because they need model calls.
+- **Wording not yet approved.** The source marks 16 user-facing texts "PENDING copy" (11 in
+  `src/g6/workforce/repo_tests.py`, 4 in `src/g6/harness/patch_review.py`, 1 in `src/g6/workforce/bench.py`). No
+  record in the history shows the owner has reviewed them.
+- **Earlier rows.** Rows whose evidence cites `claude/vs` or `claude/pool-compat` as "not yet on the line of record"
+  (S2-16, S2-18) now have their code on the launch line (merge `c8a15c9`); their statuses were not changed, because
+  no continuous-integration run covers them there.
 
 ## Could not be determined
 
