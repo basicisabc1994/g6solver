@@ -218,7 +218,7 @@ scientific work (see the next answer).
 | `ctx_langextract` | Sources | Pull named fields out of a text, each value with its offsets in the text or refused, the whole text read. | MCP | none | — |
 | `ctx_library_mapper` | Sources | Find candidate libraries in PyPI, GitHub and Hugging Face, their declared licences looked up against yours. | MCP | `search_candidates` | — |
 | `ctx_vision` | Sources | Show a picture to an image-capable model you give it, record its account as a claim, and cross-check its reading of text with Tesseract. | MCP | `extract_text` | — |
-| `align_prompt_library` | Workspaces | Keeps every version of a prompt, spec or test set by the SHA-256 of its content, so a result can cite the exact version it used. | MCP | `put`, `retire`, `rollback` | — |
+| `align_prompt_library` | Workspaces | Keeps every version of a prompt, spec or test set by the SHA-256 of its content, so a result can cite the exact version it used. | MCP | `install_catalog`, `put`, `retire`, `rollback` | — |
 | `shared_workspace` | Workspaces | Lets several agents share one workspace folder without overwriting each other's work: the first write wins and a stale one is refused. | MCP | `write` | — |
 | `workspace_manager` | Workspaces | Gives each agent task its own workspace folder and checks every path as part of each read and write, so nothing lands outside it. | MCP | `backup`, `cleanup`, `restore`, `write` | — |
 | `adapt_django` | Code | Generate Django source without Django; check full projects in a separate, time-limited process, not a security boundary. | MCP | `run_checks`, `write_files` | — |

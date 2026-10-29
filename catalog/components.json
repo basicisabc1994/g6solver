@@ -758,10 +758,13 @@
       "search",
       "render",
       "retire",
-      "rollback"
+      "rollback",
+      "catalogue",
+      "install_catalog"
     ],
     "requires": [],
     "sensitive_ops": [
+      "install_catalog",
       "put",
       "retire",
       "rollback"
@@ -1692,6 +1695,7 @@
     "ops": [],
     "requires": [
       "action_gating",
+      "align_prompt_library",
       "bundles",
       "coding_agent_gate",
       "context",

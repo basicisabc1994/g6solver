@@ -140,4 +140,42 @@ def rollback(name: str, to_version: int, *, request_id: str = "", run_id: str = 
     return _run("rollback", act, ids, path)
 
 
-__all__ = ["COMPONENT", "get", "history", "put", "render", "retire", "rollback", "search"]
+def catalogue(*, mode: str = "", step: str = "", request_id: str = "", run_id: str = "") -> E.WorkspaceResult:
+    """The prompt catalogue's entries for ``mode`` and ``step`` (each "" for any): static data, nothing stored."""
+    from g6.workspace.align_prompt_library import catalogue as cat
+
+    ids = {"request_id": request_id, "run_id": run_id}
+    found = cat.entries(mode=mode, step=step)
+    return E.answer("catalogue", E.LIBRARY_CATALOGUE, f"{len(found)} catalogue entr{'y' if len(found) == 1 else 'ies'}"
+                                                       f" for mode {mode or 'any'} and step {step or 'any'}.",
+                    "Render one with render after install_catalog, or read its template here; a prompt proposes, it "
+                    "never decides a gate.",
+                    evidence=_seen(catalogue="g6.workspace.align_prompt_library.catalogue", entries=len(found)),
+                    mode=mode, step=step, entries=[e.to_dict() for e in found], **ids)
+
+
+def install_catalog(prefix: str = "", *, request_id: str = "", run_id: str = "", path: Any = None
+                    ) -> E.WorkspaceResult:
+    """Store every catalogue entry as ``prefix`` + its name, as a ``candidate_template`` version; a name holding a
+    prompt of the person's own is refused (``LIBRARY_NAME_TAKEN``) and never overwritten."""
+    from g6.workspace.align_prompt_library import catalogue as cat
+
+    ids = {"request_id": request_id, "run_id": run_id}
+
+    def act(library: Library) -> E.WorkspaceResult:
+        done = cat.install(prefix=prefix, path=library.path)
+        stored, refused = done["stored"], done["refused"]
+        code = E.LIBRARY_INSTALL_PARTIAL if refused else E.LIBRARY_STORED
+        said = f"installed {len(stored)} catalogue entr{'y' if len(stored) == 1 else 'ies'}"
+        if refused:
+            said += f"; {len(refused)} name(s) hold a prompt of your own and were left alone"
+        return E.answer("install_catalog", code, said + ". An installed entry is a candidate template, not a reviewed "
+                                                       "one.", _CITE, evidence=_seen(stored=len(stored),
+                                                                                    refused=len(refused)),
+                        stored=stored, refused=refused, **ids)
+
+    return _run("install_catalog", act, ids, path)
+
+
+__all__ = ["COMPONENT", "catalogue", "get", "history", "install_catalog", "put", "render", "retire", "rollback",
+           "search"]

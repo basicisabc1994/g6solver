@@ -56,6 +56,29 @@ def placeholders(content: str) -> list[str]:
     return list(dict.fromkeys(PLACEHOLDER.findall(content)))
 
 
+def fill(content: str, values: Mapping[str, str] | None, *, label: str) -> tuple[str, list[str]]:
+    """``content``'s ``{{name}}`` placeholders filled from ``values`` in one pass (a value is never expanded again),
+    and its placeholders. Strict: a placeholder with no value (``LIBRARY_MISSING_VALUE``), a value with no placeholder
+    (``LIBRARY_EXTRA_VALUE``), a value that is not text (``LIBRARY_INPUT_INVALID``) or expanded text past
+    ``MAX_RENDERED_CHARS`` (``RESOURCE_LIMIT``, measured before the text is made) is refused; ``label`` names the
+    template in the refusal. The one fill the library's ``render`` and the prompt catalogue share."""
+    given = dict(values or {})
+    wanted = placeholders(content)
+    missing = [p for p in wanted if p not in given]
+    if missing:
+        raise E.WorkspaceRefused(E.LIBRARY_MISSING_VALUE, f"{label} has no value for {', '.join(missing)}")
+    extra = sorted(set(given) - set(wanted))
+    if extra:
+        raise E.WorkspaceRefused(E.LIBRARY_EXTRA_VALUE, f"{label} has no placeholder for {', '.join(extra)}")
+    if not all(isinstance(v, str) for v in given.values()):
+        raise E.WorkspaceRefused(E.LIBRARY_INPUT_INVALID, "every value is text")
+    expanded_size = len(content) + sum(len(given[m.group(1)]) - (m.end() - m.start())
+                                       for m in PLACEHOLDER.finditer(content))
+    if expanded_size > MAX_RENDERED_CHARS:
+        raise E.WorkspaceRefused(RESOURCE_LIMIT, f"rendered text exceeds {MAX_RENDERED_CHARS} characters")
+    return PLACEHOLDER.sub(lambda m: given[m.group(1)], content), wanted
+
+
 def _ident(name: str, version: int) -> str:
     return f"{name}@{version}"
 
@@ -200,23 +223,7 @@ class Library:
         expanded again). Strict: a placeholder with no value (``LIBRARY_MISSING_VALUE``) or a value with no placeholder
         (``LIBRARY_EXTRA_VALUE``) is refused. Says the digest of the template used and of the text made."""
         record = self.get(name, version=version, digest=digest)
-        given = dict(values or {})
-        wanted = placeholders(record["content"])
-        missing = [p for p in wanted if p not in given]
-        if missing:
-            raise E.WorkspaceRefused(E.LIBRARY_MISSING_VALUE, f"{name!r} version {record['version']} has no value "
-                                                              f"for {', '.join(missing)}")
-        extra = sorted(set(given) - set(wanted))
-        if extra:
-            raise E.WorkspaceRefused(E.LIBRARY_EXTRA_VALUE, f"{name!r} version {record['version']} has no placeholder "
-                                                            f"for {', '.join(extra)}")
-        if not all(isinstance(v, str) for v in given.values()):
-            raise E.WorkspaceRefused(E.LIBRARY_INPUT_INVALID, "every value is text")
-        expanded_size = len(record["content"]) + sum(
-            len(given[m.group(1)]) - (m.end() - m.start()) for m in PLACEHOLDER.finditer(record["content"]))
-        if expanded_size > MAX_RENDERED_CHARS:
-            raise E.WorkspaceRefused(RESOURCE_LIMIT, f"rendered text exceeds {MAX_RENDERED_CHARS} characters")
-        text = PLACEHOLDER.sub(lambda m: given[m.group(1)], record["content"])
+        text, wanted = fill(record["content"], values, label=f"{name!r} version {record['version']}")
         return {"name": record["name"], "version": record["version"], "kind": record["kind"],
                 "template_digest": record["digest"], "text": text, "rendered_digest": digest_of(text),
                 "placeholders": wanted}
