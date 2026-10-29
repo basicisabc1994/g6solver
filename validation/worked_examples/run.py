@@ -44,6 +44,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import observe  # noqa: E402
 import selection  # noqa: E402
 import wecommon as c  # noqa: E402
 
@@ -779,6 +780,10 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         run.write_json("rounds.json", rounds)
         record["rounds"] = len(rounds)
         record["outcomes"] = [r["outcome"] for r in rounds]
+        try:
+            record["observed"] = observe.observe_run(run.path)     # what the run shows about W1 to W5
+        except (OSError, ValueError) as exc:
+            record["observed"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         record["egress"] = egress(ctx, px, run.fresh_path("egress.jsonl"))
         status = record["status_detail"]
     except Exception as exc:  # noqa: BLE001 - every failure is recorded and the containers are removed

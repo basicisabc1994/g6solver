@@ -68,6 +68,27 @@ As a result, a project whose top-level package has the name of one of G6's depen
 - **pydantic's repository:** G6 imported the repository's `pydantic`, and its server failed to start (run 3).
 - **starlette's repository:** G6's server imported the repository's `starlette` and ran it there, unconfined (runs 4 and 5). This was checked with no model.
 
+## Corrections (2026-10-29, after run 5; the records above are left as first written)
+
+1. **Runs 1 and 2's integrity alarms came from the harness, not from Black.**
+   - **Where they came from:** this harness made each task's repository with `git init` and a plain `git add`. Black's
+     repository tracks test fixtures under `tests/data/gitignore_used_on_multiple_sources/` that Black's own
+     `.gitignore` files match on purpose. A plain `git add` left them untracked and git-ignored.
+   - **Why G6 raised them:** G6's rule for `ignored_file_can_change_tests` goes by file names only. It saw git-ignored
+     files the tests could load and gave "test integrity compromised".
+   - **A real clone gives no alarm.** In a repository fetched from upstream, at G6 a923002, `run.py g6replay`
+     reviewed the maintainers' fix of #496 with one of their tests as the stated check. G6 gave "supported within
+     its stated scope" with no integrity reason.
+   - **The "false alarm" judgement stands,** because the reason was never about the agent's patch. But
+     `run.py g6replay` reproduced it on the maintainers' fix only because the oracle image shared the same repository.
+   - **G6's rule is unchanged for the launch.** Since W3b (in a923002) its report says what to do about git-ignored
+     files.
+   - **From run 6 on, the harness fetches upstream's base commit itself** (PLAN.md section 9). The runner checks the
+     repository's tree against upstream's before every paid run.
+2. **Run 5's last review did not drop the templates,** as the run's account above says. On its fourth try the agent's
+   `differential.v1` instance was accepted. It compared the base and the patch on one call, with `root_path` "/app".
+   That call does not reach the regressing case (a trailing slash), so it found no difference.
+
 ## Held
 
 | # | Task | State |
