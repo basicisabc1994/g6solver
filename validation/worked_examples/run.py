@@ -969,10 +969,34 @@ def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in record.items() if k not in ("results", "base", "fixed", "usage")}
 
 
+def progress(archive: c.Archive, task: str) -> dict[str, Any]:
+    """An unfinished (or finished) run's progress, read from its stream: model calls, cost so far, rounds and their
+    outcomes, and the last tool the agent used. Reads only the archive."""
+    runs = sorted(p for p in (archive.root / "run" / task).glob("*") if p.is_dir()) if (archive.root / "run" / task).is_dir() else []
+    if not runs:
+        return {"run": None}
+    folder = runs[-1]
+    tally, objects, last_tool = c.Tally(), [], ""
+    stream = folder / "stream.jsonl"
+    for line in (stream.read_text(encoding="utf-8").splitlines() if stream.is_file() else []):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        tally.feed(obj)
+        objects.append(obj)
+        for block in ((obj.get("message") or {}).get("content") or []) if obj.get("type") == "assistant" else []:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                last_tool = str(block.get("name"))
+    rounds = extract_rounds(objects)
+    return {"run": folder.name, "finished": (folder / "run.json").is_file(), "model_calls": tally.model_calls,
+            "cost_usd": round(tally.cost_usd, 4), "rounds": [r["outcome"] for r in rounds], "last_tool": last_tool}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "dryrun", "run", "check",
-                                        "replay", "show"))
+                                        "replay", "show", "progress"))
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -986,6 +1010,9 @@ def main(argv: list[str] | None = None) -> int:
     archive = c.Archive(c.archive_root(args.archive))
     if args.command == "base":
         print(json.dumps(build_base(archive, args.ref, args.claude or default_claude()), indent=1))
+        return 0
+    if args.command == "progress":
+        print(json.dumps(progress(archive, args.task), indent=1))
         return 0
     if args.command == "show":
         found = latest(archive, args.kind, args.task)

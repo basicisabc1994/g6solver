@@ -232,6 +232,17 @@ def _stream():
             result(5, {"assessment": {"outcome": "supported_within_scope", "report": "R two"}})]
 
 
+def test_progress_reads_an_unfinished_run(tmp_path):
+    archive = c.Archive(tmp_path)
+    run = archive.start("run", TASK.id)
+    lines = [*_stream(), {"type": "assistant", "message": {"id": "u1", "model": c.MODEL,
+                                                          "usage": {"output_tokens": 100_000}}}]
+    (run.path / "stream.jsonl").write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+    got = we.progress(archive, TASK.id)
+    assert not got["finished"] and got["rounds"] == ["defect_detected", "supported_within_scope"]
+    assert got["cost_usd"] == pytest.approx(1.0) and got["last_tool"] == "mcp__g6__g6_review_patch"
+
+
 def test_extract_rounds():
     rounds = we.extract_rounds(_stream())
     assert [r["outcome"] for r in rounds] == ["defect_detected", "supported_within_scope"]
