@@ -276,6 +276,10 @@ def test_observe_records_what_the_w_fixes_changed():
     assert got["report_shown_verbatim"] == [True]
     assert got["templates"] == {"rounds_with_instances": 2, "refused_for_bindings": 1,
                                 "accepted_after_a_refusal": True}
+    quoted = [*stream[:5], {"type": "result", "result": "\n".join("> " + line for line in report.splitlines())}]
+    assert observe.observe(quoted)["report_shown_verbatim"] == [True]       # quoted whole is shown whole
+    cut = [*stream[:5], {"type": "result", "result": report[:30]}]
+    assert observe.observe(cut)["report_shown_verbatim"] == [False]
 
 
 def test_extract_rounds():

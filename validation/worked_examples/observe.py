@@ -45,7 +45,8 @@ def _report(parsed: Any) -> str | None:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
+    """Whitespace collapsed, and a Markdown quote's ``>`` markers taken off: a report quoted whole is shown whole."""
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^[ \t]*>[ \t]?", "", text)).strip()
 
 
 def observe(objects: Iterable[Mapping[str, Any]], *, saved: Mapping[str, str] | None = None) -> dict[str, Any]:
