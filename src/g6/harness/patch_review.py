@@ -245,13 +245,17 @@ def _each_once(paths) -> list[str]:
 
 
 def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
-    """The next actions for the git-ignored files ``scan`` found the tests could load."""
+    """The next actions for the git-ignored files ``scan`` found the tests could load, each file as the report shows
+    repository text (``patch_report.code``: one printable line in a code span, never a line or Markdown of its own:
+    the security review of W1-W5, F5)."""
+    from g6.harness.patch_report import code
+
     named = _each_once(scan.named_like_modules)
     rest = [rel for rel in _each_once(scan.loadable) if rel not in set(named)]
     asks = []
     for files, ask in ((named, IGNORED_NAMED_ASK), (rest, IGNORED_OTHER_ASK)):
         if files:
-            shown = ", ".join(files[:IGNORED_SHOWN]) + (
+            shown = ", ".join(code(rel, 200) for rel in files[:IGNORED_SHOWN]) + (
                 f" and {len(files) - IGNORED_SHOWN} more (git status --ignored lists them all)"
                 if len(files) > IGNORED_SHOWN else "")
             asks.append(ask.format(files=shown))

@@ -81,7 +81,7 @@ def test_ignored_fixtures_named_like_modules_are_named_once_with_what_settles_it
     assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("integrity", "ignored_file_can_change_tests")]
     asked, = _asked(got)
     files = ["tests/data/gitignore_case/dir1/calc.py", "tests/data/gitignore_case/dir2/calc.py"]
-    assert asked == f"{', '.join(files)}: {NAMED}"
+    assert asked == f"{', '.join(f'`{rel}`' for rel in files)}: {NAMED}"   # each in a code span (F5)
     report = assessment["report"]
     assert "What to do:" in report and "commit them before the change under review" in report
     assert "`assessment.next_actions`" in report and "git add -f" not in report and "git add -f" not in asked
@@ -106,7 +106,7 @@ def test_each_file_is_named_once_and_never_also_its_folder(repo, monkeypatch):
     _recorded(monkeypatch)
     got = _review(repo)
     asked, = _asked(got)
-    assert asked == f"a/b/c.py, x/calc.py: {NAMED}"
+    assert asked == f"`a/b/c.py`, `x/calc.py`: {NAMED}"
     reason, = got["assessment"]["reasons"]
     assert reason["detail"] == "git ignores files that could change the tests: a/b, a/b/c.py, a/b/c.py, x/calc.py"
 
@@ -119,7 +119,7 @@ def test_an_ignored_conftest_is_not_said_to_be_named_like_a_module(repo, monkeyp
     got = _review(repo)
     assert got["assessment"]["outcome"] == "test_integrity_compromised"
     asked, = _asked(got)
-    assert asked.startswith("conftest.py: untracked and git-ignored, but pytest or Python could load them")
+    assert asked.startswith("`conftest.py`: untracked and git-ignored, but pytest or Python could load them")
     assert "named like modules" not in asked and asked.endswith(SETTLE) and "git add -f" not in asked
 
 
@@ -128,4 +128,4 @@ def test_many_files_name_the_first_ten_and_say_how_to_list_the_rest(repo, monkey
     monkeypatch.setattr(repo_tests, "ignored_inputs", lambda root: repo_tests.Ignored(listed, {}, True, listed))
     _recorded(monkeypatch)
     asked, = _asked(_review(repo))
-    assert asked.startswith(", ".join(listed[:10]) + " and 2 more (git status --ignored lists them all): ")
+    assert asked.startswith(", ".join(f"`{rel}`" for rel in listed[:10]) + " and 2 more (git status --ignored lists them all): ")
