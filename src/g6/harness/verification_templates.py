@@ -399,9 +399,11 @@ class StateInvariantBindings(_Strict):
         if not isinstance(variables, dict) or variables.get(self.action) != "Int":
             raise ValueError("action must name an Int state variable of the model: the one whose value at each step "
                              "says which action led to that step")
-        if any(not _INTEGER.fullmatch(key) for key in self.actions):
-            raise ValueError("actions maps each value of the action variable, written as a whole number, to an "
-                             "operation call")
+        if any(not _INTEGER.fullmatch(key) or str(int(key)) != key for key in self.actions):
+            # the review of VS-4, M3: "01" beside "1" would read as one action, with one of the calls dropped
+            raise ValueError("actions maps each value of the action variable, written as a whole number in its "
+                             "canonical form (no leading zero or sign but a minus, and 0 for zero), to an operation "
+                             "call")
         if any(name not in variables or name == self.action for name in self.observe):
             raise ValueError("observe names state variables of the model, other than the action variable")
         return self
@@ -1340,7 +1342,10 @@ TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for defini
         (_CALLED, "each input is the function's one argument",
          "two results are equal as JSON writes them, or by == where one is not JSON data; monotonicity compares "
          "results with < and <=",
-         "the relation is checked on the inputs given only: this version searches no other input"),
+         "the relation is checked on the inputs given; for a function of whole numbers and booleans in Z3Verifier's "
+         "subset, Z3 also searches every whole number from the smallest input to the largest when that span holds "
+         "at most 10,000 of them (else the inputs given), and each input it finds is re-run on the real code "
+         "before it is reported"),
         _relation, _text("relation.v1", _RELATION)),
     TemplateDefinition(
         "access_rule.v1", REQUIREMENT_SATISFACTION,
@@ -1360,7 +1365,8 @@ TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for defini
          "object as its type's qualified name and its attributes (one with none by its type and its repr, without "
          "memory addresses); a long output by its SHA-256; an input the base commit observes differently on two "
          "runs is unstable, and never a difference",
-         "a difference is a counterexample when the instance's intent is preserve, and a question when it is change"),
+         "a difference is a counterexample when the instance's intent is preserve, and a question when it is change; "
+         "a difference Z3 finds at a value the caller did not declare is a question"),
         _differential, _text("differential.v1", _DIFFERENTIAL)),
     TemplateDefinition(
         "forbidden_dependency.v1", SAFETY_STRUCTURAL, "the patch adds no import that breaks a declared layer rule",
@@ -1421,6 +1427,8 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
         definition = REGISTRY.get(one.template)
         if definition is None:
             raise ValueError(f"{where}: template must be one of {', '.join(sorted(REGISTRY))}")
+        if vs.reserved_id(one.id):
+            raise ValueError(f"{where}: {vs.RESERVED_ID}")
         if one.intent not in definition.intents:
             raise ValueError(f"{where}: {one.template} checks that behaviour is kept: its intent is preserve")
         problem = literal_problem(one.bindings)

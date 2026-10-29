@@ -261,7 +261,17 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
     if isinstance(base, str):
         return error("at the base commit", base)
     also = [i for i in broken if base[i]["outcome"] == "broken"]
-    new = [i for i in broken if i not in also]
+    # the review of VS-4, I1: only a trace the base commit replays and keeps is new; one it cannot replay is not kept
+    new = [i for i in broken if base[i]["outcome"] == "holds"]
+    unknown = {str(i): str(base[i].get("why", ""))[:200] for i in broken if base[i]["outcome"] == "not_replayable"}
+    if not new and unknown:
+        return {"result": vs.CHECK_ERROR,
+                "detail": f"trace(s) {', '.join(unknown)} break the invariants on the patch's real code, and whether "
+                          "the base commit's keeps them is not established at the base commit: it could not replay "
+                          "them",
+                "correspondence": {"result": "reproduced", "traces_reproduced": broken, "on": "the patch",
+                                   "at_base": "not established at the base commit",
+                                   "traces_not_replayable_at_base": unknown, "at_base_too": also}}
     if not new:
         return {"result": vs.FAILS_ON_BASE_TOO, "detail": f"trace(s) {shown} break the invariants on the real code at "
                                                           "the base commit too",
@@ -271,7 +281,8 @@ def _judge(count: int, intent: str, on_patch: dict, at_base: dict | None) -> dic
                       "patch's real code and keep them at the base commit's",
             "shape": "a trace the model checker found breaks the invariants on the patch's real code, and keeps them "
                      "at the base commit's",
-            "correspondence": {"result": "reproduced", "traces_reproduced": new, "traces_also_at_base": also}}
+            "correspondence": {"result": "reproduced", "traces_reproduced": new, "traces_also_at_base": also,
+                               **({"traces_not_replayable_at_base": unknown} if unknown else {})}}
 
 
 def _record(one, b) -> dict:
@@ -372,6 +383,7 @@ def run(prepared, *, deadline: float, skip: str = "", budget: int = 0) -> Formal
             _standalone(prepared, one, record, "not_replayable", time.monotonic() - started, str(exc))
             continue
         record["replayed"] = True
+        record["sha256"] = vs._sha(check.source)
         record["replay_traces"] = [t["model_trace"] for t in replayed]
         prepared.checks.append(check)
         prepared.placed[check.id] = placed
@@ -488,7 +500,7 @@ def _symbolic(prepared, formal: Formal, *, deadline: float, budget: int, skip: s
         activity = {"activity": "symbolic search", "instance": one.id, "template": one.template,
                     "verifier": "Z3Verifier (g6.cegis)", "seconds": 0.0, "model_calls": 0}
         prepared.activities.append(activity)
-        record = {"id": f"{one.id[:90]}.symbolic", "activity": activity,
+        record = {"id": symbolic_id(one.id), "activity": activity,
                   "specification": {"template": one.template, "bindings_provenance": one.provenance},
                   "model": {"verifier": "Z3Verifier", "source": READING},
                   "correspondence": {"result": "not_searched"}}
@@ -560,22 +572,38 @@ def _symbolic(prepared, formal: Formal, *, deadline: float, budget: int, skip: s
                                         "instance's own inputs, which its own check runs"}
             activity.update(result="counterexample", formal=parts(record))
             continue
-        try:
+        try:   # the review of VS-4, I2: a value Z3 found is not one the caller declared outside the change's scope,
+            # so a difference there is a question (behaviour_changed), never a counterexample
             check, placed, origin = vt.compiled_check(
                 item["root"], one, data, item["notes"], ident=record["id"],
                 label=f"a counterexample Z3 found for an instance of {one.template}, which G6 compiled",
                 unconfirmed="Z3 found it on G6's reading of the source and G6 compiled its re-run from the caller's "
-                            "bindings; a compiled check decides no requirement")
+                            "bindings; a compiled check decides no requirement", refuted_by_difference=False)
         except vt.Inapplicable as exc:
             record["correspondence"] = {"result": "not_replayable", "reason": str(exc)}
             activity.update(result="counterexample", formal=parts(record))
             continue
         activity.update(result="counterexample", rerun=check.id, formal=parts(record))
+        record["sha256"] = vs._sha(check.source)
         prepared.checks.append(check)
         prepared.placed[check.id] = placed
         prepared.origins[check.id] = origin
         formal.symbolic.append(record)
         budget -= 1
+
+
+def symbolic_id(ident: str) -> str:
+    """The id of an instance's symbolic re-run (the review of VS-4, I3): never another's, however long the ids, as a
+    digest of the instance's whole id is in it; it ends in the suffix no caller's id may end in (``vs.reserved_id``)."""
+    import hashlib
+
+    return f"{ident[:70]}-{hashlib.sha256(ident.encode('utf-8')).hexdigest()[:12]}{vs.RESERVED_SUFFIX}"
+
+
+def _run_of(search, record: dict) -> dict | None:
+    """The activity of ``record``'s own check: its id and the digest of its text (the review of VS-4, I3)."""
+    return next((a for a in (search.activities if search else [])
+                 if a.get("check") == record["id"] and a.get("sha256") == record.get("sha256")), None)
 
 
 def finish(formal: Formal | None, search) -> None:
@@ -585,7 +613,7 @@ def finish(formal: Formal | None, search) -> None:
     for record in formal.runs:
         if not record["replayed"]:
             continue
-        activity = next((a for a in (search.activities if search else []) if a.get("check") == record["id"]), None)
+        activity = _run_of(search, record)
         if activity is None:
             continue
         activity.pop("shape", None)
@@ -598,7 +626,7 @@ def finish(formal: Formal | None, search) -> None:
             if defect["check"] == record["id"]:
                 defect["formal"] = parts(record)
     for record in formal.symbolic:   # each symbolic counterexample, as its re-run on the real code found it
-        rerun = next((a for a in (search.activities if search else []) if a.get("check") == record["id"]), None)
+        rerun = _run_of(search, record)
         result = rerun.get("result") if rerun else "skipped"
         if result in (vs.COUNTEREXAMPLE, vs.UNCONFIRMED_FAILURE, vs.FAILS_ON_BASE_TOO, vs.BEHAVIOUR_CHANGED):
             record["correspondence"] = {"result": "reproduced", "rerun": result}
