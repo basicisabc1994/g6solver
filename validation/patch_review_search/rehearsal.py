@@ -72,10 +72,15 @@ WALLET_BASE = ("class Wallet:\n    def __init__(self):\n        self.balance = 0
 WALLET_FIX = WALLET_BASE.replace("class Wallet:", "class InsufficientFunds(Exception):\n    pass\n\n\nclass Wallet:").replace(
     "    if amount <= wallet.balance:\n        wallet.balance -= amount\n",
     "    if amount > wallet.balance:\n        raise InsufficientFunds(amount)\n    wallet.balance -= amount\n")
+#: What every fixture ignores, as a real repository does (the rehearsal's first fault: without it, bytecode from the
+#: agent's own pytest run was captured as binary stubs git cannot apply).
+IGNORE = "__pycache__/\n*.pyc\n.pytest_cache/\n"
 FIXTURES = {
     "dev-codec": {
         "repository": "rehearsal/codec",
-        "files": {"textcodec.py": CODEC_BASE, "test_textcodec.py": "from textcodec import decode, encode\n\n\n"
+        "suite": ["test_textcodec.py"],
+        "files": {".gitignore": IGNORE, "textcodec.py": CODEC_BASE,
+                  "test_textcodec.py": "from textcodec import decode, encode\n\n\n"
                   "def test_plain():\n    assert decode(encode('plain, text')) == 'plain, text'\n"},
         "statement": {"problem_statement": "Text with a newline does not survive the codec: encode leaves the newline "
                                            "as it is. Escape newlines too.",
@@ -92,7 +97,9 @@ FIXTURES = {
         "pass_to_pass": ["test_textcodec.py::test_plain"]},
     "dev-wallet": {
         "repository": "rehearsal/wallet",
-        "files": {"wallet.py": WALLET_BASE, "test_wallet.py": "from wallet import Wallet, deposit, withdraw\n\n\n"
+        "suite": ["test_wallet.py"],
+        "files": {".gitignore": IGNORE, "wallet.py": WALLET_BASE,
+                  "test_wallet.py": "from wallet import Wallet, deposit, withdraw\n\n\n"
                   "def test_deposit_then_withdraw():\n    w = Wallet()\n    deposit(w, 10)\n    withdraw(w, 4)\n"
                   "    assert w.balance == 6\n"},
         "statement": {"problem_statement": "A withdrawal larger than the balance is silently ignored; it should be "
@@ -166,7 +173,7 @@ def build(out: str | Path, *, g6_commit: str = "0" * 40) -> Path:
         "v9": {"seed": SEED, "limits": {"arm_seconds": 1800, "suite_run_seconds": 600, "calibration_seconds": 600,
                                         "token_cap": 2_000_000},
                "executor": {"command": list(CONFINED), "confined": True, "network": False},
-               "suites": {fixture["repository"]: list(fixture["files"])[1:] for fixture in FIXTURES.values()},
+               "suites": {fixture["repository"]: fixture["suite"] for fixture in FIXTURES.values()},
                "vault": {"roots": ["vault"], "id": "v10-rehearsal", "ledger": "vault-ledger.jsonl"},
                "audit": None, "registered_size": None,
                "broken_tasks": {"published_list": {"found": False}, "screen": {"on": False}},

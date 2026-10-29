@@ -26,6 +26,12 @@ def test_the_fixtures_build_a_development_freeze_in_draw_order_with_known_answer
                for t in freeze["v9"]["tasks"])
     assert freeze["v9"]["executor"]["confined"] is True and freeze["v9"]["executor"]["network"] is False
     assert freeze["v10"]["bindings"] == {arm: f"patch_review_search.rehearsal:arm_{arm.lower()}" for arm in "CTE"}
+    # the rehearsal's first fault: with no .gitignore, the agent's pytest run left bytecode that V7's capture took as
+    # binary stubs git cannot apply; every fixture ignores it, as a real repository does
+    for task_id in rehearsal.FIXTURES:
+        ignored = (tmp_path / "sources" / task_id / ".gitignore").read_text(encoding="utf-8").split()
+        assert {"__pycache__/", "*.pyc", ".pytest_cache/"} <= set(ignored), task_id
+    assert freeze["v9"]["suites"] == {f["repository"]: f["suite"] for f in rehearsal.FIXTURES.values()}
     contract = json.loads((tmp_path / "vault" / "dev-wallet" / "contract.json").read_text(encoding="utf-8"))
     assert contract["groups"][0]["fail_to_pass"] and (tmp_path / "vault" / "dev-wallet" / "reference.diff").is_file()
 
