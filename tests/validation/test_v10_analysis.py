@@ -196,8 +196,27 @@ def test_costs_per_arm_and_tool_errors_by_kind(tmp_path):
     costs = got["costs"]
     assert costs["T"]["model_calls"] == {"mean": 2.0, "median": 2.0, "total": 12, "missing": 0}
     assert costs["T"]["cents"]["total"] == 24.0 and costs["T"]["dollars"]["mean"] == 0.04
-    assert costs["A"]["seconds"]["mean"] == 10.0 and costs["A"]["cents"]["missing"] == 6
+    # arm A makes no model call, so its cents, dollars and tokens read 0, never missing (the coordinator, 2026-10-29)
+    assert costs["A"]["seconds"]["mean"] == 10.0
+    for key in ("cents", "dollars"):
+        assert costs["A"][key] == {"mean": 0.0, "median": 0.0, "total": 0.0, "missing": 0}
+    assert costs["A"]["input_tokens"] == costs["A"]["output_tokens"] == {"mean": 0.0, "median": 0, "total": 0,
+                                                                         "missing": 0}
+    assert costs["T"]["input_tokens"]["missing"] == 6            # a meter that counted no tokens: missing, said so
     assert got["tool_errors"]["C"]["error_kinds"] == {"time_out": 1}
+
+
+def test_input_and_output_tokens_per_arm_are_what_each_arms_meter_counted_as_the_provider_reported_them(tmp_path):
+    arms = {name: outputs() for name in ARMS}
+    for name, found in arms.items():
+        for arm, tokens in (("C", {"input_tokens": 900, "output_tokens": 100}),
+                            ("R", {"input_tokens": 40, "output_tokens": 2000, "cache_read_input_tokens": 90000,
+                                   "cache_creation_input_tokens": 5000})):
+            found[arm]["meter"] = {**found[arm]["meter"], "tokens": tokens}
+    costs = study(tmp_path, TASKS, arms)["costs"]
+    assert costs["C"]["input_tokens"] == {"mean": 900.0, "median": 900.0, "total": 5400, "missing": 0}
+    assert costs["C"]["cache_read_input_tokens"]["total"] == 0          # a kind the meter's tokens leave out is 0
+    assert costs["R"]["output_tokens"]["total"] == 12000 and costs["R"]["cache_read_input_tokens"]["mean"] == 90000.0
 
 
 LIMITS = {"cap_cents": 300.0, "call_cap": 8, "limit_s": 1800, "grace_s": 60}

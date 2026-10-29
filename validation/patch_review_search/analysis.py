@@ -84,7 +84,9 @@ FILTERED = ("E", "R")
 NOT_BUILT = ("template applicability (arm T)", "the formal path's counts (arm T)",
              "whether surviving mutants predict defects (arm T)",
              "similarity to the hidden tests of the checks C, T, E and R wrote",
-             "per-reason-code shares over findings, with their bootstrap", "input and output tokens")
+             "per-reason-code shares over findings, with their bootstrap")
+#: The tokens measure 6 reports per arm, as the provider reports them (each arm's meter counts them by kind).
+TOKEN_KINDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 #: Said beside K_R (version 2, "Measures", 4).
 K_R_NOTE = ("M is chosen by V9's arm 2, which uses arm R's model on nearly arm R's prompt, so K_R counts patches that "
             "the same model has already accepted once")
@@ -292,12 +294,17 @@ def _patches(entries: list[dict], v9: dict, reference: list[dict], *, keep_inval
         for arm in ARMS:
             reruns[arm] = [{**item, "reference": compatible.get((task["task_id"], arm, item["node"]))}
                            for item in findings.get((task["task_id"], arm), [])]
-        cost = {"A": {**((task["arms"].get("g6") or {}).get("cost") or {}), "cents": None}}
+        # arm A makes no model call: its cents and tokens are 0, never missing (the coordinator, 2026-10-29)
+        cost = {"A": {**((task["arms"].get("g6") or {}).get("cost") or {}), "cents": 0.0,
+                      **dict.fromkeys(TOKEN_KINDS, 0)}}
         for arm in RUN_ARMS:
             output = found.get(arm) or {}
             meter = output.get("meter") or {}
+            tokens = meter.get("tokens")
             cost[arm] = {"model_calls": meter.get("calls"), "seconds": output.get("seconds"),
-                         "processor_seconds": output.get("processor_seconds"), "cents": meter.get("cents")}
+                         "processor_seconds": output.get("processor_seconds"), "cents": meter.get("cents"),
+                         **{kind: int(tokens.get(kind) or 0) if isinstance(tokens, dict) else None
+                            for kind in TOKEN_KINDS}}
         rows.append({"id": task["task_id"], "repository": task["repository"], "label": task["label"],
                      "accepted_by": {"1": _accepts(arms["1"]), "2": _accepts(arms["2"])},
                      "dispositions": arms, "findings": reruns, "cost": cost, "outputs": found})
@@ -406,7 +413,7 @@ def _costs(rows: list[dict]) -> dict:
         per = [row["cost"][arm] for row in rows]
         cents = [item.get("cents") for item in per]
         found[arm] = {key: _summary([item.get(key) for item in per])
-                      for key in ("model_calls", "seconds", "processor_seconds")}
+                      for key in ("model_calls", "seconds", "processor_seconds", *TOKEN_KINDS)}
         found[arm]["cents"] = _summary(cents)
         found[arm]["dollars"] = _summary([value / 100 if isinstance(value, (int, float)) else None
                                           for value in cents])

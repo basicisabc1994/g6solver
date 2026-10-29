@@ -581,3 +581,12 @@ Items from 77 cover the paid rehearsal (`rehearsal.py`), on development fixtures
     unchanged: arm R's tests' folder also holds the bytecode of running them, which collection reads and keeping
     discards and counts; and a patch that adds no test leaves arm A, and so C and T, with insufficient evidence (V9
     item 1), so their findings come from the proposer alone. For the coordinator's ruling.
+
+80. **Measure 6's tokens, arm A's zero, and R's bytecode.** Each arm's meter counts the tokens each model call reports,
+    by kind (`metering`'s `tokens`, in a reading only once a call reports some): arms C, T and E from the hosted
+    interface's usage (`input_tokens` and `output_tokens`), arm R from its session's usage (the result record's,
+    `arm_r.tokens`, with the two cache kinds). The analysis gives each kind per arm, mean, median and total, with a
+    meter that counted none as missing. Arm A makes no model call, so its cents, dollars and tokens read 0, never
+    missing. Arm R's collection skips `__pycache__` folders and `.pyc` files outright, so there is nothing to discard
+    and count. Arms E and R keep each kept file's text in their output, for the similarity measure after the labels.
+    Ruled by the coordinator (2026-10-29) for arm A and R's bytecode; the token counts for the coordinator's ruling.

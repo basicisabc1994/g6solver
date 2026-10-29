@@ -64,6 +64,7 @@ def test_the_callers_stop_counts_the_worst_case_first_and_charges_the_ledger_and
     cost = (1000 * rehearsal.PRICE_G6["input"] + 100 * rehearsal.PRICE_G6["output"]) / 1e6
     assert ledger.spent == pytest.approx(cost) and meter.reading()["cents"] == pytest.approx(cost * 100)
     assert meter.reading()["calls"] == 1
+    assert meter.reading()["tokens"] == {"input_tokens": 1000, "output_tokens": 100}   # measure 6, as reported
     with pytest.raises(rehearsal.LLMError, match="dollar stop"):
         caller.complete("s", "u", max_tokens=4000)            # its worst case would pass the cap
     blocked = rehearsal.StoppedCaller(FakeCaller(), ledger, Meter(), share_left=lambda: False)

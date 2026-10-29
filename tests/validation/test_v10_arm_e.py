@@ -140,6 +140,7 @@ def test_arm_e_counts_each_replys_reading(trees):
     got = run(trees, Model(body, f"Tests:\n```json\n{body}\n```"), runner, c_calls=2)
     assert [x["reading"] for x in got["exchanges"]] == ["json", "fenced_with_prose"]
     assert got["counts"]["readings"] == {"json": 1, "fenced": 0, "fenced_with_prose": 1}
+    assert [one["text"] for one in got["kept"]] == [PASSES]     # kept for the similarity measure after the labels
 
 
 @pytest.mark.parametrize("path", ["conftest.py", "tests/a_test.py", "tests/test-a.py", "../test_a.py", "/test_a.py",

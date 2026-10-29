@@ -114,6 +114,27 @@ def test_its_tests_are_collected_from_the_folder_kept_as_arm_es_and_judged_on_th
     sums = arm_e.placement("test_sum.py", FINDING) + "::test_sum"
     assert got["tests"][sums]["finding"] is True and got["tests"][sums]["fails_at_base"] is False
     assert [f["node"] for f in got["findings"]] == [sums] and got["findings"][0]["text"] == FINDING
+    # each kept file's text stays in R's output, for the similarity measure after the labels
+    assert {one["file"]: one["text"] for one in got["kept"]}["test_sum.py"] == FINDING
+
+
+def test_collection_skips_the_bytecode_of_running_rs_tests_outright(tmp_path):
+    # the rehearsal's observation, and the coordinator's ruling (2026-10-29): nothing to discard and count
+    folder = tmp_path / "copy" / arm_r.FOLDER
+    (folder / "__pycache__").mkdir(parents=True)
+    (folder / "__pycache__" / "test_sum.cpython-312-pytest-9.1.1.pyc").write_bytes(b"\x00\x01")
+    (folder / "deep" / "__pycache__").mkdir(parents=True)
+    (folder / "deep" / "__pycache__" / "notes.txt").write_text("cached\n", encoding="utf-8")
+    (folder / "stray.pyc").write_bytes(b"\x00")
+    (folder / "test_sum.py").write_text(FINDING, encoding="utf-8")
+    assert [item["path"] for item in arm_r.collect(tmp_path / "copy")] == ["test_sum.py"]
+
+
+def test_its_tokens_are_the_sessions_usage_by_kind_for_measure_6():
+    record = {"usage": {"input_tokens": 40, "output_tokens": 2000, "cache_read_input_tokens": 90000,
+                        "cache_creation_input_tokens": 5000}}
+    assert arm_r.tokens(record) == record["usage"]
+    assert arm_r.tokens({"usage": {}}) is None and arm_r.tokens({}) is None
 
 
 def test_its_cost_is_the_sessions_tokens_priced_by_the_frozen_price_list():

@@ -135,7 +135,10 @@ def collect(copy: Path) -> list[dict]:
     if not folder.is_dir():
         return []
     found = []
-    for path in sorted(p for p in folder.rglob("*") if p.is_file()):
+    # the bytecode of running R's tests is skipped outright, so there is nothing to discard and count (the coordinator,
+    # 2026-10-29)
+    for path in sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix != ".pyc"
+                       and "__pycache__" not in p.relative_to(folder).parts):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -156,11 +159,17 @@ def judge(pool: list[dict], *, executor, patched_tree: Path, base_tree: Path, ru
     on_patch = arm_e.run_tests(executor, patched_tree, kept, runs=runs, timeout=timeout)
     at_base = arm_e.run_tests(executor, base_tree, kept, runs=runs, timeout=timeout)
     tests, findings = arm_e.judged(kept, on_patch, at_base, runs)
-    return {"kept": [{key: one[key] for key in ("file", "placed", "sha256", "tests")} for one in kept],
+    return {"kept": [{key: one[key] for key in ("file", "placed", "sha256", "tests", "text")} for one in kept],
             "discarded": discarded, "tests": tests, "findings": findings,
             "counts": {"files": len(pool), "kept_files": len(kept), "kept_tests": len(tests),
                        "discarded": len(discarded), "errors": sum(t["error"] for t in tests.values()),
                        "findings": len(findings)}}
+
+
+def tokens(record: dict) -> dict | None:
+    """The tokens the session reports, by kind (measure 6), or None when it reports none."""
+    usage = record.get("usage")
+    return {str(kind): int(count) for kind, count in usage.items()} if isinstance(usage, dict) and usage else None
 
 
 def cost_cents(record: dict, prices: dict) -> float | None:

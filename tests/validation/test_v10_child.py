@@ -108,3 +108,15 @@ def test_a_file_meter_adds_up_what_it_recorded_and_ignores_a_line_cut_short(tmp_
     with open(tmp_path / "meter.jsonl", "a", encoding="utf-8") as handle:
         handle.write('{"calls": 1, "chara')                              # a process killed mid-write
     assert metering.FileMeter(tmp_path / "meter.jsonl").reading() == {"calls": 2, "characters": 12, "cents": 0.75}
+
+
+def test_a_meter_counts_the_tokens_a_call_reports_by_kind_and_only_once_one_does(tmp_path):
+    from patch_review_search import metering
+    for meter in (metering.Meter(), metering.FileMeter(tmp_path / "tokens.jsonl")):
+        meter.add(calls=1, cents=0.5)
+        assert "tokens" not in meter.reading()
+        meter.add(calls=1, cents=0.5, tokens={"input_tokens": 900, "output_tokens": 100})
+        meter.add(calls=1, cents=0.5, tokens={"input_tokens": 50, "cache_read_input_tokens": 7})
+        assert meter.reading()["tokens"] == {"input_tokens": 950, "output_tokens": 100, "cache_read_input_tokens": 7}
+        with pytest.raises(ValueError):
+            meter.add(calls=1, tokens={"input_tokens": -1})

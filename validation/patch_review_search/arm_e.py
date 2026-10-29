@@ -478,7 +478,7 @@ def arm_e(*, ask, patched_tree: Path, base_tree: Path, patch: str, contract: str
         return failed(TIME_OUT, f"the arm's wall-clock limit of {frozen.limit_s} seconds was reached", time_or_cap=True)
 
     tests, findings = judged(kept, outcomes, at_base, frozen.runs)
-    found.update(kept=[{key: one[key] for key in ("file", "placed", "sha256", "call", "tests")} for one in kept],
+    found.update(kept=[{key: one[key] for key in ("file", "placed", "sha256", "call", "tests", "text")} for one in kept],
                  discarded=discarded, tests=tests, findings=findings,
                  counts={"no_test_file": not files_seen, "none_kept": files_seen and not kept,
                          "kept_files": len(kept), "kept_tests": len(tests), "discarded": len(discarded),

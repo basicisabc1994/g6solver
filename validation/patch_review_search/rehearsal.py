@@ -248,7 +248,8 @@ class StoppedCaller:
             cost = ((usage.get("input_tokens") or 0) * PRICE_G6["input"]
                     + (usage.get("output_tokens") or 0) * PRICE_G6["output"]) / 1e6
             self.ledger.settle(ident, cost, {"usage": dict(usage), "worst": round(worst, 6)})
-            self.meter.add(calls=1, cents=cost * 100)
+            self.meter.add(calls=1, cents=cost * 100, tokens={kind: int(usage[kind]) for kind in launcher.USAGE_KEYS
+                                                              if isinstance(usage.get(kind), int)})
 
 
 def study_caller():

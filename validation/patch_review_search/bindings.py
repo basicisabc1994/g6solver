@@ -86,7 +86,7 @@ class Sessions:
             return {"disposition": disposition, "findings": [], "session": None}
         cents = arm_r.cost_cents(record, self.prices)
         calls = int(record.get("model_calls") or 0)
-        meter.add(calls=calls, cents=cents or 0.0)
+        meter.add(calls=calls, cents=cents or 0.0, tokens=arm_r.tokens(record))
         patched, base = self.trees[task]
         judged = arm_r.judge(arm_r.collect(self.copies[task]), executor=self.executor_for(task),
                              patched_tree=Path(patched), base_tree=Path(base), runs=self.runs, run_s=self.run_s)
