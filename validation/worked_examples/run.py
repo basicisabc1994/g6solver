@@ -376,7 +376,7 @@ report = a.get("report") or ""
 backend = "bubblewrap" if "isolation `bubblewrap`" in report else None
 done = subprocess.run([str(root / ".venv/bin/python"), "-m", "pytest", "-q", "-p", "no:cacheprovider",
                        "test_keyprobe.py"], cwd=root, capture_output=True, text=True)
-said = re.findall(r"seen: ([a-z_,]+)", done.stdout + done.stderr)
+said = re.findall(r"AssertionError: seen: ([a-z_,]+)", done.stdout + done.stderr)
 channels = sorted(set(",".join(said).split(","))) if said else []
 print(json.dumps({"confined": {"R1": status.get("R1"), "outcome": a.get("outcome"), "backend": backend,
                                "code": (got.get("warning_card") or {}).get("code")},
@@ -892,9 +892,24 @@ def read_issue(task: Task) -> tuple[str, str]:
     return str(data.get("title") or ""), str(data.get("body") or "")
 
 
+def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
+    """A short view of a record, for the terminal: test results are counted, not listed."""
+    if kind == "validate":
+        return {"ok": record.get("ok"), "fail_to_pass": record.get("fail_to_pass"),
+                "pass_to_pass": len(record.get("pass_to_pass") or []),
+                **{f"{side}_{k}": (record.get(side) or {}).get(k) for side in ("base", "fixed")
+                   for k in ("pytest_exit", "patch_applied")},
+                **{f"{side}_results": len((record.get(side) or {}).get("results") or {}) for side in ("base", "fixed")}}
+    if kind == "check":
+        return {"checks": [{k: row.get(k) for k in ("patch", "bytes", "patch_applied", "passes",
+                                                     "fail_to_pass_failing")} | {"failing": len(row.get("failing") or [])}
+                           for row in record.get("checks") or []]}
+    return {k: v for k, v in record.items() if k not in ("results", "base", "fixed", "usage")}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("base", "images", "validate", "freecheck", "run", "check", "replay"))
+    ap.add_argument("command", choices=("base", "images", "validate", "freecheck", "run", "check", "replay", "show"))
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -903,10 +918,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run", dest="run_rel")
     ap.add_argument("--code")
     ap.add_argument("--test", type=Path)
+    ap.add_argument("--kind", default="validate", help="show: validate, run, check, freecheck, replay or build")
     args = ap.parse_args(argv)
     archive = c.Archive(c.archive_root(args.archive))
     if args.command == "base":
         print(json.dumps(build_base(archive, args.ref, args.claude or default_claude()), indent=1))
+        return 0
+    if args.command == "show":
+        found = latest(archive, args.kind, args.task)
+        print(json.dumps({"run": found and found["run"], **brief(args.kind, found["record"] if found else {})},
+                         indent=1, default=str)[:6000])
         return 0
     task = task_by_id(args.task)
     g6 = g6_info(args.g6)
@@ -917,7 +938,7 @@ def main(argv: list[str] | None = None) -> int:
         result = {"validate": lambda: validate(ctx, task), "freecheck": lambda: freecheck(ctx, task),
                   "run": lambda: run_task(ctx, task), "check": lambda: check(ctx, task, args.run_rel),
                   "replay": lambda: replay(ctx, task, args.code, args.test)}[args.command]()
-    print(json.dumps(result, indent=1, default=str)[:8000])
+    print(json.dumps(brief(args.command, result), indent=1, default=str)[:8000])
     return 0
 
 
