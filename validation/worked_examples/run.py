@@ -178,7 +178,7 @@ def base_dockerfile(variant: str = "") -> str:
     ``.venv`` made with ``python -m venv --copies``, then ``pip install ".[all]"`` there (``g6`` on the path stands
     in for activating it); Claude Code 2.1.309; on ``g6-a2-linux``. Round 2 (``variant`` "r2") first makes its one
     G6-side change (``round2_g6.py``) to the source G6 is installed from."""
-    round2 = (f" && python3 /tmp/round2_g6.py {G6SRC}/src/g6/harness/verification_search.py && rm /tmp/round2_g6.py \\\n"
+    round2 = (f" && python3 /tmp/round2_g6.py {G6SRC}/src/g6/harness && rm /tmp/round2_g6.py \\\n"
               if variant == ROUND2 else "")
     copy = "COPY round2_g6.py /tmp/round2_g6.py\n" if variant == ROUND2 else ""
     return f"""FROM {FROM_IMAGE}

@@ -120,7 +120,7 @@ def test_base_dockerfile_installs_g6_as_the_readme_says():
     assert we.G6PY == "/opt/g6src/.venv/bin/python3"
     assert "round2_g6" not in text
     r2 = we.base_dockerfile(we.ROUND2)
-    change = r2.index("round2_g6.py /opt/g6src/src/g6/harness/verification_search.py")
+    change = r2.index("round2_g6.py /opt/g6src/src/g6/harness &&")
     assert change < r2.index('pip install -q --no-cache-dir ".[all]"')    # made to the source G6 is installed from
     assert we.base_tag("a" * 40, we.ROUND2) == "g6we-base:aaaaaaaaaaaa-r2"
 
@@ -564,6 +564,20 @@ def test_round2_forces_the_proposer_on_whatever_the_caller_passes():
     assert got["templates"] is False                     # every other setting stays the caller's
     with pytest.raises(ValueError):
         round2_g6.patch(MINI_SEARCH.replace("        return settings\n", ""))   # an anchor gone: nothing written
+    # and the review builds a search configuration even when the caller passes no search and no template instance
+    review = ('def _inputs(search):\n    config = None\n    if search is not None:\n        config = search\n'
+              '    return stated, assumed, unmapped, proposed, instances, config\n')
+    patched = round2_g6.patch(review, round2_g6.REVIEW_EDITS)
+    assert "config = config or verification_search.search_config(None)\n    return stated" in patched
+
+
+def test_round2_patch_writes_nothing_unless_both_files_have_their_anchors(tmp_path):
+    from worked_examples import round2_g6
+
+    (tmp_path / "verification_search.py").write_text(MINI_SEARCH, encoding="utf-8")
+    (tmp_path / "patch_review.py").write_text("no anchor here\n", encoding="utf-8")
+    assert round2_g6.main(["x", str(tmp_path)]) == 1
+    assert (tmp_path / "verification_search.py").read_text(encoding="utf-8") == MINI_SEARCH
 
 
 def test_round2_key_file_and_cost():

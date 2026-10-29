@@ -330,3 +330,14 @@ the text.
 
 The records say how many calls were counted this way. The $100 stop uses this count, so it can only overstate what
 G6's model cost.
+
+### 2026-10-29: round 2's G6-side change needs a second line (before any of its runs)
+
+**Why.** A dry run with no model showed the proposer never running. At 9ad134d, `review_patch` builds no search
+configuration at all when the caller passes neither `search` nor template instances, and then no proposer runs,
+whatever `search_config` returns.
+
+**Change.** `round2_g6.py` also adds one line to `g6.harness.patch_review._inputs`, so that every review gets the
+search configuration: the caller's, or the defaults when it gives none. With the first edit, that means the proposer
+runs on every review. Each anchor must be found exactly once in both files, or the image is not built. Nothing else in
+G6 changes.
