@@ -219,6 +219,27 @@ Copy is a draft for the owner's review in the live preview.
     </div>
 </section>
 
+<section class="band" id="tried-it" aria-labelledby="tried-it-h">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="tried-it-h">What happened when we tried it</h2>
+            </div>
+            <div class="band__body">
+                <p class="lede quiet">We gave Claude Code with Claude Sonnet 5.5 ten recent, real bugs in black,
+                pydantic, starlette, click, attrs and fastapi, with G6 over MCP. G6 reproduced no defect. Six of the
+                ten patches failed the maintainers' tests: G6 asked for more evidence, accepted the patch within the
+                checks the agent stated, or raised an alarm that turned out to be false. We fixed what it taught
+                us.</p>
+                <p>That is G6 today: a careful, isolated check of what your agent states, not yet a defect finder. In
+                these runs G6 called no model of its own; a second round, with G6's own model proposing checks, is
+                under way. Making G6 a defect finder is the self-improvement loop's first job.
+                <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md">All ten runs</a></p>
+            </div>
+        </div>
+    </div>
+</section>
+
 <section class="band" id="in-public" aria-labelledby="in-public-h">
     <div class="wrap">
         <div class="cols">

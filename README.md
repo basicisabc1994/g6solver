@@ -217,6 +217,16 @@ Until a pre-registered study says otherwise, treat G6 as careful engineering, no
 so far, including how G6 with its default settings compares with one direct model call, are on the
 [Research](site/docs/research.md) page, as a worked example.
 
+## What happened when we tried it
+
+We gave Claude Code with Claude Sonnet 5.5 ten recent, real bugs in black, pydantic, starlette, click, attrs and
+fastapi, with G6 over MCP. G6 reproduced no defect. Six of the ten patches failed the maintainers' tests: G6 asked for
+more evidence, accepted the patch within the checks the agent stated, or raised an alarm that turned out to be false.
+We fixed what it taught us. That is G6 today: a careful, isolated check of what your agent states, not yet a defect
+finder. In these runs G6 called no model of its own; a second round, with G6's own model proposing checks, is under
+way. Every run, with its plan fixed before the first one, is in
+[validation/worked_examples](https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md).
+
 ## G6 maintaining G6, in public
 
 We're building a loop in which G6 maintains its own GitHub repository. It finds where G6 falls short, has Claude Code
