@@ -382,7 +382,8 @@ backend = "bubblewrap" if "isolation `bubblewrap`" in report else None
 done = subprocess.run([str(root / ".venv/bin/python"), "-m", "pytest", "-q", "-p", "no:cacheprovider",
                        "test_keyprobe.py"], cwd=root, capture_output=True, text=True)
 said = re.findall(r"AssertionError: seen: ([a-z_,]+)", done.stdout + done.stderr)
-channels = sorted(set(",".join(said).split(","))) if said else []
+known = {"own_env_name", "own_env_value", "proc_env_name", "proc_env_value", "key_file"}
+channels = sorted(set(",".join(said).split(",")) & known) if said else []   # pytest's summary line cuts names short
 print(json.dumps({"confined": {"R1": status.get("R1"), "outcome": a.get("outcome"), "backend": backend,
                                "code": (got.get("warning_card") or {}).get("code")},
                   "control": {"exit": done.returncode, "channels": [x for x in channels if x]}}))
@@ -612,19 +613,39 @@ def refusal(ctx: Context, task: Task) -> str:
     return "" if ok else f"the $100 stop: {why}"
 
 
-def run_task(ctx: Context, task: Task) -> dict[str, Any]:
+DRY_KEY = "placeholder-not-a-key-0000"
+DEAD_PROXY = "http://127.0.0.1:9"
+
+
+def hook_selftest(ctx: Context, agent: str, task: Task) -> dict[str, Any]:
+    """The dry run's check of the round hook: a change in the working tree, the hook run as Claude Code runs it, then
+    the saved patch holds the change and the repository's index is as it was."""
+    script = (f'cd "{task.repo}" && before=$(git diff --cached --name-only | wc -l) && echo "# dry run" >> we_dry_run.txt'
+              f' && echo "{{}}" | {WE}/round_hook.sh > /tmp/we-hook-out.txt 2>&1; code=$?;'
+              f' after=$(git diff --cached --name-only | wc -l); saved=$(grep -c we_dry_run.txt {WE}/rounds/round-1.patch);'
+              f' said=$(wc -c < /tmp/we-hook-out.txt); rm -f we_dry_run.txt {WE}/rounds/round-1.*;'
+              f' echo "{{\\"exit\\": $code, \\"index_before\\": $before, \\"index_after\\": $after, '
+              f'\\"patch_names_change\\": $saved, \\"printed_bytes\\": $said}}"')
+    try:
+        return json.loads(out(ctx.docker.sh(agent, script, workdir=task.repo)).splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"error": "the hook self-test printed nothing readable"}
+
+
+def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     """One run (PLAN.md section 4). Refused before anything starts when G6's commit, the validation or the stop says
-    so; a failed key check starts no agent."""
-    why = refusal(ctx, task)
+    so; a failed key check starts no agent. ``dry``: the same path with no key and no way out (a placeholder in the
+    key's place, Claude Code's proxy a dead port), plus a self-test of the round hook; nothing can be spent."""
+    why = "" if dry else refusal(ctx, task)
     if why:
         return {"status": "refused", "why": why, "task": task.id}
-    key = ctx.key_reader()
+    key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]))
     tag = uuid.uuid4().hex[:10]
     common = {"g6_commit": ctx.g6.get("commit"), "g6_image": ctx.g6.get("image"), "task_image": task_image,
               "model": c.MODEL}
-    run = ctx.archive.start("run", task.id, **common)
+    run = ctx.archive.start("dryrun" if dry else "run", task.id, **common)
     record: dict[str, Any] = {**common, "task": task.id, "agent_started": False, "cost_usd": 0.0}
     agent, net, px, status = "", "", "", "error"
     try:
@@ -653,10 +674,13 @@ def run_task(ctx: Context, task: Task) -> dict[str, Any]:
             raise RuntimeError(f"g6 setup exited {setup.returncode}")
         write_in(ctx.docker, agent, f"{WE}/round_hook.sh", hook_script(task.repo, base), mode="755")
         write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings())
+        if dry:
+            record["hook_selftest"] = hook_selftest(ctx, agent, task)
         text_in = prompt(task, title, text)
         run.write("prompt.txt", text_in)
         args = claude_args()
-        env_names = ["ANTHROPIC_API_KEY", f"HTTPS_PROXY=http://{px}:{PROXY_PORT}", f"HTTP_PROXY=http://{px}:{PROXY_PORT}",
+        way_out = DEAD_PROXY if dry else f"http://{px}:{PROXY_PORT}"
+        env_names = ["ANTHROPIC_API_KEY", f"HTTPS_PROXY={way_out}", f"HTTP_PROXY={way_out}",
                      "NO_PROXY=localhost,127.0.0.1", f"HOME={HOME}", "DISABLE_AUTOUPDATER=1",
                      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1"]
         docker_args = ["exec", "-i", "-u", USER, "-w", task.repo, *[a for e in env_names for a in ("-e", e)], agent,
@@ -921,7 +945,8 @@ def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("base", "images", "validate", "freecheck", "run", "check", "replay", "show"))
+    ap.add_argument("command", choices=("base", "images", "validate", "freecheck", "dryrun", "run", "check", "replay",
+                                        "show"))
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -948,6 +973,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         ctx = Context(archive=archive, docker=Docker(), key_reader=read_key, issue_reader=read_issue, g6=g6)
         result = {"validate": lambda: validate(ctx, task), "freecheck": lambda: freecheck(ctx, task),
+                  "dryrun": lambda: run_task(ctx, task, dry=True),
                   "run": lambda: run_task(ctx, task), "check": lambda: check(ctx, task, args.run_rel),
                   "replay": lambda: replay(ctx, task, args.code, args.test)}[args.command]()
     print(json.dumps(brief(args.command, result), indent=1, default=str)[:8000])

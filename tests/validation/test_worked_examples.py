@@ -349,6 +349,22 @@ def test_a_run_refuses_before_any_start(tmp_path):
     assert rec["status"] == "refused" and "stop" in rec["why"]
 
 
+def test_a_dry_run_reads_no_key_and_has_no_way_out(tmp_path):
+    (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
+    docker = FakeDocker()
+    ctx = _ctx(tmp_path, docker, validated=False, g6_commit_ok=False)
+
+    def no_key():
+        raise AssertionError("a dry run must not read the key")
+
+    ctx.key_reader = no_key
+    rec = we.run_task(ctx, TASK, dry=True)
+    assert rec["status"] == "finished" and "hook_selftest" in rec
+    claude = next(call for call in docker.calls if we.CLAUDE in call and "-p" in call)
+    assert f"HTTPS_PROXY={we.DEAD_PROXY}" in claude
+    assert all(r.get("kind") != "run" for r in ctx.archive.rows() if r.get("event") == "started")
+
+
 def test_a_failed_key_check_starts_no_agent(tmp_path):
     (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
     docker = FakeDocker(keycheck_ok=False)
