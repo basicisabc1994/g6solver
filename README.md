@@ -5,6 +5,13 @@ evidence, verification and action control. Its north star is **AI for AI**: agen
 propose redesigns and test hypotheses against frozen checks, with evaluation and activation outside the candidate's
 writable scope. Components and workflow tools are available today; benefits for a particular application require testing.
 
+**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+
+The first use is a check on a coding agent's work. Before your agent (Claude Code or Codex) says a Python change is
+done, it calls `g6_review_patch`: G6 runs the tests that check each requirement inside an operating-system boundary,
+looks for signs that the tests were weakened, and returns a report your agent shows you as it is. Your agent fixes what G6 reproduces and
+asks again. Merging stays your decision. G6 makes no model calls of its own unless you turn them on.
+
 Every result carries one of three labels, and G6 never upgrades a label it did not earn:
 
 | Label | Meaning |
@@ -37,40 +44,64 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
 
 ## Install
 
+You need Python 3.12 or 3.13, git, and Claude Code or Codex. Run these yourself, in a terminal, not through your
+agent:
+
 ```bash
 git clone https://github.com/basicisabc1994/g6solver && cd g6solver
-pip install ".[all]"        # Python 3.12 or 3.13
-g6 doctor                   # read-only installation check
-g6 setup --client codex      # register this installation and install its skill; or --client claude
+pip install ".[all]"
+g6 doctor                                               # read-only: what this computer offers G6
+g6 setup --client claude --allow patch_review.review    # or --client codex; give --client twice for both
 ```
 
-Not a programmer? Ready-made **bundles** (double-click apps) come with the first release; see the
+`g6 setup` registers this installation with the client (`claude mcp add` or `codex mcp add`, with this installation's
+Python), installs the `using-g6` skill for it, and allows patch review, the one sensitive operation the first review
+needs. Restart the client afterwards. Its last lines show the first review call.
+
+If the client already has an entry called `g6`, setup leaves it as it is and stops. See it with `claude mcp get g6` (or
+`codex mcp get g6`). To replace it, remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`), then
+run `g6 setup` again.
+
+G6 runs a patch and your repository's tests for you only inside an operating-system boundary: bubblewrap on Linux
+(install the `bubblewrap` package), an AppContainer on Windows (after the one-time access grant `g6 doctor` prints).
+`g6 doctor` says which you have. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap,
+and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script,
+a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read
+your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for
+what you run. `G6_ALLOW_UNCONFINED=1`, set where you start G6, does the same as allowing it; `G6_REQUIRE_ISOLATION=1`
+refuses such code whatever you allowed.
+
+## The first review
+
+In a Python repository, ask your agent for a change, then ask it to review the change with G6 before it says the task
+is done. The skill tells it how:
+
+1. It turns the task into numbered requirements, each with the pytest tests that check it where such a test exists.
+2. It calls `g6_review_patch` with the repository's folder, the task and the requirements, and polls
+   `metaharness_job` until the review ends.
+3. It shows you the reply's readable report (`assessment.report`) as it is: what G6 reproduced first, then what is not
+   established, then what you decide.
+4. When G6 reproduces a defect, it fixes it and reviews again, with each earlier reproduction added as a stated check,
+   so you can see the fix pass the original counterexample. It stops after three rounds, when a round changes nothing,
+   or when the report says only you can decide.
+
+The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope.
+Supported within scope means every stated requirement passed its stated checks; it is not proof that the patch does
+everything the task needs. Merging needs your separate decision.
+
+Not a programmer? Ready-made **bundles** (double-click apps) are described in the
 [install guide](site/docs/install.md).
 
 ## Use it
 
-**From a coding agent (MCP), the main surface:**
+**From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets discovery, `g6_compose`,
+`g6_review_patch`, and `metaharness_*` tools for constructing, measuring and revising applications. Long runs return
+job IDs; poll `metaharness_job`. [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent itself.
 
-```bash
-g6 setup --client claude     # user-scoped registration, absolute Python path
-g6 setup --client codex      # install using-g6 for Codex too
-```
-
-The agent gets discovery, `g6_compose`, `g6_review_patch`, and `metaharness_*` tools for constructing,
-measuring and revising applications. Long runs return job IDs; poll `metaharness_job`. [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent itself.
-
-G6 runs untrusted code for you only inside an operating-system boundary: bubblewrap on Linux (install the `bubblewrap`
-package), an AppContainer on Windows (after the one-time access grant `g6 doctor` prints). `g6 doctor` says which you
-have. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows
-before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a
-repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read your
-key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for
-what you run. `G6_ALLOW_UNCONFINED=1`, set where you start G6, does the same as allowing it; `G6_REQUIRE_ISOLATION=1`
-refuses such code whatever you allowed.
-
-Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values are local preferences under a trusted host: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code sign-in), `G6_LLM_PROVIDER=codex`
-(your Codex sign-in), `G6_LLM_PROVIDER=ollama` (a model on your computer), or a provider and its key. With none set,
-those steps say so and your agent can do them itself.
+Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values
+are local preferences under a trusted host: for example the line `G6_LLM_PROVIDER=claude_code` (your own Claude Code
+sign-in), `G6_LLM_PROVIDER=codex` (your Codex sign-in), `G6_LLM_PROVIDER=ollama` (a model on your computer), or a
+provider and its key. With none set, those steps say so and your agent can do them itself.
 
 **From the command line:**
 
@@ -93,7 +124,7 @@ print(ev.gate_decision.decision)    # block: irreversible and public, with no ve
 ## Build and test an application
 
 Start with [the AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). The loop is:
-`metaharness_start` ? confirm ? diagnose ? propose code with a hypothesis ? evaluate ? decide ? client consent ? run.
+`metaharness_start` -> confirm -> diagnose -> propose code with a hypothesis -> evaluate -> decide -> client consent -> run.
 Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: give
 it the patched repository, the task, and the requirements the patch must meet, each with the tests that check it.
 You can also give it the task's intent: its success criteria become requirements and its non-goals and failure
@@ -113,15 +144,16 @@ reproduction you can run with plain pytest, the way G6 ran it (with `PYTHONPATH=
 import path).
 G6 keeps its record of its own test runs (test receipts) in a file your user account owns: it stops a caller's
 claimed results from counting as G6's, not a program running as you.
-Enable it explicitly with `g6 setup --client codex --allow patch_review.review`.
+Enable it explicitly with `g6 setup --client claude --allow patch_review.review` (or `--client codex`).
 
 Fewer than 30 held-out cases means exploration only. Generated-code activation still requires independently
 configured safety checks; source support and passing tests cannot replace them. A local file is not a human-only
 authorization boundary: an agent with unrestricted same-user shell access can edit it. Use a trusted host or
 separate account to enforce that separation.
 
-The public `v0.1.0` tag is immutable. See [the v0.1.1 release gates](docs/releases/v0.1.1.md) for known limitations
-and the checks required before recommending a new release.
+The public `v0.1.0` tag is immutable. [The launch release notes](docs/releases/launch.md) say what ships, what does
+not, and its limits; [the v0.1.1 release gates](docs/releases/v0.1.1.md) list the checks required before
+recommending a new release.
 
 ## What is in it
 
@@ -158,6 +190,7 @@ and the checks required before recommending a new release.
 | Action gating: allow, ask a person, or block (`action_gating`) | `implemented`. Studied on a public agent benchmark; the result, its miss included, is on the [Research](site/docs/research.md) page |
 | End-to-end harness: frozen checks, adjudication, memory of failed checks (`g6.harness`) | `implemented` |
 | Checks on a coding agent's "fixed it" (`coding_agent_gate`, `workforce`, the agent-change-check bundle) | `implemented` |
+| Patch review for a coding agent's Python patch (`g6_review_patch`) | `implemented`. Its studies (V9 and V10) are registered, not run |
 | Governed learning: hints credited from paired runs, a promotion gate for harness changes | `implemented`. Earlier self-training benchmark gains are withdrawn pending re-validation |
 | Bundles (11) | `implemented`. Downloads come with the first release; their study has not run (see [Research](site/docs/research.md)) |
 | Research kernel (the evidence kernel, governed adaptation, the mission bridge) | `wired-but-inert`: off unless `G6_ECHA_RESEARCH=1` |
