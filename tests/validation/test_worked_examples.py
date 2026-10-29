@@ -287,6 +287,30 @@ def test_observe_records_what_the_w_fixes_changed():
     assert observe.observe(cut)["report_shown_verbatim"] == [False]
 
 
+def test_proposer_summary_reads_what_g6s_model_proposed():
+    from worked_examples import observe
+
+    saved = {"ok": True, "assessment": {"outcome": "insufficient_evidence",
+             "reasons": [{"stage": "search", "code": "counterexample"}],
+             "next_actions": ["PYTHONPATH=src python -m pytest g6p-1_test.py"],
+             "completion": {"activities": [
+                 {"activity": "proposer stage", "stage": "templates", "result": "replied"},
+                 {"activity": "model call", "stage": "templates", "result": "replied"},
+                 {"activity": "model call", "stage": "free_form", "result": "error", "reason": "x"},
+                 {"activity": "proposal", "stage": "templates", "requirement": "R1", "reason": "refused: y"},
+                 {"check": "g6p-1", "template": "example.v1", "result": "counterexample"},
+                 {"check": "g6p-2", "template": "", "result": "not_refuted"},
+                 {"check": "T1", "template": "relation.v1", "result": "not_refuted"}],
+                 "defects_reproduced": [{"check": "g6p-1", "said": "f(0) gave 1"}]}}}
+    got = observe.proposer_summary(saved)
+    assert got["outcome"] == "insufficient_evidence" and got["model_calls"] == 2 and got["model_call_errors"] == 1
+    assert got["proposed"] == [{"check": "g6p-1", "template": "example.v1", "result": "counterexample"},
+                               {"check": "g6p-2", "template": "", "result": "not_refuted"}]
+    assert got["refused"] == [{"stage": "templates", "requirement": "R1", "reason": "refused: y"}]
+    assert got["defects_reproduced"] == [{"check": "g6p-1", "said": "f(0) gave 1"}]
+    assert got["next_actions"] == ["PYTHONPATH=src python -m pytest g6p-1_test.py"]
+
+
 def test_extract_rounds():
     rounds = we.extract_rounds(_stream())
     assert [r["outcome"] for r in rounds] == ["defect_detected", "supported_within_scope"]

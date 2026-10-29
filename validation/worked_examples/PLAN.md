@@ -316,3 +316,17 @@ G6's model helps.
 - it does not see the results between its calls;
 - its free-form path had been tested only with a fake model;
 - a check that a model proposed gives at most "not enough evidence" ("ask, don't accuse").
+
+### 2026-10-29: round 2's G6 cost counted at an upper bound (before any of its runs)
+
+**Why.** G6's Anthropic caller returns a reply's text but not its token counts, so the proposer's model-call records
+hold characters only. Sonnet 5.5 also thinks by default, and those tokens are billed as output without appearing in
+the text.
+
+**Change.** Each of G6's model calls whose record gives no token counts is counted at an upper bound:
+- input: the request's characters divided by two (code and English run nearer four characters a token);
+- output: the full 4,096-token reply limit;
+- both priced at the published Sonnet 5.5 prices.
+
+The records say how many calls were counted this way. The $100 stop uses this count, so it can only overstate what
+G6's model cost.
