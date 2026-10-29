@@ -180,7 +180,70 @@ agentic. This is the first worked example, labelled a mechanism demonstration.
   G6's code refuses or a model judges it inadequate, the accepted overrides' correctness by an independent check.
 - Never "verified", and never "experimental". The public status line stays as it is.
 
-## 10. Left to the builder
+## 10. Calls after the builder check (2026-10-29; these override sections 4 to 8 where they differ)
+
+A fresh builder read this design and the code it reuses, and asked eight questions. Each answer below is the
+designer's call, made under the owner's decisions in section 3, unless it is marked otherwise.
+
+1. **Who confirms over MCP.** Over MCP the caller is itself a model, so an agent's "ask", or its choice of part after
+   a refusal, is a model's judgement. **Every override started over MCP therefore asks the person** in the client's
+   dialog, whatever its trigger. This is the designer's reading of the owner's decisions 2 and 3. A standing
+   sensitive-operation allowance only lets the tool be called; it is never consent to an override. From Python, the
+   person's own code may name the part and mode with an explicit `allow`, as `g6.invoke` does. The kernel's
+   allowance and the operation's own sensitive allowance are both required.
+2. **Isolation when the operation starts its own confined child** (cegis does).
+   - The kernel's confined child is the boundary for everything the operation runs inside it.
+   - An operation that starts its own confined children needs a declared seam that runs that work in-process when it
+     is already inside the kernel's child. For cegis this is a runner choice in `cegis/runner.py`. `confine.py`
+     (certificate-bound) is not changed.
+   - Prompt mode runs in a confined child too.
+3. **The final answer is re-checked.**
+   - In code mode the model's code shares the child with the operation's own checks, so it could forge the child's
+     reply. The parent therefore re-checks the final answer with unchanged code, in a fresh confined run, through a
+     checker the component declares. For cegis that checker is its own verifier, run on the final program against the
+     specification.
+   - A component that declares no checker can still be overridden. Its result says "not re-checked", and it is still
+     `qualified-draft` at best.
+4. **The protected set** is section 5's list, plus `g6.core.adaptation_gate.PROTECTED_FRAGMENTS` (oracles, graders,
+   judges, verifiers, gates, ledgers, tests), plus each component's own declared verifiers. For cegis those are
+   `verify.py`, `z3_verifier.py` and `loop._verifier_says`.
+5. **What counts as "refused or failed".**
+   - An exception inside the component's own computation counts. So does a reply carrying one of the codes the
+     component declares as a limit of what it can do, such as cegis finding no candidate in its space.
+   - A code from a trust door never counts: isolation unavailable, sensitive operation denied, input validation,
+     approval required, budget exhausted and the like. An override can never route around a door.
+6. **First version's scope: pure computation.**
+   - It covers operations that compute from their parameters alone, with no model calls, no network, no reads of the
+     person's files and no writes to G6's state.
+   - Every other operation is refused with a stable code. Passing such an operation's model calls and file reads
+     through the parent comes in a later version.
+   - Running a pure operation twice repeats no side effect.
+7. **The unit of substitution** is a named set of functions inside one component, listed up front and shown in the
+   dialog. A single function is the commonest case.
+8. **The owner's example, re-targeted.**
+   - cegis can already widen an integer hole's range with no override (`Sketch.from_src(src, lo, hi)`), so the
+     demonstration is a hole kind cegis does not support. Example: a floating-point hole `??f` with a candidate grid.
+   - Code mode edits the cooperating set: `HoleKind`, `extract_holes`, `Hole.accepts` and `_child._values`.
+   - cegis gets a small block, so the example runs over MCP as well as from Python. The block's oracle is data, a table
+     of inputs and outputs, because a callable cannot cross into a child or come over MCP. That is a new, additive
+     operation.
+   - The parent's re-check with cegis's unchanged verifier still decides whether the final program meets the
+     specification.
+9. **One MCP tool.**
+   - `g6_agentic_run` (provisional) runs the original first. When there is a trigger, it opens the dialog inside the
+     same call. The answer is bound to that question's digest, so it cannot be replayed.
+   - The override then runs as a job, polled through `metaharness_job` like patch review.
+   - No pending proposals are stored.
+10. **The self-improvement loop's log** does not exist yet.
+    - The first version stops at the ledger. The loop reads it once phase 2 builds the log.
+    - Rule 8's meaning: an override's record may direct where the loop looks next, but it never counts as evidence that
+      a change works, and it never passes a check.
+11. **Small calls the builder proposed, accepted:**
+    - prompt mode also runs behind the operating-system boundary;
+    - an exhausted budget keeps the original's answer;
+    - "the operation's own code" means the component's own package.
+
+## 11. Left to the builder
 
 - The final names, from the canonical vocabulary.
 - How the child and parent exchange values, and the child's start-up.
