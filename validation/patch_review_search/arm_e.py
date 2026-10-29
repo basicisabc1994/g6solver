@@ -323,6 +323,29 @@ def _most(outcomes: list[str], state: str, runs: int) -> bool:
     return sum(outcome == state for outcome in outcomes) * 2 > runs
 
 
+def judged(kept: list[dict], on_patch: dict[str, list[str]], at_base: dict[str, list[str]],
+           runs: int) -> tuple[dict, list[dict]]:
+    """Each kept test's outcomes and reading (passes, finding, error, fails at the base), and the findings: the kept
+    tests that failed in their body in more than half of their ``runs`` on the patched tree, each as the reproduction
+    the reruns run. Arm R's tests are judged by the same rule (``arm_r.judge``)."""
+    tests = {}
+    for one in kept:
+        for test in one["tests"]:
+            patched, base = on_patch[test], at_base[test]
+            tests[test] = {"file": one["placed"], "call": one.get("call", 0), "patched": patched, "base": base,
+                           "passes": _most(patched, PASSED, runs), "finding": _most(patched, FAILED, runs),
+                           "error": _most(patched, ERRORED, runs), "fails_at_base": _most(base, FAILED, runs)}
+    findings = [{"file": one["placed"], "text": one["text"], "node": test, "call": one.get("call", 0),
+                 "sha256": one["sha256"], "fails_at_base": tests[test]["fails_at_base"]}
+                for one in kept for test in one["tests"] if tests[test]["finding"]]
+    return tests, findings
+
+
+def run_tests(executor, tree: Path, kept: list[dict], *, runs: int, timeout) -> dict[str, list[str]]:
+    """Each kept file ``runs`` times on ``tree``, on its own: each test's outcome in each run."""
+    return _run(executor, tree, kept, runs=runs, timeout=timeout)
+
+
 def _run(executor, tree: Path, kept: list[dict], *, runs: int, timeout) -> dict[str, list[str]]:
     """Each kept file ``runs`` times on ``tree``, on its own: each test's outcome in each run."""
     found: dict[str, list[str]] = {}
@@ -423,20 +446,9 @@ def arm_e(*, ask, patched_tree: Path, base_tree: Path, patch: str, contract: str
     except _OutOfTime:
         return failed(TIME_OUT, f"the arm's wall-clock limit of {frozen.limit_s} seconds was reached", time_or_cap=True)
 
-    tests = {}
-    for one in kept:
-        for test in one["tests"]:
-            patched, base = outcomes[test], at_base[test]
-            tests[test] = {"file": one["placed"], "call": one["call"], "patched": patched, "base": base,
-                           "passes": _most(patched, PASSED, frozen.runs),
-                           "finding": _most(patched, FAILED, frozen.runs),
-                           "error": _most(patched, ERRORED, frozen.runs),
-                           "fails_at_base": _most(base, FAILED, frozen.runs)}
+    tests, findings = judged(kept, outcomes, at_base, frozen.runs)
     found.update(kept=[{key: one[key] for key in ("file", "placed", "sha256", "call", "tests")} for one in kept],
-                 discarded=discarded, tests=tests,
-                 findings=[{"file": one["placed"], "text": one["text"], "node": test, "call": one["call"],
-                            "sha256": one["sha256"]}
-                           for one in kept for test in one["tests"] if tests[test]["finding"]],
+                 discarded=discarded, tests=tests, findings=findings,
                  counts={"no_test_file": not files_seen, "none_kept": files_seen and not kept,
                          "kept_files": len(kept), "kept_tests": len(tests), "discarded": len(discarded),
                          "errors": sum(one["error"] for one in tests.values()),

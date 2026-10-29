@@ -306,3 +306,52 @@ Items 42 to 44 cover the report check (`report_check.py`), the comparison of sta
     one of arm A's findings, and so C's and T's; its reproduction is the repository test's node id and the frozen
     test command. V9's arm 1 counts the same evidence, and it cannot inflate the headline (M needs arm 1 to accept).
     V10 version 2's findings table says so. The rest of item 44 is accepted.
+
+Items from 45 cover version 2 of the protocol: arm R (`arm_r.py`), its place in the driver and the measures, and
+V9 version 2's broken tasks as V10 inherits them.
+
+45. **Where arm R writes its tests.** G6 places a free-form check in a folder of its own, `g6_check_` and the first 12
+    hexadecimal digits of the SHA-256 of its text, inside the folder its file names (`src/g6/harness/
+    verification_search.py` at f786774: line 223, `FOLDER = "g6_check_"`, and lines 350 to 354, `placement`). That
+    folder depends on the test's text, so it cannot be named before the test is written. R's prompt therefore names
+    one folder of that form at the copy's top, `g6_check_review`, which no repository holds; when R's kept tests run,
+    each file is placed as arm E's are, by `placement`. For the coordinator's ruling.
+
+46. **How a launcher enforces R's session set-up.** The script records the set-up (`SESSION`), and the gaming scan
+    checks the transcript; the launcher, the owner's or an approved one, enforces it: the session starts with a fresh,
+    empty configuration folder of its own (no saved settings, memory, plugins, skills or hooks, and no instruction
+    files from the person's own configuration), an empty tool-server configuration that the product is told to keep to
+    strictly, and the copy as its working folder inside a fresh temporary folder (so no instruction file above the copy
+    is read); the commands it runs have no network, by a sandbox or container whose only outbound connection is to the
+    model provider. The launcher writes what it did into the session record, beside the transcript. For the
+    coordinator's ruling.
+
+47. **The diff R gets.** The prompt is V9's arm 2 prompt with only the two registered changes, so the diff is not
+    added to it: the launcher gives it to the session beside the prompt (`prepare`'s `diff`), as V9's arm 2 session
+    has the patch in its working tree. For the coordinator's ruling.
+
+48. **R's copy and the history check.** The copy is a new repository into which the base commit alone is fetched
+    (`git fetch --depth=1` of that commit), checked out detached, with the patch applied to the working tree and not
+    committed. The history check (`history_problem`) holds when `HEAD` is the base commit, every reference names it,
+    and the only commit object in the copy's store is the base commit. A full clone fails it. This check is the one the
+    protocol's history rule needs for every copy arms C, T, E and R use; only R's copy is made here. For the
+    coordinator's ruling.
+
+49. **Collecting and keeping R's tests.** Every file in R's folder, at any depth, in path order, is collected before
+    the copy is discarded; a test file outside the folder is never collected. They are then kept as arm E's are
+    (G6's rule for a check file, 64 kilobytes at most, at most 20 test functions in file order), and everything else is
+    counted. For the coordinator's ruling.
+
+50. **R's cost.** The session record gives its model and its usage, the number of each kind of token the session
+    reports. Each kind is priced in dollars per million tokens by the frozen price list for that model; a model or a
+    kind of token the list does not price is refused, and a record with no usage is not priced and is counted. For the
+    coordinator's ruling.
+
+51. **The gaming scan of R's transcript.** V9's scan is reused: vault reads, network use from a command, shortcuts, and
+    edits to test or runner files (its edits to its own tests' folder excepted). Every git command R ran is listed;
+    the history check, not the scan, keeps the upstream fix out of reach. The set-up is checked from the transcript's
+    first record: a tool server connected, or a tool one gives, is a `session_set_up` finding. An edit outside R's copy
+    is an `edit_outside_copy` finding. The findings that void the study stay V9's (`vault_read`, `network`); whether
+    a `session_set_up` finding voids it too is for the coordinator's ruling. V9's scan now reads a Windows session's
+    paths too: an edit to a test or runner file named with backslashes was missed before. For the coordinator's
+    ruling.

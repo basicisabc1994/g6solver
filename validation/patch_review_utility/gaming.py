@@ -89,7 +89,7 @@ def _finding(kind: str, source: str, line: int, detail: str) -> dict:
 
 
 def _test_or_runner(path: str) -> bool:
-    name = PurePosixPath(path).name.lower()
+    name = PurePosixPath(path.replace("\\", "/")).name.lower()   # a Windows session's paths too
     return name in RUNNER_NAMES or (name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")))
 
 
