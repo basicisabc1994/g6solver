@@ -59,6 +59,36 @@ def test_the_readme_shows_the_same_journey():
         assert part in readme, part
 
 
+#: What G6 runs a repository's tests with (``repo_tests.interpreter``), said where the first review is.
+INTERPRETER = ("G6 runs the tests with the repository's own .venv or venv; without one, with the Python running G6, "
+               "which then needs pytest and the project's dependencies.")
+#: The places a founder follows as the first journey; none may skip g6 setup or install less than .[all].
+FIRST_JOURNEY = ("README.md", "site/docs/index.md", "site/docs/install.md", "web/content/install.md",
+                 "web/content/developers.md", "site/docs/developers.md", "web/content/guide.md",
+                 "site/docs/guide/index.md", "web/templates/pages/landing.html")
+
+
+def test_the_first_review_says_which_python_runs_the_tests(client):
+    readme = shipped()["README.md"]
+    review = readme.split("## The first review", 1)[1].split("\n## ", 1)[0]
+    assert INTERPRETER in review.replace("`", "") and "G6_REPO_PYTHON" in review
+    assert "(docs/AI_FOR_AI_WORKFLOW.md#reference-application-review-a-python-patch)" in review
+    page = client.get("/get-started/").content.decode()
+    step = flat(page.split(">The first review</h3>", 1)[1].split('<h3 class="h3">', 1)[0])     # to the next step
+    step = re.sub(r" ([;,.])(?=\s|$)", r"\1", step)       # a tag taken out before punctuation leaves a space
+    assert INTERPRETER in step and "G6_REPO_PYTHON" in step and "docs/AI_FOR_AI_WORKFLOW.md" in step
+
+
+def test_every_first_journey_installs_all_and_runs_setup_never_a_bare_mcp_add(client):
+    for name in FIRST_JOURNEY:
+        text = (OSS / name).read_text(encoding="utf-8")
+        for bare in (".[mcp]", "claude mcp add g6", "codex mcp add g6"):
+            assert bare not in text, (name, bare)
+    page = client.get("/get-started/").content.decode()
+    journey = page.split('id="from-agent"', 1)[1].split(">Another agent or client</h3>", 1)[0]
+    assert 'pip install ".[all]"' in journey and ".[mcp]" not in journey and "mcp add" not in journey
+
+
 def test_the_launch_copy_claims_no_more_defects_found_and_no_time_saved(client):
     texts = {**shipped(), **{path: flat(client.get(path).content.decode()) for path in PAGES}}
     for where, text in texts.items():

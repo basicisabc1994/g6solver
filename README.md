@@ -86,6 +86,10 @@ is done. The skill tells it how:
    so you can see the fix pass the original counterexample. It stops after three rounds, when a round changes nothing,
    or when the report says only you can decide.
 
+G6 runs the tests with the repository's own `.venv` or `venv`; without one, with the Python running G6, which then
+needs pytest and the project's dependencies. For Poetry, conda or another environment, see `G6_REPO_PYTHON` in
+[the workflow guide](docs/AI_FOR_AI_WORKFLOW.md#reference-application-review-a-python-patch).
+
 The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope.
 Supported within scope means every stated requirement passed its stated checks; it is not proof that the patch does
 everything the task needs. Merging needs your separate decision.

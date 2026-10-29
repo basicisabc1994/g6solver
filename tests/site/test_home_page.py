@@ -139,7 +139,12 @@ def test_the_home_page_says_the_thesis(client):
     assert "<title>G6: make AI agents check their own work" in page
     for step in ("Propose", "Test", "Gate", "Approve"):
         assert f">{step}<" in page, step
-    assert 'claude mcp add g6 -- g6-mcp' in page
+    # the launch (owner, 2026-10-29): the second command is setup, which installs the skill and allows patch review
+    start = page.split('id="start"', 1)[1].split("</section>", 1)[0]
+    assert ('<code id="cmd-start">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver\n'
+            'pip install ".[all]" &amp;&amp; g6 setup --client claude --allow patch_review.review</code>') in start
+    assert "<code>--client codex</code>" in start and 'href="/get-started/"' in start
+    assert "mcp add" not in start and ".[mcp]" not in start
 
 
 def test_all_three_ways_to_use_g6_are_available_now(client):

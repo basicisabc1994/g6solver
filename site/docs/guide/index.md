@@ -349,12 +349,12 @@ pip install ".[all]"
 g6 doctor
 ```
 
-(PyPI publishing comes with the first release.)
+(G6 is not on PyPI.)
 
-**As an MCP server for Claude Code:**
+**As an MCP server for Claude Code or Codex:**
 
 ```
-claude mcp add g6 -- g6-mcp
+g6 setup --client claude --allow patch_review.review    # or --client codex
 ```
 
 **For Cursor and other MCP clients**, add this to the client's MCP configuration:

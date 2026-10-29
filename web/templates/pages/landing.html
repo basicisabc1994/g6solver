@@ -228,7 +228,8 @@ Copy is a draft for the owner's review in the live preview.
             </div>
             <div class="band__body">
                 <div class="cmd"><code id="cmd-start">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
-pip install ".[mcp]" &amp;&amp; claude mcp add g6 -- g6-mcp</code><button type="button" class="btn btn--small copy" data-copy="#cmd-start">Copy</button></div>
+pip install ".[all]" &amp;&amp; g6 setup --client claude --allow patch_review.review</code><button type="button" class="btn btn--small copy" data-copy="#cmd-start">Copy</button></div>
+                <p class="small quiet">For Codex, use <code>--client codex</code>. <a class="link" href="{% url 'pages:get_started' %}">The Get started page</a> shows the first review.</p>
                 <ul class="ways-line">
                     <li><a href="{% url 'pages:get_started' %}"><b>From your agent</b> over MCP, in Claude Code, Codex or any client</a></li>
                     <li><a href="{% url 'pages:metaharness' %}"><b>In your code</b> as a Python library</a></li>

@@ -114,7 +114,7 @@ studies run with it are on the [Research](research.md#the-meta-harness) page, as
 ```
 git clone https://github.com/basicisabc1994/g6solver && cd g6solver
 pip install ".[all]" && g6 doctor
-claude mcp add g6 -- g6-mcp
+g6 setup --client claude --allow patch_review.review    # or --client codex
 ```
 
 Not a programmer? [Start here instead](install.md).
