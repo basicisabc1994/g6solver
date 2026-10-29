@@ -9,8 +9,9 @@ writable scope. Components and workflow tools are available today; benefits for 
 
 The first use is a check on a coding agent's work. Before your agent (Claude Code or Codex) says a Python change is
 done, it calls `g6_review_patch`: G6 runs the tests that check each requirement inside an operating-system boundary,
-looks for signs that the tests were weakened, and returns a report your agent shows you as it is. Your agent fixes what G6 reproduces and
-asks again. Merging stays your decision. G6 makes no model calls of its own unless you turn them on.
+looks for signs that the tests were weakened, and returns a report your agent shows you as it is. Your agent fixes
+what G6 reproduces and asks again. Merging stays your decision. Patch review makes no model call unless the caller
+turns one on.
 
 Every result carries one of three labels, and G6 never upgrades a label it did not earn:
 
@@ -190,7 +191,7 @@ recommending a new release.
 | Action gating: allow, ask a person, or block (`action_gating`) | `implemented`. Studied on a public agent benchmark; the result, its miss included, is on the [Research](site/docs/research.md) page |
 | End-to-end harness: frozen checks, adjudication, memory of failed checks (`g6.harness`) | `implemented` |
 | Checks on a coding agent's "fixed it" (`coding_agent_gate`, `workforce`, the agent-change-check bundle) | `implemented` |
-| Patch review for a coding agent's Python patch (`g6_review_patch`) | `implemented`. Its studies (V9 and V10) are registered, not run |
+| Patch review for a coding agent's Python patch (`g6_review_patch`) | `implemented`. Its two studies are registered and have not run |
 | Governed learning: hints credited from paired runs, a promotion gate for harness changes | `implemented`. Earlier self-training benchmark gains are withdrawn pending re-validation |
 | Bundles (11) | `implemented`. Downloads come with the first release; their study has not run (see [Research](site/docs/research.md)) |
 | Research kernel (the evidence kernel, governed adaptation, the mission bridge) | `wired-but-inert`: off unless `G6_ECHA_RESEARCH=1` |

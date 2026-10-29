@@ -7,9 +7,11 @@ promotion rules remain host-controlled. Better performance is a hypothesis to te
 ## Install and discover
 
 Use Python 3.12 or 3.13. From the checkout, install `pip install ".[all]"`, run `g6 doctor`, then
-`g6 setup --client codex` or `g6 setup --client claude`. Setup uses an absolute interpreter path
-and installs the using-g6 skill. Existing skills are preserved. An existing MCP entry that the
-client refuses to replace must be inspected with that client's `mcp get g6` command.
+`g6 setup --client claude --allow patch_review.review` or `g6 setup --client codex --allow patch_review.review`.
+Setup uses an absolute interpreter path, installs the using-g6 skill, and ends by showing the first review
+call. Existing skills are preserved. An existing MCP entry that the client refuses to replace must be
+inspected with that client's `mcp get g6` command; to replace it, remove it (`claude mcp remove --scope user
+g6` or `codex mcp remove g6`) and run setup again.
 
 To explicitly use a host subscription, add `--model codex` or `--model claude_code`. Setup stores
 the provider preference without changing other settings. This authorizes future model usage;
@@ -78,7 +80,8 @@ Never supply invented observations to satisfy it.
 
 ## Reference application: review a Python patch
 
-Register permission with `g6 setup --client codex --allow patch_review.review`. Call `g6_review_patch`
+Register permission with `g6 setup --client claude --allow patch_review.review` (or `--client codex`). Call
+`g6_review_patch`
 with the repository root, the task, `requirements` (a list of `{id, text, checks}`, where `checks` are
 pytest node IDs and may be empty), optional extra `tests`, and a base ref (default `HEAD`). A `claim` and
 `sources` are optional: their lexical support is reported and decides nothing. Poll its job.
@@ -276,6 +279,12 @@ run shows it passes at the base commit; what is not established and what would s
 demonstrated; at most 3 questions and merging, for the person to decide; how it was decided (proposed, tested,
 gate, approve); and the standing note that the task's specification may be incomplete. It is derived from the
 other fields and decides nothing. Text from the repository or the request in it is shown inert, in code spans.
+
+The repair loop, as the using-g6 skill gives it: fix what G6 reproduced; on the next call, add each earlier
+reproduction as a stated check of its requirement (a proposed check's reproduction is a test file, added to the
+repository's tests and listed by its node id), so the person can see the fix pass the original counterexample;
+review again; and stop after 3 rounds, when a round changes nothing, or when the report says only the person can
+decide. Never call a patch verified, and never merge it on the person's behalf.
 
 Every reply has `assessment.completion`, built from what ran: `demonstrated` (requirements passed on their
 stated checks, with the receipts), `not_established` (with what would settle each), `defects_reproduced`

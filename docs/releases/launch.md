@@ -27,10 +27,13 @@ Merging stays the person's decision.
 
 ## What does not ship
 
-- **G6's own model calls.** G6 makes no model call unless the person sets a model in their key file. The proposer
-  that asks a model for checks is off unless the caller turns it on, and this release does not offer it.
+- **G6's own model calls in patch review.** Patch review makes no model call unless the caller turns on
+  `search={"propose": true}`. Elsewhere in the library, a step that needs a model uses the provider the person chose,
+  in their key file or with `G6_LLM_PROVIDER`; none is chosen by default. The proposer that asks a model for checks
+  is in the code and off by default, and the launch skill does not use it. It has had one development smoke run and
+  no study, so nothing is claimed for it.
 - **V9 and V10**, the studies of patch review: both are registered, and neither has run. Nothing here says how often
-  patch review finds a defect or whether it saves time.
+  patch review finds a defect, or whether it shortens a person's work.
 - **The plugins and hooks** for Claude Code and Codex.
 - **Venture**, the third work mode.
 - **The continuous integration check** that would run patch review on a pull request.

@@ -4,6 +4,8 @@ Today's language models already hold the right kind of general intelligence. Wha
 put it to work, and G6 is built to be that way.
 {: .why }
 
+**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+
 ## Why G6
 
 ### Why does G6 exist?
@@ -70,9 +72,10 @@ agents in the real world, on complex, open-ended work that needs human-level rea
 
 ### What can I do with it that I could not before?
 Build a specialist from the agent you already run and your own data, without training a model of your own: G6
-engineers the harness for your task on your examples, and your model's weights never change. Then cut what repeated
-work costs. Pay a frontier model once to engineer the harness, and run a small model on your own computer inside it,
-with no fee per call. Most real work is repeated work, so that is where the saving lands.
+engineers the harness for your task on your examples, and your model's weights never change. Then try to cut what
+repeated work costs: pay a frontier model once to engineer the harness, and run a small model on your own computer
+inside it, with no fee per call. Whether that saves anything on your work is for your own held-out examples to
+show.
 
 ### How far can it go on one task?
 Give it a task you can check and enough examples with known answers, and nothing in its design caps how far it can go
