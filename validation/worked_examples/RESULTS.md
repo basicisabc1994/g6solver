@@ -232,6 +232,7 @@ what happened in each run.
 | 3 | pydantic #14065 | G6's server did not start (2680cc9); passes | 1: test integrity compromised (`run_not_trusted`) | 8 calls; 2 free-form checks, both skipped after the integrity reason. No finding. | final **passes**, as in round 1 | $0.14 + $0.94, 2.8 min |
 | 4 | starlette #3720 | supported within scope; passes | 1: supported within scope | 9 calls; 3 `differential.v1` instances and 2 free-form checks, all run, none refuting the patch. No finding. | final **passes**, as in round 1 | $0.11 + $0.85, 1.5 min |
 | 5 | starlette #3718 | supported within scope; fails (a trailing-slash `root_path` regression) | 1: supported within scope | 8 calls; 2 free-form checks, both run, refuting nothing. No finding. | final **passes**: this run's patch keeps the trailing-slash case. G6 reproduced nothing, so the change is the agent's, not G6's | $0.12 + $0.82, 1.6 min |
+| 6 | pydantic #14052 | not enough evidence; fails | 1: not enough evidence (R2's whole-file check has skipped tests) | 9 calls; 2 `example.v1` and 2 `differential.v1` instances (1 refused) and 3 free-form checks, all run, none refuting the patch. No finding. | final **fails** (1 of 1 FAIL_TO_PASS: documented nested definitions), as in round 1 | $0.12 + $0.85, 3.5 min |
 
 **What happened, run by run**
 
