@@ -58,6 +58,8 @@ invoked here.
 """
 from __future__ import annotations
 
+import configparser
+import fnmatch
 import hashlib
 import importlib.machinery
 import json
@@ -69,7 +71,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+import tomllib
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -377,14 +380,74 @@ _START_UP = frozenset({"conftest.py", "sitecustomize.py", "usercustomize.py"})
 
 
 def is_test_related(rel: str) -> bool:
-    """A Python file the tests are made of: a test file by either of pytest's default names (``test_*.py``,
-    ``*_test.py``, with ``is_test_file``'s case rule), ``conftest.py`` or a start-up file, or any Python file under a
-    ``tests``, ``test`` or ``testing`` folder, such as a helper the tests check through (review C2)."""
+    """A Python file the tests are made of, by its path alone: a test file by pytest's default names (``test_*.py``,
+    ``*_test.py``) or unittest's and Django's (``test*.py``, ``tests.py``), with ``is_test_file``'s case rule;
+    ``conftest.py`` or a start-up file; or any Python file under a ``tests``, ``test`` or ``testing`` folder, such as a
+    helper the tests check through (review C2). ``test_related`` adds what the repository and the review name."""
     path = PurePosixPath(rel)
     name = os.path.normcase(path.name)
-    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py")
+    return name.endswith(".py") and (name.startswith("test") or name.endswith("_test.py")
                                      or path.name.lower() in _START_UP
                                      or any(part.lower() in _TEST_FOLDERS for part in path.parts[:-1]))
+
+
+def test_related(change: Change, ids: Iterable[str] = ()) -> tuple[str, ...]:
+    """The changed files the tests are made of (the owner's ruling on the launch review's C1): ``is_test_related``'s,
+    the Python files a test id among ``ids`` names (a stated check's, say, whatever its file is called), and the
+    Python files the repository's own ``python_files`` setting names (``python_files``)."""
+    ids = list(ids)
+    named = {node.partition("::")[0].replace("\\", "/").strip("/") for node in ids}
+    patterns = python_files(change.repo, ids)
+    return tuple(rel for rel in change.files if is_test_related(rel) or rel.endswith(".py") and (
+        rel in named or any(_python_file(rel, pattern) for pattern in patterns)))
+
+
+def _python_file(rel: str, pattern: str) -> bool:
+    """Whether pytest's ``python_files`` ``pattern`` names ``rel``: by its name, or, for a pattern with a ``/``, by
+    the end of its path (pytest's ``fnmatch_ex``)."""
+    pattern = pattern.replace("\\", "/")
+    if "/" not in pattern:
+        return fnmatch.fnmatch(PurePosixPath(rel).name, pattern)
+    return fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, "*/" + pattern.lstrip("/"))
+
+
+def python_files(repo: Path, ids: Iterable[str] = ()) -> tuple[str, ...]:
+    """The repository's own ``python_files`` patterns: from the pytest configuration that applies to ``ids`` (pytest's
+    search, as ``_config_args`` follows it: from the folder the tests named share, or the repository's top when none
+    is named, up to the top), as that file holds them now; () when none applies, it sets none or it cannot be read."""
+    ids = list(ids)
+    folder = repo
+    if ids:
+        dirs = [path if path.is_dir() else path.parent for path in (repo / node.partition("::")[0] for node in ids)]
+        folder = Path(os.path.commonpath([str(path) for path in dirs]))
+    while True:
+        found = _config_file(folder)
+        if found is not None:
+            return _python_files_in(found)
+        if folder == repo or folder.parent == folder or not folder.is_relative_to(repo):
+            return ()
+        folder = folder.parent
+
+
+def _python_files_in(path: Path) -> tuple[str, ...]:
+    """``python_files`` as one pytest configuration file sets it (a TOML list or string, an ini line of patterns)."""
+    name = path.name.lower()
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if name.endswith(".toml"):
+            data = tomllib.loads(text)
+            table = data.get("tool", {}).get("pytest", {}) if name == "pyproject.toml" else data.get("pytest", {})
+            table = table.get("ini_options", table) if isinstance(table, dict) else {}
+            value = table.get("python_files") if isinstance(table, dict) else None
+        else:
+            parser = configparser.ConfigParser(interpolation=None, strict=False)
+            parser.read_string(text)
+            value = parser.get("tool:pytest" if name == "setup.cfg" else "pytest", "python_files", fallback=None)
+    except (OSError, ValueError, configparser.Error, AttributeError):
+        return ()
+    if isinstance(value, str):
+        return tuple(value.split())
+    return tuple(item for item in value if isinstance(item, str)) if isinstance(value, list) else ()
 
 
 @dataclass(frozen=True)
@@ -528,12 +591,14 @@ def _moves(repo: Path, commit: str, gone: list[str], new: list[str], before: dic
     return found
 
 
-def related_texts(change: Change) -> tuple[dict[str, str], dict[str, str]]:
-    """Every test-related file the change touches (``is_test_related``), as ``change`` reads its test files: its text
-    at the base commit (absent when it is new) and now (absent when it was deleted), with the line endings
-    ``Path.read_text`` gives. A file moved since the base (``_moves``) is keyed by its new path on both sides, so it
-    is compared with its old text, not read as one file deleted and another added."""
-    related = [rel for rel in change.files if is_test_related(rel)]
+def related_texts(change: Change, related: Iterable[str] | None = None) -> tuple[dict[str, str], dict[str, str]]:
+    """Every test-related file the change touches (``related``, by default ``is_test_related``'s; patch review gives
+    ``test_related``'s), as ``change`` reads its test files: its text at the base commit (absent when it is new) and
+    now (absent when it was deleted), with the line endings ``Path.read_text`` gives. A file moved since the base
+    (``_moves``) is keyed by its new path on both sides, so it is compared with its old text, not read as one file
+    deleted and another added."""
+    wanted = None if related is None else set(related)
+    related = [rel for rel in change.files if (is_test_related(rel) if wanted is None else rel in wanted)]
     if not related:
         return {}, {}
     existed = set(_paths(_git(change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit, "--", *related)))
@@ -1250,16 +1315,21 @@ _PYTEST_CONFIG = (("pytest.toml", ""), (".pytest.toml", ""), ("pytest.ini", ""),
                   ("tox.ini", r"^\s*\[pytest\]"), ("setup.cfg", r"^\s*\[tool:pytest\]"))
 
 
-def _configures_pytest(folder: Path) -> bool:
+def _config_file(folder: Path) -> Path | None:
+    """The file in ``folder`` pytest would read its configuration from (the first of ``_PYTEST_CONFIG`` that counts)."""
     for name, section in _PYTEST_CONFIG:
         path = folder / name
         try:
             if path.is_file() and (not section or re.search(section, path.read_text(encoding="utf-8", errors="replace"),
                                                             re.MULTILINE)):
-                return True
+                return path
         except OSError:
             continue
-    return False
+    return None
+
+
+def _configures_pytest(folder: Path) -> bool:
+    return _config_file(folder) is not None
 
 
 def _config_args(repo: Path, ids: list[str], own: Path) -> list[str]:

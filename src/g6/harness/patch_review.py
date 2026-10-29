@@ -4,8 +4,9 @@
 ``review_patch`` gives exactly one technical outcome, decided in this order:
 
 1. ``test_integrity_compromised``: a sign of weakening ``g6.safety_engine.detect_test_weakening`` finds in a changed
-   test-related file (``repo_tests.is_test_related``: a test file by pytest's default names, ``conftest.py`` or a
-   start-up file, any Python file under a test folder; a moved one is compared with its old text), a changed
+   test-related file (``repo_tests.test_related``: a test file by pytest's, unittest's or Django's default names or
+   the repository's own ``python_files``, ``conftest.py`` or a start-up file, any Python file under a test folder,
+   or a file a stated check or extra test names; a moved one is compared with its old text), a changed
    test-runner file (``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini`` or a
    start-up file; ``pyproject.toml``, ``setup.cfg`` and ``tox.ini`` only when their pytest section changed, an empty
    one included), a git-ignored file that could change the tests (``repo_tests.ignored_inputs``: a runner, start-up,
@@ -109,6 +110,7 @@ import platform
 import re
 import time
 import uuid
+from collections.abc import Collection
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -611,19 +613,22 @@ def _diff_files(diff: str) -> list[tuple[set[str], str]]:
     return [(names - {""}, "".join(lines)) for names, lines in parts]
 
 
-def _scanned(rel: str) -> bool:
-    """A file whose diff is a question of the tests: test-related (``repo_tests.is_test_related``), a runner file
-    (``RUNNER_FILES``), or continuous-integration or task-runner configuration."""
+def _scanned(rel: str, related: Collection[str] = ()) -> bool:
+    """A file whose diff is a question of the tests: test-related (``repo_tests.is_test_related``, or among
+    ``related``: ``repo_tests.test_related``'s), a runner file (``RUNNER_FILES``), or continuous-integration or
+    task-runner configuration."""
     name = PurePosixPath(rel).name.lower()
-    return (repo_tests.is_test_related(rel) or name in RUNNER_FILES or name in _CI_FILES
+    return (repo_tests.is_test_related(rel) or rel in related or name in RUNNER_FILES or name in _CI_FILES
             or _weakening_kind(rel) == "runner")
 
 
-def _test_diff(diff: str) -> str:
+def _test_diff(diff: str, related: Collection[str] = ()) -> str:
     """The parts of ``diff`` the coding gate scans for shortcuts: those of the files ``_scanned`` keeps, and any part
     whose file cannot be read from it. A source file's hunks are left out: an assert it drops, or a setting named
     SKIP_..., weakens no test (``detect_test_weakening`` reads the test files themselves)."""
-    return "".join(text for names, text in _diff_files(diff) if not names or any(_scanned(rel) for rel in names))
+    related = set(related)
+    return "".join(text for names, text in _diff_files(diff)
+                   if not names or any(_scanned(rel, related) for rel in names))
 
 
 def _gate(task: str, claim: str, runs: list[dict], artifact: str, diff: str) -> dict:
@@ -780,8 +785,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         return bool(found)
 
     # Integrity, before anything runs: every changed test-related file through G6's weakening detector (review C2); a
-    # moved one is compared with its old text, never read as deleted.
-    for finding in detect_test_weakening(*repo_tests.related_texts(change)).reasons:
+    # moved one is compared with its old text, never read as deleted. Test-related (the launch review's C1): by
+    # pytest's, unittest's and Django's names, the repository's own python_files, a test folder, a start-up file, or
+    # a file a stated check or extra test names, whatever it is called.
+    related = repo_tests.test_related(change, ids)
+    for finding in detect_test_weakening(*repo_tests.related_texts(change, related), tests=related).reasons:
         reason("integrity", "test_weakened", finding)
     runner = _runner_changes(change)
     if runner:
@@ -971,7 +979,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if ran.get("source_before") and ran["source_before"] != artifact:
             reason("integrity", "repository_changed_during_review", f"the tier {tier} run began on a working tree "
                    "other than the one under review (its digest is not the artifact digest)")
-    gate = _gate(task, claim, [ran for _, ran in in_place], artifact, _test_diff(repo_tests.diff_text(change)))
+    gate = _gate(task, claim, [ran for _, ran in in_place], artifact,
+                 _test_diff(repo_tests.diff_text(change), related))
     statuses = [found.get("receipt_status", "unknown") for found in gate["receipts"]]
     receipts = [{"tier": tier, "receipt": ran.get("receipt", ""),
                  "receipt_status": statuses[index] if index < len(statuses) else "unknown"}
