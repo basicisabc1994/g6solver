@@ -878,6 +878,50 @@ def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
                                            "patch_applied": r["patch_applied"]} for k, r in rows.items()}}, "finished")
 
 
+G6_REPLAY = """import json, sys
+from g6.harness.patch_review import review_patch
+args = json.loads(sys.stdin.read())
+got = review_patch(args.pop("repo"), **args)
+a = got.get("assessment") or {}
+print(json.dumps({"ok": got.get("ok"), "error": got.get("error"), "outcome": a.get("outcome"),
+                  "reasons": [(r.get("stage"), r.get("code")) for r in a.get("reasons") or []],
+                  "requirements": [(r.get("id"), r.get("status")) for r in a.get("requirements") or []],
+                  "report": a.get("report")}))
+"""
+
+
+def g6replay(ctx: Context, task: Task, code: str, args_file: Path) -> dict[str, Any]:
+    """For judging a finding: G6's own review, confined as in the run, of the maintainers' fix (``code`` "fix") or of
+    a patch, with the review arguments in ``args_file`` (JSON: task, requirements and the like; the repository is the
+    task's). No model is called."""
+    folder = ctx.archive.start("g6replay", task.id, code=code, args=args_file.name)
+    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    name = f"g6we-replay-{uuid.uuid4().hex[:10]}"
+    body: dict[str, Any] = {"code": code, "args": json.loads(args_file.read_text(encoding="utf-8"))}
+    try:
+        checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *SECURITY, "-u", USER,
+                           "-e", f"HOME={HOME}", "-w", task.repo, oracle, "tail", "-f", "/dev/null", timeout=600),
+                "replay container")
+        if code == "fix":
+            checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /oracle/fix.patch", workdir=task.repo),
+                    "the maintainers' fix")
+        else:
+            checked(ctx.docker("cp", code, f"{name}:/tmp/we.patch", timeout=300), "patch copy")
+            checked(ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo),
+                    "the patch")
+        args = {**body["args"], "repo": task.repo}
+        done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, name, G6PY, "-I", "-",
+                          input=(G6_REPLAY.replace("sys.stdin.read()", json.dumps(json.dumps(args)))).encode("utf-8"),
+                          timeout=2400)
+        try:
+            body["review"] = json.loads(out(done).splitlines()[-1])
+        except (ValueError, IndexError):
+            body["review"] = {"error": f"no readable reply (exit {done.returncode}): {err(done)[-400:]}"}
+    finally:
+        ctx.docker("rm", "-f", name, timeout=300)
+    return folder.finish(body, "finished")
+
+
 def replay(ctx: Context, task: Task, code: str, test: Path) -> dict[str, Any]:
     folder = ctx.archive.start("replay", task.id, code=code, test=test.name)
     patch = None if code == "fix" else Path(code)
@@ -1026,7 +1070,8 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "dryrun", "run", "check",
-                                        "replay", "show", "progress", "rounds"))
+                                        "replay", "g6replay", "show", "progress", "rounds"))
+    ap.add_argument("--args", type=Path, help="g6replay: a JSON file of the review's arguments")
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -1069,7 +1114,8 @@ def main(argv: list[str] | None = None) -> int:
                   "freecheck": lambda: freecheck(ctx, task),
                   "dryrun": lambda: run_task(ctx, task, dry=True),
                   "run": lambda: run_task(ctx, task), "check": lambda: check(ctx, task, args.run_rel),
-                  "replay": lambda: replay(ctx, task, args.code, args.test)}[args.command]()
+                  "replay": lambda: replay(ctx, task, args.code, args.test),
+                  "g6replay": lambda: g6replay(ctx, task, args.code, args.args)}[args.command]()
     print(json.dumps(brief(args.command, result), indent=1, default=str)[:8000])
     return 0
 
