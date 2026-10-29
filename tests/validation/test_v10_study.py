@@ -127,7 +127,7 @@ def stand_ins(monkeypatch):
 def fakes(monkeypatch, calls: list):
     """Arms C, T and E bound to fakes that say what they were given and spend one cent each."""
     def search(patch, *, search, share_left, meter):
-        calls.append(("search", patch["id"], dict(search)))
+        calls.append(("search", patch["id"], dict(search), list(patch["checks_cited"])))
         meter.add(cents=1.0)
         return {"own": dispositions.make("accept"), "model_calls": 1, "spent_cents": 1.0}
 
@@ -226,6 +226,7 @@ def test_arms_run_in_the_protocols_order_and_the_record_and_its_final_hash_come_
     assert [c[:2] for c in calls] == [("search", ordered[0]), ("search", ordered[0]), ("E", ordered[0]),
                                       ("search", ordered[1]), ("search", ordered[1]), ("E", ordered[1])]
     assert calls[0][2] == {"templates": False} and calls[1][2]["templates"] is True
+    assert calls[0][3] == ["tests/test_more.py"]                 # the checks arm A cites, for C and T too
     written = json.loads((root / "arms.json").read_text(encoding="utf-8"))
     assert all(row["label"] is None for row in written["v9"]["rows"]) and written["labels"] == "not read"
     by = {row["patch"]: row["arms"] for row in got["v10"]["patches"]}

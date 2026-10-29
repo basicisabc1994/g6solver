@@ -254,6 +254,7 @@ def arms(freeze: dict, order: dict, *, calibration, prepared, work, record_path,
         task = by_id[patch["id"]]
         patch.update(patch_text=_patch_text(manifest, task), requirements=v9run._requirements(task),
                      arm_1=rows_by_id[patch["id"]]["arms"]["tests"],
+                     checks_cited=list(rows_by_id[patch["id"]].get("checks_cited") or []),
                      trees={"patched": str(built[patch["id"]]["patched"]), "base": str(built[patch["id"]]["base"])})
 
     def executor_for(task_id: str):
