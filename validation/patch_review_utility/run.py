@@ -360,7 +360,10 @@ def _review_task(manifest, task, index, work, calibration, markers, findings, a5
     row["details"] = {"tests": {key: ci.get(key) for key in ("base_passing", "base_flaky", "regressions",
                                                              "added_not_passing", "unrunnable", "killed")},
                       "g6": {"row": reviewed.get("row"), "a5": reviewed.get("a5"),
-                             "model_calls": reviewed.get("model_calls")},
+                             "model_calls": reviewed.get("model_calls"),
+                             # for V10: arm 3's stated-check results and the defects it reproduced
+                             "stated_checks": reviewed.get("stated_checks"),
+                             "defects_reproduced": reviewed.get("defects_reproduced")},
                       "direct_checks": {"checks": direct.get("checks")}}
     return row
 

@@ -221,6 +221,29 @@ def model_calls(reply: dict | None) -> dict:
     return {"count": 0, "source": MODEL_CALLS_NOT_REPORTED}
 
 
+def stated_check_verdicts(reply: dict | None) -> dict[str, str] | None:
+    """Each stated check's verdict in G6's reply (``assessment.requirements[].checks``), by id: the checks whose
+    provenance is ``stated``, or that carry none (G6's review before provenance was recorded). None when the reply
+    has no assessment. V10's comparison of the search arms' stated-check results with arm 3's reads it."""
+    requirements = ((reply or {}).get("assessment") or {}).get("requirements") if isinstance(reply, dict) else None
+    if not isinstance(requirements, list):
+        return None
+    found: dict[str, str] = {}
+    for req in requirements:
+        for check in (req.get("checks") or []) if isinstance(req, dict) else []:
+            if isinstance(check, dict) and check.get("id") and check.get("provenance", "stated") == "stated":
+                found[check["id"]] = check.get("verdict")
+    return found
+
+
+def defects_reproduced(reply: dict | None) -> dict | None:
+    """The defects G6's reply reproduced (``assessment.completion.defects_reproduced``), with their reproductions;
+    None when the reply has no completion section (G6's review before verification search). V10 reruns arm 3's."""
+    completion = ((reply or {}).get("assessment") or {}).get("completion") if isinstance(reply, dict) else None
+    found = completion.get("defects_reproduced") if isinstance(completion, dict) else None
+    return found if isinstance(found, dict) else None
+
+
 def g6_review(tree: Path, requirements: list[dict], checks: list[str], *, timeout_s: int,
               review=patch_review.review_patch, kill_after_s: float | None = None,
               import_roots: list[str] | tuple = ()) -> dict:
@@ -269,7 +292,8 @@ def g6_review(tree: Path, requirements: list[dict], checks: list[str], *, timeou
     trace = {"commands": [run["command"] for run in found["checks_run"]],
              "isolation": [found["isolation"]] if found["isolation"] else []}
     return {"disposition": {**disposition, "cost": cost}, "row": found, "a5": a5, "trace": trace,
-            "model_calls": calls}
+            "model_calls": calls, "stated_checks": stated_check_verdicts(reply),
+            "defects_reproduced": defects_reproduced(reply)}
 
 
 # --- arm 4 --------------------------------------------------------------------------------------------------------------

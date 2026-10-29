@@ -58,8 +58,9 @@ from pathlib import Path
 
 from g6.core import component_process
 from patch_review_search.metering import NOTHING, FileMeter, InfrastructureFailure, Meter
-from patch_review_search import report_check
+from patch_review_search import report_check, stated_checks
 from patch_review_search.record import Record
+from patch_review_utility.arms import stated_check_verdicts
 from patch_review_utility.arms import KILL_GRACE_S, RESEARCH_FLAG, ROOTS
 from patch_review_utility.dispositions import CATEGORIES, ERROR, make, tally
 
@@ -287,7 +288,10 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                          # G6's report says it once VS-5 settles the field
                          "search_stage": reply.get("search_stage"),
                          # G6's report itself, and the report check of it (feasibility criterion 4)
-                         "report": reply.get("report"), "report_check": checked}
+                         "report": reply.get("report"), "report_check": checked,
+                         # its results on the stated checks (feasibility criterion 5)
+                         "stated_checks": stated_check_verdicts(reply.get("report"))
+                         if reply.get("report") is not None else None}
             if reply.get("proposer_failure"):
                 failures.append({"patch": patch["id"], "arm": arm, "reason": reply["proposer_failure"],
                                  "category": arms[arm]["disposition"]["category"]})
@@ -303,8 +307,11 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                      "findings": list(reply.get("findings") or [])}
         for arm in ARMS:
             record.add("arm", {"patch": patch["id"], "arm": arm, "output": arms[arm]})
-        rows.append({"patch": patch["id"], "draw_index": patch["draw_index"], "arm_a": arm_a, "arms": arms})
+        rows.append({"patch": patch["id"], "draw_index": patch["draw_index"], "arm_a": arm_a,
+                     "arm_a_stated_checks": patch.get("arm_a_stated_checks"), "arms": arms})
 
+    comparison = stated_checks.compare(rows)     # feasibility criterion 5, recorded before any label is read
+    record.add("comparison", comparison)
     reruns = []
     for patch, row in zip(patches, rows):
         found_by = {"A": list(patch.get("arm_a_findings") or []),
@@ -316,7 +323,8 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                 reruns.append(found)
                 record.add("rerun", found)
     counts = {reason: sum(item["reason"] == reason for item in excluded) for reason in EXCLUDED}
-    return {"patches": rows, "excluded": {"counts": counts, "patches": [dict(item) for item in excluded]},
+    return {"patches": rows, "comparison": comparison,
+            "excluded": {"counts": counts, "patches": [dict(item) for item in excluded]},
             "reruns": reruns, "retries": retries, "proposer_failures": failures, "spending_differences": differences,
             "tallies": {arm: tally([row["arms"][arm]["disposition"] for row in rows]) for arm in ARMS},
             "spending": spending.report(), "record": record.final}

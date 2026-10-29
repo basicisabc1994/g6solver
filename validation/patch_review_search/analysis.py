@@ -128,10 +128,11 @@ def _outputs(entries: list[dict]) -> dict[str, dict]:
 LIMIT_KINDS = ("time_out", "killed_at_time_limit", "spend_share_reached")
 
 
-def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None) -> dict:
+def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None, comparison: dict | None = None) -> dict:
     """The feasibility criteria (PROTOCOL.md, "The level: feasibility only"), each met, not met or inconclusive, with
     the numbers behind it, over every non-empty patch; feasible only when all six are met. ``limits``: the frozen
-    ``cap_cents``, ``call_cap``, ``limit_s`` and ``grace_s``."""
+    ``cap_cents``, ``call_cap``, ``limit_s`` and ``grace_s``; ``comparison``: the comparison of stated-check results
+    the driver recorded (``stated_checks.compare``)."""
     tasks = [task for task in v9["tasks"] if task.get("patch") == "non_empty"]
     n = len(tasks)
 
@@ -214,11 +215,19 @@ def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None) -> dict
     differ = {arm: [task["task_id"] for task in tasks
                     if _accepts((outputs.get(task["task_id"], {}).get(arm) or {}).get("own"))
                     and not _accepts(task["arms"].get("g6"))] for arm in "CT"}
-    found.append({"criterion": 5, "text": "the frozen comparison of each search arm's stated-check results with arm "
-                                          "A's lists every patch a search arm's own review accepted and arm A did not",
-                  "result": "inconclusive", "numbers": {"own_accepted_arm_a_did_not": differ},
-                  "why": "not computed: the comparison of stated-check results is not built yet; the patches it must "
-                         "list are given"})
+    text = ("the frozen comparison of each search arm's stated-check results with arm A's lists every patch a search "
+            "arm's own review accepted and arm A did not")
+    if comparison is None:
+        found.append({"criterion": 5, "text": text, "result": "inconclusive",
+                      "numbers": {"own_accepted_arm_a_did_not": differ},
+                      "why": "not computed: the record holds no comparison of stated-check results; the patches its "
+                             "list must hold are given"})
+    else:
+        result = {True: "met", False: "not met", None: "inconclusive"}[comparison.get("holds")]
+        found.append({"criterion": 5, "text": text, "result": result,
+                      "numbers": {key: comparison.get(key) for key in ("differ", "must_hold", "not_on_list", "unread")},
+                      "why": "the comparison could not read every patch's results on the stated checks"
+                      if result == "inconclusive" else ""})
 
     failed = [task["task_id"] for task in tasks if task.get("oracle_controls_passed") is not True]
     found.append({"criterion": 6, "text": "V9's feasibility level met its own criterion 3 (oracle controls) for every "
@@ -464,7 +473,8 @@ def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], lim
 
 def _measures(entries, rows, counts, v9, limits, committed, seed, resamples) -> dict:
     return {"study": "V10", "kind": "primary measures", "confidence": CONFIDENCE,
-            "feasibility": feasibility(v9, _outputs(entries), limits),
+            "feasibility": feasibility(v9, _outputs(entries), limits,
+                                       next((e["data"] for e in entries if e["kind"] == "comparison"), None)),
             "record": {"committed": committed, "entries": len(entries)}, "counts": counts,
             "bootstrap_seed": seed, "resamples": resamples,
             "rates": {name: _rates(rows, name) for name in (*ARMS, *VARIANTS)},

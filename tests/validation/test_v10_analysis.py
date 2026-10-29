@@ -49,7 +49,7 @@ def finding(patch, arm, node, reproducible=True):
             "result": {"runnable": True, "reproducible": reproducible, "patched": ["fail"] * 3, "base": ["pass"] * 3}}
 
 
-def written(tmp_path, arms, reruns=(), excluded=()):
+def written(tmp_path, arms, reruns=(), excluded=(), comparison=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "record.jsonl"
     kept = record.Record(path)
@@ -58,6 +58,8 @@ def written(tmp_path, arms, reruns=(), excluded=()):
     for patch, found in arms.items():
         for arm in ("C", "T", "E"):
             kept.add("arm", {"patch": patch, "arm": arm, "output": found[arm]})
+    if comparison is not None:
+        kept.add("comparison", comparison)
     for item in reruns:
         kept.add("rerun", item)
     return path, kept.final
@@ -257,11 +259,23 @@ def test_criterion_4_reads_each_search_arms_report_check(tmp_path):
     assert by[4]["result"] == "met"                       # a report missing a part is a tool error, criterion 1's
 
 
-def test_criteria_4_and_5_wait_for_scripts_not_built_and_say_so_with_their_numbers(tmp_path):
+def test_criteria_4_and_5_wait_for_what_the_record_does_not_hold_and_say_so_with_their_numbers(tmp_path):
     _, by = criteria(tmp_path)
     assert by[4]["result"] == "inconclusive" and "report check" in by[4]["why"]
     assert by[5]["result"] == "inconclusive" and "comparison" in by[5]["why"]
     assert by[5]["numbers"]["own_accepted_arm_a_did_not"] == {"C": ["c2"], "T": []}
+
+
+def test_criterion_5_reads_the_comparison_the_driver_recorded_before_the_labels(tmp_path):
+    def comparison(holds, not_on_list):
+        return {"differ": {"C": ["c2"], "T": []}, "must_hold": {"C": ["c2"], "T": []},
+                "not_on_list": not_on_list, "unread": {"C": [], "T": []}, "holds": holds}
+    for holds, not_on_list, expected in ((True, {"C": [], "T": []}, "met"), (False, {"C": ["c2"], "T": []}, "not met"),
+                                         (None, {"C": [], "T": []}, "inconclusive")):
+        path, final = written(tmp_path / expected.replace(" ", "_"), ARMS, comparison=comparison(holds, not_on_list))
+        got = analysis.analyse(path, final, v9={"seed": SEED, "tasks": TASKS}, reference=[], resamples=50)
+        by = {item["criterion"]: item for item in got["feasibility"]["criteria"]}
+        assert by[5]["result"] == expected and by[5]["numbers"]["not_on_list"] == not_on_list
 
 
 def test_criterion_6_and_the_outcome(tmp_path):

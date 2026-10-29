@@ -277,3 +277,13 @@ Items 42 to 44 cover the report check (`report_check.py`), the comparison of sta
     output carries a report check and none lists a model-originated check as passing a requirement or a formal result
     without its three parts; a report short of another part is a tool error, counted by criterion 1. While the outputs
     carry no report check, criterion 4 is inconclusive. For the coordinator's ruling.
+
+43. **The comparison of stated-check results and criterion 5.** A result on the stated checks is each stated check's
+    verdict by its id, as G6's reply gives it (V9's `arms.stated_check_verdicts`: the checks whose provenance is
+    `stated`, or that carry none). Arm A's comes from V9's arm 3, which now keeps it (`stated_checks`, with the defects
+    it reproduced, in V9's details for arm 3), through the patch's `arm_a_stated_checks`; each search arm's from its
+    report. Two results differ when any check's verdict differs or a check is in one and not the other. The driver
+    compares them on every patch once every arm has run, and records the comparison before any label is read.
+    Criterion 5 is met when every patch a search arm's own review accepted and arm A did not is on the list,
+    not met when one is not, and inconclusive when any patch's results cannot be read, or the record holds no
+    comparison. For the coordinator's ruling.

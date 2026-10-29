@@ -126,6 +126,24 @@ def direct(root, checks, runs, *, timeout_s=300):
 
 # --- arm 3, G6's review ------------------------------------------------------------------------------------------------
 
+def test_g6s_review_keeps_its_stated_check_results_and_the_defects_it_reproduced(repo, monkeypatch):
+    checks = patch(repo, {"calc.py": BAD + "\n", "test_more.py": MORE})
+    Runs({("test_more.py",): result(failed=[MORE_ID])}).into(monkeypatch)
+    got = g6(repo, checks)
+    assert got["stated_checks"] == {"test_more.py": "failed"}                 # the cited check, by its id
+    assert got["defects_reproduced"] == arms.defects_reproduced(None)        # this G6 has no completion section
+    reply = {"assessment": {"requirements": [
+        {"id": "R1", "checks": [{"id": "a.py::t", "verdict": "passed", "provenance": "stated"},
+                                {"id": "g6_check_0123456789ab/test_x.py", "verdict": "failed",
+                                 "provenance": "proposed"}]},
+        {"id": "R2", "checks": [{"id": "b.py::t", "verdict": "failed"}]}],
+        "completion": {"defects_reproduced": {"stated_and_repository_checks": [{"check": "b.py::t"}],
+                                              "proposed_checks": []}}}}
+    assert arms.stated_check_verdicts(reply) == {"a.py::t": "passed", "b.py::t": "failed"}
+    assert arms.stated_check_verdicts({"error": "refused"}) is None
+    assert arms.defects_reproduced(reply)["stated_and_repository_checks"] == [{"check": "b.py::t"}]
+
+
 def test_g6_accepts_only_supported_within_scope_with_every_requirement_passed(repo, monkeypatch):
     checks = patch(repo, {"calc.py": GOOD, "test_more.py": MORE})
     Runs({("test_more.py",): result([MORE_ID]), ("test_calc.py",): result([ADD, NEGATIVE])}).into(monkeypatch)
