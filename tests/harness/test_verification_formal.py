@@ -398,7 +398,9 @@ def test_a_replay_that_cannot_run_is_not_replayable_and_counted_never_a_finding(
     found = _instance(got)
     assert found["result"] == "check_error" and found["formal"]["correspondence"]["result"] == "not_replayable"
     assert found["formal"]["correspondence"]["reason"]
-    assert got["assessment"]["reasons"] == [] and got["assessment"]["outcome"] == "supported_within_scope"
+    # reviewer B's B2: the replay runs at the base commit, so its error on the patch alone is asked about, no finding
+    assert [(r["stage"], r["code"]) for r in got["assessment"]["reasons"]] == [("evidence", "check_error_on_patch")]
+    assert got["assessment"]["outcome"] == "insufficient_evidence"
 
 
 # --- induction: a result about the model only ---------------------------------------------------------------------------

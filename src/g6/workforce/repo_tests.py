@@ -690,7 +690,10 @@ _RETURN_HEAD, _RETURN_TAIL = 2048, 6144
 #: guard and the hook apply (review I8). A small plugin writes, as the session ends, how many tests were collected and
 #: deselected, and how many started and finished (a setup and a teardown reported), so a run that stops part-way with
 #: exit code 0 is not read as a pass (review I3), and the message of each failure, a collection's included, in full
-#: (``failure_messages``: pytest's summary line is cut to the terminal's width). Another turns pytest's "fd" capture, its default, into "sys" before
+#: (``failure_messages``: pytest's summary line is cut to the terminal's width); and each test or file whose failure was
+#: an operating-system error, or was raised from or during one (``os_errors``: read from the exception objects, their
+#: ``__cause__`` and ``__context__``, never from text the code printed; reviewer B's B2). Another turns pytest's "fd"
+#: capture, its default, into "sys" before
 #: capturing starts: "fd" opens the null device for standard input, which a Windows AppContainer may be refused
 #: (``truth.CAPTURE``); a capture the repository's own options chose otherwise (``-s``) stays. A third, as the
 #: session ends, writes each module the pytest process has loaded from outside the tree under test (the working
@@ -769,6 +772,16 @@ class _Counted:
         self.test_outcomes, self.collected_ids, self.omitted_ids = {}, set(), set()
         self.rootdir = ""
         self.messages = {}
+        self.os_errors = set()
+    def pytest_exception_interact(self, node, call, report):
+        error, seen = getattr(getattr(call, "excinfo", None), "value", None), set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, OSError):
+                self.os_errors.add(report.nodeid)
+                break
+            error = error.__cause__ or error.__context__
+        self.write()
     def pytest_itemcollected(self, item):
         self.collected_ids.add(item.nodeid)
     def pytest_deselected(self, items):
@@ -805,7 +818,8 @@ class _Counted:
                            "finished": len(self.finished), "failed_ids": self.failed,
                            "setup_errors": self.setup_errors, "test_outcomes": self.test_outcomes,
                            "collected_ids": sorted(self.collected_ids), "omitted_ids": sorted(self.omitted_ids),
-                           "rootdir": self.rootdir, "messages": self.messages}, handle)
+                           "rootdir": self.rootdir, "messages": self.messages,
+                           "os_errors": sorted(self.os_errors)}, handle)
 class _Capture:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_load_initial_conftests(self, early_config):
@@ -1409,6 +1423,7 @@ def _progress(counts: dict[str, int], counted: Path) -> dict[str, int]:
             "omitted_ids": found.get("omitted_ids", []),
             "failed_ids": found.get("failed_ids", []), "setup_errors": found.get("setup_errors", {}),
             "rootdir": found.get("rootdir") or "", "failure_messages": found.get("messages") or {},
+            "os_errors": found.get("os_errors") or [],
             "passed": max(0, counts.get("passed", 0) - max(0, started - finished))}
 
 
@@ -1567,6 +1582,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
                     (tally["expected"] is None or tally["expected"] != tally.get("finished"))), "receipt": "",
                 "source_before": ledger.digest(before), "rootdir": _root(repo, tally.get("rootdir") or ""),
                 "failure_messages": tally.get("failure_messages") or {},
+                "os_errors": list(tally.get("os_errors") or []),
                 "import_path": [Path(entry).relative_to(repo).as_posix() for entry in entries],
                 "own_config": bool(own_config),
                 "repo_env": _digests(person), "env_set_by_g6": list(set_by_g6),

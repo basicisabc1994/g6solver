@@ -107,3 +107,104 @@ def test_confined_the_same_instance_the_caller_states_is_a_defect_as_before_b1(t
          "bindings": {"contract": "repository"}}])
     assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]["reasons"]
     assert ("tier_1", "forbidden_dependency_added") in _codes(got)
+
+# --- B2: the patch cannot silence a counterexample ---------------------------------------------------------------------
+
+NODE = "g6_check_x/test_keep.py::test_neg"
+
+
+def _ran(kind: str, node: str = NODE) -> dict:
+    """One recorded run of a check: passed, failed (an assertion), os_error (a failure G6's own record says an
+    operating-system error was raised from or during), or timed_out. Printed text that names a refusal is in every
+    failed one's output and message, as code under test can print it."""
+    printed = "cache: Connection refused, using local value\nE   OSError: [Errno 111] Connection refused\n"
+    if kind == "passed":
+        return {"verdict": "passed", "seconds": 0.1, "output": printed + "1 passed",
+                "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}}}
+    if kind == "timed_out":
+        return {"verdict": "timed_out", "said": "it ran out of time", "seconds": 1.0, "output": ""}
+    found = {"verdict": "failed", "seconds": 0.1, "output": printed + f"FAILED {node} - assert 2 == -2",
+             "test_outcomes": {node: {"setup": "passed", "call": "failed", "teardown": "passed"}},
+             "failure_messages": {node: "assert 2 == -2\n" + printed}}
+    if kind == "os_error":
+        found.update(os_errors=[node], failure_messages={node: "RuntimeError: the cache is unreachable"})
+    return found
+
+
+def test_a_refusal_is_read_from_g6s_own_record_of_the_run_never_from_text_the_code_printed():
+    from g6.harness import verification_search as vs
+
+    assert vs.reading(_ran("failed"), NODE)["result"] == "failed"   # the printed words name a refusal: not read
+    assert vs.reading(_ran("os_error"), NODE)["result"] == "error"   # the record says so: a refused access, perhaps
+    collected = {"verdict": "collection_error", "seconds": 0.1, "test_outcomes": {}, "os_errors": ["g6_check_x/test_keep.py"],
+                 "output": "ERROR collecting g6_check_x/test_keep.py\n",
+                 "failure_messages": {"g6_check_x/test_keep.py": "ImportError while importing test module"}}
+    assert vs.reading(collected, NODE)["result"] == "error"
+
+
+def _search(tmp_path, monkeypatch, on_patch: str, at_base: str):
+    """``verification_search.search`` of one preserve check, its run on the patch giving ``on_patch`` (``_ran``'s
+    kinds) and at the base commit ``at_base``; what it did, and which runs it asked for (True: at the base)."""
+    from g6.harness import verification_search as vs
+
+    root = _repo(tmp_path, {"calc.py": "def neg(a):\n    return -a\n"}, {"calc.py": "def neg(a):\n    return a\n"})
+    one = vs.ProposedCheck.model_validate({"id": "keep-neg", "requirement_id": "R1", "intent": "preserve",
+                                           "file": "test_keep.py",
+                                           "source": "from calc import neg\n\n\ndef test_neg():\n    assert neg(2) == -2\n"})
+    asked: list[bool] = []
+
+    def run_check(change, placed, source, node, *, at_base, timeout_s, **_):
+        asked.append(at_base)
+        return _ran(base if at_base else patch, node)
+
+    patch, base = on_patch, at_base
+    monkeypatch.setattr(vs, "_run_check", run_check)
+    done = vs.search(repo_tests.change(root), [one], {one.id: vs.placement(one)}, deadline=time.monotonic() + 120,
+                     artifact="x")
+    return done, asked
+
+
+@pytest.mark.parametrize("on_patch", ["os_error", "timed_out"])
+def test_a_check_that_errors_on_the_patch_and_runs_to_a_result_at_the_base_is_insufficient_evidence(
+        tmp_path, monkeypatch, on_patch):
+    done, asked = _search(tmp_path, monkeypatch, on_patch, "passed")
+    assert asked == [False, True]   # run at the base commit too, though the patch's run errored
+    [activity] = done.activities
+    assert activity["result"] == "check_error", activity
+    assert [code for code, _ in done.reasons] == ["check_error_on_patch"], done.reasons
+    assert any("keep-neg" in action for action in done.next_actions)
+
+
+def test_a_broken_check_that_errors_at_the_base_and_on_the_patch_adds_no_reason(tmp_path, monkeypatch):
+    done, _ = _search(tmp_path, monkeypatch, "os_error", "os_error")
+    assert done.activities[0]["result"] == "check_error" and done.reasons == []
+
+
+LOUD = {"calc.py": "def add(a, b):\n    return b + a\n\n\ndef neg(a):\n    print('cache: Connection refused, using "
+                   "local value')\n    return a\n"}
+VERSIONS = {
+    "quiet": {"calc.py": "def add(a, b):\n    return b + a\n\n\ndef neg(a):\n    return a\n"},
+    "loud": LOUD,   # reviewer B's probe: the broken function prints a refusal's words
+    "raises": {"calc.py": "def add(a, b):\n    return b + a\n\n\ndef neg(a):\n    raise OSError('Connection "
+                          "refused')\n"},   # it errors on the patch, as a refused access would
+}
+NEG_BASE = {"calc.py": "def add(a, b):\n    return a + b\n\n\ndef neg(a):\n    return -a\n",
+            "test_add.py": "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"}
+KEEP_NEG = {"id": "keep-neg", "requirement_id": "R1", "intent": "preserve", "file": "test_keep_neg.py",
+            "source": "from calc import neg\n\n\ndef test_neg():\n    assert neg(2) == -2\n"}
+NEG_EXAMPLE = {"id": "neg-example", "template": "example.v1", "requirement_id": "R1", "intent": "preserve",
+               "bindings": {"function": "calc.neg", "cases": [{"args": [2], "returns": -2}]}}
+ADD = [{"id": "R1", "text": "add returns the sum", "checks": ["test_add.py::test_add"]}]
+
+
+@pytest.mark.parametrize("version", sorted(VERSIONS))
+def test_confined_the_patch_cannot_silence_a_counterexample(tmp_path, bwrap_backend, version):
+    """Reviewer B's probe (probe_classifier_refusal_text.py), with a third version that raises what a refused access
+    raises: every version gives the same outcome."""
+    root = _repo(tmp_path, NEG_BASE, VERSIONS[version])
+    got = review_patch(root, task="Tidy add.", requirements=ADD, proposed_checks=[KEEP_NEG],
+                       template_instances=[NEG_EXAMPLE], timeout_s=240)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", (version, assessment["reasons"])
+    codes = {code for _, code in _codes(got)}
+    assert codes & {"unconfirmed_counterexample", "check_error_on_patch"}, (version, codes)
