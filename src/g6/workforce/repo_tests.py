@@ -1704,6 +1704,69 @@ def _module(path: PurePosixPath) -> str:
     return path.parent.name if path.stem == "__init__" else path.stem
 
 
+def _import_names(rel: str, roots: Iterable[str]) -> set[str]:
+    """The dotted names Python files ``rel`` gives with each of ``roots`` (folders, "." the top) on the import path."""
+    path, names = PurePosixPath(rel), set()
+    for root in roots:
+        if root not in (".", "") and not path.is_relative_to(root):
+            continue
+        parts = list((path if root in (".", "") else path.relative_to(root)).with_suffix("").parts)
+        if parts and parts[-1] == "__init__":
+            parts.pop()
+        if parts and all(part.isidentifier() for part in parts):
+            names.add(".".join(parts))
+    return names
+
+
+def loadable_changes(change: Change, roots: tuple[str, ...] = ()) -> dict[str, str]:
+    """The files the change adds or changes, visible to git, that could change what a test run loads, by
+    ``ignored_inputs``' judge (the launch review's I2), each with why: an ``.egg-info`` or ``.dist-info`` folder's
+    ``entry_points.txt`` declaring a pytest plugin; a compiled extension module; bytecode (``.pyc``), anywhere; a link
+    whose name Python could import; and a new Python file, not a test file, whose dotted name, with any import root a
+    run uses (the review's ``roots``, the top, ``src``, and each folder pytest puts first for its tests), is that of a
+    module the base commit has, and the patch kept, at another path, which it could shadow. Runner, start-up and test
+    files are judged elsewhere (the runner check and the weakening detector)."""
+    base = set(_paths(_git(change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit)))
+    tree = base | set(change.files)
+    # pytest's own import mode puts the first folder above a test file with no __init__.py first on the path
+    basedirs = set()
+    for rel in tree:
+        if is_test_related(rel):
+            folder = PurePosixPath(rel).parent
+            while str(folder) not in (".", "") and f"{folder.as_posix()}/__init__.py" in tree:
+                folder = folder.parent
+            basedirs.add(folder.as_posix())
+    import_roots = (*roots, ".", "src", *sorted(basedirs))
+    held: dict[str, set[str]] = {}
+    for rel in base:   # the base commit's modules the patch kept (one it deleted or moved can no longer be shadowed)
+        if rel.endswith(".py") and os.path.lexists(change.repo / rel):
+            for name in _import_names(rel, import_roots):
+                held.setdefault(name, set()).add(rel)
+    found: dict[str, str] = {}
+    for rel in change.files:
+        path, full = PurePosixPath(rel), change.repo / rel
+        name = path.name.lower()
+        if not os.path.lexists(full):
+            continue   # deleted
+        inside = next((index for index, part in enumerate(path.parts[:-1]) if part.endswith(_METADATA)), None)
+        if inside is not None:
+            if inside == len(path.parts) - 2 and name == "entry_points.txt" and _declares_plugin(full):
+                found[rel] = "it declares a pytest plugin, which pytest loads at start-up"
+        elif _linked(full):
+            if not path.suffix or name.endswith((".py", ".pyc", ".pth", *_EXTENSIONS)):
+                found[rel] = "a link, which can put any code under a name Python imports"
+        elif name.endswith(_EXTENSIONS):
+            found[rel] = "a compiled extension module, which Python imports in place of a .py file of the same name"
+        elif name.endswith(".pyc"):
+            found[rel] = "bytecode, which Python can import in place of the source"
+        elif path.suffix == ".py" and rel not in base and not is_test_related(rel):   # a test: the weakening detector
+            clash = sorted(other for module in _import_names(rel, import_roots)
+                           for other in held.get(module, ()) if other != rel)
+            if clash:
+                found[rel] = f"a new module named like {clash[0]}, which it can shadow on the import path"
+    return found
+
+
 def ignored_inputs(repo: Path) -> Ignored:
     """The git-ignored files in ``repo`` a test run could load. Loadable (``Ignored.loadable``): an ignored
     ``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``,

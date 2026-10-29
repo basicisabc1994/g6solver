@@ -796,6 +796,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     runner = _runner_changes(change)
     if runner:
         reason("integrity", "runner_configuration_changed", "; ".join(runner))
+    # the launch review's I2: what ignored_inputs' judge finds in a git-ignored file, in a file the patch adds or
+    # changes in git's view too (a plugin's metadata, an extension module, bytecode, a link, a module's twin)
+    loadable = list(repo_tests.loadable_changes(change, roots).items())
+    if loadable:
+        reason("integrity", "changed_file_can_change_tests", "the patch adds or changes files that could change what "
+               "the tests load: " + "; ".join(f"{rel}: {why}" for rel, why in loadable[:10])
+               + (f"; and {len(loadable) - 10} more" if len(loadable) > 10 else ""))
     scan = repo_tests.ignored_inputs(root)   # review I2: outside git's view, so outside the digest
     if scan.loadable:
         hidden = scan.loadable

@@ -184,3 +184,57 @@ def test_each_run_patch_review_makes_is_refused_before_it_starts_without_the_bou
             patch_review._execute_at_base(change, ["test_calc.py::test_add"], timeout_s=30)
     assert refused.value.code == ISOLATION_UNAVAILABLE
     assert started == []
+
+# --- I2: a file the patch adds or changes, visible to git, that could change what the tests load ----------------------
+
+SRC = {"src/calc.py": GOOD, "tests/test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"}
+CHECK = [{"id": "R1", "text": "add adds", "checks": ["tests/test_calc.py::test_add"]}]
+
+
+def _extension(stem: str) -> str:
+    import importlib.machinery
+
+    return stem + importlib.machinery.EXTENSION_SUFFIXES[-1]   # .so on Linux, .pyd on Windows
+
+
+@pytest.mark.parametrize(("added", "what"), [
+    ({"src/x-1.0.dist-info/entry_points.txt": "[pytest11]\nx = x_plugin\n", "src/x_plugin.py": "\n"}, "plugin"),
+    ({"src/x-1.0.egg-info/entry_points.txt": "[pytest11]\nx = x_plugin\n", "src/x_plugin.py": "\n"}, "plugin"),
+    ({_extension("src/calc"): "not really a binary\n"}, "extension"),
+    ({"src/helper.pyc": "not really bytecode\n"}, "bytecode"),
+    ({"src/__pycache__/calc.cpython-312.pyc": "not really bytecode\n"}, "bytecode"),
+    ({"calc.py": "def add(a, b):\n    return 5\n"}, "shadow"),   # named like src/calc.py, earlier on the path
+])
+def test_a_visible_file_the_patch_adds_that_could_change_the_tests_compromises_integrity(tmp_path, monkeypatch,
+                                                                                         added, what):
+    root = _repo(tmp_path, SRC)
+    _write(root, added)
+    _record(monkeypatch, lambda ids: result(ids))
+    got = review_patch(root, task="Change add.", requirements=CHECK)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "test_integrity_compromised", assessment["reasons"]
+    found = [r for r in assessment["reasons"] if r["code"] == "changed_file_can_change_tests"]
+    assert found and found[0]["stage"] == "integrity", assessment["reasons"]
+    assert any(rel in found[0]["detail"] for rel in added if not rel.endswith("x_plugin.py")), found
+
+
+@pytest.mark.parametrize("added", [
+    {"src/extra.py": "def extra():\n    return 1\n"},                                    # an ordinary new module
+    {"src/shop/__init__.py": "", "src/shop/models.py": "X = 1\n"},                     # a new package's own modules
+    {"src/x-1.0.dist-info/METADATA": "Name: x\n", "src/x-1.0.dist-info/entry_points.txt": "[console_scripts]\n"},
+])
+def test_an_ordinary_added_file_leaves_the_outcome_as_it_was(tmp_path, monkeypatch, added):
+    root = _repo(tmp_path, {**SRC, "src/blog/__init__.py": "", "src/blog/models.py": "Y = 2\n"})
+    _write(root, added)
+    _record(monkeypatch, lambda ids: result(ids))
+    got = review_patch(root, task="Add a module.", requirements=CHECK)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+def test_a_module_the_patch_moves_shadows_nothing(tmp_path, monkeypatch):
+    """Moved, the old path is gone: nothing is left for the new one to shadow (and a moved test file is the weakening
+    detector's, compared with its old text)."""
+    root = _repo(tmp_path, {**SRC, "src/helpers.py": "H = 1\n"})
+    _git(root, "mv", "src/helpers.py", "helpers.py")
+    _record(monkeypatch, lambda ids: result(ids))
+    got = review_patch(root, task="Move a module.", requirements=CHECK)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]

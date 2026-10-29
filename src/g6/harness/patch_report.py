@@ -38,6 +38,7 @@ RULES = {"test_integrity_compromised": "a sign that the tests, their configurati
 INTEGRITY = {"test_weakened": "a test or a test helper was weakened",
              "runner_configuration_changed": "the test runner's configuration changed",
              "ignored_file_can_change_tests": "a file git ignores could change the tests",
+             "changed_file_can_change_tests": "a file the patch adds or changes could change what the tests load",
              "run_not_trusted": "a test run's result cannot be believed",
              "repository_changed_during_review": "the working tree changed during the review",
              "gate_shortcut": "the diff of the tests takes a shortcut"}
