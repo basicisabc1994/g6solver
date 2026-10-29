@@ -35,6 +35,11 @@ Merging stays the person's decision.
   the repository's `starlette`, outside any boundary, with the person's rights. Setup now starts the server with
   `python -P`, which keeps the project's folder off the import path. An entry made before this fix keeps the old
   command: remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run `g6 setup` again.
+- **No network request when the server starts.** FastMCP, the library G6's MCP server is built on, asked PyPI for
+  its latest version each time the server started, and read its settings from a `.env` file in the folder the server
+  started in, the project's, where a line could name a class for G6's server to import and build. G6's server now
+  turns the version check off and reads no such file; what a person sets in the environment
+  (`FASTMCP_CHECK_FOR_UPDATES`, `FASTMCP_ENV_FILE`) is kept.
 
 ## What does not ship
 

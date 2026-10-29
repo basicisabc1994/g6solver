@@ -39,6 +39,7 @@ does. G6 re-checks artifacts with its own code; it does not defend against malic
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any
 
@@ -85,8 +86,30 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
                                        f"(or {component}) to {SENSITIVE_ENV} where the server is registered.")
 
 
+#: FastMCP's settings G6 gives its own server unless the person set them in the environment (worked examples, W5).
+#: FastMCP asks PyPI for its latest version each time a server starts and shows its banner, unless its update check
+#: is off; and it reads its settings from a ``.env`` file in the folder the server starts in, which is the project's,
+#: where ``FASTMCP_SERVER_AUTH`` names a class it imports and builds while the server is created. ``FASTMCP_ENV_FILE``
+#: is read once, when FastMCP is first imported, so it is set before that; the update check is also set on
+#: FastMCP's own settings after the import, which holds even where FastMCP was imported first.
+QUIET = {"FASTMCP_CHECK_FOR_UPDATES": "off", "FASTMCP_ENV_FILE": os.devnull}
+
+
+def _quiet() -> None:
+    """No network request at start: FastMCP's update check off and no project ``.env``, the person's own choice
+    kept."""
+    chose = "FASTMCP_CHECK_FOR_UPDATES" in os.environ
+    for name, value in QUIET.items():
+        os.environ.setdefault(name, value)
+    import fastmcp
+
+    if not chose:
+        fastmcp.settings.check_for_updates = "off"
+
+
 def build_server(surface: Any = None) -> Any:
     try:
+        _quiet()
         from fastmcp import Context, FastMCP
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
