@@ -20,8 +20,8 @@ the five of this version:
   intent is ``preserve`` (the caller declared that behaviour must not change), so at most insufficient evidence; and
   ``behaviour_changed``, a question only, when it is ``change``;
 - ``forbidden_dependency.v1`` (safety and structural invariants): the patch adds no import that breaks a declared
-  layer rule, read statically with ``design_governance``'s ``layer_violations`` on the package before and after (no
-  code runs). The contract is the repository's own, an import-linter configuration (``.importlinter``, ``setup.cfg``
+  layer rule, read statically from ``design_governance``'s import graph of the package before and after (no code
+  runs). The contract is the repository's own, an import-linter configuration (``.importlinter``, ``setup.cfg``
   or ``pyproject.toml``) as the base commit declares it, so the patch cannot loosen it (provenance
   ``repository_stated``), or one the instance states (``stated``); against either, a new forbidden import is a failed
   check, so ``defect_detected``. The owner's ruling R-C1: a check that finds none never passes its requirement, which
@@ -30,8 +30,12 @@ the five of this version:
   broken it (``_unexercised``). A contract a model proposed (``model_hypothesis``, which only G6's own code sets) gives
   at most insufficient evidence.
   A part of a contract that matches no module of the package, and a module outside the package, are reported as out
-  of scope, never as violations. It sees direct imports only (those inside functions and under ``TYPE_CHECKING``
-  included), not dynamic ones.
+  of scope, never as violations. It follows chains of imports inside the package as import-linter does (a forbidden
+  contract with ``allow_indirect_imports`` checks direct ones only), with those inside functions included and those
+  under ``TYPE_CHECKING`` too unless the configuration's ``exclude_type_checking_imports`` leaves them out; dynamic
+  imports are not seen. An option, contract type or layer syntax of the configuration that G6 does not implement
+  (``_unsupported``) makes the instance not applicable, with the option named, and so does a package that more than
+  one folder holds: G6 never guesses.
 
 An instance is data, never code: ``{id, template, requirement_id, intent, bindings}`` (``template_instances``). A name
 in the bindings is a dotted name of the letters A to Z (either case), digits and ``_``, a module path and then a
@@ -60,6 +64,7 @@ import ast
 import builtins
 import collections
 import configparser
+import dataclasses
 import hashlib
 import inspect
 import itertools
@@ -1332,8 +1337,8 @@ TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for defini
         "forbidden_dependency.v1", SAFETY_STRUCTURAL, "the patch adds no import that breaks a declared layer rule",
         ForbiddenBindings,
         ("the imports are read from the package's files, before and after, and no code runs",
-         "only direct imports between modules of the package count: dynamic imports (importlib, __import__) and "
-         "imports through another module are not seen, and modules outside the package are out of scope",
+         "imports between modules of the package count, and chains of them, as import-linter follows them: dynamic "
+         "imports (importlib, __import__) are not seen, and modules outside the package are out of scope",
          "the repository's own contract is the one its import-linter configuration declares at the base commit"),
         None, "", ("preserve",)),
 )}
@@ -1541,6 +1546,11 @@ class _Contract:
     layers: tuple[str, ...]
     forbidden: tuple[tuple[str, str], ...]
     ignore: tuple[str, ...] = ()
+    #: A forbidden contract whose ``allow_indirect_imports`` is true: its direct imports only. Every other contract
+    #: follows import chains inside the package, as import-linter does (review C3).
+    direct: bool = False
+    #: The configuration's ``exclude_type_checking_imports``: imports under ``if TYPE_CHECKING`` are left out.
+    no_type_checking: bool = False
 
 
 _CONFIGS = (".importlinter", "setup.cfg", "pyproject.toml")
@@ -1548,6 +1558,66 @@ _LIST_KEYS = frozenset({"layers", "containers", "source_modules", "forbidden_mod
                         "root_packages", "modules"})
 _KIND = re.compile(r"[a-z_]{1,40}")
 _IGNORE = re.compile(r"\s*([A-Za-z0-9_.*]+)\s*->\s*([A-Za-z0-9_.*]+)\s*")
+#: What G6 implements of an import-linter configuration (review I1): the top-level options; each contract type's
+#: options besides ``type``, ``name`` and ``id`` (``unmatched_ignore_imports_alerting`` only says how an ignored import
+#: that matches nothing is reported, and G6 never reports one; ``broken_contract_guidance`` is text for a person); and
+#: the options it reads at one value only. Any other option, value, type or layer syntax makes the instance not
+#: applicable, with the option named: G6 never guesses what one means.
+_TOP_OPTIONS = frozenset({"root_package", "root_packages", "exclude_type_checking_imports", "show_timings",
+                          "contracts"})
+_CONTRACT_OPTIONS = {
+    "layers": frozenset({"layers", "containers", "ignore_imports", "unmatched_ignore_imports_alerting",
+                         "broken_contract_guidance", "exhaustive", "exhaustive_ignores"}),
+    "forbidden": frozenset({"source_modules", "forbidden_modules", "ignore_imports", "allow_indirect_imports",
+                            "unmatched_ignore_imports_alerting", "broken_contract_guidance", "as_packages"})}
+_FLAGS = frozenset({"exclude_type_checking_imports", "allow_indirect_imports"})
+_ONLY = {"include_external_packages": False, "exhaustive": False, "as_packages": True}
+
+
+def _flag(value) -> bool | None:
+    """An import-linter boolean option's value (``True``, ``true``, ``False``, ``false``, or TOML's own), None for any
+    other."""
+    if isinstance(value, bool):
+        return value
+    text = value.strip() if isinstance(value, str) else ""
+    return {"True": True, "true": True, "False": False, "false": False}.get(text)
+
+
+def _named(key) -> str:
+    """An option's name as a reason shows it: the repository's text, cut short, with nothing but letters, digits, ``_``,
+    ``.`` and ``-`` kept."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "?", str(key))[:60]
+
+
+def _unsupported(options: dict, raw: list[dict]) -> list[str]:
+    """What an import-linter configuration sets that G6 does not implement (``_TOP_OPTIONS``, ``_CONTRACT_OPTIONS``)."""
+    found = []
+
+    def judge(label: str, key, value, known: frozenset) -> None:
+        if key in _ONLY:
+            if _flag(value) is not _ONLY[key]:
+                found.append(f"{label}{key} at a value other than {_ONLY[key]}")
+        elif key in _FLAGS and key in known:
+            if _flag(value) is None:
+                found.append(f"{label}{key} at a value G6 cannot read")
+        elif key not in known:
+            found.append(f"{label}{_named(key)}")
+
+    for key, value in options.items():
+        judge("", key, value, _TOP_OPTIONS | {"include_external_packages"})
+    for index, item in enumerate(raw):
+        label = f"contract {index + 1}: "
+        kind = item.get("type")
+        if kind not in _CONTRACT_OPTIONS:
+            found.append(label + (f"a contract of type {kind}" if isinstance(kind, str) and _KIND.fullmatch(kind)
+                                  else "a contract of a type G6 cannot read"))
+            continue
+        for key, value in item.items():
+            if key not in ("type", "name", "id"):
+                judge(label, key, value, _CONTRACT_OPTIONS[kind])
+        if kind == "layers" and any("|" in layer or ":" in layer for layer in _lines(item.get("layers"))):
+            found.append(f"{label}independent or non-independent sibling layers (a | b, a : b)")
+    return found
 
 
 def _contract_provenance(one: TemplateInstance) -> str:
@@ -1563,7 +1633,7 @@ def _lines(value) -> list[str]:
     return []
 
 
-def _ini(text: str) -> tuple[list[str], list[dict]] | None:
+def _ini(text: str) -> tuple[list[str], list[dict], dict] | None:
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     try:
         parser.read_string(text)
@@ -1575,10 +1645,10 @@ def _ini(text: str) -> tuple[list[str], list[dict]] | None:
     roots = _lines(main.get("root_packages", "")) or _lines(main.get("root_package", ""))
     contracts = [{key: (_lines(value) if key in _LIST_KEYS else value.strip()) for key, value in parser[name].items()}
                  for name in parser.sections() if name.startswith("importlinter:contract:")]
-    return roots, contracts
+    return roots, contracts, dict(main.items())
 
 
-def _toml(text: str) -> tuple[list[str], list[dict]] | None:
+def _toml(text: str) -> tuple[list[str], list[dict], dict] | None:
     try:
         section = tomllib.loads(text).get("tool", {}).get("importlinter")
     except (tomllib.TOMLDecodeError, AttributeError):
@@ -1589,11 +1659,13 @@ def _toml(text: str) -> tuple[list[str], list[dict]] | None:
     contracts = section.get("contracts") or []
     if isinstance(contracts, dict):
         contracts = list(contracts.values())
-    return roots, [item for item in contracts if isinstance(item, dict)] if isinstance(contracts, list) else []
+    return (roots, [item for item in contracts if isinstance(item, dict)] if isinstance(contracts, list) else [],
+            dict(section))
 
 
-def _declared(tree: Tree, side: str) -> tuple[str, tuple[list[str], list[dict]]] | None:
-    """The first import-linter configuration on ``side``, and what it holds."""
+def _declared(tree: Tree, side: str) -> tuple[str, tuple[list[str], list[dict], dict]] | None:
+    """The first import-linter configuration on ``side``, and what it holds: the root packages, the contracts, and
+    the top-level options."""
     for rel in _CONFIGS:
         if not tree.has(rel, side):
             continue
@@ -1619,27 +1691,21 @@ def _in(module: str, prefix: str) -> bool:
     return module == prefix or module.startswith(prefix + ".")
 
 
-def _read_contracts(roots: list[str], raw: list[dict]) -> tuple[list[_Contract], list[str]]:
-    """The layers and forbidden contracts of an import-linter configuration, each with its package; and what is out of
-    scope, said in G6's words (a type G6 does not read, siblings in a layer, a name that is not a dotted name)."""
+def _read_contracts(roots: list[str], raw: list[dict], options: dict) -> tuple[list[_Contract], list[str]]:
+    """The layers and forbidden contracts of an import-linter configuration whose every option G6 implements
+    (``_unsupported`` is empty), each with its package; and what is out of scope, said in G6's words (a name that is not
+    a dotted name, a contract outside the root package)."""
     found, out = [], []
     roots = [root for root in roots if _dotted_ok(root)]
+    no_type_checking = bool(_flag(options.get("exclude_type_checking_imports", False)))
     for index, item in enumerate(raw):
         label = f"contract {index + 1}"
         kind = item.get("type")
-        if not isinstance(kind, str) or not _KIND.fullmatch(kind):
-            out.append(f"{label}: a contract of a type G6 does not read")
-            continue
-        if kind not in ("layers", "forbidden"):
-            out.append(f"{label}: a contract of type {kind} is not read (G6 reads layers and forbidden contracts)")
-            continue
         ignore = tuple(_lines(item.get("ignore_imports")))
+        direct = kind == "forbidden" and bool(_flag(item.get("allow_indirect_imports", False)))
         if kind == "layers":
             layers = [layer[1:-1].strip() if layer.startswith("(") and layer.endswith(")") else layer
                       for layer in _lines(item.get("layers"))]
-            if any("|" in layer or ":" in layer for layer in layers):
-                out.append(f"{label}: a layer of sibling modules is not read")
-                continue
             containers = _lines(item.get("containers")) or [""]
             stacks = [tuple(f"{c}.{layer}" if c else layer for layer in layers) for c in containers]
             pairs: tuple = ()
@@ -1659,25 +1725,33 @@ def _read_contracts(roots: list[str], raw: list[dict]) -> tuple[list[_Contract],
             if package is None:
                 out.append(f"{label}: no module it names is inside the root package the configuration declares")
                 continue
-            found.append(_Contract(label, package, stack, pairs, ignore))
+            found.append(_Contract(label, package, stack, pairs, ignore, direct=direct,
+                                   no_type_checking=no_type_checking))
     return found, out
 
 
 def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str], str] | None:
     """The package's Python files on ``side``, by path relative to the folder that holds it (as design_governance reads
-    them), and that folder's prefix ("" or "src/"); None when it has none there."""
+    them), and that folder's prefix (an import root's, "" or "src/"); None when it has none there. The same rule on
+    both sides: a package that more than one of those folders holds is an ``Inapplicable``, never a silent choice."""
     from g6.code.design_governance import graph
 
     stem = package.replace(".", "/")
     listed = tree.at_base if side == BASE else tree.known
-    for folder in tree.folders():
+    held = []
+    for folder in dict.fromkeys(tree.folders()):
         names = sorted(rel for rel in listed if rel.endswith(".py") and (
             rel.startswith(folder + stem + "/") or rel == folder + stem + ".py")
             and graph.module_of(rel[len(folder):]) is not None)
         if names:
-            break
-    else:
+            held.append((folder, names))
+    if not held:
         return None
+    if len(held) > 1:
+        raise Inapplicable(f"the package {package} is in more than one folder {WHERE[side]} ("
+                           + ", ".join(f"{folder}{stem}/" for folder, _ in held) + "), so G6 cannot say which one "
+                           "the imports name")
+    [(folder, names)] = held
     if len(names) > MAX_PACKAGE_FILES:
         raise Inapplicable(f"{package} holds more than {MAX_PACKAGE_FILES} files {WHERE[side]}")
     files, size = {}, 0
@@ -1721,29 +1795,88 @@ def _matched(found, contract: _Contract) -> tuple[tuple[str, ...], tuple[tuple[s
     return layers, pairs, missing
 
 
-def _breaches(found, contract: _Contract) -> tuple[list[dict], set[str]]:
-    """The contract's breaches in the graph ``found``, with what no module of it is in left out; and the prefixes it
-    left out."""
-    from g6.code._types import CodeRefused
-    from g6.code.design_governance import graph
+def _counted(found, contract: _Contract) -> dict[str, list]:
+    """The package's imports the contract counts, by importing module, each module's in target and line order: those
+    under ``if TYPE_CHECKING`` left out when the configuration says so, and those its ``ignore_imports`` names
+    removed, as import-linter removes them before it looks for chains."""
+    out: dict[str, list] = {}
+    for edge in sorted(found.edges, key=lambda e: (e.source, e.target, e.line)):
+        if not (contract.no_type_checking and edge.type_checking) and not _ignored(
+                {"from": edge.source, "to": edge.target}, contract.ignore):
+            out.setdefault(edge.source, []).append(edge)
+    return out
 
+
+def _reached(edges: dict[str, list], start: str, stop: Callable[[str], bool], through: Callable[[str], bool]) -> dict:
+    """The modules ``stop`` holds for that ``start`` reaches, each with the imports of the shortest chain to it (a
+    breadth-first search, in a fixed order), passing through modules ``through`` holds for only."""
+    parent: dict[str, Any] = {start: None}
+    queue, reached = collections.deque([start]), {}
+    while queue:
+        node = queue.popleft()
+        for edge in edges.get(node, ()):
+            if edge.target in parent:
+                continue
+            parent[edge.target] = edge
+            if stop(edge.target):
+                chain, step = [], edge
+                while step is not None:
+                    chain.append(step)
+                    step = parent[step.source]
+                reached[edge.target] = chain[::-1]
+            elif through(edge.target):
+                queue.append(edge.target)
+    return reached
+
+
+def _breaches(found, contract: _Contract, in_time: Callable[[], None] = lambda: None) -> tuple[list[dict], set[str]]:
+    """The contract's breaches in the graph ``found``, with what no module of it is in left out; and the prefixes it
+    left out. Import chains are followed inside the package as import-linter follows them (review C3): a module of a
+    lower layer that reaches a module of a higher one, directly or through modules in no layer (a chain between two
+    layers passes through no other); a module of a pair's source that reaches one of its forbidden prefix through
+    modules in neither, or directly only when the contract allows indirect imports. Each breach names its chain, and
+    the file and line of the chain's first import. ``in_time`` raises once the review's time is spent."""
     layers, pairs, missing = _matched(found, contract)
-    if not layers and not pairs:
-        return [], missing
-    try:
-        breaches = graph.layer_violations(found, layers, pairs)
-    except CodeRefused:
-        return [], missing
-    return [item for item in breaches if not _ignored(item, contract.ignore)], missing
+    edges = _counted(found, contract)
+
+    def rank(module: str) -> int | None:
+        hits = [i for i, prefix in enumerate(layers) if _in(module, prefix)]
+        return max(hits, key=lambda i: len(layers[i])) if hits else None
+
+    def breach(rule: str, chain: list, why: str) -> dict:
+        middle = [edge.source for edge in chain[1:]]
+        return {"rule": rule, "from": chain[0].source, "to": chain[-1].target, "file": chain[0].file,
+                "line": chain[0].line, "lazy": chain[0].lazy, "chain": [chain[0].source, *(e.target for e in chain)],
+                "why": why + (f", even through {', '.join(middle)}" if middle else "")}
+
+    out = []
+    ranks = {module: rank(module) for module in found.modules}
+    for module, own in sorted(ranks.items()) if len(layers) > 1 else ():
+        if own is None:
+            continue
+        in_time()
+        for target, chain in _reached(edges, module, lambda m: ranks.get(m) is not None,
+                                      lambda m: ranks.get(m) is None).items():
+            if ranks[target] < own:
+                out.append(breach("layers", chain, f"{layers[own]} is below {layers[ranks[target]]}, so it may not "
+                                                   "import it"))
+    for source, banned in pairs:
+        for module in sorted(m for m in found.modules if _in(m, source) and not _in(m, banned)):
+            in_time()
+            through = (lambda m: False) if contract.direct else (   # noqa: E731
+                lambda m, source=source, banned=banned: not _in(m, source) and not _in(m, banned))
+            for chain in _reached(edges, module, lambda m, banned=banned: _in(m, banned), through).values():
+                out.append(breach("forbidden", chain, f"{source} may not import {banned}"))
+    return out, missing
 
 
 def _unexercised(before, after, contract: _Contract) -> str:
     """Why the patch could not have broken ``contract`` (the owner's ruling R-C1: such a contract is reported as
     vacuous, "does not exercise the change"), or "" when it could: the contract, as G6 can check it on the package,
-    has two layers or a forbidden pair, and the patch adds an import inside the package from a module the contract
-    covers (a module in a layer, or a pair's source), one the contract's ignored imports allow included. A change that
-    leaves every module's imports as they were is not one a structural check sees; only an added import can break a
-    contract."""
+    has two layers or a forbidden pair, and the patch adds an import inside the package that a chain can pass through
+    (any, for a contract that follows chains; for one of direct imports only, one from a module of a pair's source),
+    one the contract's ignored imports allow included. A change that leaves every module's imports as they were is not
+    one a structural check sees; only an added import can break a contract."""
     layers, pairs, _ = _matched(after, contract)
     if len(layers) < 2 and not pairs:
         return ("a contract of fewer than two layers and no forbidden pair, as G6 can check it on the package, can "
@@ -1752,9 +1885,10 @@ def _unexercised(before, after, contract: _Contract) -> str:
         return {(edge.source, edge.target) for edge in found.edges} if found is not None else set()
 
     added = edges(after) - edges(before)
-    if not any(_in(source, prefix) for source, _ in added for prefix in (*layers, *(pair[0] for pair in pairs))):
-        return ("the patch adds no import inside the package from a module the contract covers, so it could not have "
-                "broken it")
+    if contract.direct:
+        added = {(source, target) for source, target in added if any(_in(source, pair[0]) for pair in pairs)}
+    if not added:
+        return "the patch adds no import inside the package that could break the contract"
     return ""
 
 
@@ -1773,14 +1907,20 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
             added = _declared(tree, PATCH)
             raise Inapplicable("the repository declares no import-linter contract at the base commit" + (
                 f" (the patch adds one in {added[0]}, which is not the repository's own)" if added else ""))
-        rel, (roots, raw) = declared
-        contracts, out = _read_contracts(roots, raw)
+        rel, (roots, raw, options) = declared
+        unsupported = _unsupported(options, raw)
+        if unsupported:   # review I1: never a guess at what an option means
+            raise Inapplicable(f"the repository's import-linter configuration ({rel}) sets "
+                               + "; ".join(unsupported[:5]) + (f" and {len(unsupported) - 5} more" if
+                                                               len(unsupported) > 5 else "")
+                               + ", which G6 does not implement, so it does not apply that contract")
+        contracts, out = _read_contracts(roots, raw, options)
         source = f"{rel} at the base commit"
         if rel in tree.change.files:
             limits.append(f"the patch changes {rel}; G6 used the contract as the base commit declares it")
-        if any(item.get("type") == "forbidden" and str(item.get("allow_indirect_imports", "")).lower() != "true"
-               for item in raw):
-            limits.append("import-linter also checks imports made through other modules; G6 checks direct ones only")
+        if any(item.get("ignore_imports") for item in raw):
+            limits.append("an ignored import that matches no import is not reported (import-linter reports one by "
+                          "default)")
     else:
         stated = bindings.contract
         contracts = [_Contract("the instance's contract", bindings.package, tuple(stated.layers),
@@ -1792,10 +1932,9 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
                    if not _in(name, contract.package)]
         out += [f"{contract.name}: {name} is outside the package {contract.package}, so G6 does not check imports of "
                 "it" for name in dict.fromkeys(outside)]
-        kept = _Contract(contract.name, contract.package,
-                         tuple(layer for layer in contract.layers if layer not in outside),
-                         tuple(pair for pair in contract.forbidden if pair[0] not in outside
-                               and pair[1] not in outside), contract.ignore)
+        kept = dataclasses.replace(contract, layers=tuple(layer for layer in contract.layers if layer not in outside),
+                                   forbidden=tuple(pair for pair in contract.forbidden if pair[0] not in outside
+                                                   and pair[1] not in outside))
         if kept.layers or kept.forbidden:
             scoped.append(kept)
     if not scoped:
@@ -1816,8 +1955,8 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
             out.append(f"{contract.name}: the package {contract.package} has no module {WHERE[PATCH]}")
             continue
         named = set(contract.layers) | {prefix for pair in contract.forbidden for prefix in pair}
-        old, missing_before = _breaches(before, contract) if before is not None else ([], named)
-        found, missing_after = _breaches(after, contract)
+        old, missing_before = _breaches(before, contract, tree.in_time) if before is not None else ([], named)
+        found, missing_after = _breaches(after, contract, tree.in_time)
         out += [f"{contract.name}: {prefix} matches no module of the package, so it is out of scope"
                 for prefix in sorted(missing_before & missing_after)]
         if named <= missing_before & missing_after:
@@ -1844,7 +1983,7 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
             text = tree.text(item["file"], PATCH).splitlines()[item["line"] - 1].strip()[:200]
         except (ValueError, IndexError, OSError):
             text = ""
-        violations.append({key: item[key] for key in ("rule", "from", "to", "file", "line", "lazy", "why")}
+        violations.append({key: item[key] for key in ("rule", "from", "to", "file", "line", "lazy", "why", "chain")}
                           | {"text": text})
     normative = provenance != "model_hypothesis"
     if violations:

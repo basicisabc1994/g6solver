@@ -178,7 +178,14 @@ instance is data. The templates:
   `setup.cfg` or `pyproject.toml`; layers and forbidden contracts, with their `ignore_imports`) as the base
   commit declares it, so the patch cannot loosen it; otherwise `package` and a `contract` of `layers` (highest
   first) and `forbidden` pairs (`{source, forbidden}`) you state. G6 reads the imports from the package's files
-  before and after and runs no code; it sees direct imports only, not dynamic ones. A part of a contract that
+  before and after and runs no code. It follows chains of imports inside the package as import-linter does, so
+  a new path from a lower layer to a higher one is a new violation (a forbidden contract with
+  `allow_indirect_imports` checks direct imports only); imports under `if TYPE_CHECKING` count unless the
+  configuration sets `exclude_type_checking_imports`; dynamic imports are not seen. An option, contract type
+  or layer syntax G6 does not implement (`contract_types`, `include_external_packages`, `exhaustive`, sibling
+  layers such as `a | b`, an `independence` contract, any option it does not know) makes the instance not
+  applicable, with the option named: G6 never guesses what an option means. So does a package that two
+  folders hold (the top folder and `src`, or an import root). A part of a contract that
   matches no module, and a module outside the package, are reported as out of scope, never as violations.
 
 Bindings are data. A name is a dotted name of the letters A to Z (either case), digits and `_`, a module and

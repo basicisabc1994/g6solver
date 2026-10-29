@@ -987,6 +987,138 @@ def test_review_c2_a_flagged_file_missing_from_the_working_tree_is_an_unknown_ne
     assert any("shop/service.py" in unknown for unknown in assessment["unknowns"])
 
 
+# --- C3: import chains inside the package, as import-linter follows them --------------------------------------------------
+
+HELPERS = {"shop/helpers.py": "from shop import api\n\n\ndef helper():\n    return api\n"}
+DATA_IMPORTS_HELPERS = {"shop/data.py": "from shop import helpers\n\n\ndef load(x):\n    return x\n"}
+FORBIDDEN_LINTER = ("[importlinter]\nroot_package = shop\n\n[importlinter:contract:one]\nname = no upward import\n"
+                    "type = forbidden\nsource_modules =\n    shop.data\nforbidden_modules =\n    shop.api\n")
+
+
+def _lint_imports(root: Path) -> int | None:
+    """The exit code of the repository's own linter on the tree as it is (None when import-linter is not installed)."""
+    import shutil
+
+    program = shutil.which("lint-imports")
+    if program is None:
+        return None
+    return subprocess.run([program, "--no-cache"], cwd=root, capture_output=True, text=True,
+                          env={**os.environ, "PYTHONPATH": str(root)}).returncode
+
+
+@pytest.mark.parametrize("config", [IMPORTLINTER, FORBIDDEN_LINTER], ids=["layers", "forbidden"])
+def test_review_c3_a_new_chain_from_a_lower_layer_to_a_higher_one_is_a_new_violation(tmp_path, monkeypatch, config):
+    """The reviewer's case: the patch makes shop.data import shop.helpers, which imports shop.api."""
+    root = _repo(tmp_path, {**SHOP, **HELPERS, ".importlinter": config})
+    base_lint = _lint_imports(root)
+    _patch(root, DATA_IMPORTS_HELPERS)
+    Tiers(monkeypatch)
+    got = review(root, ONE_RULE, template_instances=[instance("layers", "forbidden_dependency.v1",
+                                                              {"contract": "repository"})])
+    assert got["assessment"]["outcome"] == "defect_detected", got["assessment"]["reasons"]
+    [violation] = _activity(got, "layers")["violations"]
+    assert (violation["from"], violation["to"], violation["file"], violation["line"]) == (
+        "shop.data", "shop.api", "shop/data.py", 1)
+    assert violation["chain"] == ["shop.data", "shop.helpers", "shop.api"]
+    assert violation["text"] == "from shop import helpers"
+    assert not any("direct ones only" in limit for limit in _activity(got, "layers")["limits"])
+    if base_lint is not None:   # G6 agrees with the repository's own linter
+        assert (base_lint, _lint_imports(root)) == (0, 1)
+
+
+def test_review_c3_a_forbidden_contract_that_allows_indirect_imports_checks_direct_ones_only(tmp_path, monkeypatch):
+    config = FORBIDDEN_LINTER + "allow_indirect_imports = True\n"
+    root = _patch(_repo(tmp_path, {**SHOP, **HELPERS, ".importlinter": config}), DATA_IMPORTS_HELPERS)
+    Tiers(monkeypatch)
+    got = review(root, ONE_RULE, template_instances=[instance("layers", "forbidden_dependency.v1",
+                                                              {"contract": "repository"})])
+    found = _activity(got, "layers")
+    assert found["result"] == "passed" and found["violations"] == [], found
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    lint = _lint_imports(root)
+    assert lint in (None, 0)
+
+
+def test_review_c3_a_chain_the_base_commit_already_had_is_not_one_the_patch_adds(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {**SHOP, **HELPERS, **DATA_IMPORTS_HELPERS, ".importlinter": IMPORTLINTER})
+    _patch(root, {"shop/data.py": DATA_IMPORTS_HELPERS["shop/data.py"] + "\n\ndef more():\n    return 2\n"})
+    Tiers(monkeypatch)
+    got = review(root, ONE_RULE, template_instances=[instance("layers", "forbidden_dependency.v1",
+                                                              {"contract": "repository"})])
+    found = _activity(got, "layers")
+    assert found["violations"] == [] and found["already_at_base"], found
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
+# --- I1: every contract option G6 reads is honoured, and one it does not implement is never guessed ----------------------
+
+TYPE_CHECKING_DATA = {"shop/data.py": "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n"
+                                      "    from shop.api import handle\n\n\ndef load(x):\n    return x\n"}
+
+
+@pytest.mark.parametrize("excluded", [True, False], ids=["excluded", "control"])
+def test_review_i1_type_checking_imports_are_left_out_when_the_repository_says_so(tmp_path, monkeypatch, excluded):
+    config = IMPORTLINTER.replace("root_package = shop\n", "root_package = shop\nexclude_type_checking_imports = True\n"
+                                  ) if excluded else IMPORTLINTER
+    root = _patch(_repo(tmp_path, {**SHOP, ".importlinter": config}), TYPE_CHECKING_DATA)
+    Tiers(monkeypatch)
+    got = review(root, ONE_RULE, template_instances=[instance("layers", "forbidden_dependency.v1",
+                                                              {"contract": "repository"})])
+    found = _activity(got, "layers")
+    if excluded:
+        assert found["result"] == "passed" and found["violations"] == [], found
+        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    else:
+        assert found["result"] == "failed" and found["violations"][0]["to"] == "shop.api", found
+    lint = _lint_imports(root)
+    assert lint in (None, 0 if excluded else 1)
+
+
+@pytest.mark.parametrize("config, named", [
+    (IMPORTLINTER.replace("root_package = shop\n", "root_package = shop\ncontract_types =\n"
+                          "    mine: somewhere.Contract\n"), "contract_types"),
+    (IMPORTLINTER.replace("root_package = shop\n", "root_package = shop\ninclude_external_packages = True\n"),
+     "include_external_packages"),
+    (IMPORTLINTER + "exhaustive = True\n", "exhaustive"),
+    (IMPORTLINTER + "unknown_setting = 1\n", "unknown_setting"),
+    (IMPORTLINTER.replace("    shop.service\n", "    shop.service | shop.helpers\n"), "independent"),
+    (FORBIDDEN_LINTER + "as_packages = False\n", "as_packages"),
+    (FORBIDDEN_LINTER + "allow_indirect_imports = sometimes\n", "allow_indirect_imports"),
+    (IMPORTLINTER + "\n[importlinter:contract:apart]\nname = apart\ntype = independence\nmodules =\n    shop.api\n"
+                    "    shop.data\n", "independence"),
+], ids=["contract-types", "external-packages", "exhaustive", "unknown-option", "sibling-layers", "as-packages",
+        "unreadable-flag", "unsupported-type"])
+def test_review_i1_an_option_or_type_g6_does_not_implement_makes_the_instance_not_applicable(tmp_path, monkeypatch,
+                                                                                            config, named):
+    root = _patch(_repo(tmp_path, {**SHOP, **HELPERS, ".importlinter": config}), {"shop/data.py": DATA_IMPORTS_API})
+    Tiers(monkeypatch)
+    got = review(root, ONE_RULE, template_instances=[instance("layers", "forbidden_dependency.v1",
+                                                              {"contract": "repository"})])
+    found = _activity(got, "layers")
+    assert found["result"] == "refused" and named in found["reason"], found
+    assert "does not implement" in found["reason"]
+    assert _requirement(got, "R1")["status"] == "passed_on_stated_checks"   # R-C1: its stated check decides it
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
+# --- the decoy package folder: two folders holding one package are never a silent choice ---------------------------------
+
+def test_review_a_package_in_two_folders_makes_the_instance_not_applicable(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, {**SHOP, ".importlinter": IMPORTLINTER}), {
+        "shop/data.py": DATA_IMPORTS_API, "src/shop/__init__.py": "", "src/shop/data.py": "def load(x):\n    return x\n",
+        "src/shop/api.py": "def handle(x):\n    return x\n"})
+    Tiers(monkeypatch)
+    for one in (instance("layers", "forbidden_dependency.v1", {"contract": "repository"}),
+                instance("layers", "forbidden_dependency.v1", {"package": "shop", "contract": {
+                    "layers": ["shop.api", "shop.service", "shop.data"]}})):
+        got = review(root, ONE_RULE, template_instances=[one])
+        found = _activity(got, "layers")
+        assert found["result"] == "refused", found
+        assert "more than one folder" in found["reason"] and "src/" in found["reason"], found["reason"]
+        assert found.get("violations") is None
+        assert any("layers" in u and "could not be applied" in u for u in got["assessment"]["unknowns"])
+
+
 # --- test adequacy: reported only ----------------------------------------------------------------------------------------
 
 CLAMP = {"clamp.py": "def clamp(x):\n    return x\n",

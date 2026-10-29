@@ -188,7 +188,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         (module.attribute) G6 finds in the files, literals are JSON; anything else refuses the review. G6 compiles
         each instance into a test from the template's fixed text, run like a proposed check, which never passes a
         requirement; an instance the repository gives nothing to apply to is refused and reported in activities. A
-        forbidden import against the repository's or your contract is defect_detected. Optional search: {"templates":
+        forbidden import against the repository's or your contract is defect_detected; a contract that holds passes
+        no requirement, and reads vacuous when the patch could not have broken it. Optional search: {"templates":
         false} runs free-form checks only; {"test_adequacy": true} also mutates the changed lines and reports how many
         mutants each requirement's stated checks killed and how many survived, which changes no outcome. Every reply
         has assessment.completion: what was demonstrated, what is not established, the defects reproduced,
