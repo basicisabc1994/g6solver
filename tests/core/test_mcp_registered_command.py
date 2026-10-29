@@ -151,8 +151,9 @@ SKIP = {".git", ".venv", "venv", "node_modules", "__pycache__", ".ruff_cache", "
 TEXT = {".md", ".py", ".html", ".txt", ".toml", ".json", ".yml", ".yaml", ".ps1", ".sh", ".cfg", ".ini"}
 #: Python's flags before -c or -m; -X and -W take a value.
 FLAGS = r"((?:\s-[XW]\s+\S+|\s-[A-Za-z]\w*)*)"
-#: A Python start of G6's server, in shell lines, Python lists, JSON and TOML alike.
-SERVER_START = re.compile(FLAGS + r"\s-(?:c\s+from\s+g6\.mcp\s+import|m\s+g6\.mcp\b)")
+#: A Python start of one of G6's servers (g6.mcp, and every module named ``server``, such as g6.abstraction.server:
+#: the security review's F3), in shell lines, Python lists, JSON and TOML alike.
+SERVER_START = re.compile(FLAGS + r"\s-(?:c\s+from\s+g6\.mcp\s+import|m\s+g6\.(?:mcp|[\w.]*\bserver)\b)")
 #: A Python start in a registration line (``claude mcp add ... -- python -c ...``).
 REGISTERED_PYTHON = re.compile(r"\bpython[\w.]*" + FLAGS + r"\s-[cm]\b")
 #: -P (or -I, which implies it), alone or among other short flags.
@@ -186,7 +187,7 @@ def test_no_documented_registration_starts_python_with_the_folder_on_its_import_
     bare = []
     for path in files:
         text = path.read_text(encoding="utf-8", errors="replace")
-        if "g6.mcp" not in text and "mcp add" not in text:
+        if "g6.mcp" not in text and "mcp add" not in text and "-m g6." not in text:
             continue
         for number, line in enumerate(text.splitlines(), 1):
             bare += [f"{path.relative_to(OSS)}:{number}" for flags in _starts(line) if _bare(flags)]
@@ -200,6 +201,8 @@ def test_no_documented_registration_starts_python_with_the_folder_on_its_import_
     'claude mcp add g6 -- /venv/bin/python -c "from g6.mcp import main; main()"',
     "codex mcp add g6 -- python3 -m g6.mcp",
     "claude mcp add g6 -- python.exe -X utf8 -m some_server",
+    "Run: python -m g6.abstraction.server  (stdio transport)",
+    "separate stdio server, `python -m g6.abstraction.server`, offers these steps",
 ])
 def test_the_scan_finds_each_form_of_a_bare_start(line):
     # survival control for the scan above
@@ -211,6 +214,7 @@ def test_the_scan_finds_each_form_of_a_bare_start(line):
     "claude mcp add g6 -- python -I -m g6.mcp",
     "claude mcp add g6 -- python -X utf8 -P -c 'from g6.mcp import main; main()'",
     "claude mcp add g6 -- g6-mcp",
+    "Run: python -P -m g6.abstraction.server  (stdio transport)",
 ])
 def test_the_scan_passes_a_start_with_the_flag(line):
     assert not any(_bare(flags) for flags in _starts(line)), line
