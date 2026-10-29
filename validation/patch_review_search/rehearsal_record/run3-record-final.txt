@@ -1,0 +1,2 @@
+9c423116b382e2b7681fd05db7033261227b08f291f098de2a5be0ac16e9a5bd
+The final hash of the paid rehearsal's run 3 record (development fixtures, not study data; G6 at claude/launch 1fcc74c8cb, not the frozen commit), committed before any of its labels was read.
