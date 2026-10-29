@@ -29,19 +29,23 @@ def _git(root: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
 
 
+def _base(root: Path) -> Path:
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("")
+    (root / "pkg" / "mod.py").write_text("def add(a, b):\n    return a - b\n")
+    (root / "test_mod.py").write_text(TEST)
+    (root / ".gitignore").write_text("data/\nsrc/\nbuild/\n")
+    _git(root, "init", "-q")
+    _git(root, "add", ".")
+    _git(root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "base")
+    (root / "pkg" / "mod.py").write_text("def add(a, b):\n    return a + b\n")
+    return root
+
+
 @pytest.fixture
 def repo(tmp_path):
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "__init__.py").write_text("")
-    (tmp_path / "pkg" / "mod.py").write_text("def add(a, b):\n    return a - b\n")
-    (tmp_path / "test_mod.py").write_text(TEST)
-    (tmp_path / ".gitignore").write_text("data/\nsrc/\nbuild/\n")
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "add", ".")
-    _git(tmp_path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
-         "commit", "-qm", "base")
-    (tmp_path / "pkg" / "mod.py").write_text("def add(a, b):\n    return a + b\n")
-    return tmp_path
+    return _base(tmp_path)
 
 
 def _plant(repo: Path, rel: str, data: bytes = b"") -> None:
@@ -142,3 +146,75 @@ def test_an_untracked_ignored_conftest_still_compromises_integrity(repo, monkeyp
     assert "data/conftest.py" not in got["assessment"]["scope"]["changed_files"]
     assert got["assessment"]["outcome"] == "test_integrity_compromised"
     assert "ignored_file_can_change_tests" in _codes(got)
+
+
+def test_a_force_added_file_is_in_the_diff_the_snapshot_and_absent_at_the_base(repo, tmp_path_factory):
+    """F4 at each place it reaches, beyond ``change`` (the fresh review's mutation run: reverting F4 in ``diff_text``,
+    ``snapshot`` and ``_base_revision`` failed no test): the gate reads its text, a later edit to it changes the
+    snapshot, and the base-revision copy does not hold it."""
+    import shutil
+    import time
+
+    _plant(repo, "data/helper.py", b"# a comment\n")
+    change = repo_tests.change(repo)
+    assert "+++ b/data/helper.py" in repo_tests.diff_text(change)
+    assert "data/helper.py" in repo_tests.snapshot(repo)
+    copy = tmp_path_factory.mktemp("copy") / "repo"
+    shutil.copytree(repo, copy, ignore=shutil.ignore_patterns(".git"))
+    with repo_tests._base_revision(change, copy, time.monotonic() + 30):
+        assert not (copy / "data" / "helper.py").exists()
+    assert (copy / "data" / "helper.py").read_bytes() == b"# a comment\n"
+
+
+MARKER = "OUTSIDE-MARKER benign text\n"
+
+
+def _crafted_entry(root: Path, wanted: str, *, mode: str = "100644", mark: str = "") -> None:
+    """Rename one entry in the repository's own index to ``wanted`` (same length), as a crafted index would: git
+    itself never stages a name above the work tree, an absolute one or one in .git. The bytes it names are benign."""
+    import hashlib
+    placeholder = "q" * len(wanted)
+    oid = (subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, check=True).stdout
+           if mode == "160000" else
+           subprocess.run(["git", "-C", str(root), "hash-object", "-w", "--stdin"], input=MARKER.encode(),
+                          capture_output=True, check=True).stdout).decode().strip()
+    _git(root, "update-index", "--add", "--cacheinfo", f"{mode},{oid},{placeholder}")
+    if mark:
+        _git(root, "update-index", mark, placeholder)
+    index = root / ".git" / "index"
+    body = index.read_bytes()[:-20]
+    assert body.count(placeholder.encode()) == 1
+    body = body.replace(placeholder.encode(), wanted.encode())
+    index.write_bytes(body + hashlib.sha1(body).digest())
+
+
+@pytest.mark.parametrize("form,mode,mark", [
+    ("above", "100644", ""), ("absolute", "100644", ""), ("git_folder", "100644", ""),
+    ("above", "100644", "--assume-unchanged"), ("above", "160000", "")])
+def test_an_index_entry_naming_a_path_git_never_stages_refuses_the_review(tmp_path, monkeypatch, form, mode, mark):
+    """The fresh review of the F1-F8 fix pass, finding 1: F4 took the repository's own index unchecked, so an entry
+    naming ``../outside.txt`` or an absolute path put that file's text in the diff the gate and the proposer read, and
+    its hash in the snapshot. The marked (assume-unchanged) and gitlink entries G6 reads from the same index are
+    checked alike, and so is one in the repository's .git folder, whose config can hold a remote's credentials."""
+    root = _base(tmp_path / "repo")
+    outside = tmp_path / "outside.txt"
+    outside.write_text(MARKER)
+    wanted = {"above": "../outside.txt", "absolute": outside.as_posix(), "git_folder": ".git/config"}[form]
+    _crafted_entry(root, wanted, mode=mode, mark=mark)
+    for call in (repo_tests.change, repo_tests.snapshot):
+        with pytest.raises(repo_tests.RepoRefused) as refused:
+            call(root)
+        assert refused.value.code == "G6_E_GIT_REPO_INVALID" and wanted in str(refused.value)
+    _recorded(monkeypatch)
+    got = _review(root)
+    assert got["completion_state"] == "blocked-escalated" and "G6_E_GIT_REPO_INVALID" in str(got)
+    assert "OUTSIDE-MARKER" not in str(got)
+
+
+@pytest.mark.parametrize("name", ["@scope/util.py", "-notes.txt"])
+def test_a_tracked_name_that_looks_like_an_option_is_still_a_changed_file(repo, name):
+    # survival control for the check above: names git does stage are never refused
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
+    (repo / name).write_text("# a comment\n")
+    _git(repo, "add", "--", name)
+    assert name in repo_tests.change(repo).files

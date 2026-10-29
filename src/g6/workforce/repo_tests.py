@@ -146,6 +146,9 @@ SAID = {
     "not_top": "name the repository's top folder: {top}",
     "bad_base": "git does not know the base {base!r}",
     "outside": "{what} {value!r} must be a path inside the repository",
+    "index_entry": "the repository's own index lists {value!r}, a path git never stages itself (outside the "
+                   "repository, absolute, or in its .git folder), so G6 read nothing it names and checked nothing; "
+                   "rebuild the index (git reset) and stage the change again",
     "no_tests": "name at least one test to run (a file, a folder or '<file>::<test>')",
     "missing": "{value!r} does not exist in the repository",
     "timed_out": "the tests did not finish within {seconds} seconds",
@@ -282,9 +285,10 @@ def _tracked_new(repo: Path, commit: str, spec: list[str] | tuple[str, ...] = ()
     working tree: staged new files, and among them a file force-added (``git add -f``) under a path git ignores, which
     ``ls-files --others --exclude-standard`` against the private index leaves out as ignored and ``ignored_inputs``
     leaves out as tracked (the security review of W1-W5, F4). Only ever added to what the private index lists, so an
-    entry written into the index can add a file to the change, never take one out."""
-    staged = {entry.partition("\t")[2] for entry in _paths(_git(repo, "ls-files", "--stage", "-z", *spec))
-              if not entry.startswith("160000 ")}
+    entry written into the index can add a file to the change, never take one out; one naming a path git never stages
+    refuses the change (``_index_path``)."""
+    staged = {_index_path(entry.partition("\t")[2])
+              for entry in _paths(_git(repo, "ls-files", "--stage", "-z", *spec)) if not entry.startswith("160000 ")}
     base = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, *spec))) if commit else set()
     return {rel for rel in staged - base if rel and os.path.lexists(repo / rel)}
 
@@ -300,7 +304,7 @@ def _gitlinks(repo: Path, index: bytes | None = None) -> tuple[str, ...]:
                for record in listing.split(b"\0") if record.startswith(b"160000 ")]
     if not records:
         return ()
-    paths = {record: record.partition(b"\t")[2].decode("utf-8", "surrogateescape") for record in records}
+    paths = {record: _index_path(record.partition(b"\t")[2].decode("utf-8", "surrogateescape")) for record in records}
     folders = _git(repo, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir").decode(
         "utf-8", "surrogateescape").splitlines()
     modules = any(_holds_anything(Path(folder) / "modules") for folder in folders if folder)
@@ -357,6 +361,22 @@ def shape_problem(value: object, what: str) -> str:
             or ".." in PurePosixPath(head).parts):
         return SAID["outside"].format(what=what, value=value)
     return ""
+
+
+#: The parts git's own path rule never stages (an empty part is a leading, doubled or trailing slash).
+_UNSTAGED_PARTS = frozenset({"", ".", "..", ".git"})
+
+
+def _index_path(rel: str) -> str:
+    """``rel``, a path the repository's own index lists, or a refusal (``G6_E_GIT_REPO_INVALID``) when it is one git
+    never stages itself: with a control character, a drive, or an empty, ``.``, ``..`` or ``.git`` part (any case).
+    Such an entry is written into the index by hand, and would make G6 read, hash or show a file outside the
+    repository or the repository's git config (the fresh review of the F1-F8 fix pass, finding 1). Names that only
+    look like options (``-x``, ``@x``) are git's to stage and stay files."""
+    parts = {part.lower() for part in rel.replace("\\", "/").split("/")}
+    if not rel or _control(rel) or re.match(r"[A-Za-z]:", rel) or parts & _UNSTAGED_PARTS:
+        raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["index_entry"].format(value=rel))
+    return rel
 
 
 def checked_repo(path: str | Path) -> Path:
@@ -580,7 +600,7 @@ def _held(repo: Path, commit: str, spec: list[str], gitlinks: set[str]) -> tuple
     from its own diff, compared by content with ``commit``'s blob as every other tracked file is (review C2): those
     that differ, or that ``commit`` does not hold, or that are a link; and, apart, those not in the working tree (a
     sparse checkout), which cannot be compared. Change detection never depends on git's index flags."""
-    marked = [entry[2:] for entry in _paths(_git(repo, "ls-files", "-v", "-z", *spec))
+    marked = [_index_path(entry[2:]) for entry in _paths(_git(repo, "ls-files", "-v", "-z", *spec))
               if (entry[:1].islower() or entry[:1] == "S") and entry[2:] not in gitlinks]
     if not marked:
         return set(), ()
@@ -941,7 +961,7 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
     found = {_HEAD: hashlib.sha256(head).hexdigest(),
              _INDEX: hashlib.sha256(index).hexdigest(), _MARKS: hashlib.sha256(marks).hexdigest()}
     # ``ls-files -v``: a lowercase tag is assume-unchanged, "S" skip-worktree.
-    held = [entry[2:] for entry in _paths(marks) if entry[:1].islower() or entry[:1] == "S"]
+    held = [_index_path(entry[2:]) for entry in _paths(marks) if entry[:1].islower() or entry[:1] == "S"]
     # The review of VS-4: what differs from HEAD's tree by content, through a private index, so no entry written into
     # the repository's own index keeps a changed file's bytes out of the snapshot (receipts bind the bytes that ran);
     # and each file the index holds that HEAD does not, a staged one, as before.

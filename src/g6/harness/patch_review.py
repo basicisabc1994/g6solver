@@ -1315,12 +1315,24 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
     return proposals, assumptions
 
 
+def _one_line(text: object) -> str:
+    """``text`` with each control character (a line break among them) shown as a space: a name a repository chose can
+    never start a line of its own in the reply's guidance. It decides nothing."""
+    return "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in str(text))
+
+
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="") -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
     the general one (the launch review's I6: a module the patch imports that is not installed here)."""
     from g6.harness import verification_search   # the completion report, in every reply
+    # a repository's names reach these texts as they are; each is one line (the fresh review of the F1-F8 fix pass)
+    reasons = [{**r, "detail": _one_line(r["detail"])} for r in reasons]
+    unknowns = [_one_line(text) for text in unknowns]
+    follow_ups, first_action = [_one_line(text) for text in follow_ups], _one_line(first_action)
+    evaluated = [{**req, **{key: _one_line(req[key]) for key in ("reason", "suggested_test")
+                            if isinstance(req.get(key), str)}} for req in evaluated]
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
     if "integrity" in stages:

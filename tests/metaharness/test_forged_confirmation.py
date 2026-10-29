@@ -114,3 +114,117 @@ def test_confirming_a_shipped_workflow_records_the_persons_own_confirmation(tmp_
     assert surface.harness("echo").store.confirmed()["accepted_by"] == "Ada"
     got = surface.run("echo", "hello")
     assert got.get("output") == "hello", got
+
+
+def _unapproved_version(mh, text: str) -> int:
+    """An "activate" row no person approved here, written with G6's own store class as any process could: its code
+    returns ``text`` (benign)."""
+    from g6.metaharness.schema import Profile
+    from g6.metaharness.store import ProfileStore
+
+    _, head = mh._head()
+    sha = mh.artifacts.put_blob(f"def solve(task):\n    return {text!r}\n")
+    profile = Profile.model_validate(head.model_dump(mode="json") | {"code": dict(head.code) | {"main.py": sha}})
+    return ProfileStore(mh.workspace / "store.jsonl").append_version(
+        "activate", profile, at="2026-10-29T00:00:00Z", accepted_by="Someone Else", decision_digest="0" * 64,
+        proposer="x")
+
+
+def test_a_shipped_activation_never_runs_after_the_person_confirms(tmp_path, monkeypatch, unconfined):
+    """The fresh review of the F1-F8 fix pass, finding 2: the confirmation was the person's, but the version run was
+    still the store's latest row, one the project's files carried."""
+    from g6.metaharness.declarative import create
+
+    elsewhere = tmp_path / "elsewhere" / ".g6" / "workflows"
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "their-home"))
+    create(SPEC, elsewhere)
+    theirs = Surface(workflow_root=elsewhere).harness("echo")
+    assert theirs.confirm("Forged Name")["code"] == "G6_E_META_CONFIRMED"
+    shipped_version = _unapproved_version(theirs, "SHIPPED-VERSION")
+    shipped = tmp_path / "project" / ".g6" / "workflows"
+    shutil.copytree(elsewhere / "echo", shipped / "echo")
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "my-home"))
+    surface = Surface(workflow_root=shipped)
+    confirmed = surface.harness("echo").confirm("Ada")
+    # version 0 is exactly the initial version the person's own confirmation makes, so it counts; the activation does not
+    assert confirmed["code"] == "G6_E_META_CONFIRMED" and confirmed["head_version"] == 0, confirmed
+    assert confirmed["versions_not_counted"] == [shipped_version], confirmed
+    assert surface.run("echo", "hello").get("output") == "hello"
+    rolled = surface.harness("echo").rollback(shipped_version, "Ada")
+    assert rolled["warning_card"]["code"] == "G6_E_META_APPROVAL_REQUIRED", rolled
+    refused, _, _ = surface.rollback_check("echo", shipped_version)
+    assert refused is not None and refused["warning_card"]["code"] == "G6_E_META_APPROVAL_REQUIRED", refused
+
+
+def test_a_shipped_initial_version_with_other_code_is_never_confirmed(tmp_path, monkeypatch, unconfined):
+    from g6.metaharness.declarative import create
+    from g6.metaharness.schema import Profile
+
+    elsewhere = tmp_path / "elsewhere" / ".g6" / "workflows"
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "their-home"))
+    create(SPEC, elsewhere)
+    theirs = Surface(workflow_root=elsewhere).harness("echo")
+    sha = theirs.artifacts.put_blob("def solve(task):\n    return 'SHIPPED-INITIAL'\n")
+    initial = Profile(routing={s: next(iter(theirs.workflow.models)) for s in theirs.workflow.steps},
+                      pipeline=tuple(n for n, s in theirs.workflow.pipeline_steps.items() if s.mandatory),
+                      code={"main.py": sha})
+    assert theirs.confirm("Forged Name", initial=initial)["code"] == "G6_E_META_CONFIRMED"
+    shipped = tmp_path / "project" / ".g6" / "workflows"
+    shutil.copytree(elsewhere / "echo", shipped / "echo")
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "my-home"))
+    surface = Surface(workflow_root=shipped)
+    got = surface.harness("echo").confirm("Ada")
+    assert got["warning_card"]["code"] == "G6_E_META_APPROVAL_REQUIRED", got
+    got = surface.run("echo", "hello")
+    assert got["completion_state"] == "blocked-escalated" and got.get("output") != "SHIPPED-INITIAL", got
+
+
+def test_the_person_can_confirm_their_workflow_again_from_another_state_folder(tmp_path, monkeypatch, unconfined):
+    """The fresh review of the F1-F8 fix pass (its probe ``probe_two_homes``): with F2 a confirmation counts only where
+    G6 recorded it, so a person whose clients use two G6 state folders confirms in each, and may come back to the
+    first; every one of those confirmations is recorded and counts."""
+    from g6.metaharness.declarative import create
+
+    root = tmp_path / "project" / ".g6" / "workflows"
+    create(SPEC, root)
+    for home in ("home-a", "home-b", "home-a", "home-c"):
+        monkeypatch.setenv("G6_HOME", str(tmp_path / home))
+        got = Surface(workflow_root=root).harness("echo").confirm("Ada")
+        assert got["code"] == "G6_E_META_CONFIRMED", (home, got)
+        assert Surface(workflow_root=root).run("echo", "hello").get("output") == "hello", home
+
+
+def test_running_or_evaluating_a_workflows_code_over_mcp_is_refused_unless_allowed(tmp_path, monkeypatch, unconfined):
+    """F2's gate on the evaluation tools (the fresh review's mutation run: removing it from them failed no test)."""
+    from g6.metaharness.declarative import create
+
+    root = tmp_path / "project" / ".g6" / "workflows"
+    create(SPEC, root)
+    surface = Surface(workflow_root=root)
+    assert surface.harness("echo").confirm("Ada")["code"] == "G6_E_META_CONFIRMED"
+    monkeypatch.delenv("G6_MCP_SENSITIVE", raising=False)
+
+    async def flow(tool: str) -> dict:
+        async with Client(build_server(surface)) as client:
+            reply = await client.call_tool(tool, {"workflow": "echo", "proposal_digest": "0" * 64})
+            return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    for tool in ("metaharness_evaluate_start", "metaharness_evaluate"):
+        got = asyncio.run(flow(tool))
+        assert got["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED", (tool, got)
+
+
+def test_a_version_written_into_the_store_after_confirmation_never_runs(tmp_path, monkeypatch, unconfined):
+    from g6.metaharness.declarative import create
+
+    root = tmp_path / "project" / ".g6" / "workflows"
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "my-home"))
+    create(SPEC, root)
+    surface = Surface(workflow_root=root)
+    mh = surface.harness("echo")
+    head = mh.confirm("Ada")["head_version"]
+    _unapproved_version(mh, "UNAPPROVED-VERSION")
+    again = Surface(workflow_root=root)
+    assert again.run("echo", "hello").get("output") == "hello"
+    assert again.harness("echo")._head()[0] == head
+    assert again.harness("echo")._previous_approved() is None

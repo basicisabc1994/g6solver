@@ -98,9 +98,13 @@ class ProfileStore:
 
     def confirm(self, *, workflow_digest: str, judging_sha256: str, held_out_digest: str, accepted_by: str,
                 at: str) -> str:
-        # a re-confirmation of the same workflow (after G6's judging code changed) gets its own row id
-        taken = any(e["kind"] == "workflow" and e["id"] == workflow_digest for e in self._chain.entries())
-        ident = f"{workflow_digest}:{judging_sha256}" if taken else workflow_digest
+        # each re-confirmation of the same workflow gets its own row id: after G6's judging code changed, and since F2
+        # whenever a person confirms from a G6 state folder that has not recorded it (another client, a third time)
+        taken = {e["id"] for e in self._chain.entries() if e["kind"] == "workflow"}
+        ident, again = workflow_digest, 1
+        while ident in taken:
+            ident = f"{workflow_digest}:{judging_sha256}" + (f":{again}" if again > 1 else "")
+            again += 1
         return self._chain.append("workflow", ident, {
             "workflow_digest": workflow_digest, "judging_sha256": judging_sha256, "held_out_digest": held_out_digest,
             "accepted_by": accepted_by, "identity": UNAUTHENTICATED, "at": at})
