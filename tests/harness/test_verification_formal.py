@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from g6.harness import patch_review, verification_search, verification_templates
+from g6.harness import patch_review, verification_formal, verification_search, verification_templates
 from g6.harness.patch_review import review_patch
 from g6.invariants import check_envelope
 from g6.workforce import repo_tests
@@ -347,6 +347,40 @@ def test_a_preserve_trace_the_base_commit_breaks_too_accuses_nobody(tmp_path, mo
     assert question["check"] == "t-wallet" and question["result"] == "fails_on_base_too"
 
 
+@pytest.mark.parametrize("held_at_base", [(), (0,)], ids=["none-replayable-at-base", "one-kept-at-base"])
+def test_review_vs4_i1_a_trace_the_base_commit_cannot_replay_is_never_kept_at_the_base(tmp_path, monkeypatch,
+                                                                                      held_at_base):
+    """Probe E of the review of VS-4: a preserve instance whose traces break the invariants on the patch and cannot be
+    replayed at the base commit (its action raises there). Only a trace the base commit keeps is new."""
+    root = _patch(_repo(tmp_path, WALLET), {"wallet.py": WALLET_PATCH})
+    Tiers(monkeypatch)
+
+    def run_check(change, placed, source, node, *, at_base, timeout_s, **_):
+        traces = _traces_of(source)
+        outcomes = [{"outcome": "holds", "broken": [], "observed": {"bal": 0}} if at_base and index in held_at_base
+                    else {"outcome": "not_replayable", "why": "NotImplementedError: not yet"} if at_base
+                    else {"outcome": "broken", "broken": ["never_negative"], "observed": {"bal": -3}}
+                    for index, _ in enumerate(traces)]
+        lines = "".join(f"G6-OBSERVATION {json.dumps({'input': i, 'output': o}, sort_keys=True)}\n"
+                        for i, o in enumerate(outcomes))
+        side = "b" if at_base else "p"
+        return result([node], output=lines, digest=side * 64) if at_base else result(failed=[node], output=lines,
+                                                                                    digest=side * 64)
+
+    monkeypatch.setattr(verification_search, "_run_check", run_check)
+    got = review(root, template_instances=[instance()])
+    found = _instance(got)
+    if not held_at_base:
+        assert found["result"] == "check_error", found
+        assert "not established at the base commit" in found["detail"]
+        assert "unconfirmed_counterexample" not in _codes(got)
+        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    else:
+        assert found["result"] == "counterexample", found
+        correspondence = found["formal"]["correspondence"]
+        assert correspondence["traces_reproduced"] == [0] and correspondence["traces_not_replayable_at_base"]
+
+
 def test_a_change_instance_is_replayed_on_the_patch_only(tmp_path, monkeypatch):
     root = _patch(_repo(tmp_path, WALLET), {"wallet.py": WALLET_PATCH})
     Tiers(monkeypatch)
@@ -654,7 +688,8 @@ def test_a_z3_counterexample_is_re_run_confined_before_it_is_reported(tmp_path, 
     assert [(c[0], c[1], c[2]["inputs"]) for c in runs.calls] == [
         ("relation.v1", "patch", [0, 20]), ("relation.v1", "base", [0, 20]), ("relation.v1", "patch", [7]),
         ("relation.v1", "base", [7])]
-    rerun = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == "t-trip.symbolic")
+    rerun = next(a for a in got["assessment"]["completion"]["activities"]
+                 if a.get("check") == verification_formal.symbolic_id("t-trip"))
     assert rerun["result"] == "counterexample" and rerun["template"] == "relation.v1"
     assert [(r["stage"], r["code"]) for r in got["assessment"]["reasons"]] == [("evidence", "unconfirmed_counterexample")]
     assert got["assessment"]["outcome"] == "insufficient_evidence"
@@ -681,8 +716,12 @@ def test_a_differential_search_finds_where_base_and_patch_differ_and_the_probe_c
     [search] = _searches(got, "t-score")
     assert (search["result"], search["counterexample"]) == ("counterexample", {"n": 11}), search
     assert [c[2]["calls"] for c in runs.calls][-2:] == [[{"args": [11], "kwargs": {}}]] * 2
-    rerun = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == "t-score.symbolic")
-    assert rerun["result"] == "counterexample" and "unconfirmed_counterexample" in _codes(got)
+    rerun = next(a for a in got["assessment"]["completion"]["activities"]
+                 if a.get("check") == verification_formal.symbolic_id("t-score"))
+    # the review of VS-4, I2: 11 is not one of the caller's own calls, so the difference there is a question
+    assert rerun["result"] == "behaviour_changed" and "unconfirmed_counterexample" not in _codes(got)
+    assert search["formal"]["correspondence"]["result"] == "reproduced"
+    assert any(q["check"] == rerun["check"] for q in got["assessment"]["completion"]["open_questions"])
 
 
 @pytest.mark.parametrize("item, said", [
@@ -730,6 +769,98 @@ def test_review_i2_a_function_nested_too_deeply_for_g6s_reading_is_an_activity_e
     assert len(runs.calls) == 2   # the instance's own check, on the patch and at the base commit
 
 
+PRICE_BASE = "def price(x):\n    return x * 2\n"
+PRICE_PATCH = "def price(x):\n    return x * 3 if 40 <= x <= 60 else x * 2\n"
+PRICE = {"price.py": PRICE_BASE, "test_price.py": "from price import price\n\n\ndef test_mid():\n"
+                                                    "    assert price(50) == 150\n"}
+PRICE_RULE = [{"id": "R1", "text": "prices from 40 to 60 are tripled", "checks": ["test_price.py::test_mid"]}]
+KEEP_EDGES = {"id": "keep-edges", "template": "differential.v1", "requirement_id": "R1", "intent": "preserve",
+              "bindings": {"function": "price.price", "mode": "outputs", "calls": [{"args": [0]}, {"args": [100]}]}}
+
+
+def _prices(template, side, data):
+    """What the real price module gives for each call: the patch triples 40 to 60, as the task asks."""
+    def price(x):
+        return x * 3 if side == "patch" and 40 <= x <= 60 else x * 2
+
+    return [{"input": call, "output": {"returned": price(call["args"][0])}} for call in data["calls"]]
+
+
+def test_review_vs4_i2_a_difference_z3_finds_outside_the_callers_inputs_is_a_question_never_a_counterexample(
+        tmp_path, monkeypatch):
+    """Probe G of the review of VS-4: the caller declares calls 0 and 100 outside the change's scope, and the patch
+    triples prices from 40 to 60 as the task asks. Z3 finds a value between them where base and patch differ; that
+    value is not one the caller declared, so the difference is a question (behaviour_changed), never an accusation."""
+    root = _patch(_repo(tmp_path, PRICE), {"price.py": PRICE_PATCH})
+    Tiers(monkeypatch)
+    Runs(monkeypatch, _prices)
+    got = review(root, PRICE_RULE, template_instances=[KEEP_EDGES])
+    [search] = _searches(got, "keep-edges")
+    assert search["result"] == "counterexample" and 40 <= search["counterexample"]["x"] <= 60, search
+    rerun = next(a for a in got["assessment"]["completion"]["activities"]
+                 if a.get("check", "").startswith("keep-edges") and a.get("check") != "keep-edges")
+    assert rerun["result"] == "behaviour_changed", rerun
+    assert "unconfirmed_counterexample" not in _codes(got)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert any(q["check"] == rerun["check"] for q in got["assessment"]["completion"]["open_questions"])
+    assert _instance(got, "keep-edges")["result"] == "not_refuted"   # the caller's own calls: as before
+
+
+def test_review_vs4_i3_a_caller_id_with_the_reserved_symbolic_suffix_is_refused(tmp_path, monkeypatch):
+    """Probe F of the review of VS-4: an instance whose id is another's with ".symbolic" read as its re-run."""
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    Tiers(monkeypatch)
+    for ident in ("t-trip.symbolic", "x.SYMBOLIC"):
+        got = review(root, MATHX_RULE, template_instances=[ROUND_TRIP, {**KEEP_SCORE, "id": ident}])
+        _refused(got)
+        assert ".symbolic" in got["warning_card"]["message"]
+    proposed = {"id": "p.symbolic", "requirement_id": "R1", "intent": "preserve", "file": "test_p.py",
+                "source": "def test_p():\n    pass\n"}
+    got = review(root, MATHX_RULE, proposed_checks=[proposed])
+    _refused(got)
+
+
+def test_review_vs4_i3_each_symbolic_re_run_is_its_own_and_is_read_from_its_own_run(tmp_path, monkeypatch):
+    """Two instances whose ids share their first 90 characters each get their own re-run id; each record reads its own
+    re-run: one reproduces and the other does not."""
+    root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
+    Tiers(monkeypatch)
+    first, second = ("t" * 95 + "1"), ("t" * 95 + "2")
+    reproduced = {"x": True}
+
+    def decide(template, side, data):
+        if template == "relation.v1" and side == "patch" and data["inputs"] == [7]:
+            first_run = reproduced["x"]
+            reproduced["x"] = False
+            return "failed" if first_run else "passed"
+        return "passed"
+
+    Runs(monkeypatch, decide)
+    got = review(root, MATHX_RULE, template_instances=[{**ROUND_TRIP, "id": first}, {**ROUND_TRIP, "id": second}])
+    reruns = [a for a in got["assessment"]["completion"]["activities"] if str(a.get("check", "")).endswith(".symbolic")]
+    assert len({a["check"] for a in reruns}) == 2, [a["check"] for a in reruns]
+    by_instance = {s["instance"]: s for s in _activities(got, "symbolic search")}
+    assert by_instance[first]["formal"]["correspondence"]["result"] == "reproduced"
+    assert by_instance[second]["formal"]["correspondence"]["result"] == "not_reproduced"
+
+
+def test_review_vs4_m2_relation_v1_says_what_its_search_does():
+    text = " ".join(verification_templates.REGISTRY["relation.v1"].assumptions)
+    assert "searches no other input" not in text
+    assert "Z3" in text and "re-run" in text
+
+
+def test_review_vs4_m3_an_action_key_must_be_a_canonical_whole_number(tmp_path, monkeypatch):
+    """Two keys that read as one number ("01" beside "1") are refused, never merged with one call dropped."""
+    root = _patch(_repo(tmp_path, WALLET), {"wallet.py": WALLET_PATCH})
+    Tiers(monkeypatch)
+    for actions in ({"1": {"call": "wallet.deposit", "args": [5]}, "01": {"call": "wallet.withdraw", "args": [3]}},
+                    {"+1": {"call": "wallet.deposit", "args": [5]}}, {"-0": {"call": "wallet.deposit", "args": [5]}}):
+        got = review(root, template_instances=[instance(actions=actions)])
+        _refused(got)
+        assert "canonical" in got["warning_card"]["message"], got["warning_card"]["message"]
+
+
 def test_a_symbolic_re_run_counts_within_the_limit_of_twenty_checks(tmp_path, monkeypatch):
     root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
     Tiers(monkeypatch)
@@ -744,11 +875,13 @@ def test_a_symbolic_re_run_counts_within_the_limit_of_twenty_checks(tmp_path, mo
 def test_confined_z3_counterexamples_reproduce_on_the_real_code(tmp_path, bwrap_backend):
     root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
     got = review(root, MATHX_RULE, template_instances=[ROUND_TRIP, KEEP_SCORE])
-    for ident, found in (("t-trip", {"x": 7}), ("t-score", {"n": 11})):
+    # a broken relation is a counterexample; a difference at a value Z3 found, not declared, a question (VS-4 review I2)
+    for ident, found, shown in (("t-trip", {"x": 7}, "counterexample"), ("t-score", {"n": 11}, "behaviour_changed")):
         [search] = _searches(got, ident)
         assert search["counterexample"] == found and search["formal"]["correspondence"]["result"] == "reproduced"
-        rerun = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == f"{ident}.symbolic")
-        assert rerun["result"] == "counterexample", rerun
+        rerun = next(a for a in got["assessment"]["completion"]["activities"]
+                     if a.get("check") == verification_formal.symbolic_id(ident))
+        assert rerun["result"] == shown, rerun
     plain = next(a for a in got["assessment"]["completion"]["activities"] if a.get("check") == "t-trip")
     assert plain["result"] == "not_refuted"   # the caller's two inputs alone miss the defect
 

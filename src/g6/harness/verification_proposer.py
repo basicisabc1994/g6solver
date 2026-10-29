@@ -526,9 +526,11 @@ class StudyCaller:
     built with ``fallbacks=False`` (so no other model can answer) on a ``RecordingClient``; the key only from
     ``g6.core.keys`` (``ANTHROPIC_API_KEY`` in the person's key file), the address only Anthropic's own; nothing goes
     through a Claude Code or Codex sign-in. ``last_usage``: what the last call's response said (its token counts and
-    the model that answered), which the proposer records. ``client``: an SDK-shaped client to wrap instead (a test's)."""
+    the model that answered), which the proposer records. ``client``: an SDK-shaped client to wrap instead (a test's).
+    ``temperature``: sent only when given; by default none is, so every arm has the provider's default (an SDK that
+    sends API version 2026-10-21 refuses a request that sets one)."""
 
-    def __init__(self, model: str, *, client: object | None = None, temperature: float | None = 0.0) -> None:
+    def __init__(self, model: str, *, client: object | None = None, temperature: float | None = None) -> None:
         if client is None:
             from g6.core import keys
 

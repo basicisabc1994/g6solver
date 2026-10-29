@@ -289,6 +289,18 @@ _OBSERVED = re.compile(rf"{OBSERVATION} (.*)$", re.MULTILINE)
 _clock = time.monotonic
 
 
+#: The suffix of the ids G6 gives its symbolic re-runs (``verification_formal.symbolic_id``): a caller's check or
+#: instance id never ends in it, in any case (the review of VS-4, I3).
+RESERVED_SUFFIX = ".symbolic"
+
+
+def reserved_id(ident: object) -> bool:
+    return isinstance(ident, str) and ident.lower().endswith(RESERVED_SUFFIX)
+
+
+RESERVED_ID = f"ids ending in {RESERVED_SUFFIX} are G6's own, for the re-runs of what Z3 finds"
+
+
 class ProposedCheck(BaseModel):
     """A check the caller proposes: ``{id, requirement_id, intent, file, source, test}`` (``proposed_checks``)."""
     model_config = ConfigDict(extra="forbid")
@@ -345,6 +357,8 @@ def proposed_checks(value, requirement_ids) -> list[ProposedCheck]:
         if item.get("intent") not in ("preserve", "change"):
             raise ValueError(f"{where}: intent must be preserve (behaviour the patch must keep) or change (behaviour "
                              "the patch must bring); a check that declares neither is not run")
+        if reserved_id(name):
+            raise ValueError(f"{where}: {RESERVED_ID}")
         try:
             one = ProposedCheck.model_validate(item)
         except ValidationError as exc:

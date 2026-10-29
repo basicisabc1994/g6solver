@@ -299,6 +299,81 @@ def test_a_changed_runner_configuration_marked_assume_unchanged_still_compromise
                for r in got["assessment"]["reasons"])
 
 
+#: The review of VS-4 and the VS-3 fix pass, its finding 1: the weakened test is the same size as the original, so a
+#: stat cache that trusts the size and the modification time alone cannot tell them apart.
+WEAK_SAME_SIZE = TEST.replace("assert add(-2, -3) == -5", "assert True".ljust(len("assert add(-2, -3) == -5")))
+OLD = 1_600_000_000
+
+
+def _forge_index(repo: Path, rel: str, blob: str) -> None:
+    """Write ``blob`` as ``rel``'s object name in the repository's own index, keeping the stat values the index holds
+    for the file as it is now, and the index's checksum right: git then trusts its stat cache and reads the file as
+    unchanged."""
+    import hashlib
+    import struct
+
+    path = repo / ".git" / "index"
+    data = bytearray(path.read_bytes())
+    assert data[:4] == b"DIRC"
+    version, count = struct.unpack(">II", data[4:12])
+    assert version == 2, version
+    position = 12
+    for _ in range(count):
+        end = data.index(b"\0", position + 62)
+        name = bytes(data[position + 62:end]).decode()
+        if name == rel:
+            data[position + 40:position + 60] = bytes.fromhex(blob)
+        position += (62 + len(name.encode())) // 8 * 8 + 8
+    data[-20:] = hashlib.sha1(bytes(data[:-20])).digest()
+    path.write_bytes(bytes(data))
+
+
+@pytest.mark.parametrize("how", ["replace-ref", "stat-cache-config", "forged-index-entry"])
+def test_a_weakened_test_hidden_through_git_s_own_records_still_compromises_test_integrity(repo, monkeypatch, how):
+    """Change detection never trusts what the patch author controls in .git: B, a replace ref that makes the base
+    commit's blob read as the weakened text; C, a configuration that trusts the size and the modification time
+    alone, with a same-size edit and its time put back; D2, an index entry written with the file's real stat values
+    and the base commit's object name. G6 compares the working tree's content with the base commit's blobs."""
+    for rel in ("calc.py", "test_calc.py"):
+        os.utime(repo / rel, (OLD, OLD))
+    _git(repo, "update-index", "--refresh")   # the index records the files' times as they now are
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_calc.py").write_text(WEAK_SAME_SIZE)
+    os.utime(repo / "test_calc.py", (OLD, OLD))
+    base_blob = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD:test_calc.py"], capture_output=True,
+                               text=True, check=True).stdout.strip()
+    if how == "replace-ref":
+        weak = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "test_calc.py"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+        _git(repo, "replace", base_blob, weak)
+    elif how == "stat-cache-config":
+        _git(repo, "config", "core.trustctime", "false")
+        _git(repo, "config", "core.checkStat", "minimal")
+    else:
+        _git(repo, "update-index", "test_calc.py")   # the weakened file's real stat values, then the base's name
+        _forge_index(repo, "test_calc.py", base_blob)
+    shown = subprocess.run(["git", "-C", str(repo), "diff", "HEAD", "--name-only"], capture_output=True, text=True,
+                           check=True).stdout.split()
+    assert "test_calc.py" not in shown   # git itself is fooled: the probe reaches the defect
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "test_weakened" and "test_negative" in r["detail"] for r in got["assessment"]["reasons"])
+    assert "test_calc.py" in got["assessment"]["scope"]["changed_files"]
+
+
+def test_a_correct_patch_on_a_checkout_with_windows_line_endings_stays_supported(repo, monkeypatch):
+    """The control: git's line-ending conversion (core.autocrlf) leaves an untouched file unchanged, so a correct patch
+    never reads as a change to its tests."""
+    _git(repo, "config", "core.autocrlf", "true")
+    (repo / "test_calc.py").write_bytes(TEST.replace("\n", "\r\n").encode())
+    (repo / "calc.py").write_bytes(GOOD.replace("\n", "\r\n").encode())
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert got["assessment"]["scope"]["changed_files"] == ["calc.py"]
+
+
 def _pytest_config_names() -> set[str]:
     """The configuration files the installed pytest looks for by name: its ``CONFIG_LOADERS_BY_NAME`` (pytest 9.2 on),
     else the file names ``locate_config`` holds as constants (earlier versions); a skip that says so when neither
