@@ -23,7 +23,9 @@ The two configurations (``search.proposer``): ``templates_first`` asks template 
 with ``example.v1`` and ``differential.v1``), then for distinguishing scenarios, then for free-form checks only for
 the requirements no proposed instance applied to; ``free_form`` asks for free-form checks only. Every model call goes
 through a ``reasoning.budget.MeteredCaller`` (the model-call cap and the review's deadline) and ``_Limits`` (the input
-and output limits of one call); reaching one is a skipped activity with its reason, never an error. Every call is an
+and output limits of one call), around the provider itself, never around G6's ``EmptyRetry`` (``_backend``), so each
+holds for every request the provider receives (reviewer B's B4); reaching one is a skipped activity with its reason,
+never an error. Every call is an
 activity with the provider's token counts and the model that answered where the caller says them (``StudyCaller``),
 and every request and reply is kept in ``assessment.completion.model_exchanges``.
 """
@@ -38,7 +40,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from g6.core.llm import AnthropicCaller, LLMCaller, LLMError, NoModel, UnusableModel, complete_structured
+from g6.core.llm import (AnthropicCaller, EmptyRetry, LLMCaller, LLMError, NoModel, UnusableModel,
+                         complete_structured)
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 from g6.reasoning.budget import Budget, BudgetExhausted, MeteredCaller
@@ -274,6 +277,16 @@ def default_caller() -> LLMCaller:
     return provider_from_env()
 
 
+def _backend(caller: LLMCaller) -> LLMCaller:
+    """The provider behind G6's ``EmptyRetry`` (``provider_from_env`` wraps every one in it), which the proposer's
+    limits meter and cap: the retry would ask again, for more tokens, past both, and its attempts would be neither
+    counted nor kept (reviewer B's B4; ``MeteredCaller``: wrap the backend, not the retry). An empty reply is then the
+    stage's to read, as any reply is."""
+    while isinstance(caller, EmptyRetry):
+        caller = caller._inner
+    return caller
+
+
 def boundary(root: Path) -> str:
     """Why no operating-system boundary can confine the checks the proposer would bring ("" when one can)."""
     from g6.core import confine
@@ -313,7 +326,8 @@ class Proposer:
         budget = Budget(max_model_calls=settings["max_model_calls"],
                         max_output_chars=settings["max_model_calls"] * settings["max_output_tokens"] * CHARS_PER_TOKEN,
                         max_wall_clock_s=left)
-        self.limits = _Limits(MeteredCaller(raw, budget), raw, settings, self.stage)
+        backend = _backend(raw)
+        self.limits = _Limits(MeteredCaller(backend, budget), backend, settings, self.stage)
         self.context: RepositoryContext | None = None
         self.stopped = ""   # why every later stage is skipped (the cap, the time)
         if not self.ready:
