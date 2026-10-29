@@ -51,7 +51,8 @@ pip install ".[all]"</code><button type="button" class="btn btn--small copy" dat
                 <p>Run this yourself, in a terminal, with <code>--client codex</code> for Codex, or give
                 <code>--client</code> twice for both:</p>
                 <div class="cmd"><code id="cmd-setup">g6 setup --client claude --allow patch_review.review</code><button type="button" class="btn btn--small copy" data-copy="#cmd-setup">Copy</button></div>
-                <p>It registers this installation with the client, with this installation's Python, installs the
+                <p>It registers this installation with the client, with this installation's Python, started with
+                <code>-P</code> so that the packages in the project's folder never replace G6's own, installs the
                 <code>using-g6</code> skill for it, and allows patch review, the one sensitive operation the first
                 review needs. Restart the client afterwards. Setup's last lines show the first review call.</p>
                 <p class="small">If the client already has an entry called <code>g6</code>, setup leaves it as it is

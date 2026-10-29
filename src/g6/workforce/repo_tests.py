@@ -1782,11 +1782,13 @@ class Ignored:
     """What ``ignored_inputs`` found among the files git ignores, which its view (and so the artifact digest) leaves
     out. ``loadable``: those that can change what a run does, so no receipt is written; ``other``: every other ignored
     Python file, path to SHA-256, which a receipt binds instead; ``complete``: the scan finished within
-    ``IGNORED_SCAN_LIMIT`` entries (if not, no receipt either)."""
+    ``IGNORED_SCAN_LIMIT`` entries (if not, no receipt either); ``named_like_modules``: those of ``loadable`` counted
+    only because their module name is a tracked module's, which they could shadow."""
 
     loadable: tuple[str, ...]
     other: dict[str, str]
     complete: bool
+    named_like_modules: tuple[str, ...] = ()
 
 
 def _module(path: PurePosixPath) -> str:
@@ -1877,6 +1879,7 @@ def ignored_inputs(repo: Path) -> Ignored:
     listed = _paths(_git(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"))
     modules = {_module(PurePosixPath(rel)) for rel in _paths(_git(repo, "ls-files", "-z")) if rel.endswith(".py")}
     loadable: list[str] = []
+    named: list[str] = []
     other: dict[str, str] = {}
     seen = 0
 
@@ -1888,9 +1891,11 @@ def ignored_inputs(repo: Path) -> Ignored:
             if inside == len(path.parts) - 2 and name == "entry_points.txt" and _declares_plugin(repo / rel):
                 loadable.append(rel)
         elif _linked(repo / rel) or name in _LOADABLE or name.endswith((".pth", ".pyc", *_EXTENSIONS)) or (
-                path.suffix == ".py" and (
-                    name.startswith("test_") or name.endswith("_test.py") or _module(path) in modules)):
+                path.suffix == ".py" and (name.startswith("test_") or name.endswith("_test.py"))):
             loadable.append(rel)
+        elif path.suffix == ".py" and _module(path) in modules:
+            loadable.append(rel)
+            named.append(rel)
         elif path.suffix == ".py":
             other[rel] = _digest(repo / rel)
 
@@ -1906,7 +1911,7 @@ def ignored_inputs(repo: Path) -> Ignored:
         return False
 
     def found(complete: bool) -> Ignored:
-        return Ignored(tuple(sorted(loadable)), dict(sorted(other.items())), complete)
+        return Ignored(tuple(sorted(loadable)), dict(sorted(other.items())), complete, tuple(sorted(named)))
 
     for entry in listed:
         seen += 1

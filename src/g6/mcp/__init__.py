@@ -39,6 +39,7 @@ does. G6 re-checks artifacts with its own code; it does not defend against malic
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any
 
@@ -85,8 +86,30 @@ def invoke_reply(component: str, op: str, params_json: str = "{}", *, registry: 
                                        f"(or {component}) to {SENSITIVE_ENV} where the server is registered.")
 
 
+#: FastMCP's settings G6 gives its own server unless the person set them in the environment (worked examples, W5).
+#: FastMCP asks PyPI for its latest version each time a server starts and shows its banner, unless its update check
+#: is off; and it reads its settings from a ``.env`` file in the folder the server starts in, which is the project's,
+#: where ``FASTMCP_SERVER_AUTH`` names a class it imports and builds while the server is created. ``FASTMCP_ENV_FILE``
+#: is read once, when FastMCP is first imported, so it is set before that; the update check is also set on
+#: FastMCP's own settings after the import, which holds even where FastMCP was imported first.
+QUIET = {"FASTMCP_CHECK_FOR_UPDATES": "off", "FASTMCP_ENV_FILE": os.devnull}
+
+
+def _quiet() -> None:
+    """No network request at start: FastMCP's update check off and no project ``.env``, the person's own choice
+    kept."""
+    chose = "FASTMCP_CHECK_FOR_UPDATES" in os.environ
+    for name, value in QUIET.items():
+        os.environ.setdefault(name, value)
+    import fastmcp
+
+    if not chose:
+        fastmcp.settings.check_for_updates = "off"
+
+
 def build_server(surface: Any = None) -> Any:
     try:
+        _quiet()
         from fastmcp import Context, FastMCP
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise SystemExit("g6-mcp needs the MCP extra: pip install 'g6[mcp] @ git+https://github.com/basicisabc1994/g6solver'") from exc
@@ -185,7 +208,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         differential.v1 function of whole numbers and booleans, Z3 looks for an input your list misses, re-run on the
         real code before it is reported. Each such result comes in three parts: specification, model,
         correspondence. Bindings are data: names are dotted names
-        (module.attribute) G6 finds in the files, literals are JSON; anything else refuses the review. G6 compiles
+        (module.attribute) G6 finds in the files, literals are JSON; anything else refuses the review, and a refusal of
+        bindings names each one missing or misnamed, its warning card giving the template's bindings and one valid
+        instance. G6 compiles
         each instance into a test from the template's fixed text, run like a proposed check, which never passes a
         requirement; an instance the repository gives nothing to apply to is refused and reported in activities. A
         forbidden import against the repository's or your contract is defect_detected; a contract that holds passes
@@ -198,12 +223,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         10), "max_input_chars", "max_output_tokens" and "max_context_chars" per call, each holding for every request
         the provider receives. Its replies are untrusted data:
         what it proposes runs as proposed checks do, never passes a requirement and gives at most
-        insufficient_evidence; every model call, request and reply is in assessment.completion. Every reply
-        has assessment.completion: what was demonstrated, what is not established, the defects reproduced,
+        insufficient_evidence; every model call, request and reply is in assessment.completion. Every full
+        assessment has assessment.completion: what was demonstrated, what is not established, the defects reproduced,
         preservation, test adequacy, open questions and every activity; and assessment.report, the review as
         Markdown to show the person verbatim: reproduced findings first, then what is not established, what they
         decide, how it was decided, and the standing note (it decides nothing; text from the repository in it is
-        inert). Poll metaharness_job for the result.
+        inert). Poll metaharness_job for the result. Its reply is compact: assessment.report first, the outcome, the
+        reasons, the next actions, the unknowns, the merge authorisation, and full_assessment, where the full assessment
+        is saved (a file under G6's state folder); metaharness_job with detail="full" returns all of it.
         assessment.outcome is one of: test_integrity_compromised (a sign of a weakened test or test helper that G6's
         static comparison finds, a changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
@@ -243,7 +270,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                 return blocked_reply("[G6_E_PATCH_REVIEW_INTERRUPTED] G6 could not confirm that the review's test "
                                      f"processes ended, so nothing from it is used: {exc}")
 
-        return jobs.start(review)
+        from g6.mcp.review_reply import finish
+        return jobs.start(review, compact=finish)
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))
@@ -296,9 +324,12 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied."""
         return jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
 
-    def metaharness_job(job_id: str) -> dict:
-        """Read a process-local job's pending/running/completed/failed status and retained result."""
-        return jobs.status(job_id)
+    def metaharness_job(job_id: str, detail: str = "compact") -> dict:
+        """Read a process-local job's pending/running/completed/failed status and retained result. A finished
+        g6_review_patch job replies compactly by default: assessment.report first, then the outcome, the reasons, the
+        next actions, the unknowns, the merge authorisation, and in full_assessment where the full assessment is (a
+        file under G6's state folder); detail="full" returns the full assessment instead. Other jobs reply in full."""
+        return jobs.status(job_id, detail)
 
     def metaharness_run(workflow: str, task_input: str) -> dict:
         """Run the currently approved application version on new input as a job."""

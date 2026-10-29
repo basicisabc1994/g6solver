@@ -65,6 +65,7 @@ import builtins
 import collections
 import configparser
 import dataclasses
+import difflib
 import hashlib
 import inspect
 import itertools
@@ -1396,6 +1397,82 @@ FORMAL_TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for
 )}
 #: Every template a review takes, by id: a view of both registries.
 REGISTRY = collections.ChainMap(TEMPLATES, FORMAL_TEMPLATES)
+#: One valid, minimal instance of each template, which a refusal of an instance's bindings gives and the using-g6
+#: skill's ``references/templates.md`` repeats (worked examples, W4); its names are an example project's.
+EXAMPLES: dict[str, dict] = {example["template"]: example for example in (
+    {"id": "E1", "template": "example.v1", "requirement_id": "R1", "intent": "change",
+     "bindings": {"function": "shop.prices.total", "cases": [{"args": [[2, 3]], "returns": 5}]}},
+    {"id": "E2", "template": "relation.v1", "requirement_id": "R1", "intent": "preserve",
+     "bindings": {"relation": "round_trip", "function": "shop.codec.encode", "inverse": "shop.codec.decode",
+                  "inputs": ["a", "b\nc"]}},
+    {"id": "E3", "template": "access_rule.v1", "requirement_id": "R1", "intent": "change",
+     "bindings": {"operation": "shop.notes.read_note", "refusal": "exception", "exception": "PermissionError",
+                  "cases": [{"who": "owner", "resource": "note 1", "args": ["owner", 1], "expected": "allowed"},
+                            {"who": "guest", "resource": "note 1", "args": ["guest", 1], "expected": "refused"}]}},
+    {"id": "E4", "template": "differential.v1", "requirement_id": "R1", "intent": "preserve",
+     "bindings": {"function": "shop.urls.normalise", "mode": "outputs", "calls": [{"args": ["/a/b"]}, {"args": ["/a/"]}]}},
+    {"id": "E5", "template": "forbidden_dependency.v1", "requirement_id": "R1", "intent": "preserve",
+     "bindings": {"package": "shop", "contract": {"forbidden": [{"source": "shop.core", "forbidden": "shop.web"}]}}},
+    {"id": "E6", "template": "state_invariant.v1", "requirement_id": "R1", "intent": "preserve",
+     "bindings": {"constructor": {"call": "shop.wallet.new_wallet"},
+                  "model": {"variables": {"bal": "Int", "act": "Int"}, "init": "(and (= bal 0) (= act 0))",
+                            "transition": "(or (and (= next_act 1) (= next_bal (+ bal 5))) "
+                                          "(and (= next_act 2) (= next_bal (- bal 3))))",
+                            "invariants": {"never_negative": "(>= bal 0)"}},
+                  "action": "act",
+                  "actions": {"1": {"call": "shop.wallet.deposit", "args": [5]},
+                              "2": {"call": "shop.wallet.withdraw", "args": [3]}},
+                  "observe": {"bal": {"call": "shop.wallet.balance"}}}},
+)}
+
+
+class BindingsRefused(ValueError):
+    """An instance's bindings that its template's bindings model refuses: the message names each binding missing or
+    misnamed; ``help`` lists the template's bindings and gives one valid instance (``EXAMPLES``)."""
+
+    def __init__(self, message: str, help: str):
+        super().__init__(message)
+        self.help = help
+
+
+def _forms(template: str, bindings: Any) -> list[tuple[str, type[BaseModel]]]:
+    """The bindings models of ``template``, the one ``bindings`` takes first, each with how the help introduces it."""
+    form = REGISTRY[template].bindings
+    if form is not _AccessForms:
+        return [("", form)]
+    single, steps = ("", AccessBindings), ("with steps, ", AccessStepsBindings)
+    return [steps, single] if isinstance(bindings, dict) and "steps" in bindings else [single, steps]
+
+
+def bindings_help(template: str, bindings: Any = None) -> str:
+    """What ``template``'s bindings are, the required first, and one valid instance of it."""
+    said = []
+    for how, form in _forms(template, bindings):
+        required = [name for name, one in form.model_fields.items() if one.is_required()]
+        optional = [name for name, one in form.model_fields.items() if not one.is_required()]
+        said.append(f"{how}{template} needs bindings {', '.join(required)}"
+                    + (f", and also takes {', '.join(optional)}" if optional else ""))
+    return (f"{'; '.join(said)}. One valid instance: {json.dumps(EXAMPLES[template])}. Correct the instance and "
+            "review again.")
+
+
+def _refused_bindings(where: str, template: str, bindings: Any, exc: ValidationError) -> BindingsRefused:
+    """The refusal of bindings ``exc`` found wrong: the first problem, as it was always said, then each binding
+    missing and each name that is not one of the template's bindings, with the one it most likely meant."""
+    errors = exc.errors()
+    first = errors[0]
+    loc = ".".join(str(p) for p in first["loc"])
+    message = f"{where}: bindings{'.' + loc if loc else ''}: {first['msg']}"
+    names = {name for _, form in _forms(template, bindings) for name in form.model_fields}
+    missing = [str(e["loc"][0]) for e in errors if e["type"] == "missing" and len(e["loc"]) == 1]
+    named = []
+    if missing:
+        named.append("missing: " + ", ".join(f"bindings.{name}" for name in missing))
+    for wrong in (str(e["loc"][0]) for e in errors if e["type"] == "extra_forbidden" and len(e["loc"]) == 1):
+        meant = difflib.get_close_matches(wrong, sorted(names), n=1)
+        named.append(f"bindings.{wrong} is not one of {template}'s bindings"
+                     + (f" (did you mean {meant[0]}?)" if meant else ""))
+    return BindingsRefused(message + ("; " + "; ".join(named) if named else ""), bindings_help(template, bindings))
 
 
 def template_instances(value, requirement_ids) -> list[TemplateInstance]:
@@ -1437,9 +1514,7 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
         try:
             definition.bindings.model_validate(one.bindings)
         except ValidationError as exc:
-            first = exc.errors()[0]
-            loc = ".".join(str(p) for p in first["loc"])
-            raise ValueError(f"{where}: bindings{'.' + loc if loc else ''}: {first['msg']}") from exc
+            raise _refused_bindings(where, one.template, one.bindings, exc) from exc
         if one.requirement_id not in requirement_ids:
             raise ValueError(f"{where}: requirement_id {one.requirement_id!r} names no requirement this review "
                              "assesses")

@@ -77,7 +77,14 @@ those agents produce is far higher.
   - The subscriptions' sign-in files follow the same rule: no check G6 runs, and no agent session's tools, may read
     them.
   - Before any paid or subscription session, a confined check is shown unable to read them.
-  - **How (provisional; open owner decision O1, section 9):** the sign-in token never enters a container. The
+  - **How (the owner's decision O1, 2026-10-29: yes, on one condition):** the owner allows headless, autonomous use
+    of their subscriptions in the loop "as long as claude and codex do not expose their api to external users". So:
+    - the credential relay is reachable only from the loop's own containers on the owner's machine;
+    - model work serves only G6's own engineering. An issue becomes work only once the loop has reproduced it as a
+      G6 defect, and the loop never works on an issue author's own project or request;
+    - issue-driven model work has caps per author and per day.
+
+    The sign-in token never enters a container. The
     engineer's container reaches the network only through an egress proxy that adds the credential to requests to
     the provider's API host, and to no other host. The agent's shell therefore has nothing to read, and a published
     transcript cannot carry the token. It also avoids Codex's rotating refresh token being copied into containers,
@@ -212,14 +219,14 @@ The comparison a sceptical senior engineer accepts, confirmed by the owner:
 - Sealed tasks' text, fixes and tests sit in a vault the loop's processes cannot read. They are read only by the
   study's label step, after the arms' records are hashed and committed.
 - A task the loop ever saw never enters a study. The study's draw excludes it by ID.
-- **Custody (provisional; open owner decision O2).** The study runner is a separate program, frozen at the study's
-  registration. It runs under a second local Windows account, which the owner creates once. That account holds the
-  vault, and the loop's account cannot read it (file permissions).
+- **Custody (the owner's decision O2, 2026-10-29: no second account).** The study runner is a separate program,
+  frozen at the study's registration. It runs under the owner's own user, as the loop does, so every study report
+  states the limit below.
   - The study runner harvests and qualifies sealed tasks. The judgement "a clear expected behaviour" is made by a
     grade-A model under the registered rule, on a sample audited by the other model family. The runner then runs
     both arms: they need the issue text, the loop's development processes do not.
-  - If the owner declines the second account, every study report states the limit plainly: the vault was protected
-    only from the loop's code, not from processes running as the same user.
+  - Every study report states the limit plainly: the vault was protected only from the loop's code, not from
+    processes running as the same user.
 
 ### 6.4 Missions: the loop's engineers
 
@@ -398,11 +405,17 @@ The owner decided that the loop reads issues, answers them publicly and works on
 - retry an action a classifier or permission prompt stopped;
 - open anything on another repository.
 
-**The loop's GitHub identity (provisional; open owner decision O3):**
-- The loop acts as its own bot account or GitHub App, not with the owner's login.
-- A repository ruleset (available for public repositories on GitHub Free) lets that identity push only `g6-loop/*`
-  branches and the records branch, and lets only the owner merge into `main` and the release branches. The envelope
-  is then enforced by GitHub, not only by the loop's code.
+**The loop's GitHub identity (the owner's decision O3, 2026-10-29: a GitHub App):**
+- The loop acts as its own GitHub App, installed on g6solver only, not with the owner's login. Its permissions are
+  contents, pull requests and issues (write), plus actions and checks (read). It has no `workflows` permission, so it
+  can never change CI files, and no `administration` permission, so it can never change the repository's rules.
+- Repository rulesets (available for public repositories on GitHub Free):
+  - every branch outside `g6-loop/*` can be created, changed or deleted only by the owner, so only the owner merges
+    into `main` and the release branches;
+  - no tag can be moved or deleted, and only the owner creates tags.
+
+  The envelope is then enforced by GitHub, not only by the loop's code. The rules go on after the App is installed
+  and after the first launch.
 - The identity's token is held like the sign-ins: never inside a container.
 - Issue replies then appear as the loop, not as the owner.
 - Until the owner sets this up, the loop pushes nothing (P1 needs no pushes from the loop; P2 needs this).
@@ -486,8 +499,11 @@ the certificates stay as they are.
 - **Bound files.** A needed change to a certificate-bound file (such as the post-launch fixes to `confine.py`: the
   `/tmp` change and the linked-Python fix) waits for the one post-launch issuance window. That window is run by a
   supervised session with the held sources, never by the loop.
-- **Dependencies on the owner's decisions** (section 9): P1 needs none. P2 needs O3, the identity. P3's live runs
-  need O1, the sign-in custody. P5's custody needs O2, the second account, or else the stated limit.
+- **Dependencies on the owner's decisions** (section 9, all answered on 2026-10-29):
+  - P1 needs none.
+  - P2 needs O3, the App, installed.
+  - P3's live runs need O1's relay, built and shown to work for each command-line tool.
+  - P5 states O2's same-user limit.
 - V9 and V10 continue as registered.
 
 ## 9. Calls
@@ -519,14 +535,15 @@ the certificates stay as they are.
 - cross-family review;
 - the 24-hour release of the reserve.
 
-**Open owner decisions.** Each provisional answer stays in force until the owner answers:
-- **O1, the sign-in custody (most important).** Is it acceptable to use the subscriptions headless, through an
-  egress proxy that adds the sign-in to requests (section 3)? The alternatives are a token inside the container,
-  which the agent's shell can read, or no live engineer runs.
-- **O2, the study's custody.** Will the owner create a second local Windows account for the study runner (section
-  6.3)? Otherwise the same-user limit is stated in every report.
-- **O3, the loop's GitHub identity.** Will the owner create a bot account or GitHub App, plus a repository ruleset
-  (section 6.10)? Otherwise the loop keeps pushing nothing.
+**The owner's decisions, answered on 2026-10-29:**
+- **O1, the sign-in custody: yes, on one condition.** The subscriptions may be used headless and autonomously,
+  through the relay that adds the sign-in to requests (section 3), "as long as claude and codex do not expose their
+  api to external users". Section 3 says how the loop keeps that condition.
+- **O2, the study's custody: no second Windows account.** The study runner shares the owner's user, and every study
+  report states the same-user limit (section 6.3).
+- **O3, the loop's GitHub identity: a GitHub App,** created by the owner through GitHub's manifest flow, plus
+  repository rulesets (section 6.10). The App's private key goes straight into a folder only the owner's user can
+  read, never into a container. Until the App is installed, the loop pushes nothing.
 
 **Left to the builder:**
 - how each command-line tool reports usage and limits (checked by running it, not assumed);

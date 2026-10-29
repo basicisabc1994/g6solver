@@ -61,8 +61,9 @@ G6 gets an environment of its own, made with `--copies`: on Linux, G6 cannot yet
 environment linked to the same one, and refuses to review then.
 
 `g6 setup` registers this installation with the client (`claude mcp add` or `codex mcp add`, with this installation's
-Python), installs the `using-g6` skill for it, and allows patch review, the one sensitive operation the first review
-needs. Restart the client afterwards. Its last lines show the first review call.
+Python, started with `-P` so that the packages in the project's folder never replace G6's own), installs the `using-g6`
+skill for it, and allows patch review, the one sensitive operation the first review needs. Restart the client
+afterwards. Its last lines show the first review call.
 
 If the client already has an entry called `g6`, setup leaves it as it is and stops. See it with `claude mcp get g6` (or
 `codex mcp get g6`). To replace it, remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`), then
@@ -87,7 +88,8 @@ is done. The skill tells it how:
 2. It calls `g6_review_patch` with the repository's folder, the task and the requirements, and polls
    `metaharness_job` until the review ends.
 3. It shows you the reply's readable report (`assessment.report`) as it is: what G6 reproduced first, then what is not
-   established, then what you decide.
+   established, then what you decide. The reply is compact; the full assessment is saved in G6's state folder
+   (`~/.g6/reviews/`).
 4. When G6 reproduces a defect, it fixes it and reviews again, with each earlier reproduction added as a stated check,
    so you can see the fix pass the original counterexample. It stops after three rounds, when a round changes nothing,
    or when the report says only you can decide.
@@ -209,10 +211,20 @@ recommending a new release.
 | Research kernel (the evidence kernel, governed adaptation, the mission bridge) | `wired-but-inert`: off unless `G6_ECHA_RESEARCH=1` |
 | G6 helps independent coding agents on held-out tasks | `aspirational`: protocol published, not run |
 | Meta-harness: tune G6 to your own recurring work (`g6.metaharness`) | `implemented`. The studies run with it are on the [Research](site/docs/research.md) page, as a worked example |
+| G6 maintains its own repository through its self-improvement loop | `aspirational`: designed, and being built in the open |
 
 Until a pre-registered study says otherwise, treat G6 as careful engineering, not as a proven uplift. The studies run
 so far, including how G6 with its default settings compares with one direct model call, are on the
 [Research](site/docs/research.md) page, as a worked example.
+
+## G6 maintaining G6, in public
+
+We're building a loop in which G6 maintains its own GitHub repository. It finds where G6 falls short, has Claude Code
+and Codex work on the biggest gap in isolated containers, checks every change with G6's own review, and opens a pull
+request. A maintainer reviews and merges every change. Everything is public: the code, the decisions, the evidence and
+the agents' transcripts. It's an open experiment in self-improvement infrastructure for AI agents, and we'll report
+what it shows, including if it doesn't help. The loop works only on G6 itself. Read
+[the design](https://github.com/basicisabc1994/g6solver/blob/main/docs/superpowers/specs/2026-10-29-self-improvement-loop-design.md).
 
 ## Develop
 
