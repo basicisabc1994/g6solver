@@ -124,6 +124,8 @@ SANDBOX = "repository_in_place"
 #: A run's verdicts. Only ``passed`` and ``failed`` mean the tests ran to a result.
 PASSED, FAILED, CHANGED = "passed", "failed", "changed_tracked_files"
 RAN = frozenset({PASSED, FAILED})
+#: The owner's ruling (2026-10-29): every test passed by pytest's own count, then the process exited with an error.
+RUN_INCONSISTENT = "run_inconsistent"
 #: Files that configure, or could stand in for, the runner (the bench's lists, ``bench.py:60-63``, and every
 #: configuration file pytest looks for by name): a change to one is said, not judged.
 RUNNER_FILES = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml",
@@ -148,6 +150,9 @@ SAID = {
     "no_tests_collected": "pytest collected no tests from the tests named",
     "pytest_not_found": "pytest is not installed for {python}",
     "inconsistent_report": "pytest's exit code and its own tallies disagree, so neither is believed",
+    # PENDING copy (the owner's ruling of 2026-10-29): a non-zero exit after a session pytest counts as all passed.
+    "run_inconsistent": ("the tests passed by pytest's own count, but the process exited with an error afterwards, so "
+                         "G6 does not count them as passed"),
     "could_not_start": "the test run could not start ({error})",
     "changed": "files in your repository changed while your tests ran",
     "network_off": "G6: network connections are refused for this test run",
@@ -1164,7 +1169,12 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
       error G6 places in the repository's own code (a syntax error, a broken import of its own module); a collection
       error G6 cannot place stays "could not be collected" (I2);
     * a pass needs every test pytest meant to run (collected, less deselected: ``expected``) to have run to its end
-      (``finished``); fewer, or a count that cannot be read, is "incomplete" (I3). ``run`` always sets ``expected``."""
+      (``finished``); fewer, or a count that cannot be read, is "incomplete" (I3). ``run`` always sets ``expected``;
+    * the owner's ruling (2026-10-29), asymmetric on purpose: an exit other than 0 and 2-5 after a session whose
+      tallies hold passes, no failure or error, and every test it meant to run finished, is ``run_inconsistent``
+      (not a pass, and no sign of tampering, since it cannot get a patch accepted: a GUI suite's X connection that
+      fails at exit). Exit 0 with a failure, an error or fewer tests finished stays untrusted, as a tampered runner
+      would show it."""
     if moved:
         return CHANGED
     if exit_code is None:
@@ -1184,12 +1194,16 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
         if "expected" in counts and (counts["expected"] is None or counts["expected"] != counts.get("finished")):
             return "incomplete"
         return PASSED
-    if exit_code == 1:
-        return FAILED if bad else "inconsistent_report"
+    if exit_code == 1 and bad:
+        return FAILED
     if exit_code in (2, 3, 4):
         # Errors whose culprit is not in the tally are taken as collection errors G6 cannot place (exit 2-4's usual).
         unplaced = counts.get("collection", counts["errors"]) - counts.get("placed", 0)
         return FAILED if bad - outside - unplaced > 0 else "collection_error"
+    complete = "expected" not in counts or (counts["expected"] is not None
+                                            and counts["expected"] == counts.get("finished"))
+    if not bad and counts["passed"] > 0 and complete:
+        return RUN_INCONSISTENT
     return "inconsistent_report"
 
 

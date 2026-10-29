@@ -7,10 +7,11 @@ At most ``MAX_LINES`` lines, in this order:
 1. one headline: the outcome in plain words, its code, "qualified draft", and "merging needs your separate approval"
    (no score, certificate or count of checks);
 2. the reproduced findings, integrity first: what weakened the tests or their configuration, then each failed check
-   with its requirement, a one-line command that reproduces it with the repository's own test command, and whether a
-   base run shows it passes there; then the unconfirmed findings of proposed or compiled checks;
+   with its requirement, the repository's plain command that reproduces it (G6's exact, isolating one is named by its
+   field), and whether a base run shows it passes there; then the unconfirmed findings of proposed or compiled checks;
 3. what is not established, each with its reason and what would settle it; then what was demonstrated on the stated
-   checks (with the findings and what is not established, the review contract and its evidence);
+   checks, with "fails at the base commit, passes on the patch" where the base run shows a requirement's checks
+   exercise the change (with the findings and what is not established, the review contract and its evidence);
 4. what the person decides: at most 3 questions, and merging;
 5. how this was decided, one line per step: proposed, tested, gate, approve;
 6. the standing note: the specification may be incomplete.
@@ -45,6 +46,38 @@ FAILED = {"check_failed": "A stated check failed", "derived_test_regressed": "A 
 UNCONFIRMED = {"counterexample": "A proposed check found a counterexample, not confirmed",
                "unconfirmed_failure": "A proposed check fails on the patch, not confirmed"}
 BUDGET = {"findings": 10, "missing": 5, "shown": 3, "decide": 5}
+#: The review's runs and skips by plain names (no internal tier names in the report).
+RUNS = {"stated checks and extra tests": "the stated checks",
+        "tests that touch the changed modules": "tests that touch the changed code",
+        "stated checks at the base commit": "the stated checks at the base commit",
+        "mutation and old-against-new probes": "deeper checks"}
+#: Where the exact command G6 ran is, beside the repository's plain one.
+EXACT = ("G6 ran it with its own isolating options; the exact command is in "
+         "`assessment.completion.defects_reproduced` (`reproduction.command`)")
+
+
+def _plain(node: object) -> str:
+    """The repository's plain command for ``node``: its own pytest, with none of G6's isolating options."""
+    import shlex
+
+    return code(f"python -m pytest {shlex.quote(str(node))}", 200)
+
+
+def _words(text: str) -> str:
+    """G6's own wording of a run or a skip, with its internal tier names put plainly."""
+    for old, new in (("tier 1 found", "the stated checks found"), ("tier 2 found", "the tests of the changed code "
+                                                                                    "found"),
+                     ("tier 1", "the stated checks"), ("tier 2", "the tests of the changed code"),
+                     ("tier 3 not run: ", ""), ("tier 3", "deeper checks")):
+        text = text.replace(old, new)
+    return text
+
+
+def _at_base(assessment: dict) -> dict[str, str]:
+    """Each stated check's own verdict at the base commit, from the review's run there (empty when none ran)."""
+    runs = (assessment.get("scope") or {}).get("checks_run") or []
+    found = next((run for run in runs if run.get("check") == "stated checks at the base commit"), None)
+    return dict((found or {}).get("outcomes") or {})
 
 
 def code(value: object, limit: int = 140) -> str:
@@ -86,7 +119,8 @@ def _findings(assessment: dict) -> list[list[str]]:
     completion = assessment.get("completion") or {}
     defects = completion.get("defects_reproduced") or {}
     items = [[f"- **Test integrity: {INTEGRITY.get(r['code'], 'the tests cannot be trusted')}** ({r['code']}): "
-              f"{code(r.get('detail', ''))}"] for r in assessment.get("reasons", []) if r.get("stage") == "integrity"]
+              f"{code(_words(str(r.get('detail', ''))))}"] for r in assessment.get("reasons", [])
+             if r.get("stage") == "integrity"]
     for found in defects.get("stated_and_repository_checks", []):
         requirements = ", ".join(code(r) for r in found.get("requirements", [])) or "no stated requirement"
         reproduction = found.get("reproduction") or {}
@@ -102,7 +136,7 @@ def _findings(assessment: dict) -> list[list[str]]:
         else:
             base = ("passes at the base commit, fails on the patch" if found.get("code") == "derived_test_regressed"
                     else "not run at the base commit")
-            how = f"  - Reproduce: {code(reproduction.get('command', ''), 200)}; {base}"
+            how = f"  - Reproduce: {_plain(reproduction.get('node', found.get('check', '')))}; {base}. {EXACT}."
         items.append([head, how])
     for found in defects.get("proposed_checks", []):
         reproduction = found.get("reproduction") or {}
@@ -115,20 +149,31 @@ def _findings(assessment: dict) -> list[list[str]]:
         else:
             base = f"at the base commit: {code(reproduction.get('at_base', ''), 80)}"
         how = (f"  - Reproduce: write its text (in {code('assessment.completion.defects_reproduced.proposed_checks')}) "
-               f"to {code(reproduction.get('file', ''), 80)}, then {code(reproduction.get('command', ''), 160)}; {base}")
+               f"to {code(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}; {base}. "
+               f"{EXACT}.")
         items.append([head, how])
     return items
 
 
 def _missing(assessment: dict) -> list[list[str]]:
     return [[f"- {code(item.get('requirement', ''), 40)} {code(item.get('text', ''), 80)}: "
-             f"{code(item.get('reason', ''), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}"]
+             f"{code(_words(str(item.get('reason', ''))), 120)}; to settle it: {code(item.get('settle_by', ''), 140)}"]
             for item in (assessment.get("completion") or {}).get("not_established", [])]
 
 
 def _shown(assessment: dict) -> list[list[str]]:
-    return [[f"- {code(item.get('requirement', ''), 40)} on " + ", ".join(code(c, 80) for c in item.get("checks", []))]
-            for item in (assessment.get("completion") or {}).get("demonstrated", [])]
+    """Each requirement passed on its stated checks; one whose every check fails at the base commit and passes on the
+    patch says so, as it shows the checks exercise the change (for a requirement that keeps behaviour, a failure at
+    the base keeps its own meaning and is not shown as that)."""
+    base = _at_base(assessment)
+    items = []
+    for item in (assessment.get("completion") or {}).get("demonstrated", []):
+        checks = item.get("checks", [])
+        line = f"- {code(item.get('requirement', ''), 40)} on " + ", ".join(code(c, 80) for c in checks)
+        if item.get("kind") != "preserve" and checks and all(base.get(c) in ("failed", "timed_out") for c in checks):
+            line += ": fails at the base commit, passes on the patch"
+        items.append([line])
+    return items
 
 
 def _decide(assessment: dict) -> list[str]:
@@ -152,10 +197,27 @@ def _steps(assessment: dict) -> list[str]:
     if search.get("model_calls"):
         who.append("G6's proposer, a model whose proposals decide nothing")
     runs = scope.get("checks_run") or []
-    ran = "; ".join(f"tier {run.get('tier')} {code(run.get('check', ''), 50)}: {code(run.get('verdict', ''), 30)}"
-                    for run in runs[:3]) or "no test ran"
+    shown = []
+    for run in runs[:3]:
+        name = RUNS.get(run.get("check"), str(run.get("check", "")))
+        outcomes = run.get("outcomes") or {}
+        if run.get("check") == "stated checks at the base commit" and outcomes:
+            failing = sum(verdict in ("failed", "timed_out") for verdict in outcomes.values())
+            shown.append("the stated checks fail at the base commit, so they exercise the change" if failing == len(
+                outcomes) else "the stated checks pass at the base commit too, so they may not exercise the change"
+                if not failing else f"{failing} of the {len(outcomes)} stated checks fail at the base commit (those "
+                                    "exercise the change), the others pass there too")
+        elif run.get("verdict") == "run_inconsistent":   # the owner's ruling (2026-10-29): said plainly, no accusation
+            shown.append(f"{name}: passed by pytest's own count, but the process exited with an error afterwards "
+                         f"({code('run_inconsistent')}), so they are not counted as passed")
+        else:
+            shown.append(f"{name}: {code(run.get('verdict', ''), 30)}")
+    ran = "; ".join(shown) or "no test ran"
     skipped = scope.get("checks_skipped") or []
-    passed_over = "; ".join(code(f"tier {s.get('tier')}: {s.get('reason', '')}", 70) for s in skipped[:2])
+    passed_over = "; ".join(
+        "deeper checks (not run)" if s.get("tier") == 3 and "not run" in str(s.get("reason", "")) else
+        f"{RUNS.get(s.get('check'), str(s.get('check', '')))} (not run: {code(_words(str(s.get('reason', ''))), 70)})"
+        for s in skipped[:2])
     backend = ((scope.get("environment") or {}).get("isolation") or {}).get("backend")
     outcome = assessment.get("outcome") or "unknown"
     stage = {"test_integrity_compromised": "integrity", "defect_detected": "tier", "insufficient_evidence": "evidence"}
@@ -167,7 +229,7 @@ def _steps(assessment: dict) -> list[str]:
             f"{code(str(scope.get('base_commit', ''))[:12])}, {len(requirements)} requirement(s); checks from "
             f"{', '.join(who)}.",
             f"- **Tested:** {ran}; isolation {code(backend or 'none')}; {float(scope.get('seconds') or 0):.1f} "
-            f"seconds" + (f"; skipped {passed_over}" + (f" and {len(skipped) - 2} more" if len(skipped) > 2 else "")
+            f"seconds" + (f"; {passed_over}" + (f" and {len(skipped) - 2} more not run" if len(skipped) > 2 else "")
                           if skipped else "") + ".",
             f"- **Gate:** {OUTCOMES.get(outcome, outcome.replace('_', ' '))} ({outcome}): {rule}.",
             "- **Approve:** waiting for you: merging needs your separate approval."]

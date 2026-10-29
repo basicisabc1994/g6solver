@@ -208,7 +208,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
         on the patch and passed at the base commit, or the patch adds an import a stated contract forbids);
         insufficient_evidence (no requirement, a requirement with no check, a check that did not run or ran out of
-        time, a shortcut only the claim reports, or a proposed or compiled check's unconfirmed_counterexample or
+        time, a run whose tests all passed by pytest's own count but whose process then exited with an error
+        (run_inconsistent; exit 0 with a failure, an error or fewer tests finished is a run that cannot be believed),
+        a shortcut only the claim reports, or a proposed or compiled check's unconfirmed_counterexample or
         unconfirmed_failure);
         supported_within_scope (every requirement passed its stated checks: support on those checks only, never proof
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is

@@ -141,6 +141,14 @@ RUNNER_FILES = repo_tests.RUNNER_FILES
 PYTEST_SECTIONS = {"pyproject.toml": "[tool.pytest]", "setup.cfg": "[tool:pytest]", "tox.ini": "[pytest]"}
 #: Run verdicts whose results are not believed: an integrity problem, never evidence.
 UNTRUSTED = frozenset({repo_tests.CHANGED, "inconsistent_report", "incomplete"})
+#: The owner's ruling (2026-10-29), asymmetric on purpose: a run whose tests all passed by pytest's own count and whose
+#: process then exited with an error cannot get a patch accepted, so it is insufficient evidence, never integrity (a
+#: correct patch's environment called tampering is the false alarm people give up over); exit 0 with tallies that show
+#: a failure, an error or fewer tests finished stays untrusted, as a tampered runner would show it.
+RUN_INCONSISTENT = repo_tests.RUN_INCONSISTENT
+RUN_INCONSISTENT_DETAIL = ("{run}: the tests passed by pytest's own count, but the process exited with an error "
+                           "afterwards, so nothing is counted as passed on it; run them with the repository's own "
+                           "command to see what fails at exit")
 #: A check's verdicts that are a defect when it is stated or extra; every other verdict but "passed" did not run.
 #: ``failed`` includes a collection error G6 places in the repository's own code; ``collection_error`` is the
 #: environment's (a dependency it lacks), which leaves the check not run. A run out of time is no defect (review I5):
@@ -472,6 +480,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         states = set(nodes.values())
         if run in UNTRUSTED:
             verdict, detail = run, said or "the run's results are not believed"
+        elif run == repo_tests.RUN_INCONSISTENT:   # the owner's ruling (2026-10-29): no check passes on such a run
+            verdict, detail = run, said or repo_tests.SAID[run]
         elif "failed" in states:
             verdict, detail = FAILED, "failed: " + ", ".join(sorted(n for n, s in nodes.items() if s == "failed")[:5])
         elif "skipped" in states:
@@ -811,6 +821,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         verdicts.update(_verdicts(present, first))
         if first["verdict"] in UNTRUSTED:
             reason("integrity", "run_not_trusted", _untrusted(1, first))
+        elif first["verdict"] == repo_tests.RUN_INCONSISTENT:   # the owner's ruling (2026-10-29): evidence, not integrity
+            reason("evidence", RUN_INCONSISTENT, RUN_INCONSISTENT_DETAIL.format(run="the stated checks' run"))
         elif first["verdict"] == "timed_out":
             reason("evidence", "run_timed_out", f"the tier 1 run did not finish: {first.get('said') or 'timed out'}")
         elif unusable(1, first):   # a pass or a failure of code the patch did not change says nothing of the patch
@@ -890,6 +902,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             runs.append(_record(2, "tests that touch the changed modules", derived, second, provenance=DERIVED))
             if second["verdict"] in UNTRUSTED:
                 reason("integrity", "run_not_trusted", _untrusted(2, second))
+            elif second["verdict"] == repo_tests.RUN_INCONSISTENT:
+                reason("evidence", RUN_INCONSISTENT,
+                       RUN_INCONSISTENT_DETAIL.format(run="the run of the tests that touch the changed modules"))
             elif unusable(2, second):
                 pass   # its failures, and its passes, are of code the patch did not change
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):
@@ -1062,7 +1077,10 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
                         f"({ran.get('verdict')}: {ran.get('said') or 'no result'})")
         return []
     actions = []
-    for check, found in _verdicts(passing, ran).items():
+    at_base = _verdicts(passing, ran)
+    if "isolation" in ran:   # each check's own verdict at the base commit, which the readable report says in words
+        runs[-1]["outcomes"] = {check: found["verdict"] for check, found in at_base.items()}
+    for check, found in at_base.items():
         if found["verdict"] != "passed":
             continue
         unknowns.append(f"{check} passes against the base commit's code too, so it may not exercise the change")

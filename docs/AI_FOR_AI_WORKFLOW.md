@@ -120,7 +120,10 @@ checks with the extra tests in one confined run. Integrity is what these checks 
 
 A stated check the environment cannot collect (a dependency it lacks) is not established; one whose own code
 fails to collect is a defect. A check the time limit cuts off, or never reaches, is not established either,
-never a defect. Tier 2, the other tests that touch the changed modules, runs only when tier 1 found no
+never a defect. So is every check of a run whose tests all passed by pytest's own count but whose process then
+exited with an error (`run_inconsistent`, insufficient evidence: a graphical test suite whose display
+connection fails at exit, say). That cannot get a patch accepted, so it is not an integrity problem; a run
+that exits 0 while its tallies show a failure, an error or fewer tests finished than collected is one. Tier 2, the other tests that touch the changed modules, runs only when tier 1 found no
 integrity problem and no defect; one that fails, or fails to collect, on the patch is replayed at the base
 commit (a moved test file at its old path), and counts as a defect only if it passed there. When nothing so
 far found a problem, the stated checks that passed also run against the base commit's code, in a copy: one
@@ -274,10 +277,13 @@ model that answered, where the caller gives them; every request and reply is in
 Every reply has `assessment.report`: the review as Markdown, at most about 40 lines, for you to show the
 person as it is. It comes in this order: a headline in plain words (the outcome, "qualified draft", "merging
 needs your separate approval"); the reproduced findings, integrity first, each failed check with its
-requirement, a one-line command that reproduces it with the repository's own test command, and whether a base
+requirement, the repository's plain command that reproduces it (such as `python -m pytest test_calc.py::test_add`;
+G6 ran it with its own isolating options, and the exact command is in `reproduction.command`), and whether a base
 run shows it passes at the base commit; what is not established and what would settle it; what was
-demonstrated; at most 3 questions and merging, for the person to decide; how it was decided (proposed, tested,
-gate, approve); and the standing note that the task's specification may be incomplete. It is derived from the
+demonstrated, with "fails at the base commit, passes on the patch" where the base run shows a requirement's
+checks exercise the change; at most 3 questions and merging, for the person to decide; how it was decided
+(proposed, tested, gate, approve), in plain names: the stated checks, tests that touch the changed code, deeper
+checks; and the standing note that the task's specification may be incomplete. It is derived from the
 other fields and decides nothing. Text from the repository or the request in it is shown inert, in code spans.
 
 The repair loop, as the using-g6 skill gives it: fix what G6 reproduced; on the next call, add each earlier

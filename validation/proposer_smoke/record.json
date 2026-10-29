@@ -1,0 +1,1393 @@
+{
+ "model": "claude-haiku-4-5",
+ "price": {
+  "input": 1.0,
+  "output": 5.0,
+  "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "read": "2026-10-29"
+ },
+ "cap_dollars": 10.0,
+ "settings": {
+  "propose": true,
+  "proposer": "templates_first",
+  "max_model_calls": 10,
+  "max_input_chars": 60000,
+  "max_output_tokens": 4096,
+  "max_context_chars": 24000
+ },
+ "temperature": "not sent: the provider's default (the SDK's API version 2026-10-21 refuses a sampling setting)",
+ "spent_dollars": 0.151364,
+ "stopped": "",
+ "calls": [
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1839,
+   "output_tokens": 648,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.005079,
+   "worst_dollars": 0.025923
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1751,
+   "output_tokens": 332,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003411,
+   "worst_dollars": 0.025706
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2889,
+   "output_tokens": 176,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003769,
+   "worst_dollars": 0.02902
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1725,
+   "output_tokens": 563,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.00454,
+   "worst_dollars": 0.025788
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1721,
+   "output_tokens": 267,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003056,
+   "worst_dollars": 0.025596
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2391,
+   "output_tokens": 462,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.004701,
+   "worst_dollars": 0.027784
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1154,
+   "output_tokens": 438,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003344,
+   "worst_dollars": 0.023696
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1680,
+   "output_tokens": 428,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.00382,
+   "worst_dollars": 0.025705
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1592,
+   "output_tokens": 319,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003187,
+   "worst_dollars": 0.025488
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2730,
+   "output_tokens": 134,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.0034,
+   "worst_dollars": 0.028802
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1566,
+   "output_tokens": 382,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003476,
+   "worst_dollars": 0.02557
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1562,
+   "output_tokens": 182,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002472,
+   "worst_dollars": 0.025378
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2232,
+   "output_tokens": 911,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.006787,
+   "worst_dollars": 0.027566
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 995,
+   "output_tokens": 319,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.00259,
+   "worst_dollars": 0.023478
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1517,
+   "output_tokens": 407,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003552,
+   "worst_dollars": 0.025311
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1429,
+   "output_tokens": 284,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002849,
+   "worst_dollars": 0.025094
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2567,
+   "output_tokens": 318,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.004157,
+   "worst_dollars": 0.028408
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1403,
+   "output_tokens": 411,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003458,
+   "worst_dollars": 0.025176
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1399,
+   "output_tokens": 206,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002429,
+   "worst_dollars": 0.024984
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2069,
+   "output_tokens": 574,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.004939,
+   "worst_dollars": 0.027172
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 832,
+   "output_tokens": 380,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002732,
+   "worst_dollars": 0.023084
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1838,
+   "output_tokens": 720,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.005438,
+   "worst_dollars": 0.026117
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1750,
+   "output_tokens": 391,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003705,
+   "worst_dollars": 0.0259
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2888,
+   "output_tokens": 109,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003433,
+   "worst_dollars": 0.029214
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1724,
+   "output_tokens": 583,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.004639,
+   "worst_dollars": 0.025982
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1720,
+   "output_tokens": 159,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002515,
+   "worst_dollars": 0.02579
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2390,
+   "output_tokens": 707,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.005925,
+   "worst_dollars": 0.027978
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1153,
+   "output_tokens": 479,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003548,
+   "worst_dollars": 0.02389
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1417,
+   "output_tokens": 366,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003247,
+   "worst_dollars": 0.024966
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1329,
+   "output_tokens": 283,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002744,
+   "worst_dollars": 0.024749
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2467,
+   "output_tokens": 237,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003652,
+   "worst_dollars": 0.028063
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1303,
+   "output_tokens": 389,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003248,
+   "worst_dollars": 0.024831
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1299,
+   "output_tokens": 147,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002034,
+   "worst_dollars": 0.024639
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1969,
+   "output_tokens": 424,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.004089,
+   "worst_dollars": 0.026827
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 732,
+   "output_tokens": 344,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002452,
+   "worst_dollars": 0.022739
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1545,
+   "output_tokens": 416,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003625,
+   "worst_dollars": 0.025433
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1457,
+   "output_tokens": 322,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003067,
+   "worst_dollars": 0.025216
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2595,
+   "output_tokens": 213,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.00366,
+   "worst_dollars": 0.02853
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1431,
+   "output_tokens": 434,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.003601,
+   "worst_dollars": 0.025298
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 1427,
+   "output_tokens": 180,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.002327,
+   "worst_dollars": 0.025106
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 2097,
+   "output_tokens": 430,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.004247,
+   "worst_dollars": 0.027294
+  },
+  {
+   "model": "claude-haiku-4-5-20251001",
+   "input_tokens": 860,
+   "output_tokens": 312,
+   "stop_reason": "end_turn",
+   "requested": "claude-haiku-4-5",
+   "temperature": null,
+   "dollars": 0.00242,
+   "worst_dollars": 0.023206
+  }
+ ],
+ "reviews": [
+  {
+   "case": "codec",
+   "ok": true,
+   "outcome": "insufficient_evidence",
+   "reasons": [
+    [
+     "evidence",
+     "requirement_without_check"
+    ]
+   ],
+   "requirements": [
+    [
+     "R1",
+     "passed_on_stated_checks"
+    ],
+    [
+     "R2",
+     "not_established"
+    ]
+   ],
+   "seconds": 51.4,
+   "model_calls": 7,
+   "input_tokens": 13470,
+   "output_tokens": 2886,
+   "answered_by": [
+    "claude-haiku-4-5-20251001"
+   ],
+   "dollars": 0.0279,
+   "stages": [
+    [
+     "example.v1",
+     "replied",
+     ""
+    ],
+    [
+     "relation.v1",
+     "replied",
+     ""
+    ],
+    [
+     "access_rule.v1",
+     "replied",
+     ""
+    ],
+    [
+     "differential.v1",
+     "replied",
+     ""
+    ],
+    [
+     "forbidden_dependency.v1",
+     "replied",
+     ""
+    ],
+    [
+     "state_invariant.v1",
+     "replied",
+     ""
+    ],
+    [
+     "scenarios",
+     "replied",
+     ""
+    ],
+    [
+     "free_form",
+     "skipped",
+     "a proposed template instance applies to every requirement"
+    ]
+   ],
+   "proposed": [
+    "g6p-differential-10",
+    "g6p-differential-11",
+    "g6p-differential-8",
+    "g6p-differential-9",
+    "g6p-example-1",
+    "g6p-example-2",
+    "g6p-example-3",
+    "g6p-example-4",
+    "g6p-relation-5",
+    "g6p-relation-6",
+    "g6p-relation-7"
+   ],
+   "applied": [
+    [
+     "g6p-example-1",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-2",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-3",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-4",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-relation-5",
+     "relation.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-relation-6",
+     "relation.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-relation-7",
+     "relation.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-8",
+     "differential.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-9",
+     "differential.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-10",
+     "differential.v1",
+     "behaviour_changed"
+    ],
+    [
+     "g6p-differential-11",
+     "differential.v1",
+     "behaviour_changed"
+    ]
+   ],
+   "refused": [
+    [
+     "state_invariant.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-12): bindings: Value error, model: the model has no field original_text; it takes variables, init, transition and invariants"
+    ],
+    [
+     "state_invariant.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-12): bindings: Value error, model: the model has no field original_text; it takes variables, init, transition and invariants"
+    ]
+   ],
+   "questions": [
+    "g6p-differential-10",
+    "g6p-differential-11",
+    "g6p-scenario-1"
+   ],
+   "unknowns": 1
+  },
+  {
+   "case": "cli",
+   "ok": true,
+   "outcome": "insufficient_evidence",
+   "reasons": [
+    [
+     "evidence",
+     "unconfirmed_failure"
+    ],
+    [
+     "evidence",
+     "unconfirmed_failure"
+    ],
+    [
+     "evidence",
+     "unconfirmed_counterexample"
+    ],
+    [
+     "evidence",
+     "requirement_without_check"
+    ],
+    [
+     "evidence",
+     "requirement_without_check"
+    ]
+   ],
+   "requirements": [
+    [
+     "R1",
+     "passed_on_stated_checks"
+    ],
+    [
+     "R2",
+     "not_established"
+    ],
+    [
+     "R3",
+     "not_established"
+    ]
+   ],
+   "seconds": 44.4,
+   "model_calls": 7,
+   "input_tokens": 12357,
+   "output_tokens": 2675,
+   "answered_by": [
+    "claude-haiku-4-5-20251001"
+   ],
+   "dollars": 0.025732,
+   "stages": [
+    [
+     "example.v1",
+     "replied",
+     ""
+    ],
+    [
+     "relation.v1",
+     "replied",
+     ""
+    ],
+    [
+     "access_rule.v1",
+     "replied",
+     ""
+    ],
+    [
+     "differential.v1",
+     "replied",
+     ""
+    ],
+    [
+     "forbidden_dependency.v1",
+     "replied",
+     ""
+    ],
+    [
+     "state_invariant.v1",
+     "replied",
+     ""
+    ],
+    [
+     "scenarios",
+     "replied",
+     ""
+    ],
+    [
+     "free_form",
+     "skipped",
+     "a proposed template instance applies to every requirement"
+    ]
+   ],
+   "proposed": [
+    "g6p-differential-6",
+    "g6p-differential-7",
+    "g6p-differential-8",
+    "g6p-example-1",
+    "g6p-example-2",
+    "g6p-example-3",
+    "g6p-relation-4",
+    "g6p-relation-5"
+   ],
+   "applied": [
+    [
+     "g6p-example-1",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-2",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-3",
+     "example.v1",
+     "fails_on_base_too"
+    ],
+    [
+     "g6p-relation-4",
+     "relation.v1",
+     "unconfirmed_failure"
+    ],
+    [
+     "g6p-relation-5",
+     "relation.v1",
+     "unconfirmed_failure"
+    ],
+    [
+     "g6p-differential-6",
+     "differential.v1",
+     "behaviour_changed"
+    ],
+    [
+     "g6p-differential-7",
+     "differential.v1",
+     "behaviour_changed"
+    ],
+    [
+     "g6p-differential-8",
+     "differential.v1",
+     "counterexample"
+    ]
+   ],
+   "refused": [
+    [
+     "relation.v1",
+     "R3",
+     "its instance was refused: template_instances.0 (g6p-relation-6): bindings.transformation: Value error, must be a dotted name of the letters A to Z (either case), digits and _ only, such as package.mod"
+    ],
+    [
+     "state_invariant.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-9): bindings.observe.count_value.call: Value error, must be a dotted name of the letters A to Z (either case), digits and _ only, su"
+    ],
+    [
+     "state_invariant.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-9): bindings.observe.verbose_present.call: Value error, must be a dotted name of the letters A to Z (either case), digits and _ only"
+    ],
+    [
+     "state_invariant.v1",
+     "R3",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-9): bindings.observe.count_default_value.call: Value error, must be a dotted name of the letters A to Z (either case), digits and _ "
+    ]
+   ],
+   "questions": [
+    "g6p-example-3",
+    "g6p-differential-7",
+    "g6p-scenario-1"
+   ],
+   "unknowns": 1
+  },
+  {
+   "case": "notes",
+   "ok": true,
+   "outcome": "insufficient_evidence",
+   "reasons": [
+    [
+     "evidence",
+     "requirement_without_check"
+    ]
+   ],
+   "requirements": [
+    [
+     "R1",
+     "passed_on_stated_checks"
+    ],
+    [
+     "R2",
+     "not_established"
+    ]
+   ],
+   "seconds": 35.5,
+   "model_calls": 7,
+   "input_tokens": 11216,
+   "output_tokens": 2580,
+   "answered_by": [
+    "claude-haiku-4-5-20251001"
+   ],
+   "dollars": 0.024116,
+   "stages": [
+    [
+     "example.v1",
+     "replied",
+     ""
+    ],
+    [
+     "relation.v1",
+     "replied",
+     ""
+    ],
+    [
+     "access_rule.v1",
+     "replied",
+     ""
+    ],
+    [
+     "differential.v1",
+     "replied",
+     ""
+    ],
+    [
+     "forbidden_dependency.v1",
+     "replied",
+     ""
+    ],
+    [
+     "state_invariant.v1",
+     "replied",
+     ""
+    ],
+    [
+     "scenarios",
+     "replied",
+     ""
+    ],
+    [
+     "free_form",
+     "skipped",
+     "a proposed template instance applies to every requirement"
+    ]
+   ],
+   "proposed": [
+    "g6p-differential-3",
+    "g6p-differential-4",
+    "g6p-differential-5",
+    "g6p-differential-6",
+    "g6p-example-1",
+    "g6p-relation-2"
+   ],
+   "applied": [
+    [
+     "g6p-example-1",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-3",
+     "differential.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-4",
+     "differential.v1",
+     "behaviour_changed"
+    ],
+    [
+     "g6p-differential-5",
+     "differential.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-6",
+     "differential.v1",
+     "not_refuted"
+    ]
+   ],
+   "refused": [
+    [
+     "example.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-example-2): bindings.cases.0.raises: Value error, must be a built-in exception's name, such as ValueError, or module.attribute"
+    ],
+    [
+     "example.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-example-2): bindings.cases.0.raises: Value error, must be a built-in exception's name, such as ValueError, or module.attribute"
+    ],
+    [
+     "example.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-example-2): bindings.cases.0.raises: Value error, must be a built-in exception's name, such as ValueError, or module.attribute"
+    ],
+    [
+     "relation.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-relation-3): bindings.transformation: Value error, must name module.attribute: the module's dotted path, then a top-level name in it"
+    ],
+    [
+     "access_rule.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-access_rule-3): bindings: Value error, an access rule needs at least one allowed case and one refused case: a rule checked on one side only passes a"
+    ],
+    [
+     "access_rule.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-access_rule-3): bindings: Value error, an access rule needs at least one allowed case and one refused case: a rule checked on one side only passes a"
+    ],
+    [
+     "state_invariant.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-7): bindings: Value error, model: the model has no field can_update, current_user, owner; it takes variables, init, transition and i"
+    ],
+    [
+     "state_invariant.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-7): bindings.observe.update_rejected.exception: Value error, must be a built-in exception's name, such as ValueError, or module.attr"
+    ]
+   ],
+   "questions": [
+    "g6p-differential-4",
+    "g6p-scenario-2",
+    "g6p-scenario-3"
+   ],
+   "unknowns": 1
+  },
+  {
+   "case": "pipeline",
+   "ok": true,
+   "outcome": "insufficient_evidence",
+   "reasons": [
+    [
+     "evidence",
+     "unconfirmed_counterexample"
+    ],
+    [
+     "evidence",
+     "requirement_without_check"
+    ],
+    [
+     "evidence",
+     "requirement_without_check"
+    ]
+   ],
+   "requirements": [
+    [
+     "R1",
+     "passed_on_stated_checks"
+    ],
+    [
+     "R2",
+     "not_established"
+    ],
+    [
+     "R3",
+     "not_established"
+    ]
+   ],
+   "seconds": 46.9,
+   "model_calls": 7,
+   "input_tokens": 13463,
+   "output_tokens": 3148,
+   "answered_by": [
+    "claude-haiku-4-5-20251001"
+   ],
+   "dollars": 0.029203,
+   "stages": [
+    [
+     "example.v1",
+     "replied",
+     ""
+    ],
+    [
+     "relation.v1",
+     "replied",
+     ""
+    ],
+    [
+     "access_rule.v1",
+     "replied",
+     ""
+    ],
+    [
+     "differential.v1",
+     "replied",
+     ""
+    ],
+    [
+     "forbidden_dependency.v1",
+     "replied",
+     ""
+    ],
+    [
+     "state_invariant.v1",
+     "replied",
+     ""
+    ],
+    [
+     "scenarios",
+     "replied",
+     ""
+    ],
+    [
+     "free_form",
+     "skipped",
+     "a proposed template instance applies to every requirement"
+    ]
+   ],
+   "proposed": [
+    "g6p-differential-6",
+    "g6p-differential-7",
+    "g6p-differential-8",
+    "g6p-example-1",
+    "g6p-example-2",
+    "g6p-example-3",
+    "g6p-relation-4",
+    "g6p-relation-5"
+   ],
+   "applied": [
+    [
+     "g6p-example-1",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-2",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-3",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-relation-4",
+     "relation.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-relation-5",
+     "relation.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-6",
+     "differential.v1",
+     "behaviour_changed"
+    ],
+    [
+     "g6p-differential-7",
+     "differential.v1",
+     "behaviour_changed"
+    ],
+    [
+     "g6p-differential-8",
+     "differential.v1",
+     "counterexample"
+    ]
+   ],
+   "refused": [
+    [
+     "relation.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-relation-5): bindings.transformation: Value error, must name module.attribute: the module's dotted path, then a top-level name in it"
+    ],
+    [
+     "state_invariant.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-9): bindings.observe.output_length.call: Value error, must name module.attribute: the module's dotted path, then a top-level name in"
+    ],
+    [
+     "state_invariant.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-9): bindings.observe.result_count.call: Value error, must name module.attribute: the module's dotted path, then a top-level name in "
+    ],
+    [
+     "state_invariant.v1",
+     "R3",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-9): bindings: Value error, model: the model has no field decimal_places; it takes variables, init, transition and invariants"
+    ]
+   ],
+   "questions": [
+    "g6p-differential-7",
+    "g6p-scenario-1",
+    "g6p-scenario-2"
+   ],
+   "unknowns": 1
+  },
+  {
+   "case": "mathx",
+   "ok": true,
+   "outcome": "insufficient_evidence",
+   "reasons": [
+    [
+     "evidence",
+     "unconfirmed_failure"
+    ],
+    [
+     "evidence",
+     "unconfirmed_failure"
+    ],
+    [
+     "evidence",
+     "unconfirmed_counterexample"
+    ]
+   ],
+   "requirements": [
+    [
+     "R1",
+     "passed_on_stated_checks"
+    ]
+   ],
+   "seconds": 41.4,
+   "model_calls": 7,
+   "input_tokens": 10516,
+   "output_tokens": 2190,
+   "answered_by": [
+    "claude-haiku-4-5-20251001"
+   ],
+   "dollars": 0.021466,
+   "stages": [
+    [
+     "example.v1",
+     "replied",
+     ""
+    ],
+    [
+     "relation.v1",
+     "replied",
+     ""
+    ],
+    [
+     "access_rule.v1",
+     "replied",
+     ""
+    ],
+    [
+     "differential.v1",
+     "replied",
+     ""
+    ],
+    [
+     "forbidden_dependency.v1",
+     "replied",
+     ""
+    ],
+    [
+     "state_invariant.v1",
+     "replied",
+     ""
+    ],
+    [
+     "scenarios",
+     "replied",
+     ""
+    ],
+    [
+     "free_form",
+     "skipped",
+     "a proposed template instance applies to every requirement"
+    ]
+   ],
+   "proposed": [
+    "g6p-differential-6",
+    "g6p-differential-7",
+    "g6p-differential-7-976d4381be10.symbolic",
+    "g6p-differential-8",
+    "g6p-example-1",
+    "g6p-example-2",
+    "g6p-example-3",
+    "g6p-example-4",
+    "g6p-relation-5"
+   ],
+   "applied": [
+    [
+     "g6p-example-1",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-2",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-3",
+     "example.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-example-4",
+     "example.v1",
+     "unconfirmed_failure"
+    ],
+    [
+     "g6p-relation-5",
+     "relation.v1",
+     "unconfirmed_failure"
+    ],
+    [
+     "g6p-differential-6",
+     "differential.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-7",
+     "differential.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-8",
+     "differential.v1",
+     "counterexample"
+    ],
+    [
+     "g6p-differential-7-976d4381be10.symbolic",
+     "differential.v1",
+     "behaviour_changed"
+    ]
+   ],
+   "refused": [
+    [
+     "state_invariant.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-9): bindings: Value error, model: the model has no field last_action, x_value; it takes variables, init, transition and invariants"
+    ]
+   ],
+   "questions": [
+    "g6p-differential-7-976d4381be10.symbolic",
+    "g6p-scenario-1",
+    "g6p-scenario-2"
+   ],
+   "unknowns": 1
+  },
+  {
+   "case": "wallet",
+   "ok": true,
+   "outcome": "insufficient_evidence",
+   "reasons": [
+    [
+     "evidence",
+     "requirement_without_check"
+    ]
+   ],
+   "requirements": [
+    [
+     "R1",
+     "passed_on_stated_checks"
+    ],
+    [
+     "R2",
+     "not_established"
+    ]
+   ],
+   "seconds": 29.7,
+   "model_calls": 7,
+   "input_tokens": 11412,
+   "output_tokens": 2307,
+   "answered_by": [
+    "claude-haiku-4-5-20251001"
+   ],
+   "dollars": 0.022947,
+   "stages": [
+    [
+     "example.v1",
+     "replied",
+     ""
+    ],
+    [
+     "relation.v1",
+     "replied",
+     ""
+    ],
+    [
+     "access_rule.v1",
+     "replied",
+     ""
+    ],
+    [
+     "differential.v1",
+     "replied",
+     ""
+    ],
+    [
+     "forbidden_dependency.v1",
+     "replied",
+     ""
+    ],
+    [
+     "state_invariant.v1",
+     "replied",
+     ""
+    ],
+    [
+     "scenarios",
+     "replied",
+     ""
+    ],
+    [
+     "free_form",
+     "skipped",
+     "a proposed template instance applies to every requirement"
+    ]
+   ],
+   "proposed": [
+    "g6p-differential-3",
+    "g6p-differential-4",
+    "g6p-relation-1",
+    "g6p-relation-2"
+   ],
+   "applied": [
+    [
+     "g6p-differential-3",
+     "differential.v1",
+     "not_refuted"
+    ],
+    [
+     "g6p-differential-4",
+     "differential.v1",
+     "not_refuted"
+    ]
+   ],
+   "refused": [
+    [
+     "example.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-example-1): bindings.cases.0: Value error, a case states exactly one of returns (the result), raises (an exception type) or effect (an argument's va"
+    ],
+    [
+     "example.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-example-1): bindings.cases.0: Value error, a case states exactly one of returns (the result), raises (an exception type) or effect (an argument's va"
+    ],
+    [
+     "relation.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-relation-1): bindings: Value error, monotonicity's inputs must be at least two, in ascending order, and comparable with one another"
+    ],
+    [
+     "state_invariant.v1",
+     "R1",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-5): bindings: Value error, model: the model has no field balance; it takes variables, init, transition and invariants"
+    ],
+    [
+     "state_invariant.v1",
+     "R2",
+     "its instance was refused: template_instances.0 (g6p-state_invariant-5): bindings: Value error, model: the model has no field balance; it takes variables, init, transition and invariants"
+    ]
+   ],
+   "questions": [
+    "g6p-scenario-1",
+    "g6p-scenario-2",
+    "g6p-scenario-3"
+   ],
+   "unknowns": 1
+  }
+ ],
+ "python": "3.12.14",
+ "observed": {
+  "calls": 42,
+  "answered_by": [
+   "claude-haiku-4-5-20251001"
+  ],
+  "stop_reasons": [
+   "end_turn"
+  ],
+  "input_tokens_most_in_one_call": 2889,
+  "output_tokens_most_in_one_call": 911,
+  "calls_per_review": [
+   7
+  ],
+  "dollars_per_review": [
+   0.021466,
+   0.029203
+  ],
+  "seconds_per_review": [
+   29.7,
+   51.4
+  ],
+  "worst_case_dollars_of_one_call_as_checked": 0.029214
+ },
+ "choices": {
+  "written": "after the run, from this record alone (development fixtures only)",
+  "max_model_calls": "10, kept: templates_first used 7 per review (six template stages and the scenarios), leaving 3 for the free-form stage or a retry; the free-form stage was skipped in every review, as a proposed template instance applied to every requirement",
+  "max_output_tokens": "4,096, kept: the longest reply held 911 tokens and every reply ended on its own (end_turn), so the limit cut nothing and leaves room for a larger repository's reply",
+  "max_input_chars": "60,000, kept: the largest request was 2,889 input tokens; the context, cut at max_context_chars (24,000), is what grows with a real repository, and a request past 60,000 characters is never sent",
+  "max_context_chars": "24,000, kept: these fixtures' context was far smaller, so the smoke says nothing that would move it",
+  "prompts": "not changed: every review refused its state_invariant.v1 instances (the model put its own fields where the binding takes variables, init, transition and invariants), and several instances named a callable that is not a dotted name; this is recorded here, not tuned, since a change would need another paid run to judge",
+  "for_v10s_cap": "about $0.02 to $0.03 per review on these small fixtures with claude-haiku-4-5; the most the limits allow one review to cost is 10 calls of at most 60,000 input characters (counted as tokens) and 4,096 output tokens: 10 x ($0.06 + $0.02048) = $0.80"
+ }
+}
