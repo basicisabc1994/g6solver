@@ -7,8 +7,9 @@ as a tool result: it saves a result over 50,000 characters (or 25,000 tokens) to
 reply ``metaharness_job`` returns by default: ``assessment.report`` first, then the outcome, the reasons, the next
 actions and the unknowns, the merge authorisation, the job id, the envelope's fields, and where the full assessment is
 (that file, and ``metaharness_job`` with ``detail="full"``, which returns the whole reply as it was before). The report
-is never cut. The other lists keep their first items and each text its first characters, at most, so the rest of the
-reply stays within ``BUDGET`` characters whatever the review holds; ``full_assessment.shortened`` names what was cut.
+is never cut, and every integrity reason is kept whole and first. The other lists keep their first items and each
+text its first characters, at most, so the rest of the reply stays within ``BUDGET`` characters whatever the review
+holds; ``full_assessment.shortened`` names what was cut.
 A reply with no assessment, a refusal, is returned as it is. Nothing here decides anything.
 """
 from __future__ import annotations
@@ -71,6 +72,11 @@ def compact(reply: dict, job_id: str, saved: str | None) -> dict:
     report = str(assessment.get("report", ""))
     evidence = [{key: item[key] for key in EVIDENCE if key in item}
                 for item in reply.get("evidence") or [] if isinstance(item, dict)]
+    # every integrity reason comes before every other finding: kept whole and first, never cut (the security review
+    # of W1-W5, F6); only the others are shortened
+    reasons = [r for r in assessment.get("reasons") or [] if isinstance(r, dict)]
+    integrity = [r for r in reasons if r.get("stage") == "integrity"]
+    others = [r for r in reasons if r.get("stage") != "integrity"]
     how = f'metaharness_job(job_id="{job_id}", detail="full")'
     for items, chars in SHORTENINGS:
         cut: set[str] = set()
@@ -80,7 +86,7 @@ def compact(reply: dict, job_id: str, saved: str | None) -> dict:
 
         shown = {
             "assessment": {"report": report, "outcome": assessment.get("outcome"),
-                           "reasons": short(assessment.get("reasons") or [], "assessment.reasons"),
+                           "reasons": [*integrity, *short(others, "assessment.reasons")],
                            "next_actions": short(assessment.get("next_actions") or [], "assessment.next_actions"),
                            "unknowns": short(assessment.get("unknowns") or [], "assessment.unknowns")},
             "merge": short(reply.get("merge"), "merge"),
@@ -97,7 +103,8 @@ def compact(reply: dict, job_id: str, saved: str | None) -> dict:
             "evidence": short(evidence, "evidence"),
         }
         shown["full_assessment"]["shortened"] = sorted(cut)
-        if len(json.dumps(shown, ensure_ascii=False)) - len(json.dumps(report, ensure_ascii=False)) <= BUDGET:
+        kept = len(json.dumps(report, ensure_ascii=False)) + len(json.dumps(integrity, ensure_ascii=False))
+        if len(json.dumps(shown, ensure_ascii=False)) - kept <= BUDGET:
             break
     return shown
 
