@@ -554,7 +554,7 @@ class MissionStore:
         # COPY: why a result waits for the owner's confirmation of a raised standard.
         return (accept_rules.Requirement(
             "you confirmed what counts as done", "", {},
-            f"it was raised to revision {contract.revision} and you have not confirmed it; to resolve: python -m "
+            f"it was raised to revision {contract.revision} and you have not confirmed it; to resolve: python -P -m "
             f"g6.workforce.decide confirm {mission_id} --reason \"...\""),)
 
     def record_unmet(self, mission_id: str, *, kind: str, subject: str, why: str, unit: str = "") -> None:
@@ -627,12 +627,12 @@ class MissionStore:
                 raise ValueError(
                     f"This plan raised what counts as done for this mission to {mission['risk_tier']} ({raised}), and "
                     "you have not confirmed the raised standard. The raised standard was kept; the plan was not "
-                    "stored. To resolve: confirm it at your terminal: python -m g6.workforce.decide confirm "
+                    "stored. To resolve: confirm it at your terminal: python -P -m g6.workforce.decide confirm "
                     f"{mission_id} --reason \"...\", then submit the same plan again; if G6 says the spec is not "
                     "complete, accept the mission again with the owner's answers first (code G6_E_PENDING_APPROVAL)")
             raise ValueError("This plan cannot be stored yet: what counts as done for this mission "
                              f"({mission['risk_tier']}) has not been confirmed by you. Nothing was stored. To resolve: "
-                             f"confirm it at your terminal: python -m g6.workforce.decide confirm {mission_id} "
+                             f"confirm it at your terminal: python -P -m g6.workforce.decide confirm {mission_id} "
                              "--reason \"...\" (code G6_E_PENDING_APPROVAL)")
         with self._conn:
             cur = self._conn.execute(

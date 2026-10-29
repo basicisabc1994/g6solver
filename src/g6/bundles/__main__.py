@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""``python -m g6.bundles [<id>]`` — start a bundle's local page; with no id, list the bundles."""
+"""``python -P -m g6.bundles [<id>]`` — start a bundle's local page; with no id, list the bundles."""
 from __future__ import annotations
 
 import sys

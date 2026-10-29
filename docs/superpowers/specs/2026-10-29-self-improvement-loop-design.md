@@ -108,7 +108,7 @@ those agents produce is far higher.
 - **Public history:** everything pushed is public. No user name, home folder, private path, key or held source
   (all-rights-reserved book text) is ever committed (section 6.9).
 - **The surfaces:** MCP is the surface of record. The CLI and GUI are frozen, so the loop runs as
-  `python -m g6.self_maintenance`, not as a new `g6` command (designer's call).
+  `python -P -m g6.self_maintenance`, not as a new `g6` command (designer's call).
 - **Classifier and permission stops:** when a safety classifier or a permission prompt stops an action, the loop
   stops that action. It records the stop and reports it in its digest. It never rephrases or retries the action.
 - **Containers:** the loop never stops, kills or removes a container it did not start.
@@ -530,7 +530,7 @@ the certificates stay as they are.
 - the kill switch and the health pause;
 - bound files only through `needs-issuance` pull requests;
 - the experiment selector off by default until Gate C;
-- `python -m g6.self_maintenance`, not a new CLI command;
+- `python -P -m g6.self_maintenance`, not a new CLI command;
 - the records branch;
 - cross-family review;
 - the 24-hour release of the reserve.
