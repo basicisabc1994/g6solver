@@ -211,8 +211,11 @@ class RepoRefused(ValueError):
 #: unchanged lines between them, whatever the owner's ``diff.interHunkContext`` (review M7). And nothing in .git the
 #: patch's author controls changes what git reports (the review of VS-4, finding 1): no replace ref
 #: (``--no-replace-objects``), no file-system monitor or untracked cache answering for the working tree, and no sparse
-#: checkout marking the entries of the private index ``_private`` builds.
-_GIT = ("git", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects", "-c", "core.quotepath=off",
+#: checkout marking the entries of the private index ``_private`` builds. Its first part stands for git itself, found
+#: when the command runs through ``git_env.git_program`` (on PATH, never the current folder: Windows looks there
+#: first for a bare name, so a project could ship its own git.exe; the security review of W1-W5, F1).
+_GIT_PROGRAM = object()
+_GIT = (_GIT_PROGRAM, "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects", "-c", "core.quotepath=off",
         "-c", "diff.interHunkContext=0", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
         "-c", "core.sparseCheckout=false")
 
@@ -240,7 +243,8 @@ def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,), timeout_s: float = 
                     env["GIT_INDEX_FILE"] = str(index)
                 output.seek(0)
                 output.truncate()
-                code = component_process.run_process([*_GIT, "-C", str(repo), *git_env.safe_git_args(*args)],
+                command = [git_env.git_program() if part is _GIT_PROGRAM else part for part in _GIT]
+                code = component_process.run_process([*command, "-C", str(repo), *git_env.safe_git_args(*args)],
                                                      env=env, stdout=output, stderr=errors)
             if code not in ok:
                 errors.seek(0)
