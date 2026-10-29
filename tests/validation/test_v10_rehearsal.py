@@ -100,8 +100,9 @@ def test_the_paid_steps_run_each_task_once_in_draw_order_and_arm_r_in_the_host_p
     ran = []
     monkeypatch.setattr(launcher, "patch_and_self_review", lambda task_id, **kw: ran.append(("patch", task_id)) or {})
     monkeypatch.setattr(launcher, "review_r", lambda task_id, **kw: ran.append(("r", task_id, kw["copy"])) or {})
+    ledger = launcher.Ledger(tmp_path / "ledger.json", cap=15.0)
     monkeypatch.setattr(rehearsal, "_paid_context", lambda run, assets: {"docker": None, "assets": None,
-                                                                          "key": "made-up", "ledger": None})
+                                                                          "key": "made-up", "ledger": ledger})
     (tmp_path / "patches").mkdir()
     (tmp_path / "patches" / "dev-wallet.diff").write_text("", encoding="utf-8")       # attempted already
     rehearsal.patches(tmp_path, assets=None, image="img")
@@ -112,6 +113,26 @@ def test_the_paid_steps_run_each_task_once_in_draw_order_and_arm_r_in_the_host_p
                                              encoding="utf-8")
     rehearsal.reviews(tmp_path, assets=None, image="img")
     assert ran[-1] == ("r", "dev-codec", tmp_path / "prepared" / "copies" / "c")
+
+
+def test_no_r_session_starts_that_rs_share_cannot_cover_at_its_worst(tmp_path, monkeypatch):
+    # ruling on items 68 and 71: R is charged only when judged, so its share is checked before each session
+    rehearsal.build(tmp_path)
+    ledger = launcher.Ledger(tmp_path / "ledger.json", cap=15.0)
+    share = 1500 / 100 / 4                                                   # a quarter of V10's cap, in dollars
+    held = ledger.reserve("review_r:earlier", share - 1.0)
+    ledger.settle(held, share - 1.0, {})                                     # R has spent all but a dollar
+    ran = []
+    monkeypatch.setattr(launcher, "review_r", lambda task_id, **kw: ran.append(task_id) or {})
+    monkeypatch.setattr(rehearsal, "_paid_context", lambda run, assets: {"docker": None, "assets": None,
+                                                                          "key": "made-up", "ledger": ledger})
+    prepared = tmp_path / "prepared" / "arm_r"
+    prepared.mkdir(parents=True)
+    (prepared / "dev-codec.json").write_text(json.dumps({"task_id": "dev-codec", "copy": "/work/prepared/copies/c"}),
+                                             encoding="utf-8")
+    with pytest.raises(launcher.Stopped, match="share"):
+        rehearsal.reviews(tmp_path, assets=None, image="img")
+    assert ran == [] and json.loads((tmp_path / "freeze.json").read_text(encoding="utf-8"))["v10"]["cap_cents"] == 1500
 
 
 def test_arm_c_and_t_are_arm_as_rule_with_their_search_and_the_stopped_caller(tmp_path, monkeypatch):

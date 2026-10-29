@@ -178,7 +178,7 @@ def build(out: str | Path, *, g6_commit: str = "0" * 40) -> Path:
                "audit": None, "registered_size": None,
                "broken_tasks": {"published_list": {"found": False}, "screen": {"on": False}},
                "tasks": [tasks[name] for name in draw.order(rows, seed=SEED)]},
-        "v10": {"cap_cents": 600.0, "shares": None, "limit_s": LIMIT_S, "grace_s": 60, "call_cap": CALL_CAP,
+        "v10": {"cap_cents": 1500.0, "shares": None, "limit_s": LIMIT_S, "grace_s": 60, "call_cap": CALL_CAP,
                 "rerun_timeout_s": 120, "arm_e": {"runs": RUNS, "run_s": RUN_S},
                 "arm_r": {"sessions": "r-sessions", "prices": launcher.PRICES},
                 "bindings": {arm: f"{__name__}:arm_{arm.lower()}" for arm in "CTE"}}}
@@ -360,12 +360,22 @@ def reviews(run: str | Path, *, assets, image: str) -> list[dict]:
     """V10's arm R for each patch ``study.py prepare`` prepared (in the container), once each, in the host path of
     its copy."""
     run, context, done = Path(run), None, []
+    v10 = study.load_freeze(run / "freeze.json")["v10"]
+    share = float(v10["cap_cents"]) / 100 * float((v10.get("shares") or {}).get("R", 0.25))
+    worst = launcher.CAPS["review_r"]["max_usd"] + launcher.MARGIN_USD
     for path in sorted((run / "prepared" / "arm_r").glob("*.json")):
         prepared = json.loads(path.read_text(encoding="utf-8"))
         if (run / "r-sessions" / f"{prepared['task_id']}.json").exists():
             continue
         copy = run / Path(prepared["copy"]).relative_to(CONTAINER_RUN)
         context = context or _paid_context(run, assets)
+        # ruling on items 68 and 71: R is charged only once judged, so before each session its worst case must fit
+        # R's share as well as the whole cap (the ledger checks the cap)
+        spent = (sum(e["dollars"] for e in context["ledger"].data["entries"] if e["what"].startswith("review_r:"))
+                 + sum(o["most"] for o in context["ledger"].data["open"].values() if o["what"].startswith("review_r:")))
+        if spent + worst > share + 1e-9:
+            raise launcher.Stopped(f"arm R's share of {share:.2f} dollars cannot cover another session's worst case "
+                                   f"of {worst:.2f} with {spent:.4f} spent or held")
         done.append(launcher.review_r(prepared["task_id"], prepared={k: v for k, v in prepared.items() if k != "copy"},
                                       copy=copy, docker=context["docker"], assets=context["assets"], image=image,
                                       key=context["key"], ledger=context["ledger"], sessions=run / "r-sessions"))
@@ -387,8 +397,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command in ("patches", "reviews"):
         done = (patches if args.command == "patches" else reviews)(args.run, assets=args.assets, image=args.image)
-        print(json.dumps([{k: (v.get("dollars") if isinstance(v, dict) else None) for k, v in item.items()
-                           if k != "patch_text"} for item in done]))
+        print(json.dumps([{k: v.get("dollars") for k, v in item.items() if isinstance(v, dict)} or
+                          {"task_id": item.get("task_id"), "dollars": item.get("dollars")} for item in done]))
         return 0
     with tempfile.TemporaryDirectory(prefix="rehearsal-key-") as work:
         found = key_check(Path(work) / "repo")

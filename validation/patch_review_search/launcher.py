@@ -40,13 +40,16 @@ if str(V7_FOLDER) not in sys.path:
 
 import run_arm as v7  # noqa: E402
 
-#: The model and effort the rehearsal's sessions use: V7's runner's, the candidate the registry records for V9's
-#: agent until the owner names one at the freeze.
-MODEL, EFFORT = "claude-sonnet-5-5", "high"
-#: Anthropic's published prices for MODEL, US dollars per million tokens (read 2026-10-29). A cache write is counted at
-#: the one-hour rate, twice the input price, the higher of the two, so the stop errs high.
-PRICES = {MODEL: {"input_tokens": 2.00, "output_tokens": 10.00, "cache_read_input_tokens": 0.20,
-                  "cache_creation_input_tokens": 4.00}}
+#: The model V9's sessions use: Claude Code with claude-haiku-4-5, the owner's choice for V9 (2026-10-28), which the
+#: feasibility freeze entry names (ruling on item 73). Effort is Claude Code's default for the model: none is set.
+MODEL, EFFORT = "claude-haiku-4-5", None
+EFFORT_NOTE = "Claude Code's default for the model (none set)"
+#: Anthropic's published prices for MODEL, US dollars per million tokens (read 2026-10-29): input 1.00, output 5.00, a
+#: cache read a tenth of input, a five-minute cache write 1.25 times input and a one-hour write twice input. The stop
+#: counts every cache write at the higher rate (``PRICES``); the accounting prices each at its own (``accounted``).
+INPUT, OUTPUT = 1.00, 5.00
+PRICES = {MODEL: {"input_tokens": INPUT, "output_tokens": OUTPUT, "cache_read_input_tokens": INPUT / 10,
+                  "cache_creation_input_tokens": INPUT * 2}}
 MARGIN_USD = 0.50
 KINDS = ("patch", "self_review", "review_r")
 #: Each kind's caps: turns, wall clock (arm 2 and arm R have V9's arm 2 limit, 30 minutes) and dollars.
@@ -64,8 +67,20 @@ class Stopped(RuntimeError):
 
 
 def dollars(usage: dict, model: str = MODEL) -> float:
+    """The stop's count: every kind at ``PRICES``, a cache write at the higher rate."""
     price = PRICES[model]
     return sum(int(usage.get(kind) or 0) * rate for kind, rate in price.items()) / 1e6
+
+
+def accounted(usage: dict) -> float:
+    """The cost record's count (ruling on item 76): each cache write at its own published rate where the usage says
+    which (five minutes 1.25 times input, one hour twice), else twice."""
+    split = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else None
+    writes = (int(split.get("ephemeral_5m_input_tokens") or 0) * INPUT * 1.25
+              + int(split.get("ephemeral_1h_input_tokens") or 0) * INPUT * 2) if split else \
+        int(usage.get("cache_creation_input_tokens") or 0) * INPUT * 2
+    return (int(usage.get("input_tokens") or 0) * INPUT + int(usage.get("output_tokens") or 0) * OUTPUT
+            + int(usage.get("cache_read_input_tokens") or 0) * INPUT / 10 + writes) / 1e6
 
 
 class Ledger:
@@ -115,12 +130,22 @@ class Ledger:
         self._save()
 
 
-def claude_args(*, caps: dict, resume: str = "", model: str = MODEL, effort: str = EFFORT) -> list[str]:
+def claude_args(*, caps: dict, resume: str = "", model: str = MODEL, effort: str | None = EFFORT) -> list[str]:
     """V7's flags, with the model and effort the rehearsal names."""
-    args = [v7.CLAUDE_IN, "-p", "--model", model, "--effort", effort, "--output-format", "stream-json", "--verbose",
+    args = [v7.CLAUDE_IN, "-p", "--model", model, *(["--effort", effort] if effort else []), "--output-format",
+            "stream-json", "--verbose",
             "--max-turns", str(caps["max_turns"]), "--max-budget-usd", f"{caps['max_usd']:.2f}",
             "--dangerously-skip-permissions", "--disallowedTools", "WebFetch", "WebSearch", "--strict-mcp-config"]
     return args + (["--resume", resume] if resume else [])
+
+
+def _writes(tally) -> dict:
+    """Cache writes by lifetime, summed over the session's messages, for arm 2's token cap at the freeze."""
+    found = {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}
+    for usage in tally.usage_by_message.values():
+        for kind, count in (usage.get("cache_creation") or {}).items():
+            found[kind] = found.get(kind, 0) + int(count or 0)
+    return found
 
 
 def _sha256(text: str) -> str:
@@ -197,7 +222,11 @@ def run_session(kind: str, *, prompt: str, docker, box, key: str, ledger: Ledger
     record = {"task_id": task_id, "kind": kind, "patch_sha256": _sha256(patch),
               "answer": str(result.get("result") or ""), "ended": ENDED.get(status, "error"), "status": status,
               "elapsed_s": round(time.monotonic() - started, 3), "tokens": sum(tally.usage.values()),
-              "model_calls": tally.model_calls, "model": MODEL, "usage": tally.usage, "dollars": cost,
+              "model_calls": tally.model_calls, "model": MODEL, "effort": EFFORT_NOTE,
+              "claude_code": getattr(box, "claude_code", None),
+              "configuration_empty": getattr(box, "configuration_empty", None), "usage": tally.usage,
+              "cache_writes": _writes(tally), "dollars": cost,
+              "accounted_dollars": round(sum(accounted(u) for u in tally.usage_by_message.values()), 6),
               "reported_usd": result.get("total_cost_usd"), "num_turns": result.get("num_turns"),
               "session_id": tally.session_id, "transcript": f"{task_id}.jsonl"}
     (record_dir / f"{task_id}.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
@@ -217,7 +246,9 @@ def open_box(docker, assets, image: str, tag: str):
     net = v7.start_net(docker, env, assets, tag)
     try:
         box = v7.start_box(docker, env, image, net, f"rehearsal-{tag}")
-        v7.install_claude(docker, box, assets)
+        box.claude_code = v7.install_claude(docker, box, assets).strip().splitlines()[-1]
+        # the record says the configuration folder was empty as checked at the start (ruling on item 46)
+        box.configuration_empty = v7.out(docker.sh(box.agent, "ls -A /root/.claude 2>/dev/null | wc -l")) == "0"
     except Exception:
         net.close()
         raise

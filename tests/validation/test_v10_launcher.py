@@ -92,6 +92,7 @@ def test_a_session_is_claude_code_headless_with_the_registered_flags_and_the_key
     docker = FakeDocker(stream())
     ledger = launcher.Ledger(tmp_path / "ledger.json", cap=15.0)
     box = launcher.v7.Box(docker, "agent-1", repo="/app", net=launcher.v7.Net(docker, "net", "proxy"))
+    box.claude_code, box.configuration_empty = "2.1.309 (Claude Code)", True
     patch = "diff --git a/x.py b/x.py\n"
     got = launcher.run_session("self_review", prompt="Review it.", docker=docker, box=box, key=KEY,
                                ledger=ledger, record_dir=tmp_path / "s", task_id="t1", patch=patch,
@@ -99,16 +100,16 @@ def test_a_session_is_claude_code_headless_with_the_registered_flags_and_the_key
     command = docker.commands[-1]
     claude = command[command.index(launcher.v7.CLAUDE_IN):]
     assert claude[:2] == [launcher.v7.CLAUDE_IN, "-p"] and claude[claude.index("--model") + 1] == launcher.MODEL
-    assert claude[claude.index("--effort") + 1] == launcher.EFFORT and "--strict-mcp-config" in claude
+    assert "--effort" not in claude and "--strict-mcp-config" in claude          # Claude Code's default effort
     assert claude[claude.index("--resume") + 1] == "sess-0" and "WebFetch" in claude and "WebSearch" in claude
     assert claude[claude.index("--max-budget-usd") + 1] == "0.75"
     assert "ANTHROPIC_API_KEY" in command and KEY not in json.dumps(command)       # passed by name only
     assert docker.envs[-1]["ANTHROPIC_API_KEY"] == KEY
     written = "".join(p.read_text(encoding="utf-8") for p in (tmp_path / "s").rglob("*") if p.is_file())
     assert KEY not in written
-    dollars = (1000 * 2.00 + 200 * 10.00 + 5000 * 0.20 + 100 * 4.00) / 1e6
+    dollars = (1000 * 1.00 + 200 * 5.00 + 5000 * 0.10 + 100 * 2.00) / 1e6        # the stop's rates
     assert got["dollars"] == pytest.approx(dollars) and ledger.spent == pytest.approx(dollars)
-    assert got["model"] == launcher.MODEL and got["ended"] == "completed" and got["model_calls"] == 1
+    assert got["model"] == launcher.MODEL == "claude-haiku-4-5" and got["effort"] == launcher.EFFORT_NOTE
     assert got["patch_sha256"] == hashlib.sha256(patch.encode("utf-8")).hexdigest()
     assert got["tokens"] == 6300 and got["session_id"] == "sess-1" and got["transcript"] == "t1.jsonl"
 
@@ -201,3 +202,11 @@ def test_the_records_are_the_ones_arm_2_and_arm_r_read(tmp_path):
     assert arm_r.disposition(prepared, got)["category"] == "defect_found"
     assert self_review.disposition(prepared, {**got, "answer": "VERDICT: ACCEPT"})["accepted"] is True
     assert arm_r.cost_cents(got, launcher.PRICES) == pytest.approx(got["dollars"] * 100)
+
+
+def test_the_accounting_prices_a_five_minute_cache_write_at_its_own_rate_and_the_stop_at_the_higher(tmp_path):
+    usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 1000,
+             "cache_creation": {"ephemeral_5m_input_tokens": 800, "ephemeral_1h_input_tokens": 200}}
+    assert launcher.dollars(usage) == pytest.approx(1000 * 2.00 / 1e6)                 # the stop: twice input
+    assert launcher.accounted(usage) == pytest.approx((800 * 1.25 + 200 * 2.00) / 1e6)  # each at its own rate
+    assert launcher.accounted({"cache_creation_input_tokens": 1000}) == pytest.approx(1000 * 2.00 / 1e6)
