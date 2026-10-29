@@ -1456,21 +1456,33 @@ def bindings_help(template: str, bindings: Any = None) -> str:
             "review again.")
 
 
+_PLAIN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
+
+
+def _shown(part: Any) -> str:
+    """A part of a field's location as a refusal says it: a list index or a plain name as it is, anything else the
+    request wrote as a JSON string, so a name holding a line break or Markdown stays one inert, printable line (the
+    security review of W1-W5, F5)."""
+    if isinstance(part, int) or (isinstance(part, str) and _PLAIN_NAME.fullmatch(part)):
+        return str(part)
+    return json.dumps(str(part))
+
+
 def _refused_bindings(where: str, template: str, bindings: Any, exc: ValidationError) -> BindingsRefused:
     """The refusal of bindings ``exc`` found wrong: the first problem, as it was always said, then each binding
     missing and each name that is not one of the template's bindings, with the one it most likely meant."""
     errors = exc.errors()
     first = errors[0]
-    loc = ".".join(str(p) for p in first["loc"])
+    loc = ".".join(_shown(p) for p in first["loc"])
     message = f"{where}: bindings{'.' + loc if loc else ''}: {first['msg']}"
     names = {name for _, form in _forms(template, bindings) for name in form.model_fields}
     missing = [str(e["loc"][0]) for e in errors if e["type"] == "missing" and len(e["loc"]) == 1]
     named = []
     if missing:
-        named.append("missing: " + ", ".join(f"bindings.{name}" for name in missing))
+        named.append("missing: " + ", ".join(f"bindings.{_shown(name)}" for name in missing))
     for wrong in (str(e["loc"][0]) for e in errors if e["type"] == "extra_forbidden" and len(e["loc"]) == 1):
         meant = difflib.get_close_matches(wrong, sorted(names), n=1)
-        named.append(f"bindings.{wrong} is not one of {template}'s bindings"
+        named.append(f"bindings.{_shown(wrong)} is not one of {template}'s bindings"
                      + (f" (did you mean {meant[0]}?)" if meant else ""))
     return BindingsRefused(message + ("; " + "; ".join(named) if named else ""), bindings_help(template, bindings))
 
@@ -1500,7 +1512,7 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
             one = TemplateInstance.model_validate(data)
         except ValidationError as exc:
             first = exc.errors()[0]
-            raise ValueError(f"{where}: {'.'.join(str(p) for p in first['loc']) or 'instance'}: {first['msg']}") from exc
+            raise ValueError(f"{where}: {'.'.join(_shown(p) for p in first['loc']) or 'instance'}: {first['msg']}") from exc
         definition = REGISTRY.get(one.template)
         if definition is None:
             raise ValueError(f"{where}: template must be one of {', '.join(sorted(REGISTRY))}")

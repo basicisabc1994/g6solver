@@ -29,7 +29,8 @@ and ``ABSTRACTION_MCP_STATE``, must resolve inside the directory that person
 names in ``ABSTRACTION_MCP_DIR``. The agent can set neither: the server reads
 both from its own environment.
 
-Run: python -m g6.abstraction.server  (stdio transport)
+Run: python -P -m g6.abstraction.server  (stdio transport; -P keeps the folder it starts in, a project's, off the
+import path, so the project's own packages never replace G6's)
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import server as _sdk
 
 from .abstractions import COMBINATORS, SpecError, from_spec
 from .cegar import (find_counterexamples as _find_cexs, refine_until,
@@ -50,6 +52,10 @@ from .gate import run_gate
 from .library import Library, STALE_WARN
 from .pruning import advise_pruning as _advise
 
+# The mcp SDK's FastMCP builds its settings with env_file=".env", read from the folder the server starts in, which is
+# the project's, whatever FASTMCP_ENV_FILE says (the security review of W1-W5, F3): this server reads no such file.
+# FASTMCP_* variables in the person's own environment are read as before.
+_sdk.Settings.model_config["env_file"] = None
 
 mcp = FastMCP(
     "abstraction-harness",

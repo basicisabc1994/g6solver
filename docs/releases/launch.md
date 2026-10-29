@@ -40,6 +40,15 @@ Merging stays the person's decision.
   started in, the project's, where a line could name a class for G6's server to import and build. G6's server now
   turns the version check off and reads no such file; what a person sets in the environment
   (`FASTMCP_CHECK_FOR_UPDATES`, `FASTMCP_ENV_FILE`) is kept.
+- **A meta-harness workflow a project ships is never confirmed for the person.** G6 finds workflows in the project's
+  folder, and a workflow's confirmation lived in its own files there, so a project could ship one confirmed under any
+  name, and G6 ran it. A confirmation now counts only when G6 recorded it in its own state folder when a person
+  confirmed; and the tools that run a workflow's code over MCP are refused unless the person allows them in
+  `G6_MCP_SENSITIVE` (`metaharness.run`, `metaharness.evaluate_start`, `metaharness.evaluate`).
+- **A false alarm on pdm-backend's build output, found by a worked example.** pdm-backend's editable install writes a
+  git-ignored `.pdm-build/` folder with a `.pth` file in it, which Python never reads from there, and G6 counted it as
+  a file that could change the tests. G6 now leaves `.pdm-build/` out of its scan of ignored files, as it does
+  `build/` and `dist/`.
 
 ## What does not ship
 
@@ -72,8 +81,9 @@ Merging stays the person's decision.
 - **Python first.** Patch review runs pytest on Python repositories only.
 - **Files git ignores.** G6 does not compare files git ignores, so an untracked, git-ignored file the tests could load
   puts test integrity in doubt. A `.py` file named like any module in the repository counts, wherever it is, so a
-  data fixture called `a.py` can raise it. The reply names each such file once; if they are data or not needed, track
-  them (`git add -f <path>`) or remove them, then review again.
+  data fixture called `a.py` can raise it. The reply names each such file once; if they belong to the project, commit
+  them before the change under review, otherwise remove them or move them out of the repository, then review again.
+  A file the patch itself adds under an ignored path, with `git add -f`, is part of the change and is judged as one.
 - **What an outcome means.** Supported within scope means every stated requirement passed its stated checks; it is
   not proof that the patch does everything the task needs. The comparison for weakened tests is static and cannot
   show that the tests are as strong as before.

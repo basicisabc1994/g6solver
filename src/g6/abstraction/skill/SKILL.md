@@ -82,7 +82,7 @@ candidate in range and within 0.25 of the data.
 
 It has no block, so over MCP `g6_invoke("abstraction", ...)` answers `G6_E_NO_BLOCK`; `g6_describe("abstraction")`
 serves this skill. From Python: `from g6.abstraction import ConcreteDomain, Library, Quotient, replay, run_gate`. A
-separate stdio server, `python -m g6.abstraction.server`, offers these steps as tools of its own. Its file tools,
+separate stdio server, `python -P -m g6.abstraction.server`, offers these steps as tools of its own. Its file tools,
 `load_dataset`, `save_state` and `load_state`, are refused (`G6_E_SENSITIVE_COMPONENT_DENIED`) unless the person who
 runs the server lists them (`abstraction.save_state`, ...) or `abstraction` in `G6_MCP_SENSITIVE`, and every path
 must lie inside the directory that person names in `ABSTRACTION_MCP_DIR` (`G6_E_ABSTRACTION_PATH_REFUSED`

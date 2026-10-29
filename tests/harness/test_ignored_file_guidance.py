@@ -23,9 +23,11 @@ GOOD = "def add(a, b):\n    return a + b\n"
 TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 ADD = "test_calc.py::test_add"
 SUM = [{"id": "R1", "text": "add returns the sum", "checks": [ADD]}]
+#: What settles it (the security review's F4): never "git add -f", which only stages the file into the patch.
+SETTLE = ("If they belong to the project, commit them before the change under review; otherwise remove them or move "
+          "them out of the repository; then review again.")
 NAMED = ("untracked and git-ignored, but named like modules in the repository, so G6 cannot rule out that one "
-         "replaces a module during the tests. If they are data or not needed, track them (git add -f <path>) or "
-         "remove them, then review again.")
+         "replaces a module during the tests. " + SETTLE)
 
 
 def _git(root: Path, *args: str) -> None:
@@ -79,9 +81,10 @@ def test_ignored_fixtures_named_like_modules_are_named_once_with_what_settles_it
     assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("integrity", "ignored_file_can_change_tests")]
     asked, = _asked(got)
     files = ["tests/data/gitignore_case/dir1/calc.py", "tests/data/gitignore_case/dir2/calc.py"]
-    assert asked == f"{', '.join(files)}: {NAMED}"
+    assert asked == f"{', '.join(f'`{rel}`' for rel in files)}: {NAMED}"   # each in a code span (F5)
     report = assessment["report"]
-    assert "What to do:" in report and "`git add -f <path>`" in report and "`assessment.next_actions`" in report
+    assert "What to do:" in report and "commit them before the change under review" in report
+    assert "`assessment.next_actions`" in report and "git add -f" not in report and "git add -f" not in asked
     assert len(report.splitlines()) <= 40
 
 
@@ -103,7 +106,7 @@ def test_each_file_is_named_once_and_never_also_its_folder(repo, monkeypatch):
     _recorded(monkeypatch)
     got = _review(repo)
     asked, = _asked(got)
-    assert asked == f"a/b/c.py, x/calc.py: {NAMED}"
+    assert asked == f"`a/b/c.py`, `x/calc.py`: {NAMED}"
     reason, = got["assessment"]["reasons"]
     assert reason["detail"] == "git ignores files that could change the tests: a/b, a/b/c.py, a/b/c.py, x/calc.py"
 
@@ -111,13 +114,13 @@ def test_each_file_is_named_once_and_never_also_its_folder(repo, monkeypatch):
 def test_an_ignored_conftest_is_not_said_to_be_named_like_a_module(repo, monkeypatch):
     (repo / ".git" / "info").mkdir(exist_ok=True)
     (repo / ".git" / "info" / "exclude").write_text("conftest.py\n")
-    (repo / "conftest.py").write_text("def pytest_runtest_setup(item):\n    pass\n")
+    (repo / "conftest.py").write_text("# an empty conftest\n")
     _recorded(monkeypatch)
     got = _review(repo)
     assert got["assessment"]["outcome"] == "test_integrity_compromised"
     asked, = _asked(got)
-    assert asked.startswith("conftest.py: untracked and git-ignored, but pytest or Python could load them")
-    assert "named like modules" not in asked and "git add -f <path>" in asked
+    assert asked.startswith("`conftest.py`: untracked and git-ignored, but pytest or Python could load them")
+    assert "named like modules" not in asked and asked.endswith(SETTLE) and "git add -f" not in asked
 
 
 def test_many_files_name_the_first_ten_and_say_how_to_list_the_rest(repo, monkeypatch):
@@ -125,4 +128,4 @@ def test_many_files_name_the_first_ten_and_say_how_to_list_the_rest(repo, monkey
     monkeypatch.setattr(repo_tests, "ignored_inputs", lambda root: repo_tests.Ignored(listed, {}, True, listed))
     _recorded(monkeypatch)
     asked, = _asked(_review(repo))
-    assert asked.startswith(", ".join(listed[:10]) + " and 2 more (git status --ignored lists them all): ")
+    assert asked.startswith(", ".join(f"`{rel}`" for rel in listed[:10]) + " and 2 more (git status --ignored lists them all): ")

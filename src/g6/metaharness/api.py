@@ -133,6 +133,23 @@ def _rebuilt(kind: str, body: dict[str, Any]) -> Proposal | EvaluationReport | G
     return GateDecision(**{**fields, "reasons": tuple(fields["reasons"]), "checks": tuple(fields.get("checks", ()))})
 
 
+#: Why a confirmation a workflow's own files carry is not the person's (the security review of W1-W5, F2): workflows are
+#: found in the folder G6 starts in, the project's, and a store there is a hash chain with no secret, so a project could
+#: ship one "confirmed" under any name. A confirmation counts only when G6 recorded it under its own state folder when a
+#: person confirmed (``confirmations_path``).
+NOT_RECORDED = ("the confirmation this workflow's own files carry was not recorded by G6 when a person confirmed it, "
+                "so it is not counted (a project's files can carry one)")
+
+
+def confirmations_path(workspace: Path) -> Path:
+    """Where G6 records a person's confirmation of the workflow in ``workspace``: under G6's state folder, by the
+    workspace's own path, never inside the workspace."""
+    import os
+
+    key = hashlib.sha256(os.path.normcase(str(workspace.resolve())).encode("utf-8")).hexdigest()
+    return g6_home() / "metaharness" / "confirmations" / f"{key}.json"
+
+
 class MetaHarness:
     def __init__(self, workflow: Workflow, factory: ExecutorFactory | None, workspace: Path, *,
                  theories: TheoryStore | None, clock: Callable[[], float],
@@ -214,10 +231,39 @@ class MetaHarness:
             if confirmed is None:
                 return _blocked(NOT_CONFIRMED, "a person has not confirmed the workflow",
                                 "mh.confirm(accepted_by='<your name>')")
+            if not self._recorded_confirmation(confirmed):
+                return _blocked(NOT_CONFIRMED, NOT_RECORDED,
+                                "A person inspects the workflow and confirms it: mh.confirm(accepted_by='<your name>').")
             if confirmed["workflow_digest"] != self.workflow.digest():
                 return _blocked(STANDARD_CHANGED, "the workflow changed since it was confirmed; every earlier "
                                 "comparison is void", "Confirm the new workflow (a person), then baseline again.")
         return None
+
+    def _recorded_confirmation(self, confirmed: Mapping[str, Any]) -> bool:
+        """Whether ``confirmed``, the store's latest confirmation, is the one G6 recorded under its state folder."""
+        import json
+
+        try:
+            return json.loads(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
+        except (OSError, ValueError):
+            return False
+
+    def _record_confirmation(self) -> None:
+        """Record the store's latest confirmation under G6's state folder (``confirmations_path``); ``OSError`` when it
+        cannot be written."""
+        import json
+        import os
+        import tempfile
+
+        target = confirmations_path(self.workspace)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=target.parent, prefix=".confirmation-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+                json.dump(self.store.confirmed(), out, sort_keys=True)
+            os.replace(name, target)
+        finally:
+            Path(name).unlink(missing_ok=True)
 
     def _head(self) -> tuple[int, Profile]:
         head = self.store.head()
@@ -315,11 +361,23 @@ class MetaHarness:
             if not self.ledger.has("vault", vault.vault_id):
                 self.ledger.add_vault(vault.vault_id, vault.digest, files=len(vault.manifest), roots=len(vault.roots))
         existing = self.store.confirmed()
-        # a new workflow, or G6's judging code changed since (an upgrade): the person's confirmation pins it again
-        if existing is None or existing["workflow_digest"] != digest_now or existing.get("judging_sha256") != judging:
-            self.store.confirm(workflow_digest=digest_now, judging_sha256=judging,
-                               held_out_digest=self.workflow.suite.digest("held_out"), accepted_by=accepted_by,
-                               at=_now())
+        # a new workflow, or G6's judging code changed since (an upgrade), or a confirmation G6 never recorded (one the
+        # workflow's own files carry, F2): the person's confirmation pins it again
+        if (existing is None or existing["workflow_digest"] != digest_now or existing.get("judging_sha256") != judging
+                or not self._recorded_confirmation(existing)):
+            try:
+                self.store.confirm(workflow_digest=digest_now, judging_sha256=judging,
+                                   held_out_digest=self.workflow.suite.digest("held_out"), accepted_by=accepted_by,
+                                   at=_now())
+            except LedgerError as exc:
+                return _blocked(APPROVAL_REQUIRED, f"the store refused the confirmation: {exc}",
+                                "Remove the workflow's folder if you did not make it, then create the workflow again.")
+        try:
+            self._record_confirmation()
+        except OSError as exc:
+            return _blocked(APPROVAL_REQUIRED, f"G6 could not record the confirmation in its state folder "
+                            f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
+                            "confirm again.")
         if self.store.head() is None:
             first = initial if initial is not None else Profile(
                 routing={s: next(iter(self.workflow.models)) for s in self.workflow.steps},

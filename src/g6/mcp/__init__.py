@@ -20,7 +20,10 @@ Ops a component marks sensitive (they run a program on your machine, reach the n
 this surface unless the person who runs the server lists them in ``G6_MCP_SENSITIVE``, a comma-separated list of
 component names (``lean``) or single ops (``lean.check_proof``), set where the server is registered, for example
 ``claude mcp add g6 -e G6_MCP_SENSITIVE=lean -- g6-mcp``. There is no wildcard, and the agent cannot set it: the
-server reads it from its own environment. ``g6_describe`` says which sensitive ops this server allows. Before you list
+server reads it from its own environment. The meta-harness tools that run a workflow's code are sensitive too:
+``metaharness.run``, ``metaharness.evaluate_start`` and ``metaharness.evaluate`` (``metaharness`` for all three); and
+a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
+project's files carry does not count. ``g6_describe`` says which sensitive ops this server allows. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -320,9 +323,19 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         except (ValueError, TypeError) as exc:
             return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}")
 
+    def runs_code(op: str) -> dict | None:
+        """The refusal of a tool that runs a workflow's code, unless the host lists ``metaharness.<op>`` (or
+        ``metaharness``) in G6_MCP_SENSITIVE (the security review of W1-W5, F2)."""
+        if _allowed("metaharness", op, allowed_sensitive()):
+            return None
+        from g6.core.door import blocked_reply
+        return blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code; the host must allow it, by adding "
+                             f"metaharness.{op} (or metaharness) to {SENSITIVE_ENV} where the server is registered")
+
     def metaharness_evaluate_start(workflow: str, proposal_digest: str) -> dict:
-        """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied."""
-        return jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
+        """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied. It runs the
+        workflow's code: requires host permission metaharness.evaluate_start in G6_MCP_SENSITIVE."""
+        return runs_code("evaluate_start") or jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
 
     def metaharness_job(job_id: str, detail: str = "compact") -> dict:
         """Read a process-local job's pending/running/completed/failed status and retained result. A finished
@@ -332,8 +345,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return jobs.status(job_id, detail)
 
     def metaharness_run(workflow: str, task_input: str) -> dict:
-        """Run the currently approved application version on new input as a job."""
-        return jobs.start(lambda: mh.run(workflow, task_input))
+        """Run the currently approved application version on new input as a job. It runs the workflow's code:
+        requires host permission metaharness.run in G6_MCP_SENSITIVE."""
+        return runs_code("run") or jobs.start(lambda: mh.run(workflow, task_input))
 
     def metaharness_inspect(workflow: str) -> dict:
         """A declared workflow's versions, confirmations, evaluations and decisions."""
@@ -351,8 +365,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return mh.propose(workflow, session=session(ctx), profile=profile, proposer=proposer)
 
     def metaharness_evaluate(workflow: str, proposal_digest: str) -> dict:
-        """Measure a candidate against the active version on the held-out split (paired, compute-matched)."""
-        return mh.evaluate(workflow, proposal_digest)
+        """Measure a candidate against the active version on the held-out split (paired, compute-matched). It runs the
+        workflow's code: requires host permission metaharness.evaluate in G6_MCP_SENSITIVE."""
+        return runs_code("evaluate") or mh.evaluate(workflow, proposal_digest)
 
     def metaharness_decide(workflow: str, report_digest: str, proposal_digest: str) -> dict:
         """The meta-gate's decision: recommend (qualified-draft at best), refuse or block, with a G6_E_META_* code.

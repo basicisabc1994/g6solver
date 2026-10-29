@@ -116,7 +116,8 @@ def test_a_huge_review_still_fits_and_keeps_its_report_whole(tmp_path, monkeypat
     real = _real()
     huge = copy.deepcopy(real)
     assessment = huge["assessment"]
-    assessment["reasons"] = [{"stage": "integrity", "code": f"code_{i}", "detail": "x" * 5_000} for i in range(100)]
+    # evidence-stage reasons: an integrity reason is never cut (F6, tests/core/test_mcp_review_reply_integrity.py)
+    assessment["reasons"] = [{"stage": "evidence", "code": f"code_{i}", "detail": "x" * 5_000} for i in range(100)]
     assessment["next_actions"] = [f"action {i}: " + "y" * 5_000 for i in range(100)]
     assessment["unknowns"] = [f"unknown {i}: " + "z" * 5_000 for i in range(100)]
     huge["evidence"] = huge["evidence"] * 100
