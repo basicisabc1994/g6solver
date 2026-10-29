@@ -201,3 +201,43 @@ These are worked examples. They show what happened in these ten runs and say not
   - template refusals did not say what was wrong. W4 fixed this: in run 8 a refusal named the missing binding and
     the next call was accepted.
 - **Spent:** $1.84 in all, of the $100 stop: $0.10 to $0.31 a run, 26 seconds to 5.4 minutes each.
+
+## Round 2: G6 with its own model
+
+**These are worked examples, not a study.** Each round 2 run is a new run of the same task: the agent writes a new
+patch, which can differ from its round 1 patch for reasons that have nothing to do with G6. So a difference between
+the rounds is not evidence that G6's model helps, and a sameness is not evidence that it does not. What follows says
+what happened in each run.
+
+**How round 2 was run** (PLAN.md section 9, "Round 2: G6 with its own model" and the two dated notes after it):
+
+- **G6:** commit 9ad134d, which includes the security review's fix pass, installed as its README says. Two lines in
+  the image's copy (`round2_g6.py`) put G6's check proposer (VS-5) on for every review, at the code's own limits:
+  `templates_first`, at most 10 model calls a review.
+- **G6's model:** claude-sonnet-5-5, through the `anthropic` provider. Its key is in G6's key file in the container
+  (owner-only), written only through standard input, and removed before G6's state folder is copied out.
+- **The agent, its container and its way out** are as in round 1. The task's repository is fetched from upstream.
+- **Before the first run:**
+  - one G6 model call from the container through the proxy replied, and only api.anthropic.com was reached;
+  - a dry run with no key passed the repository, hook and server checks.
+- **The key check before every run:** its own review asked G6's model while the confined test looked for the key.
+  The confined test found nothing; the unconfined control found the key in the environment and in G6's key file.
+- **Cost:** G6's caller reports no token counts, so each of G6's model calls is counted at an upper bound: the
+  request's characters over two in, the 4,096-token reply limit out. G6's costs below can only be overstated.
+
+| # | Task | Round 1 (G6 alone): G6's outcome, independent check | Round 2 (G6 + its model): G6 by round | What the proposer did | Round 2 independent check | Cost (agent + G6), time |
+|---:|---|---|---|---|---|---|
+| 1 | black #5634 | test integrity compromised (a harness false alarm); fails | 1: refused (template bindings); 2: not enough evidence; 3: supported within scope | 8 calls a review, 16 in all, all replied. Three free-form checks a review: 1 check error, 2 failing on the base too, because they could not import black (see below). No finding. | final **fails** (2 of 2 FAIL_TO_PASS), as in round 1 | $0.31 + $1.54, 4.7 min |
+
+**What happened, run by run**
+
+1. **black #5634**
+   - **What the proposer gave:** each review asked G6's model 8 times, once a stage from `example.v1` to the
+     free-form checks.
+   - **Why its checks did not run:** the three free-form checks it proposed in each review could not be collected,
+     at the base or on the patch: `ModuleNotFoundError: No module named '_black_version'`. Black's build writes that
+     file at install time and git ignores it, and G6 runs a proposed check in a copy of the repository that leaves
+     ignored files out.
+   - **G6's verdicts:** one check was a check error and two failed on the base too. G6 put them under "for you to
+     decide", as it should, and reproduced nothing.
+   - **The agent's patch fails the same two maintainers' tests as in round 1** (an indented `# fmt: off`).
