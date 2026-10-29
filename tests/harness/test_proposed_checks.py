@@ -298,17 +298,25 @@ def _read(spec, observations=()):
         ran = result([NODE], output=lines + ".\n1 passed in 0.01s\n")
     elif spec == "failed":
         ran = result(failed=[NODE], output=f"FAILED {NODE} - AssertionError: assert 7 == 6\n")
+    # reviewer B's B2: an operating-system error is read from G6's own record of the run (os_errors, from the
+    # exception objects), as its plugin writes it, never from the text of the output or a message
     elif spec == "contained":
-        ran = result(failed=[NODE], output=f"E       PermissionError: [Errno 13] Permission denied: '/x'\n"
-                                           f"FAILED {NODE} - PermissionError: [Errno 13] Permission denied\n")
+        ran = {**result(failed=[NODE], output=f"E       PermissionError: [Errno 13] Permission denied: '/x'\n"
+                                              f"FAILED {NODE} - PermissionError: [Errno 13] Permission denied\n"),
+               "os_errors": [NODE]}
     elif spec == "unreadable":   # options such as --tb=no -rN hide how it failed, so G6 cannot rule out a refusal
         ran = result(failed=[NODE], output="F\n1 failed in 0.01s\n")
     elif spec == "refused_via_library":   # review E12: a client library wraps the boundary's refusal; the line is cut
-        ran = result(failed=[NODE], output=f"FAILED {NODE} - httpx.Conn...\n",
-                     messages={NODE: "httpx.ConnectError: G6: network connections are refused for this test run"})
+        ran = {**result(failed=[NODE], output=f"FAILED {NODE} - httpx.Conn...\n",
+                        messages={NODE: "httpx.ConnectError: G6: network connections are refused for this test run"}),
+               "os_errors": [NODE]}
     elif spec == "no_name_lookup":
-        ran = result(failed=[NODE], output=f"FAILED {NODE} - httpx.Conn...\n",
-                     messages={NODE: "httpx.ConnectError: [Errno -3] Temporary failure in name resolution"})
+        ran = {**result(failed=[NODE], output=f"FAILED {NODE} - httpx.Conn...\n",
+                        messages={NODE: "httpx.ConnectError: [Errno -3] Temporary failure in name resolution"}),
+               "os_errors": [NODE]}
+    elif spec == "printed_refusal":   # B2: the code printed a refusal's words, and failed on an assertion
+        ran = result(failed=[NODE], output=f"cache: Connection refused\nE   OSError: refused\nFAILED {NODE} - assert 2 "
+                                           "== -2\n", messages={NODE: "assert 2 == -2\nConnection refused"})
     elif spec in ("not_collected", "not_collected_outside"):   # review E8, E9: the check file itself did not collect
         ran = {"verdict": "failed" if spec == "not_collected" else "collection_error", "said": "", "seconds": 0.1,
                "test_outcomes": {}, "output": f"ERROR collecting {FILE}\nE   ImportError: cannot import name 'mul'\n",
@@ -344,6 +352,9 @@ def _read(spec, observations=()):
     ("preserve", "passed", "refused_via_library", "check_error"),
     ("change", "passed", "refused_via_library", "check_error"),
     ("preserve", "passed", "no_name_lookup", "check_error"),
+    # reviewer B's B2: words the code printed are not G6's record of a refusal
+    ("preserve", "passed", "printed_refusal", "counterexample"),
+    ("change", "passed", "printed_refusal", "unconfirmed_failure"),
     # review 5 (E8, E9): a preserve check whose own file the patch stops collecting fails, and the base decides
     ("preserve", "passed", "not_collected", "counterexample"),
     ("preserve", "passed", "not_collected_outside", "counterexample"),
@@ -547,16 +558,25 @@ def test_at_most_three_questions_are_asked(repo, monkeypatch):
 
 
 def test_a_check_error_is_counted_never_a_finding(repo, monkeypatch):
+    """Reviewer B's B2: an error on the patch alone is compared with the base commit's run, which is made (the patch
+    could make a check error on purpose): one that passes there gives check_error_on_patch, at most insufficient
+    evidence; an error on both, a broken check, gives nothing. Either way the check is no finding."""
     (repo / "calc.py").write_text(FIXED)
     Tiers(monkeypatch)
     stage = Stage(monkeypatch, {VACUOUS["source"]: {"patch": "error", "base": "passed"}})
     got = review(repo, proposed_checks=[VACUOUS])
-    assert got["assessment"]["outcome"] == "supported_within_scope" and got["assessment"]["reasons"] == []
+    assert got["assessment"]["outcome"] == "insufficient_evidence"
+    assert [(r["stage"], r["code"]) for r in got["assessment"]["reasons"]] == [("evidence", "check_error_on_patch")]
     found = _activity(got, "c-vac")
     assert found["result"] == "check_error"
     assert [run["on"] for run in found["runs"]] == ["patch", "base commit"]
-    assert found["runs"][1]["result"] == "skipped" and found["runs"][1]["reason"]
-    assert len(stage.calls) == 1   # its run at the base commit would decide nothing
+    assert found["runs"][1]["result"] == "passed"
+    assert len(stage.calls) == 2
+    assert got["assessment"]["completion"]["defects_reproduced"]["proposed_checks"] == []
+    stage = Stage(monkeypatch, {VACUOUS["source"]: {"patch": "error", "base": "error"}})
+    got = review(repo, proposed_checks=[VACUOUS])
+    assert got["assessment"]["outcome"] == "supported_within_scope" and got["assessment"]["reasons"] == []
+    assert _activity(got, "c-vac")["result"] == "check_error" and len(stage.calls) == 2
 
 
 def test_completion_activities_list_every_run_and_every_skip_and_the_stage_stops_at_the_deadline(repo,
@@ -966,7 +986,9 @@ def test_confined_a_network_call_refused_through_a_client_library_is_a_check_err
         found = _activity(got, "c-keep")
         assert found["result"] == "check_error", found
         assert "operating-system error" in found["detail"] and "httpx" in found["detail"]
-        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+        # reviewer B's B2: it passes at the base commit, so the error on the patch alone is asked about, never nothing
+        assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+        assert [r["code"] for r in got["assessment"]["reasons"]] == ["check_error_on_patch"]
 
 
 def test_confined_a_wrong_preserve_check_and_an_incomplete_fix_and_a_probe(repo, bwrap_backend):

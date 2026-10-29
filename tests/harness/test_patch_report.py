@@ -280,3 +280,29 @@ def test_the_mcp_tool_carries_the_report_and_keeps_its_envelope_and_codes(repo, 
 def test_the_docs_that_describe_the_reply_name_the_report():
     docs = Path(__file__).resolve().parents[2] / "docs" / "AI_FOR_AI_WORKFLOW.md"
     assert "assessment.report" in docs.read_text(encoding="utf-8")
+
+
+#: An assessment as small as the report reads it: a supported patch on its stated checks.
+MINIMAL = {"outcome": "supported_within_scope", "reasons": [], "requirements": [{"id": "R1"}],
+           "scope": {"artifact_digest": "a" * 64, "base_commit": "b" * 40, "search": {}, "checks_run": []},
+           "completion": {}}
+
+
+def test_the_report_says_the_checks_were_stated_in_the_request_never_by_you():
+    """Reviewer B's B3: in the launch flow the agent states the requirements and their checks, not the person."""
+    report = patch_report.render(MINIMAL)
+    proposed = next(line for line in report.splitlines() if line.startswith("- **Proposed:**"))
+    assert "checks from the checks stated in the request" in proposed, proposed
+    assert not re.search(r"\byou\b", proposed), proposed
+
+
+def test_a_proposed_checks_reproduction_carries_g6s_caution():
+    """Reviewer B's B6: the check is code someone other than G6 wrote."""
+    assessment = {**MINIMAL, "outcome": "insufficient_evidence", "completion": {"defects_reproduced": {
+        "proposed_checks": [{"check": "keep-neg", "requirement": "R1", "result": "counterexample",
+                             "code": "unconfirmed_counterexample",
+                             "reproduction": {"file": "g6_check_x/test_keep.py", "node": "g6_check_x/test_keep.py::t",
+                                              "at_base": "passed: 1 test(s) passed"}}]}}}
+    report = patch_report.render(assessment)
+    line = next(line for line in report.splitlines() if line.lstrip().startswith("- Reproduce: write its text"))
+    assert "Read it before you run it, or run it in a container." in line, line

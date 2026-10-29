@@ -1710,7 +1710,9 @@ def _installed(tmp_path: Path, monkeypatch) -> Path:
     root = _repo(tmp_path, {"lib/calc/__init__.py": CALC_BASE,
                             "tests/test_other.py": "def test_other():\n    assert True\n"}, "app")
     env = tmp_path / "installed-env"
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(env)], check=True,
+    # --copies: an environment linked to G6's own Python is refused (L1)
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", "--copies", str(env)],
+                   check=True,
                    capture_output=True, timeout=180)
     python = env / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     site = Path(subprocess.run([str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
@@ -1812,3 +1814,30 @@ def test_confined_surviving_mutants_are_reported_and_change_no_outcome(tmp_path,
     assert all(run["verdict"] in ("passed", "failed") for run in got["assessment"]["completion"]["activities"]
                if run["activity"] == "mutation run")
     assert got["artifact_digest"] == patch_review.digest(repo_tests.snapshot(root))
+
+
+# --- reviewer B's B5: a repository's ignore_imports rule cannot hold G6's process past its deadline -------------------
+
+def test_a_rule_of_many_wildcards_against_a_long_module_name_is_matched_in_a_moment():
+    """Reviewer B's probe (probe_ignore_imports_backtracking.py): 16 ``**`` parts against a module of 32 parts, which
+    the rule's last part never matches, took 5.8 seconds as a regular expression, about 6 times longer per step."""
+    rule = "app." + ".".join(["**"] * 16) + ".zz -> app.web"
+    source = "app." + ".".join(["a"] * 30) + ".y"
+    started = time.perf_counter()
+    assert not verification_templates._ignored({"from": source, "to": "app.web"}, (rule,))
+    assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize(("pattern", "name", "matches"), [
+    ("shop.data", "shop.data", True), ("shop.data", "shop.data.x", False),
+    ("shop.*", "shop.data", True), ("shop.*", "shop.data.x", False), ("shop.*", "shop", False),
+    ("shop.**", "shop.data", True), ("shop.**", "shop.data.x.y", True), ("shop.**", "shop", False),
+    ("**.models", "shop.models", True), ("**.models", "shop.a.models", True), ("**.models", "models", False),
+    ("shop.*.api", "shop.x.api", True), ("shop.*.api", "shop.x.y.api", False),
+    ("shop.**.api", "shop.x.y.api", True), ("shop.**.api", "shop.api", False),
+    ("shop.**.**.api", "shop.x.y.api", True), ("shop.**.**.api", "shop.x.api", False),
+])
+def test_ignore_imports_wildcards_mean_what_import_linter_says(pattern, name, matches):
+    """``*`` is one part of a module's name, ``**`` one or more, any other part itself; as before (a regular
+    expression gave the same answers), now part by part."""
+    assert verification_templates._ignored({"from": name, "to": "x"}, (f"{pattern} -> x",)) is matches

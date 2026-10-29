@@ -610,3 +610,127 @@ def test_confined_a_report_that_hides_a_failure_g6_recorded_compromises_integrit
     assessment = got["assessment"]
     assert assessment["outcome"] == "test_integrity_compromised", assessment["reasons"]
     assert ("integrity", "run_not_trusted") in _codes(got), assessment["reasons"]
+
+# --- L1 (the owner's decision): an environment linked to the same Python as G6's own, refused before anything runs -----
+# confine.interpreter_paths takes such a Python for G6's own (it resolves links) and binds G6's folders in place of its
+# environment's, so its confined run cannot start; confine is fixed in the post-launch issuance window.
+
+
+def _venv(folder: Path, *, cfg: bool = True) -> Path:
+    """A fake environment's Python (never started), with its pyvenv.cfg unless ``cfg`` is false."""
+    python = folder.joinpath(*PYTHON_IN)
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text("", encoding="utf-8")
+    python.chmod(0o755)
+    if cfg:
+        (folder / "pyvenv.cfg").write_text("home = elsewhere\n", encoding="utf-8")
+    return python
+
+
+@pytest.fixture
+def g6_in(tmp_path, monkeypatch):
+    """G6 as if it ran from ``where`` ("venv": an environment of its own; "base": a base installation), and every
+    Python file under ``tmp_path`` the same file as G6's through links (``confine._key``), as ``python -m venv`` makes
+    them on Linux."""
+    from g6.core import confine
+
+    real = confine._key
+
+    def set_up(where: str) -> Path:
+        base = tmp_path / "base"
+        own = _venv(tmp_path / "g6env") if where == "venv" else _venv(base, cfg=False)
+        monkeypatch.setattr(sys, "executable", str(own))
+        monkeypatch.setattr(sys, "prefix", str(tmp_path / "g6env" if where == "venv" else base))
+        monkeypatch.setattr(sys, "base_prefix", str(base))
+        monkeypatch.setattr(confine, "_key", lambda path: "the-one-python" if Path(path).is_relative_to(tmp_path)
+                            else real(path))
+        return own
+
+    return set_up
+
+
+@pytest.mark.parametrize("where", ["venv", "base"])
+def test_an_environment_linked_to_the_same_python_as_g6s_is_refused_before_anything_runs(tmp_path, monkeypatch,
+                                                                                      g6_in, where):
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(repo_tests.REPO_PYTHON, raising=False)
+    g6_in(where)
+    project = tmp_path / "project"
+    python = _venv(project / ".venv")
+    assert repo_tests._linked_to_g6(str(python))
+    with pytest.raises(repo_tests.RepoRefused) as refused:
+        repo_tests.interpreter(project)
+    said = str(refused.value)
+    assert refused.value.code == repo_tests.REPO_PYTHON_INVALID, said
+    assert "same interpreter" in said and "python -m venv --copies" in said and repo_tests.REPO_PYTHON in said, said
+    assert "seccomp" not in said and "apparmor" not in said
+    monkeypatch.setenv(repo_tests.REPO_PYTHON, str(python))   # named by the setting: the same
+    with pytest.raises(repo_tests.RepoRefused):
+        repo_tests.interpreter(tmp_path / "elsewhere")
+
+
+def test_g6s_own_environment_and_a_distinct_python_are_not_refused(tmp_path, monkeypatch, g6_in):
+    from g6.core import confine
+    from g6.workforce import repo_tests
+
+    own = g6_in("venv")
+    assert not repo_tests._linked_to_g6(str(own))                        # G6 installed there: the same path
+    assert not repo_tests._linked_to_g6(str(own.with_name("python3")))   # another name in G6's own environment
+    assert not repo_tests._linked_to_g6(str(_venv(tmp_path / "plain", cfg=False)))   # a link to it, no environment
+    monkeypatch.setattr(confine, "_key", lambda path: str(path))   # every file its own: no link between them
+    assert not repo_tests._linked_to_g6(str(_venv(tmp_path / "project" / ".venv")))
+
+
+def test_with_no_repository_environment_g6s_own_python_runs_the_tests(tmp_path, monkeypatch, g6_in):
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(repo_tests.REPO_PYTHON, raising=False)
+    own = g6_in("venv")
+    (tmp_path / "project").mkdir()
+    assert repo_tests.interpreter(tmp_path / "project") == str(own)
+
+
+_REVIEW = ("import json, sys\nfrom g6.harness.patch_review import review_patch\n"
+           "got = review_patch(sys.argv[1], task='Repair add.', timeout_s=120, requirements=[{'id': 'R1', 'text': "
+           "'add adds', 'checks': ['test_calc.py::test_add']}])\n"
+           "a = got.get('assessment') or {}\n"
+           "print(json.dumps({'ok': got.get('ok'), 'code': (got.get('warning_card') or {}).get('code'), "
+           "'message': (got.get('warning_card') or {}).get('message'), 'outcome': a.get('outcome'), "
+           "'backend': ((a.get('scope') or {}).get('environment') or {}).get('isolation', {}).get('backend'), "
+           "'runs': len((a.get('scope') or {}).get('checks_run') or [])}))\n")
+
+
+@pytest.mark.parametrize("g6_env", ["linked", "copies"])
+def test_confined_g6_in_a_linked_venv_refuses_a_linked_project_venv_and_a_copied_one_reviews_it(tmp_path,
+                                                                                                bwrap_backend, g6_env):
+    """L1 in a real boundary: G6 runs from its own environment (made with links, as python -m venv makes it on Linux,
+    or with --copies), against a project whose .venv python -m venv made with links. The first is refused before any
+    test process starts, with the accurate reason; the second, the positive control, reviews the patch confined."""
+    import json
+    import os
+
+    if sys.platform == "win32":
+        pytest.skip("Windows makes no venv by links")
+    made = ["--without-pip", "--system-site-packages"]
+    g6env = tmp_path / "g6env"
+    subprocess.run([sys.executable, "-m", "venv", *made, *(["--copies"] if g6_env == "copies" else []), str(g6env)],
+                   check=True, capture_output=True, timeout=180)
+    root = _repo(tmp_path / "project", {"calc.py": BAD, "test_calc.py": CALC_TEST, ".gitignore": ".venv/\n"})
+    subprocess.run([sys.executable, "-m", "venv", *made, str(root / ".venv")], check=True, capture_output=True,
+                   timeout=180)
+    _write(root, {"calc.py": GOOD})
+    src = str(Path(patch_review.__file__).resolve().parents[2])
+    env = {**os.environ, "PYTHONPATH": src}
+    env.pop("G6_REPO_PYTHON", None)
+    done = subprocess.run([str(g6env / "bin" / "python"), "-c", _REVIEW, str(root)], capture_output=True, text=True,
+                          timeout=300, env=env)
+    assert done.returncode == 0, done.stderr[-2000:]
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    if g6_env == "linked":
+        assert got["ok"] is False and got["code"] == "G6_E_REPO_PYTHON_INVALID", got
+        assert "same interpreter" in got["message"] and "python -m venv --copies" in got["message"], got
+        assert "seccomp" not in got["message"] and got["runs"] == 0
+    else:
+        assert got["ok"] is True and got["backend"] == "bubblewrap", got
+        assert got["outcome"] == "supported_within_scope", got

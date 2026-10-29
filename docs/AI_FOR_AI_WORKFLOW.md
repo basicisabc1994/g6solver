@@ -6,8 +6,12 @@ promotion rules remain host-controlled. Better performance is a hypothesis to te
 
 ## Install and discover
 
-Use Python 3.12 or 3.13. From the checkout, install `pip install ".[all]"`, run `g6 doctor`, then
-`g6 setup --client claude --allow patch_review.review` or `g6 setup --client codex --allow patch_review.review`.
+Use Python 3.12 or 3.13. From the checkout, make G6's own environment with `python -m venv --copies .venv`
+and activate it (`source .venv/bin/activate`; in PowerShell `.venv\Scripts\Activate.ps1`), install
+`pip install ".[all]"`, run `g6 doctor`, then `g6 setup --client claude --allow patch_review.review` or
+`g6 setup --client codex --allow patch_review.review`. G6 gets an environment of its own, made with `--copies`:
+on Linux, G6 cannot yet tell its own Python from a project environment linked to the same one, and refuses to
+review then (`G6_E_REPO_PYTHON_INVALID`, before anything runs).
 Setup uses an absolute interpreter path, installs the using-g6 skill, and ends by showing the first review
 call. Existing skills are preserved. An existing MCP entry that the client refuses to replace must be
 inspected with that client's `mcp get g6` command; to replace it, remove it (`claude mcp remove --scope user
@@ -263,12 +267,15 @@ as skipped; `{"test_adequacy": true}` also measures test adequacy. The configura
 `differential.v1`), then for at most 3 distinguishing scenarios, asked as questions, then for free-form tests
 only for the requirements no proposed instance applied to; `"proposer": "free_form"` asks for free-form tests
 only. Limits: `max_model_calls` (default 10), `max_input_chars` per request (60,000), `max_output_tokens` per
-reply (4,096) and `max_context_chars` (24,000). Reaching one is a skipped activity with its reason; a request
-past the input limit is never sent. Everything the model returns is untrusted data. Each reply must fit a closed
-schema, so a reply that claims a check is stated, adopted or confirmed is refused. An instance it proposes is
-checked by its template (its bindings' provenance is `model_hypothesis`). A free-form test is a file G6 names
-and places, run confined; a conftest, a configuration or a plugin is refused. What it proposes never passes a
-requirement and gives at most `insufficient_evidence`, with its reproduction. Without a boundary for the checks
+reply (4,096) and `max_context_chars` (24,000). Each holds for every request the provider receives: G6 counts
+and caps the provider itself, never a retry around it. Reaching one is a skipped activity with its reason; a
+request past the input limit is never sent. Everything the model returns is untrusted data. Each reply must fit a
+closed schema, so a reply that claims a check is stated, adopted or confirmed is refused. An instance it proposes
+is checked by its template (its bindings' provenance is `model_hypothesis`), whatever contract it names. A
+free-form test is a file G6 names and places, run confined. A proposed conftest, a runner configuration and a
+plain plugin declaration (`pytest_plugins`) are refused; a check that builds one at run time is not detected,
+and the checks you propose yourself are not filtered for one; either way, a proposed check never passes a
+requirement. What it proposes gives at most `insufficient_evidence`, with its reproduction. Without a boundary for the checks
 it would bring, no model is called. Every model call is an activity with the provider's token counts and the
 model that answered, where the caller gives them; every request and reply is in
 `assessment.completion.model_exchanges`. The repository context it sends is built by

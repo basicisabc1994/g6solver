@@ -500,7 +500,9 @@ def test_i4_the_run_says_which_python_ran_the_tests(repo, tmp_path):
     """G6's own interpreter, and the repository's own virtual environment (a real one, sharing G6's packages)."""
     found = rt.run(repo, ["tests/test_calc.py"])
     assert (found["interpreter_source"], found["python"]) == ("g6", sys.executable)
-    subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(repo / ".venv")],
+    # --copies: an environment linked to G6's own Python is refused (L1)
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", "--copies",
+                    str(repo / ".venv")],
                    check=True, capture_output=True, timeout=180)
     found = rt.run(repo, ["tests/test_calc.py"])
     assert (found["verdict"], found["interpreter_source"]) == (rt.FAILED, "repository")

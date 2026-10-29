@@ -381,6 +381,37 @@ def test_each_call_asks_for_at_most_the_output_limit(tmp_path, monkeypatch, read
     assert asked == [700]
 
 
+@pytest.mark.parametrize("calls", [1, 3])
+def test_the_limits_hold_for_every_request_the_provider_receives_behind_g6s_retry(tmp_path, monkeypatch, ready,
+                                                                                calls):
+    """Reviewer B's B4 (probe_proposer_limits_through_default_caller.py): the caller G6 builds for the person's model
+    (``provider_from_env``) wraps the provider in ``EmptyRetry``, which asks again, for more tokens, after an empty
+    reply. The limits hold for the provider's own requests, and each is counted and kept with its reply."""
+    from g6.core.llm import EmptyRetry
+
+    root = _repo(tmp_path, CODEC, {"textcodec.py": CODEC_PATCH})
+    Tiers(monkeypatch)
+    asked: list[int] = []
+
+    class Provider(FakeLLM):   # empty three times (a model that spent its budget thinking), then a reply
+        model = "a-fake-model"
+
+        def complete(self, system, user, *, max_tokens=2048):
+            asked.append(max_tokens)
+            return super().complete(system, user, max_tokens=max_tokens)
+
+    provider = Provider(lambda system, user: "" if len(asked) % 4 else json.dumps({"checks": []}))
+    monkeypatch.setattr(verification_proposer, "default_caller", lambda: EmptyRetry(provider))
+    got = review_patch(root, task="t", requirements=RULES, search={
+        "propose": True, "proposer": "free_form", "max_model_calls": calls, "max_output_tokens": 300})
+    assert asked and max(asked) <= 300 and len(asked) <= calls, asked
+    kept = got["assessment"]["completion"]["model_exchanges"]
+    sent = [exchange for exchange in kept if exchange["sent"]]
+    assert got["assessment"]["scope"]["search"]["model_calls"] == len(sent) == len(asked) == len(provider.calls)
+    assert [exchange["user"] for exchange in sent] == [user for _, user in provider.calls]
+    assert all(exchange["reply"] == "" for exchange in sent)   # each reply kept as the provider gave it
+
+
 @pytest.mark.parametrize("search, said", [({"propose": True, "max_model_calls": 0}, "max_model_calls"),
                                           ({"propose": True, "proposer": "everything"}, "proposer"),
                                           ({"propose": "yes"}, "propose"),

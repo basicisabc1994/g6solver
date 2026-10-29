@@ -36,18 +36,20 @@ proposals are never taken as independent of the patch's author (VS-D2). Nothing 
 
 ``search`` runs each check twice, confined with no network, each time in a fresh scratch copy that holds no repository
 history (no ``.git``) and only that check overlaid: on the patched tree, then at the base commit's code
-(``repo_tests.run_at_base``); one whose run on the patch gives no result is not run at the base commit, since that
-would decide nothing. Each run has its own time limit (``RUN_S``) inside the review's deadline; a check is started only
+(``repo_tests.run_at_base``), even when its run on the patch gives no result (reviewer B's B2). Each run has its own time limit (``RUN_S``) inside the review's deadline; a check is started only
 when both its runs could have ``MIN_RUN_S``, and the stage stops at the first that could not and lists the checks it
 skipped. A run no operating-system backend confines is refused (``G6_E_ISOLATION_UNAVAILABLE``) before it
 starts, whatever the person allowed: never run unconfined. The repository is never written.
 
 ``classify`` (plan rule 3), from what each run says (``reading``, which reads each failure from the message the run
 recorded in full, ``repo_tests``'s ``failure_messages``, before pytest's output): a run that did not finish in time,
-changed its copy, could not be believed, collected or set up, was skipped, or failed on an operating-system error or a
-refusal a client library wrapped (G6's network refusal, a name that could not be looked up, an unreachable network:
-inside the boundary that is what a refused access looks like), or without saying how, is a ``check_error``, counted
-and never a finding. A check whose own file could not be collected (an import the patch broke) has failed, as tier 2
+changed its copy, could not be believed, collected or set up, was skipped, or failed on an operating-system error or
+one raised from or during one (a refusal a client library wrapped: G6's network refusal, a name that could not be
+looked up, an unreachable network; inside the boundary that is what a refused access looks like), read only from G6's
+own record of the run (``os_errors``, from the exception objects; never from text the check or the code printed), or
+without saying how, is a ``check_error``, counted and never a finding. One that ends in a ``check_error`` on the patch
+but runs to a pass or a failure at the base commit gives the reason ``check_error_on_patch`` (stage ``evidence``, so
+at most ``insufficient_evidence``): the patch could make a check error on purpose (reviewer B's B2). A check whose own file could not be collected (an import the patch broke) has failed, as tier 2
 reads a test file, and its run at the base commit decides. Otherwise:
 
 - ``preserve``: passes at the base commit and fails on the patch, ``counterexample``; fails on both,
@@ -267,21 +269,6 @@ _METADATA = (".egg-info", ".dist-info", ".pyc")
 _NODE = re.compile(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*(?:\[[^\]\x00-\x1f\x7f]*\])?")
 _FAILED_LINE = re.compile(r"^FAILED (\S+)(?: - (.*))?$", re.MULTILINE)
 _RAISED_LINE = re.compile(r"^E\s+(\S.*)$", re.MULTILINE)
-#: A failure on an operating-system error: inside the boundary a refused access (a file outside the copy, the network,
-#: a name lookup) raises one, so G6 cannot tell it from a failure of the code. A check error, never a finding.
-_OS_NAME = (r"(?:[\w.]+\.)?(?:OSError|IOError|EnvironmentError|PermissionError|FileNotFoundError|FileExistsError|"
-            r"IsADirectoryError|NotADirectoryError|ConnectionError|ConnectionRefusedError|ConnectionResetError|"
-            r"ConnectionAbortedError|BrokenPipeError|TimeoutError|BlockingIOError|InterruptedError|ChildProcessError|"
-            r"ProcessLookupError|gaierror|herror|timeout|URLError|SSLError)\b")
-#: In pytest's output, on an ``E`` line or the summary line; in a message the run recorded, on any line.
-_OS_ERROR = re.compile(rf"^(?:E\s+|FAILED \S+ - ){_OS_NAME}", re.MULTILINE)
-_OS_RAISED = re.compile(rf"^(?:E\s+)?{_OS_NAME}", re.MULTILINE)
-#: The same seen through a client library that wraps it in an exception of its own (review E12): G6's own network
-#: refusal, a name that could not be looked up, an unreachable network, or the private loopback's refusal.
-_REFUSED = re.compile("|".join([re.escape(repo_tests.SAID["network_off"]), "Temporary failure in name resolution",
-                                "Name or service not known", "No address associated with hostname",
-                                "nodename nor servname", "getaddrinfo failed", "Network is unreachable",
-                                "Connection refused"]))
 #: ``repo_tests._output``'s mark where it cut a run's output.
 _CUT = re.compile(r"^\.\.\. \[\d+ bytes of output omitted\] \.\.\.$", re.MULTILINE)
 _OBSERVED = re.compile(rf"{OBSERVATION} (.*)$", re.MULTILINE)
@@ -493,10 +480,13 @@ def _failure(ran: dict, node: str) -> str:
 
 
 def _refused_access(ran: dict, node: str) -> bool:
-    """Whether the failure is an operating-system error or a refusal seen through a library (``_REFUSED``)."""
-    output = ran.get("output") or ""
-    return bool(_OS_ERROR.search(output) or _REFUSED.search(output) or any(
-        _OS_RAISED.search(text) or _REFUSED.search(text) for text in _messages(ran, node)))
+    """Whether the failure is an operating-system error, or was raised from or during one (a refusal a client library
+    wraps): inside the boundary a refused access (a file outside the copy, the network, a name lookup) raises one, so
+    G6 cannot tell it from a failure of the code. Read only from G6's own record of the run (``os_errors``, which its
+    plugin reads from the exception objects) for the check, a test of it or its file; never from text the check or
+    the code under test printed (reviewer B's B2)."""
+    full, file = _in_repository(ran), node.partition("::")[0]
+    return any(_covers(node, full(named)) or full(named) == file for named in ran.get("os_errors") or ())
 
 
 def _uncollected(ran: dict, node: str) -> bool:
@@ -779,9 +769,7 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             at_base, skip = None, ""
             if origin.patch_only:
                 skip = PATCH_ONLY
-            elif on_patch["result"] == "error":
-                skip = "the run on the patch did not run to a result, so a run at the base commit would decide nothing"
-            elif deadline - _clock() < MIN_RUN_S:
+            elif deadline - _clock() < MIN_RUN_S:   # a patch run that errored is run at the base too (B2)
                 skip = OUT_OF_TIME
             else:
                 at_base = read(at_base=True)
@@ -795,7 +783,8 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
                 activity["runs"].append({"on": "base commit, again", **(_summary(again) if again else {
                     "result": "skipped", "reason": OUT_OF_TIME})})
                 verdict = _stable(verdict, at_base, again)
-            if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR:   # only where the base run would decide
+            if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR and on_patch["result"] != "error":
+                # only where the base run would have decided the result
                 verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
             if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:
                 # the differential rule: the instance declares this behaviour must not change, so a difference refutes
@@ -869,6 +858,13 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
             f"folder, write the check's text (sha256 {activity['sha256']}) to {activity['placed']}, and run "
             f"{reproduction['command']} from the copy's top folder; the text and the digests of the trees it ran on "
             f"are in assessment.completion.defects_reproduced. {origin.caution}")
+    elif result == CHECK_ERROR and not _to_a_result(on_patch) and at_base is not None and _to_a_result(at_base):
+        # reviewer B's B2: an error on the patch alone may be the patch's doing (code that raises what a refused access
+        # raises), so it is compared with the base commit's result and never read as nothing
+        said = f"{about}: {ERROR_ON_PATCH_SAID.format(base=at_base['result'])}"
+        done.reasons.append((ERROR_ON_PATCH, said))
+        done.next_actions.append(f"{said}. Read what it errored with in assessment.completion.activities, and run it "
+                                 f"on the patch yourself to see why. {origin.caution}")
     elif result == BEHAVIOUR_CHANGED:
         first = verdict["differences"][0]
         more = len(verdict["differences"]) - 1
@@ -886,6 +882,20 @@ def _found(done: Search, one: ProposedCheck, activity: dict, on_patch: dict, at_
                         f"({on_patch['detail']}). Does what it expects describe the behaviour {one.requirement_id} "
                         "asks to keep, or is the check wrong?",
             "behaviours": {"base": at_base["detail"], "patch": on_patch["detail"]}})
+
+
+#: Reviewer B's B2: a check that ends in a check error on the patch but runs to a result at the base commit, the
+#: reason it gives (stage ``evidence``) and what it says, in G6's own words.
+ERROR_ON_PATCH = "check_error_on_patch"
+ERROR_ON_PATCH_SAID = ("ends in a check error on the patch but {base} at the base commit, and G6 cannot tell an access "
+                       "the boundary refused from a patch that makes the check error, so it is not compared")
+
+
+def _to_a_result(found: dict) -> bool:
+    """Whether a run's reading (``reading``) ran to a pass or a failure, the check's own file failing to collect in the
+    repository's own code included; a collection that failed outside it (a module this environment lacks) is not one."""
+    return found["result"] in ("passed", "failed") and not (found.get("collection")
+                                                            and found.get("verdict") != repo_tests.FAILED)
 
 
 def annotate(evaluated: list[dict], done: Search) -> None:

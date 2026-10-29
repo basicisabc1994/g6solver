@@ -50,10 +50,15 @@ agent:
 
 ```bash
 git clone https://github.com/basicisabc1994/g6solver && cd g6solver
+python -m venv --copies .venv                           # G6's own environment, with a copy of Python
+source .venv/bin/activate                               # PowerShell: .venv\Scripts\Activate.ps1
 pip install ".[all]"
 g6 doctor                                               # read-only: what this computer offers G6
 g6 setup --client claude --allow patch_review.review    # or --client codex; give --client twice for both
 ```
+
+G6 gets an environment of its own, made with `--copies`: on Linux, G6 cannot yet tell its own Python from a project
+environment linked to the same one, and refuses to review then.
 
 `g6 setup` registers this installation with the client (`claude mcp add` or `codex mcp add`, with this installation's
 Python), installs the `using-g6` skill for it, and allows patch review, the one sensitive operation the first review
@@ -148,8 +153,8 @@ You can also propose checks of your own (`proposed_checks`, at most 20 test file
 boundary on a copy of the patch and on one of the base commit's code, and says whether it found a counterexample,
 or, for a check of what the change should bring, whether it fails on the patch, whatever the base gives. A
 proposed check never passes a requirement, and a failing one gives at most insufficient evidence, with a
-reproduction you can run with plain pytest, the way G6 ran it (with `PYTHONPATH=src` where G6 put `src` on the
-import path).
+reproduction you can run with plain pytest: the repository's own command, without G6's boundary (with
+`PYTHONPATH=src` where G6 put `src` on the import path).
 G6 keeps its record of its own test runs (test receipts) in a file your user account owns: it stops a caller's
 claimed results from counting as G6's, not a program running as you.
 Enable it explicitly with `g6 setup --client claude --allow patch_review.review` (or `--client codex`).
