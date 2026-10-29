@@ -117,7 +117,10 @@ checks with the extra tests in one confined run. Integrity is what these checks 
 
 A stated check the environment cannot collect (a dependency it lacks) is not established; one whose own code
 fails to collect is a defect. A check the time limit cuts off, or never reaches, is not established either,
-never a defect. Tier 2, the other tests that touch the changed modules, runs only when tier 1 found no
+never a defect. So is every check of a run whose tests all passed by pytest's own count but whose process then
+exited with an error (`run_inconsistent`, insufficient evidence: a graphical test suite whose display
+connection fails at exit, say). That cannot get a patch accepted, so it is not an integrity problem; a run
+that exits 0 while its tallies show a failure, an error or fewer tests finished than collected is one. Tier 2, the other tests that touch the changed modules, runs only when tier 1 found no
 integrity problem and no defect; one that fails, or fails to collect, on the patch is replayed at the base
 commit (a moved test file at its old path), and counts as a defect only if it passed there. When nothing so
 far found a problem, the stated checks that passed also run against the base commit's code, in a copy: one

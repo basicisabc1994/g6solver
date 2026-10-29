@@ -207,6 +207,9 @@ def _steps(assessment: dict) -> list[str]:
                 outcomes) else "the stated checks pass at the base commit too, so they may not exercise the change"
                 if not failing else f"{failing} of the {len(outcomes)} stated checks fail at the base commit (those "
                                     "exercise the change), the others pass there too")
+        elif run.get("verdict") == "run_inconsistent":   # the owner's ruling (2026-10-29): said plainly, no accusation
+            shown.append(f"{name}: passed by pytest's own count, but the process exited with an error afterwards "
+                         f"({code('run_inconsistent')}), so they are not counted as passed")
         else:
             shown.append(f"{name}: {code(run.get('verdict', ''), 30)}")
     ran = "; ".join(shown) or "no test ran"

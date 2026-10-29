@@ -213,6 +213,23 @@ def test_base_evidence_is_said_in_plain_words_only_where_it_means_the_check_exer
     assert "passes on the patch" not in lines["R1"]
 
 
+def test_a_run_that_exits_with_an_error_after_passing_is_said_in_plain_words(repo, monkeypatch):
+    """The owner's ruling (2026-10-29): not enough evidence, never an accusation of tampering."""
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(GOOD)
+    monkeypatch.setattr(patch_review, "_execute", lambda root, ids, *, timeout_s, change=None, **_: {
+        **result(list(ids)), "verdict": "run_inconsistent", "said": repo_tests.SAID["run_inconsistent"]})
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda change, ids, *, timeout_s, **_: {"verdict": "not_run", "said": "not recorded"})
+    report = review_patch(repo, task="t", requirements=SUM)["assessment"]["report"]
+    assert report.startswith("**Not enough evidence**"), report
+    assert "Test integrity" not in report and "test_integrity_compromised" not in report
+    tested = next(line for line in report.splitlines() if line.startswith("- **Tested"))
+    assert "passed by pytest's own count, but the process exited with an error afterwards" in tested, tested
+    assert "run_inconsistent" in next(line for line in report.splitlines() if line.startswith("- **Gate"))
+
+
 def test_the_report_decides_nothing(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
     _runs(monkeypatch, failing=(NEGATIVE,))

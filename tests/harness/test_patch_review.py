@@ -513,6 +513,30 @@ def test_a_run_that_cannot_be_believed_compromises_test_integrity(repo, monkeypa
     assert _requirement(got, "R1")["status"] != "passed_on_stated_checks"
 
 
+@pytest.mark.parametrize("tier", [1, 2])
+def test_a_run_that_exits_with_an_error_after_every_test_passed_is_insufficient_evidence(repo, monkeypatch, tier):
+    """The owner's ruling (2026-10-29), asymmetric on purpose: pytest's own tallies say every test passed and the
+    process then exited with an error. That cannot get a patch accepted, so it is not an integrity problem; nothing is
+    counted as passed on it."""
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    exited = result([ADD, NEGATIVE], verdict="run_inconsistent", said=repo_tests.SAID["run_inconsistent"])
+    passing = result([ADD, NEGATIVE])
+    derived = ["test_more.py::test_zero", ADD, NEGATIVE]   # the tests that touch the changed module
+    Recorded(monkeypatch, {(ADD, NEGATIVE): exited if tier == 1 else passing},
+             default=result(derived, verdict="run_inconsistent") if tier == 2 else result(derived))
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert ("evidence", "run_inconsistent") in [(r["stage"], r["code"]) for r in assessment["reasons"]]
+    assert not any(r["stage"] == "integrity" for r in assessment["reasons"])
+    if tier == 1:
+        assert {_requirement(got, ident)["status"] for ident in ("R1", "R2")} == {"not_established"}
+    assert got["completion_state"] == "qualified-draft"
+
+
 def test_a_run_that_began_on_another_tree_compromises_integrity_whatever_the_gate_says(repo, monkeypatch):
     """Review I4 (probe S9): the tree was the defective one when the review took its digest, the fixed one while the
     tests ran, and the defective one again at the end, so the before and after digests matched and only the receipts
@@ -1502,6 +1526,25 @@ def test_confined_receipts_make_the_gate_g6_observed_and_a_forged_one_does_not(r
     faked = review(repo)
     assert [r["receipt_status"] for r in faked["gate"]["receipts"]] == ["unknown", "unknown"]
     assert faked["gate"]["evidence_basis"] == "caller-declared"
+
+
+def test_confined_a_process_that_exits_with_an_error_after_a_passing_session_is_insufficient_evidence(repo,
+                                                                                                       bwrap_backend):
+    """The owner's ruling (2026-10-29), from a GUI suite whose X connection failed at exit after 65 passes: the base
+    commit's conftest makes the process exit 1 after pytest's session passed. A correct patch is then neither
+    supported nor accused of tampering."""
+    (repo / "conftest.py").write_text("import atexit\nimport os\n\natexit.register(os._exit, 1)\n")
+    _git(repo, "add", "conftest.py")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "a conftest that exits 1 at the end")
+    (repo / "calc.py").write_text(GOOD)
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert "run_inconsistent" in _reasons(got) and not any(r["stage"] == "integrity" for r in assessment["reasons"])
+    assert {_requirement(got, ident)["status"] for ident in ("R1", "R2")} == {"not_established"}
+    assert assessment["scope"]["checks_run"][0]["verdict"] == "run_inconsistent"
+    assert assessment["scope"]["environment"]["isolation"]["backend"] == confine.BUBBLEWRAP
 
 
 HOOK = ("import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n"
