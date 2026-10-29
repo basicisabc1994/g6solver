@@ -191,7 +191,8 @@ def test_the_committed_record_summarises_each_run_labels_other_models_and_names_
     assert one["v10"]["dev-codec"]["E"] == {"disposition": "accept", "error_kind": "", "calls": 1, "g6_calls": 1,
                                             "dollars": 0.008, "seconds": 11.0, "findings": 0}
     assert got["spent_dollars"] == 0.5 and got["cap_dollars"] == rehearsal.CAP_DOLLARS
-    assert got["projection"]["patch"]["observed"] == [0.03]                             # the study's model only
+    # the study's model only, at each kind's published rate (ruling 76: the projection gives the accounted figure)
+    assert got["projection"]["patch"]["observed"] == [0.02]
     assert got["projection"]["E"]["observed"] == [0.008]
 
 

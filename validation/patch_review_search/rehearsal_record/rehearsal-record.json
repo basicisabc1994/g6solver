@@ -87,15 +87,15 @@
     30,
     45
    ],
-   "high": 4.1011,
-   "low": 1.664,
+   "high": 3.2282,
+   "low": 1.3706,
    "observed": [
-    0.084322,
-    0.03471,
-    0.091135,
-    0.037603,
-    0.054567,
-    0.030464
+    0.064262,
+    0.030441,
+    0.071738,
+    0.033155,
+    0.048062,
+    0.026471
    ]
   },
   "review_r": {
@@ -104,14 +104,14 @@
     30,
     30
    ],
-   "high": 3.9102,
-   "low": 2.5787,
+   "high": 3.1878,
+   "low": 2.0783,
    "observed": [
-    0.13034,
-    0.051523,
-    0.076183,
-    0.114432,
-    0.057298
+    0.106259,
+    0.042889,
+    0.057183,
+    0.091434,
+    0.048622
    ]
   },
   "self_review": {
@@ -120,27 +120,27 @@
     30,
     45
    ],
-   "high": 1.472,
-   "low": 0.6825,
+   "high": 1.3558,
+   "low": 0.6269,
    "observed": [
-    0.026029,
-    0.024516,
-    0.032712,
-    0.012173,
-    0.023467,
-    0.017604
+    0.023933,
+    0.022512,
+    0.030129,
+    0.011194,
+    0.021585,
+    0.016022
    ]
   },
   "totals": {
    "V10": {
     "cap_bound": 117.432,
-    "high": 7.1288,
-    "low": 4.4828
+    "high": 6.4064,
+    "low": 3.9824
    },
    "V9": {
     "cap_bound": 146.25,
-    "high": 5.5731,
-    "low": 2.3465
+    "high": 4.584,
+    "low": 1.9975
    }
   }
  },
@@ -861,7 +861,7 @@
     "ok": true
    },
    "ledger_spent_after": 1.228919,
-   "note": "claude-haiku-4-5 end to end at f3411d10ce with the first four fixes; arm E's codec reply began with prose before its fence and stays a tool error, so V10's criterion 1 is not met; arm R's dollars under v10 are what the ledger charged before the fifth fix (its sessions' repriced dollars are under sessions)",
+   "note": "claude-haiku-4-5 end to end at f3411d10ce with the first four fixes; arm E's codec reply began with prose before its fence and was a tool error then, so V10's criterion 1 was not met (read under the coordinator's ruling of 2026-10-29, all 14 of the rehearsal's E replies parse); arm R's dollars under v10 are what the ledger charged before the fifth fix (its sessions' repriced dollars are under sessions)",
    "record": {
     "entries": 13,
     "final": "39621499a4f548c540ce4e716b1ea28e488f4d81efb2b91327e567a8d600b31a"

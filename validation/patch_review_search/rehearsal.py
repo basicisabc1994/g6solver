@@ -492,7 +492,8 @@ def record(runs: dict[str, str | Path], *, notes: dict[str, str] | None = None) 
                      "label": "the study's model" if s["study_model"] else "not the study's model"}
                     for s in cost["sessions"]]
         for s in cost["projection_input"]["sessions"]:
-            units.setdefault(s["kind"], []).append(s["stop_dollars"])
+            # ruling 76: the projection gives each kind at its published rate, the accounted figure
+            units.setdefault(s["kind"], []).append(s["accounted_dollars"])
         v10 = {}
         for row in (arms_out.get("v10") or {}).get("patches") or []:
             v10[row["patch"]] = {"A": {"disposition": (row.get("arm_a") or {}).get("category")}}
