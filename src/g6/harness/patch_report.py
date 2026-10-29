@@ -192,7 +192,7 @@ def _steps(assessment: dict) -> list[str]:
     scope = assessment.get("scope") or {}
     search = scope.get("search") or {}
     requirements = assessment.get("requirements") or []
-    who = ["you (the stated checks)"]
+    who = ["the checks stated in the request"]   # reviewer B's B3: the agent states them, not the person
     if search.get("template_instances") or search.get("proposed_checks"):
         who.append("template instances and proposed checks")
     if search.get("model_calls"):
