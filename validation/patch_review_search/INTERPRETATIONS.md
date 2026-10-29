@@ -442,3 +442,26 @@ Items from 64 cover the entry point for V9's feasibility level and V10 together 
     and the calibration are those the arms ran with. Every reproducible finding is rerun on its task's reference fix.
     The gaming findings given to V10's verdict are those of V9's arm 3 (arm A) and the scans of R's transcripts; the
     scan of arms C, T and E's traces waits for VS-5's trace format. For the coordinator's ruling.
+
+Items from 70 cover the cost calibration (`calibration.py`), development calibration and never study data.
+
+70. **What calibration runs on.** Only the `model.patch` files V7's archive manifest lists, each in its own task's
+    folder and with the hash the manifest records. The manifest lists four: two are empty, so they get no review and
+    are listed as not run, and two have content, both in the archive's `gold` folder, which may hold the benchmark's
+    reference fixes rather than an agent's patches; their cost is measured all the same. The tasks file gives each
+    task's repository, source, base commit and statement, since the script reads no dataset. The arms get no arm A or
+    arm 1 disposition: calibration measures cost, not dispositions. For the coordinator's ruling.
+
+71. **The hard dollar stop.** One cap over all four arms, not the study's quarter shares: no model call begins once
+    the total spent reaches it, and no arm run starts after that. A call that begins below the cap may end above it.
+    Arm R's sessions are launched outside the script and counted when they are judged, so the launcher has to keep
+    them within the cap. One run's cap is at most 50 dollars; the script cannot know earlier development spend, so the
+    50-dollar total across runs, and VS-5's 10-dollar smoke run first, are the owner's to keep. Arms C and T run in
+    the script's own process, so a hung call can stall calibration until VS-5's caller enforces its own time-outs.
+    For the coordinator's ruling.
+
+72. **The cost record.** Per patch and arm: model calls, tokens by kind where the provider reports them (C's and T's
+    reply `usage`, E's exchanges, R's session record), cents, dollars, and wall-clock and processor seconds; per arm,
+    totals and means per patch. It is labelled development calibration, says it is not study data and that it
+    informs the owner's spending cap only, and is written only to its output path, never to the freeze file or to
+    anything of G6's. For the coordinator's ruling.

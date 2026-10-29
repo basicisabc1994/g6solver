@@ -71,12 +71,12 @@ class Refused(ValueError):
     """The freeze file or the request cannot be run as the protocols require; nothing was run."""
 
 
-def _write(path: Path, data: dict) -> None:
+def write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
 
 
-def _folder(index: int, task_id: str) -> str:
+def folder_name(index: int, task_id: str) -> str:
     return f"{index:03d}-" + re.sub(r"[^A-Za-z0-9._-]", "_", task_id)[:60]
 
 
@@ -130,7 +130,7 @@ def load_freeze(path: str | Path) -> dict:
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
-def _at(freeze: dict, rel: str) -> Path:
+def at(freeze: dict, rel: str) -> Path:
     return (freeze["folder"] / rel).resolve()
 
 
@@ -138,7 +138,7 @@ def _at(freeze: dict, rel: str) -> Path:
 
 def draw(freeze: dict, *, exclusion_files=EXCLUSION_FILES) -> dict:
     """The draw order after the exclusions (the module docstring), with each source's excluded IDs."""
-    data = _at(freeze, freeze["pool"]["file"]).read_bytes()
+    data = at(freeze, freeze["pool"]["file"]).read_bytes()
     if hashlib.sha256(data).hexdigest() != freeze["pool"]["sha256"]:
         raise Refused("the pool's file does not have the SHA-256 the freeze file records")
     rows = json.loads(data)
@@ -149,7 +149,7 @@ def draw(freeze: dict, *, exclusion_files=EXCLUSION_FILES) -> dict:
     listed = ((freeze["v9"].get("broken_tasks") or {}).get("published_list") or {})
     if listed.get("found"):
         excluded["the published list of broken tasks"] = sorted(broken.published_ids(
-            _at(freeze, listed["file"]), listed["sha256"], ids))
+            at(freeze, listed["file"]), listed["sha256"], ids))
     leave_out = set().union(*map(set, excluded.values()))
     seed = freeze["v9"]["seed"]
     return {"study": STUDY, "seed": seed, "pool_sha256": freeze["pool"]["sha256"], "excluded": excluded,
@@ -192,7 +192,7 @@ def build_trees(freeze: dict, work: Path) -> dict:
     manifest, found = freeze["v9"], {}
     for index, task in enumerate(manifest["tasks"]):
         source = v9run._at(manifest, task["source"])
-        folder = Path(work) / _folder(index, task["task_id"])
+        folder = Path(work) / folder_name(index, task["task_id"])
         base = trees.checkout(source, task["base_commit"], folder / "base")
         patched = trees.checkout(source, task["base_commit"], folder / "patched")
         found[task["task_id"]] = {"state": trees.apply(patched, _patch_text(manifest, task)), "base": base,
@@ -211,13 +211,13 @@ def prepare(freeze: dict, order: dict, output_dir: str | Path) -> list[Path]:
         patch = _patch_text(manifest, task)
         try:
             copy = arm_r.make_copy(v9run._at(manifest, task["source"]), task["base_commit"], patch,
-                                   out / "copies" / _folder(index, task["task_id"]))
+                                   out / "copies" / folder_name(index, task["task_id"]))
         except ValueError:
             continue     # an empty or non-applying patch: no review to prepare
         prepared = arm_r.prepare(task["task_id"], v9run._requirements(task), patch=patch,
                                  time_limit_s=limits["arm_seconds"], token_cap=limits["token_cap"])
         path = out / "arm_r" / bindings.session_file(task["task_id"])
-        _write(path, {**prepared, "copy": str(copy)})
+        write_json(path, {**prepared, "copy": str(copy)})
         written.append(path)
     return written
 
@@ -265,7 +265,7 @@ def arms(freeze: dict, order: dict, *, calibration, prepared, work, record_path,
         if path.is_file():
             ready[patch["id"]] = json.loads(path.read_text(encoding="utf-8"))
     sessions = bindings.Sessions(
-        folder=_at(freeze, v10["arm_r"]["sessions"]),
+        folder=at(freeze, v10["arm_r"]["sessions"]),
         prepared={task_id: {key: value for key, value in found.items() if key != "copy"}
                   for task_id, found in ready.items()},
         copies={task_id: Path(found["copy"]) for task_id, found in ready.items()},
@@ -296,7 +296,7 @@ def arms(freeze: dict, order: dict, *, calibration, prepared, work, record_path,
                      "vault": {"id": vault.vault_id, "digest": vault.digest},
                      "calibration_sha256": hashlib.sha256(reviewed["calibration_bytes"]).hexdigest()},
               "v10": found, "labels": "not read"}
-    _write(Path(output), result)
+    write_json(Path(output), result)
     return result
 
 
@@ -322,13 +322,13 @@ def label(freeze: dict, *, arms_path, record_path, committed: str, calibration, 
                        environment=found["v9"]["environment"], calibration_bytes=calibration_bytes, rows=rows,
                        a5=found["v9"]["a5"], gaming_found=found["v9"]["gaming"])
     out = Path(output_dir)
-    _write(out / "v9-results.json", v9)
+    write_json(out / "v9-results.json", v9)
     reference = _on_reference_fix(freeze, entries, rows, vault, ledger, work / "reference")
     limits = {key: v10[key] for key in ("cap_cents", "call_cap", "limit_s", "grace_s")} | {"shares": v10.get("shares")}
     arm_a_gaming = [item for item in v9["gaming"]["findings"] if str(item.get("source", "")).startswith("g6:")]
     v10_found = analysis.analyse(record_path, committed, v9=v9, reference=reference, limits=limits,
                                  gaming=arm_a_gaming)
-    _write(out / "v10-results.json", v10_found)
+    write_json(out / "v10-results.json", v10_found)
     return {"v9": v9, "v10": v10_found}
 
 
@@ -350,7 +350,7 @@ def _on_reference_fix(freeze: dict, entries: list[dict], rows: list[dict], vault
         if data["patch"] not in built:
             contract = labels.load(vault, v9run._at(manifest, task["label_contract"]), ledger=ledger)
             tree = trees.checkout(v9run._at(manifest, task["source"]), task["base_commit"],
-                                  work / _folder(index, task["task_id"]))
+                                  work / folder_name(index, task["task_id"]))
             trees.apply(tree, contract["reference_patch"])
             built[data["patch"]] = tree
         reproduction = reproductions.get((data["patch"], data["arm"], data["node"]))
@@ -390,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     freeze = load_freeze(args.freeze)
     if args.command == "draw":
-        _write(Path(args.output), draw(freeze))
+        write_json(Path(args.output), draw(freeze))
     elif args.command == "calibrate":
         v9run.calibrate(freeze["v9"], args.output)
     else:
