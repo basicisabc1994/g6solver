@@ -1432,7 +1432,8 @@ def _said(verdict: str, *, seconds: int, python: str) -> str:
 
 
 def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
-        network: bool = False, mutant: tuple[str, str] | None = None, receipt: bool = False) -> dict:
+        network: bool = False, mutant: tuple[str, str] | None = None, receipt: bool = False,
+        require_isolation: bool = False) -> dict:
     """Run ``tests`` (files, folders or ``file::test`` ids, relative to ``repo``) against the working tree, in place,
     and say what pytest found. A run under which a tracked file, HEAD or the index changed is ``changed_tracked_files``
     with the paths, whatever the tests said, and so is one after which git cannot read the repository (with that
@@ -1453,7 +1454,9 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
     G6's test-receipt store (``g6.workforce.receipt_store``), and ``receipt`` is the receipt's id; every other run, an
     unconfined one included, has ``receipt`` "" (with ``receipt_withheld`` and ``ignored_inputs`` when ignored files
     stopped it, and ``receipt_error`` when the store could not take the receipt). A mutant is not the artifact under review: ``receipt=True`` with ``mutant`` raises
-    ``ValueError``."""
+    ``ValueError``. ``require_isolation``: a run no backend would confine is refused before anything starts
+    (``RepoRefused``, ``G6_E_ISOLATION_UNAVAILABLE``), whatever the person allowed (patch review's runs; the launch
+    review's I1)."""
     if receipt and mutant is not None:
         raise ValueError("a mutant run is not the artifact under review, so it is never given a test receipt")
     repo = checked_repo(repo)
@@ -1465,10 +1468,12 @@ def run(repo: str | Path, tests: list[str], *, roots: tuple[str, ...] = (), time
         try:
             with repository_copy(repo, deadline=deadline, report=report) as copy:
                 return _run(copy, tests, roots=roots, timeout_s=timeout_s, network=network, mutant=mutant,
-                            copied=True, python=python, scratch_dir=copy.parent, deadline=deadline, links=report)
+                            copied=True, python=python, scratch_dir=copy.parent, deadline=deadline, links=report,
+                            require_isolation=require_isolation)
         except CopyNotRun as exc:
             raise RepoRefused("G6_E_TESTS_DID_NOT_RUN", str(exc)) from exc
-    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network, receipt=receipt, python=python)
+    return _run(repo, tests, roots=roots, timeout_s=timeout_s, network=network, receipt=receipt, python=python,
+                require_isolation=require_isolation)
 
 
 def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int, network: bool,
@@ -2135,7 +2140,7 @@ def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[
 
 
 def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = DEFAULT_TIMEOUT_S,
-               network: bool = False) -> dict[str, dict]:
+               network: bool = False, require_isolation: bool = False) -> dict[str, dict]:
     """Execute the old changed/deleted tests against copied current code, never overwrite the caller's tests.
 
     Same file/time caps as the main run. All old files are restored together for cross-file imports; each file gets
@@ -2143,7 +2148,8 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
     ``not_run`` entry made after the old-code baseline ran carries that baseline's verdict (``baseline``), and, when
     the baseline passed but the new run did not match its tests, the new run's verdict (``patched``). A file of
     ``change.before`` that ``change.renamed`` moved there runs at its old path at the base commit, where the new one
-    is absent, and its tests are matched across the move (review I6).
+    is absent, and its tests are matched across the move (review I6). ``require_isolation``: a run no backend would
+    confine is refused before it starts, and that refusal is raised, not returned (``run``).
     """
     bound = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     started, results = time.monotonic(), {}
@@ -2167,7 +2173,7 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                 with _base_revision(change, copy, started + bound, materialised=report.get("links_materialised")):
                     baseline = _run(copy, [old_path.get(rel, rel)], roots=roots, timeout_s=bound, network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
-                                    deadline=started + bound, links=report)
+                                    deadline=started + bound, links=report, require_isolation=require_isolation)
                 if (baseline["verdict"] != PASSED or baseline.get("degraded") or baseline.get("not_passed")
                         or baseline.get("deselected") or not baseline.get("test_outcomes")):
                     reason = baseline.get("said") or "; ".join(baseline.get("setup_errors", {}).values())
@@ -2180,7 +2186,7 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
                     continue
                 results[rel] = _run(copy, [rel], roots=roots, timeout_s=int(remaining), network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
-                                    deadline=started + bound, links=report)
+                                    deadline=started + bound, links=report, require_isolation=require_isolation)
                 if moved(baseline["test_outcomes"], old_path.get(rel, rel), rel) != set(
                         results[rel].get("test_outcomes") or {}):
                     reason = results[rel].get("said") or (SAID["collection_error"] if results[rel]["verdict"] == FAILED
@@ -2190,6 +2196,8 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
         except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
             raise
         except (OSError, RepoRefused, CopyNotRun) as exc:
+            if require_isolation and getattr(exc, "code", "") == ISOLATION_UNAVAILABLE:
+                raise
             results[rel] = {"verdict": "not_run", "said": str(exc)}
     return results
 

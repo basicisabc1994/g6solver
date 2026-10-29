@@ -111,6 +111,21 @@ def test_a_weakened_test_outside_pytests_default_names_compromises_integrity(tmp
 MAIN = "def test_ok():\n    assert True\n"
 
 
+@pytest.fixture
+def started(monkeypatch):
+    """Every test process a run would start (``repo_tests._bounded``), recorded and never started."""
+    from g6.workforce import repo_tests
+
+    calls: list[list[str]] = []
+
+    def bounded(cmd, **_):
+        calls.append(list(cmd))
+        return None
+
+    monkeypatch.setattr(repo_tests, "_bounded", bounded)
+    return calls
+
+
 @pytest.mark.parametrize(("test_file", "changed"), [
     ("app/tests.py", False),          # unchanged: nothing to compare
     ("check_calc.py", True),          # changed, but nothing makes it a test: no python_files, no check names it
@@ -124,3 +139,48 @@ def test_the_correct_cases_stay_as_they_were(tmp_path, monkeypatch, test_file, c
         {"id": "R1", "text": "add adds", "checks": ["test_main.py::test_ok"]}])
     assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
 
+
+# --- I1: patch review never runs a patch without the boundary, whatever the person allowed ---------------------------
+
+TEST = ("from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n\n\n"
+        "def test_negative():\n    assert add(-2, -3) == -5\n")
+SUM = [{"id": "R1", "text": "add returns the sum of two positive integers", "checks": ["test_calc.py::test_add"]},
+       {"id": "R2", "text": "add returns the sum of two negative integers", "checks": ["test_calc.py::test_negative"]}]
+
+
+def test_with_unconfined_runs_allowed_and_no_boundary_the_review_starts_nothing(tmp_path, monkeypatch, unconfined,
+                                                                                 started):
+    from g6.core import confine
+    from g6.core.errors import ISOLATION_UNAVAILABLE
+
+    monkeypatch.delenv(confine.REQUIRE, raising=False)
+    root = _repo(tmp_path, {"calc.py": BAD, "test_calc.py": TEST})
+    _write(root, {"calc.py": GOOD})
+    got = review_patch(root, task="Repair add.", requirements=SUM)
+    assert got["ok"] is False and got["completion_state"] == "blocked-escalated"
+    assert got["warning_card"]["code"] == ISOLATION_UNAVAILABLE and "assessment" not in got
+    said = got["warning_card"]["message"]
+    assert "does not change this" in said and "g6 doctor" in said and "bubblewrap" in said
+    assert started == []   # no test process was started, not only no receipt written
+
+
+@pytest.mark.parametrize("which", ["in place", "replayed at the base commit", "against the base commit's code"])
+def test_each_run_patch_review_makes_is_refused_before_it_starts_without_the_boundary(tmp_path, monkeypatch,
+                                                                                      unconfined, started, which):
+    from g6.core import confine
+    from g6.core.errors import ISOLATION_UNAVAILABLE
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(confine.REQUIRE, raising=False)
+    root = _repo(tmp_path, {"calc.py": BAD, "test_calc.py": TEST})
+    _write(root, {"calc.py": GOOD, "test_calc.py": TEST + "\n"})
+    change = repo_tests.change(root)
+    with pytest.raises(repo_tests.RepoRefused) as refused:
+        if which == "in place":
+            patch_review._execute(root, ["test_calc.py"], timeout_s=30)
+        elif which == "replayed at the base commit":
+            patch_review._execute(root, ["test_calc.py"], timeout_s=30, change=change)
+        else:
+            patch_review._execute_at_base(change, ["test_calc.py::test_add"], timeout_s=30)
+    assert refused.value.code == ISOLATION_UNAVAILABLE
+    assert started == []

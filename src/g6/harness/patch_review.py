@@ -273,17 +273,19 @@ def _execute(root: Path, ids: list[str], *, timeout_s: int, change: repo_tests.C
     """Every test run of a review, with ``roots`` (the review's ``import_roots``) first on the import path. In place on
     the patched tree (``repo_tests.run``); or, given ``change``, each test file of ``ids`` replayed at the base commit
     and then on the patch, in a copy (``repo_tests.run_before``), as ``{file: result}``: a file that did not pass at
-    the base commit reads ``not_run``."""
+    the base commit reads ``not_run``. Every one requires the boundary (the launch review's I1): a run no
+    operating-system boundary would confine is refused before it starts, whatever the person allowed."""
     if change is not None:
         texts = {rel: (root / rel).read_text(encoding="utf-8", errors="replace") for rel in ids}
-        return repo_tests.run_before(replace(change, before=texts), roots=roots, timeout_s=timeout_s)
-    return repo_tests.run(root, ids, roots=roots, timeout_s=timeout_s, receipt=True)
+        return repo_tests.run_before(replace(change, before=texts), roots=roots, timeout_s=timeout_s,
+                                     require_isolation=True)
+    return repo_tests.run(root, ids, roots=roots, timeout_s=timeout_s, receipt=True, require_isolation=True)
 
 
 def _execute_at_base(change: repo_tests.Change, ids: list[str], *, timeout_s: int, roots: tuple[str, ...] = ()) -> dict:
     """The stated checks that passed, as their test files are now, run against the base commit's code in a copy
-    (``repo_tests.run_at_base``; review I8)."""
-    return repo_tests.run_at_base(change, ids, roots=roots, timeout_s=timeout_s)
+    (``repo_tests.run_at_base``; review I8), only inside the boundary (I1)."""
+    return repo_tests.run_at_base(change, ids, roots=roots, timeout_s=timeout_s, require_isolation=True)
 
 
 def _rooted(roots: tuple[str, ...]) -> dict:
