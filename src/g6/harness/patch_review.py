@@ -18,13 +18,17 @@
    binds the gate to that part of the diff; ``_test_diff``);
 2. ``defect_detected``: a stated check or extra test failed, or failed to collect because of the repository's own
    code; or a test that touches a changed module fails, or fails to collect, on the patch and passed at the base
-   commit (a moved test file runs there at its old path). One that does not pass at the base commit either, or could
-   not be run there, is not counted against the patch: an unknown. Or the patch adds an import that a contract the
+   commit (a moved test file runs there at its old path). One that does not pass at the base commit either is not
+   counted against the patch: an unknown. Or the patch adds an import that a contract the
    repository declares (its import-linter configuration at the base commit) or the caller states forbids
    (``forbidden_dependency_added``, a ``forbidden_dependency.v1`` template instance, read from the files);
 3. ``insufficient_evidence``: no requirement stated, a requirement with no stated check, a stated check that did not
    run (missing, not collected, could not be collected in this environment, skipped, deselected, started and cut off
-   by the time limit, never reached before it), the tier 1 run out of time, a shortcut only the claim's text reports
+   by the time limit, never reached before it), the tier 1 run out of time, a test that touches a changed module
+   failing on the patch where G6 cannot say it passed at the base commit (no failing test it can name, the time
+   budget spent, a copy over its cap or a base run that never happened, a replay not read or not comparable, one
+   that passed in the copy), or the run of those tests giving no result (``derived_test_not_compared``; the launch
+   review's I4), a shortcut only the claim's text reports
    (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at
    its limit, a changed entry of a submodule git does not look into (``change_inside_submodule``: git cannot check
    the files a submodule holds), or such a submodule folder G6 could not hash (``submodule_not_hashed``). Each such
@@ -148,6 +152,9 @@ UNTRUSTED = frozenset({repo_tests.CHANGED, "inconsistent_report", "incomplete"})
 #: correct patch's environment called tampering is the false alarm people give up over); exit 0 with tallies that show
 #: a failure, an error or fewer tests finished stays untrusted, as a tampered runner would show it.
 RUN_INCONSISTENT = repo_tests.RUN_INCONSISTENT
+#: The launch review's I4: a test of the changed modules fails on the patch (or their run gave no result), and G6
+#: cannot say it passed at the base commit and fails on the patch.
+NOT_COMPARED = "derived_test_not_compared"
 RUN_INCONSISTENT_DETAIL = ("{run}: the tests passed by pytest's own count, but the process exited with an error "
                            "afterwards, so nothing is counted as passed on it; run them with the repository's own "
                            "command to see what fails at exit")
@@ -926,9 +933,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                 pass   # its failures, and its passes, are of code the patch did not change
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):
                 _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots)
-            elif second["verdict"] not in repo_tests.RAN:
-                unknowns.append(f"the tests that touch the changed modules did not run to a result "
-                                f"({second['verdict']}): {second.get('said', '')}")
+            elif second["verdict"] not in repo_tests.RAN:   # the launch review's I4: nothing compared, no support
+                said = (f"the tests that touch the changed modules did not run to a result ({second['verdict']}): "
+                        f"{second.get('said', '')}")
+                unknowns.append(said)
+                reason("evidence", NOT_COMPARED, said)
     follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)
     search = None
     formal = None
@@ -1110,18 +1119,24 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
 
 def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, roots=()) -> None:
     """Replay each failing derived test file, and each one pytest could not collect, at the base commit: a defect only
-    when it passed there."""
+    when it passed there. Where one fails on the patch and G6 cannot say it passed at the base commit and fails on the
+    patch, an evidence reason of its own (``derived_test_not_compared``; the launch review's I4), never support; one
+    that did not pass at the base commit either stays an unknown (the patch did not cause it)."""
+    def uncompared(text: str) -> None:
+        unknowns.append(text)
+        reason("evidence", NOT_COMPARED, text)
+
     full = _in_repository(second)
     failing = sorted({full(rel) for rel in {node.partition("::")[0] for node in [*second.get("failed_ids", []),
                                                                               *second.get("setup_errors", {})]}
                       | _collection_errors(second.get("output") or "")} & set(derived))
     if not failing:
-        unknowns.append(f"the tests that touch the changed modules failed without a test G6 can name: "
-                        f"{second.get('said') or 'read their output'}")
+        uncompared(f"the tests that touch the changed modules failed without a test G6 can name: "
+                   f"{second.get('said') or 'read their output'}")
         return
     if _left(deadline) < 1:
-        unknowns.extend(f"{rel} fails on the patch; the time budget was spent before it ran at the base commit"
-                        for rel in failing)
+        for rel in failing:
+            uncompared(f"{rel} fails on the patch; the time budget was spent before it ran at the base commit")
         return
     replays = _execute(root, failing, timeout_s=max(1, _left(deadline)), change=change, **_rooted(roots))
     for rel in failing:
@@ -1131,7 +1146,7 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
                             provenance=DERIVED))
         elsewhere = _loaded_elsewhere(change, out)
         if elsewhere:   # review C1: a replay of code the patch did not change says nothing of the patch
-            unknowns.append(f"{rel} fails on the patch, and its replay in a copy is not read: {elsewhere}")
+            uncompared(f"{rel} fails on the patch, and its replay in a copy is not read: {elsewhere}")
         elif out.get("verdict") == repo_tests.FAILED:
             reason("tier_2", "derived_test_regressed", f"{rel} passed at the base commit and fails on the patch: "
                    + ", ".join(out.get("failed_ids", [])[:5]), node=rel, ran=out)
@@ -1139,17 +1154,17 @@ def _on_base(root, change, derived, second, deadline, runs, unknowns, reason, ro
             reason("tier_2", "derived_test_regressed", f"{rel} collects and passes at the base commit, and fails to "
                    f"collect or run on the patch ({out.get('said') or out.get('patched')})", node=rel, ran=out)
         elif out.get("verdict") == "passed":
-            unknowns.append(f"{rel} failed in place on the patch but passed when replayed in a copy")
+            uncompared(f"{rel} failed in place on the patch but passed when replayed in a copy")
         elif out.get("baseline") == "passed":
-            unknowns.append(f"{rel} fails on the patch, and its run there could not be compared with its passing run "
-                            f"at the base commit ({out.get('said') or out.get('patched')})")
+            uncompared(f"{rel} fails on the patch, and its run there could not be compared with its passing run at "
+                       f"the base commit ({out.get('said') or out.get('patched')})")
         elif out.get("baseline"):
             unknowns.append(f"{rel} fails on the patch and did not pass at the base commit either "
                             f"({out['baseline']}), so G6 does not count it as a defect of this patch"
                             + (f" ({out['said']})" if out.get("said") else ""))
         else:   # review I6: the base run never happened, so nothing says the file failed there
-            unknowns.append(f"{rel} fails on the patch and could not be run at the base commit, so G6 cannot say "
-                            f"whether the patch broke it ({out.get('said') or out.get('verdict')})")
+            uncompared(f"{rel} fails on the patch and could not be run at the base commit, so G6 cannot say whether "
+                       f"the patch broke it ({out.get('said') or out.get('verdict')})")
 
 
 _SUMMARY = {

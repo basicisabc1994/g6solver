@@ -698,7 +698,9 @@ def test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect(r
          "commit", "-qm", "legacy")
     (repo / "calc.py").write_text(GOOD)
     derived = result([ADD, NEGATIVE], ["test_legacy.py::test_legacy"])
-    not_on_base = {"verdict": "not_run", "said": "old tests not run: the old-code baseline did not pass"}
+    # as repo_tests.run_before gives it: the base run happened and failed (with no baseline it never ran: launch I4)
+    not_on_base = {"verdict": "not_run", "said": "old tests not run: the old-code baseline did not pass",
+                   "baseline": "failed"}
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
                                   ("test_calc.py", "test_legacy.py"): derived},
                     on_base={"test_legacy.py": not_on_base})

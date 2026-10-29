@@ -238,3 +238,98 @@ def test_a_module_the_patch_moves_shadows_nothing(tmp_path, monkeypatch):
     _record(monkeypatch, lambda ids: result(ids))
     got = review_patch(root, task="Move a module.", requirements=CHECK)
     assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+# --- I4: a touched-module test that fails on the patch and is not compared with the base commit ------------------------
+
+MORE = "from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n"
+STATED = [{"id": "R1", "text": "add adds", "checks": ["test_calc.py::test_add"]}]
+ZERO = "test_more.py::test_zero"
+
+
+def _tier2(monkeypatch, second, replay=lambda rel: {"verdict": "not_run", "said": "not replayed"}, spend=False):
+    """The stated checks pass; the tests that touch the changed module give ``second`` (with ``spend``, after the
+    whole time they were given, so the review's time budget is spent whatever the set-up took); each replay at the
+    base commit and on the patch gives ``replay(file)``."""
+    import time
+
+    def execute(root, ids, *, timeout_s, change=None, **_):
+        if change is not None:
+            return {rel: replay(rel) for rel in ids}
+        if all("::" in node for node in ids):
+            return result(ids)
+        if spend:
+            time.sleep(timeout_s + 0.2)
+        return second
+
+    monkeypatch.setattr(patch_review, "_execute", execute)
+    monkeypatch.setattr(patch_review, "_execute_at_base", lambda change, ids, *, timeout_s, **_: {
+        "verdict": "not_run", "said": "no run was recorded"})
+
+
+def _touched(tmp_path) -> Path:
+    root = _repo(tmp_path, {"calc.py": BAD, "test_calc.py": "from calc import add\n\n\ndef test_add():\n"
+                            "    assert add(2, 3) == 5\n", "test_more.py": MORE})
+    _write(root, {"calc.py": GOOD})
+    return root
+
+
+FAILING = result(failed=[ZERO])
+CASES = {
+    "no failing test G6 can name": dict(second={**FAILING, "failed_ids": [], "test_outcomes": {}}),
+    "the base never ran (the copy over its cap)": dict(second=FAILING, replay=lambda rel: {
+        "verdict": "not_run", "said": "the repository copy cap of 10000 files was exceeded"}),
+    "the replay is not read": dict(second=FAILING, replay=lambda rel: {
+        **result([ZERO]), "loaded_outside": {"calc": "/elsewhere/site-packages/calc.py"}, "loaded_complete": True}),
+    "failed in place, passed in the copy": dict(second=FAILING, replay=lambda rel: result([ZERO])),
+    "the runs are not comparable": dict(second=FAILING, replay=lambda rel: {
+        "verdict": "not_run", "said": "its tests did not match", "baseline": "passed", "patched": "passed"}),
+    "tier 2 did not run to a result": dict(second={**result(), "verdict": "no_tests_collected", "said": "none"}),
+    "tier 2 ran out of time": dict(second={**result(), "verdict": "timed_out", "said": "the time ran out"}),
+}
+
+
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_a_touched_test_that_fails_and_is_not_compared_with_the_base_is_insufficient_evidence(tmp_path, monkeypatch,
+                                                                                               case):
+    root = _touched(tmp_path)
+    _tier2(monkeypatch, **CASES[case])
+    got = review_patch(root, task="Repair add.", requirements=STATED)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", (case, assessment["reasons"])
+    assert ("evidence", "derived_test_not_compared") in _codes(got), (case, assessment["reasons"])
+
+
+def test_the_copy_over_its_cap_is_insufficient_evidence(tmp_path, monkeypatch):
+    """The real replay (``repo_tests.run_before``), whose copy stops at its file cap before anything runs."""
+    from g6.workforce import repo_tests
+
+    real = patch_review._execute
+    root = _touched(tmp_path)
+    _tier2(monkeypatch, FAILING)
+    recorded = patch_review._execute
+    monkeypatch.setattr(patch_review, "_execute", lambda root, ids, *, timeout_s, change=None, **kw: (
+        real(root, ids, timeout_s=timeout_s, change=change, **kw) if change is not None
+        else recorded(root, ids, timeout_s=timeout_s)))
+    monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 1)
+    got = review_patch(root, task="Repair add.", requirements=STATED)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    found = [r["detail"] for r in got["assessment"]["reasons"] if r["code"] == "derived_test_not_compared"]
+    assert found and "test_more.py" in found[0], got["assessment"]["reasons"]
+
+
+def test_the_time_budget_spent_before_the_replay_is_insufficient_evidence(tmp_path, monkeypatch):
+    root = _touched(tmp_path)
+    _tier2(monkeypatch, FAILING, spend=True)
+    got = review_patch(root, task="Repair add.", requirements=STATED, timeout_s=5)
+    found = [r["detail"] for r in got["assessment"]["reasons"] if r["code"] == "derived_test_not_compared"]
+    assert found and "time budget was spent" in found[0], got["assessment"]["reasons"]
+    assert got["assessment"]["outcome"] == "insufficient_evidence"
+
+
+def test_a_touched_test_that_did_not_pass_at_the_base_either_leaves_the_outcome_as_it_was(tmp_path, monkeypatch):
+    root = _touched(tmp_path)
+    _tier2(monkeypatch, FAILING, replay=lambda rel: {"verdict": "not_run", "said": "it failed there too",
+                                                     "baseline": "failed"})
+    got = review_patch(root, task="Repair add.", requirements=STATED)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert "derived_test_not_compared" not in [code for _, code in _codes(got)]
