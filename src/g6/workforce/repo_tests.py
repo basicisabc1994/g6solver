@@ -277,6 +277,18 @@ def _private(repo: Path, commit: str, *commands: tuple[str, ...]) -> list[bytes]
         return [_git(repo, *command, index=index) for command in commands]
 
 
+def _tracked_new(repo: Path, commit: str, spec: list[str] | tuple[str, ...] = ()) -> set[str]:
+    """The files the repository's own index tracks that ``commit`` does not hold, gitlinks aside, present in the
+    working tree: staged new files, and among them a file force-added (``git add -f``) under a path git ignores, which
+    ``ls-files --others --exclude-standard`` against the private index leaves out as ignored and ``ignored_inputs``
+    leaves out as tracked (the security review of W1-W5, F4). Only ever added to what the private index lists, so an
+    entry written into the index can add a file to the change, never take one out."""
+    staged = {entry.partition("\t")[2] for entry in _paths(_git(repo, "ls-files", "--stage", "-z", *spec))
+              if not entry.startswith("160000 ")}
+    base = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, *spec))) if commit else set()
+    return {rel for rel in staged - base if rel and os.path.lexists(repo / rel)}
+
+
 def _gitlinks(repo: Path, index: bytes | None = None) -> tuple[str, ...]:
     """The gitlinks (mode 160000) the index (``index``: its ``ls-files --stage -z`` listing, when already read) or HEAD
     holds, each a submodule that was never set up here: a folder git does not enter (each status and diff skips
@@ -522,7 +534,8 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
     # the review of VS-4, finding 1: the list never comes from the repository's own index or its replace refs
     diffed, others = _private(repo, commit, ("diff", "--name-only", "-z", "--no-renames", "--no-textconv", *spec),
                               ("ls-files", "--others", "--exclude-standard", "-z", *spec))
-    files = tuple(sorted((set(_paths(diffed)) | set(_paths(others)) | set(held)) - set(unseen)))
+    files = tuple(sorted((set(_paths(diffed)) | set(_paths(others)) | _tracked_new(repo, commit, spec) | set(held))
+                         - set(unseen)))
     tests = [rel for rel in files if is_test_file(rel)]
     existed = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", *tests))) if tests else set()
     before = {rel: _text(_git(repo, "show", f"{commit}:{rel}")) for rel in sorted(existed)}
@@ -673,7 +686,8 @@ def diff_text(change: Change) -> str:
                               ("diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text"),
                               ("ls-files", "--others", "--exclude-standard", "-z"))
     text = diffed.decode("utf-8", "replace")
-    for rel in sorted(set(_paths(others)) & set(change.files) - set(change.outside_links)):   # never read (M1)
+    new = set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # a force-added file too (F4)
+    for rel in sorted(new & set(change.files) - set(change.outside_links)):   # never read (M1)
         lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS].splitlines()
         text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
     return text
@@ -934,7 +948,8 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
     diffed, others = _private(repo, head.decode().strip(), ("diff", "--name-only", "-z", "--no-renames",
                                                              "--no-textconv"),
                               ("ls-files", "--others", "--exclude-standard", "-z"))
-    staged = set(_paths(others)) & {entry.partition("\t")[2] for entry in _paths(index)}
+    staged = (set(_paths(others)) & {entry.partition("\t")[2] for entry in _paths(index)}) | _tracked_new(
+        repo, head.decode().strip())   # a file force-added under an ignored path too (F4)
     for rel in (*_paths(_git(repo, "diff", "--name-only", "-z")), *_paths(diffed), *sorted(staged), *held,
                 *(_untracked(repo) if untracked is None else untracked)):
         found[rel] = _digest(repo / rel)
@@ -2256,7 +2271,7 @@ def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[
     diffed, others = _private(change.repo, change.base_commit,   # never the repository's index (the review of VS-4)
                               ("diff", "--name-only", "--no-renames", "-z"),
                               ("ls-files", "--others", "--exclude-standard", "-z"))
-    changed = set(_paths(diffed)) | set(_paths(others))
+    changed = set(_paths(diffed)) | set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # F4
     changed.update(change.held)   # changed, though git's index flags hide them from its diff (review C2)
     changed = {rel for rel in changed if not any(rel == kept or rel.startswith(kept + "/") for kept in keep)}
     entries = _paths(_git(change.repo, "ls-tree", "-r", "-l", "-z", change.base_commit))

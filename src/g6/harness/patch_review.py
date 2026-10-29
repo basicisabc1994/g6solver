@@ -226,14 +226,15 @@ TEST_DATA_REASON = ("the patch changes test data or snapshots, which G6 does not
 TEST_DATA_ASK = ("Read the diff of {path} (git diff {base} -- {path}): it is test data or a snapshot the patch "
                  "changed, which G6 does not compare; confirm the new values are intended, then review again.")
 #: What the person does about git-ignored files the tests could load (worked examples, W3b): the next actions name each
-#: file once, the files named like a tracked module apart from the others; the outcome stays what it was.
+#: file once, the files named like a tracked module apart from the others; the outcome stays what it was. Never "git
+#: add -f": that only stages the file into the patch under review (the security review of W1-W5, F4).
+IGNORED_SETTLE = ("If they belong to the project, commit them before the change under review; otherwise remove them or "
+                  "move them out of the repository; then review again.")
 IGNORED_NAMED_ASK = ("{files}: untracked and git-ignored, but named like modules in the repository, so G6 cannot rule "
-                     "out that one replaces a module during the tests. If they are data or not needed, track them (git "
-                     "add -f <path>) or remove them, then review again.")
+                     "out that one replaces a module during the tests. " + IGNORED_SETTLE)
 IGNORED_OTHER_ASK = ("{files}: untracked and git-ignored, but pytest or Python could load them during the tests (a "
                      "conftest, start-up or test file, bytecode, a compiled module, a link or a plugin declaration), "
-                     "and G6 does not compare them. Read them; if they are not needed, remove them, or track them (git "
-                     "add -f <path>) so that G6 compares them, then review again.")
+                     "and G6 does not compare them. Read them. " + IGNORED_SETTLE)
 IGNORED_SHOWN = 10
 
 

@@ -59,9 +59,9 @@ EXACT = ("G6 ran it with its own isolating options; the exact command is in "
 CAUTION = "Read it before you run it, or run it in a container."
 #: What the person does about git-ignored files the tests could load (worked examples, W3b), under that finding.
 IGNORED_TO_DO = ("  - What to do: these files are untracked and git-ignored, yet the tests could load them (one named "
-                 "like a module in the repository could replace it), so G6 cannot rule that out. If they are data or "
-                 "not needed, track them (`git add -f <path>`) or remove them, then review again; each is named once "
-                 "in `assessment.next_actions`.")
+                 "like a module in the repository could replace it), so G6 cannot rule that out. If they belong to the "
+                 "project, commit them before the change under review; otherwise remove them or move them out of the "
+                 "repository; then review again. Each is named once in `assessment.next_actions`.")
 TO_DO = frozenset({"ignored_file_can_change_tests"})
 
 
