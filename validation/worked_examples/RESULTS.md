@@ -235,6 +235,7 @@ what happened in each run.
 | 6 | pydantic #14052 | not enough evidence; fails | 1: not enough evidence (R2's whole-file check has skipped tests) | 9 calls; 2 `example.v1` and 2 `differential.v1` instances (1 refused) and 3 free-form checks, all run, none refuting the patch. No finding. | final **fails** (1 of 1 FAIL_TO_PASS: documented nested definitions), as in round 1 | $0.12 + $0.85, 3.5 min |
 | 7 | click #3769 | supported within scope; fails (`bar.update()` cases) | 1: supported within scope | 8 calls; 2 `differential.v1` instances and 2 free-form checks (all run, none refuting) and 2 `state_invariant.v1` instances (refused). No finding. | final **fails** (3 of 6 FAIL_TO_PASS: `bar.update()` still stops short), as in round 1 | $0.18 + $0.95, 3.8 min |
 | 8 | attrs #1593 | supported within scope; passes | 1: supported within scope | 7 calls; 2 `example.v1` and 4 `differential.v1` instances (2 refused; the rest run, none refuting). No finding. | final **passes**, as in round 1 | $0.14 + $0.89, 1.8 min |
+| 9 | fastapi #15077 | test integrity compromised (`.pdm-build`, a false alarm); passes | 1: supported within scope, with no integrity alarm (F8 at 9ad134d) | 8 calls; 3 `differential.v1` instances and 3 free-form checks, all run, none refuting. No finding. | final **passes**, as in round 1 | $0.18 + $0.95, 4.2 min |
 
 **What happened, run by run**
 
