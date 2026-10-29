@@ -18,7 +18,13 @@ SAID = (
     "G6 reproduced no defect",
     "Six of the ten patches failed the maintainers' tests",
     "not yet a defect finder",
+    # round 2 (2026-10-29): the same ten bugs with G6's own model proposing checks in every review
+    "A second round turned on G6's own model",
+    "it proposed 51 checks, and none found a defect",
+    "Five of the ten new patches failed",
 )
+#: Said while round 2 ran; it has run.
+STALE = ("under way",)
 
 
 def _words(text: str) -> str:
@@ -31,6 +37,7 @@ def test_the_home_page_says_what_happened_when_we_tried_it(client):
     words = _words(section)
     for phrase in SAID:
         assert phrase in words
+    assert not [phrase for phrase in STALE if phrase in words]
     assert LINK in section
     assert not re.search(r"(?i)\bexperimental\b|\bverified\b|proof of concept", words)
 
@@ -39,6 +46,8 @@ def test_the_readme_says_the_same_and_links_to_the_record():
     text = " ".join((OSS / "README.md").read_text(encoding="utf-8").split())
     for phrase in SAID:
         assert phrase in text, phrase
+    section = text.split("## What happened when we tried it", 1)[1].split("## ", 1)[0]
+    assert not [phrase for phrase in STALE if phrase in section]
     assert LINK in text
 
 
