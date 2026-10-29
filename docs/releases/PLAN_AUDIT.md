@@ -79,7 +79,7 @@ section 5.
 | Usability | **Superseded for the first launch** by the owner's decision. Not run. |
 | Utility | **Superseded for the first launch.** No claim is made that G6 finds more defects or saves time (row L-G5). V9 and V10 are registered and have not run. |
 | Broader usability | **Superseded for the first launch.** Not run. |
-| Artifacts | **Not re-checked for this update.** The launch notes leave the version number for the owner to set (row L-G6). |
+| Artifacts | **Not re-checked for this update.** The version is 0.2.0 (row L-G6); the five certificates are renewed after it. |
 | V10 feasibility report | **Deferred** (row L-D1). |
 | Step 5 trial | **Superseded for the first launch;** the owner's pilot remains (row L-G4). |
 | Security reviews | **Open.** Half A and half B of the launch review found problems that are fixed (rows L-A to L-B8). The fresh review of W1 to W5 is in progress (row L-W6). The integrity fix of the VS-4 review has no separate fresh review on record (row L-G1). |
@@ -294,7 +294,7 @@ Three ledger rows recorded steps that worked and need nothing: P0-03 (the instal
 | P0-02 | The README never says to make a virtual environment | missing | `README.md:40-45` | Step 5 |
 | P0-04 | Doctor calls "no model" fine without saying what will not work or how to choose one | missing | `src/g6/cli/doctor.py:139`. The fix text at `:140` is printed only when a check is not ok (`:241`) | Step 5 |
 | P0-05 | Doctor's Windows isolation line is long and technical, and its closing line points to "optional extras" | missing | `doctor.py:182`, `:244`; `src/g6/core/confine.py:547-548, 858-859` | Step 5 |
-| P0-06 | The version reads as a development version though v0.1.0 exists | implemented and verified | `src/g6/__init__.py:12` is `0.1.1`. Test: `tests/tools/test_release_guard.py::test_wrong_or_development_version_cannot_be_released`. The published v0.1.0 apps keep their old label | — |
+| P0-06 | The version reads as a development version though v0.1.0 exists | implemented and verified | `src/g6/__init__.py:12` is `0.2.0` (the owner, 2026-10-29). Tests: `tests/tools/test_release_guard.py::test_wrong_or_development_version_cannot_be_released` and `::test_the_launch_notes_name_the_stable_version_g6_reports`. The published v0.1.0 apps keep their old label | — |
 | P0-07 | `g6 init` leaves an empty folder: no key file, no model, no next step | missing | `g6 init` still prints only the folder (`src/g6/cli/__init__.py:227`). `g6 setup` exists, but it ends with "Restart the client to load it." (`src/g6/cli/setup.py:166`) | Step 5 |
 | P0-08 | The README's `g6 invoke` example breaks in Windows PowerShell 5.1, which strips the inner quotes | missing | `README.md:79`. Parameters are taken only as one positional JSON string (`cli/__init__.py:152`) | Step 5 |
 | P0-10 | `g6 find` prints raw scores, and an unrelated component ranks second for a claim check | missing | `cli/__init__.py:236` prints raw output. The ranking was not rerun | Step 5 |
@@ -542,7 +542,7 @@ account.
 | L-G3 | Continuous integration green on the release commit (a red macOS job is acceptable) | missing | Pending. The last runs found: 40780356106 (red, fixed) and 40810994710 at `28a2c3b` (red on the scan and one install-message test, fixed). Most launch commits carry `[skip ci]`, so a run must be started on the release commit itself. The macOS job is untested (section 5.9) | owner |
 | L-G4 | The owner's pilot in Claude Code and in Codex: setup, one real review, allow and decline in the dialog | missing | Pending. Earlier: in Codex Esc cancelled the form and no Decline control was visible (`docs/releases/UAT_ROUND_1.md:61-65`); Claude Code is untested (row S5-1) | owner |
 | L-G5 | Honest copy: the status line, never "verified" as a claim, no claim that G6 catches more defects or saves time | implemented, not verified | Pinned by `tests/site/test_launch_copy.py::test_each_page_that_ships_carries_the_status_line_word_for_word`, `::test_the_launch_copy_claims_no_more_defects_found_and_no_time_saved` and `tests/site/test_loop_in_public.py`, which also checks the section never says "experimental" or "verified". Not verified: `tests/site/test_honesty.py` still does not exist (row E34); the word "experimental" still appears in three blog essays (`web/templates/blog/context_window_is_not_memory.html`, `epistemology_of_ai.html`, `two_types_of_thinking.html`; row E33), which no test reads; rows E25 to E32 were not re-read for this update | owner |
-| L-G6 | The owner's steps: squash-merge PR #1, tag the release, deploy the site; set the version number | missing | Pending. `docs/releases/launch.md` carries the placeholder `VERSION-TO-BE-SET-BY-THE-OWNER` in its title, and says the owner sets it | owner |
+| L-G6 | The owner's steps: squash-merge PR #1, tag the release, deploy the site; set the version number | missing | The version is set: 0.2.0 (the owner, 2026-10-29), in `src/g6/__init__.py` and the title of `docs/releases/launch.md`; the tag is then `v0.2.0` (`tools/check_release.py`). The version is an input every certificate binds, so the five are renewed after it. The merge, the tag and the site remain pending | owner |
 
 ### 5.8 Deferred until after launch
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 
 def invoke(component: str, op: str, params: Any = None, *, allow: Iterable[str] | str = ()) -> dict[str, Any]:

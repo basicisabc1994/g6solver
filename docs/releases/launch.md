@@ -1,8 +1,6 @@
-# G6 VERSION-TO-BE-SET-BY-THE-OWNER: patch review for Claude Code and Codex
+# G6 0.2.0: patch review for Claude Code and Codex
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.
-
-The owner sets the version number above before release.
 
 ## What ships
 

@@ -165,9 +165,11 @@ def test_the_home_pages_quick_start_first_makes_g6s_own_environment_and_links_ge
     assert 'href="/get-started/"' in before   # the line links to Get started
 
 
-def test_the_release_notes_say_what_ships_what_does_not_and_leave_the_version_to_the_owner():
+def test_the_release_notes_say_what_ships_what_does_not_and_name_the_version_the_owner_set():
+    import g6
     notes = shipped()["docs/releases/launch.md"]
-    assert notes.startswith("# G6 VERSION-TO-BE-SET-BY-THE-OWNER")
+    assert notes.startswith(f"# G6 {g6.__version__}: ")   # the owner set it, 2026-10-29
+    assert "VERSION-TO-BE-SET" not in notes
     for part in ("## What ships", "## What does not ship", "## Limits", "G6's own model calls", "V9 and V10",
                  "plugins and hooks", "Venture", "continuous integration check", "macOS", "Python first"):
         assert part in notes, part
