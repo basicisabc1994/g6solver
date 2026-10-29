@@ -468,3 +468,26 @@ Items from 70 cover the cost calibration (`calibration.py`), development calibra
 
 Where the work stands: slices J (items 45 to 63, with V9's 58 to 62) and K (items 64 to 72) are complete, every item
 awaiting the coordinator's ruling; the launch slice came next, and nothing of J or K was left part-done.
+
+Items from 73 cover the session launcher (`launcher.py`), written for the paid rehearsal before the freeze.
+
+73. **The launcher reuses V7's runner.** Each Claude Code session runs headless in a container on an internal network
+    whose only way out is V7's proxy, which lets through the model's endpoint alone, so a session's own commands have
+    no network, as V9 and V10 require. The container holds no saved memory, plugin, skill, hook, tool server or
+    instruction file of its own, and `--strict-mcp-config` loads no tool server. Web tools are refused. The model,
+    effort and caps are the rehearsal's (V7's runner's `claude-sonnet-5-5` at high effort, the candidate the registry
+    records), since the freeze entry names V9's agent. For the coordinator's ruling.
+
+74. **Arm 2 and the patch session share one session.** The patch session's patch is captured as V7 captured it, and
+    arm 2 resumes that same session (`--resume`) with V9's frozen review prompt, in the same container. Arm R is a
+    fresh session in its own container, in R's copy, and the tests it writes are copied back for `arm_r.collect`. For
+    the coordinator's ruling.
+
+75. **The diff beside R's prompt.** Item 47 gives R the diff beside its registered prompt. The launcher gives it in
+    Claude Code's appended system prompt, so the prompt R reads is the registered text word for word. For the
+    coordinator's ruling.
+
+76. **Tokens and endings.** A session's `tokens` counts every kind of token its usage reports, cache reads included,
+    so arm 2's token cap must be set with that in mind. A session Claude Code stopped at its turn or budget cap ends
+    as `token_cap`, the arm 2 rule's stop at a cap; a time-out as `timed_out`. The dollar stop counts a cache write at
+    twice the input price, the higher published rate. For the coordinator's ruling.
