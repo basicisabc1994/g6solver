@@ -1204,7 +1204,7 @@ def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes(repo, m
             job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
                                                                   "requirements": SUM}))
             for _ in range(400):
-                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
                 if got.get("status") in ("completed", "failed"):
                     return tool, got
                 await asyncio.sleep(0.05)
@@ -1243,7 +1243,7 @@ def test_the_mcp_tool_takes_an_intent_and_refuses_an_invalid_one_with_a_code(rep
         job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
                                                               "requirements": SUM, **arguments}))
         for _ in range(400):
-            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
             if got.get("status") in ("completed", "failed"):
                 assert got["status"] == "completed", got
                 return got["result"]

@@ -61,8 +61,9 @@ G6 gets an environment of its own, made with `--copies`: on Linux, G6 cannot yet
 environment linked to the same one, and refuses to review then.
 
 `g6 setup` registers this installation with the client (`claude mcp add` or `codex mcp add`, with this installation's
-Python), installs the `using-g6` skill for it, and allows patch review, the one sensitive operation the first review
-needs. Restart the client afterwards. Its last lines show the first review call.
+Python, started with `-P` so that the packages in the project's folder never replace G6's own), installs the `using-g6`
+skill for it, and allows patch review, the one sensitive operation the first review needs. Restart the client
+afterwards. Its last lines show the first review call.
 
 If the client already has an entry called `g6`, setup leaves it as it is and stops. See it with `claude mcp get g6` (or
 `codex mcp get g6`). To replace it, remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`), then
@@ -87,7 +88,8 @@ is done. The skill tells it how:
 2. It calls `g6_review_patch` with the repository's folder, the task and the requirements, and polls
    `metaharness_job` until the review ends.
 3. It shows you the reply's readable report (`assessment.report`) as it is: what G6 reproduced first, then what is not
-   established, then what you decide.
+   established, then what you decide. The reply is compact; the full assessment is saved in G6's state folder
+   (`~/.g6/reviews/`).
 4. When G6 reproduces a defect, it fixes it and reviews again, with each earlier reproduction added as a stated check,
    so you can see the fix pass the original counterexample. It stops after three rounds, when a round changes nothing,
    or when the report says only you can decide.

@@ -32,7 +32,7 @@ def probe() -> dict:
         # No credentials or user's MCP configuration are copied into this home.
         (config / "config.toml").write_text(
             '[mcp_servers.g6]\ncommand = ' + json.dumps(sys.executable) + '\nargs = '
-            + json.dumps(["-c", "from g6.mcp import main; main()"])
+            + json.dumps(["-P", "-c", "from g6.mcp import main; main()"])
             + '\n[mcp_servers.g6.env]\nG6_HOME = ' + json.dumps(str(root / "state"))
             + '\nG6_DISABLE_LLM = "1"\n', encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if not any(

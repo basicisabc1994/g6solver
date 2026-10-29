@@ -25,6 +25,11 @@ files, your key file ~/.g6/.env among them, and the programs it starts can reach
 computer needs for a boundary.
 """
 PROMPT = "Allow G6 to run such code without a boundary on this computer? [y/N] "
+#: How a client starts G6's server, after this installation's Python: with -P. The client starts it in the project's
+#: folder, and a plain ``-c`` puts that folder first on the import path, so a project's own ``pydantic`` or
+#: ``starlette`` would replace G6's and run in G6's process (worked examples, W1). -P keeps the folder off; -I would
+#: also drop PYTHONPATH and the user's site-packages, which the person sets, not the project.
+SERVER_ARGS = ("-P", "-c", "from g6.mcp import main; main()")
 #: How each client removes its existing g6 entry, so setup can register this installation in its place.
 REMOVE = {"claude": "claude mcp remove --scope user g6", "codex": "codex mcp remove g6"}
 #: Setup's closing lines when patch review is allowed: the first review call.
@@ -168,7 +173,7 @@ def register_clients(args, clients: list[str], say: Say) -> int:
             command += [flag, f"G6_MCP_SENSITIVE={allowed}"]
         if args.model:
             command += [flag, f"G6_LLM_PROVIDER={args.model}"]
-        command += ["--", sys.executable, "-c", "from g6.mcp import main; main()"]
+        command += ["--", sys.executable, *SERVER_ARGS]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -179,7 +184,8 @@ def register_clients(args, clients: list[str], say: Say) -> int:
                 f"replace it, remove it with '{REMOVE[client]}' and run g6 setup again.")
             return 2
         cli(["skills", "install", "--user", "--client", client])
-        say(f"Registered G6 for {client} with this installation's Python. Restart the client to load it.")
+        say(f"Registered G6 for {client} with this installation's Python, started with -P so that the packages in "
+            "the project's folder never replace G6's own. Restart the client to load it.")
     say("Local settings assume a trusted host. An agent with your account's unrestricted shell can change them.")
     if "patch_review.review" in {item.strip() for item in allowed.split(",")}:
         say(FIRST_REVIEW)

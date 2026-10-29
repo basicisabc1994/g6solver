@@ -91,8 +91,8 @@ simulated executor and an approval queue a person decides). `g6.research` is off
 g6 setup --client claude --allow patch_review.review    # or --client codex; give --client twice for both
 ```
 
-Setup registers this installation with the client, with this installation's Python, installs the `using-g6` skill
-for it, allows patch review, and ends by showing the first review call. If the client already has an entry called
+Setup registers this installation with the client, with this installation's Python, started with `-P` so that the
+packages in the project's folder never replace G6's own, installs the `using-g6` skill for it, allows patch review, and ends by showing the first review call. If the client already has an entry called
 `g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
@@ -108,7 +108,8 @@ compromised, defect detected, insufficient evidence, or supported within scope. 
 stated requirement passed its stated checks, not that the patch does everything the task needs. Each requirement gets
 its own evidence, and merging always needs a separate approval. It returns a job: poll `metaharness_job`. The reply's
 `assessment.report` is the review as Markdown, for the agent to show the person verbatim: what G6 reproduced first,
-then what is not established, then what the person decides. The `using-g6` skill tells the agent to fix what G6
+then what is not established, then what the person decides. The reply is compact; its `full_assessment` names the file
+in G6's state folder that holds every field, and `metaharness_job` with `detail="full"` returns them all. The `using-g6` skill tells the agent to fix what G6
 reproduced, add each earlier reproduction as a stated check, and review again, for at most three rounds.
 
 ## Choose a model

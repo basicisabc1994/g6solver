@@ -19,7 +19,7 @@ def test_setup_registers_explicit_client_with_absolute_interpreter_and_skills(tm
     assert main(["setup", "--client", "codex", "--refuse-unconfined", "--allow", "patch_review.review"]) == 0
     assert calls[0][:4] == ["C:/tools/codex.exe", "mcp", "add", "g6"]
     assert "G6_MCP_SENSITIVE=patch_review.review" in calls[0]
-    assert calls[0][-4:] == ["--", sys.executable, "-c", "from g6.mcp import main; main()"]
+    assert calls[0][-5:] == ["--", sys.executable, "-P", "-c", "from g6.mcp import main; main()"]
     assert (tmp_path / ".codex" / "skills" / "using-g6" / "SKILL.md").is_file()
 
 

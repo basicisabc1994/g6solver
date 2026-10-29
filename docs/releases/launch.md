@@ -11,8 +11,9 @@ The owner sets the version number above before release.
   and test-runner files with the base commit for the signs of weakening it knows how to find, runs the other tests
   that touch the changed modules, and returns one outcome: test integrity compromised, defect detected, insufficient
   evidence, or supported within scope. The reply's readable report (`assessment.report`) puts what G6 reproduced
-  first, then what is not established, then what the person decides. A caller may also give proposed checks and
-  template instances; neither ever passes a requirement.
+  first, then what is not established, then what the person decides. Over MCP the reply is compact, so that it fits
+  in a client's tool result; the full assessment is saved in G6's state folder. A caller may also give proposed
+  checks and template instances; neither ever passes a requirement.
 - **Setup for both clients.** `g6 setup --client claude --allow patch_review.review` (or `--client codex`) registers
   the installation with the client, installs the `using-g6` skill for it, allows patch review, and ends by showing the
   first review call. When the client already has an entry called `g6`, setup stops and says how to replace it.
@@ -24,6 +25,21 @@ The owner sets the version number above before release.
 - **The rest of the library**, as the README's status table describes it.
 
 Merging stays the person's decision.
+
+## Fixed before release
+
+- **A security fix, found by a worked example.** `g6 setup` registered G6's MCP server as `python -c ...`. Claude
+  Code and Codex start the server in the project's folder, and `-c` puts that folder first on Python's import path.
+  So a project whose top-level package had the name of one of G6's dependencies replaced that dependency inside G6's
+  own server: in pydantic's repository the server did not start, and in starlette's repository it imported and ran
+  the repository's `starlette`, outside any boundary, with the person's rights. Setup now starts the server with
+  `python -P`, which keeps the project's folder off the import path. An entry made before this fix keeps the old
+  command: remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run `g6 setup` again.
+- **No network request when the server starts.** FastMCP, the library G6's MCP server is built on, asked PyPI for
+  its latest version each time the server started, and read its settings from a `.env` file in the folder the server
+  started in, the project's, where a line could name a class for G6's server to import and build. G6's server now
+  turns the version check off and reads no such file; what a person sets in the environment
+  (`FASTMCP_CHECK_FOR_UPDATES`, `FASTMCP_ENV_FILE`) is kept.
 
 ## What does not ship
 
@@ -54,6 +70,10 @@ Merging stays the person's decision.
   environment linked to the same one, and refuses to review then (`G6_E_REPO_PYTHON_INVALID`, before anything
   runs).
 - **Python first.** Patch review runs pytest on Python repositories only.
+- **Files git ignores.** G6 does not compare files git ignores, so an untracked, git-ignored file the tests could load
+  puts test integrity in doubt. A `.py` file named like any module in the repository counts, wherever it is, so a
+  data fixture called `a.py` can raise it. The reply names each such file once; if they are data or not needed, track
+  them (`git add -f <path>`) or remove them, then review again.
 - **What an outcome means.** Supported within scope means every stated requirement passed its stated checks; it is
   not proof that the patch does everything the task needs. The comparison for weakened tests is static and cannot
   show that the tests are as strong as before.

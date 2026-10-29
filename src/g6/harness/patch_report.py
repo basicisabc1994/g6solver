@@ -57,6 +57,12 @@ EXACT = ("G6 ran it with its own isolating options; the exact command is in "
          "`assessment.completion.defects_reproduced` (`reproduction.command`)")
 #: Reviewer B's B6: the caution a proposed or compiled check's reproduction carries, said on its line too.
 CAUTION = "Read it before you run it, or run it in a container."
+#: What the person does about git-ignored files the tests could load (worked examples, W3b), under that finding.
+IGNORED_TO_DO = ("  - What to do: these files are untracked and git-ignored, yet the tests could load them (one named "
+                 "like a module in the repository could replace it), so G6 cannot rule that out. If they are data or "
+                 "not needed, track them (`git add -f <path>`) or remove them, then review again; each is named once "
+                 "in `assessment.next_actions`.")
+TO_DO = frozenset({"ignored_file_can_change_tests"})
 
 
 def _plain(node: object) -> str:
@@ -122,8 +128,8 @@ def _findings(assessment: dict) -> list[list[str]]:
     completion = assessment.get("completion") or {}
     defects = completion.get("defects_reproduced") or {}
     items = [[f"- **Test integrity: {INTEGRITY.get(r['code'], 'the tests cannot be trusted')}** ({r['code']}): "
-              f"{code(_words(str(r.get('detail', ''))))}"] for r in assessment.get("reasons", [])
-             if r.get("stage") == "integrity"]
+              f"{code(_words(str(r.get('detail', ''))))}", *([IGNORED_TO_DO] if r["code"] in TO_DO else [])]
+             for r in assessment.get("reasons", []) if r.get("stage") == "integrity"]
     for found in defects.get("stated_and_repository_checks", []):
         requirements = ", ".join(code(r) for r in found.get("requirements", [])) or "no stated requirement"
         reproduction = found.get("reproduction") or {}

@@ -293,6 +293,13 @@ checks exercise the change; at most 3 questions and merging, for the person to d
 checks; and the standing note that the task's specification may be incomplete. It is derived from the
 other fields and decides nothing. Text from the repository or the request in it is shown inert, in code spans.
 
+Over MCP, `metaharness_job` returns a finished review in its compact form by default, so that it fits in a client's
+tool result (Claude Code saves a result longer than 50,000 characters to a file): `assessment.report` first, then
+`assessment.outcome`, `assessment.reasons`, `assessment.next_actions`, `assessment.unknowns`, `merge`, the job id, the
+envelope's fields, and `full_assessment`, which names the file that holds the full reply, every field described here
+included: `reviews/<job id>.json` in G6's state folder (`~/.g6`, or `G6_HOME`). `metaharness_job` with
+`detail="full"` returns the full reply instead, while the server runs. The Python API returns the full reply.
+
 The repair loop, as the using-g6 skill gives it: fix what G6 reproduced; on the next call, add each earlier
 reproduction as a stated check of its requirement (a proposed check's reproduction is a test file, added to the
 repository's tests and listed by its node id), so the person can see the fix pass the original counterexample;
