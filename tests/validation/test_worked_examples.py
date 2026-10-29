@@ -127,6 +127,8 @@ def test_task_dockerfile_keeps_the_fix_out_of_reach():
     assert "init -q" in final and "/.venv/" in final and "python3 -m venv .venv" in final
     assert "--copies" not in final                   # the project's .venv is an ordinary one, with links
     assert "SETUPTOOLS_SCM_PRETEND_VERSION=26.10.0" in final and "ENV SETUPTOOLS" not in final
+    # the dependencies as they were when the fix was merged, and the installer gone from the image afterwards
+    assert "UV_EXCLUDE_NEWER=2026-10-28T19:18:12Z" in final and "rm -rf /tmp/we-uv" in final
 
 
 def test_oracle_dockerfile_holds_the_fix_apart():

@@ -185,9 +185,12 @@ RUN chmod 755 {CLAUDE} \\
 
 def task_dockerfile(task: Task, base_image: str) -> str:
     """The project at the parent commit as a new repository with that tree as its only commit (the fetch stage's
-    history never reaches the final image), and its ``.venv``, made the project's normal way, with links."""
-    env = " ".join(f"{k}={v}" for k, v in sorted(task.env.items()))
-    install = " && ".join(f"{env} {cmd}".strip() for cmd in task.install)
+    history never reaches the final image), and its ``.venv``, made the project's normal way, with links. Its
+    dependencies are the versions published by the time the fix was merged (``uv``'s exclude-newer), so a later
+    release cannot break the project's own tests; the installer is removed from the image afterwards."""
+    env = " ".join(f"{k}={v}" for k, v in sorted({**task.env, "UV_EXCLUDE_NEWER": task.merged_at,
+                                                  "UV_NO_CACHE": "1"}.items()))
+    install = " && ".join(f"{env} {cmd}" for cmd in task.install)
     return f"""FROM {FROM_IMAGE} AS fetch
 RUN git clone -q --filter=blob:none --no-checkout https://github.com/{task.full_name}.git /src \\
  && git -C /src -c advice.detachedHead=false checkout -q {task.parent} \\
@@ -203,8 +206,10 @@ RUN git -c init.defaultBranch=main init -q \\
     -c user.email=base@example.invalid -c commit.gpgsign=false commit -q -m "base: {task.full_name} at {task.parent}" \\
  && printf '/.venv/\\n' >> .git/info/exclude \\
  && python3 -m venv .venv \\
- && .venv/bin/pip install -q --no-cache-dir -U pip \\
+ && python3 -m venv /tmp/we-uv && /tmp/we-uv/bin/pip install -q --no-cache-dir uv \\
+ && export PATH="/tmp/we-uv/bin:$PATH" \\
  && {install} \\
+ && rm -rf /tmp/we-uv \\
  && git status --porcelain | sed -n 's|^?? |/|p' >> .git/info/exclude \\
  && test -z "$(git status --porcelain)"
 """
