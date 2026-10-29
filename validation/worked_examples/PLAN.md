@@ -201,3 +201,20 @@ no test at all, and the task would be dropped for a reason that has nothing to d
 **Change.** In sections 3 and 5, a changed or added file under the tests folder that holds no pytest test (no
 function or class pytest collects) is run through the test module of the project that reads it: that whole module is
 run in its place. The selection record names the module for each task. Nothing else changes.
+
+### 2026-10-29: G6's own environment follows the README at the commit run (before any run)
+
+**Why.** A check with no model, before any run, found a defect in G6 at the tip of `origin/claude/launch`
+(f3411d1): when G6's own virtual environment and a repository's `.venv` are both made with `python -m venv` from the
+same Python (links, the default on Linux), G6 takes the repository's interpreter for its own, does not give the
+confined run the repository's `.venv`, and every review stops with `G6_E_ISOLATION_UNAVAILABLE`. The owner decided
+(2026-10-29) that G6's confinement code is not changed before the launch: the launch line refuses that case up front
+with an accurate message (item L1), and the README and Get started make G6's own environment with
+`python -m venv --copies`, which avoids the defect. A project's `.venv` stays an ordinary one, made with links.
+
+**Change.** In section 4, G6 is installed exactly as the README says at the commit run: `python -m venv --copies` for
+G6's own environment, then `pip install "<source>[all]"` from that commit, then `g6 setup --client claude --allow
+patch_review.review`. Each project's `.venv` is made the project's normal way, with links. No paid run starts before
+the L1 commit is on `origin/claude/launch`; G6 is installed from a tip that contains both 5dad0fe and L1, and each
+run records the commit. Before the first paid run, one review with that install and a project whose `.venv` uses
+links must run confined, with no model call. Nothing else changes.
