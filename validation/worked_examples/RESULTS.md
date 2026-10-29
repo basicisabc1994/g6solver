@@ -10,9 +10,10 @@ about how often G6 helps.**
 - The trails (transcripts, every round's patch, G6's replies, logs) are in the local archive, outside the repository.
 
 **State (2026-10-29):**
-- Runs 1 to 5 are done.
-- The series is held before run 6 (see "Held").
-- Spent: $0.98 of the $100 stop.
+- Runs 1 to 8 are done: runs 1 to 5 on G6 2680cc9, runs 6 to 8 on G6 a923002.
+- Runs 9 and 10 are next.
+- Spent: $1.50 of the $100 stop.
+- If the security review of W1 to W5 leads to a fix pass, runs 6 to 10 stay as made, on a923002.
 
 ## How the runs were made
 
@@ -89,12 +90,63 @@ As a result, a project whose top-level package has the name of one of G6's depen
    `differential.v1` instance was accepted. It compared the base and the patch on one call, with `root_path` "/app".
    That call does not reach the regressing case (a trailing slash), so it found no difference.
 
-## Held
+## Held (2026-10-29, after run 5; resumed under option B)
 
-| # | Task | State |
-|---:|---|---|
-| 6 | pydantic #14052 | held before its run: the defect above would stop G6's server here too |
-| 7 | click #3769 | not run yet |
-| 8 | attrs #1593 | not run yet |
-| 9 | fastapi #15077 | not run yet |
-| 10 | click #3678 | not run yet |
+After run 5 the series was held before run 6, because the server defect above would have stopped G6's server there
+too. The owner chose option B. Runs 6 to 10 run on G6 a923002 (W1 to W5), with each task's repository fetched from
+upstream (PLAN.md section 9).
+
+## Runs 6 to 10 (G6 a923002)
+
+Before each paid run:
+- the runner checked the task's repository: HEAD is the parent commit, HEAD's tree equals upstream's (from GitHub's
+  API), one commit, a clean tree;
+- the key check passed;
+- a dry run with no key and no way out had shown G6's server starting with its 20 tools in every one of these
+  projects.
+
+| # | Task (licence) | Issue, fix | G6, round by round | G6's findings | Independent check (round patches, final) | Cost, time |
+|---:|---|---|---|---|---|---|
+| 6 | pydantic/pydantic (MIT) | [#14041](https://github.com/pydantic/pydantic/issues/14041), [#14052](https://github.com/pydantic/pydantic/pull/14052) | 1: insufficient evidence | none | fail; final **fails** (1 of 1 FAIL_TO_PASS) | $0.16, 26 s |
+| 7 | pallets/click (BSD-3-Clause) | [#3571](https://github.com/pallets/click/issues/3571), [#3769](https://github.com/pallets/click/pull/3769) | 1: supported within scope | none | fail; final **fails** (3 of 6 FAIL_TO_PASS) | $0.20, 1.5 min |
+| 8 | python-attrs/attrs (MIT) | [#1575](https://github.com/python-attrs/attrs/issues/1575), [#1593](https://github.com/python-attrs/attrs/pull/1593) | 1: refused (template bindings); 2: supported within scope | none | pass, pass; final **passes** | $0.15, 1.8 min |
+
+**What happened, run by run**
+
+6. **pydantic #14052**
+   - **The fix:** the agent stopped the docstring visitor from entering nested classes.
+   - **G6's review:**
+     - the agent's test was demonstrated: it fails at the base and passes on the patch;
+     - G6 left R2 ("existing behaviour unchanged") not established. Its stated check was the whole test file, and two
+       of the file's tests are skipped or expected to fail, so the check did not run to a pass;
+     - there was no reproduced finding.
+   - **The patch fails the maintainers' test for documented nested definitions,** and G6 did not reproduce it.
+7. **click #3769**
+   - **G6 gave "supported within its stated scope".**
+   - **The patch fixed the iterating progress bar only.** Three of the maintainers' six new cases use `bar.update(n)`,
+     and there the bar still ends at 14/20 and 18/20.
+   - **G6 did not reproduce this.**
+8. **attrs #1593**
+   - **The template bindings were refused once.** G6's refusal named the missing binding (`bindings.cases`) and the
+     two names `example.v1` does not take.
+   - **On the second call** the agent's `example.v1` instance was accepted, and G6 gave "supported within its stated
+     scope".
+   - **The patch passes the maintainers' tests.**
+
+**What the runs show about W1 to W5** (from `observe.py`, read from each archived transcript)
+
+| # | G6's server (W1, W5) | Reply sizes (W2) | Report shown whole (W2) | Template instances (W4) |
+|---:|---|---|---|---|
+| 6 | connected, 20 tools | 5,730 characters, in the transcript | yes | none |
+| 7 | connected, 20 tools | 6,645, in the transcript | yes | none |
+| 8 | connected, 20 tools | 2,682 (the refusal) and 5,405, in the transcript | yes (as a Markdown quote) | refused once for bindings, then accepted |
+
+For comparison, at 2680cc9 (runs 1 to 5), every finished reply was 64,108 to 242,490 characters, and Claude Code
+saved each to a file. No report was shown whole, and in run 3 G6's server did not start.
+
+## Not run yet
+
+| # | Task |
+|---:|---|
+| 9 | fastapi #15077 |
+| 10 | click #3678 |
