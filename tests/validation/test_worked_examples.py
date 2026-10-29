@@ -122,10 +122,13 @@ def test_base_dockerfile_installs_g6_as_the_readme_says():
 
 def test_task_dockerfile_keeps_the_fix_out_of_reach():
     text = we.task_dockerfile(TASK, "g6we-base:abc")
-    fetch, final = text.split("\nFROM g6we-base:abc", 1)
-    assert "checkout -q " + "p" * 40 in fetch and "rm -rf /src/.git" in fetch
-    assert "m" * 40 not in text                      # the merge commit is never named in the agent's image
-    assert "init -q" in final and "/.venv/" in final and "python3 -m venv .venv" in final
+    assert text.startswith("FROM g6we-base:abc")
+    final = text
+    # upstream's base commit fetched alone, so git tracks exactly what upstream tracks (PLAN.md section 9, run 6 on)
+    assert "fetch -q --depth=1 --no-tags https://github.com/psf/black.git " + "p" * 40 in text
+    assert "checkout -q --detach " + "p" * 40 in text and 'rev-list --all --count)" = 1' in text
+    assert "git add" not in text and "m" * 40 not in text   # no re-made commit; the merge commit is never named
+    assert "/.venv/" in final and "python3 -m venv .venv" in final
     assert "--copies" not in final                   # the project's .venv is an ordinary one, with links
     assert "SETUPTOOLS_SCM_PRETEND_VERSION=26.10.0" in final and "ENV SETUPTOOLS" not in final
     # the dependencies as they were when the fix was merged, and the installer gone from the image afterwards
@@ -301,8 +304,8 @@ class FakeDocker:
             body = {"confined": {"R1": "passed_on_stated_checks" if self.keycheck_ok else "failed",
                                  "backend": "bubblewrap"}, "control": {"exit": 1, "channels": ["own_env_name"]}}
             return Done(json.dumps(body).encode())
-        if args[0] == "exec" and "rev-parse HEAD" in text:
-            return Done(b"b" * 40)
+        if args[0] == "exec" and "we-tree-state" in text:
+            return Done(json.dumps({"head": TASK.parent, "tree": "t" * 40, "dirty": 0, "commits": 1}).encode())
         if args[0] == "exec" and "--version" in text:
             return Done(b"2.1.309 (Claude Code)")
         if args[0] == "image" and args[1] == "inspect":
@@ -329,7 +332,7 @@ def _ctx(tmp_path, docker, *, validated=True, g6_commit_ok=True, oracle_id="sha2
                  "finished")
     return we.Context(archive=archive, docker=docker, key_reader=lambda: KEY, issue_reader=lambda t: ("T", "body"),
                       g6={"commit": "g" * 40, "image": "g6we-base:gggg", "contains_required": g6_commit_ok},
-                      proxy_source=tmp_path / "proxy.py", environ={"PATH": "x"})
+                      proxy_source=tmp_path / "proxy.py", environ={"PATH": "x"}, tree_reader=lambda t: "t" * 40)
 
 
 def test_a_run_passes_the_key_by_name_only_and_cleans_up_its_own(tmp_path):
@@ -393,6 +396,17 @@ def test_a_dry_run_reads_no_key_and_has_no_way_out(tmp_path):
     claude = next(call for call in docker.calls if we.CLAUDE in call and "-p" in call)
     assert f"HTTPS_PROXY={we.DEAD_PROXY}" in claude
     assert all(r.get("kind") != "run" for r in ctx.archive.rows() if r.get("event") == "started")
+
+
+def test_a_tree_unlike_upstreams_starts_no_agent(tmp_path):
+    (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
+    docker = FakeDocker()
+    ctx = _ctx(tmp_path, docker)
+    ctx.tree_reader = lambda t: "u" * 40            # upstream's tree differs from the image's
+    rec = we.run_task(ctx, TASK)
+    assert rec["status"] == "tree_mismatch" and rec["tree_state"]["upstream_tree"] == "u" * 40
+    assert not any(we.CLAUDE in call and "-p" in call for call in docker.calls)
+    assert not any("setup" in call for call in docker.calls)
 
 
 def test_a_failed_key_check_starts_no_agent(tmp_path):

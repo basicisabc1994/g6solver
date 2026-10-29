@@ -218,3 +218,42 @@ patch_review.review`. Each project's `.venv` is made the project's normal way, w
 the L1 commit is on `origin/claude/launch`; G6 is installed from a tip that contains both 5dad0fe and L1, and each
 run records the commit. Before the first paid run, one review with that install and a project whose `.venv` uses
 links must run confined, with no model call. Nothing else changes.
+
+### 2026-10-29: runs 6 to 10 on G6 a923002, and the task's repository fetched from upstream (before run 6)
+
+**Why.** Runs 1 to 5 were made on G6 2680cc9. They showed two problems, and the series was held before run 6:
+
+- **G6's own server.** `g6 setup` registered the server with `python -c`. In pydantic's repository, G6's server
+  imported the repository's `pydantic` and did not start (run 3). In starlette's repository, it imported the
+  repository's `starlette` (runs 4 and 5).
+- **The harness's repository.** Each task's repository was a new one made with `git init` and a plain `git add`. Black
+  keeps test fixtures that its own `.gitignore` files match, so they were left untracked and git-ignored. G6's
+  name-only rule then gave the integrity reason `ignored_file_can_change_tests` in runs 1 and 2; a real clone of
+  Black gives no such alarm.
+
+The owner chose option B: the series waits for G6's fixes and goes on with them. The worked examples' launch fixes W1
+to W5 are merged on `origin/claude/launch` at a923002:
+
+- W1 starts the server with `python -P`;
+- W2 sends a compact reply, report first;
+- W3b says what to do about git-ignored files;
+- W4's template refusals name each missing binding and give a valid instance;
+- W5 makes no network request at server start.
+
+**Change.**
+- **G6:** runs 6 to 10 run on G6 a923002 (it contains 5dad0fe and L1), installed exactly as the README at that commit
+  says: in G6's folder, `python -m venv --copies .venv`, then `pip install ".[all]"`, then `g6 setup --client claude
+  --allow patch_review.review`. Runs 1 to 5 stay as they were made, on 2680cc9.
+- **The task's repository (section 4):** from run 6, it is upstream's base commit fetched alone (`git fetch
+  --depth=1 --no-tags`), checked out detached, so git tracks exactly what upstream tracks and nothing after the base is
+  reachable. Before each paid run, the runner checks four things:
+  - HEAD is the parent commit;
+  - HEAD's tree is upstream's tree for that commit (read from GitHub's API);
+  - exactly one commit is reachable;
+  - the working tree is clean (only `.venv` and the install's leftovers are excluded).
+
+  If any check fails, no agent starts.
+- **Validation:** the validation and the check's own control are taken again on the new images before the runs.
+
+Nothing else changes: the tasks, their order, the prompt, the caps, the independent check and the $100 stop are as
+before.

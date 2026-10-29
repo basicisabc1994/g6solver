@@ -64,7 +64,10 @@ WE = "/opt/we"
 PROXY_PORT = 3128
 MODEL_HOSTS = ("api.anthropic.com:443",)
 TURN_BACKSTOP = 2
-BASE_DATE = "2026-01-01T00:00:00Z"
+#: The repository's state before a paid run: its HEAD, HEAD's tree, how many paths are not clean, how many commits.
+TREE_STATE = ("echo we-tree-state >/dev/null; printf '{\"head\": \"%s\", \"tree\": \"%s\", \"dirty\": %s, "
+              "\"commits\": %s}\\n' \"$(git rev-parse HEAD)\" \"$(git rev-parse 'HEAD^{tree}')\" "
+              "\"$(git status --porcelain | wc -l)\" \"$(git rev-list --all --count)\"")
 
 PROMPT = """You are working in a clone of {owner}/{name}, at the commit just before the maintainers fixed the issue below.
 The project's development environment is the virtual environment in .venv (its Python is .venv/bin/python).
@@ -187,27 +190,24 @@ RUN chmod 755 {CLAUDE} \\
 
 
 def task_dockerfile(task: Task, base_image: str) -> str:
-    """The project at the parent commit as a new repository with that tree as its only commit (the fetch stage's
-    history never reaches the final image), and its ``.venv``, made the project's normal way, with links. Its
+    """The project's repository holding upstream's base commit alone (fetched with ``--depth=1 --no-tags`` and checked
+    out detached, as ``arm_r.base_only`` does), so git tracks exactly what upstream tracks and nothing after the base
+    is in reach (PLAN.md section 9, from run 6); then its ``.venv``, made the project's normal way, with links. Its
     dependencies are the versions published by the time the fix was merged (``uv``'s exclude-newer), so a later
     release cannot break the project's own tests; the installer is removed from the image afterwards."""
     env = " ".join(f"{k}={v}" for k, v in sorted({**task.env, "UV_EXCLUDE_NEWER": task.merged_at,
                                                   "UV_NO_CACHE": "1"}.items()))
     install = " && ".join(f"{env} {cmd}" for cmd in task.install)
-    return f"""FROM {FROM_IMAGE} AS fetch
-RUN git clone -q --filter=blob:none --no-checkout https://github.com/{task.full_name}.git /src \\
- && git -C /src -c advice.detachedHead=false checkout -q {task.parent} \\
- && rm -rf /src/.git
-FROM {base_image}
-COPY --from=fetch --chown=1000:1000 /src {task.repo}
+    return f"""FROM {base_image}
 USER {USER}
 ENV HOME={HOME}
+RUN mkdir -p {task.repo} && cd {task.repo} && git -c init.defaultBranch=main init -q \\
+ && git fetch -q --depth=1 --no-tags https://github.com/{task.full_name}.git {task.parent} \\
+ && git -c advice.detachedHead=false checkout -q --detach {task.parent} \\
+ && rm -f .git/FETCH_HEAD \\
+ && test "$(git rev-parse HEAD)" = {task.parent} && test "$(git rev-list --all --count)" = 1
 WORKDIR {task.repo}
-RUN git -c init.defaultBranch=main init -q \\
- && git add -A \\
- && GIT_AUTHOR_DATE={BASE_DATE} GIT_COMMITTER_DATE={BASE_DATE} git -c user.name="worked example" \\
-    -c user.email=base@example.invalid -c commit.gpgsign=false commit -q -m "base: {task.full_name} at {task.parent}" \\
- && printf '/.venv/\\n' >> .git/info/exclude \\
+RUN printf '/.venv/\\n' >> .git/info/exclude \\
  && python3 -m venv .venv \\
  && python3 -m venv /tmp/we-uv && /tmp/we-uv/bin/pip install -q --no-cache-dir uv \\
  && export PATH="/tmp/we-uv/bin:$PATH" \\
@@ -548,6 +548,7 @@ class Context:
     g6: Mapping[str, Any]                 # {"commit", "image", "contains_required"}
     proxy_source: Path = PROXY
     environ: Mapping[str, str] | None = None
+    tree_reader: Callable[[Task], str] | None = None    # upstream's tree for the base commit (default: GitHub's API)
 
     def client_env(self, key: str | None = None) -> dict[str, str]:
         base = dict(self.environ) if self.environ is not None else {
@@ -692,7 +693,17 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         checked(ctx.docker("run", "-d", "--name", agent, "--label", "g6we=1", "--network", net, *LIMITS, *SECURITY,
                            "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, task_image, "tail", "-f", "/dev/null",
                            timeout=600), "agent container")
-        base = out(ctx.docker.sh(agent, "git rev-parse HEAD", workdir=task.repo))
+        try:
+            state = json.loads(out(ctx.docker.sh(agent, TREE_STATE, workdir=task.repo)).splitlines()[-1])
+        except (ValueError, IndexError):
+            state = {}
+        expected = (ctx.tree_reader or read_tree)(task)
+        record["tree_state"] = {**state, "upstream_tree": expected}
+        if (state.get("head") != task.parent or state.get("tree") != expected or state.get("dirty") != 0
+                or state.get("commits") != 1):
+            status = "tree_mismatch"     # git must track exactly what upstream tracks at the base (PLAN.md section 9)
+            return run.finish(record, status)
+        base = str(state["head"])
         record["base_commit"] = base
         record["claude_version"] = out(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120))
         doctor = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", agent, "g6", "doctor", timeout=600)
@@ -1021,6 +1032,13 @@ def read_key() -> str:
 
     return keys.require(keys.Key("ANTHROPIC_API_KEY", "the worked examples' Claude Code runs (the owner's key)",
                                  paid=True))
+
+
+def read_tree(task: Task) -> str:
+    """Upstream's tree for the task's base commit, from GitHub's API (read-only)."""
+    got = subprocess.run(["gh", "api", f"repos/{task.full_name}/git/commits/{task.parent}", "--jq", ".tree.sha"],
+                         capture_output=True, timeout=120)
+    return got.stdout.decode("utf-8", errors="replace").strip() if got.returncode == 0 else ""
 
 
 def read_issue(task: Task) -> tuple[str, str]:
