@@ -191,25 +191,14 @@ class RepoTestsRunner:
         # Backend planning happens BEFORE any untrusted tests are executed.
         # repo_tests itself might run without isolation if left to its defaults.
         from g6.core import confine
-        if confine.required() is False:
-            # Confinement is mandatory for this autonomous interface regardless of environment flags.
-            pass
+        # Never change process-wide execution policy in a concurrent agent host.
+        # The host MUST enable G6_REQUIRE_ISOLATION=1 before starting the process.
+        if not confine.required():
+            raise PermissionError("G6_REQUIRE_ISOLATION=1 required for autonomous testing")
         from g6.workforce import repo_tests
         from g6.core import confine as confinement
-        # G6's plan for the exact interpreter and read-only paths is the final authority.
-        # Run only when G6_REQUIRE_ISOLATION enforces refusal; runtime must re-check
-        # returned receipt, since availability can change during a run.
-        import os
-        old = os.environ.get(confinement.REQUIRE)
-        os.environ[confinement.REQUIRE] = "1"
-        try:
-            raw = repo_tests.run(self.repo, list(tests), timeout_s=timeout_s,
-                                 network=False, mutant=(expected_path, source))
-        finally:
-            if old is None:
-                os.environ.pop(confinement.REQUIRE, None)
-            else:
-                os.environ[confinement.REQUIRE] = old
+        raw = repo_tests.run(self.repo, list(tests), timeout_s=timeout_s,
+                             network=False, mutant=(expected_path, source))
         if self._checker_digest() != self._checker or self._source_digests() != self._sources:
             raise ValueError("protected repository content drifted during execution")
         isolation = raw.get("isolation") or {}
@@ -300,7 +289,7 @@ def run_agent(mission: DesignMission, producer: ProposalAgent,
         return result("blocked-escalated", "baseline_could_not_run")
     ledger.append("baseline", "baseline", {"verdict": baseline.verdict, "isolated": baseline.isolated,
                                           "source": baseline.candidate_digest})
-    if not (baseline.isolated and baseline.completed and baseline.verdict == "passed"
+    if not (baseline.isolated and baseline.completed and baseline.verdict in ("passed", "failed")
             and baseline.candidate_digest == _sha(mission.files[key])):
         return result("blocked-escalated", "baseline_not_independently_established", obs=(baseline,))
     checker = baseline.checker_digest
@@ -314,8 +303,8 @@ def run_agent(mission: DesignMission, producer: ProposalAgent,
                               hypotheses, mission.max_attempts)
     observed = [baseline]
     seen = set()
-    last_failed: tuple[str, ...] = ()
-    failure_excerpt = ""
+    last_failed: tuple[str, ...] = baseline.failed_tests if baseline.verdict == "failed" else ()
+    failure_excerpt = baseline.log_excerpt if baseline.verdict == "failed" else ""
     for i in range(mission.max_attempts):
         brief = AgentBrief(mission.problem.target, choices if mission.mode != "swe" else ("swe_refactor",),
                            tuple(f.root_cause for f in cir.findings), impact.impacted, normative,
