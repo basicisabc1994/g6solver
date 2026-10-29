@@ -14,7 +14,7 @@ free for the mission's verification state, a different object.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -149,6 +149,36 @@ def reduce_observation(state: ExperimentState, experiment: Experiment, observed:
                    budget_units=budget)
 
 
+def order_checks(checks: Sequence[Any], *, patch_only: Callable[[str], bool]) -> list[Any]:
+    """``checks`` (each with ``.id``, ``.requirement_id`` and ``.intent``) in the order the selector would run them.
+
+    Each check is an ``Experiment`` costing 1 when it runs on the patch only (``patch_only(check id)``) and 2 when it
+    also runs at the base commit; each requirement is a ``Hypothesis``, of severity "high" when any of its checks
+    keeps behaviour (``preserve``) and "medium" otherwise. The order is repeated :func:`next_experiment`, ties broken
+    by id; every check appears once. Off by default in verification search (``search(..., select=True)`` only): Gate C
+    (V11) must show it helps before any caller sets it.
+    """
+    checks = list(checks)
+    if not checks:
+        return []
+    preserving = {c.requirement_id for c in checks if c.intent == "preserve"}
+    hypotheses = tuple(Hypothesis(r, f"requirement {r}", "high" if r in preserving else "medium")
+                       for r in sorted({c.requirement_id for c in checks}))
+    experiments = tuple(Experiment(c.id, "check", (c.requirement_id,), 1 if patch_only(c.id) else 2, allowed=True)
+                        for c in checks)
+    state = ExperimentState("order", "order", "order", hypotheses, 2 * len(checks))
+    by_id = {c.id: c for c in checks}
+    ordered: list[Any] = []
+    while len(ordered) < len(checks):
+        chosen = next_experiment(state, experiments)
+        if chosen is None:
+            break
+        ordered.append(by_id[chosen.id])
+        state = replace(state, attempted=(*state.attempted, chosen.id))
+    picked = {id(c) for c in ordered}
+    return ordered + sorted((c for c in checks if id(c) not in picked), key=lambda c: c.id)
+
+
 def rebase(state: ExperimentState, *, tree_digest: str, environment_digest: str,
            checker_digest: str) -> ExperimentState:
     """New artifact means all old observations are retained as history, not eligible evidence."""
@@ -160,4 +190,4 @@ def rebase(state: ExperimentState, *, tree_digest: str, environment_digest: str,
 
 
 __all__ = ["OUTCOMES", "Experiment", "ExperimentState", "Outcome", "RunObservation", "from_run", "next_experiment",
-           "rebase", "receipt_matches", "reduce_observation"]
+           "order_checks", "rebase", "receipt_matches", "reduce_observation"]
