@@ -555,6 +555,8 @@ def extract_rounds(objects: Iterable[Mapping[str, Any]],
                     parsed = json.loads(text)
                 except ValueError:
                     continue
+                if name.endswith("g6_review_patch") and isinstance(parsed, dict) and parsed.get("job_id"):
+                    rounds[-1]["job_id"] = str(parsed["job_id"])
                 for found in _reports(parsed)[:1]:
                     rounds[-1].update(outcome=found.get("outcome"), report=found.get("report"), assessment=found)
                 inner = parsed.get("result") if isinstance(parsed, dict) and isinstance(parsed.get("result"), dict) \
@@ -884,14 +886,14 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
                           (f"{HOME}/.g6", "g6_home")):
             copy_out(ctx.docker, agent, src, run.path / name)
             redact_tree(run.path / name, ctx.archive.redact)
+        saved: dict[str, Any] = {}
         if round2:
-            saved = []
             for path in sorted((run.path / "g6_home" / "reviews").glob("*.json")):
                 try:
-                    saved.append(json.loads(path.read_text(encoding="utf-8")))
+                    saved[path.stem] = json.loads(path.read_text(encoding="utf-8"))
                 except ValueError:
                     continue
-            record["g6_model"] = {**g6_model_cost(saved), "reviews_saved": len(saved)}
+            record["g6_model"] = {**g6_model_cost(saved.values()), "reviews_saved": len(saved)}
             record["cost_usd"] = round(record["cost_usd"] + record["g6_model"]["usd"], 6)
         objects = []
         for line in (run.path / "stream.jsonl").read_text(encoding="utf-8").splitlines():
@@ -900,6 +902,10 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
             except ValueError:
                 continue
         rounds = extract_rounds(objects, archived_resolver(run.path))
+        for one in rounds:      # round 2: what G6's own model proposed in this round's review
+            if one.get("job_id") in saved:
+                one["proposer"] = observe.proposer_summary(saved[one["job_id"]])
+                one["g6_model"] = g6_model_cost([saved[one["job_id"]]])
         run.write_json("rounds.json", rounds)
         record["rounds"] = len(rounds)
         record["outcomes"] = [r["outcome"] for r in rounds]

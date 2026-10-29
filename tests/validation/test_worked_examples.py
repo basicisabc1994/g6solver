@@ -314,6 +314,7 @@ def test_proposer_summary_reads_what_g6s_model_proposed():
 def test_extract_rounds():
     rounds = we.extract_rounds(_stream())
     assert [r["outcome"] for r in rounds] == ["defect_detected", "supported_within_scope"]
+    assert rounds[0]["job_id"] == "j1" and rounds[1].get("job_id") is None    # the job whose saved review is read
     assert rounds[0]["report"] == "R one" and rounds[0]["polls"] == 2 and rounds[1]["input"]["task"] == "t"
     assert rounds[0]["assessment"]["outcome"] == "defect_detected"     # the whole assessment, for the judgements
     refused = [{"type": "assistant", "message": {"id": "m9", "content": [
