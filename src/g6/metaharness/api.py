@@ -56,6 +56,7 @@ from g6.metaharness.schema import (
     SCHEMA,
     SELECTED,
     STANDARD_CHANGED,
+    WORKFLOW_INVALID,
     Profile,
     Proposal,
     Workflow,
@@ -196,9 +197,15 @@ class MetaHarness:
         self._online: Strategy | None = None
         if not problems:
             workspace.mkdir(parents=True, exist_ok=True)
-            self.store = ProfileStore(workspace / "store.jsonl")
-            self.ledger = RunLedger(workspace / "ledger.jsonl")
-            problems += self._live_leaks()
+            try:
+                self.store = ProfileStore(workspace / "store.jsonl")
+                self.ledger = RunLedger(workspace / "ledger.jsonl")
+            except LedgerError as exc:   # a row breaks the store's rules, as a forged profile row does (I1): nothing runs
+                self.store = self.ledger = None
+                problems.append((WORKFLOW_INVALID, f"the workflow's store or run ledger does not verify ({exc}); "
+                                 f"remove its workspace ({workspace}) if you did not make it"))
+            else:
+                problems += self._live_leaks()
             self._problems = problems
         code, why = problems[0] if problems else ("G6_E_META_READY", "")
         self.envelope = (_blocked(code, "; ".join(p for _, p in problems), "Fix the workflow; then adapt again.",

@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from g6.metaharness.api import NOT_CONFIRMED
+from g6.metaharness.schema import WORKFLOW_INVALID
 from g6.metaharness.surface import Surface
 
 fastmcp = pytest.importorskip("fastmcp")
@@ -177,6 +178,47 @@ def test_a_shipped_initial_version_with_other_code_is_never_confirmed(tmp_path, 
     assert got["warning_card"]["code"] == "G6_E_META_APPROVAL_REQUIRED", got
     got = surface.run("echo", "hello")
     assert got["completion_state"] == "blocked-escalated" and got.get("output") != "SHIPPED-INITIAL", got
+
+
+def test_a_shipped_profile_row_whose_content_is_not_its_digest_never_runs(tmp_path, monkeypatch, unconfined):
+    """The fresh review of the second fix pass, I1: the store keeps a profile under its digest, and nothing checked
+    that the content has that digest. A project could ship a store whose row under the digest of the initial version
+    the person's confirmation makes holds other code: confirming counted its version 0, and G6 ran that code under the
+    person's confirmation. Now a profile row whose content is not its digest makes the store refuse to open. The rows
+    are written through the chain alone, as any process could; the code they carry is benign."""
+    from g6.core.ledger import ChainLedger
+    from g6.metaharness.declarative import create
+    from g6.metaharness.schema import Profile
+    from g6.metaharness.store import UNAUTHENTICATED
+
+    elsewhere = tmp_path / "elsewhere" / ".g6" / "workflows"
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "their-home"))
+    create(SPEC, elsewhere)
+    theirs = Surface(workflow_root=elsewhere).harness("echo")
+    initial = Profile(routing={s: next(iter(theirs.workflow.models)) for s in theirs.workflow.steps},
+                      pipeline=tuple(n for n, s in theirs.workflow.pipeline_steps.items() if s.mandatory))
+    sha = theirs.artifacts.put_blob("def solve(task):\n    return 'SHIPPED-CONTENT'\n")
+    other = Profile.model_validate(initial.model_dump(mode="json") | {"code": {"main.py": sha}})
+    named, at = initial.digest(), "2026-10-30T00:00:00Z"
+    chain = ChainLedger(theirs.workspace / "store.jsonl")
+    chain.append("profile", named, {"digest": named, "profile": other.model_dump(mode="json")})
+    chain.append("workflow", theirs.workflow.digest(), {
+        "workflow_digest": theirs.workflow.digest(), "judging_sha256": "0" * 64,
+        "held_out_digest": theirs.workflow.suite.digest("held_out"), "accepted_by": "Forged Name",
+        "identity": UNAUTHENTICATED, "at": at})
+    chain.append("version", "0", {
+        "version": 0, "kind": "initial", "profile_digest": named, "at": at, "accepted_by": "Forged Name",
+        "identity": UNAUTHENTICATED, "decision_digest": "", "proposer": "", "ledger_head": "", "snapshot": "",
+        "reason": ""})
+    shipped = tmp_path / "project" / ".g6" / "workflows"
+    shutil.copytree(elsewhere / "echo", shipped / "echo")
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "my-home"))
+    surface = Surface(workflow_root=shipped)
+    got = surface.harness("echo").confirm("Ada")
+    assert got["completion_state"] == "blocked-escalated" and got["warning_card"]["code"] == WORKFLOW_INVALID, got
+    assert "digest" in got["message"], got
+    got = surface.run("echo", "hello")
+    assert got["completion_state"] == "blocked-escalated" and got.get("output") != "SHIPPED-CONTENT", got
 
 
 def test_the_person_can_confirm_their_workflow_again_from_another_state_folder(tmp_path, monkeypatch, unconfined):

@@ -3,7 +3,8 @@
 
 The store's rules live in its validation hook, so they hold for every row, however it is appended:
 
-* a ``profile`` row holds a profile's content under its digest; a ``version`` row moves the head;
+* a ``profile`` row holds a profile's content under its digest, which the content must have; a ``version`` row moves
+  the head;
 * the first version is ``initial`` (written at confirmation); ``activate`` needs a decision digest and a named person
   who is not an automated (``auto:``) name; ``rollback`` and ``demote`` may only point at a version a person approved
   (``initial`` or ``activate``), and ``demote`` only at the one approved before the current head (MH-7, MH-8);
@@ -41,7 +42,13 @@ def _store_rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str
     if kind == "workflow":
         return [] if body.get("workflow_digest") and body.get("accepted_by") else ["workflow: digest and accepted_by"]
     if kind == "profile":
-        return [] if body.get("digest") == ident else ["profile: id must be the profile's digest"]
+        # the content too: a row named by one profile's digest and holding another would run that other's code under
+        # an approval of the first (the fresh review of the second fix pass, I1)
+        try:
+            content = Profile.model_validate(body.get("profile")).digest()
+        except ValueError:
+            content = None
+        return [] if body.get("digest") == ident == content else ["profile: id must be the profile's digest"]
     if kind != "version":
         return [f"unknown kind {kind!r}"]
     versions = _versions(seen)

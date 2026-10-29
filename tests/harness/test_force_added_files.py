@@ -211,7 +211,44 @@ def test_an_index_entry_naming_a_path_git_never_stages_refuses_the_review(tmp_pa
     assert "OUTSIDE-MARKER" not in str(got)
 
 
-@pytest.mark.parametrize("name", ["@scope/util.py", "-notes.txt"])
+@pytest.mark.parametrize("wanted", [".git./config", ".git /config", "GIT~1/config", ".git::$INDEX_ALLOCATION/config"])
+def test_an_index_entry_naming_the_git_folder_as_windows_reads_it_refuses_the_review(tmp_path, monkeypatch, wanted):
+    """The fresh review of the second fix pass, I2: Windows drops a name's trailing dots and spaces, reads ``GIT~1`` as
+    ``.git``'s short name and ``::$INDEX_ALLOCATION`` as its folder stream, so each of these opens .git's config there.
+    git's own core.protectNTFS rule (on by default everywhere) never stages them, and neither is a path G6 reads."""
+    root = _base(tmp_path / "repo")
+    _crafted_entry(root, wanted)
+    for call in (repo_tests.change, repo_tests.snapshot):
+        with pytest.raises(repo_tests.RepoRefused) as refused:
+            call(root)
+        assert refused.value.code == "G6_E_GIT_REPO_INVALID" and wanted in str(refused.value)
+
+
+def test_an_index_entry_beyond_a_link_refuses_the_review(tmp_path, monkeypatch):
+    """The fresh review of the second fix pass, I2: a link ``cfg`` to the .git folder, kept out of git by
+    .git/info/exclude, and an index entry ``cfg/config``: every part of the name passed, the file resolved inside the
+    repository, and G6 put the repository's git config in the diff the gate and the proposer read. git never stages a
+    path beyond a link, and G6 now refuses one. The marker in the config is benign."""
+    root = _base(tmp_path / "repo")
+    try:
+        (root / "cfg").symlink_to(root / ".git", target_is_directory=True)
+    except OSError:
+        pytest.skip("this system does not let the test make a link")
+    (root / ".git" / "info").mkdir(exist_ok=True)
+    (root / ".git" / "info" / "exclude").write_text("cfg\n")
+    _git(root, "config", "g6test.marker", "GITCONFIG-MARKER")
+    _crafted_entry(root, "cfg/config")
+    for call in (repo_tests.change, repo_tests.snapshot):
+        with pytest.raises(repo_tests.RepoRefused) as refused:
+            call(root)
+        assert refused.value.code == "G6_E_GIT_REPO_INVALID" and "cfg/config" in str(refused.value)
+    _recorded(monkeypatch)
+    got = _review(root)
+    assert got["completion_state"] == "blocked-escalated" and "G6_E_GIT_REPO_INVALID" in str(got)
+    assert "GITCONFIG-MARKER" not in str(got)
+
+
+@pytest.mark.parametrize("name", ["@scope/util.py", "-notes.txt", ".github/notes.txt"])
 def test_a_tracked_name_that_looks_like_an_option_is_still_a_changed_file(repo, name):
     # survival control for the check above: names git does stage are never refused
     (repo / name).parent.mkdir(parents=True, exist_ok=True)
