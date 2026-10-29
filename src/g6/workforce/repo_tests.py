@@ -250,7 +250,7 @@ def _private(repo: Path, commit: str, *commands: tuple[str, ...]) -> list[bytes]
     and ``ls-files --others`` lists every file the base tree does not hold."""
     with tempfile.TemporaryDirectory(prefix="g6-index-") as scratch:
         index = Path(scratch) / "index"
-        _git(repo, "read-tree", commit, index=index)
+        _git(repo, "read-tree", *([commit] if commit else ["--empty"]), index=index)   # no commit yet: empty
         return [_git(repo, *command, index=index) for command in commands]
 
 
@@ -814,7 +814,8 @@ def _digest(path: Path) -> str:
 def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -> dict[str, str]:
     """What a run may not change, as git sees it: HEAD, the index (the staged files), git's assume-unchanged and
     skip-worktree marks, and the bytes (``_digest``) of every tracked file that differs from the index (a deleted one
-    reads ""), of every file so marked (git's own diff skips them; review M4), and of each of ``untracked`` (default:
+    reads "") or from HEAD's tree by content (``_private``: whatever an entry written into the index says; the review
+    of VS-4), of every file so marked (git's own diff skips them; review M4), and of each of ``untracked`` (default:
     the untracked files that are not ignored now; ``run`` passes the ones that existed before it, review I7). Also,
     as git cannot see them, each submodule folder git does not look into (``_gitlinks``), as G6 hashes it
     (``_submodule``: every file in it, untracked and ignored ones included). A repository holding a submodule that was
@@ -823,11 +824,19 @@ def snapshot(repo: Path, untracked: list[str] | tuple[str, ...] | None = None) -
     part of it. Raises ``RepoRefused`` when git cannot read the repository."""
     marks, index = _git(repo, "ls-files", "-v", "-z"), _git(repo, "ls-files", "--stage", "-z")
     gitlinks = _gitlinks(repo, index)
-    found = {_HEAD: hashlib.sha256(_git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1))).hexdigest(),
+    head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1))
+    found = {_HEAD: hashlib.sha256(head).hexdigest(),
              _INDEX: hashlib.sha256(index).hexdigest(), _MARKS: hashlib.sha256(marks).hexdigest()}
     # ``ls-files -v``: a lowercase tag is assume-unchanged, "S" skip-worktree.
     held = [entry[2:] for entry in _paths(marks) if entry[:1].islower() or entry[:1] == "S"]
-    for rel in (*_paths(_git(repo, "diff", "--name-only", "-z")), *held,
+    # The review of VS-4: what differs from HEAD's tree by content, through a private index, so no entry written into
+    # the repository's own index keeps a changed file's bytes out of the snapshot (receipts bind the bytes that ran);
+    # and each file the index holds that HEAD does not, a staged one, as before.
+    diffed, others = _private(repo, head.decode().strip(), ("diff", "--name-only", "-z", "--no-renames",
+                                                             "--no-textconv"),
+                              ("ls-files", "--others", "--exclude-standard", "-z"))
+    staged = set(_paths(others)) & {entry.partition("\t")[2] for entry in _paths(index)}
+    for rel in (*_paths(_git(repo, "diff", "--name-only", "-z")), *_paths(diffed), *sorted(staged), *held,
                 *(_untracked(repo) if untracked is None else untracked)):
         found[rel] = _digest(repo / rel)
     budget = {"files": 0, "bytes": 0, "until": time.monotonic() + SUBMODULE_HASH_S}
