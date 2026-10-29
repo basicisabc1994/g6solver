@@ -404,3 +404,41 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     every non-empty patch, as before, since its criteria do not read labels. The verdict reads V9's audit summary
     from V9's results unless another is given, and reports it beside the verdict with its one-sided 95% bound. For
     the coordinator's ruling.
+
+Items from 64 cover the entry point for V9's feasibility level and V10 together (`study.py`, with `bindings.py`).
+
+64. **One freeze file.** Every frozen parameter is in one file: V9's manifest is its `v9` section, and the file gives
+    the level and G6's commit once, for both studies. The entry point refuses to start without that file, or when it
+    names no G6 commit (40 lower-case hexadecimal digits); at the feasibility level V9's own checks apply and the arms
+    run only from that commit, as this checkout's clean `HEAD`. For the coordinator's ruling.
+
+65. **The order, in steps.** `draw`, V9's `calibrate`, `prepare` (once the agent's patches exist), `arms`, `label`.
+    V9's entry point ran its arms and its labels in one call; it is split into `review`, `label` and `results`, with
+    `run` unchanged, so that V9's labels stay unread until V10's arms and reruns are recorded (V10's "Data", second
+    condition). The record holds V9's rows first, then V9's gaming findings, then V10's driver entries; its final hash
+    is written beside it (`<record>.final`) before any label is read. A record that exists already refuses a second
+    run. For the coordinator's ruling.
+
+66. **The draw and the stopping rule.** Every pool ID that V7's or V8's split files hold as a whole ID is excluded,
+    with the tasks seen while building verification search and a published list's IDs. V9's tasks must be the draw's
+    first tasks, in order, less the tasks the freeze file logs as replaced, and at the feasibility level they must end
+    where V9's rule ends them: at the 30th non-empty patch, the 45th task, or the end of the order. For the
+    coordinator's ruling.
+
+67. **The arms' bindings.** Arms C, T and E are callables the freeze file names. Until VS-5, stand-ins take their
+    place behind the same interface; each raises, a counted tool error, and a study level refuses them. At the
+    feasibility level C and T run each in a child process, as the driver requires; E runs in the study's process, as
+    the driver has it. Each arm is given the patch with its text, its requirements, V9's arm 1 disposition and its
+    trees, the inputs VS-5's callables are expected to need. For the coordinator's ruling.
+
+68. **Arm R from its sessions.** The entry point never launches a session. A launcher leaves, for each patch, V9's
+    arm 2 session record with R's model, its token counts by kind and its transcript's file name, beside it in the
+    sessions folder. A patch with no record is a counted tool error ("no session record"); a record without its
+    transcript leaves the scan of R's transcript not run, shown as none. R's cost is charged when its session is
+    judged, after the session has run, so R's share cannot stop a session already run: the launcher has to keep R's
+    sessions within R's share. For the coordinator's ruling.
+
+69. **The labels step.** It runs only for a record that verifies against the hash the owner committed, when the vault
+    and the calibration are those the arms ran with. Every reproducible finding is rerun on its task's reference fix.
+    The gaming findings given to V10's verdict are those of V9's arm 3 (arm A) and the scans of R's transcripts; the
+    scan of arms C, T and E's traces waits for VS-5's trace format. For the coordinator's ruling.

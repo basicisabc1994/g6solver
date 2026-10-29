@@ -64,15 +64,19 @@ def frozen_problems(entry, *, auditor: str | None = None) -> list[str]:
     return problems
 
 
+def whole_ids(text: str, pool_ids) -> set[str]:
+    """The pool IDs ``text`` holds, each as a whole ID: not as part of a longer one."""
+    return {task for task in pool_ids
+            if re.search(rf"(?<![{_ID_CHARACTER}]){re.escape(task)}(?![{_ID_CHARACTER}])", text)}
+
+
 def published_ids(path: str | Path, sha256: str, pool_ids) -> set[str]:
-    """The pool IDs a published list's file holds, each as a whole ID (not part of a longer one); refused when the
-    file's SHA-256 is not ``sha256``."""
+    """The pool IDs a published list's file holds, each as a whole ID (``whole_ids``); refused when the file's
+    SHA-256 is not ``sha256``."""
     data = Path(path).read_bytes()
     if hashlib.sha256(data).hexdigest() != sha256:
         raise ValueError("the published list's file does not have the SHA-256 its freeze entry records")
-    text = data.decode("utf-8", errors="replace")
-    return {task for task in pool_ids
-            if re.search(rf"(?<![{_ID_CHARACTER}]){re.escape(task)}(?![{_ID_CHARACTER}])", text)}
+    return whole_ids(data.decode("utf-8", errors="replace"), pool_ids)
 
 
 def screened(record) -> dict:

@@ -16,7 +16,8 @@ text, so the reruns count it as one they cannot run. A reply without a completio
 verification search) gives none. ``findings`` with ``search_arm`` gives a search arm's from its report the same way,
 with its proposed checks' counterexamples and unconfirmed failures, for the arms' callables (VS-5) to use.
 
-Building V9's trees, the arms' callables and the frozen parameters is the study's entry point, not built yet.
+Building V9's trees, binding the arms' callables and reading the frozen parameters is the study's entry point
+(``study.py``).
 """
 from __future__ import annotations
 

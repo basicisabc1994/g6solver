@@ -86,9 +86,11 @@ def _checkout() -> dict:
         return {"commit": None, "clean": False}
 
 
-def load_manifest(path: str | Path) -> dict:
+def load_manifest(path: str | Path, *, data: dict | None = None) -> dict:
+    """The manifest at ``path``, checked; ``data``, when given, is the manifest itself, held in the file at ``path``
+    (V10's freeze file holds V9's manifest as one of its sections), whose folder relative paths are read from."""
     path = Path(path).resolve()
-    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest = json.loads(path.read_text(encoding="utf-8")) if data is None else dict(data)
     level = manifest.get("level")
     if manifest.get("study") != "V9" or level not in LEVELS:
         raise Refused(f"the manifest is V9's, at one of the levels {LEVELS}")
@@ -182,6 +184,10 @@ def _vault(manifest: dict):
     ledger = labels.Ledger(_at(manifest, manifest["vault"]["ledger"]))
     roots = [_at(manifest, root) for root in manifest["vault"]["roots"]]
     return labels.seal(roots, ledger=ledger, vault_id=manifest["vault"]["id"]), ledger, roots
+
+
+#: The vault, its ledger and its roots, for an entry point that runs V9's steps apart (V10's ``study.py``).
+vault_of = _vault
 
 
 def task_executor(manifest: dict, task: dict) -> executor.Executor:
@@ -424,12 +430,8 @@ def _review_task(manifest, task, index, work, calibration, markers, findings, a5
     return row
 
 
-def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dict:
-    checkout = _frozen(manifest)
-    vault, ledger, roots = _vault(manifest)
-    leaks = labels.exposed(vault, _arm_inputs(manifest))
-    if leaks:
-        raise Refused("arm inputs lie inside the vault: " + ", ".join(leaks[:5]))
+def calibration_of(manifest: dict, calibration_path: str | Path, vault, ledger) -> tuple[dict, bytes]:
+    """The calibration's tasks and bytes, read through the vault (a study level reads it only from inside)."""
     calibration_path = Path(calibration_path).resolve()
     if vault.covers(calibration_path):
         calibration_bytes = labels.guarded_read(vault, "evaluator", calibration_path, ledger=ledger)
@@ -437,38 +439,61 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
         raise Refused("a study level reads its calibration only from inside the vault")
     else:
         calibration_bytes = calibration_path.read_bytes()
-    calibration = json.loads(calibration_bytes)["tasks"]
+    return json.loads(calibration_bytes)["tasks"], calibration_bytes
+
+
+def review(manifest: dict, calibration_path: str | Path, work: str | Path) -> dict:
+    """Every arm on every task, then the gaming scan and the vault's check that nothing changed; no label is read.
+    The trees are made under ``work``."""
+    checkout = _frozen(manifest)
+    vault, ledger, roots = _vault(manifest)
+    leaks = labels.exposed(vault, _arm_inputs(manifest))
+    if leaks:
+        raise Refused("arm inputs lie inside the vault: " + ", ".join(leaks[:5]))
+    calibration, calibration_bytes = calibration_of(manifest, calibration_path, vault, ledger)
     environment = _toolchain_ready(manifest)
     markers = [*vault.roots, *(str(root) for root in roots), manifest["vault"]["id"]]
     incidents_before = sum(e["event"] == "incident" for e in ledger.events())
     rows, findings, a5 = [], [], {"checked": 0, "incomplete": []}
-    with tempfile.TemporaryDirectory(prefix="v9-study-") as work:
-        for index, task in enumerate(manifest["tasks"]):
-            rows.append(_review_task(manifest, task, index, work, calibration, markers, findings, a5))
-        vault_changes = list(vault.verify_unchanged(ledger=ledger))
-        incidents = [e for e in ledger.events() if e["event"] == "incident"][incidents_before:]
-        contaminated = gaming.contaminating(findings) or bool(vault_changes) or bool(incidents)
-        # the labels, only now that every arm has run and the scan is done
-        for index, (row, task) in enumerate(zip(rows, manifest["tasks"])):
-            found = calibration.get(task["task_id"])
-            if row["patch"] != "non_empty" or not found or "groups" not in found:
-                continue
-            label_contract = labels.load(vault, _at(manifest, task["label_contract"]), ledger=ledger)
-            tree = trees.checkout(_at(manifest, task["source"]), task["base_commit"],
-                                  Path(work) / _folder(index, task["task_id"]) / "label")
-            trees.apply(tree, _at(manifest, task["patch"]).read_text(encoding="utf-8"))
-            labelled = labels.label(label_contract, found, tree, executor=task_executor(manifest, task))
-            row["label"], row["defect_categories"] = labelled["label"], labelled["defect_categories"]
-            row["label_detail"] = {key: labelled.get(key) for key in ("failed", "by_origin", "disagreement",
-                                                                       "infrastructure_errors", "retried",
-                                                                       "unlabelled_because")}
+    for index, task in enumerate(manifest["tasks"]):
+        rows.append(_review_task(manifest, task, index, work, calibration, markers, findings, a5))
+    vault_changes = list(vault.verify_unchanged(ledger=ledger))
+    incidents = [e for e in ledger.events() if e["event"] == "incident"][incidents_before:]
+    contaminated = gaming.contaminating(findings) or bool(vault_changes) or bool(incidents)
+    return {"checkout": checkout, "vault": vault, "ledger": ledger, "markers": markers, "calibration": calibration,
+            "calibration_bytes": calibration_bytes, "environment": environment, "rows": rows, "a5": a5,
+            "gaming": {"findings": findings, "contaminated": contaminated, "vault_changes": vault_changes,
+                       "vault_incidents": incidents}}
+
+
+def label(manifest: dict, rows: list[dict], calibration: dict, vault, ledger, work: str | Path) -> None:
+    """Each non-empty, calibrated patch's label, into its row, on a fresh tree under ``work``: only once every arm
+    has run and the scan is done."""
+    for index, (row, task) in enumerate(zip(rows, manifest["tasks"])):
+        found = calibration.get(task["task_id"])
+        if row["patch"] != "non_empty" or not found or "groups" not in found:
+            continue
+        label_contract = labels.load(vault, _at(manifest, task["label_contract"]), ledger=ledger)
+        tree = trees.checkout(_at(manifest, task["source"]), task["base_commit"],
+                              Path(work) / _folder(index, task["task_id"]) / "label")
+        trees.apply(tree, _at(manifest, task["patch"]).read_text(encoding="utf-8"))
+        labelled = labels.label(label_contract, found, tree, executor=task_executor(manifest, task))
+        row["label"], row["defect_categories"] = labelled["label"], labelled["defect_categories"]
+        row["label_detail"] = {key: labelled.get(key) for key in ("failed", "by_origin", "disagreement",
+                                                                   "infrastructure_errors", "retried",
+                                                                   "unlabelled_because")}
+
+
+def results(manifest: dict, *, checkout: dict, vault, environment, calibration_bytes: bytes, rows: list[dict],
+            a5: dict, gaming_found: dict) -> dict:
+    """The results file's content from the labelled rows: the audit's exclusions, the statistics and the verdict."""
     # the label audit's kinds, recorded before this run: a label-invalid patch leaves the primary analysis
     audited = broken.audit(manifest.get("audit"), {row["task_id"]: row["label"] for row in rows})
     for row in rows:
         row["label_invalid"] = audited is not None and row["task_id"] in audited["label_invalid"]
     analysis = stats.analyse(rows, seed=manifest["seed"])
     counts = analysis["counts"]
-    result = {
+    return {
         "study": "V9", "level": manifest["level"], "g6_commit": manifest.get("g6_commit"), "g6_checkout": checkout,
         "seed": manifest["seed"], "limits": manifest["limits"], "toolchain": environment,
         "executors": {task["task_id"]: task_executor(manifest, task).describe() for task in manifest["tasks"]},
@@ -477,17 +502,26 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
                                             for r in rows if r["details"].get("g6")} - {""}),
         "vault": {"id": vault.vault_id, "digest": vault.digest, "blinding": labels.blinding_status(vault)},
         "input_sha256": _digests(manifest, {"calibration": calibration_bytes}),
-        "tasks": rows, "a5": a5,
-        "gaming": {"findings": findings, "contaminated": contaminated, "vault_changes": vault_changes,
-                   "vault_incidents": incidents},
+        "tasks": rows, "a5": a5, "gaming": gaming_found,
         "broken_tasks": {**(manifest.get("broken_tasks") or {}), "audit": audited,
                          "note": "" if audited is not None else broken.NOT_CHECKED},
         "experiment_1": analysis, "feasibility": stats.feasibility(rows),
-        "verdict": stats.verdict(level=manifest["level"], contaminated=contaminated, audit=manifest.get("audit"),
-                                 registered_size=manifest.get("registered_size"), defective=counts["defective"],
-                                 correct=counts["correct"], hypotheses=analysis["hypotheses"]),
+        "verdict": stats.verdict(level=manifest["level"], contaminated=gaming_found["contaminated"],
+                                 audit=manifest.get("audit"), registered_size=manifest.get("registered_size"),
+                                 defective=counts["defective"], correct=counts["correct"],
+                                 hypotheses=analysis["hypotheses"]),
         "setup_effort": manifest.get("setup_effort", {}), "deviations": manifest.get("deviations", []),
         "interpretation": INTERPRETATION[manifest["level"]]}
+
+
+def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dict:
+    with tempfile.TemporaryDirectory(prefix="v9-study-") as work:
+        reviewed = review(manifest, calibration_path, work)
+        # the labels, only now that every arm has run and the scan is done
+        label(manifest, reviewed["rows"], reviewed["calibration"], reviewed["vault"], reviewed["ledger"], work)
+    result = results(manifest, checkout=reviewed["checkout"], vault=reviewed["vault"],
+                     environment=reviewed["environment"], calibration_bytes=reviewed["calibration_bytes"],
+                     rows=reviewed["rows"], a5=reviewed["a5"], gaming_found=reviewed["gaming"])
     _write(output, result)
     return result
 
