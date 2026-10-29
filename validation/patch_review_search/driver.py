@@ -3,10 +3,10 @@
 "Reruns", with the attribution rule under "Arms").
 
 **Order** (``study``). The non-empty patches of V9's draw, in draw order; the empty and non-applying ones are
-counted and recorded with their reason first (``excluded``), never dropped. On each, arms C, T and E run, all three on
-the patch before the next; arm A is V9's arm 3 result on the patch, reused, never rerun. When every patch is done,
-every finding of C, T and E is rerun (``rerun``, before any label is read), and so is every finding of arm A the patch
-carries (``arm_a_findings``: its failed stated checks, as reproductions). Each arm run is timed, wall-clock and
+counted and recorded with their reason first (``excluded``), never dropped. On each, arms C, T, E and R run, all four
+on the patch before the next; arm A is V9's arm 3 result on the patch, reused, never rerun. When every patch is done,
+every finding of C, T, E and R is rerun (``rerun``, before any label is read), and so is every finding of arm A the
+patch carries (``arm_a_findings``: as reproductions). Each arm run is timed, wall-clock and
 processor seconds (children included). Every arm's output, every retry and every
 rerun result goes into an append-only record (``Record``), each entry's SHA-256 chained to the one before it.
 
@@ -16,7 +16,10 @@ it as ``search={"templates": bool, ...}`` (VS-3), and its proposer comes with VS
 Each returns its own review's disposition by arm A's rule (``own``), its model calls, what it spent (``spent_cents``),
 its reason codes, whether its deadline was reached during the search stage, its findings (reproductions ``{file, text,
 node}``) and, when the proposer failed, G6's reason. Arm E is ``arm_e(patch, *, c_calls, t_calls, share_left, meter)``,
-around ``arm_e.arm_e``.
+around ``arm_e.arm_e``. Arm R is ``arm_r(patch, *, share_left, meter)``: the study's runner prepares R's session
+(``arm_r.prepare``), an approved launcher runs it, and the runner judges it (``arm_r.disposition`` and ``judge``) and
+prices its tokens into the meter. When R's result carries the session's transcript, the driver scans it
+(``arm_r.scan_session``) and keeps the scan with R's output.
 
 **C and T in a child process.** At a study level (``children_only``) arms C and T are ``ChildArm``s: each run is a
 fresh isolated interpreter (``child.py``), killed with its process tree at the arm's limit plus its grace, so a hung
@@ -29,7 +32,8 @@ environment without the research flag. A plain callable runs in this process, fo
 failure is a tool error. The same failure after a model call, any other exception, or a reply without a disposition, is
 a tool error, never retried. Every tool error is counted, never dropped.
 
-**Spending.** Each of C, T and E runs under a third of the study's spending cap (``Spending``). Every arm run gets a
+**Spending.** Each of C, T, E and R runs under its share of the study's spending cap (``Spending``), a quarter each
+unless the freeze entry sets other shares. Every arm run gets a
 fresh meter (``Meter``; VS-5's MeteredCaller will be one), which counts calls, characters and cents as each model call
 happens; the driver charges the arm what its meter counted, read after the arm returns and after it raises, so a run
 that fails after its calls is charged for them. What the arm says it spent (``spent_cents``, and its calls) is a
@@ -58,6 +62,7 @@ from pathlib import Path
 
 from g6.core import component_process
 from patch_review_search.metering import NOTHING, FileMeter, InfrastructureFailure, Meter
+from patch_review_search import arm_r as arm_r_script
 from patch_review_search import report_check, stated_checks
 from patch_review_search.record import Record
 from patch_review_utility.arms import stated_check_verdicts
@@ -67,7 +72,7 @@ from patch_review_utility.dispositions import CATEGORIES, ERROR, make, tally
 __all__ = ["NOTHING", "ChildArm", "FileMeter", "InfrastructureFailure", "Meter", "Record", "Spending", "study"]
 CHILD = Path(__file__).with_name("child.py")
 
-ARMS = ("C", "T", "E")
+ARMS = ("C", "T", "E", "R")
 #: Each search arm's configuration, as G6's review takes it (``search``): C, free-form checks only; T, templates first
 #: (and the formal path where a template uses it), free-form checks where no template applies, and test adequacy.
 SEARCH = {"C": {"templates": False}, "T": {"templates": True, "test_adequacy": True}}
@@ -131,16 +136,25 @@ def _in_child(arm: ChildArm, patch: dict, *, search: dict, share_cents: float, m
 
 
 class Spending:
-    """The study's spending cap, in cents, a third for each of arms C, T and E."""
+    """The study's spending cap, in cents, shared by arms C, T, E and R: a quarter each, unless the freeze entry sets
+    other ``shares`` (each arm's fraction of the cap, together at most the whole)."""
 
-    def __init__(self, cap_cents: float):
+    def __init__(self, cap_cents: float, shares: dict[str, float] | None = None):
         if not cap_cents > 0:
             raise ValueError("the spending cap must be above zero")
-        self.cap, self.share = float(cap_cents), float(cap_cents) / len(ARMS)
+        fractions = shares or dict.fromkeys(ARMS, 1 / len(ARMS))
+        if set(fractions) != set(ARMS) or any(not 0 < f <= 1 for f in fractions.values()) or sum(
+                fractions.values()) > 1 + 1e-9:
+            raise ValueError("each of arms C, T, E and R needs a share of the cap, together at most the whole")
+        self.cap = float(cap_cents)
+        self.shares = {arm: self.cap * float(fractions[arm]) for arm in ARMS}
         self.spent = dict.fromkeys(ARMS, 0.0)
 
+    def share(self, arm: str) -> float:
+        return self.shares[arm]
+
     def left(self, arm: str) -> bool:
-        return self.spent[arm] < self.share
+        return self.spent[arm] < self.shares[arm]
 
     def charge(self, arm: str, cents) -> None:
         cents = float(cents or 0)
@@ -149,7 +163,7 @@ class Spending:
         self.spent[arm] += cents
 
     def report(self) -> dict:
-        return {"cap_cents": self.cap, "share_cents": self.share, "spent_cents": dict(self.spent)}
+        return {"cap_cents": self.cap, "shares_cents": dict(self.shares), "spent_cents": dict(self.spent)}
 
 
 def _valid(disposition) -> bool:
@@ -173,9 +187,11 @@ def _attribution(arm_a: dict, own: dict, reply: dict) -> str | None:
     return TO_SEARCH if codes & SEARCH_REASONS or reply.get("deadline_in_search") else BETWEEN_RUNS
 
 
-def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, record: Record, rerun,
-          excluded: list[dict], meters=lambda arm: Meter(), children_only: bool = False) -> dict:
-    """Arms C, T and E on every patch in draw order, then the reruns of every finding (the module docstring).
+def study(patches: list[dict], *, arm_c, arm_t, arm_e, arm_r, spending: Spending, record: Record, rerun,
+          excluded: list[dict], meters=lambda arm: Meter(), children_only: bool = False,
+          vault_markers: tuple = ()) -> dict:
+    """Arms C, T, E and R on every patch in draw order, then the reruns of every finding (the module docstring).
+    ``vault_markers``: the vault's folders and file names, for the gaming scan of R's transcripts.
     ``excluded``: the patches of the draw V9 found empty or not applying (``{id, draw_index, reason}``), each counted
     and recorded with its reason before any arm runs, never dropped."""
     order = [patch.get("draw_index") for patch in patches]
@@ -205,7 +221,7 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         started, cpu = time.monotonic(), os.times()
 
         def share_left() -> bool:   # what the arm has spent so far on this patch counts against its share
-            return spending.spent[arm] + meter.reading()["cents"] < spending.share
+            return spending.spent[arm] + meter.reading()["cents"] < spending.share(arm)
 
         reply, attempt, kind = None, 0, ""
         try:
@@ -261,7 +277,7 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         with tempfile.TemporaryDirectory(prefix="v10-arm-", ignore_cleanup_errors=True) as folder:
             meter = FileMeter(Path(folder) / "meter.jsonl")
             return once(patch, arm, lambda share_left, meter: _in_child(
-                run, patch, search=search, share_cents=spending.share - spending.spent[arm], meter=meter,
+                run, patch, search=search, share_cents=spending.share(arm) - spending.spent[arm], meter=meter,
                 folder=Path(folder)), meter=meter)
 
     for patch in patches:
@@ -307,6 +323,19 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                      "disposition": errored(kind, reply) if kind else reply["disposition"], "attempts": attempts,
                      "model_calls": reading["calls"], "meter": reading, **timing,
                      "findings": list(reply.get("findings") or [])}
+        reply, attempts, kind, reading, timing = once(patch, "R", lambda share_left, meter: arm_r(
+            patch, share_left=share_left, meter=meter))
+        if not kind and not _valid((reply or {}).get("disposition")):
+            kind = TOOL_ERROR
+        reply = reply or {}
+        scanned = (arm_r_script.scan_session(reply["transcript"], source=f"R:{patch['id']}",
+                                             copy_root=Path(reply.get("copy_root") or "."),
+                                             vault_markers=list(vault_markers))
+                   if reply.get("transcript") else None)
+        arms["R"] = {**{key: value for key, value in reply.items() if key not in ("disposition", "findings")},
+                     "disposition": errored(kind, reply) if kind else reply["disposition"], "attempts": attempts,
+                     "model_calls": reading["calls"], "meter": reading, **timing,
+                     "findings": list(reply.get("findings") or []), "gaming": scanned}
         for arm in ARMS:
             record.add("arm", {"patch": patch["id"], "arm": arm, "output": arms[arm]})
         rows.append({"patch": patch["id"], "draw_index": patch["draw_index"], "arm_a": arm_a,

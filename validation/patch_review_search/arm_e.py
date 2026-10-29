@@ -18,7 +18,7 @@ of these, and takes them as inputs:
   VS-5;
 - the spending share: ``share_left``, asked before every call; tokens and dollars are counted by whoever implements
   ``ask``;
-- the frozen parameters the freeze entry records (``Frozen``): R and each run's own time limit, read from G6's frozen
+- the frozen parameters the freeze entry records (``Frozen``): n and each run's own time limit, read from G6's frozen
   commit (``g6_parameters``, ``frozen_from_g6``); the feedback switch (whether G6's proposer gets the results of its
   earlier checks between calls); the seed, always recorded and sent to the model only when the hosted interface takes
   one and G6's proposer sends it (``send_seed``, which VS-5 decides); the arm's wall-clock limit; and the model-call
@@ -35,9 +35,9 @@ placed where G6 places one in its copy (``placement``: a folder of its own, ``g6
 digits of the SHA-256 of its text, inside the folder the file names, never where a path already exists), and at most
 ``MAX_TESTS`` test functions in file order. Everything else is discarded and counted.
 
-Each kept file runs ``R`` times on the patched tree with V9's arm 1 command and its outcome plugin (``executor``: V9's
+Each kept file runs ``n`` times on the patched tree with V9's arm 1 command and its outcome plugin (``executor``: V9's
 ``Executor`` with arm 1's container command at a study level), on its own, in a fresh copy, each run within its own time
-limit; then ``R`` times at the base commit, which changes no disposition. Each test's outcome in each run is read from
+limit; then ``n`` times at the base commit, which changes no disposition. Each test's outcome in each run is read from
 the plugin's report, written outside the copy (``reading``): ``passed``; ``failed`` (in its body: an assertion or an
 exception raised there); ``error`` (it could not be collected or set up, a teardown failed, or the run did not finish in
 time); ``skipped``; or ``missing`` (no recorded outcome). A test **passes** when it passed in more than half of its runs;
@@ -98,11 +98,11 @@ class _OutOfTime(Exception):
 
 @dataclass(frozen=True)
 class Frozen:
-    """The parameters the freeze entry records: ``runs`` (R, the times each kept test runs on each tree, read from
+    """The parameters the freeze entry records: ``runs`` (n, the times each kept test runs on each tree, read from
     G6's frozen commit: ``g6_parameters``), ``feedback`` (whether each call after the first gets the results of the
     tests kept so far), ``seed`` (always recorded; sent in the requests only when ``send_seed``, which holds when the
     hosted interface takes a seed and G6's proposer sends one, as VS-5 decides), ``run_s`` (each run's own time limit,
-    G6's per-run limit for a proposed check, read from its frozen commit like R), ``limit_s`` (the arm's wall-clock
+    G6's per-run limit for a proposed check, read from its frozen commit like n), ``limit_s`` (the arm's wall-clock
     limit, V9's arm 3's) and ``call_cap`` (the model-call cap per patch, the same as arms C and T)."""
     runs: int
     feedback: bool
@@ -123,7 +123,7 @@ class Frozen:
 
 
 def g6_parameters(search_module) -> dict:
-    """R and each run's own limit, read from G6's verification search module at its frozen commit
+    """n and each run's own limit, read from G6's verification search module at its frozen commit
     (``g6.harness.verification_search``, passed in: this module never imports G6): ``runs``, the runs of one proposed
     check on the patched tree, counted in ``search``'s source as its calls with ``at_base=False`` inside its loop over
     the checks; and ``run_s``, its ``RUN_S``. A ``ValueError`` when either is not there in that shape: a change in how
@@ -154,7 +154,7 @@ def g6_parameters(search_module) -> dict:
 
 
 def frozen_from_g6(search_module, *, feedback: bool, seed: int, send_seed: bool, limit_s: int, call_cap: int) -> Frozen:
-    """The frozen parameters, with R and each run's own limit read from G6's frozen commit (``g6_parameters``)."""
+    """The frozen parameters, with n and each run's own limit read from G6's frozen commit (``g6_parameters``)."""
     found = g6_parameters(search_module)
     return Frozen(runs=found["runs"], feedback=feedback, seed=seed, send_seed=send_seed, run_s=found["run_s"],
                   limit_s=limit_s, call_cap=call_cap)

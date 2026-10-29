@@ -14,7 +14,7 @@ Each feature belongs to a group:
   refuses, ``repo_tests.shadowed`` and the ``changed_code_not_loaded`` code, the submodule folders and their reasons,
   ``_moved``'s reading of a folder not hashed);
 - ``search``: verification search, whose rules arm E mirrors (the check file rule, the size and count limits, the
-  placement rule and ``placements``, R and each run's own limit) and whose settings arms C and T are given (each
+  placement rule and ``placements``, n and each run's own limit) and whose settings arms C and T are given (each
   configuration the driver gives, ``driver.SEARCH``, read back through G6's ``search_config``).
 
 A feature is read by importing G6 from the tree in a separate interpreter and probing it: a value compared with the
@@ -291,7 +291,7 @@ def _probes() -> list[tuple[str, str, object]]:
             ("submodule reason codes", "pool", submodule_codes),
             ("verification_search", "search", search), ("check limits", "search", limits),
             ("check file rule", "search", file_rule), ("placement", "search", placement),
-            ("placements", "search", placements), ("R and each run's limit", "search", parameters),
+            ("placements", "search", placements), ("n and each run's limit", "search", parameters),
             ("search settings", "search", settings), ("review_patch's search setting", "search", search_parameter)]
 
 

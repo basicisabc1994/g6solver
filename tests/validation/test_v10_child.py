@@ -57,7 +57,7 @@ def in_process(patch, *, meter, **kwargs):
 
 
 def study(c, t=in_process, *, items=None, record=None, children_only=False):
-    return driver.study(items or [{"id": "p0", "draw_index": 0, "arm_a": ACCEPTED}], arm_c=c, arm_t=t, arm_e=e_arm,
+    return driver.study(items or [{"id": "p0", "draw_index": 0, "arm_a": ACCEPTED}], arm_c=c, arm_t=t, arm_e=e_arm, arm_r=e_arm,
                         spending=driver.Spending(300.0), record=record or driver.Record(),
                         rerun=lambda *args: {}, excluded=[], children_only=children_only)
 

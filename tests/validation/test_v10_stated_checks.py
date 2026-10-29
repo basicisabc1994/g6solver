@@ -64,7 +64,7 @@ def test_the_driver_reads_each_search_arms_stated_checks_from_its_report_and_rec
     record = driver.Record()
     got = driver.study([{"id": "p0", "draw_index": 0, "arm_a": NO, "contract_ids": ["R1"],
                          "arm_a_stated_checks": {"a::t": "failed"}}], arm_c=arm("passed"), arm_t=arm("failed"),
-                       arm_e=e_arm, spending=driver.Spending(300.0), record=record, rerun=lambda *args: {}, excluded=[])
+                       arm_e=e_arm, arm_r=e_arm, spending=driver.Spending(300.0), record=record, rerun=lambda *args: {}, excluded=[])
     assert got["patches"][0]["arms"]["C"]["stated_checks"] == {"a::t": "passed"}
     assert got["comparison"]["differ"] == {"C": ["p0"], "T": []} and got["comparison"]["holds"] is True
     kinds = [entry["kind"] for entry in record.entries]

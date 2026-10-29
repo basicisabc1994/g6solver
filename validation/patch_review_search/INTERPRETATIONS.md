@@ -5,11 +5,11 @@ leaves a mechanic open, the scripts in this folder read it as below. A reading i
 until it is ruled, and then carries the ruling. Items 1 to 14 cover arm E's run mechanics (`arm_e.py`); the model call,
 E's prompt and the repository context wait for verification search's proposer interface (VS-5).
 
-1. **R, the runs of each kept test on each tree.** The protocol sets R to the number of times G6 runs a proposed
+1. **n, the runs of each kept test on each tree.** The protocol sets n to the number of times G6 runs a proposed
    check on the patched tree. G6's verification search, on the branch as it stands (`search` in
    `src/g6/harness/verification_search.py`), runs each proposed check once on the patched tree and once at the base
-   commit's code, so R would be 1, and "passes in more than half of its runs" means "passes in its one run". The script
-   takes R as a frozen parameter, read from G6's frozen commit when it is chosen (`g6_parameters`: the calls with
+   commit's code, so n would be 1, and "passes in more than half of its runs" means "passes in its one run". The script
+   takes n as a frozen parameter, read from G6's frozen commit when it is chosen (`g6_parameters`: the calls with
    `at_base=False` in `search`'s loop over the checks; any other shape is refused). Ruled by the coordinator: accepted
    as written.
 
@@ -75,11 +75,11 @@ E's prompt and the repository context wait for verification search's proposer in
     each run the smaller of its own limit and the time left. The arm reaching its limit is a time-out, a tool error
     marked as shaped by the limit. A call that times out on its own is a time-out too, marked only when the arm's
     limit was reached. Each run's own limit is read from G6's frozen commit, G6's per-run limit for a proposed check
-    (`RUN_S`, by `g6_parameters`), like R. Ruled by the coordinator, amended: each run's own limit is read from G6's
-    frozen commit (G6's per-run limit for a proposed check), like R. It is not a separate 60-second constant.
+    (`RUN_S`, by `g6_parameters`), like n. Ruled by the coordinator, amended: each run's own limit is read from G6's
+    frozen commit (G6's per-run limit for a proposed check), like n. It is not a separate 60-second constant.
 
-11. **Feedback.** With feedback, the tests kept so far are run before each call after the first, R times each on the
-    patched tree, and the request carries each test's outcomes. Those are their R runs; no test runs twice. Without
+11. **Feedback.** With feedback, the tests kept so far are run before each call after the first, n times each on the
+    patched tree, and the request carries each test's outcomes. Those are their n runs; no test runs twice. Without
     feedback, every call comes first and no request carries results. What G6's proposer receives, and in what form,
     waits for VS-5. Ruled by the coordinator: accepted as written.
 
@@ -244,7 +244,7 @@ Item 37's criterion 4 is now computed: see item 42.
 
 Items 38 to 41 cover the headline sentences (`analysis.headlines`).
 
-38. **N and R.** N is the number of analysed patches (non-empty and labelled), and R the number of their repositories.
+38. **N and P.** N is the number of analysed patches (non-empty and labelled), and P the number of their repositories.
     Ruled by the coordinator: accepted as written.
 
 39. **How the numbers are written.** The sentence text is the protocol's exactly, numbers filled in; the second
@@ -355,3 +355,39 @@ V9 version 2's broken tasks as V10 inherits them.
     a `session_set_up` finding voids it too is for the coordinator's ruling. V9's scan now reads a Windows session's
     paths too: an edit to a test or runner file named with backslashes was missed before. For the coordinator's
     ruling.
+
+52. **Arm R in the driver.** Arm R runs after E on each patch, all four arms on one patch before the next, as an
+    injected callable, `arm_r(patch, *, share_left, meter)`: the study's runner prepares the session, an approved
+    launcher runs it, and the runner judges it and prices its tokens into the meter, so R is charged as the other arms
+    are. When R's result carries the session's transcript, the driver scans it and keeps the scan with R's output in
+    the record. Version 1's names follow version 2: arm E's run count is n, and the permitted sentence's number of
+    repositories is P. For the coordinator's ruling.
+
+53. **Spending shares.** A quarter of the cap each for C, T, E and R, unless the freeze entry sets other shares: each
+    arm's fraction of the cap, together at most the whole. The driver and criterion 2 read the same shares. For the
+    coordinator's ruling.
+
+54. **Criteria 1 and 2 for arm R.** Criterion 1 holds R as it holds the other arms. Under criterion 2, R's spending is
+    held to its share; a session past V9's arm 2 time limit or token cap abstains (or, with no reply, is a tool
+    error), is counted as stopped at a limit (`killed_at_time_limit`, `stopped_at_token_cap`, or marked as shaped by
+    a limit), and is not a failure of criterion 2. R has no call cap or wall-clock check of its own beyond these. For
+    the coordinator's ruling.
+
+55. **The filtered findings of E and R.** A finding of arm E or R is left out when its test failed in its body in more
+    than half of that arm's own n runs at the base (the arm's record of its tests), not the reruns' three base runs.
+    Measures 3 and 4 are then given again for E and R. For the coordinator's ruling.
+
+56. **The verdict.** It is decided only when the gaming scan's findings are given; the scans of R's transcripts the
+    record holds are added to them. The findings that void the study are V9's (`vault_read`, `network`). History
+    beyond the base never reaches a session: the copy is refused before it is made (item 48). R's `session_set_up`
+    and `edit_outside_copy` findings are reported with the others but do not decide verdict 1 by themselves, and no
+    script decides "could change its evaluator": both are for the coordinator's ruling. Verdict 2 is
+    feasibility criterion 6 alone. V9's feasibility label audit is reported beside it: its sample, label errors, errors
+    by kind, label-invalid patches, and the one-sided 95% Clopper–Pearson upper bound on its label error rate. Every
+    git command R ran is reported beside it too. For the coordinator's ruling.
+
+57. **The version 2 sentences.** The second sentence gives arm R's rates beside A's, with all six intervals, and is
+    not printed when any of arm T's, A's or R's four rates has no interval. The first sentence gives K_R, with its
+    interval, and the note the protocol asks for beside K_R: that M is chosen by V9's arm 2, which uses R's model on
+    nearly R's prompt. Similarity to the hidden tests, still not built, covers the checks C, T, E and R wrote. For the
+    coordinator's ruling.

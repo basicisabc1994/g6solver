@@ -57,31 +57,37 @@ def e_arm(replies=None):
                                       "calls": {"due": 1, "made": 1}})
 
 
-def study(items, c=None, t=None, e=None, *, cap=300.0, rerun=None, record=None, excluded=()):
-    c, t, e = c or Arm("C"), t or Arm("T"), e or e_arm()
+def r_arm(replies=None):
+    return Arm("R", replies, default={"disposition": ACCEPTED, "findings": [], "spent_cents": 1.0,
+                                      "calls": {"made": 1}})
+
+
+def study(items, c=None, t=None, e=None, r=None, *, cap=300.0, rerun=None, record=None, excluded=(), shares=None):
+    c, t, e, r = c or Arm("C"), t or Arm("T"), e or e_arm(), r or r_arm()
     order = []
-    for arm in (c, t, e):
+    for arm in (c, t, e, r):
         original = arm.__call__
 
         def logged(patch, _original=original, _name=arm.name, **kwargs):
             order.append((patch["id"], _name))
             return _original(patch, **kwargs)
         arm.logged = logged
-    got = driver.study(items, arm_c=c.logged, arm_t=t.logged, arm_e=e.logged, spending=driver.Spending(cap),
-                       record=record or driver.Record(), rerun=rerun or (lambda patch, arm, reproduction: {}),
-                       excluded=list(excluded))
+    got = driver.study(items, arm_c=c.logged, arm_t=t.logged, arm_e=e.logged, arm_r=r.logged,
+                       spending=driver.Spending(cap, shares), record=record or driver.Record(),
+                       rerun=rerun or (lambda patch, arm, reproduction: {}), excluded=list(excluded))
     return got, order, (c, t, e)
 
 
-def test_arms_c_t_and_e_all_run_on_one_patch_before_the_next_in_draw_order():
+def test_arms_c_t_e_and_r_all_run_on_one_patch_before_the_next_in_draw_order():
     got, order, _ = study(patches(ACCEPTED, ACCEPTED))
-    assert order == [("p0", "C"), ("p0", "T"), ("p0", "E"), ("p1", "C"), ("p1", "T"), ("p1", "E")]
+    assert order == [("p0", "C"), ("p0", "T"), ("p0", "E"), ("p0", "R"), ("p1", "C"), ("p1", "T"), ("p1", "E"),
+                     ("p1", "R")]
     assert [row["patch"] for row in got["patches"]] == ["p0", "p1"]
     with pytest.raises(ValueError, match="draw order"):
-        driver.study(list(reversed(patches(ACCEPTED, ACCEPTED))), arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(),
+        driver.study(list(reversed(patches(ACCEPTED, ACCEPTED))), arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(), arm_r=e_arm(),
                      spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {}, excluded=[])
     with pytest.raises(ValueError, match="arm A"):
-        driver.study([{"id": "p0", "draw_index": 0}], arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(),
+        driver.study([{"id": "p0", "draw_index": 0}], arm_c=Arm("C"), arm_t=Arm("T"), arm_e=e_arm(), arm_r=e_arm(),
                      spending=driver.Spending(300.0), record=driver.Record(), rerun=lambda *a: {}, excluded=[])
 
 
@@ -124,14 +130,14 @@ def test_a_search_arm_accepts_only_when_arm_a_and_its_own_review_accept(arm_a, o
     assert row["own"] == own
 
 
-def test_each_arm_runs_under_a_third_of_the_spending_cap_and_a_patch_past_its_share_is_a_counted_tool_error():
+def test_each_arm_runs_under_a_quarter_of_the_spending_cap_and_a_patch_past_its_share_is_a_counted_tool_error():
     c = Arm("C", {"p0": [{"own": ACCEPTED, "model_calls": 2, "spent_cents": 100.0}]})
     got, order, (c, t, e) = study(patches(ACCEPTED, ACCEPTED), c, cap=300.0)
     assert [patch for patch, _ in c.calls] == ["p0"] and ("p1", "C") not in order
     second = got["patches"][1]["arms"]
     assert second["C"]["disposition"]["error_kind"] == driver.SPEND_SHARE and second["T"]["disposition"]["accepted"]
-    assert got["spending"] == {"cap_cents": 300.0, "share_cents": 100.0, "spent_cents": {"C": 100.0, "T": 2.0,
-                                                                                         "E": 2.0}}
+    assert got["spending"] == {"cap_cents": 300.0, "shares_cents": {"C": 75.0, "T": 75.0, "E": 75.0, "R": 75.0},
+                               "spent_cents": {"C": 100.0, "T": 2.0, "E": 2.0, "R": 2.0}}
     assert got["tallies"]["C"][ERROR] == 1 and got["tallies"]["C"]["error_kinds"] == {driver.SPEND_SHARE: 1}
     assert e.calls[1][1]["c_calls"] == 0                            # C made no call on p1
     assert t.calls[0][1]["share_left"]() is True
@@ -204,7 +210,7 @@ def test_every_tool_error_is_counted_and_no_patch_is_dropped():
                        "spent_cents": 0.0, "calls": {"due": 1, "made": 1}}]})
     t = Arm("T", {"p0": [{"model_calls": 1}]})                          # a reply without its own review's disposition
     got, _, _ = study(patches(ACCEPTED, ACCEPTED, DEFECTIVE), t=t, e=e)
-    assert all(set(row["arms"]) == {"C", "T", "E"} for row in got["patches"]) and len(got["patches"]) == 3
+    assert all(set(row["arms"]) == {"C", "T", "E", "R"} for row in got["patches"]) and len(got["patches"]) == 3
     assert got["tallies"]["E"][ERROR] == 1 and got["tallies"]["T"][ERROR] == 1
     assert got["tallies"]["C"]["missing"] == 0 and sum(got["tallies"]["C"][k] for k in dispositions.CATEGORIES) == 3
 
@@ -268,6 +274,30 @@ def test_what_a_search_arm_says_of_its_search_stage_is_kept_for_the_feasibility_
     got, _, _ = study(patches(ACCEPTED), c)
     assert got["patches"][0]["arms"]["C"]["search_stage"] == stage
     assert got["patches"][0]["arms"]["T"]["search_stage"] is None
+
+
+def test_arm_r_runs_after_e_under_its_own_share_its_findings_rerun_and_its_transcript_scanned(tmp_path):
+    repro = {"file": "g6_check_0123456789ab/test_a.py", "text": "def test_a():\n    assert 0\n",
+             "node": "g6_check_0123456789ab/test_a.py::test_a"}
+    transcript = '{"type": "system", "subtype": "init", "mcp_servers": [{"name": "g6"}], "tools": ["Bash"]}'
+    r = r_arm({"p0": [{"disposition": DEFECTIVE, "findings": [repro], "spent_cents": 80.0, "calls": {"made": 1},
+                       "transcript": transcript, "copy_root": str(tmp_path)}]})
+    seen = []
+    got, _, (_, _, _) = study(patches(ACCEPTED, ACCEPTED), r=r,
+                              rerun=lambda patch, arm, reproduction: seen.append((patch["id"], arm)) or {})
+    first, second = got["patches"][0]["arms"]["R"], got["patches"][1]["arms"]["R"]
+    assert first["disposition"]["category"] == DEFECT and ("p0", "R") in seen
+    assert [f["kind"] for f in first["gaming"]["findings"]] == ["session_set_up"]
+    assert second["disposition"]["error_kind"] == driver.SPEND_SHARE          # 80 cents is past R's 75
+    assert got["tallies"]["R"][ERROR] == 1
+
+
+def test_the_freeze_entry_may_set_other_shares_of_the_cap():
+    got, _, _ = study(patches(ACCEPTED), shares={"C": 0.3, "T": 0.3, "E": 0.2, "R": 0.2})
+    assert got["spending"]["shares_cents"] == {"C": 90.0, "T": 90.0, "E": 60.0, "R": 60.0}
+    for bad in ({"C": 0.5, "T": 0.5, "E": 0.2, "R": 0.2}, {"C": 0.5, "T": 0.5}):
+        with pytest.raises(ValueError, match="share"):
+            driver.Spending(300.0, bad)
 
 
 def test_the_record_is_append_only_each_entry_chained_to_the_one_before(tmp_path):

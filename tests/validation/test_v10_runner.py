@@ -126,7 +126,7 @@ def test_end_to_end_arm_as_discovery_k_k_ref_and_j_read_real_values(trees, tmp_p
         return reruns.before_labels(executor.Executor(), patched, base, reproduction, timeout_s=60)
 
     path = tmp_path / "record.jsonl"
-    got = driver.study(patches, arm_c=search, arm_t=search, arm_e=e_arm, spending=driver.Spending(300.0),
+    got = driver.study(patches, arm_c=search, arm_t=search, arm_e=e_arm, arm_r=e_arm, spending=driver.Spending(300.0),
                        record=record.Record(path), rerun=rerun, excluded=excluded)
     (result,) = got["reruns"]
     assert result["arm"] == "A" and result["result"]["reproducible"] is True

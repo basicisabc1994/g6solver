@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""V10's analysis of its primary measures (docs/validation/patch_review_search/PROTOCOL.md: "Measures", "Analysis",
-"The level: feasibility only" and "What the results permit saying").
+"""V10's analysis of its primary measures (docs/validation/patch_review_search/PROTOCOL.md, version 2: "Measures",
+"Analysis", "Verdict", "The level: feasibility only" and "What the results permit saying").
 
 **Nothing is computed from a record that does not verify** (``record.verify``): its chain must hold from the first
 entry to the last and end at the hash committed before any label was read. Only then are the labels read.
@@ -14,7 +14,7 @@ oracle controls and V9's arms, arm 3 being this study's arm A); and the reruns o
 patch does not accept it, and is counted (``missing``). Unlabelled patches and those the record excludes are counted
 and left out of every rate.
 
-**Primary measures**, per arm (A, C, T, E), each also per repository:
+**Primary measures**, per arm (A, C, T, E, R), each also per repository:
 
 1. false acceptance: defective patches accepted ÷ non-empty defective patches;
 2. correct acceptance: correct patches accepted ÷ non-empty correct patches;
@@ -24,31 +24,36 @@ and left out of every rate.
    fix, and the number of findings per patch;
 4. the headline counts: M, the defective patches V9's arms 1 and 2 both accepted, and L, the correct ones; per arm K
    (patches in M with an actionable finding), K_ref (with an actionable finding compatible with the reference fix) and
-   J (patches in L with a reproducible finding);
+   J (patches in L with a reproducible finding); beside K_R, the note that M is chosen by V9's arm 2 (``K_R_NOTE``);
 6. cost per patch, mean, median and total: model calls, seconds, processor seconds, cents and dollars.
 
 Measure 5 (human verification effort) is Experiment 2, not here. Each rate has its exact two-sided 95% Clopper–Pearson
 interval (``exact``, from V9's one-sided bound at 97.5%), and a zero denominator gives a count and no interval. The
-paired differences (C and T against A, C and T against E, T against C, and C, T and E against V9's arms 1, 2 and 4, on
-measures 1 to 3) each have Newcombe's hybrid score interval (method 10) at 95% and, beside it, V9's bootstrap stratified
-by repository at 95% (seed: V9's feasibility seed plus two; the same seed, and so the same resampled task sets, for
-every comparison on the same patches). A comparison with no discordant pair is reported, not interpreted. No hypothesis
-is tested and no interval is adjusted. Also from the record: E-filtered, A-and-E, and each search arm's own-run
-acceptance; and every arm's tool errors by kind.
+paired differences (``PAIRS``: C and T against A, C and T against E, T against C, A, C, T and E against R, and C, T, E
+and R against V9's arms 1, 2 and 4, on measures 1 to 3) each have Newcombe's hybrid score interval (method 10) at 95%
+and, beside it, V9's bootstrap stratified by repository at 95% (seed: V9's feasibility seed plus two; the same seed,
+and so the same resampled task sets, for every comparison on the same patches). A comparison with no discordant pair
+is reported, not interpreted. No hypothesis is tested and no interval is adjusted. Also from the record: E-filtered,
+A-and-E, and each search arm's own-run acceptance; the filtered findings of arms E and R (measures 3 and 4 without
+the tests that also failed at the base in more than half of the arm's own base runs, ``filtered``); and every arm's
+tool errors by kind.
 
 **Feasibility** (``feasibility``): the six criteria, each met, not met or inconclusive with the numbers behind it, and
-the outcome (feasible only when all six are met).
+the outcome (feasible only when all six are met). Criteria 1 and 2 hold arm R too.
 
-**The headline sentences** (``headlines``): the three sentences "What the results permit saying" allows, their text
-exactly the protocol's (``SENTENCES``), filled from the outcome, each with its intervals beside it and arm C's numbers
-beside arm T's, never in their place. A sentence one of whose numbers or intervals cannot be computed is not printed,
-and the report says why: the first when M is zero (the protocol's own rule), the false and correct acceptance pair
-never one without the other.
+**The verdict** (``verdict``): contaminated evaluation, oracle inadequate (criterion 6 alone) or inconclusive, the
+first that applies, with V9's feasibility label audit and arm R's git commands beside it.
+
+**The headline sentences** (``headlines``): the three sentences version 2's "What the results permit saying" allows,
+their text exactly the protocol's (``SENTENCES``), filled from the outcome, each with its intervals beside it and arm
+C's numbers beside arm T's, never in their place. A sentence one of whose numbers or intervals cannot be computed is
+not printed, and the report says why: the first when M is zero (the protocol's own rule), the false and correct
+acceptance rates never one without the other.
 
 **Not built yet**, until VS-4 and VS-5 settle their fields: template applicability (arm T), the formal path's counts
-(arm T), whether surviving mutants predict defects (test adequacy, arm T), similarity to the hidden tests, the
-per-reason-code shares over findings with their bootstrap, and token counts. Measure 3 for V9's arms 1 and 4 is not
-computed: their findings are not rerun by V10's driver.
+(arm T), whether surviving mutants predict defects (test adequacy, arm T), similarity to the hidden tests of the checks
+C, T, E and R wrote, the per-reason-code shares over findings with their bootstrap, and token counts. Measure 3 for
+V9's arms 1 and 4 is not computed: their findings are not rerun by V10's driver.
 """
 from __future__ import annotations
 
@@ -56,21 +61,32 @@ import statistics
 from statistics import NormalDist
 
 from patch_review_search.record import verify
+from patch_review_utility import gaming as gaming_scan
 from patch_review_utility import stats
 from patch_review_utility.dispositions import tally
 
 CONFIDENCE = 0.95
 Z95 = NormalDist().inv_cdf(0.5 + CONFIDENCE / 2)
-ARMS = ("A", "C", "T", "E")
+ARMS = ("A", "C", "T", "E", "R")
+#: The arms this study runs itself (A is V9's arm 3, reused), with their spending shares.
+RUN_ARMS = ("C", "T", "E", "R")
 VARIANTS = ("E_filtered", "A_and_E", "C_own", "T_own")
 #: V9's arms this study compares with, by their number in V9's protocol.
 V9_ARMS = {"1": "tests", "2": "self_review", "4": "direct_checks"}
 MEASURES = ("false_acceptance", "correct_acceptance", "discovery")
+#: The paired differences of version 2, each on measures 1 to 3.
 PAIRS = (("C", "A"), ("T", "A"), ("C", "E"), ("T", "E"), ("T", "C"),
-         *((arm, v9) for arm in ("C", "T", "E") for v9 in V9_ARMS))
+         ("A", "R"), ("C", "R"), ("T", "R"), ("E", "R"),
+         *((arm, v9) for arm in ("C", "T", "E", "R") for v9 in V9_ARMS))
+#: The arms whose findings are also counted filtered (version 2, "Secondary measures").
+FILTERED = ("E", "R")
 NOT_BUILT = ("template applicability (arm T)", "the formal path's counts (arm T)",
-             "whether surviving mutants predict defects (arm T)", "similarity to the hidden tests",
+             "whether surviving mutants predict defects (arm T)",
+             "similarity to the hidden tests of the checks C, T, E and R wrote",
              "per-reason-code shares over findings, with their bootstrap", "input and output tokens")
+#: Said beside K_R (version 2, "Measures", 4).
+K_R_NOTE = ("M is chosen by V9's arm 2, which uses arm R's model on nearly arm R's prompt, so K_R counts patches that "
+            "the same model has already accepted once")
 NO_FINDING = "the agent's own review gives no finding (PROTOCOL.md, Findings)"
 NOT_RERUN = "not computed: V10's driver does not rerun this arm's findings"
 
@@ -124,8 +140,9 @@ def _outputs(entries: list[dict]) -> dict[str, dict]:
     return found
 
 
-#: The tool error kinds of a run stopped at a limit: the time limit, and the spending share.
-LIMIT_KINDS = ("time_out", "killed_at_time_limit", "spend_share_reached")
+#: The tool error kinds of a run stopped at a limit: the time limit, the token cap (arm R's, as V9's arm 2), and the
+#: spending share.
+LIMIT_KINDS = ("time_out", "killed_at_time_limit", "stopped_at_token_cap", "spend_share_reached")
 
 
 def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None, comparison: dict | None = None) -> dict:
@@ -155,15 +172,15 @@ def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None, compari
                   "result": "inconclusive" if not n else "not met" if broken else "met", "numbers": numbers,
                   "why": "" if n else "there is no non-empty patch"})
 
-    stopped = {arm: {} for arm in "CTE"}
+    stopped = {arm: {} for arm in RUN_ARMS}
     for task in tasks:
-        for arm in "CTE":
+        for arm in RUN_ARMS:
             given = disposition(task, arm) or {}
             if given.get("error_kind") in LIMIT_KINDS or given.get("time_or_cap_reached"):
                 kind = given.get("error_kind") or "time_or_cap_reached"
                 stopped[arm][kind] = stopped[arm].get(kind, 0) + 1
     usage = {}
-    for arm in "CTE":
+    for arm in RUN_ARMS:
         runs = [outputs.get(task["task_id"], {}).get(arm) or {} for task in tasks]
         usage[arm] = {"cents": round(sum((run.get("meter") or {}).get("cents") or 0.0 for run in runs), 6),
                       "most_calls": max([(run.get("meter") or {}).get("calls") or 0 for run in runs], default=0),
@@ -171,13 +188,15 @@ def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None, compari
     if not limits:
         result, why = "inconclusive", "not computed: the frozen limits were not given"
     else:
-        share = float(limits["cap_cents"]) / len("CTE")
-        over = [arm for arm in "CTE" if usage[arm]["cents"] > share + 1e-9
-                or usage[arm]["most_calls"] > limits["call_cap"]
-                or usage[arm]["most_seconds"] > limits["limit_s"] + limits.get("grace_s", 0)]
+        fractions = limits.get("shares") or dict.fromkeys(RUN_ARMS, 1 / len(RUN_ARMS))
+        share = {arm: float(limits["cap_cents"]) * float(fractions[arm]) for arm in RUN_ARMS}
+        # arm R's own limits are V9's arm 2 caps: a session past them abstains, counted above, and fails nothing
+        over = [arm for arm in RUN_ARMS if usage[arm]["cents"] > share[arm] + 1e-9
+                or (arm != "R" and (usage[arm]["most_calls"] > limits["call_cap"]
+                                    or usage[arm]["most_seconds"] > limits["limit_s"] + limits.get("grace_s", 0)))]
         result, why = ("not met" if over else "met"), (f"over a limit: {', '.join(over)}" if over else "")
-    found.append({"criterion": 2, "text": "no search arm and not arm E used more than its frozen limits; a run stopped "
-                                          "at a limit is counted, with the limit it reached",
+    found.append({"criterion": 2, "text": "no search arm, and neither arm E nor arm R, used more than its frozen limits; "
+                                          "a run stopped at a limit is counted, with the limit it reached",
                   "result": result, "why": why, "numbers": {**usage, "stopped_at_a_limit": stopped,
                                                             "limits": limits}})
 
@@ -260,7 +279,7 @@ def _patches(entries: list[dict], v9: dict, reference: list[dict]) -> tuple[list
     rows = []
     for task in labelled:
         found = outputs.get(task["task_id"], {})
-        arms = {"A": task["arms"].get("g6"), **{arm: (found.get(arm) or {}).get("disposition") for arm in "CTE"}}
+        arms = {"A": task["arms"].get("g6"), **{arm: (found.get(arm) or {}).get("disposition") for arm in RUN_ARMS}}
         arms.update(E_filtered=(found.get("E") or {}).get("e_filtered", arms["E"]),
                     A_and_E=(found.get("E") or {}).get("a_and_e", arms["E"]),
                     C_own=(found.get("C") or {}).get("own"), T_own=(found.get("T") or {}).get("own"),
@@ -270,7 +289,7 @@ def _patches(entries: list[dict], v9: dict, reference: list[dict]) -> tuple[list
             reruns[arm] = [{**item, "reference": compatible.get((task["task_id"], arm, item["node"]))}
                            for item in findings.get((task["task_id"], arm), [])]
         cost = {"A": {**((task["arms"].get("g6") or {}).get("cost") or {}), "cents": None}}
-        for arm in "CTE":
+        for arm in RUN_ARMS:
             output = found.get(arm) or {}
             meter = output.get("meter") or {}
             cost[arm] = {"model_calls": meter.get("calls"), "seconds": output.get("seconds"),
@@ -286,13 +305,16 @@ def _patches(entries: list[dict], v9: dict, reference: list[dict]) -> tuple[list
     return rows, counts
 
 
-def _actionable(row: dict, arm: str) -> list[dict]:
-    """The arm's reproducible findings on the patch (actionable on a defective one)."""
-    return [item for item in row["findings"].get(arm, []) if (item.get("result") or {}).get("reproducible") is True]
+def _actionable(row: dict, arm: str, filtered: bool = False) -> list[dict]:
+    """The arm's reproducible findings on the patch (actionable on a defective one); ``filtered``: without the tests
+    that also failed at the base in more than half of the arm's own base runs (arms E and R)."""
+    tests = ((row["outputs"].get(arm) or {}).get("tests") or {}) if filtered else {}
+    return [item for item in row["findings"].get(arm, []) if (item.get("result") or {}).get("reproducible") is True
+            and not (tests.get(item.get("node")) or {}).get("fails_at_base")]
 
 
-def _discovers(row: dict, arm: str) -> bool:
-    return arm != "2" and bool(_actionable(row, arm))
+def _discovers(row: dict, arm: str, filtered: bool = False) -> bool:
+    return arm != "2" and bool(_actionable(row, arm, filtered))
 
 
 def _rates(rows: list[dict], name: str) -> dict:
@@ -326,18 +348,33 @@ def _discovery(rows: list[dict], arm: str) -> dict:
                                    "most": max(every) if every else None}}
 
 
-def _headline(rows: list[dict]) -> dict:
+def _sets(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """M and L: the defective and the correct patches V9's arms 1 and 2 both accepted."""
     both = [row for row in rows if row["accepted_by"]["1"] and row["accepted_by"]["2"]]
-    m = [row for row in both if row["label"] == "defective"]
-    l_ = [row for row in both if row["label"] == "correct"]
-    arms = {}
-    for arm in ARMS:
-        k = sum(_discovers(row, arm) for row in m)
-        k_ref = sum(any((item["reference"] or {}).get("compatible") is True for item in _actionable(row, arm))
-                    for row in m)
-        j = sum(bool(_actionable(row, arm)) for row in l_)
-        arms[arm] = {"K": rate(k, len(m)), "K_ref": rate(k_ref, len(m)), "J": rate(j, len(l_))}
-    return {"M": len(m), "L": len(l_), "arms": arms}
+    return [row for row in both if row["label"] == "defective"], [row for row in both if row["label"] == "correct"]
+
+
+def _counts(rows: list[dict], arm: str, filtered: bool = False) -> dict:
+    m, l_ = _sets(rows)
+    k = sum(_discovers(row, arm, filtered) for row in m)
+    k_ref = sum(any((item["reference"] or {}).get("compatible") is True for item in _actionable(row, arm, filtered))
+                for row in m)
+    j = sum(bool(_actionable(row, arm, filtered)) for row in l_)
+    return {"K": rate(k, len(m)), "K_ref": rate(k_ref, len(m)), "J": rate(j, len(l_))}
+
+
+def _headline(rows: list[dict]) -> dict:
+    m, l_ = _sets(rows)
+    return {"M": len(m), "L": len(l_), "arms": {arm: _counts(rows, arm) for arm in ARMS},
+            "notes": {"K_R": K_R_NOTE}}
+
+
+def _filtered(rows: list[dict]) -> dict:
+    """Measures 3 and 4 again for arms E and R, without the tests that also failed at the base in more than half of
+    their base runs (version 2, "Secondary measures")."""
+    defective = [row for row in rows if row["label"] == "defective"]
+    return {arm: {"discovery": rate(sum(_discovers(row, arm, True) for row in defective), len(defective)),
+                  "headline": _counts(rows, arm, True)} for arm in FILTERED}
 
 
 def _differences(rows: list[dict], *, seed: int, resamples: int) -> list[dict]:
@@ -372,18 +409,17 @@ def _costs(rows: list[dict]) -> dict:
     return found
 
 
-#: The sentences "What the results permit saying" allows, exactly as the protocol writes them, with their numbers as
-#: fields (``X2`` for X′, and so on). Arm C's numbers go beside them, never in arm T's place.
+#: The sentences version 2's "What the results permit saying" allows, exactly as the protocol writes them, with their
+#: numbers as fields (``X2`` for X′, and so on). Arm C's numbers go beside them, never in arm T's place.
 SENTENCES = (
-    "On {N} agent-written Python patches from {R} repositories, of the {M} defective patches that the repository's "
+    "On {N} agent-written Python patches from {P} repositories, of the {M} defective patches that the repository's "
     "tests and the agent's own review both accepted, G6 with verification search in its full configuration (arm T) "
     "gave a reproducible finding on {K}, of which {K_ref} also pass on the benchmark's reference fix. Model-written "
-    "tests run without G6 (arm E) did so on {K_E}. On the {L} correct patches that both accepted, arm T gave a "
-    "reproducible finding on {J}.",
-    "On the same patches, arm T's false acceptance was {X}% against arm A's {Y}%, and its correct acceptance {X2}% "
-    "against {Y2}%",
+    "tests run without G6 (arm E) did so on {K_E}, and a fresh review by a coding agent that did not write the patch "
+    "(arm R) on {K_R}. On the {L} correct patches that both accepted, arm T gave a reproducible finding on {J}.",
+    "On the same patches, arm T's false acceptance was {X}% against arm A's {Y}% and arm R's {Z}%, and its correct "
+    "acceptance {X2}% against {Y2}% and {Z2}%",
     "Arm T cost a mean of {C} model calls, {S} seconds and {D} dollars per patch (median {C2}, {S2} and {D2}).")
-
 
 def percent(share: float) -> str:
     return f"{100 * share:.1f}"
@@ -403,7 +439,7 @@ def headlines(result: dict) -> dict:
     why."""
     sentences, not_printed = [], []
     counts, head, rates, costs = result["counts"], result["headline"], result["rates"], result["costs"]
-    t, c, e = head["arms"]["T"], head["arms"]["C"], head["arms"]["E"]
+    t, c, e, r = head["arms"]["T"], head["arms"]["C"], head["arms"]["E"], head["arms"]["R"]
     if not head["M"]:
         not_printed.append({"id": 1, "why": "no defective patch was accepted by both the repository's tests and the "
                                             "agent's own review (M is zero)"})
@@ -411,33 +447,35 @@ def headlines(result: dict) -> dict:
         not_printed.append({"id": 1, "why": "no correct patch was accepted by both the repository's tests and the "
                                             "agent's own review (L is zero), so J has no interval"})
     else:
-        text = SENTENCES[0].format(N=counts["defective"] + counts["correct"], R=len(counts["repositories"]),
+        text = SENTENCES[0].format(N=counts["defective"] + counts["correct"], P=len(counts["repositories"]),
                                    M=head["M"], K=t["K"]["count"], K_ref=t["K_ref"]["count"], K_E=e["K"]["count"],
-                                   L=head["L"], J=t["J"]["count"])
+                                   K_R=r["K"]["count"], L=head["L"], J=t["J"]["count"])
         sentences.append({"id": 1, "text": text,
                           "intervals": {"K": percent_interval(t["K"]["interval"]),
                                         "K_ref": percent_interval(t["K_ref"]["interval"]),
                                         "K_E": percent_interval(e["K"]["interval"]),
+                                        "K_R": percent_interval(r["K"]["interval"]),
                                         "J": percent_interval(t["J"]["interval"])},
+                          "notes": {"K_R": head["notes"]["K_R"]},
                           "beside": {"arm": "C", "K": _of(c["K"]), "K_ref": _of(c["K_ref"]), "J": _of(c["J"]),
                                      "intervals": {key: percent_interval(c[key]["interval"])
                                                    for key in ("K", "K_ref", "J")}}})
-    wanted = [rates[arm][measure] for arm in ("T", "A") for measure in ("false_acceptance", "correct_acceptance")]
+    wanted = [rates[arm][measure] for arm in ("T", "A", "R") for measure in ("false_acceptance", "correct_acceptance")]
     if any(found["interval"] is None for found in wanted):
         missing = [f"{measure.replace('_', ' ')} cannot be computed: no {label} patch"
                    for measure, label in (("false_acceptance", "defective"), ("correct_acceptance", "correct"))
-                   if rates["T"][measure]["interval"] is None or rates["A"][measure]["interval"] is None]
-        not_printed.append({"id": 2, "why": "; ".join(missing) + "; neither pair is used without the other"})
+                   if any(rates[arm][measure]["interval"] is None for arm in ("T", "A", "R"))]
+        not_printed.append({"id": 2, "why": "; ".join(missing) + "; neither rate is used without the other"})
     else:
-        fa_t, ca_t, fa_a, ca_a = (rates[arm][measure] for arm in ("T", "A")
-                                  for measure in ("false_acceptance", "correct_acceptance"))
-        text = SENTENCES[1].format(X=percent(fa_t["rate"]), Y=percent(fa_a["rate"]), X2=percent(ca_t["rate"]),
-                                   Y2=percent(ca_a["rate"]))
+        fa_t, ca_t, fa_a, ca_a, fa_r, ca_r = (rates[arm][measure] for arm in ("T", "A", "R")
+                                              for measure in ("false_acceptance", "correct_acceptance"))
+        text = SENTENCES[1].format(X=percent(fa_t["rate"]), Y=percent(fa_a["rate"]), Z=percent(fa_r["rate"]),
+                                   X2=percent(ca_t["rate"]), Y2=percent(ca_a["rate"]), Z2=percent(ca_r["rate"]))
         both_c = [rates["C"][measure] for measure in ("false_acceptance", "correct_acceptance")]
         sentences.append({"id": 2, "text": text,
                           "intervals": {f"{measure} {arm}": percent_interval(rates[arm][measure]["interval"])
-                                        for arm in ("T", "A") for measure in ("false_acceptance",
-                                                                              "correct_acceptance")},
+                                        for arm in ("T", "A", "R") for measure in ("false_acceptance",
+                                                                                   "correct_acceptance")},
                           "beside": {"arm": "C", "false_acceptance": f"{percent(both_c[0]['rate'])}%",
                                      "correct_acceptance": f"{percent(both_c[1]['rate'])}%",
                                      "intervals": {measure: percent_interval(found["interval"]) for measure, found in
@@ -460,21 +498,47 @@ def headlines(result: dict) -> dict:
     return {"sentences": sentences, "not_printed": not_printed}
 
 
+def verdict(outputs: dict[str, dict], gaming: list[dict] | None, found: dict, v9_audit: dict | None) -> dict:
+    """The study's ECHA verdict (version 2, "Verdict"), the first that applies: ``contaminated_evaluation`` when the
+    gaming checks (``gaming``, with the scans of R's transcripts the record holds) found an arm reading the label
+    contract, the reference fix or the vault, or using the network from a check or a command a session ran;
+    ``oracle_inadequate`` when feasibility criterion 6 fails; ``inconclusive`` otherwise. V9's feasibility label audit
+    (``v9_audit``: its sample, label errors, errors by kind and label-invalid patches) is reported beside it, with its
+    one-sided 95% upper bound, and decides nothing. No verdict without the gaming scan."""
+    scans = {patch: (arms.get("R") or {}).get("gaming") for patch, arms in outputs.items()}
+    audit = None if v9_audit is None else {
+        **v9_audit, "upper_bound": stats.clopper_pearson_upper(int(v9_audit.get("label_errors", 0)),
+                                                               int(v9_audit.get("sample", 0)))}
+    beside = {"v9_feasibility_audit": audit,
+              "r_git_commands": {patch: scan["git_commands"] for patch, scan in scans.items() if scan}}
+    if gaming is None:
+        return {"verdict": None, "why": "not decided: the gaming scan was not given", **beside}
+    findings = [*gaming, *(f for scan in scans.values() if scan for f in scan["findings"])]
+    criterion_6 = next(item["result"] for item in found["criteria"] if item["criterion"] == 6)
+    said = ("contaminated_evaluation" if gaming_scan.contaminating(findings) else
+            "oracle_inadequate" if criterion_6 == "not met" else "inconclusive")
+    return {"verdict": said, "gaming_findings": findings, **beside}
+
+
 def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], limits: dict | None = None,
-            resamples: int = stats.RESAMPLES) -> dict:
-    """The primary measures and the feasibility criteria (the module docstring), from a record that verifies against
-    ``committed``. ``limits``: the frozen ``cap_cents``, ``call_cap``, ``limit_s`` and ``grace_s``."""
+            gaming: list[dict] | None = None, v9_audit: dict | None = None, resamples: int = stats.RESAMPLES) -> dict:
+    """The primary measures, the feasibility criteria and the verdict (the module docstring), from a record that
+    verifies against ``committed``. ``limits``: the frozen ``cap_cents``, ``call_cap``, ``limit_s``, ``grace_s`` and
+    ``shares``; ``gaming``: the gaming scan's findings over the other arms' traces; ``v9_audit``: V9's feasibility
+    label audit, reported beside the verdict."""
     entries = verify(record_path, committed)
     rows, counts = _patches(entries, v9, reference)
     seed = int(v9["seed"]) + 2
     found = _measures(entries, rows, counts, v9, limits, committed, seed, resamples)
-    return {**found, "headlines": headlines(found)}
+    return {**found, "headlines": headlines(found),
+            "verdict": verdict(_outputs(entries), gaming, found["feasibility"], v9_audit)}
 
 
 def _measures(entries, rows, counts, v9, limits, committed, seed, resamples) -> dict:
     return {"study": "V10", "kind": "primary measures", "confidence": CONFIDENCE,
             "feasibility": feasibility(v9, _outputs(entries), limits,
                                        next((e["data"] for e in entries if e["kind"] == "comparison"), None)),
+            "filtered": _filtered(rows),
             "record": {"committed": committed, "entries": len(entries)}, "counts": counts,
             "bootstrap_seed": seed, "resamples": resamples,
             "rates": {name: _rates(rows, name) for name in (*ARMS, *VARIANTS)},

@@ -26,8 +26,9 @@ def task(name, repository, label, *, tests=True, self_review=True, g6=True, dire
                      "direct_checks": disposition(direct)}}
 
 
-def outputs(*, c=True, t=True, e=True, c_own=None, t_own=None, e_filtered=None, a_and_e=None, calls=2, cents=4.0,
-            seconds=6.0, c_error="", search_stage=None, report_check=None):
+def outputs(*, c=True, t=True, e=True, r=True, c_own=None, t_own=None, e_filtered=None, a_and_e=None, calls=2,
+            cents=4.0, seconds=6.0, c_error="", search_stage=None, report_check=None, e_tests=None, r_tests=None,
+            r_cents=5.0, r_error="", r_gaming=None):
     def disposition(accepted):
         return dict(OK if accepted else NO)
     c_disposition = make(ERROR, "x", error_kind=c_error) if c_error else disposition(c)
@@ -41,7 +42,11 @@ def outputs(*, c=True, t=True, e=True, c_own=None, t_own=None, e_filtered=None, 
             "E": {"disposition": disposition(e), "e_filtered": disposition(e if e_filtered is None else e_filtered),
                   "a_and_e": disposition(e if a_and_e is None else a_and_e),
                   "meter": {"calls": 1, "characters": 50, "cents": 1.0}, "model_calls": 1, "seconds": 2.0,
-                  "processor_seconds": 0.5, "findings": []}}
+                  "processor_seconds": 0.5, "findings": [], "tests": e_tests or {}},
+            "R": {"disposition": make(ERROR, "x", error_kind=r_error, time_or_cap=r_error == "stopped_at_token_cap")
+                  if r_error else disposition(r), "meter": {"calls": 1, "characters": 0, "cents": r_cents},
+                  "model_calls": 1, "seconds": 30.0, "processor_seconds": 0.0, "findings": [], "tests": r_tests or {},
+                  "gaming": r_gaming}}
 
 
 def finding(patch, arm, node, reproducible=True):
@@ -56,7 +61,7 @@ def written(tmp_path, arms, reruns=(), excluded=(), comparison=None):
     for item in excluded:
         kept.add("excluded", item)
     for patch, found in arms.items():
-        for arm in ("C", "T", "E"):
+        for arm in ("C", "T", "E", "R"):
             kept.add("arm", {"patch": patch, "arm": arm, "output": found[arm]})
     if comparison is not None:
         kept.add("comparison", comparison)
@@ -289,18 +294,19 @@ def test_criterion_6_and_the_outcome(tmp_path):
     assert got["result"] == "inconclusive"                                 # criteria 4 and 5 cannot be checked yet
 
 
-#: The protocol's permitted sentences, as "What the results permit saying" writes them.
+#: The protocol's permitted sentences, as version 2's "What the results permit saying" writes them.
 PROTOCOL = (
-    "On N agent-written Python patches from R repositories, of the M defective patches that the repository's tests "
+    "On N agent-written Python patches from P repositories, of the M defective patches that the repository's tests "
     "and the agent's own review both accepted, G6 with verification search in its full configuration (arm T) gave a "
     "reproducible finding on K, of which K_ref also pass on the benchmark's reference fix. Model-written tests run "
-    "without G6 (arm E) did so on K_E. On the L correct patches that both accepted, arm T gave a reproducible finding "
-    "on J.",
-    "On the same patches, arm T's false acceptance was X% against arm A's Y%, and its correct acceptance X′% against "
-    "Y′%",
+    "without G6 (arm E) did so on K_E, and a fresh review by a coding agent that did not write the patch (arm R) on "
+    "K_R. On the L correct patches that both accepted, arm T gave a reproducible finding on J.",
+    "On the same patches, arm T's false acceptance was X% against arm A's Y% and arm R's Z%, and its correct "
+    "acceptance X′% against Y′% and Z′%",
     "Arm T cost a mean of C model calls, S seconds and D dollars per patch (median C′, S′ and D′).")
 HEADLINE_RERUNS = [finding("d1", "T", "a.py::t1"), finding("d2", "T", "a.py::t"), finding("d3", "T", "b.py::t"),
-                   finding("c1", "T", "c.py::t"), finding("c1", "C", "c.py::u", False), finding("d2", "C", "a.py::u")]
+                   finding("c1", "T", "c.py::t"), finding("c1", "C", "c.py::u", False), finding("d2", "C", "a.py::u"),
+                   finding("d4", "R", "g6_check_0123456789ab/test_r.py::test_r")]
 HEADLINE_REFERENCE = [{"patch": "d1", "arm": "T", "node": "a.py::t1",
                        "result": {"compatible": True, "not_comparable": False}}]
 
@@ -310,9 +316,9 @@ def headlines(tmp_path, tasks=TASKS, arms=ARMS):
 
 
 def test_the_sentence_templates_are_the_protocols_text_exactly():
-    names = {"N": "N", "R": "R", "M": "M", "K": "K", "K_ref": "K_ref", "K_E": "K_E", "L": "L", "J": "J",
-             "X": "X", "Y": "Y", "X2": "X′", "Y2": "Y′", "C": "C", "S": "S", "D": "D", "C2": "C′", "S2": "S′",
-             "D2": "D′"}
+    names = {"N": "N", "P": "P", "M": "M", "K": "K", "K_ref": "K_ref", "K_E": "K_E", "K_R": "K_R", "L": "L",
+             "J": "J", "X": "X", "Y": "Y", "Z": "Z", "X2": "X′", "Y2": "Y′", "Z2": "Z′", "C": "C", "S": "S", "D": "D",
+             "C2": "C′", "S2": "S′", "D2": "D′"}
     assert tuple(template.format(**names) for template in analysis.SENTENCES) == PROTOCOL
 
 
@@ -323,18 +329,19 @@ def test_the_headline_sentences_are_filled_from_the_outcome_with_arm_c_beside_ar
         "On 6 agent-written Python patches from 2 repositories, of the 3 defective patches that the repository's "
         "tests and the agent's own review both accepted, G6 with verification search in its full configuration (arm "
         "T) gave a reproducible finding on 2, of which 1 also pass on the benchmark's reference fix. Model-written "
-        "tests run without G6 (arm E) did so on 0. On the 2 correct patches that both accepted, arm T gave a "
-        "reproducible finding on 1.")
-    assert second["text"] == ("On the same patches, arm T's false acceptance was 0.0% against arm A's 50.0%, and its "
-                              "correct acceptance 50.0% against 50.0%")
+        "tests run without G6 (arm E) did so on 0, and a fresh review by a coding agent that did not write the patch "
+        "(arm R) on 1. On the 2 correct patches that both accepted, arm T gave a reproducible finding on 1.")
+    assert second["text"] == ("On the same patches, arm T's false acceptance was 0.0% against arm A's 50.0% and arm "
+                              "R's 100.0%, and its correct acceptance 50.0% against 50.0% and 100.0%")
     assert third["text"] == ("Arm T cost a mean of 2.0 model calls, 6.0 seconds and 0.04 dollars per patch (median "
                              "2.0, 6.0 and 0.04).")
     assert all("arm C" not in item["text"] for item in got["sentences"])
     assert first["beside"]["arm"] == "C" and first["beside"]["K"] == "1 of 3" and first["beside"]["J"] == "0 of 2"
-    assert len(second["intervals"]) == 4 and second["beside"]["false_acceptance"] == "25.0%"
+    assert first["notes"]["K_R"] == analysis.K_R_NOTE
+    assert len(second["intervals"]) == 6 and second["beside"]["false_acceptance"] == "25.0%"
     assert first["intervals"]["K"] == analysis.percent_interval(analysis.exact(2, 3))
+    assert first["intervals"]["K_R"] == analysis.percent_interval(analysis.exact(1, 3))
     assert got["not_printed"] == []
-
 
 def test_the_first_sentence_is_not_used_when_no_defective_patch_was_accepted_by_both(tmp_path):
     tasks = [dict(t, arms={**t["arms"], "tests": dict(NO)}) if t["label"] == "defective" else t for t in TASKS]
@@ -351,6 +358,57 @@ def test_a_false_and_correct_acceptance_pair_is_never_printed_without_both_rates
     why = {item["id"]: item["why"] for item in got["not_printed"]}
     assert "correct acceptance" in why[2] and "no correct patch" in why[2]
     assert all("false_acceptance" not in str(item.get("beside")) for item in got["sentences"])
+
+
+def test_arm_r_has_its_rates_discovery_headline_and_the_note_beside_k_r(tmp_path):
+    arms = {**ARMS, "d1": {**ARMS["d1"], "R": outputs(r=False)["R"]}}
+    reruns = [finding("d1", "R", "g6_check_0123456789ab/test_r.py::test_r")]
+    got = study(tmp_path, TASKS, arms, reruns)
+    assert got["rates"]["R"]["false_acceptance"]["count"] == 3 and got["rates"]["R"]["correct_acceptance"]["count"] == 2
+    assert got["discovery"]["R"]["count"] == 1 and got["headline"]["arms"]["R"]["K"]["count"] == 1
+    assert got["headline"]["notes"]["K_R"] == analysis.K_R_NOTE and "arm 2" in analysis.K_R_NOTE
+
+
+def test_the_paired_differences_include_r_against_a_c_t_and_e_and_r_against_v9s_arms(tmp_path):
+    pairs = {(d["x"], d["y"], d["measure"]) for d in study(tmp_path, TASKS, ARMS)["differences"]}
+    for x, y in (("A", "R"), ("C", "R"), ("T", "R"), ("E", "R"), ("R", "1"), ("R", "2"), ("R", "4")):
+        assert {(x, y, m) for m in ("false_acceptance", "correct_acceptance")} <= pairs
+    assert ("A", "R", "discovery") in pairs and ("R", "2", "discovery") in pairs and ("R", "1", "discovery") not in pairs
+
+
+def test_the_filtered_findings_of_e_and_r_leave_out_tests_that_also_fail_at_the_base(tmp_path):
+    node_e, node_r = "g6_check_aaaaaaaaaaaa/test_e.py::test_e", "g6_check_bbbbbbbbbbbb/test_r.py::test_r"
+    arms = {**ARMS, "d1": outputs(c=False, t=False, e=False, e_tests={node_e: {"fails_at_base": True}},
+                                  r_tests={node_r: {"fails_at_base": False}})}
+    reruns = [finding("d1", "E", node_e), finding("d1", "R", node_r)]
+    got = study(tmp_path, TASKS, arms, reruns)
+    assert got["discovery"]["E"]["count"] == 1 and got["filtered"]["E"]["discovery"]["count"] == 0
+    assert got["filtered"]["R"]["discovery"]["count"] == 1
+    assert got["filtered"]["E"]["headline"]["K"]["count"] == 0 and got["filtered"]["R"]["headline"]["K"]["count"] == 1
+
+
+def test_criteria_1_and_2_hold_arm_r_too_and_a_session_past_its_limits_is_counted_not_failed(tmp_path):
+    _, by = criteria(tmp_path)
+    assert by[1]["numbers"]["R"]["tool_errors"] == 0 and by[2]["numbers"]["R"]["cents"] == 30.0
+    capped = {**{name: outputs() for name in ARMS}, "d1": outputs(r_error="stopped_at_token_cap")}
+    _, by = criteria(tmp_path / "capped", arms=capped)
+    assert by[2]["result"] == "met" and by[2]["numbers"]["stopped_at_a_limit"]["R"] == {"stopped_at_token_cap": 1}
+    costly = {name: outputs(r_cents=20.0) for name in ARMS}
+    _, by = criteria(tmp_path / "costly", arms=costly)
+    assert by[2]["result"] == "not met" and "R" in by[2]["why"]               # 120 cents is past R's 75
+
+
+def test_the_verdict_is_contamination_then_criterion_6_then_inconclusive_with_v9s_audit_beside(tmp_path):
+    audit = {"sample": 10, "label_errors": 1, "by_kind": {"1": 1}, "label_invalid": ["d3"]}
+    got = study(tmp_path, TASKS, ARMS, gaming=[], v9_audit=audit)["verdict"]
+    assert got["verdict"] == "inconclusive" and got["v9_feasibility_audit"]["by_kind"] == {"1": 1}
+    assert got["v9_feasibility_audit"]["upper_bound"] == pytest.approx(analysis.stats.clopper_pearson_upper(1, 10))
+    network = {"kind": "network", "source": "R:d1", "line": 3, "detail": "curl"}
+    arms = {**ARMS, "d1": outputs(c=False, t=False, e=False, r_gaming={"git_commands": [], "findings": [network]})}
+    assert study(tmp_path / "net", TASKS, arms, gaming=[])["verdict"]["verdict"] == "contaminated_evaluation"
+    tasks = [*TASKS[:-1], task("c2", "r2", "correct", g6=False, oracle=False)]
+    assert study(tmp_path / "oracle", tasks, ARMS, gaming=[])["verdict"]["verdict"] == "oracle_inadequate"
+    assert study(tmp_path / "none", TASKS, ARMS)["verdict"]["verdict"] is None
 
 
 def test_unlabelled_and_excluded_patches_are_counted_and_left_out_of_every_rate(tmp_path):

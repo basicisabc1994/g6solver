@@ -97,13 +97,13 @@ def test_the_driver_checks_each_search_arms_report_and_a_failed_one_is_a_tool_er
         return {"disposition": make(ACCEPT), "findings": [], "calls": {"due": 1, "made": 0}}
 
     got = driver.study([{"id": "p0", "draw_index": 0, "arm_a": make(ACCEPT), "contract_ids": ["R1"]}],
-                       arm_c=arm(bad), arm_t=arm(report()), arm_e=e_arm, spending=driver.Spending(300.0),
+                       arm_c=arm(bad), arm_t=arm(report()), arm_e=e_arm, arm_r=e_arm, spending=driver.Spending(300.0),
                        record=driver.Record(), rerun=lambda *args: {}, excluded=[])
     c, t = got["patches"][0]["arms"]["C"], got["patches"][0]["arms"]["T"]
     assert c["own"]["category"] == ERROR and c["own"]["error_kind"] == driver.REPORT_CHECK
     assert c["disposition"]["error_kind"] == driver.REPORT_CHECK and c["report_check"]["model_originated_passing"]
     assert t["disposition"]["accepted"] is True and t["report_check"]["complete"] is True
     unreported = driver.study([{"id": "p0", "draw_index": 0, "arm_a": make(ACCEPT)}], arm_c=arm(None),
-                              arm_t=arm(None), arm_e=e_arm, spending=driver.Spending(300.0), record=driver.Record(),
+                              arm_t=arm(None), arm_e=e_arm, arm_r=e_arm, spending=driver.Spending(300.0), record=driver.Record(),
                               rerun=lambda *args: {}, excluded=[])
     assert unreported["patches"][0]["arms"]["C"]["report_check"] is None
