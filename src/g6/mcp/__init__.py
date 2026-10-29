@@ -167,8 +167,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         not_refuted, unconfirmed_failure for a change check that fails on the patch whatever the base gives,
         behaviour_changed or check_error). A proposed check never passes a requirement: a counterexample or a failure
         of the change gives at most insufficient_evidence, with a reproduction in next_actions: the command G6's run
-        amounted to (PYTHONPATH=src where G6 put src on the path, an empty configuration where the repository has
-        none). Anything else, a conftest or a pytest configuration say, is refused. Optional template_instances,
+        amounted to (PYTHONPATH=src where G6 put src on the path, the import roots before the top folder as G6's run
+        had them, an empty configuration where the repository has none). Anything else, a conftest or a pytest configuration say, is refused. Optional template_instances,
         counted with proposed_checks within the 20, [{id, template, requirement_id, intent, bindings}], fill G6's
         reviewed templates: example.v1 (a stated input gives a stated result, error or effect), relation.v1 (a round
         trip, idempotence, invariance or monotonicity over at most 32 inputs), access_rule.v1 (allowed and refused

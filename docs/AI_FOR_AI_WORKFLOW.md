@@ -152,7 +152,8 @@ refute it. A counterexample or an unconfirmed failure gives at most insufficient
 what the check printed or failed with is your text and stays in `assessment.completion`. The reproduction is in
 the next actions: the check's text and SHA-256, its path and node identifier, the plain `python -m pytest` run
 G6's run amounted to (`PYTHONPATH=src` where G6 put `src` on the import path, an empty configuration where the
-repository has none), which needs no G6, the interpreter and boundary each run had, and the digests of the two
+repository has none; with `import_roots`, a `python -c` start that puts them before the top folder, as G6's run
+had them, on any Python from 3.9), which needs no G6, the interpreter and boundary each run had, and the digests of the two
 copies it ran in. The check is code you wrote: G6 ran it only inside its boundary with no network, so read it
 before you run it, or run it in a container.
 
@@ -172,7 +173,11 @@ instance is data. The templates:
   (with the `exception` type it raises) or `falsy_return`. One call per case;
 - `differential.v1`: outside the change's declared scope, the base commit and the patch agree on the `calls`
   you state, on outputs or on exceptions only (`mode`). A difference is a counterexample when the instance's
-  `intent` is `preserve`, and a question (`behaviour_changed`) when it is `change`;
+  `intent` is `preserve`, and a question (`behaviour_changed`) when it is `change`. Outputs are compared in a
+  canonical form, never by their repr: a mapping as its items sorted, a set sorted, another object as its
+  type's qualified name and its attributes. When G6 sees a difference it observes the base commit again: an
+  input the base commit gives differently on two runs (an order that follows the hash seed, say) is listed as
+  `unstable` and is never a counterexample;
 - `forbidden_dependency.v1` (intent `preserve`): the patch adds no import that breaks a layer rule. With
   `contract: "repository"`, the rule is the repository's own import-linter configuration (`.importlinter`,
   `setup.cfg` or `pyproject.toml`; layers and forbidden contracts, with their `ignore_imports`) as the base

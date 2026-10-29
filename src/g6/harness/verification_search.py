@@ -410,11 +410,18 @@ def reproduce(node: str, ran: dict) -> dict:
     ``environment`` (``PYTHONPATH`` for each folder G6 put on the import path besides the top, which ``python -m``
     puts there itself), ``arguments`` (after ``python -m pytest``: G6's empty configuration, rooted at the top, when
     the repository had none) and the ``command`` that runs it in a POSIX shell. A run that does not say is read as one
-    with the top alone on the path and the repository's own configuration."""
-    folders = [rel for rel in ran.get("import_path") or ["."] if rel != "."]
+    with the top alone on the path and the repository's own configuration. With import roots before the top folder
+    (review M2), ``python -m`` would put the top first, so the command moves it after them before pytest starts, as
+    G6's run had it: the import roots, the top folder, then ``src``. It works on Python 3.9 on (no ``-P``)."""
+    path = list(ran.get("import_path") or ["."])
+    folders = [rel for rel in path if rel != "."]
     environment = {"PYTHONPATH": os.pathsep.join(folders)} if folders else {}
     arguments = ["-p", "no:cacheprovider", *(OWN_CONFIG if ran.get("own_config") else ()), node]
-    command = (f"PYTHONPATH={shlex.quote(environment['PYTHONPATH'])} " if environment else "") + "python -m pytest " + \
+    roots = path.index(".") if "." in path else 0   # the folders G6 put before the top
+    runner = ("python -m pytest " if not roots else "python -c " + shlex.quote(
+        f"import runpy, sys; sys.path.insert({roots}, sys.path.pop(0)); "
+        "runpy.run_module('pytest', run_name='__main__', alter_sys=True)") + " ")
+    command = (f"PYTHONPATH={shlex.quote(environment['PYTHONPATH'])} " if environment else "") + runner + \
         " ".join(shlex.quote(argument) for argument in arguments)
     return {"environment": environment, "arguments": arguments, "command": command,
             **{key: ran[key] for key in ("python", "interpreter_source") if key in ran}}
@@ -595,6 +602,33 @@ def _differences(base: list[dict] | None, patch: list[dict] | None) -> list[dict
     return found
 
 
+#: Review I6: a difference G6 could not observe the base commit again for is never a finding.
+NOT_REPEATED = ("observes input(s) differently at the base commit and on the patch, but the base commit's run could not "
+                "be repeated to a pass ({why}), so G6 cannot say the difference is stable; it is not compared")
+UNSTABLE = ("passes at the base commit and on the patch; each input it observed differently, the base commit observes "
+            "differently on two runs too, so it is unstable (an order or a value that changes from run to run) and is "
+            "not compared")
+
+
+def _stable(verdict: dict, first: dict, again: dict | None) -> dict:
+    """``verdict``'s differences, less each input the base commit observed differently on its second run (review I6):
+    such an observation is unstable, listed as such and never a difference, so never a counterexample. With none left,
+    ``not_refuted``; when the second run could not be made to a pass, a check error."""
+    if again is None or again["result"] != "passed":
+        why = OUT_OF_TIME if again is None else f"it gave {again['result']}: {again['detail']}"
+        return {"result": CHECK_ERROR, "detail": NOT_REPEATED.format(why=why)}
+    shaky = {item["input"]: item for item in _differences(first.get("observations"), again.get("observations"))}
+    unstable = [{"input": key, "base": item["base"], "base_again": item["patch"]} for key, item in shaky.items()]
+    kept = [item for item in verdict["differences"] if item["input"] not in shaky]
+    if not kept:
+        return {"result": NOT_REFUTED, "detail": UNSTABLE, "unstable": unstable}
+    found = {**verdict, "differences": kept, **({"unstable": unstable} if unstable else {})}
+    if found["result"] == BEHAVIOUR_CHANGED:
+        found["detail"] = (f"passes at the base commit and on the patch, and observes {len(kept)} input(s) differently"
+                           + (f"; {len(unstable)} other(s) are unstable at the base commit" if unstable else ""))
+    return found
+
+
 def classify(intent: str, on_patch: dict, at_base: dict | None) -> dict:
     """One check's result from its two runs (``reading``) and its intent (plan rule 3): ``{result, detail}``, with a
     ``note`` or the probe's ``differences`` where they apply."""
@@ -742,6 +776,11 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
                 activity["runs"].append({"on": "base commit", "result": "skipped", "reason": skip})
             verdict = origin.judge(one.intent, on_patch, at_base) if origin.judge else classify(one.intent, on_patch,
                                                                                                  at_base)
+            if verdict.get("differences") and not origin.judge:   # review I6: the base commit observed again
+                again = read(at_base=True) if deadline - _clock() >= MIN_RUN_S else None
+                activity["runs"].append({"on": "base commit, again", **(_summary(again) if again else {
+                    "result": "skipped", "reason": OUT_OF_TIME})})
+                verdict = _stable(verdict, at_base, again)
             if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR:   # only where the base run would decide
                 verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
             if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:

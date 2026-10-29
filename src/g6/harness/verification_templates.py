@@ -882,6 +882,7 @@ _HEADER = """\
 # Python literal; nothing else here comes from the caller. Run it with pytest from the top folder of a copy of the
 # repository: it imports the repository's code by the names BINDINGS holds.
 import builtins
+import collections.abc
 import copy
 import hashlib
 import importlib
@@ -1067,24 +1068,49 @@ _DIFFERENTIAL = """
 MARK = "G6-OBSERVATION"
 
 
+def _attributes(value):
+    # an object's own attributes, from its __dict__ and the __slots__ of its classes, or None when it has neither
+    found, seen = {}, False
+    if isinstance(getattr(value, "__dict__", None), dict):
+        found.update(vars(value))
+        seen = True
+    for kind in type(value).__mro__:
+        slots = kind.__dict__.get("__slots__", ())
+        for slot in [slots] if isinstance(slots, str) else slots:
+            if slot not in ("__dict__", "__weakref__") and hasattr(value, slot):
+                found[slot] = getattr(value, slot)
+                seen = True
+    return {str(key): item for key, item in found.items()} if seen else None
+
+
+def _sorted(items):
+    return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+
+
 def _plain(value, depth=0):
-    # the value as plain JSON data: a tuple as a list, a set sorted, anything else by its type and its repr
+    # the value in a canonical structural form, never its repr: a tuple as a list; any mapping as its items, sorted;
+    # a set sorted; another object as its type's qualified name and its attributes (__dict__, __slots__), so an
+    # insertion order, a hash order or a changed repr is no difference; one with neither by its type and its repr
     if depth > 8:
         return {"deeper": _name(type(value))}
     if value is None or type(value) in (bool, int, str):
         return value
     if type(value) is float:
         return value if value == value and abs(value) != float("inf") else {"float": repr(value)}
-    if type(value) in (list, tuple):
+    if isinstance(value, type):
+        return {"class": _name(value)}
+    if isinstance(value, (list, tuple)):
         return [_plain(item, depth + 1) for item in value]
-    if type(value) in (set, frozenset):
-        return sorted((_plain(item, depth + 1) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
-    if type(value) is dict and all(type(key) is str for key in value):
-        return {key: _plain(item, depth + 1) for key, item in value.items()}
-    if type(value) is dict:
-        pairs = [[_plain(key, depth + 1), _plain(item, depth + 1)] for key, item in value.items()]
-        return sorted(pairs, key=lambda pair: json.dumps(pair, sort_keys=True))
-    return {"type": _name(type(value)), "repr": re.sub(r" at 0x[0-9A-Fa-f]+", "", _shown(value))}
+    if isinstance(value, (set, frozenset)):
+        return _sorted(_plain(item, depth + 1) for item in value)
+    if isinstance(value, collections.abc.Mapping):
+        if all(type(key) is str for key in value):
+            return {key: _plain(item, depth + 1) for key, item in value.items()}
+        return _sorted([_plain(key, depth + 1), _plain(item, depth + 1)] for key, item in value.items())
+    found = _attributes(value)
+    if found is None:
+        return {"type": _name(type(value)), "repr": re.sub(r" at 0x[0-9A-Fa-f]+", "", _shown(value))}
+    return {"type": _name(type(value)), "attributes": {key: _plain(item, depth + 1) for key, item in found.items()}}
 
 
 def _bounded(value):
@@ -1330,8 +1356,10 @@ TEMPLATES: dict[str, TemplateDefinition] = {definition.id: definition for defini
         "outside the change's declared scope, the base commit and the patch agree, on outputs or on exceptions only",
         DifferentialBindings,
         (_CALLED + ", at the base commit", "the caller declares that the calls lie outside the change's scope",
-         "outputs are compared as plain JSON data: a value JSON cannot write by its type and its repr, without "
-         "memory addresses; a long output by its SHA-256",
+         "outputs are compared in a canonical structural form: a mapping as its items sorted, a set sorted, another "
+         "object as its type's qualified name and its attributes (one with none by its type and its repr, without "
+         "memory addresses); a long output by its SHA-256; an input the base commit observes differently on two "
+         "runs is unstable, and never a difference",
          "a difference is a counterexample when the instance's intent is preserve, and a question when it is change"),
         _differential, _text("differential.v1", _DIFFERENTIAL)),
     TemplateDefinition(

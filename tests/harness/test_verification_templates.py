@@ -570,6 +570,99 @@ def test_a_compiled_differential_probe_observes_each_call_and_the_planted_change
         {"input": {"args": [{"amount": 1, "name": None}], "kwargs": {}}, "output": {"raised": "AttributeError"}}]
 
 
+# --- I5 and I6: differential observations in a canonical form, and stable across two runs of the base commit -----------
+
+TAGS = ("from collections import defaultdict\n\n\n"
+        "def labels():\n    return list({'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'})\n\n\n"
+        "def by_initial(words):\n    groups = defaultdict(list)\n    for word in words:\n"
+        "        groups[word[0]].append(word)\n    return groups\n\n\n"
+        "def count(words):\n    return len(words)\n")
+# the patch fixes count and builds each group from the words in sorted order: every group, and the mapping as ==
+# sees it, are as they were; only the order the mapping's keys were first seen in changes
+TAGS_PATCH = TAGS.replace("    for word in words:\n", "    for word in sorted(words):\n").replace(
+    "return len(words)", "return len(set(words))")
+MONEY = ("class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n"
+         "    def __eq__(self, other):\n        return isinstance(other, Money) and other.cents == self.cents\n"
+         "\n\ndef parse(text):\n    whole, _, part = text.partition('.')\n"
+         "    return Money(int(whole) * 100 + int(part or 0))\n")
+MONEY_REPR = MONEY.replace("    def __eq__", "    def __repr__(self):\n        return f'Money({self.cents // 100}."
+                                             "{self.cents % 100:02d})'\n\n    def __eq__")
+MONEY_WRONG = MONEY.replace("int(whole) * 100", "int(whole) * 10")
+BY_INITIAL = instance("keep", "differential.v1", {"function": "tags.by_initial", "mode": "outputs",
+                                                  "calls": [{"args": [["beta", "alpha", "bravo", "apple"]]}]})
+KEEP_PARSE = instance("keep", "differential.v1", {"function": "money.parse", "mode": "outputs",
+                                                  "calls": [{"args": ["1.50"]}, {"args": ["2"]}]})
+
+
+@pytest.mark.parametrize("files, patch, item, differ", [
+    ({"tags.py": TAGS}, {"tags.py": TAGS_PATCH}, BY_INITIAL, False),
+    ({"money.py": MONEY}, {"money.py": MONEY_REPR}, KEEP_PARSE, False),
+    ({"money.py": MONEY}, {"money.py": MONEY_WRONG}, KEEP_PARSE, True),
+], ids=["defaultdict-key-order", "an-added-repr", "a-real-output-change"])
+def test_review_i5_the_differential_probe_observes_a_canonical_form_never_a_repr(tmp_path, files, patch, item, differ):
+    """The reviewer's defaultdict and added __repr__ cases: a mapping is its items sorted, another object its type's
+    qualified name and its attributes, so neither is a difference; a real change of the output still is."""
+    prepared = _prepared(tmp_path, files, {}, [item])
+    [check] = prepared.checks
+    seen = []
+    for side in ("base", "patch"):
+        if side == "patch":
+            _patch(tmp_path / "repo", patch)
+        ran = _plain_run(tmp_path / "repo", prepared.placed["keep"], check.source)
+        assert ran.returncode == 0, ran.stdout + ran.stderr
+        seen.append(verification_search.reading({**result([prepared.placed["keep"]]), "output": ran.stdout},
+                                                prepared.placed["keep"])["observations"])
+    assert bool(verification_search._differences(*seen)) is differ, seen
+    if item is KEEP_PARSE:
+        assert seen[0][0]["output"]["returned"] == {"type": "money.Money", "attributes": {"cents": 150}}
+
+
+def test_review_i6_an_observation_the_base_commit_gives_differently_twice_is_unstable_never_a_counterexample(
+        tmp_path, monkeypatch):
+    """The reviewer's list made from a set: its order follows Python's hash seed, so it differs between any two runs.
+    G6 observes the base commit again when it sees a difference; an input observed differently there is unstable."""
+    root = _patch(_repo(tmp_path, {"tags.py": TAGS, "tests/test_tags.py": "from tags import count\n\n\n"
+                                   "def test_count():\n    assert count(['a', 'b']) == 2\n"}), {"tags.py": TAGS_PATCH})
+    Tiers(monkeypatch)
+    orders = iter([["alpha", "beta"], ["beta", "alpha"], ["alpha", "beta"]])
+    call = {"args": [], "kwargs": {}}
+    observed = lambda node: _observed(node, [{"input": call, "output": {"returned": next(orders)}}])  # noqa: E731
+    runs = Compiled(monkeypatch, {"differential.v1": {"patch": observed, "base": observed}})
+    rule = [{"id": "R1", "text": "count counts distinct words", "checks": ["tests/test_tags.py::test_count"]}]
+    got = review(root, rule, template_instances=[instance("keep", "differential.v1", {
+        "function": "tags.labels", "mode": "outputs", "calls": [{"args": []}]})])
+    found = _activity(got, "keep")
+    assert found["result"] == "not_refuted" and found["unstable"], found
+    assert "unstable" in found["detail"]
+    assert runs.calls == [("differential.v1", False), ("differential.v1", True), ("differential.v1", True)]
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert got["assessment"]["completion"]["defects_reproduced"]["proposed_checks"] == []
+
+
+def test_review_i6_a_difference_the_base_commit_keeps_on_its_second_run_is_still_a_counterexample(tmp_path,
+                                                                                                    monkeypatch):
+    root = _patch(_repo(tmp_path, PIPE), {"pipeline.py": PIPE_PATCH})
+    Tiers(monkeypatch)
+    call = {"args": [{"name": " Ann ", "amount": 1.234}], "kwargs": {}}
+    runs = Compiled(monkeypatch, {"differential.v1": {"base": [{"input": call, "output": {"returned": 1.23}}],
+                                                      "patch": [{"input": call, "output": {"returned": 1.2}}]}})
+    got = review(root, STATED["PIPE"], template_instances=[KEEP_NORMALISE])
+    found = _activity(got, "t-normalise")
+    assert found["result"] == "counterexample" and "unstable" not in found, found
+    assert [at_base for _, at_base in runs.calls] == [False, True, True]   # the base commit observed twice
+
+
+def test_confined_the_reviewers_ordering_and_repr_cases_give_no_counterexample(tmp_path, bwrap_backend):
+    for name, files, patch, item in (("tags", {"tags.py": TAGS}, {"tags.py": TAGS_PATCH}, BY_INITIAL),
+                                     ("money", {"money.py": MONEY}, {"money.py": MONEY_REPR}, KEEP_PARSE)):
+        root = _patch(_repo(tmp_path, {**files, "tests/test_ok.py": "def test_ok():\n    assert True\n"}, name),
+                      patch)
+        got = review(root, [{"id": "R1", "text": "the stated test passes", "checks": ["tests/test_ok.py::test_ok"]}],
+                     template_instances=[item])
+        assert _activity(got, "keep")["result"] == "not_refuted", _activity(got, "keep")
+        assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
 # --- the compiled checks through the review, with recorded runs ---------------------------------------------------------
 
 def test_a_compiled_check_runs_like_a_proposed_check_and_never_passes_a_requirement(tmp_path, monkeypatch):
@@ -1644,6 +1737,57 @@ def test_confined_proposed_and_compiled_checks_see_the_patch_through_import_root
     [reproduction] = [d["reproduction"] for d in rooted["assessment"]["completion"]["defects_reproduced"][
         "proposed_checks"] if d["check"] == "p-add"]
     assert reproduction["environment"]["PYTHONPATH"].split(os.pathsep)[0] == "lib"
+
+
+# --- M2: a reproduction loads modules in the order G6's run did --------------------------------------------------------
+
+TWO_PKGS = {"pkg/__init__.py": "VALUE = 1\n", "lib/pkg/__init__.py": "VALUE = 2\n",
+            "app.py": "def double(x):\n    return x * 2\n",
+            "tests/test_app.py": "from app import double\n\n\ndef test_double():\n    assert double(2) == 4\n"}
+VALUE_CHECK = {"id": "value", "requirement_id": "R1", "intent": "change", "file": "tests/test_value.py",
+               "source": "import pkg\n\n\ndef test_value():\n    assert pkg.VALUE == 1, pkg.__file__\n"}
+TWO_RULE = [{"id": "R1", "text": "pkg keeps VALUE 1", "checks": ["tests/test_app.py::test_double"]}]
+
+
+def _run_as_given(root: Path, reproduction: dict, where: Path) -> int:
+    """The reproduction's command, exactly as G6 gives it, from the top of a copy of the tree without .git."""
+    import shutil
+
+    shell = shutil.which("sh")
+    if shell is None:
+        pytest.skip("no POSIX shell to run the command in")
+    shutil.copytree(root, where, ignore=shutil.ignore_patterns(".git"))
+    (where / reproduction["file"]).parent.mkdir(parents=True, exist_ok=True)
+    (where / reproduction["file"]).write_text(reproduction["text"], encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if key in ("PATH", "HOME", "SYSTEMROOT", "TMP", "TEMP")}
+    return subprocess.run([shell, "-c", reproduction["command"]], cwd=where, env=env, capture_output=True, text=True,
+                          timeout=120).returncode
+
+
+def test_review_m2_a_reproduction_puts_the_import_roots_before_the_top_folder_as_g6s_run_did(tmp_path, monkeypatch):
+    """The reviewer's case: pkg in the top folder and in lib, with lib an import root. G6's run imported lib's pkg
+    and the check failed there; run exactly as G6 gives it, the reproduction must fail too, on any Python 3.9 on."""
+    root = _patch(_repo(tmp_path, TWO_PKGS), {"lib/pkg/__init__.py": "VALUE = 2\nOTHER = 0\n"})
+    Tiers(monkeypatch)
+    rooted = {"import_path": ["lib", "."]}   # G6's run, as repo_tests records its import path
+    failed = lambda node: {**result(failed=[node], output=f"FAILED {node} - AssertionError: lib/pkg\n",  # noqa: E731
+                                    messages={node: "AssertionError: lib/pkg"}), **rooted}
+    Compiled(monkeypatch, {VALUE_CHECK["source"]: {"patch": failed, "base": failed}})
+    got = review(root, TWO_RULE, proposed_checks=[VALUE_CHECK], import_roots=["lib"])
+    [found] = got["assessment"]["completion"]["defects_reproduced"]["proposed_checks"]
+    assert found["result"] == "unconfirmed_failure", found
+    reproduction = found["reproduction"]
+    assert reproduction["environment"]["PYTHONPATH"].split(os.pathsep)[0] == "lib"
+    assert " -P " not in f" {reproduction['command']} "
+    assert _run_as_given(root, reproduction, tmp_path / "copy") != 0   # G6's verdict: it fails
+
+
+def test_confined_a_reproduction_with_import_roots_gives_g6s_verdict(tmp_path, bwrap_backend):
+    root = _patch(_repo(tmp_path, TWO_PKGS), {"lib/pkg/__init__.py": "VALUE = 2\nOTHER = 0\n"})
+    got = review(root, TWO_RULE, proposed_checks=[VALUE_CHECK], import_roots=["lib"])
+    [found] = got["assessment"]["completion"]["defects_reproduced"]["proposed_checks"]
+    assert found["result"] == "unconfirmed_failure", found
+    assert _run_as_given(root, found["reproduction"], tmp_path / "copy") != 0
 
 
 def test_confined_surviving_mutants_are_reported_and_change_no_outcome(tmp_path, bwrap_backend):
