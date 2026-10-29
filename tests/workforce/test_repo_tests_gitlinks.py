@@ -275,7 +275,8 @@ def test_an_initialised_submodule_is_still_refused(openlib, kind):
 
 def test_a_tracked_link_into_the_gitlink_folder_is_recreated_in_a_copy(linked):
     with _copy(linked) as copy:
-        assert (copy / "lib").is_symlink() and os.readlink(copy / "lib") == "vendor/lib/lib"
+        # the link names vendor/lib/lib, with the system's separator (Windows resolves no forward slash in one)
+        assert (copy / "lib").is_symlink() and os.readlink(copy / "lib").replace(os.sep, "/") == "vendor/lib/lib"
         assert (copy / "lib" / "__init__.py").read_text(encoding="utf-8") == "VALUE = 7\n"
         assert (copy / "vendor" / "lib" / "x.py").read_text(encoding="utf-8") == "X = 1\n"
 
@@ -341,6 +342,45 @@ def test_where_a_link_cannot_be_made_its_target_is_copied_in_its_place_and_said(
         assert not os.path.lexists(copy / "pkg" / "up")
     assert report == {"links_left_out": {"pkg/up": rt.LINK_OUTSIDE},
                       "links_materialised": {"conf.py": "vendor/lib/x.py", "lib": "vendor/lib/lib"}}
+
+
+@pytest.mark.parametrize("privilege", [True, False], ids=["link-made", "privilege-refused"])
+def test_on_windows_a_link_is_made_with_backslashes_and_as_a_folders_link_when_its_target_is_one(tmp_path, monkeypatch,
+                                                                                                 privilege):
+    """CI on Windows (run 40780356106): a copied link kept git's forward slashes (``vendor/lib/lib``), which a Windows
+    link does not resolve, so reading through it failed. On Windows the link is made with the system's separator, as a
+    folder's link when its target in the copy is a folder; where the privilege is refused, the target is still copied
+    in its place. The link-making call is recorded, never made, so this runs on any system."""
+    copy = tmp_path / "copy"
+    (copy / "vendor" / "lib" / "lib").mkdir(parents=True)
+    (copy / "vendor" / "lib" / "lib" / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
+    (copy / "vendor" / "lib" / "x.py").write_text("X = 1\n", encoding="utf-8")
+    made: list[tuple[str, str, bool]] = []
+
+    def symlink(target, path, target_is_directory=False, **kwargs):
+        made.append((target, Path(path).relative_to(copy).as_posix(), target_is_directory))
+        if not privilege:
+            error = OSError(1, "A required privilege is not held by the client")
+            error.winerror = 1314   # Windows: ERROR_PRIVILEGE_NOT_HELD
+            raise error
+        Path(path).mkdir() if target_is_directory else Path(path).write_text("")   # a stand-in, never followed
+
+    monkeypatch.setattr(rt, "_WINDOWS", True, raising=False)
+    monkeypatch.setattr(rt.os, "symlink", symlink)
+    left: dict[str, str] = {}
+
+    def put(source: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+    materialised = rt._copy_links(copy, {"lib": ("vendor/lib/lib", False), "conf.py": ("vendor/lib/x.py", False)},
+                                  left, put)
+    assert sorted(made) == [("vendor\\lib\\lib", "lib", True), ("vendor\\lib\\x.py", "conf.py", False)]
+    assert left == {}
+    if not privilege:
+        assert materialised == {"conf.py": "vendor/lib/x.py", "lib": "vendor/lib/lib"}
+        assert (copy / "lib" / "__init__.py").read_text(encoding="utf-8") == "VALUE = 7\n"
+        assert (copy / "conf.py").read_text(encoding="utf-8") == "X = 1\n"
 
 
 @pytest.mark.usefixtures("unconfined")

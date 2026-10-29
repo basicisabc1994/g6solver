@@ -231,6 +231,26 @@ REASONS = {COUNTEREXAMPLE: "unconfirmed_counterexample", UNCONFIRMED_FAILURE: "u
 SHAPE = {COUNTEREXAMPLE: "passes at the base commit and fails on the patch",
          UNCONFIRMED_FAILURE: "fails on the patch, where the change should make it pass"}
 OUT_OF_TIME = "the review's time budget would be passed"
+#: The VS-3 review's fix pass, item 5: what G6's own work in its process (reading and parsing the files, building an
+#: import graph, making mutants, comparing observations) raised is an activity's error, with ``stopped`` naming what did
+#: not complete, and never the review's.
+STOPPED = ("verification search did not complete: {what} stopped on {error} in G6's own process, so its result is "
+           "missing; the outcome is from the other checks")
+
+
+def stopped(exc: BaseException) -> str:
+    """An exception from G6's own work, as an activity's reason says it: its type and its first words (a
+    RecursionError or a MemoryError says the text was nested too deeply for Python's parser or G6's reading)."""
+    said = " ".join(str(exc).split())[:120]
+    return type(exc).__name__ + (f": {said}" if said else "")
+
+
+def stopped_unknowns(activities) -> list[str]:
+    """An unknown for each activity that stopped on an error in G6's own work (``STOPPED``)."""
+    return [STOPPED.format(what=a["stopped"], error=a["reason"]) for a in activities
+            if a.get("result") == "error" and a.get("stopped")]
+
+
 HOW = ("copy the tree without its .git folder (the working tree under review, or the base commit's tree to see the "
        "other result), write text to file inside the copy, and run command from the copy's top folder (python -m "
        "pytest with arguments, and environment set): that is what G6's run amounted to, and it needs the repository's "
@@ -705,32 +725,37 @@ def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[
             activity.update(result="skipped", reason=OUT_OF_TIME)
             continue
         node = activity["node"]
-        on_patch = read(at_base=False)
-        activity["runs"].append({"on": "patch", **_summary(on_patch)})
-        at_base, skip = None, ""
-        if origin.patch_only:
-            skip = PATCH_ONLY
-        elif on_patch["result"] == "error":
-            skip = "the run on the patch did not run to a result, so a run at the base commit would decide nothing"
-        elif deadline - _clock() < MIN_RUN_S:
-            skip = OUT_OF_TIME
-        else:
-            at_base = read(at_base=True)
-            activity["runs"].append({"on": "base commit", **_summary(at_base)})
-        if skip:
-            activity["runs"].append({"on": "base commit", "result": "skipped", "reason": skip})
-        verdict = origin.judge(one.intent, on_patch, at_base) if origin.judge else classify(one.intent, on_patch,
-                                                                                             at_base)
-        if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR:   # only where the base run would have decided
-            verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
-        if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:
-            # the differential rule: the instance declares this behaviour must not change, so a difference refutes it
-            verdict = {"result": COUNTEREXAMPLE, "differences": verdict["differences"],
-                       "detail": f"observes {len(verdict['differences'])} input(s) differently at the base commit "
-                                 "and on the patch, where the instance declares that behaviour must not change"}
-        activity.update(verdict)
-        activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
-        _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)
+        try:   # what G6's own reading of the runs raises is this check's error, never the review's (review I2)
+            on_patch = read(at_base=False)
+            activity["runs"].append({"on": "patch", **_summary(on_patch)})
+            at_base, skip = None, ""
+            if origin.patch_only:
+                skip = PATCH_ONLY
+            elif on_patch["result"] == "error":
+                skip = "the run on the patch did not run to a result, so a run at the base commit would decide nothing"
+            elif deadline - _clock() < MIN_RUN_S:
+                skip = OUT_OF_TIME
+            else:
+                at_base = read(at_base=True)
+                activity["runs"].append({"on": "base commit", **_summary(at_base)})
+            if skip:
+                activity["runs"].append({"on": "base commit", "result": "skipped", "reason": skip})
+            verdict = origin.judge(one.intent, on_patch, at_base) if origin.judge else classify(one.intent, on_patch,
+                                                                                                 at_base)
+            if skip == OUT_OF_TIME and verdict["result"] == CHECK_ERROR:   # only where the base run would decide
+                verdict = {"result": CHECK_ERROR, "detail": f"its run at the base commit was not started: {OUT_OF_TIME}"}
+            if origin.refuted_by_difference and verdict["result"] == BEHAVIOUR_CHANGED:
+                # the differential rule: the instance declares this behaviour must not change, so a difference refutes
+                verdict = {"result": COUNTEREXAMPLE, "differences": verdict["differences"],
+                           "detail": f"observes {len(verdict['differences'])} input(s) differently at the base commit "
+                                     "and on the patch, where the instance declares that behaviour must not change"}
+            activity.update(verdict)
+            activity["seconds"] = round(sum(run.get("seconds", 0.0) for run in activity["runs"]), 3)
+            _found(done, one, activity, on_patch, at_base, verdict, artifact, change.base_commit, origin)
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
+            raise   # an operator stop, unconfirmed cleanup or a refusal (no boundary) still reaches the door
+        except Exception as exc:
+            activity.update(result="error", reason=stopped(exc), stopped=f"the check {one.id}")
     return done
 
 
@@ -857,6 +882,15 @@ ADEQUACY_NOTE = ("reported only: it changes no outcome, and a mutant that surviv
                  "equivalent change), so a survivor is a question about the checks, not a defect of the patch")
 #: A stated check's verdicts on a mutant that say it caught the mutant.
 _KILLED = frozenset({repo_tests.FAILED, "timed_out"})
+#: The VS-3 review's fix pass, item 6: a changed file of more characters than this is left out of test adequacy, with
+#: why. Making each mutant copies the file's whole syntax tree, so the work grows with the square of its size: a new
+#: file of 450 lines (17,760 characters) took 41 seconds to mutate in G6's own process, and one of 900 lines 173. Below
+#: the cap one step of that work takes well under a second, so the review's deadline, checked before each step, holds.
+ADEQUACY_FILE_CHARS = 20_000
+TOO_BIG = (f"{{rel}} holds {{size}} characters, more than the {ADEQUACY_FILE_CHARS} test adequacy mutates: making "
+           "each mutant copies the whole file, so the work grows with the square of its size")
+LINK_LEFT_OUT = "{rel} is a link to a path outside the repository, which G6 never reads in its own process"
+MUTANTS_OUT_OF_TIME = "the review's time budget was spent while G6 made this file's mutants"
 
 
 def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str], timeout_s: int,
@@ -905,15 +939,35 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
     if not measured:
         return entries, []
     ids = list(dict.fromkeys(check for entry in measured for check in entry["checks"]))
-    files = [rel for rel in change.sources if repo_tests.changed_lines(change, rel)]
     activities = []
-    for rel in files[ADEQUACY_FILES:]:
+
+    def left_out(rel: str, why: str) -> None:
         for entry in measured:
-            entry["skipped"].append({"file": rel, "mutant": "", "reason": f"test adequacy mutates at most "
-                                                                          f"{ADEQUACY_FILES} changed files"})
+            entry["skipped"].append({"file": rel, "mutant": "", "reason": why})
+
+    for rel in change.outside_links:   # review M1: never read, as a copy never holds one
+        if rel.endswith(".py"):
+            left_out(rel, LINK_LEFT_OUT.format(rel=rel))
+    files = [rel for rel in change.sources if repo_tests.changed_lines(change, rel)]
+    for rel in files[ADEQUACY_FILES:]:
+        left_out(rel, f"test adequacy mutates at most {ADEQUACY_FILES} changed files")
     for rel in files[:ADEQUACY_FILES]:
         text = (change.repo / rel).read_text(encoding="utf-8", errors="replace")
+        if len(text) > ADEQUACY_FILE_CHARS:
+            left_out(rel, TOO_BIG.format(rel=rel, size=len(text)))
+            continue
         lines = repo_tests.changed_lines(change, rel)
+        try:   # the mutants are made in G6's own process, within the review's deadline (review I4)
+            candidates = mutation_check.mutants(text, ADEQUACY_MUTANTS, lines, deadline=deadline, clock=_clock)
+        except mutation_check.Unfinished:
+            left_out(rel, MUTANTS_OUT_OF_TIME)
+            continue
+        except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (review I2)
+            why = stopped(exc)
+            activities.append({"activity": "mutation run", "file": rel, "mutant": "", "result": "error",
+                               "reason": why, "stopped": f"test adequacy on {rel}", "seconds": 0.0, "model_calls": 0})
+            left_out(rel, f"G6 could not make its mutants: {why}")
+            continue
         runs: dict[str, dict] = {}
         why_stopped = [""]   # the guard's reason, for the mutants the check did not reach after it
 
@@ -931,8 +985,8 @@ def measure_adequacy(change: repo_tests.Change, requirements, norm: dict[str, st
                                    reason="" if executed else str(ran.get("verdict") or ""))
 
         record = mutation_check.check(text, run, budget_s=max(0.0, deadline - _clock()), base_duration_s=base_seconds,
-                                      limit=ADEQUACY_MUTANTS, clock=_clock, lines=lines)
-        for mutant in mutation_check.mutants(text, ADEQUACY_MUTANTS, lines):
+                                      limit=ADEQUACY_MUTANTS, clock=_clock, lines=lines, candidates=candidates)
+        for mutant in candidates:
             activity = {"activity": "mutation run", "file": rel, "mutant": mutant.describe(), "seconds": 0.0,
                         "model_calls": 0}
             activities.append(activity)
@@ -968,9 +1022,10 @@ _DERIVED_RUN = "tests that touch the changed modules"
 
 def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], skipped: list[dict], defects: list[dict],
                done: Search | None, *, artifact: str, base_commit: str, templates=None,
-               adequacy: tuple[list[dict], list[dict]] | None = None) -> dict:
+               adequacy: tuple[list[dict], list[dict]] | None = None, stopped=()) -> dict:
     """``assessment.completion``, from what ran only (the module's rules). ``templates``: the review's prepared
-    template instances (``verification_templates.Prepared``); ``adequacy``: test adequacy and its mutation runs."""
+    template instances (``verification_templates.Prepared``); ``adequacy``: test adequacy and its mutation runs;
+    ``stopped``: each search stage that stopped on an error in G6's own work (``STOPPED``)."""
     tier_one = [found for found in receipts if found.get("tier") == 1]
     demonstrated = [{"requirement": req["id"], "text": req["text"], "kind": req["kind"],
                      "checks": [c["id"] for c in req["checks"]], "receipts": tier_one}
@@ -1033,4 +1088,4 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
                                    "proposed_checks": [*(done.defects if done else []), *unconfirmed]},
             "preservation": preservation, "test_adequacy": list(measured), "open_questions": questions[:MAX_QUESTIONS],
             "activities": [*activities, *proposed, *(templates.activities if templates is not None else []),
-                           *mutations]}
+                           *mutations, *stopped]}

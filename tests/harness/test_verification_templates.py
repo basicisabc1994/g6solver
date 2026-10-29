@@ -1194,6 +1194,205 @@ def test_test_adequacy_measures_only_requirements_whose_stated_checks_passed(tmp
     assert got["assessment"]["outcome"] == "defect_detected"
 
 
+# --- I2 and I3: what G6's own reading of the files cannot hold never escapes the review ---------------------------------
+
+RATES = {"rates.py": "TABLE = 0\n\n\ndef rate(x):\n    return x * 2\n",
+         "tests/test_rates.py": "from rates import rate\n\n\ndef test_rate():\n    assert rate(2) == 4\n"}
+RATES_RULE = [{"id": "R1", "text": "rate doubles", "checks": ["tests/test_rates.py::test_rate"]}]
+SUM_400 = "TABLE = " + " + ".join(["1"] * 400) + "\n\n\ndef rate(x):\n    return x * 2\n"
+LISTS_190 = "TABLE = " + "[" * 190 + "]" * 190 + "\n\n\ndef rate(x):\n    return x * 2\n"
+MINUS_200000 = "def f(x):\n    return x\n\n\nY = " + "-" * 200000 + "1\n"   # Python's parser: MemoryError
+LIB = {"lib/__init__.py": "", "lib/core.py": "def f(x):\n    return x\n", "lib/deep.py": "Y = 1\n",
+       "tests/test_lib.py": "from lib.core import f\n\n\ndef test_f():\n    assert f(1) == 1\n"}
+LIB_RULE = [{"id": "R1", "text": "f is the identity", "checks": ["tests/test_lib.py::test_f"]}]
+
+
+def _did_not_complete(got, *named: str) -> None:
+    """The outcome from the stated checks stands, and an unknown says the search did not complete."""
+    assessment = got["assessment"]
+    assert got["ok"] is True and got["completion_state"] == "qualified-draft", got
+    assert assessment["outcome"] == "supported_within_scope", assessment["reasons"]
+    assert any("did not complete" in unknown and all(n in unknown for n in named)
+               for unknown in assessment["unknowns"]), assessment["unknowns"]
+
+
+@pytest.mark.parametrize("text, error", [(SUM_400, "RecursionError"), (LISTS_190, "RecursionError")],
+                         ids=["a-sum-of-400-terms", "lists-190-deep"])
+def test_review_i2_test_adequacy_on_a_file_g6_cannot_walk_records_an_error_and_never_raises(tmp_path, monkeypatch,
+                                                                                            text, error):
+    root = _patch(_repo(tmp_path, RATES), {"rates.py": text})
+    Tiers(monkeypatch)
+    Mutants(monkeypatch)
+    got = review(root, RATES_RULE, search={"test_adequacy": True})
+    _did_not_complete(got, "test adequacy", "rates.py")
+    [found] = [a for a in got["assessment"]["completion"]["activities"] if a.get("activity") == "mutation run"]
+    assert (found["file"], found["result"]) == ("rates.py", "error") and error in found["reason"], found
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    assert [s["file"] for s in adequacy["skipped"]] == ["rates.py"] and error in adequacy["skipped"][0]["reason"]
+
+
+@pytest.mark.parametrize("change, one", [
+    ({"lib/core.py": MINUS_200000}, instance("ex", "example.v1", {"function": "lib.core.f", "cases": [
+        {"args": [1], "returns": 1}]}, intent="change")),
+    ({"lib/deep.py": MINUS_200000[30:]}, instance("ex", "forbidden_dependency.v1", {"package": "lib", "contract": {
+        "layers": ["lib.core", "lib.deep"]}})),
+], ids=["example-names-the-module", "forbidden-dependency-on-its-package"])
+def test_review_i3_a_module_pythons_parser_cannot_hold_is_an_activity_error_never_an_exception(tmp_path, monkeypatch,
+                                                                                               change, one):
+    """The reviewer's 200,000 unary minus signs: Python's parser raises MemoryError in G6's own process."""
+    root = _patch(_repo(tmp_path, LIB), change)
+    Tiers(monkeypatch)
+    runs = Compiled(monkeypatch, {})
+    got = review(root, LIB_RULE, template_instances=[one])
+    _did_not_complete(got, "ex")
+    found = _activity(got, "ex")
+    assert found["result"] == "error" and "MemoryError" in found["reason"], found
+    assert runs.calls == [] and _requirement(got, "R1")["status"] == "passed_on_stated_checks"
+
+
+def test_review_i2_the_mcp_job_completes_when_g6s_own_reading_fails(tmp_path, monkeypatch):
+    """The reviewer's job case: the same review through the MCP door's job completed, where it had failed with
+    G6_E_JOB_FAILED."""
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    root = _patch(_repo(tmp_path, {**RATES, **LIB}), {"rates.py": SUM_400, "lib/core.py": MINUS_200000})
+    Tiers(monkeypatch)
+    Mutants(monkeypatch)
+    Compiled(monkeypatch, {})
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def flow():
+        async with Client(server) as client:
+            job = data(await client.call_tool("g6_review_patch", {
+                "repo": str(root), "task": "Make the change the requirements state.", "requirements": RATES_RULE,
+                "search": {"test_adequacy": True}, "template_instances": [instance("ex", "example.v1", {
+                    "function": "lib.core.f", "cases": [{"args": [1], "returns": 1}]}, intent="change")]}))
+            for _ in range(600):
+                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                if got.get("status") in ("completed", "failed"):
+                    return got
+                await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    got = asyncio.run(flow())
+    assert got["status"] == "completed", got
+    _did_not_complete(got["result"], "ex")
+    assert check_envelope(got["result"]) == []
+
+
+# --- I4 and I7: the search stage keeps to the review's deadline, and never takes tier 1's time ---------------------------
+
+RULES_450 = "".join(f'''
+def rule_{i}(order, limit=10):
+    """Rule {i}: the discount for an order."""
+    total = sum(item["price"] * item["count"] for item in order["items"])
+    if total > limit and order.get("member"):
+        return round(total * 0.9 - {i}, 2)
+    elif total < 0:
+        raise ValueError("negative total")
+    return total + {i} if order.get("rush") else total
+''' for i in range(50))
+#: The margin past the review's deadline a slow search stage may take: one step of the work it stops between (a file
+#: read, one module parsed, one mutant made of a file within test adequacy's size), measured well under a second.
+MARGIN_S = 5.0
+
+
+def test_review_i4_test_adequacy_on_a_new_450_line_module_keeps_to_the_deadline(tmp_path, monkeypatch):
+    root = _patch(_repo(tmp_path, {"shop/__init__.py": "", "tests/test_rules.py": (
+        "from shop.rules import rule_0\n\n\ndef test_rule():\n    assert rule_0({'items': []}) == 0\n")}),
+        {"shop/rules.py": RULES_450})
+    Tiers(monkeypatch)
+    monkeypatch.setattr(verification_search, "_run_mutant", lambda change, rel, source, ids, timeout_s, **_:
+                        result(list(ids)))
+    started = time.monotonic()
+    got = review(root, [{"id": "R1", "text": "rule_0 gives no discount on an empty order",
+                         "checks": ["tests/test_rules.py::test_rule"]}], search={"test_adequacy": True}, timeout_s=30)
+    took = time.monotonic() - started
+    assert took < 30 + MARGIN_S, took
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    assert adequacy["skipped"] and all(s["reason"] for s in adequacy["skipped"]), adequacy
+    assert got["assessment"]["outcome"] == "supported_within_scope"
+
+
+def test_review_i4_test_adequacy_leaves_out_a_file_over_its_size_and_says_why(tmp_path, monkeypatch):
+    big = "def rate(x):\n    return x * 2\n" + "".join(f"\n\ndef pad_{i}(x):\n    return x + {i}\n"
+                                                    for i in range(2000))
+    assert len(big) > verification_search.ADEQUACY_FILE_CHARS
+    root = _patch(_repo(tmp_path, RATES), {"rates.py": big})
+    Tiers(monkeypatch)
+    mutants = Mutants(monkeypatch)
+    got = review(root, RATES_RULE, search={"test_adequacy": True})
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    [skipped] = adequacy["skipped"]
+    assert skipped["file"] == "rates.py" and str(verification_search.ADEQUACY_FILE_CHARS) in skipped["reason"]
+    assert mutants.calls == []
+
+
+def test_review_i7_the_structural_stage_never_takes_tier_ones_time(tmp_path, monkeypatch):
+    """The reviewer's 19 files of about 1 MB: the structural check reads and parses them after tier 1, which keeps its
+    normal limit, and stops at the review's deadline."""
+    files = {"big/__init__.py": "", "tests/test_big.py": "def test_ok():\n    assert True\n"}
+    line = "import big.m0\n"
+    for index in range(19):
+        files[f"big/m{index}.py"] = line * (999_000 // len(line))
+    root = _patch(_repo(tmp_path, files), {"big/m0.py": files["big/m0.py"] + "X = 1\n"})
+    limits: list[int] = []
+
+    def execute(root, ids, *, timeout_s, change=None, **_):
+        limits.append(timeout_s)
+        return result(list(ids))
+
+    monkeypatch.setattr(patch_review, "_execute", execute)
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda change, ids, *, timeout_s, **_: {"verdict": "not_run", "said": "not recorded"})
+    rule = [{"id": "R1", "text": "the package keeps its layers", "checks": ["tests/test_big.py::test_ok"]}]
+    review(root, rule, timeout_s=20)
+    normal = limits[0]   # tier 1's limit with no template instance: the review's, less what came before it
+    limits.clear()
+    started = time.monotonic()
+    got = review(root, rule, template_instances=[instance("dep", "forbidden_dependency.v1", {"package": "big",
+                 "contract": {"layers": ["big.m1", "big.m0"]}})], timeout_s=20)
+    took = time.monotonic() - started
+    assert limits and limits[0] >= normal - 1, (normal, limits)
+    assert took < 20 + MARGIN_S, took
+    assert _activity(got, "dep")["result"] in ("refused", "passed", "vacuous", "failed"), _activity(got, "dep")
+
+
+# --- M1: a link whose target is outside the repository is never read in G6's own process -------------------------------
+
+def test_review_m1_test_adequacy_never_reads_a_link_to_a_file_outside_the_repository(tmp_path, monkeypatch):
+    outside = tmp_path / "outside" / "settings.py"
+    outside.parent.mkdir()
+    outside.write_text('def token(kind):\n    if kind == "OUTSIDE-SECRET-1234":\n        return 1\n    return 0\n',
+                       encoding="utf-8")
+    root = _repo(tmp_path, {"app.py": "def double(x):\n    return x * 2\n",
+                            "tests/test_app.py": "from app import double\n\n\ndef test_double():\n"
+                                                 "    assert double(2) == 4\n"})
+    try:
+        os.symlink(str(outside), root / "settings.py")   # the patch adds a link to a file outside the repository
+    except OSError:
+        pytest.skip("this system cannot make a symbolic link")
+    _patch(root, {"app.py": "def double(x):\n    return x + x\n"})
+    Tiers(monkeypatch)
+    Mutants(monkeypatch)
+    got = review(root, [{"id": "R1", "text": "double doubles", "checks": ["tests/test_app.py::test_double"]}],
+                 search={"test_adequacy": True})
+    assert "OUTSIDE-SECRET-1234" not in json.dumps(got)
+    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    left = [s for s in adequacy["skipped"] if s["file"] == "settings.py"]
+    assert left and "outside the repository" in left[0]["reason"], adequacy
+    assert any("settings.py" in u and "outside the repository" in u for u in got["assessment"]["unknowns"])
+
+
 # --- the review's import roots, and a run that loaded the changed code from elsewhere -----------------------------------
 
 #: A run's record that it loaded the changed module from outside the tree it tested: an installed copy (``repo_tests``).

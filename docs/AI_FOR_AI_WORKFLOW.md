@@ -255,7 +255,17 @@ asked for, G6 makes small changes to the changed lines (at most 6 in each of at 
 to `-`, a number plus one, a returned value to `None`), runs each requirement's stated checks against each one,
 confined in a copy, and reports how many changes they caught and which survived, with every change not run and
 why. That changes no outcome: a change can behave as the original does, so a survivor is a question about the
-checks, not a defect.
+checks, not a defect. Making each change copies the whole file, so the work grows with the square of its size: a
+changed file of more than 20,000 characters is left out, with why, and making the changes stops at the review's
+deadline. A changed file that is a link to a path outside the repository is never read in G6's own process (the
+rule the copies follow); it is left out, with why, and named in the unknowns.
+
+G6 reads the template instances against the files after the tier 1 run, so reading and parsing a large package
+never takes tier 1's time, and the structural check stops at the review's deadline. When G6's own work in its
+process fails in any search stage (a file nested so deeply that Python's parser or G6's reading of it runs out of
+depth, a RecursionError or a MemoryError, or anything else), that activity says `error` with its reason, and
+the outcome from the other checks stands, with an unknown that the stage did not complete. The review itself
+never fails for it, over MCP's job either.
 
 A submodule that was never set up here (a gitlink with no `.git` in its folder, as some repositories ship
 their vendored code) is accepted: git never enters its folder, and G6 hashes the folder's files itself into
@@ -265,7 +275,13 @@ the gitlink entry itself, or a folder too large for G6 to hash, is insufficient 
 (`change_inside_submodule`, `submodule_not_hashed`). A submodule that was set up (a `.git` in its folder, or
 anything under `.git/modules`) is refused, `G6_E_GIT_SUBMODULE_REFUSED`. The copies the base-commit runs use
 keep a tracked link only when it is relative and resolves inside the copy; each run lists the links it left
-out.
+out. On Windows the copy makes each link with the system's separator, and as a folder's link when it names a
+folder.
+
+Git's index flags never hide a change: a tracked file marked assume-unchanged or skip-worktree is compared
+with the base commit's text, as every other tracked file is. One so marked that is not in the working tree (a
+sparse checkout) cannot be compared, so the outcome is at most insufficient evidence
+(`file_not_in_working_tree`), with an unknown, never "unchanged".
 
 The tests run with the Python that `G6_REPO_PYTHON` names where you start G6 (a full path: a Poetry or conda
 environment, or a system Python that holds the repository's dependencies), else the repository's own `.venv`

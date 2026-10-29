@@ -41,6 +41,7 @@ import functools
 import time
 from dataclasses import dataclass, field
 
+from g6.core import component_process
 from g6.harness import verification_search as vs
 from g6.harness import verification_templates as vt
 
@@ -511,6 +512,8 @@ def _symbolic(prepared, formal: Formal, *, deadline: float, budget: int, skip: s
                 raise TimeoutError
             outcome = Z3Verifier(spec, timeout_s=min(CONTRACT_S, left)).find_counterexample(
                 sketch, {}, InputDomain.of(values))
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise   # an operator stop or unconfirmed process cleanup must reach the enclosing door
         except _Outside as exc:
             why = f"{SUBSET}: {exc}"
             record["correspondence"]["reason"] = why
@@ -519,6 +522,12 @@ def _symbolic(prepared, formal: Formal, *, deadline: float, budget: int, skip: s
             continue
         except TimeoutError:
             activity.update(result="skipped", reason=vs.OUT_OF_TIME, formal=parts(record))
+            continue
+        except Exception as exc:   # ast.unparse or Z3's reading out of depth, any other: the VS-3 review's fix pass, I2
+            why = vs.stopped(exc)
+            record["correspondence"]["reason"] = why
+            activity.update(result="error", reason=why, stopped=f"the symbolic search of {one.id}",
+                            seconds=round(time.monotonic() - started, 3), formal=parts(record))
             continue
         record["specification"]["spec"] = spec
         record["model"].update(domain=outcome.evidence.get("encoded_domain"),

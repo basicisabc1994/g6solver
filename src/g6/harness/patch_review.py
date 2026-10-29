@@ -68,8 +68,11 @@ caller's text, stays in ``assessment.completion``. Where no operating-system bou
 
 Optional ``template_instances`` (``g6.harness.verification_templates``): instances of G6's reviewed templates, each
 naming a requirement, an intent and bindings that are data (dotted names G6 finds in the files, JSON literals), counted
-with the proposed checks within 20 and checked before anything runs (an invalid one refuses the review; one the tree
-gives nothing to apply to is refused alone and reported). G6 compiles ``example.v1``, ``relation.v1``,
+with the proposed checks within 20 and checked before anything runs (an invalid one refuses the review), then read
+against the tree after tier 1, so that never takes tier 1's time (one the tree gives nothing to apply to is refused
+alone and reported). What G6's own work in its process raises in any search stage (a RecursionError or a MemoryError
+from a file nested too deeply, any other) is that activity's error: the outcome from the other checks stands, with an
+unknown that the stage did not complete. G6 compiles ``example.v1``, ``relation.v1``,
 ``access_rule.v1`` and ``differential.v1`` from each template's fixed text into checks run as proposed checks are,
 which never pass a requirement; ``forbidden_dependency.v1`` reads imports only: against a contract the repository or
 the caller states, an import the patch adds that the contract forbids fails its requirement, and a contract that holds
@@ -315,7 +318,7 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
     for rel in sorted(set(change.runner_files) | {rel for rel in change.files
                                                   if PurePosixPath(rel).name.lower() in RUNNER_FILES}):
         name = PurePosixPath(rel).name.lower()
-        if name not in PYTEST_SECTIONS:
+        if name not in PYTEST_SECTIONS or rel in change.outside_links:   # a link outside is never read (review M1)
             found.append(rel)
             continue
         reader = "pytest.ini" if name == "tox.ini" else name   # tox.ini's [pytest] section reads as pytest.ini's does
@@ -685,11 +688,6 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                 placed = verification_search.placements(root, proposed)
             except ValueError as exc:
                 raise _Refused("G6_E_INPUT_VALIDATION", str(exc)) from exc
-        prepared = None
-        if instances:   # read from files only, before anything runs: an instance that does not apply is refused alone
-            from g6.harness import verification_templates
-            prepared = verification_templates.prepare(root, change, instances, enabled=config["templates"],
-                                                      deadline=started + timeout_s, roots=roots)
         # Rule 11: only a normative requirement is assessed; the others are listed, and their checks never run.
         listed = [req for req in stated if req.provenance not in NORMATIVE]
         stated = [req for req in stated if req.provenance in NORMATIVE]
@@ -699,7 +697,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         ids = list(dict.fromkeys([*stated_ids, *(norm[raw] for raw in tests)]))
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
                        deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
-                       unmapped=unmapped, proposed=proposed, placed=placed, prepared=prepared, config=config,
+                       unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
                        roots=roots)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
@@ -723,8 +721,23 @@ def _untrusted(tier: int, ran: dict) -> str:
     return f"tier {tier} run: {ran['verdict']}" + (f": {said}" if said else "") + (f" ({changed})" if changed else "")
 
 
+def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
+    """``run``'s result, or None when G6's own work in it raised (the VS-3 review's fix pass, item 5: a RecursionError,
+    a MemoryError, any other): that is an activity's error, and the stage did not complete; an operator stop,
+    unconfirmed process cleanup and a refusal still reach the door."""
+    try:
+        return run(*args, **kwargs)
+    except (component_process.ExecutionInterrupted, component_process.ContainmentFailure, repo_tests.RepoRefused):
+        raise
+    except Exception as exc:
+        from g6.harness import verification_search
+        stopped.append({"activity": "search stage", "stage": what, "result": "error",
+                        "reason": verification_search.stopped(exc), "stopped": what, "seconds": 0.0, "model_calls": 0})
+        return None
+
+
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
-            started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, prepared=None,
+            started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
             config=None, roots=()) -> dict:
     reasons: list[dict] = []
     unknowns: list[str] = list(unmapped)   # what an intent held that is not a check of this patch
@@ -808,6 +821,15 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                    node=check, ran=first)
         elif verdicts[check]["verdict"] != "passed" and check not in stated_ids:
             unknowns.append(f"extra test {check} did not run to a pass: {verdicts[check]['verdict']}")
+    # The template instances, after tier 1, so reading and parsing the files never takes its time (review I7): read
+    # from the files, never imported; one the tree gives nothing to apply to is refused alone, and one G6's own
+    # reading fails on is an activity's error (review I2).
+    stopped: list[dict] = []   # each search stage that stopped on an error in G6's own work
+    prepared = None
+    if instances:
+        from g6.harness import verification_templates
+        prepared = _stage(stopped, "reading the template instances", verification_templates.prepare, root, change,
+                          instances, enabled=config["templates"], deadline=deadline, roots=roots)
     # Verification search's structural checks (forbidden_dependency.v1), read from the files: one against a stated
     # contract that finds an import the patch adds and the contract forbids fails its requirement; one that finds none
     # passes no requirement (the owner's ruling R-C1); a model's contract decides nothing.
@@ -854,10 +876,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)
     search = None
     formal = None
+    # Each search stage through _stage: what G6's own work raises is its activity's error, never the review's (I2).
     if prepared is not None and (prepared.formal or prepared.symbolic):   # the formal path: obligations, search,
         from g6.harness import verification_formal, verification_search   # each trace's replay, Z3's counterexamples
-        formal = verification_formal.run(
-            prepared, deadline=deadline, skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "",
+        formal = _stage(
+            stopped, "the formal path", verification_formal.run, prepared, deadline=deadline,
+            skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "",
             budget=verification_search.MAX_CHECKS - prepared.instances - len(proposed))
     compiled = list(prepared.checks) if prepared is not None else []
     if proposed or compiled:   # verification search: compiled template instances first, then the caller's proposed
@@ -867,22 +891,31 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if any(r["stage"] == "integrity" for r in reasons):
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
-            search = verification_search.search(change, checks, where, deadline=deadline, artifact=artifact,
-                                                origins=origins, roots=roots)
-        for code, detail in search.reasons:
+            search = _stage(stopped, "the proposed and compiled checks", verification_search.search, change, checks,
+                            where, deadline=deadline, artifact=artifact, origins=origins, roots=roots)
+        for code, detail in (search.reasons if search is not None else ()):
             reason("evidence", code, detail)
-        follow_ups = [*follow_ups, *search.next_actions]
+        follow_ups = [*follow_ups, *(search.next_actions if search is not None else ())]
     if formal is not None:
         verification_formal.finish(formal, search)
     adequacy = None
     if config is not None and config["test_adequacy"]:   # report only: it changes no outcome
         from g6.harness import verification_search
         integrity = any(r["stage"] == "integrity" for r in reasons)
-        adequacy = verification_search.measure_adequacy(
-            change, stated, norm, verdicts, deadline=deadline, base_seconds=float(first.get("seconds") or 1.0),
-            skip=INTEGRITY_SKIP if integrity else "", roots=roots)
+        adequacy = _stage(
+            stopped, "test adequacy", verification_search.measure_adequacy, change, stated, norm, verdicts,
+            deadline=deadline, base_seconds=float(first.get("seconds") or 1.0), skip=INTEGRITY_SKIP if integrity
+            else "", roots=roots)
     skipped.append({"tier": 3, "check": "mutation and old-against-new probes",
-                    "reason": TIER_3_ADEQUACY if adequacy is not None else TIER_3})
+                    "reason": TIER_3_ADEQUACY if config is not None and config["test_adequacy"] else TIER_3})
+    if instances or proposed or adequacy is not None or stopped:   # each stage that did not complete, an unknown
+        from g6.harness import verification_search
+        unknowns.extend(verification_search.stopped_unknowns([
+            *(prepared.activities if prepared is not None else []), *(search.activities if search else []),
+            *(adequacy[1] if adequacy is not None else []), *stopped]))
+    for rel in change.outside_links:   # review M1: G6 never reads one in its own process
+        unknowns.append(f"{rel} is a link to a path outside the repository: G6 did not read it in its own process, "
+                        "and the copies leave it out")
 
     final = repo_tests.snapshot(root)
     if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
@@ -942,8 +975,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   prepared=prepared, adequacy=adequacy, config=config,
-                  counts={"template_instances": prepared.instances if prepared is not None else 0,
-                          "proposed_checks": len(proposed)}, roots=roots)
+                  counts={"template_instances": len(instances), "proposed_checks": len(proposed)}, roots=roots,
+                  stopped=stopped)
 
 
 def _structural_check(found: dict) -> dict:
@@ -1090,7 +1123,7 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
-           adequacy=None, config=None, counts=None, roots=()) -> dict:
+           adequacy=None, config=None, counts=None, roots=(), stopped=()) -> dict:
     from g6.harness import verification_search   # the completion report, in every reply
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
@@ -1136,7 +1169,7 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
         "unknowns": unknowns, "next_actions": next_actions, "not_checked": list(NOT_CHECKED),
         "completion": verification_search.completion(evaluated, receipts, runs, skipped, list(defects), search,
                                                      artifact=artifact, base_commit=change.base_commit,
-                                                     templates=prepared, adequacy=adequacy)}
+                                                     templates=prepared, adequacy=adequacy, stopped=stopped)}
     card = warning_card(CODE, summary, next_actions[0])
     return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                               request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]),

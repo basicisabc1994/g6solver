@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import ast
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -125,8 +125,9 @@ def _resolve(importer: str, is_package: bool, node: ast.AST, modules: Mapping[st
     return [*([stem] if stem and names_left else []), *submodules]
 
 
-def build(files: Mapping[str, str], package: str) -> Graph:
-    """The graph of ``package`` in ``files``."""
+def build(files: Mapping[str, str], package: str, *, before_each: Callable[[], None] | None = None) -> Graph:
+    """The graph of ``package`` in ``files``. ``before_each``, when given, is called before each module is parsed (a
+    caller's deadline, which raises to stop the build)."""
     modules: dict[str, str] = {}
     graph = Graph(package, modules)
     for path in sorted(files):
@@ -140,6 +141,8 @@ def build(files: Mapping[str, str], package: str) -> Graph:
         modules[name] = path
     inside = {m for m in modules if m == package or m.startswith(package + ".")}
     for name, path in sorted(modules.items()):
+        if before_each is not None:
+            before_each()
         try:
             tree = ast.parse(files[path])
         except (SyntaxError, ValueError) as exc:

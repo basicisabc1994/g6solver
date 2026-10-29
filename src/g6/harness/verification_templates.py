@@ -80,6 +80,7 @@ from typing import Annotated, Any, Callable, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from g6.core import component_process
 from g6.harness import verification_search as vs
 from g6.workforce import repo_tests
 
@@ -654,9 +655,9 @@ def resolve(tree: Tree, dotted: str, side: str) -> Target:
     if not rel:
         raise Inapplicable(f"{dotted}: no module {module} {WHERE[side]} (G6 looks for it in the import roots, the top "
                            "folder and src, as the runs' import path has them)")
-    try:
+    try:   # a RecursionError or a MemoryError, Python's parser out of depth, is G6's own error (review I3), not here
         found, star = _top_level(ast.parse(tree.text(rel, side)), attribute)
-    except (SyntaxError, ValueError, RecursionError, OSError, repo_tests.RepoRefused) as exc:
+    except (SyntaxError, ValueError, OSError, repo_tests.RepoRefused) as exc:
         raise Inapplicable(f"{dotted}: {rel} could not be read or parsed {WHERE[side]} ({type(exc).__name__})") from exc
     if found is None:
         raise Inapplicable(f"{dotted}: no top-level name {attribute} in {rel} {WHERE[side]}"
@@ -1490,9 +1491,11 @@ def compiled_check(root: Path, one: TemplateInstance, data: dict, notes: list[st
 def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInstance], *,
             enabled: bool = True, deadline: float | None = None, roots: tuple[str, ...] = ()) -> Prepared:
     """Each instance checked against the tree and, where it applies, compiled and placed (or, for the structural
-    template, checked): reading files only, before anything runs, and the structural check no further than
-    ``deadline`` (the review's, on ``_clock``); names resolve in the review's import ``roots`` first, as the runs
-    import. ``enabled`` false (``search.templates``): none is run, each listed as skipped."""
+    template, checked): reading files only (the review calls it after tier 1, so it never takes tier 1's time), and
+    the structural check no further than ``deadline`` (the review's, on ``_clock``); names resolve in the review's
+    import ``roots`` first, as the runs import. ``enabled`` false (``search.templates``): none is run, each listed as
+    skipped. An instance the tree gives nothing to apply to is refused; one G6's own reading raises on (a file nested
+    too deeply for Python's parser: a RecursionError or a MemoryError) is an activity's error, never the review's."""
     found = Prepared(instances=len(instances))
     if not instances:
         return found
@@ -1524,17 +1527,26 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
                 result = structural(tree, one)
                 found.structural.append(result)
                 found.activities.append(result["activity"])
-        except (Inapplicable, ValueError, OSError, SyntaxError, RecursionError, repo_tests.RepoRefused) as exc:
+        except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
+            raise   # an operator stop or unconfirmed process cleanup must reach the enclosing door
+        except (Inapplicable, ValueError, OSError, SyntaxError, repo_tests.RepoRefused) as exc:
             why = str(exc) if isinstance(exc, Inapplicable) else (
                 f"G6 could not read what it names ({type(exc).__name__})")
-            refused = {**_listing(one), "result": "refused", "reason": why}
-            found.activities.append(refused)
-            if not definition.text and not definition.formal:
-                provenance = _contract_provenance(one)
-                found.structural.append({"id": one.id, "requirement": one.requirement_id, "verdict": "not_run",
-                                         "normative": provenance != "model_hypothesis",
-                                         "contract_provenance": provenance, "activity": refused, "violations": []})
+            _not_applied(found, one, definition, {**_listing(one), "result": "refused", "reason": why})
+        except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (the VS-3 review, I2)
+            _not_applied(found, one, definition, {**_listing(one), "result": "error", "reason": vs.stopped(exc),
+                                                  "stopped": f"template instance {one.id}"})
     return found
+
+
+def _not_applied(found: Prepared, one: TemplateInstance, definition: TemplateDefinition, activity: dict) -> None:
+    """``one`` refused, or stopped on an error, as its activity says; a structural instance's check did not run."""
+    found.activities.append(activity)
+    if not definition.text and not definition.formal:
+        provenance = _contract_provenance(one)
+        found.structural.append({"id": one.id, "requirement": one.requirement_id, "verdict": "not_run",
+                                 "normative": provenance != "model_hypothesis",
+                                 "contract_provenance": provenance, "activity": activity, "violations": []})
 
 
 # --- forbidden_dependency.v1: imports read before and after, against a declared contract ----------------------------------
@@ -1948,8 +1960,8 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
                 tree.in_time()
                 files = _package_files(tree, contract.package, side)
                 tree.in_time()
-                graphs[contract.package, side] = (graph.build(files[0], contract.package), files[1]) if files else (
-                    None, "")
+                graphs[contract.package, side] = (graph.build(files[0], contract.package, before_each=tree.in_time),
+                                                  files[1]) if files else (None, "")
         (before, _), (after, folder) = graphs[contract.package, BASE], graphs[contract.package, PATCH]
         if after is None or not after.modules:
             out.append(f"{contract.name}: the package {contract.package} has no module {WHERE[PATCH]}")

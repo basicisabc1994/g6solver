@@ -703,6 +703,33 @@ def test_a_function_outside_the_subset_is_an_activity_never_an_error(tmp_path, m
     assert got["ok"] is True and len(runs.calls) == 2   # the instance's own check only
 
 
+DEEP = "def deep(x):\n    return x" + " + 1" * 400 + "\n"   # ast.unparse exhausts the recursion limit at this depth
+
+
+@pytest.mark.parametrize("item", [
+    {**ROUND_TRIP, "bindings": {"relation": "idempotence", "function": "deepx.deep", "inputs": [0, 20]}},
+    {**KEEP_SCORE, "id": "t-trip", "bindings": {"function": "deepx.deep", "mode": "outputs",
+                                                "calls": [{"args": [0]}, {"args": [20]}]}},
+], ids=["relation", "differential"])
+def test_review_i2_a_function_nested_too_deeply_for_g6s_reading_is_an_activity_error_never_an_exception(
+        tmp_path, monkeypatch, item):
+    """The VS-3 review's fix pass, item 5, for VS-4's symbolic search: ast.unparse (and candidate_term, Z3's reading)
+    recurse, so a function whose one return is a sum of 400 terms exhausts Python's recursion limit inside G6's own
+    process. The instance's own check still runs; the symbolic search's activity is an error with its reason, and the
+    outcome stands with an unknown."""
+    root = _patch(_repo(tmp_path, {**MATHX, "deepx.py": "def deep(x):\n    return x\n"}), {"deepx.py": DEEP})
+    Tiers(monkeypatch)
+    runs = Runs(monkeypatch, lambda template, side, data: "passed" if template == "relation.v1" else [
+        {"input": call, "output": {"returned": 0}} for call in data["calls"]])
+    got = review(root, MATHX_RULE, template_instances=[item])
+    assert got["ok"] is True and got["completion_state"] == "qualified-draft", got
+    [search] = _searches(got, "t-trip")
+    assert search["result"] == "error" and "RecursionError" in search["reason"], search
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert any("did not complete" in unknown and "t-trip" in unknown for unknown in got["assessment"]["unknowns"])
+    assert len(runs.calls) == 2   # the instance's own check, on the patch and at the base commit
+
+
 def test_a_symbolic_re_run_counts_within_the_limit_of_twenty_checks(tmp_path, monkeypatch):
     root = _patch(_repo(tmp_path, MATHX), {"mathx.py": MATHX_PATCH})
     Tiers(monkeypatch)

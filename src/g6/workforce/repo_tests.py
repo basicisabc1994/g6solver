@@ -387,6 +387,10 @@ class Change:
     #: The files so marked that are not in the working tree (a sparse checkout): G6 cannot compare them with the base
     #: commit, so whether the patch changed them is unknown, never "unchanged".
     unseen: tuple[str, ...] = ()
+    #: The changed files that are, or lie below, a link whose target resolves outside the repository
+    #: (``links_outside``): G6 never reads one in its own process, as a copy never holds one (review M1). They stay in
+    #: ``files``; ``sources``, ``after`` and every text G6 reads leave them out.
+    outside_links: tuple[str, ...] = ()
 
 
 def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
@@ -418,10 +422,11 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
     existed = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", *tests))) if tests else set()
     before = {rel: _text(_git(repo, "show", f"{commit}:{rel}")) for rel in sorted(existed)}
     reader = read_file or (lambda path: path.read_text(encoding="utf-8", errors="replace"))
-    after = {rel: reader(repo / rel) for rel in tests
-             if (repo / rel).is_file()}
+    outside = tuple(rel for rel in files if links_outside(repo, rel))
+    after = {rel: reader(repo / rel) for rel in tests   # a caller's own ``read_file`` judges a link itself
+             if (read_file is not None or rel not in outside) and (repo / rel).is_file()}
     sources = tuple(rel for rel in files if rel.endswith(".py") and not is_test_file(rel)
-                    and PurePosixPath(rel).name != "conftest.py" and (repo / rel).is_file())
+                    and PurePosixPath(rel).name != "conftest.py" and rel not in outside and (repo / rel).is_file())
     runner = tuple(rel for rel in files if PurePosixPath(rel).name.lower() in RUNNER_FILES or rel.endswith(".pth"))
     gone, new = [rel for rel in before if rel not in after], [rel for rel in after if rel not in before]
     moved = _moves(repo, commit, gone, new, before, after) if gone and new else {}
@@ -436,7 +441,20 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
     return Change(repo, base, commit, head, files, before, after, sources, runner, moved,
                   submodules=tuple(rel for rel in links if rel in gitlinks),
                   submodule_changes=tuple(rel for rel in links if then.get(rel) != now.get(rel)),
-                  held=tuple(sorted(held)), unseen=unseen)
+                  held=tuple(sorted(held)), unseen=unseen, outside_links=outside)
+
+
+def links_outside(repo: Path, rel: str) -> bool:
+    """Whether ``rel``, or a folder on its way, is a link or junction and the path resolves outside ``repo`` (or
+    cannot be resolved): the rule copies follow (a link is kept only when it resolves inside), so G6 never reads such
+    a file in its own process either (review M1)."""
+    parts = PurePosixPath(rel).parts
+    if not any(_linked(repo.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
+        return False
+    try:
+        return not (repo / rel).resolve().is_relative_to(repo.resolve())
+    except (OSError, RuntimeError):
+        return True
 
 
 def _held(repo: Path, commit: str, spec: list[str], gitlinks: set[str]) -> tuple[set[str], tuple[str, ...]]:
@@ -452,9 +470,10 @@ def _held(repo: Path, commit: str, spec: list[str], gitlinks: set[str]) -> tuple
     present = [rel for rel in marked if rel not in unseen]
     then = texts_at(repo, commit, present, limit=None)
     changed = set()
-    for rel in present:
+    for rel in present:   # a link is changed, and never read (review M1)
         path = repo / rel
-        if then.get(rel) is None or _linked(path) or not path.is_file() or _text(path.read_bytes()) != then[rel]:
+        if (then.get(rel) is None or links_outside(repo, rel) or _linked(path) or not path.is_file()
+                or _text(path.read_bytes()) != then[rel]):
             changed.add(rel)
     return changed, unseen
 
@@ -493,7 +512,7 @@ def related_texts(change: Change) -> tuple[dict[str, str], dict[str, str]]:
     existed = set(_paths(_git(change.repo, "ls-tree", "-r", "-z", "--name-only", change.base_commit, "--", *related)))
     before = {rel: _text(_git(change.repo, "show", f"{change.base_commit}:{rel}")) for rel in sorted(existed)}
     after = {rel: (change.repo / rel).read_text(encoding="utf-8", errors="replace") for rel in related
-             if (change.repo / rel).is_file()}
+             if rel not in change.outside_links and (change.repo / rel).is_file()}
     gone, new = [rel for rel in before if rel not in after], [rel for rel in after if rel not in before]
     moved = _moves(change.repo, change.base_commit, gone, new, before, after) if gone and new else {}
     return {moved.get(rel, rel): text for rel, text in before.items()}, after
@@ -548,12 +567,13 @@ def diff_text(change: Change) -> str:
     text = _git(change.repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", change.base_commit).decode(
         "utf-8", "replace")
     untracked = set(_paths(_git(change.repo, "ls-files", "--others", "--exclude-standard", "-z")))
-    for rel in sorted(untracked & set(change.files)):
+    for rel in sorted(untracked & set(change.files) - set(change.outside_links)):   # a link outside: never read (M1)
         lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS].splitlines()
         text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
     for rel in change.held:   # changed, though git's index flags hide them from its diff (review C2)
         path = change.repo / rel
-        now = path.read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS] if path.is_file() else ""
+        now = path.read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS] if (
+            path.is_file() and rel not in change.outside_links) else ""
         then = (read_at(change.repo, change.base_commit, rel) or "")[:DIFF_FILE_CHARS]
         text += "".join(f"{line}\n" for line in difflib.unified_diff(then.splitlines(), now.splitlines(),
                                                                      f"a/{rel}", f"b/{rel}", lineterm=""))
@@ -1700,6 +1720,8 @@ def _copy_ignored(folder: str, names: list[str]) -> set[str]:
 
 #: Windows' ERROR_PRIVILEGE_NOT_HELD: making a symbolic link needs a privilege (or developer mode).
 _PRIVILEGE_NOT_HELD = 1314
+#: Whether links are made as Windows makes them (``_copy_links``): with its separator, and a folder's link apart.
+_WINDOWS = os.name == "nt"
 #: The most links one resolution follows: past it, a loop.
 _MAX_HOPS = 40
 
@@ -1745,17 +1767,25 @@ def _copy_links(copy: Path, links: dict[str, tuple[str, bool]], left: dict[str, 
                 put: Callable[[Path, Path], None]) -> dict[str, str]:
     """Make each of ``links`` (a path in the copy to its link's text, and whether it is a folder's) in ``copy``, then
     keep those that resolve inside the copy, judged on the copy itself after all are made (``_resolve_inside``): one
-    that names an absolute path or resolves outside is removed and named in ``left`` with why. Where this system
-    refuses to make a link for want of the privilege (Windows), its target, resolved the same way, is copied in its
-    place with ``put``: returned, path to the target copied."""
+    that names an absolute path or resolves outside is removed and named in ``left`` with why. On Windows each is made
+    with the system's separator (git keeps a link's text with forward slashes, which a Windows link does not resolve),
+    and as a folder's link when its target in the copy is a folder. Where this system refuses to make a link for want
+    of the privilege (Windows), its target, resolved the same way, is copied in its place with ``put``: returned, path
+    to the target copied."""
     deferred: dict[str, str] = {}
+    texts = {rel: text for rel, (text, _) in links.items()}
     for rel, (text, folder) in sorted(links.items()):
         if _absolute(text):
             left[rel] = LINK_ABSOLUTE
             continue
         (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+        made = text
+        if _WINDOWS:   # CI run 40780356106: a Windows link resolves no forward slash, and a folder's link is its own
+            made = text.replace("/", "\\")
+            resolved = _resolve_inside(copy, rel, texts)
+            folder = folder or (resolved is not None and copy.joinpath(*resolved).is_dir())
         try:
-            os.symlink(text, copy / rel, target_is_directory=folder)
+            os.symlink(made, copy / rel, target_is_directory=folder)
         except OSError as exc:
             if getattr(exc, "winerror", None) == _PRIVILEGE_NOT_HELD:
                 deferred[rel] = text
