@@ -257,3 +257,62 @@ to W5 are merged on `origin/claude/launch` at a923002:
 
 Nothing else changes: the tasks, their order, the prompt, the caps, the independent check and the $100 stop are as
 before.
+
+### 2026-10-29: Round 2: G6 with its own model (before any of its runs)
+
+**Why.** The owner asked for it: "G6 + model is necessary to see uplift - we should run this please". In round 1
+(runs 1 to 10) G6 made no model calls of its own, so it judged only the checks the agent stated. Round 2 switches on
+G6's own check proposer: verification search's `propose` (VS-5), with the model the person configures for G6.
+
+**What round 2 is.** The same ten tasks, run again in the same order. Each run is new: the agent writes a new patch,
+which can differ from its round 1 patch. Round 1's records stay as they are.
+
+**What changes from round 1:**
+
+- **G6:** `origin/claude/launch` at 9ad134d, which includes the security review's fix pass (F1 to F6 and F8). It is
+  installed exactly as its README says, with two G6-side settings:
+  - **The proposer is on for every review, whatever the agent passes.** At 9ad134d only the caller's `search`
+    argument switches it on: its default is off, and neither the server nor the environment has a setting for it.
+    So, as the smallest G6-side default for this round, the image's copy of G6 carries a one-function change made
+    by `round2_g6.py` before G6 is installed. In `g6.harness.verification_search.search_config`, the proposer's
+    settings are fixed at the code's own defaults, with `propose` on: `templates_first`, at most 10 model calls a
+    review (the code's default, which is higher than 6), 60,000 characters a request, 4,096 tokens a reply and
+    24,000 characters of repository context. Every other `search` setting stays as the caller gives it. Nothing
+    else in G6 changes.
+  - **G6's model is claude-sonnet-5-5**, through the provider `anthropic`. These lines are written into G6's key
+    file in the container (`~/.g6/.env` of the container's user, owner-only), the one place G6 reads a key from
+    (`g6.core.keys`): `G6_LLM_PROVIDER=anthropic`, `G6_LLM_MODEL=claude-sonnet-5-5` and the key.
+- **The key's path.** The host reads the key through `g6.core.keys`, as before, and gives it to two places in the
+  container:
+  - Claude Code's process environment, by name;
+  - G6's key file, written through standard input. It is never printed, logged or archived. It is removed from the
+    container before G6's state folder is copied out, and every archived text is masked for it.
+- **The key check (section 4)** also puts the key file in place. Its confined test must find the key in none of its
+  channels (the key file among them), and its unconfined control must find both the environment variable and the
+  key file. With the proposer on, the check's own review uses G6's model, so the check also shows that the confined
+  runs of a review that holds the key cannot read it. Before the first paid run, one G6 model call is made from the
+  container through the proxy, to show the path works.
+- **Cost.** G6's model calls do not appear in Claude Code's stream. They are counted from the model-call records in
+  each review's full assessment, which G6 saves in its state folder. They are priced at the published Sonnet 5.5
+  prices in section 6, with no cache discount assumed.
+  - A run's cost is the agent's plus G6's.
+  - A run starts only if the money spent so far in both rounds, plus $10.50 for the agent and $5.00 for G6, stays
+    within $100.
+- **The task's repository** is fetched from upstream, as from run 6 of round 1. **The independent check** is
+  unchanged.
+
+**What is recorded for each run:**
+- G6's outcome in each round;
+- the checks and template instances the proposer made, and which ran, failed or were refused;
+- any reproduced counterexample, with its command, and whether the agent's repair loop used it;
+- the independent check on every round's patch and on the final patch;
+- G6's model calls and cost, the agent's cost, and the time.
+
+**How it is reported.** Each task is compared with round 1 in RESULTS.md, under "Round 2: G6 with its own model", as
+a worked example. The agent's patches vary from run to run, so a difference between the rounds is not evidence that
+G6's model helps.
+
+**Known limits of the proposer, to watch for and report:**
+- it does not see the results between its calls;
+- its free-form path had been tested only with a fake model;
+- a check that a model proposed gives at most "not enough evidence" ("ask, don't accuse").
