@@ -6,7 +6,9 @@
 workforce bench's ``run_tests_in_place`` op runs the same function, so the census measures what verify_task uses.
 
 What it reads (``change``): the files changed against a base ref (default ``HEAD``: the working tree's change) as git
-reports them, plus untracked files that are not ignored, plus each file git's assume-unchanged or skip-worktree mark
+reports them with a private index built from the base tree (``_private``: never the repository's own index or its
+replace refs, so every file's content is compared with the base's blob), plus untracked files that are not ignored,
+plus each file git's assume-unchanged or skip-worktree mark
 hides from its diff whose text differs from the base's (``_held``; one so marked that is not in the working tree is
 listed apart, ``Change.unseen``, never read as unchanged); each changed test file's text at the base and now, both read
 with the same line endings, and the test files moved since the base; the changed source files and the changed lines in
@@ -56,7 +58,6 @@ invoked here.
 """
 from __future__ import annotations
 
-import difflib
 import hashlib
 import importlib.machinery
 import json
@@ -188,16 +189,23 @@ class RepoRefused(ValueError):
 
 #: Before every git command: no index refresh (``--no-optional-locks``); paths are paths, never patterns
 #: (``--literal-pathspecs``: ``a[1].py`` is not also ``a1.py``); names unquoted; and hunks never merged across the
-#: unchanged lines between them, whatever the owner's ``diff.interHunkContext`` (review M7).
-_GIT = ("git", "--no-optional-locks", "--literal-pathspecs", "-c", "core.quotepath=off", "-c", "diff.interHunkContext=0")
+#: unchanged lines between them, whatever the owner's ``diff.interHunkContext`` (review M7). And nothing in .git the
+#: patch's author controls changes what git reports (the review of VS-4, finding 1): no replace ref
+#: (``--no-replace-objects``), no file-system monitor or untracked cache answering for the working tree, and no sparse
+#: checkout marking the entries of the private index ``_private`` builds.
+_GIT = ("git", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects", "-c", "core.quotepath=off",
+        "-c", "diff.interHunkContext=0", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+        "-c", "core.sparseCheckout=false")
 
 
-def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,), timeout_s: float = GIT_TIMEOUT_S) -> bytes:
+def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,), timeout_s: float = GIT_TIMEOUT_S,
+         index: Path | None = None) -> bytes:
     """One read-only git command in ``repo`` (``_GIT``'s options first), in ``git_env.safe_git_env``'s clean
     environment (none of git's own redirections such as GIT_DIR, no transport, no lazy fetch) with every config key
     that would start a program switched off, the drivers any config defines included (one ``git_env.DRIVER_QUERY``
     first, in the same window), and a ``status`` or ``diff`` never entering a submodule (``git_env.safe_git_args``):
-    the repository's .git/config may be the agent's (conformance K1, review B2-C1 and B2-C2)."""
+    the repository's .git/config may be the agent's (conformance K1, review B2-C1 and B2-C2). ``index``: a private
+    index file G6 made (``_private``) in place of the repository's own."""
     if find_program("git") is None:
         raise RepoRefused("G6_E_GIT_MISSING_BINARY", SAID["no_git"])
     try:
@@ -209,6 +217,8 @@ def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,), timeout_s: float = 
                                                      stderr=errors)
                 output.seek(0)
                 env = git_env.safe_git_env(Path(scratch), git_env.driver_settings(code, output.read()))
+                if index is not None:
+                    env["GIT_INDEX_FILE"] = str(index)
                 output.seek(0)
                 output.truncate()
                 code = component_process.run_process([*_GIT, "-C", str(repo), *git_env.safe_git_args(*args)],
@@ -230,6 +240,18 @@ def _git(repo: Path, *args: str, ok: tuple[int, ...] = (0,), timeout_s: float = 
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git {args[0]} not run: {exc}") from exc
     except (OSError, subprocess.SubprocessError) as exc:
         raise RepoRefused("G6_E_GIT_COMMAND_FAILED", f"git {args[0]} failed ({type(exc).__name__})") from exc
+
+
+def _private(repo: Path, commit: str, *commands: tuple[str, ...]) -> list[bytes]:
+    """Each of ``commands`` run with a private index G6 builds from ``commit``'s tree in a scratch folder (the review of
+    VS-4, finding 1): the repository's own index, its stat cache, its assume-unchanged and skip-worktree flags and any
+    entry written into it are never consulted, so ``git diff`` with it hashes every tracked file and compares the
+    content with the base commit's blob (after git's line-ending conversion, so an untouched file is never a change),
+    and ``ls-files --others`` lists every file the base tree does not hold."""
+    with tempfile.TemporaryDirectory(prefix="g6-index-") as scratch:
+        index = Path(scratch) / "index"
+        _git(repo, "read-tree", commit, index=index)
+        return [_git(repo, *command, index=index) for command in commands]
 
 
 def _gitlinks(repo: Path, index: bytes | None = None) -> tuple[str, ...]:
@@ -414,10 +436,10 @@ def change(repo: Path, base: str = "HEAD", paths: tuple[str, ...] = (), *,
         raise RepoRefused("G6_E_GIT_REPO_INVALID", SAID["bad_base"].format(base=base)) from refused
     head = _git(repo, "rev-parse", "--verify", "-q", "HEAD", ok=(0, 1)).decode().strip()
     held, unseen = _held(repo, commit, spec, set(gitlinks))
-    files = tuple(sorted(set(_paths(_git(repo, "diff", "--name-only", "-z", "--no-renames", "--no-textconv", commit,
-                                         *spec)))
-                         | set(_paths(_git(repo, "ls-files", "--others", "--exclude-standard", "-z", *spec)))
-                         | set(held)))
+    # the review of VS-4, finding 1: the list never comes from the repository's own index or its replace refs
+    diffed, others = _private(repo, commit, ("diff", "--name-only", "-z", "--no-renames", "--no-textconv", *spec),
+                              ("ls-files", "--others", "--exclude-standard", "-z", *spec))
+    files = tuple(sorted((set(_paths(diffed)) | set(_paths(others)) | set(held)) - set(unseen)))
     tests = [rel for rel in files if is_test_file(rel)]
     existed = set(_paths(_git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", *tests))) if tests else set()
     before = {rel: _text(_git(repo, "show", f"{commit}:{rel}")) for rel in sorted(existed)}
@@ -527,13 +549,9 @@ def changed_lines(change: Change, rel: str) -> set[int]:
     file's own, never a ``textconv`` filter's (review M7)."""
     if rel not in change.sources:
         return set()
-    if rel in change.held:   # git's diff does not see it (review C2): the lines differ from the base commit's
-        old = (read_at(change.repo, change.base_commit, rel) or "").splitlines()
-        new = (change.repo / rel).read_text(encoding="utf-8", errors="replace").splitlines()
-        return {line + 1 for tag, _, _, start, end in difflib.SequenceMatcher(None, old, new, autojunk=False)
-                .get_opcodes() if tag in ("replace", "insert") for line in range(start, end)}
-    text = _git(change.repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", change.base_commit, "--",
-                rel).decode("utf-8", "replace")
+    [diffed] = _private(change.repo, change.base_commit,   # never the repository's index (the review of VS-4)
+                        ("diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--", rel))
+    text = diffed.decode("utf-8", "replace")
     if not text.strip():  # untracked: new since the base
         return set(range(1, len((change.repo / rel).read_text(encoding="utf-8", errors="replace").splitlines()) + 1))
     found: set[int] = set()
@@ -564,19 +582,15 @@ def diff_text(change: Change) -> str:
     """The change as one unified diff: git's own for tracked files (each file's text, never a ``textconv`` filter's),
     then each untracked file the change holds as added lines (at most ``DIFF_FILE_CHARS`` of it), so a scan of the
     diff sees a new test file too."""
-    text = _git(change.repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", change.base_commit).decode(
-        "utf-8", "replace")
-    untracked = set(_paths(_git(change.repo, "ls-files", "--others", "--exclude-standard", "-z")))
-    for rel in sorted(untracked & set(change.files) - set(change.outside_links)):   # a link outside: never read (M1)
+    # a private index built from the base tree (the review of VS-4, finding 1): git's flags, its stat cache and an
+    # entry written into the repository's own index hide nothing (review C2 too)
+    diffed, others = _private(change.repo, change.base_commit,   # --text: an attribute never hides a file's lines
+                              ("diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text"),
+                              ("ls-files", "--others", "--exclude-standard", "-z"))
+    text = diffed.decode("utf-8", "replace")
+    for rel in sorted(set(_paths(others)) & set(change.files) - set(change.outside_links)):   # never read (M1)
         lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS].splitlines()
         text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
-    for rel in change.held:   # changed, though git's index flags hide them from its diff (review C2)
-        path = change.repo / rel
-        now = path.read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS] if (
-            path.is_file() and rel not in change.outside_links) else ""
-        then = (read_at(change.repo, change.base_commit, rel) or "")[:DIFF_FILE_CHARS]
-        text += "".join(f"{line}\n" for line in difflib.unified_diff(then.splitlines(), now.splitlines(),
-                                                                     f"a/{rel}", f"b/{rel}", lineterm=""))
     return text
 
 
@@ -1979,8 +1993,10 @@ def _base_revision(change: Change, copy: Path, deadline: float, keep: frozenset[
     target, cannot be put back as it was: ``CopyNotRun`` (``OLD_BASELINE_NOT_RUN``)."""
     from contextlib import ExitStack
 
-    changed = set(_paths(_git(change.repo, "diff", "--name-only", "--no-renames", "-z", change.base_commit)))
-    changed.update(_untracked(change.repo))
+    diffed, others = _private(change.repo, change.base_commit,   # never the repository's index (the review of VS-4)
+                              ("diff", "--name-only", "--no-renames", "-z"),
+                              ("ls-files", "--others", "--exclude-standard", "-z"))
+    changed = set(_paths(diffed)) | set(_paths(others))
     changed.update(change.held)   # changed, though git's index flags hide them from its diff (review C2)
     changed = {rel for rel in changed if not any(rel == kept or rel.startswith(kept + "/") for kept in keep)}
     entries = _paths(_git(change.repo, "ls-tree", "-r", "-l", "-z", change.base_commit))

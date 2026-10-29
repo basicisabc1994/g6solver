@@ -283,8 +283,11 @@ keep a tracked link only when it is relative and resolves inside the copy; each 
 out. On Windows the copy makes each link with the system's separator, and as a folder's link when it names a
 folder.
 
-Git's index flags never hide a change: a tracked file marked assume-unchanged or skip-worktree is compared
-with the base commit's text, as every other tracked file is. One so marked that is not in the working tree (a
+Nothing in `.git` that the patch's author controls hides a change. G6 lists the changed files with a private
+index it builds from the base commit's tree, never the repository's own index, its stat cache or an entry
+written into it, and reads no replace ref; every file's content is compared with the base commit's blob, after
+git's own line-ending conversion, so an untouched file on a Windows checkout is never a change. A tracked file
+marked assume-unchanged or skip-worktree is compared with the base commit's text, as every other tracked file is. One so marked that is not in the working tree (a
 sparse checkout) cannot be compared, so the outcome is at most insufficient evidence
 (`file_not_in_working_tree`), with an unknown, never "unchanged".
 
