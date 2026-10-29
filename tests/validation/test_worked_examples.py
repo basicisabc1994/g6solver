@@ -246,6 +246,38 @@ def test_progress_reads_an_unfinished_run(tmp_path):
     assert got["cost_usd"] == pytest.approx(1.0) and got["last_tool"] == "mcp__g6__g6_review_patch"
 
 
+def test_observe_records_what_the_w_fixes_changed():
+    from worked_examples import observe
+
+    report = "**Supported** (supported_within_scope).\n\n## Reproduced findings\n- None."
+    init = {"type": "system", "subtype": "init", "mcp_servers": [{"name": "g6", "status": "connected"}],
+            "tools": ["Bash", "mcp__g6__g6_review_patch", "mcp__g6__metaharness_job"]}
+
+    def use(i, name, inp):
+        return {"type": "assistant", "message": {"id": f"m{i}", "content": [
+            {"type": "tool_use", "id": f"t{i}", "name": name, "input": inp}]}}
+
+    def result(i, text):
+        return {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": f"t{i}", "content": [{"type": "text", "text": text}]}]}}
+
+    refused = json.dumps({"status": "completed", "result": {"ok": False, "error":
+                          "[G6_E_INPUT_VALIDATION] template_instances.0 (T1): bindings.relation: Field required"}})
+    done = json.dumps({"status": "completed", "result": {"assessment": {"report": report, "outcome": "x"}}})
+    stream = [init,
+              use(1, "mcp__g6__g6_review_patch", {"template_instances": [{"id": "T1"}]}), result(1, refused),
+              use(2, "mcp__g6__g6_review_patch", {"template_instances": [{"id": "T1"}]}), result(2, done),
+              {"type": "assistant", "message": {"id": "m9", "content": [{"type": "text", "text": "G6:\n" + report}]}},
+              {"type": "result", "result": "done"}]
+    got = observe.observe(stream)
+    assert got["server"] == {"g6": "connected", "g6_tools": 2}
+    assert got["replies"] == [{"round": 1, "chars": len(refused), "saved_to_file": False, "refused": True},
+                              {"round": 2, "chars": len(done), "saved_to_file": False, "refused": False}]
+    assert got["report_shown_verbatim"] == [True]
+    assert got["templates"] == {"rounds_with_instances": 2, "refused_for_bindings": 1,
+                                "accepted_after_a_refusal": True}
+
+
 def test_extract_rounds():
     rounds = we.extract_rounds(_stream())
     assert [r["outcome"] for r in rounds] == ["defect_detected", "supported_within_scope"]
