@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -421,9 +422,25 @@ def _result_text(block: Mapping[str, Any]) -> str:
     return "".join(part.get("text", "") for part in content or [] if isinstance(part, dict))
 
 
-def extract_rounds(objects: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+SAVED = re.compile(r"Output has been saved to (/\S+?\.txt)")
+
+
+def archived_resolver(folder: Path) -> Callable[[str], str | None]:
+    """Where a reply Claude Code saved to a file in the container is in the run's archive (``claude_projects``)."""
+    def resolve(path: str) -> str | None:
+        marker = "/.claude/projects/"
+        if marker not in path:
+            return None
+        local = folder / "claude_projects" / path.split(marker, 1)[1]
+        return local.read_text(encoding="utf-8", errors="replace") if local.is_file() else None
+    return resolve
+
+
+def extract_rounds(objects: Iterable[Mapping[str, Any]],
+                   resolve: Callable[[str], str | None] | None = None) -> list[dict[str, Any]]:
     """Each ``g6_review_patch`` call is a round: its input, the polls of ``metaharness_job`` after it, and the last
-    assessment G6 returned before the next round (outcome and report, verbatim)."""
+    assessment G6 returned before the next round (outcome and report, verbatim). A reply too large for Claude Code's
+    transcript is read from the file Claude Code saved it to, through ``resolve``."""
     rounds: list[dict[str, Any]] = []
     tools: dict[str, str] = {}
     for obj in objects:
@@ -441,12 +458,21 @@ def extract_rounds(objects: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]
                 name = tools.get(str(block.get("tool_use_id")), "")
                 if not name.startswith("mcp__g6__"):
                     continue
+                text = _result_text(block)
+                saved = SAVED.search(text)
+                if saved and resolve is not None and (found_text := resolve(saved.group(1))) is not None:
+                    text = found_text
+                    rounds[-1]["saved_to_file"] = True
                 try:
-                    parsed = json.loads(_result_text(block))
+                    parsed = json.loads(text)
                 except ValueError:
                     continue
                 for found in _reports(parsed)[:1]:
                     rounds[-1].update(outcome=found.get("outcome"), report=found.get("report"), assessment=found)
+                inner = parsed.get("result") if isinstance(parsed, dict) and isinstance(parsed.get("result"), dict) \
+                    else parsed
+                if isinstance(inner, dict) and inner.get("error") and not rounds[-1].get("report"):
+                    rounds[-1]["error"] = str(inner["error"])      # a review G6 refused, with its reason
     return rounds
 
 
@@ -735,7 +761,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
                 objects.append(json.loads(line))
             except ValueError:
                 continue
-        rounds = extract_rounds(objects)
+        rounds = extract_rounds(objects, archived_resolver(run.path))
         run.write_json("rounds.json", rounds)
         record["rounds"] = len(rounds)
         record["outcomes"] = [r["outcome"] for r in rounds]
@@ -992,7 +1018,7 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
         for block in ((obj.get("message") or {}).get("content") or []) if obj.get("type") == "assistant" else []:
             if isinstance(block, dict) and block.get("type") == "tool_use":
                 last_tool = str(block.get("name"))
-    rounds = extract_rounds(objects)
+    rounds = extract_rounds(objects, archived_resolver(folder))
     return {"run": folder.name, "finished": (folder / "run.json").is_file(), "model_calls": tally.model_calls,
             "cost_usd": round(tally.cost_usd, 4), "rounds": [r["outcome"] for r in rounds], "last_tool": last_tool}
 
@@ -1000,7 +1026,7 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "dryrun", "run", "check",
-                                        "replay", "show", "progress"))
+                                        "replay", "show", "progress", "rounds"))
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -1017,6 +1043,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "progress":
         print(json.dumps(progress(archive, args.task), indent=1))
+        return 0
+    if args.command == "rounds":
+        # the rounds read again from a finished run's stream and its saved replies, into a new file of the run
+        folder = archive.root / args.run_rel
+        objects = [json.loads(line) for line in (folder / "stream.jsonl").read_text(encoding="utf-8").splitlines()
+                   if line.strip().startswith("{")]
+        rounds = extract_rounds(objects, archived_resolver(folder))
+        c.RunFolder(archive, folder, args.run_rel).write_json("rounds_resolved.json", rounds)
+        print(json.dumps([{k: r.get(k) for k in ("round", "outcome", "error", "saved_to_file", "polls")}
+                          for r in rounds], indent=1))
         return 0
     if args.command == "show":
         found = latest(archive, args.kind, args.task)

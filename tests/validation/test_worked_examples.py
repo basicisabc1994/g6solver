@@ -248,6 +248,20 @@ def test_extract_rounds():
     assert [r["outcome"] for r in rounds] == ["defect_detected", "supported_within_scope"]
     assert rounds[0]["report"] == "R one" and rounds[0]["polls"] == 2 and rounds[1]["input"]["task"] == "t"
     assert rounds[0]["assessment"]["outcome"] == "defect_detected"     # the whole assessment, for the judgements
+    refused = [{"type": "assistant", "message": {"id": "m9", "content": [
+        {"type": "tool_use", "id": "t9", "name": "mcp__g6__g6_review_patch", "input": {}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t9", "content": [
+            {"type": "text", "text": json.dumps({"ok": True, "status": "completed",
+                                                 "result": {"ok": False, "error": "[G6_E_INPUT_VALIDATION] x"}})}]}]}}]
+    assert we.extract_rounds(refused)[0]["error"] == "[G6_E_INPUT_VALIDATION] x"
+    # a reply too large for Claude Code is saved to a file, and the transcript holds only where
+    saved = "/home/tester/.claude/projects/-home-tester-work-black/s1/tool-results/mcp-g6-metaharness_job-1.txt"
+    big = [refused[0], {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t9",
+           "content": f"Error: result (64,108 characters) exceeds maximum allowed tokens. Output has been saved to "
+                      f"{saved}.\nFormat: JSON"}]}}]
+    reply = json.dumps({"result": {"assessment": {"outcome": "test_integrity_compromised", "report": "R big"}}})
+    got = we.extract_rounds(big, resolve=lambda p: reply if p == saved else None)
+    assert got[0]["outcome"] == "test_integrity_compromised" and got[0]["saved_to_file"] is True
 
 
 # --- one run, with a fake Docker --------------------------------------------------------------------------------------------
