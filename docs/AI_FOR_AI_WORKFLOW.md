@@ -268,6 +268,15 @@ model that answered, where the caller gives them; every request and reply is in
 `assessment.completion.model_exchanges`. The repository context it sends is built by
 `g6.harness.verification_proposer.repository_context`, which you can call on its own.
 
+Every reply has `assessment.report`: the review as Markdown, at most about 40 lines, for you to show the
+person as it is. It comes in this order: a headline in plain words (the outcome, "qualified draft", "merging
+needs your separate approval"); the reproduced findings, integrity first, each failed check with its
+requirement, a one-line command that reproduces it with the repository's own test command, and whether a base
+run shows it passes at the base commit; what is not established and what would settle it; what was
+demonstrated; at most 3 questions and merging, for the person to decide; how it was decided (proposed, tested,
+gate, approve); and the standing note that the task's specification may be incomplete. It is derived from the
+other fields and decides nothing. Text from the repository or the request in it is shown inert, in code spans.
+
 Every reply has `assessment.completion`, built from what ran: `demonstrated` (requirements passed on their
 stated checks, with the receipts), `not_established` (with what would settle each), `defects_reproduced`
 (failed stated and repository checks apart from unconfirmed proposed ones, each with its reproduction),

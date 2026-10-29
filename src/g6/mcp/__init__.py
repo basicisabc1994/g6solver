@@ -199,7 +199,10 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         what it proposes runs as proposed checks do, never passes a requirement and gives at most
         insufficient_evidence; every model call, request and reply is in assessment.completion. Every reply
         has assessment.completion: what was demonstrated, what is not established, the defects reproduced,
-        preservation, test adequacy, open questions and every activity. Poll metaharness_job for the result.
+        preservation, test adequacy, open questions and every activity; and assessment.report, the review as
+        Markdown to show the person verbatim: reproduced findings first, then what is not established, what they
+        decide, how it was decided, and the standing note (it decides nothing; text from the repository in it is
+        inert). Poll metaharness_job for the result.
         assessment.outcome is one of: test_integrity_compromised (a sign of a weakened test or test helper that G6's
         static comparison finds, a changed test-runner file, a git-ignored file that could change the run, a shortcut in the diff of the tests,
         their runner or continuous integration, or a run that cannot be believed); defect_detected (a stated check or extra test failed, or a test of a changed module fails
