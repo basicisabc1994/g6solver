@@ -628,7 +628,10 @@ def egress(ctx: Context, px: str, dest: Path) -> dict[str, Any]:
 
 
 def refusal(ctx: Context, task: Task) -> str:
-    """Why the run may not start, or ""."""
+    """Why the run may not start, or "". A file ``HOLD`` at the archive's root holds every run (its text says why)."""
+    hold = ctx.archive.root / "HOLD"
+    if hold.is_file():
+        return "held: " + hold.read_text(encoding="utf-8").strip()[:300]
     if not ctx.g6.get("contains_required"):
         return f"G6's commit {str(ctx.g6.get('commit'))[:12]} lacks a required commit ({', '.join(c.REQUIRED_G6_COMMITS)})"
     v = latest(ctx.archive, "validate", task.id)

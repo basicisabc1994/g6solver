@@ -366,6 +366,10 @@ def test_a_run_refuses_before_any_start(tmp_path):
         rec = we.run_task(ctx, TASK)
         assert rec["status"] == "refused" and why in rec["why"]
         assert not any(call[:2] == ["run", "-d"] for call in ctx.docker.calls)
+    held = _ctx(tmp_path / "e", FakeDocker())
+    (held.archive.root / "HOLD").write_text("waiting for a fix", encoding="utf-8")
+    rec = we.run_task(held, TASK)
+    assert rec["status"] == "refused" and rec["why"] == "held: waiting for a fix"
     ctx = _ctx(tmp_path / "c", FakeDocker())
     ctx.proxy_source = tmp_path / "proxy.py"
     for _ in range(9):
