@@ -196,13 +196,14 @@ Version 2, "Broken tasks" (`broken.py`, with `draw.py`, `stats.py` and `run.py`)
     published-list check (`published_list`: `{"found": false}`, or `{"found": true}` with its `source`, its `file`
     and the file's `sha256`) and the task screen (`screen`: `{"on": false}`, or `{"on": true}` with its `screener` and
     its `record`). A screener who is also the audit's named `auditor` is refused. The entry is copied into the results.
-    For the coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 59. **A published list's IDs.** Its format is not known in advance, so every pool ID its file holds as a whole ID
     (not as part of a longer one: bounded by characters other than letters, digits, underscores and hyphens) is
     excluded, and the file is read only when its SHA-256 is the one the entry records. The draw's caller adds these
     IDs to the excluded ones (`broken.published_ids`, then `draw.order`), and the entry point refuses a manifest
-    holding a task on the list. For the coordinator's ruling.
+    holding a task on the list.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 60. **The task screen and the replacement.** The screen's record is `{"screener", "tasks": {task_id:
     {"label_invalid", "test", "sentence", "weak_tests"}}}`; a task marked label-invalid names the test and the
@@ -210,7 +211,8 @@ Version 2, "Broken tasks" (`broken.py`, with `draw.py`, `stats.py` and `run.py`)
     and only when it is by the screener the entry names; its digest joins the calibration's inputs. Calibration lists
     a label-invalid task for replacement beside the tasks that fail the oracle controls, with the reason "the task
     screen: <test>: <sentence>", and lists the tasks with weak tests, which are kept. `draw.replacements` logs each
-    replacement with the next task in order not already taking another's place. For the coordinator's ruling.
+    replacement with the next task in order not already taking another's place.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 61. **The label audit's kinds.** The audit's record (the manifest's `audit`) is `{"auditor", "audited",
     "label_errors", "errors"}`, with one entry per label error: its `task_id`, its `kind` (1 to 4, or "other") and the
@@ -221,7 +223,12 @@ Version 2, "Broken tasks" (`broken.py`, with `draw.py`, `stats.py` and `run.py`)
     input to `run`, hashed with the manifest into the results, and `run` is the step that writes the labels beside
     the arms' outputs. Open: the auditor compares a judgement with the label, and the entry point computes the labels
     only within `run`. Giving the auditor the labels without the arms' outputs needs a label step inside the vault
-    before `run`, which the scripts do not have. For the coordinator's ruling.
+    before `run`, which the scripts do not have.
+    Ruling (coordinator, 2026-10-29): the owner chose (2026-10-28) that feasibility runs unaudited and says so, with
+    a person named before any confirmatory study. So the label-only step inside the vault is not built now; the
+    feasibility results say the labels were not checked for broken tasks, with OpenAI's estimate (item 62's no-audit
+    branch). It is built before any audited level, when the owner names an auditor. The scripts are to refuse an
+    audit record whose auditor could have seen the labels beside the arms' outputs.
 
 62. **Counting after exclusions.** Label-invalid patches are left out of every primary rate, the per-repository rates,
     detection by category, every hypothesis and comparison with the agent's own review, and so verdict 3, which
@@ -233,4 +240,5 @@ Version 2, "Broken tasks" (`broken.py`, with `draw.py`, `stats.py` and `run.py`)
     rates and the three hypotheses, reported and deciding nothing. `stopping` counts labels before the audit, with
     label-invalid patches. The results report the audit's summary: its errors by kind, the label-invalid patches and
     the number of errors of the fourth kind. Without an audit, no patch is left out, and the results say the labels
-    were not checked for broken tasks, with OpenAI's estimate. For the coordinator's ruling.
+    were not checked for broken tasks, with OpenAI's estimate.
+    Ruling (coordinator, 2026-10-29): accepted as written.

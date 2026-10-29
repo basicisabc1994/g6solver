@@ -320,7 +320,8 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     verification_search.py` at f786774: line 223, `FOLDER = "g6_check_"`, and lines 350 to 354, `placement`). That
     folder depends on the test's text, so it cannot be named before the test is written. R's prompt therefore names
     one folder of that form at the copy's top, `g6_check_review`, which no repository holds; when R's kept tests run,
-    each file is placed as arm E's are, by `placement`. For the coordinator's ruling.
+    each file is placed as arm E's are, by `placement`.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 46. **How a launcher enforces R's session set-up.** The script records the set-up (`SESSION`), and the gaming scan
     checks the transcript; the launcher, the owner's or an approved one, enforces it: the session starts with a fresh,
@@ -330,10 +331,14 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     is read); the commands it runs have no network, by a sandbox or container whose only outbound connection is to the
     model provider. The launcher writes what it did into the session record, beside the transcript. For the
     coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted. The launcher writes what it did into the session record, and the
+    record also states the model, the Claude Code version and that the configuration folder was empty as checked at
+    the start.
 
 47. **The diff R gets.** The prompt is V9's arm 2 prompt with only the two registered changes, so the diff is not
     added to it: the launcher gives it to the session beside the prompt (`prepare`'s `diff`), as V9's arm 2 session
-    has the patch in its working tree. For the coordinator's ruling.
+    has the patch in its working tree.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 48. **R's copy and the history check.** The copy is a new repository into which the base commit alone is fetched
     (`git fetch --depth=1` of that commit), checked out detached, with the patch applied to the working tree and not
@@ -341,16 +346,22 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     and the only commit object in the copy's store is the base commit. A full clone fails it. This check is the one the
     protocol's history rule needs for every copy arms C, T, E and R use; only R's copy is made here. For the
     coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted. The same history check must hold for the copies arms C, T and E use
+    before the study's first run: a freeze-readiness item (a copy that fails it is refused, never run).
 
 49. **Collecting and keeping R's tests.** Every file in R's folder, at any depth, in path order, is collected before
     the copy is discarded; a test file outside the folder is never collected. They are then kept as arm E's are
     (G6's rule for a check file, 64 kilobytes at most, at most 20 test functions in file order), and everything else is
-    counted. For the coordinator's ruling.
+    counted.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 50. **R's cost.** The session record gives its model and its usage, the number of each kind of token the session
     reports. Each kind is priced in dollars per million tokens by the frozen price list for that model; a model or a
     kind of token the list does not price is refused, and a record with no usage is not priced and is counted. For the
     coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted. An R record with no usage is also listed in the verdict's report as
+    not priced, never shown as zero dollars. The launcher's own dollar meter is the stop; the record's pricing is
+    the accounting.
 
 51. **The gaming scan of R's transcript.** V9's scan is reused: vault reads, network use from a command, shortcuts, and
     edits to test or runner files (its edits to its own tests' folder excepted). Every git command R ran is listed;
@@ -360,27 +371,36 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     a `session_set_up` finding voids it too is for the coordinator's ruling. V9's scan now reads a Windows session's
     paths too: an edit to a test or runner file named with backslashes was missed before. For the coordinator's
     ruling.
+    Ruling (coordinator, 2026-10-29): a session_set_up or edit_outside_copy finding voids that arm R session: R's
+    result on that patch becomes a counted tool error, the finding is reported, and the study is not voided. The
+    findings that void the study stay V9's (vault_read, network). The Windows backslash fix is accepted.
 
 52. **Arm R in the driver.** Arm R runs after E on each patch, all four arms on one patch before the next, as an
     injected callable, `arm_r(patch, *, share_left, meter)`: the study's runner prepares the session, an approved
     launcher runs it, and the runner judges it and prices its tokens into the meter, so R is charged as the other arms
     are. When R's result carries the session's transcript, the driver scans it and keeps the scan with R's output in
     the record. Version 1's names follow version 2: arm E's run count is n, and the permitted sentence's number of
-    repositories is P. For the coordinator's ruling.
+    repositories is P.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 53. **Spending shares.** A quarter of the cap each for C, T, E and R, unless the freeze entry sets other shares: each
     arm's fraction of the cap, together at most the whole. The driver and criterion 2 read the same shares. For the
     coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted as the default, a quarter each for C, T, E and R. The owner sets the
+    cap and the shares at the freeze from the rehearsal's projection, which gives each arm its own estimate so the
+    shares can follow it.
 
 54. **Criteria 1 and 2 for arm R.** Criterion 1 holds R as it holds the other arms. Under criterion 2, R's spending is
     held to its share; a session past V9's arm 2 time limit or token cap abstains (or, with no reply, is a tool
     error), is counted as stopped at a limit (`killed_at_time_limit`, `stopped_at_token_cap`, or marked as shaped by
     a limit), and is not a failure of criterion 2. R has no call cap or wall-clock check of its own beyond these. For
     the coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 55. **The filtered findings of E and R.** A finding of arm E or R is left out when its test failed in its body in more
     than half of that arm's own n runs at the base (the arm's record of its tests), not the reruns' three base runs.
-    Measures 3 and 4 are then given again for E and R. For the coordinator's ruling.
+    Measures 3 and 4 are then given again for E and R.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 56. **The verdict.** It is decided only when the gaming scan's findings are given; the scans of R's transcripts the
     record holds are added to them. The findings that void the study are V9's (`vault_read`, `network`). History
@@ -389,13 +409,18 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     script decides "could change its evaluator": both are for the coordinator's ruling. Verdict 2 is
     feasibility criterion 6 alone. V9's feasibility label audit is reported beside it: its sample, label errors, errors
     by kind, label-invalid patches, and the one-sided 95% Clopper–Pearson upper bound on its label error rate. Every
-    git command R ran is reported beside it too. For the coordinator's ruling.
+    git command R ran is reported beside it too.
+    Ruling (coordinator, 2026-10-29): a session_set_up or edit_outside_copy finding voids that arm R session (a
+    counted tool error, the finding reported), not the study; the findings that void the study stay V9's
+    (vault_read, network). Whether an arm could change its evaluator is judged by the coordinator from the reported
+    scan, written into the record before any label is read, never after.
 
 57. **The version 2 sentences.** The second sentence gives arm R's rates beside A's, with all six intervals, and is
     not printed when any of arm T's, A's or R's four rates has no interval. The first sentence gives K_R, with its
     interval, and the note the protocol asks for beside K_R: that M is chosen by V9's arm 2, which uses R's model on
     nearly R's prompt. Similarity to the hidden tests, still not built, covers the checks C, T, E and R wrote. For the
     coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 63. **V9's label-invalid patches in V10.** V10 reads V9's results, whose rows mark each label-invalid patch
     (`label_invalid`, from V9's label audit). Such a patch is left out of every V10 measure, as V9 leaves it out of
@@ -404,44 +429,56 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     every non-empty patch, as before, since its criteria do not read labels. The verdict reads V9's audit summary
     from V9's results unless another is given, and reports it beside the verdict with its one-sided 95% bound. For
     the coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 Items from 64 cover the entry point for V9's feasibility level and V10 together (`study.py`, with `bindings.py`).
 
 64. **One freeze file.** Every frozen parameter is in one file: V9's manifest is its `v9` section, and the file gives
     the level and G6's commit once, for both studies. The entry point refuses to start without that file, or when it
     names no G6 commit (40 lower-case hexadecimal digits); at the feasibility level V9's own checks apply and the arms
-    run only from that commit, as this checkout's clean `HEAD`. For the coordinator's ruling.
+    run only from that commit, as this checkout's clean `HEAD`.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 65. **The order, in steps.** `draw`, V9's `calibrate`, `prepare` (once the agent's patches exist), `arms`, `label`.
     V9's entry point ran its arms and its labels in one call; it is split into `review`, `label` and `results`, with
     `run` unchanged, so that V9's labels stay unread until V10's arms and reruns are recorded (V10's "Data", second
     condition). The record holds V9's rows first, then V9's gaming findings, then V10's driver entries; its final hash
     is written beside it (`<record>.final`) before any label is read. A record that exists already refuses a second
-    run. For the coordinator's ruling.
+    run.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 66. **The draw and the stopping rule.** Every pool ID that V7's or V8's split files hold as a whole ID is excluded,
     with the tasks seen while building verification search and a published list's IDs. V9's tasks must be the draw's
     first tasks, in order, less the tasks the freeze file logs as replaced, and at the feasibility level they must end
     where V9's rule ends them: at the 30th non-empty patch, the 45th task, or the end of the order. For the
     coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted. The freeze-readiness check looks for the published broken-task list
+    on OpenAI's own pages and records found true or false with the source; it is never guessed.
 
 67. **The arms' bindings.** Arms C, T and E are callables the freeze file names. Until VS-5, stand-ins take their
     place behind the same interface; each raises, a counted tool error, and a study level refuses them. At the
     feasibility level C and T run each in a child process, as the driver requires; E runs in the study's process, as
     the driver has it. Each arm is given the patch with its text, its requirements, V9's arm 1 disposition and its
-    trees, the inputs VS-5's callables are expected to need. For the coordinator's ruling.
+    trees, the inputs VS-5's callables are expected to need.
+    Ruling (coordinator, 2026-10-29): accepted. Verification search's proposer has landed, so at the freeze C and T
+    bind to verification search at the frozen commit (the launch's post-fix commit), not stand-ins; a stand-in at a
+    study level stays refused.
 
 68. **Arm R from its sessions.** The entry point never launches a session. A launcher leaves, for each patch, V9's
     arm 2 session record with R's model, its token counts by kind and its transcript's file name, beside it in the
     sessions folder. A patch with no record is a counted tool error ("no session record"); a record without its
     transcript leaves the scan of R's transcript not run, shown as none. R's cost is charged when its session is
     judged, after the session has run, so R's share cannot stop a session already run: the launcher has to keep R's
-    sessions within R's share. For the coordinator's ruling.
+    sessions within R's share.
+    Ruling (coordinator, 2026-10-29): accepted. Because R is charged only when judged, before each R session the
+    launcher checks that the money left in R's share and in the whole cap covers that session's worst case, and
+    starts none that could pass either.
 
 69. **The labels step.** It runs only for a record that verifies against the hash the owner committed, when the vault
     and the calibration are those the arms ran with. Every reproducible finding is rerun on its task's reference fix.
     The gaming findings given to V10's verdict are those of V9's arm 3 (arm A) and the scans of R's transcripts; the
-    scan of arms C, T and E's traces waits for VS-5's trace format. For the coordinator's ruling.
+    scan of arms C, T and E's traces waits for VS-5's trace format.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 Items from 70 cover the cost calibration (`calibration.py`), development calibration and never study data.
 
@@ -450,7 +487,13 @@ Items from 70 cover the cost calibration (`calibration.py`), development calibra
     are listed as not run, and two have content, both in the archive's `gold` folder, which may hold the benchmark's
     reference fixes rather than an agent's patches; their cost is measured all the same. The tasks file gives each
     task's repository, source, base commit and statement, since the script reads no dataset. The arms get no arm A or
-    arm 1 disposition: calibration measures cost, not dispositions. For the coordinator's ruling.
+    arm 1 disposition: calibration measures cost, not dispositions.
+    Ruling (coordinator, 2026-10-29): the two non-empty patches in V7's gold folder are not used unless V7's archive
+    manifest or runner code shows they are an agent's patches; benchmark reference fixes are never development
+    material, and the patches are never opened. If they are reference fixes, or it cannot be told, the projection
+    comes from the rehearsal and the proposer's smoke run. V7's runner shows what they are: its dry run with no
+    model (`replay --task <id> --patch gold`) applies the benchmark's reference solution, and the archive's folder
+    is that dry run's (`legacy/dryrun-2026-10-23/gold`). They are reference fixes and are not used.
 
 71. **The hard dollar stop.** One cap over all four arms, not the study's quarter shares: no model call begins once
     the total spent reaches it, and no arm run starts after that. A call that begins below the cap may end above it.
@@ -458,13 +501,15 @@ Items from 70 cover the cost calibration (`calibration.py`), development calibra
     them within the cap. One run's cap is at most 50 dollars; the script cannot know earlier development spend, so the
     50-dollar total across runs, and VS-5's 10-dollar smoke run first, are the owner's to keep. Arms C and T run in
     the script's own process, so a hung call can stall calibration until VS-5's caller enforces its own time-outs.
-    For the coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted. Before each R session its worst case must fit both R's share and the
+    whole cap (item 68's ruling).
 
 72. **The cost record.** Per patch and arm: model calls, tokens by kind where the provider reports them (C's and T's
     reply `usage`, E's exchanges, R's session record), cents, dollars, and wall-clock and processor seconds; per arm,
     totals and means per patch. It is labelled development calibration, says it is not study data and that it
     informs the owner's spending cap only, and is written only to its output path, never to the freeze file or to
-    anything of G6's. For the coordinator's ruling.
+    anything of G6's.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 Where the work stands: slices J (items 45 to 63, with V9's 58 to 62) and K (items 64 to 72) are complete, every item
 awaiting the coordinator's ruling; the launch slice came next, and nothing of J or K was left part-done.
@@ -476,18 +521,30 @@ Items from 73 cover the session launcher (`launcher.py`), written for the paid r
     no network, as V9 and V10 require. The container holds no saved memory, plugin, skill, hook, tool server or
     instruction file of its own, and `--strict-mcp-config` loads no tool server. Web tools are refused. The model,
     effort and caps are the rehearsal's (V7's runner's `claude-sonnet-5-5` at high effort, the candidate the registry
-    records), since the freeze entry names V9's agent. For the coordinator's ruling.
+    records), since the freeze entry names V9's agent.
+    Ruling (coordinator, 2026-10-29): the model is claude-haiku-4-5, not claude-sonnet-5-5, for the patch session,
+    arm 2 (the same session, resumed) and arm R (a fresh session, the same model): the owner's choice for V9
+    (2026-10-28), which the feasibility freeze entry names; the registry's Sonnet line is the V8 draft's candidate.
+    Effort is Claude Code's default for that model, none set, recorded in each session record. The container, proxy,
+    no-configuration and --strict-mcp-config set-up is accepted as written. Sessions that ran on Sonnet keep their
+    records, labelled not the study's model, and are left out of the projection.
 
 74. **Arm 2 and the patch session share one session.** The patch session's patch is captured as V7 captured it, and
     arm 2 resumes that same session (`--resume`) with V9's frozen review prompt, in the same container. Arm R is a
     fresh session in its own container, in R's copy, and the tests it writes are copied back for `arm_r.collect`. For
     the coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 75. **The diff beside R's prompt.** Item 47 gives R the diff beside its registered prompt. The launcher gives it in
     Claude Code's appended system prompt, so the prompt R reads is the registered text word for word. For the
     coordinator's ruling.
+    Ruling (coordinator, 2026-10-29): accepted as written.
 
 76. **Tokens and endings.** A session's `tokens` counts every kind of token its usage reports, cache reads included,
     so arm 2's token cap must be set with that in mind. A session Claude Code stopped at its turn or budget cap ends
     as `token_cap`, the arm 2 rule's stop at a cap; a time-out as `timed_out`. The dollar stop counts a cache write at
-    twice the input price, the higher published rate. For the coordinator's ruling.
+    twice the input price, the higher published rate.
+    Ruling (coordinator, 2026-10-29): accepted for the stop (a cache write at twice the input price). The cost
+    record prices each kind at its published rate where the usage says which (a five-minute write 1.25 times input,
+    a one-hour one twice), else twice, and the projection gives that figure. Arm 2's token cap is set at the freeze
+    from the rehearsal's measured totals by kind, cache reads included.
