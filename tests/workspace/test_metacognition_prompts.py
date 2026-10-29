@@ -50,3 +50,14 @@ def test_install_is_explicit_and_uses_existing_versioned_library(tmp_path):
         assert record["kind"] == "prompt"
         assert record["declared"]["status"] == "candidate_template"
         assert len(library.history(entry.name)) == 1
+
+
+@pytest.mark.parametrize("module", ["metacognition", "cognitive_prompts", "catalogue"])
+def test_each_prompt_module_imports_on_its_own_in_a_fresh_interpreter(module):
+    # the catalogue imports both entry modules; either imported first must not meet a half-initialised catalogue
+    import subprocess
+    import sys
+
+    done = subprocess.run([sys.executable, "-c", f"from g6.workspace.align_prompt_library.{module} import ENTRIES; "
+                           "print(len(ENTRIES))"], capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0 and int(done.stdout) > 0, done.stderr[-500:]

@@ -32,17 +32,24 @@ def impact_cone(cir: CIR, changed: tuple[str, ...]) -> Impact:
     resource_ops: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for e in cir.effects:
         resource_ops[e.resource].append((e.operation, e.kind))
-    for users in resource_ops.values():
-        if any(kind in ("write", "create", "delete", "unknown") for _, kind in users):
-            for a, _ in users:
-                for b, _ in users:
-                    if a != b:
-                        reverse[a].add(b)
-                        reverse[b].add(a)
+    # Each such resource couples all of its operations; it is kept as one group and opened once, not as every pair.
+    coupled = {resource: {a for a, _ in users} for resource, users in resource_ops.items()
+               if any(kind in ("write", "create", "delete", "unknown") for _, kind in users)}
+    groups: dict[str, list[str]] = defaultdict(list)
+    for resource in coupled:
+        for a in coupled[resource]:
+            groups[a].append(resource)
     impacted = set(changed)
     todo = deque(changed)
+    opened: set[str] = set()
     while todo:
-        for parent in sorted(reverse.get(todo.popleft(), ())):
+        node = todo.popleft()
+        near = set(reverse.get(node, ()))
+        for resource in groups.get(node, ()):
+            if resource not in opened:
+                opened.add(resource)
+                near |= coupled[resource]
+        for parent in sorted(near):
             if parent not in impacted:
                 impacted.add(parent)
                 todo.append(parent)

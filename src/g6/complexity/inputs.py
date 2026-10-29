@@ -74,8 +74,12 @@ def atlas_of(d: TreeFields) -> CIR:
     problem = files_problem(d.files)
     if problem:
         raise ValueError(problem)
-    return build_atlas(d.files, package=d.package, intent=intent_from(d.requirements, d.obligations),
-                       environment_digest=d.environment_digest)
+    intent = intent_from(d.requirements, d.obligations)
+    try:
+        return build_atlas(d.files, package=d.package, intent=intent, environment_digest=d.environment_digest)
+    except (MemoryError, RecursionError) as exc:   # CPython's parser stack or AST depth: nesting past its limits
+        raise ValueError("a file is nested too deeply for Python's parser to read; split the expression or the "
+                         "file") from exc
 
 
 def declared(d: TreeFields) -> dict[str, Any]:

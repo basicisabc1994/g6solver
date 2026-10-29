@@ -11,41 +11,18 @@ The catalogue is static data: nothing here runs a model or writes at import time
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from g6.workspace import _envelope as E
-from g6.workspace.align_prompt_library import library
+from g6.workspace.align_prompt_library import cognitive_prompts, library, metacognition
+from g6.workspace.align_prompt_library._entry import CatalogueEntry
 from g6.workspace.align_prompt_library.library import Library, digest_of
 
 MODES: tuple[str, ...] = ("premortem", "mission", "venture")
 STEPS: tuple[str, ...] = ("propose", "test", "gate", "approve")
 #: The status every installed entry declares, which is what lets a later install update it.
 CANDIDATE = "candidate_template"
-
-
-@dataclass(frozen=True)
-class CatalogueEntry:
-    name: str
-    stage: str
-    mode: str
-    step: str
-    purpose: str
-    source: str
-    template: str
-
-    @property
-    def digest(self) -> str:
-        return digest_of(self.template)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "stage": self.stage, "mode": self.mode, "step": self.step, "purpose": self.purpose,
-                "source": self.source, "digest": self.digest, "placeholders": library.placeholders(self.template),
-                "template": self.template}
-
-
-from g6.workspace.align_prompt_library import cognitive_prompts, metacognition  # noqa: E402 - they use CatalogueEntry
 
 ENTRIES: tuple[CatalogueEntry, ...] = cognitive_prompts.ENTRIES + metacognition.ENTRIES
 _BY_NAME = {e.name: e for e in ENTRIES}

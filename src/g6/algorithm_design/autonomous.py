@@ -99,9 +99,15 @@ class DesignMission:
 
     @property
     def fingerprint(self) -> str:
-        """The digest of exactly what will run: the file map's digest, the package, its root, the target, the tests,
-        the intent's fingerprint, the problem, the environment, the mode and the run limits. It never includes the
-        repository's path, so an approval names the work, not a folder on one machine."""
+        """The digest a person's approval is bound to: the file map's digest, the package, its root, the target, the
+        test identifiers, the intent's fingerprint, the problem, the environment, the mode and the run limits. It never
+        includes the repository's path, so an approval names the work, not a folder on one machine.
+
+        It does not bind the test files' bytes, ``conftest.py`` or the rest of the repository: ``RepoTestsRunner``
+        freezes the test files and the source map when it is built (after the approval is checked) and refuses a run
+        once either changes, but an edit made between the approval and that moment is not caught. An approval is not
+        used up by a run: it stands for every run of this fingerprint until the person rejects it. Binding the
+        repository's tree into the approval waits for the mission container."""
         return digest({"files": digest(dict(self.files)), "package": self.package, "source_root": self.source_root,
                        "target_path": self.target_path, "tests": list(self.tests), "intent": self.intent.fingerprint,
                        "problem": dataclasses.asdict(self.problem), "environment_digest": self.environment_digest,

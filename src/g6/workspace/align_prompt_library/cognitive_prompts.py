@@ -8,7 +8,7 @@ frozen goal, a check, a security rule, an evaluator or what counts as evidence.
 """
 from __future__ import annotations
 
-from g6.workspace.align_prompt_library.catalogue import CatalogueEntry
+from g6.workspace.align_prompt_library._entry import CatalogueEntry
 
 SOURCE = "cognitive bootstrap pull request #4"
 

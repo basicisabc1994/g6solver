@@ -9,6 +9,8 @@ file, starts a process or reaches the network.
 """
 from __future__ import annotations
 
+import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -20,13 +22,51 @@ from g6.algorithm_design import kernels
 MAX_DEPTH = 8
 
 
-def _legacy(fn: Callable[..., kernels.KernelResult], complexity: str) -> Callable[..., ck.CheckedResult]:
-    """One of the first three kernels (``kernels``), answered as a ``CheckedResult`` like the others."""
+#: The longest one kernel call may run, in seconds; past it the call is stopped and refused (``KernelUnavailable``).
+MAX_SECONDS = 10.0
+
+
+def _legacy(fn: Callable[..., kernels.KernelResult], complexity: str,
+            allowed: frozenset[str]) -> Callable[..., ck.CheckedResult]:
+    """One of the first three kernels (``kernels``), answered as a ``CheckedResult`` like the others. Only its input
+    parameters (``allowed``) reach it: its own bounds (``max_items``, ``max_target``, ``independent_oracle_n``) are
+    G6's, never a caller's."""
     def run(**parameters: Any) -> ck.CheckedResult:
+        extra = sorted(set(parameters) - allowed)
+        if extra:
+            raise ck.ContractError(f"parameters do not match the kernel contract: {', '.join(extra)[:200]} "
+                                   f"(it takes {', '.join(sorted(allowed))})")
         got = fn(**parameters)
         return ck.CheckedResult(got.algorithm_id, got.output, got.witness, got.verification, complexity,
                                 tuple(got.limitations))
     return run
+
+
+class _Deadline:
+    """A trace function that stops the traced kernel once ``seconds`` have passed: every kernel is pure Python, so the
+    check runs inside its own loops. The previous trace function (a debugger's, a coverage tool's) comes back after."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds, self.until, self.ticks = seconds, time.monotonic() + seconds, 0
+
+    def __call__(self, frame: Any, event: str, arg: Any) -> Any:
+        return self.local
+
+    def local(self, frame: Any, event: str, arg: Any) -> Any:
+        self.ticks += 1
+        if not self.ticks & 0x3FF and time.monotonic() > self.until:
+            raise kernels.KernelUnavailable(f"the kernel ran past G6's bound of {self.seconds:g} seconds; give it a "
+                                            "smaller input")
+        return self.local
+
+
+def _bounded(fn: Callable[..., ck.CheckedResult], parameters: Mapping[str, Any]) -> ck.CheckedResult:
+    previous = sys.gettrace()
+    sys.settrace(_Deadline(MAX_SECONDS))
+    try:
+        return fn(**dict(parameters))
+    finally:
+        sys.settrace(previous)
 
 
 _FUNCTIONS: dict[str, Callable[..., ck.CheckedResult]] = {
@@ -49,9 +89,9 @@ _FUNCTIONS: dict[str, Callable[..., ck.CheckedResult]] = {
     "huffman": ck.huffman,
     "held_karp_tsp": ck.held_karp_tsp,
     "randomized_quicksort": ck.randomized_quicksort,
-    "interval_earliest_finish": _legacy(kernels.interval_earliest_finish, "O(n log n)"),
-    "subset_sum_dp": _legacy(kernels.subset_sum_dp, "O(nW) pseudo-polynomial"),
-    "merge_sort": _legacy(kernels.merge_sort, "O(n log n) comparisons"),
+    "interval_earliest_finish": _legacy(kernels.interval_earliest_finish, "O(n log n)", frozenset({"intervals"})),
+    "subset_sum_dp": _legacy(kernels.subset_sum_dp, "O(nW) pseudo-polynomial", frozenset({"weights", "target"})),
+    "merge_sort": _legacy(kernels.merge_sort, "O(n log n) comparisons", frozenset({"items", "reverse"})),
 }
 
 
@@ -93,7 +133,7 @@ def invoke(algorithm_id: str, parameters: Mapping[str, Any]) -> ck.CheckedResult
     if not isinstance(parameters, Mapping) or not _plain(parameters):
         raise ck.ContractError("parameters must be declarative data")
     try:
-        result = _FUNCTIONS[algorithm_id](**dict(parameters))
+        result = _bounded(_FUNCTIONS[algorithm_id], parameters)
     except TypeError as exc:
         raise ck.ContractError("parameters do not match the kernel contract") from exc
     if not isinstance(result, ck.CheckedResult) or not result.verification:

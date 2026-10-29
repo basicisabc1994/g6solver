@@ -160,3 +160,49 @@ def test_search_with_a_problem_id_adds_only_reviewed_typed_primitives():
          "established_properties": ["unit_reward", "intervals"], "problem_id": "interval_scheduling"}
     r = invoke_reply("algorithm_design", "search", json.dumps(p))["result"]
     assert any(c["steps"] == ["interval_earliest_finish"] for c in r["candidates"])
+
+
+# --- final review: no caller can lift a kernel's bound, and no kernel runs unbounded (Review Focus 5) ------------------
+
+@pytest.mark.parametrize("algorithm_id,parameters", [
+    ("subset_sum_dp", {"weights": [2] * 40, "target": 1, "independent_oracle_n": 40}),
+    ("subset_sum_dp", {"weights": [1] * 101, "target": 1, "max_items": 1000}),
+    ("subset_sum_dp", {"weights": [1, 2], "target": 10**9, "max_target": 10**12}),
+    ("interval_earliest_finish", {"intervals": [[i, i + 1] for i in range(40)], "independent_oracle_n": 40})])
+def test_a_kernels_own_bound_cannot_be_lifted_by_a_parameter(algorithm_id, parameters):
+    started = time.monotonic()
+    r = invoke_reply("algorithm_design", "run_kernel", json.dumps({"algorithm_id": algorithm_id, "parameters": parameters}))
+    assert r["warning_card"]["code"] == "G6_E_ALGO_KERNEL_REFUSED" and time.monotonic() - started < 2
+
+
+def test_a_no_answer_too_large_to_check_is_refused_not_held_in_memory():
+    # a NO instance whose every subset sum is distinct and below the target: the independent check would hold 2^22 sums
+    params = {"algorithm_id": "subset_sum_mitm", "parameters": {"weights": [2**i for i in range(22)], "target": 2**22}}
+    started = time.monotonic()
+    r = invoke_reply("algorithm_design", "run_kernel", json.dumps(params))
+    assert r["warning_card"]["code"] == "G6_E_ALGO_KERNEL_REFUSED" and time.monotonic() - started < 5
+    small = {"algorithm_id": "subset_sum_mitm", "parameters": {"weights": [2**i for i in range(8)], "target": 2**8}}
+    assert invoke_reply("algorithm_design", "run_kernel", json.dumps(small))["result"]["output"] is False
+
+
+def test_a_kernel_past_the_time_bound_is_stopped(monkeypatch):
+    from g6.algorithm_design import invocation
+    monkeypatch.setattr(invocation, "MAX_SECONDS", 0.5)
+    bags = [list(range(10))] + [list(range(9)) + [10 + i] for i in range(110)]
+    params = {"n": 120, "edges": [], "bags": bags, "bag_tree": [[0, i] for i in range(1, 111)]}
+    started = time.monotonic()
+    r = invoke_reply("algorithm_design", "run_kernel", json.dumps({"algorithm_id": "treewidth_independent_set",
+                                                                    "parameters": params}))
+    assert r["warning_card"]["code"] == "G6_E_ALGO_KERNEL_REFUSED" and time.monotonic() - started < 5
+    assert "seconds" in r["result"]["reason"]
+
+
+def test_the_shortest_path_kernels_answer_at_their_stated_bound():
+    edges = [[i, (i * 7 + j) % 1200] for i in range(1200) for j in range(1, 11)]
+    for algorithm_id, parameters in (("bfs", {"n": 1200, "edges": edges}),
+                                     ("dijkstra", {"n": 1200, "edges": [[u, v, 1 + (u + v) % 5] for u, v in edges]})):
+        started = time.monotonic()
+        r = invoke_reply("algorithm_design", "run_kernel", json.dumps({"algorithm_id": algorithm_id,
+                                                                        "parameters": parameters}))
+        assert r["warning_card"]["code"] == "G6_E_ALGO_KERNEL_CHECKED", r["warning_card"]
+        assert time.monotonic() - started < 8

@@ -41,6 +41,7 @@ def build_atlas(files: Mapping[str, str], *, package: str, intent: FrozenIntent,
         except (SyntaxError, ValueError, RecursionError):
             continue
         globals_in_module: set[str] = set()
+        top_level = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
         for node in tree.body:
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -64,9 +65,7 @@ def build_atlas(files: Mapping[str, str], *, package: str, intent: FrozenIntent,
                             unknowns.append(f"io:{op}:{sub.lineno}")
                         elif isinstance(func, ast.Name) and func.id in _KNOWN_PURE:
                             pass
-                        elif isinstance(func, ast.Name) and func.id in {
-                            n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        }:
+                        elif isinstance(func, ast.Name) and func.id in top_level:
                             deps.append(Dependency(op, f"{module}.{func.id}", "calls", path, sub.lineno))
                         else:
                             unknowns.append(f"unresolved_call:{op}:{sub.lineno}")

@@ -8,7 +8,7 @@ fill, and the sensitive ``install_catalog``): there is no competing prompt store
 """
 from __future__ import annotations
 
-from g6.workspace.align_prompt_library.catalogue import CatalogueEntry
+from g6.workspace.align_prompt_library._entry import CatalogueEntry
 
 SOURCE = "metacognition pull request #6"
 

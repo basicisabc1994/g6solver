@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -79,3 +80,27 @@ def test_it_is_a_registered_beta_block_that_runs_no_code():
                 assert (node.module or "").split(".")[0] not in _RUNS, (path.name, node.lineno)
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 assert node.func.id not in _CALLS, (path.name, node.lineno)
+
+
+# --- final review: work stays near linear inside the 4,000,000-character bound, and no input escapes as a raw error ---
+
+def test_many_functions_sharing_print_and_calling_each_other_answer_quickly():
+    n = 6000
+    body = "".join(f"def f{i}():\n    print()\n    f{(i + 1) % n}()\n" for i in range(n))
+    files = {"big/__init__.py": "", "big/m.py": body}
+    started = time.monotonic()
+    r = invoke_reply("complexity", "impact", json.dumps({**BASE, "files": files, "package": "big",
+                                                         "changed": ["big.m.f0"]}))
+    assert r["warning_card"]["code"] == "G6_E_COMPLEXITY_IMPACT", r["warning_card"]
+    assert len(r["result"]["impacted"]) == n and time.monotonic() - started < 20
+
+
+@pytest.mark.parametrize("source", ["x = " + "not " * 7000 + "y\n", "x = " + "(" * 300 + "1" + ")" * 300 + "\n",
+                                    "x = 1" + " + 1" * 200_000 + "\n"])
+def test_a_source_too_deep_for_the_parser_is_refused_not_raised(source):
+    files = {"deep/__init__.py": "", "deep/m.py": source}
+    for op in ("atlas", "impact"):
+        r = invoke_reply("complexity", op, json.dumps({**BASE, "files": files, "package": "deep",
+                                                       "changed": ["deep.m"]}))
+        assert r["completion_state"] in ("qualified-draft", "blocked-escalated"), r
+        assert r["warning_card"]["code"].startswith("G6_E_COMPLEXITY_"), r["warning_card"]

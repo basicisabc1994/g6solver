@@ -70,16 +70,20 @@ def _verify_potentials(n: int, edges: tuple[tuple[int, int, int], ...], source: 
     """
     if len(distances) != n or len(parents) != n or distances[source] != 0 or parents[source] is not None:
         raise AssertionError("invalid root labels")
-    es = {(u, v, w) for u, v, w in edges}
-    reachable = {source}
-    for _ in range(n):
+    weights: dict[tuple[int, int], set[int]] = {}
+    for u, v, w in edges:
+        weights.setdefault((u, v), set()).add(w)
+    reachable, grew = {source}, True
+    while grew:   # at most n passes, each O(n): a vertex joins once its parent has, through a tight edge
+        grew = False
         for v, p in enumerate(parents):
-            if p is not None and p in reachable:
+            if v not in reachable and p is not None and p in reachable:
                 if distances[p] is None or distances[v] is None or not any(
-                    u == p and vv == v and distances[p] + w == distances[v] for u, vv, w in es
+                    distances[p] + w == distances[v] for w in weights.get((p, v), ())
                 ):
                     raise AssertionError("invalid predecessor path")
                 reachable.add(v)
+                grew = True
     if any((distances[v] is None) != (v not in reachable) for v in range(n)):
         raise AssertionError("unrealized distance or inaccessible vertex")
     for u, v, w in edges:
@@ -511,6 +515,10 @@ def kruskal(n: int, edges: Sequence[tuple[int, int, int]]) -> CheckedResult:
                            ("supports nonnegative integer weights and disconnected forests",))
 
 
+#: The most subset sums `subset_sum_mitm` holds to check a NO answer independently.
+MAX_NO_CHECK_SUMS = 1 << 20
+
+
 def subset_sum_mitm(weights: Sequence[int], target: int) -> CheckedResult:
     """Exact meet-in-middle with a witness, small bounded exhaustive NO oracle."""
     _size(len(weights), limit=32)
@@ -538,6 +546,9 @@ def subset_sum_mitm(weights: Sequence[int], target: int) -> CheckedResult:
         reachable = {0}
         for weight in weights:
             reachable |= {s + weight for s in reachable if s + weight <= target}
+            if len(reachable) > MAX_NO_CHECK_SUMS:
+                raise ContractError(f"a NO answer here needs more than {MAX_NO_CHECK_SUMS:,} subset sums to check "
+                                    "independently, past G6's bound; give it fewer or smaller weights")
         if target in reachable:
             raise AssertionError("false NO result")
     return CheckedResult("subset_sum_mitm", found is not None, found,
