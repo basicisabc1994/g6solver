@@ -22,7 +22,8 @@ For a Python task, work in this order, lean in words.
    acceptance test, or one of G6's templates in `template_instances`: `example.v1` (a stated input gives a stated
    result), `relation.v1` (round trip, idempotence, invariance or monotonicity), `access_rule.v1` (who may do what;
    with `steps`, grant, share and revoke), `differential.v1` (nothing changes outside the change's scope),
-   `forbidden_dependency.v1` (layer rules) or `state_invariant.v1` (critical state).
+   `forbidden_dependency.v1` (layer rules) or `state_invariant.v1` (critical state). Each template's bindings, with one
+   valid instance: `references/templates.md`.
 3. **Hidden constraints.** Ask the person at most 3 questions, each a concrete scenario with the competing outcomes:
    "for this input the original does A and the change would do B; which do you intend?" Probe the code for the rest.
    Never assume an answer: an unanswered question stays open in the report.

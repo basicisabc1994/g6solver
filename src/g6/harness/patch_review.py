@@ -293,7 +293,9 @@ class GateAdapter(AIBlock):
 
 
 class _Refused(repo_tests.RepoRefused):
-    pass
+    """A refusal of the review's own inputs; ``help``, when set, is what the refusal's warning card suggests doing (for
+    a template instance's bindings, the template's bindings and one valid instance: worked examples, W4)."""
+    help = ""
 
 
 def _execute(root: Path, ids: list[str], *, timeout_s: int, change: repo_tests.Change | None = None,
@@ -482,7 +484,9 @@ def _inputs(task, claim, tests, sources, timeout_s, requirements, intent=None, p
         try:
             instances = verification_templates.template_instances(template_instances, assessed)
         except ValueError as exc:
-            raise bad(str(exc)) from exc
+            refused = bad(str(exc))
+            refused.help = getattr(exc, "help", "")
+            raise refused from exc
         if len(instances) + len(proposed) > verification_search.MAX_CHECKS:
             raise bad(f"at most {verification_search.MAX_CHECKS} checks in all, proposed checks and template "
                       f"instances together; {len(proposed) + len(instances)} were given")
@@ -788,7 +792,10 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         if exc.code == ISOLATION_UNAVAILABLE and not isinstance(exc, _Refused):
             # the run's own refusal offers allowing unconfined runs, which a review would refuse anyway
             said = said.removeprefix(f"[{exc.code}] ").split(" To run such code without one")[0] + " " + BOUNDARY_HELP
-        return blocked_reply(f"[{exc.code}] {said}")
+        refused = blocked_reply(f"[{exc.code}] {said}")
+        if getattr(exc, "help", ""):
+            refused["warning_card"].update(suggested_action=exc.help, next_step=exc.help)
+        return refused
     except (OSError, ValueError, TypeError) as exc:
         return blocked_reply(f"[{CODE}] {exc}")
 
