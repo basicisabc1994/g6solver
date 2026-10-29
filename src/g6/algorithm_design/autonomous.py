@@ -34,7 +34,7 @@ from g6.complexity.impact import impact_cone
 from g6.complexity.ir import FrozenIntent, Hypothesis
 from g6.core.ledger import ChainLedger, digest
 from g6.harness.verification_controller import (
-    Experiment, Receipt, VerificationState, next_experiment, rebase, reduce_observation,
+    Experiment, ExperimentState, RunObservation, next_experiment, rebase, reduce_observation,
 )
 
 
@@ -136,6 +136,9 @@ class TestObservation:
     failed_tests: tuple[str, ...] = ()
     log_excerpt: str = ""
     host_observed: bool = False
+    receipt: str = ""                      # the run record's receipt id; "" for a mutant, which is never receipted
+    artifact_digest: str = ""              # the run record's source_before: the snapshot the run began on
+    network: bool = False                  # the run record's isolation.network
 
 
 class CandidateRunner(Protocol):
@@ -219,7 +222,8 @@ class RepoTestsRunner:
             checker_digest=self._checker, candidate_digest=_sha(source),
             failed_tests=tuple(str(x) for x in raw.get("failed_ids", ())[:30]),
             log_excerpt=str(raw.get("output", ""))[-1600:],
-            host_observed=isolated,
+            host_observed=isolated, receipt=str(raw.get("receipt") or ""),
+            artifact_digest=str(raw.get("source_before") or ""), network=bool(isolation.get("network")),
         )
 
 
@@ -313,7 +317,7 @@ def run_agent(mission: DesignMission, producer: ProposalAgent,
     hypotheses = (Hypothesis("regression", "A regression in changed behavior", "high"),
                   Hypothesis("hidden_dependency", "An unmodelled shared effect", "medium"),
                   Hypothesis("wrong_environment", "Wrong runtime loaded", "medium"))
-    state = VerificationState(cir.snapshot.tree_digest, environment, checker,
+    state = ExperimentState(cir.snapshot.tree_digest, environment, checker,
                               hypotheses, mission.max_attempts)
     observed = [baseline]
     seen = set()
@@ -354,12 +358,11 @@ def run_agent(mission: DesignMission, producer: ProposalAgent,
         valid = (observation.isolated and observation.completed and
                  observation.checker_digest == checker and observation.environment_id == environment
                  and observation.candidate_digest == _sha(patch.source))
-        receipt = Receipt(experiment.id, patch.fingerprint, environment, checker,
-                          "host" if observation.host_observed else "declared",
-                          "pass" if observation.verdict == "passed" else
-                          "fail" if observation.verdict == "failed" else "error",
-                          observation.isolated and valid)
-        state = reduce_observation(state, experiment, receipt)
+        outcome = ("pass" if observation.verdict == "passed" else
+                   "fail" if observation.verdict == "failed" else "error")
+        state = reduce_observation(state, experiment, RunObservation(
+            experiment.id, patch.fingerprint, checker, environment, outcome,
+            observation.backend if observation.isolated else None, observation.network, observation.receipt))
         ledger.append("observation", f"run-{i}", {
             "patch_digest": patch.fingerprint, "status": observation.verdict,
             "bound": valid, "checker": observation.checker_digest,

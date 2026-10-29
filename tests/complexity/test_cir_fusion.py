@@ -9,7 +9,7 @@ from g6.algorithm_design.ontology_adapter import retrieve_ontology
 from g6.complexity import FrozenIntent, Obligation, Requirement, build_atlas, impact_cone
 from g6.complexity.ir import Hypothesis
 from g6.harness.verification_controller import (
-    Experiment, Receipt, VerificationState, next_experiment, rebase, reduce_observation,
+    Experiment, ExperimentState, RunObservation, next_experiment, rebase, reduce_observation,
 )
 
 
@@ -75,15 +75,19 @@ def test_ontology_is_metadata_not_code():
 
 
 def test_verification_state_rejects_stale_and_unisolated_receipts():
+    # Observations, read from repo_tests' run record: (experiment, artifact, checker, environment, outcome, backend,
+    # network). A caller's own Receipt, with its isolated flag, is gone.
     h = (Hypothesis("h", "Potential regression", "high"),)
-    state = VerificationState("tree", "env", "checker", h, 4)
+    state = ExperimentState("tree", "env", "checker", h, 4)
     e = Experiment("e", "existing_test", ("h",), 1, allowed=True)
     assert next_experiment(state, (e,)) == e
-    stale = reduce_observation(state, e, Receipt("e", "old", "env", "checker", "host", "pass", True))
-    assert not stale.observations and "stale_receipt" in stale.refusals[0]
-    no_isolation = reduce_observation(state, e, Receipt("e", "tree", "env", "checker", "host", "pass", False))
+    stale = reduce_observation(state, e, RunObservation("e", "old", "checker", "env", "pass", "appcontainer", False))
+    assert not stale.observations and "stale_observation" in stale.refusals[0]
+    no_isolation = reduce_observation(state, e, RunObservation("e", "tree", "checker", "env", "pass", None, False))
     assert not no_isolation.observations
-    accepted = reduce_observation(state, e, Receipt("e", "tree", "env", "checker", "host", "fail", True))
+    networked = reduce_observation(state, e, RunObservation("e", "tree", "checker", "env", "pass", "bubblewrap", True))
+    assert not networked.observations and "isolation_unestablished" in networked.refusals[0]
+    accepted = reduce_observation(state, e, RunObservation("e", "tree", "checker", "env", "fail", "bubblewrap", False))
     assert accepted.observations and accepted.hypotheses[0].state == "open"
     assert next_experiment(accepted, (e,)) is None
     assert rebase(accepted, tree_digest="new", environment_digest="env",
@@ -91,7 +95,7 @@ def test_verification_state_rejects_stale_and_unisolated_receipts():
 
 
 def test_selector_tiebreak_is_stable():
-    state = VerificationState("t", "e", "c", (Hypothesis("h", "claim"),), 2)
+    state = ExperimentState("t", "e", "c", (Hypothesis("h", "claim"),), 2)
     a = Experiment("a", "template", ("h",), 1, True)
     b = Experiment("b", "template", ("h",), 1, True)
     assert next_experiment(state, (b, a)).id == "a"
