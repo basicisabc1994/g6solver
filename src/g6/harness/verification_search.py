@@ -893,23 +893,48 @@ def annotate(evaluated: list[dict], done: Search) -> None:
 #: What ``search`` may set, and each setting's default: template instances run (``templates``; false runs free-form
 #: checks only), and test adequacy is measured (``test_adequacy``, off unless asked: it adds mutation runs).
 SEARCH_SETTINGS = {"templates": True, "test_adequacy": False}
+#: The proposer's settings (``g6.harness.verification_proposer``): whether G6 asks a model for checks (``propose``, off
+#: unless asked), which configuration (``proposer``: ``templates_first``, or ``free_form`` alone), the model-call cap,
+#: one call's limits on its request (characters) and its reply (tokens), and how much of the repository the context
+#: holds (characters). Each limit is a whole number within ``PROPOSER_LIMITS``.
+PROPOSER_FREE_FORM, PROPOSER_TEMPLATES_FIRST = "free_form", "templates_first"
+PROPOSER_SETTINGS = {"propose": False, "proposer": PROPOSER_TEMPLATES_FIRST, "max_model_calls": 10,
+                     "max_input_chars": 60_000, "max_output_tokens": 4_096, "max_context_chars": 24_000}
+PROPOSER_LIMITS = {"max_model_calls": (1, 64), "max_input_chars": (2_000, 400_000), "max_output_tokens": (256, 32_000),
+                   "max_context_chars": (1_000, 200_000)}
 
 
 def search_config(value) -> dict:
-    """``value`` (the review's ``search``) as its settings, each a bool, or a ``ValueError`` that says what is wrong;
-    None gives the defaults."""
+    """``value`` (the review's ``search``) as its settings (``SEARCH_SETTINGS`` and ``PROPOSER_SETTINGS``, with their
+    defaults), or a ``ValueError`` that says what is wrong; None gives the defaults."""
+    settings = {**SEARCH_SETTINGS, **PROPOSER_SETTINGS}
     if value is None:
-        return dict(SEARCH_SETTINGS)
+        return settings
     if not isinstance(value, dict):
-        raise ValueError('search must be an object: {"templates": true or false, "test_adequacy": true or false}')
-    unknown = [str(key)[:40] for key in value if key not in SEARCH_SETTINGS]
+        raise ValueError('search must be an object: {"templates": true or false, "test_adequacy": true or false, '
+                         '"propose": true or false, ...}')
+    unknown = [str(key)[:40] for key in value if key not in settings]
     if unknown:
         raise ValueError("search holds setting(s) G6 does not have: " + ", ".join(unknown) + " (it takes "
-                         + ", ".join(SEARCH_SETTINGS) + ")")
+                         + ", ".join(settings) + ")")
     for key, given in value.items():
-        if not isinstance(given, bool):
+        if key == "proposer":
+            if given not in (PROPOSER_TEMPLATES_FIRST, PROPOSER_FREE_FORM):
+                raise ValueError(f"search.proposer must be {PROPOSER_TEMPLATES_FIRST} or {PROPOSER_FREE_FORM}")
+        elif key in PROPOSER_LIMITS:
+            low, high = PROPOSER_LIMITS[key]
+            if type(given) is not int or not low <= given <= high:
+                raise ValueError(f"search.{key} must be a whole number from {low} to {high}")
+        elif not isinstance(given, bool):
             raise ValueError(f"search.{key} must be true or false")
-    return {**SEARCH_SETTINGS, **value}
+    return {**settings, **value}
+
+
+def shown_config(config: dict) -> dict:
+    """The settings ``scope.search`` shows: the proposer's only when it was asked for, so a review without it reads as
+    before."""
+    return {key: value for key, value in config.items()
+            if key in SEARCH_SETTINGS or (config.get("propose") and key in PROPOSER_SETTINGS)}
 
 
 # --- test adequacy: mutants of the changed lines against each requirement's stated checks (report only) ------------------
@@ -1061,10 +1086,12 @@ _DERIVED_RUN = "tests that touch the changed modules"
 
 def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], skipped: list[dict], defects: list[dict],
                done: Search | None, *, artifact: str, base_commit: str, templates=None,
-               adequacy: tuple[list[dict], list[dict]] | None = None, stopped=()) -> dict:
+               adequacy: tuple[list[dict], list[dict]] | None = None, stopped=(), proposals=None) -> dict:
     """``assessment.completion``, from what ran only (the module's rules). ``templates``: the review's prepared
     template instances (``verification_templates.Prepared``); ``adequacy``: test adequacy and its mutation runs;
-    ``stopped``: each search stage that stopped on an error in G6's own work (``STOPPED``)."""
+    ``stopped``: each search stage that stopped on an error in G6's own work (``STOPPED``); ``proposals``: what the
+    proposer did (``verification_proposer.Proposals``): its activities, its questions and every model request and
+    reply (``model_exchanges``)."""
     tier_one = [found for found in receipts if found.get("tier") == 1]
     demonstrated = [{"requirement": req["id"], "text": req["text"], "kind": req["kind"],
                      "checks": [c["id"] for c in req["checks"]], "receipts": tier_one}
@@ -1114,8 +1141,10 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
                       "provenance": s["contract_provenance"], "check": s["id"], "requirement": s["requirement"],
                       "result": s["activity"]["result"]} for s in structural]
     status = {req["id"]: req["status"] for req in evaluated}
-    questions = sorted(done.questions if done else [],   # open obligations first, then behaviour to keep (safety)
-                       key=lambda q: (status.get(q["requirement"]) == PASSED_ON_CHECKS, q["intent"] != "preserve"))
+    questions = sorted([*(done.questions if done else []), *(proposals.questions if proposals else [])],
+                       # open obligations first, then behaviour to keep (safety); a run's question before a scenario
+                       key=lambda q: (status.get(q["requirement"]) == PASSED_ON_CHECKS, q["intent"] != "preserve",
+                                      q.get("result") == "scenario"))
     activities = [{"activity": "check run", "tier": run["tier"], "what": run["check"], "tests": run["tests"],
                    "provenance": run["provenance"], "result": run["verdict"], "seconds": float(run["seconds"] or 0.0),
                    "model_calls": 0} for run in runs]
@@ -1126,5 +1155,6 @@ def completion(evaluated: list[dict], receipts: list[dict], runs: list[dict], sk
             "defects_reproduced": {"stated_and_repository_checks": stated,
                                    "proposed_checks": [*(done.defects if done else []), *unconfirmed]},
             "preservation": preservation, "test_adequacy": list(measured), "open_questions": questions[:MAX_QUESTIONS],
-            "activities": [*activities, *proposed, *(templates.activities if templates is not None else []),
-                           *mutations, *stopped]}
+            "activities": [*activities, *(proposals.activities if proposals else []), *proposed,
+                           *(templates.activities if templates is not None else []), *mutations, *stopped],
+            **({"model_exchanges": list(proposals.exchanges)} if proposals else {})}

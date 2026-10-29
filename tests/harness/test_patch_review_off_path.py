@@ -59,9 +59,10 @@ def _golden() -> dict:
 
 
 @pytest.mark.parametrize("extra", [{}, {"intent": None}, {"proposed_checks": None}, {"proposed_checks": []},
-                                   {"template_instances": None}, {"template_instances": []}, {"search": None}],
+                                   {"template_instances": None}, {"template_instances": []}, {"search": None},
+                                   {"search": {"propose": False}}],
                          ids=["as-the-trial-calls", "intent-none", "proposed-checks-none", "proposed-checks-empty",
-                              "template-instances-none", "template-instances-empty", "search-none"])
+                              "template-instances-none", "template-instances-empty", "search-none", "propose-false"])
 def test_with_search_off_and_no_intent_every_decided_field_is_unchanged(bwrap_backend, extra):
     assert replies(**extra) == _golden()
 

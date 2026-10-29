@@ -653,7 +653,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
                  claim: str = "", sources: dict[str, str] | None = None, base: str = "HEAD",
                  expected_artifact_digest: str = "", timeout_s: int = 300, intent: dict | None = None,
                  proposed_checks: list[dict] | None = None, template_instances: list[dict] | None = None,
-                 search: dict | None = None, import_roots: list[str] | tuple[str, ...] = ()) -> dict:
+                 search: dict | None = None, import_roots: list[str] | tuple[str, ...] = (),
+                 llm=None) -> dict:
     """Assess the working tree's patch against ``base`` on the stated requirements (``[{id, text, checks}]``, checks
     being pytest node ids) and the extra ``tests``. Never accepts claimed test results; never authorises a merge.
 
@@ -669,6 +670,8 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
     ``search`` (``{"templates": bool, "test_adequacy": bool}``) runs free-form checks only, or measures test adequacy.
     Optional ``import_roots`` (at most ``MAX_IMPORT_ROOTS`` folders inside the repository, such as ``lib``) go first on
     the import path of every run of the review, in place and in copies, and are recorded in its scope.
+    ``search={"propose": true}`` asks a model for checks (``g6.harness.verification_proposer``): ``llm``, the caller to
+    ask (Python only), else the model the person configured for G6; what it proposes stays untrusted.
     """
     started = time.monotonic()
     try:
@@ -698,7 +701,7 @@ def review_patch(repo: str | Path, *, task: str, requirements: list[dict], tests
         return _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources,
                        deadline=started + timeout_s, started=started, listed=listed, assumed=assumed,
                        unmapped=unmapped, proposed=proposed, placed=placed, instances=instances, config=config,
-                       roots=roots)
+                       roots=roots, llm=llm)
     except (component_process.ExecutionInterrupted, component_process.ContainmentFailure):
         raise   # an operator stop, a spent allowance or unconfirmed process cleanup must reach the enclosing door
     except repo_tests.RepoRefused as exc:
@@ -738,7 +741,7 @@ def _stage(stopped: list[dict], what: str, run, *args, **kwargs):
 
 def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task, claim, sources, *, deadline,
             started, listed=(), assumed=(), unmapped=(), proposed=(), placed=None, instances=(),
-            config=None, roots=()) -> dict:
+            config=None, roots=(), llm=None) -> dict:
     reasons: list[dict] = []
     unknowns: list[str] = list(unmapped)   # what an intent held that is not a check of this patch
     runs: list[dict] = []
@@ -825,11 +828,32 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     # from the files, never imported; one the tree gives nothing to apply to is refused alone, and one G6's own
     # reading fails on is an activity's error (review I2).
     stopped: list[dict] = []   # each search stage that stopped on an error in G6's own work
+    instances, proposed, placed = list(instances), list(proposed), dict(placed or {})
+    proposer = proposals = None
+    if config is not None and config["propose"]:   # VS-5: what a model proposes joins the caller's, as untrusted data
+        from g6.harness import verification_proposer, verification_search
+        proposer = _stage(stopped, "the proposer", verification_proposer.Proposer,
+                          root, change, stated, config, llm=llm, deadline=deadline,
+                          room=verification_search.MAX_CHECKS - len(instances) - len(proposed),
+                          skip=INTEGRITY_SKIP if any(r["stage"] == "integrity" for r in reasons) else "")
+        if proposer is not None:
+            proposals = proposer.found
+            instances += _stage(stopped, "the proposer's template instances", proposer.templates) or []
     prepared = None
     if instances:
         from g6.harness import verification_templates
         prepared = _stage(stopped, "reading the template instances", verification_templates.prepare, root, change,
                           instances, enabled=config["templates"], deadline=deadline, roots=roots)
+    if proposer is not None:   # then the scenarios and the free-form checks, where no proposed instance applied
+        mine = {one.id for one in proposals.instances}
+        applied = {a["requirement"] for a in (prepared.activities if prepared is not None else [])
+                   if a.get("check") in mine and a.get("result") not in ("refused", "error", "skipped")}
+        applied |= {item["instance"].requirement_id for item in (prepared.formal if prepared is not None else [])
+                    if item["instance"].id in mine}
+        applied |= {one.requirement_id for one in (prepared.checks if prepared is not None else []) if one.id in mine}
+        if _stage(stopped, "the proposer's free-form checks", proposer.rest, applied) is not None:
+            proposed += proposals.checks
+            placed.update(proposals.placed)
     # Verification search's structural checks (forbidden_dependency.v1), read from the files: one against a stated
     # contract that finds an import the patch adds and the contract forbids fails its requirement; one that finds none
     # passes no requirement (the owner's ruling R-C1); a model's contract decides nothing.
@@ -887,7 +911,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if proposed or compiled:   # verification search: compiled template instances first, then the caller's proposed
         from g6.harness import verification_search   # checks, each on the patch and at the base commit
         checks, where = [*compiled, *proposed], {**(prepared.placed if prepared else {}), **(placed or {})}
-        origins = prepared.origins if prepared is not None else {}
+        origins = {**(prepared.origins if prepared is not None else {}), **(proposals.origins if proposals else {})}
         if any(r["stage"] == "integrity" for r in reasons):
             search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)
         else:
@@ -916,6 +940,10 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     for rel in change.outside_links:   # review M1: G6 never reads one in its own process
         unknowns.append(f"{rel} is a link to a path outside the repository: G6 did not read it in its own process, "
                         "and the copies leave it out")
+    for found in (proposals.activities if proposals else []):   # a proposer that failed says so, with G6's reason
+        if found.get("activity") == "proposer stage" and found.get("result") == "failed":
+            unknowns.append(f"the proposer's {found['stage']} stage failed, so what it would have proposed is "
+                            f"missing: {found['reason']}"[:400])
 
     final = repo_tests.snapshot(root)
     if repo_tests._moved(before, final):   # review I2: a folder G6 did not hash on one side is not a change
@@ -975,8 +1003,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
                   prepared=prepared, adequacy=adequacy, config=config,
-                  counts={"template_instances": len(instances), "proposed_checks": len(proposed)}, roots=roots,
-                  stopped=stopped)
+                  counts={"template_instances": len(instances), "proposed_checks": len(proposed),
+                          "model_calls": proposals.calls if proposals else 0}, roots=roots,
+                  stopped=stopped, proposer=proposals)
 
 
 def _structural_check(found: dict) -> dict:
@@ -1123,7 +1152,7 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
-           adequacy=None, config=None, counts=None, roots=(), stopped=()) -> dict:
+           adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None) -> dict:
     from g6.harness import verification_search   # the completion report, in every reply
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
@@ -1163,13 +1192,14 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
                   "environment": environment, "checks_run": runs, "checks_skipped": skipped, "receipts": receipts,
                   "assumptions": assumptions,
                   # the search configuration (protocol item 1): what ran besides the stated checks, and no model call
-                  "search": {**(config or verification_search.search_config(None)),
-                             **(counts or {"template_instances": 0, "proposed_checks": 0}), "model_calls": 0},
+                  "search": {**verification_search.shown_config(config or verification_search.search_config(None)),
+                             **{"template_instances": 0, "proposed_checks": 0, "model_calls": 0, **(counts or {})}},
                   "import_roots": list(roots), "seconds": round(time.monotonic() - started, 3)},
         "unknowns": unknowns, "next_actions": next_actions, "not_checked": list(NOT_CHECKED),
         "completion": verification_search.completion(evaluated, receipts, runs, skipped, list(defects), search,
                                                      artifact=artifact, base_commit=change.base_commit,
-                                                     templates=prepared, adequacy=adequacy, stopped=stopped)}
+                                                     templates=prepared, adequacy=adequacy, stopped=stopped,
+                                                     proposals=proposer)}
     card = warning_card(CODE, summary, next_actions[0])
     return {**envelope_fields(reliability_label="qualified-draft", warning_card=card, evidence=evidence,
                               request_id=uuid.uuid4().hex[:12], degradation_reason=summary[:300]),

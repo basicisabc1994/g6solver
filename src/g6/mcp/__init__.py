@@ -191,7 +191,13 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         forbidden import against the repository's or your contract is defect_detected; a contract that holds passes
         no requirement, and reads vacuous when the patch could not have broken it. Optional search: {"templates":
         false} runs free-form checks only; {"test_adequacy": true} also mutates the changed lines and reports how many
-        mutants each requirement's stated checks killed and how many survived, which changes no outcome. Every reply
+        mutants each requirement's stated checks killed and how many survived, which changes no outcome.
+        {"propose": true} has G6 ask the model you configured for G6 (G6_LLM_PROVIDER; none, no call) for checks:
+        "proposer": "templates_first" (the default: template by template, then scenarios as questions, then free-form
+        tests where no template applied) or "free_form" (free-form tests only), within "max_model_calls" (default
+        10), "max_input_chars", "max_output_tokens" and "max_context_chars" per call. Its replies are untrusted data:
+        what it proposes runs as proposed checks do, never passes a requirement and gives at most
+        insufficient_evidence; every model call, request and reply is in assessment.completion. Every reply
         has assessment.completion: what was demonstrated, what is not established, the defects reproduced,
         preservation, test adequacy, open questions and every activity. Poll metaharness_job for the result.
         assessment.outcome is one of: test_integrity_compromised (a sign of a weakened test or test helper that G6's
