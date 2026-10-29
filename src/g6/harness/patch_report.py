@@ -55,6 +55,8 @@ RUNS = {"stated checks and extra tests": "the stated checks",
 #: Where the exact command G6 ran is, beside the repository's plain one.
 EXACT = ("G6 ran it with its own isolating options; the exact command is in "
          "`assessment.completion.defects_reproduced` (`reproduction.command`)")
+#: Reviewer B's B6: the caution a proposed or compiled check's reproduction carries, said on its line too.
+CAUTION = "Read it before you run it, or run it in a container."
 
 
 def _plain(node: object) -> str:
@@ -151,7 +153,7 @@ def _findings(assessment: dict) -> list[list[str]]:
             base = f"at the base commit: {code(reproduction.get('at_base', ''), 80)}"
         how = (f"  - Reproduce: write its text (in {code('assessment.completion.defects_reproduced.proposed_checks')}) "
                f"to {code(reproduction.get('file', ''), 80)}, then {_plain(reproduction.get('node', ''))}; {base}. "
-               f"{EXACT}.")
+               f"{EXACT}. The check is code someone other than G6 wrote: {CAUTION}")
         items.append([head, how])
     return items
 

@@ -294,3 +294,15 @@ def test_the_report_says_the_checks_were_stated_in_the_request_never_by_you():
     proposed = next(line for line in report.splitlines() if line.startswith("- **Proposed:**"))
     assert "checks from the checks stated in the request" in proposed, proposed
     assert not re.search(r"\byou\b", proposed), proposed
+
+
+def test_a_proposed_checks_reproduction_carries_g6s_caution():
+    """Reviewer B's B6: the check is code someone other than G6 wrote."""
+    assessment = {**MINIMAL, "outcome": "insufficient_evidence", "completion": {"defects_reproduced": {
+        "proposed_checks": [{"check": "keep-neg", "requirement": "R1", "result": "counterexample",
+                             "code": "unconfirmed_counterexample",
+                             "reproduction": {"file": "g6_check_x/test_keep.py", "node": "g6_check_x/test_keep.py::t",
+                                              "at_base": "passed: 1 test(s) passed"}}]}}}
+    report = patch_report.render(assessment)
+    line = next(line for line in report.splitlines() if line.lstrip().startswith("- Reproduce: write its text"))
+    assert "Read it before you run it, or run it in a container." in line, line
