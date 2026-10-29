@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from patch_review_search import analysis, bindings, record, study
+from patch_review_search import analysis, arm_r, bindings, record, study
 from patch_review_utility import arms, dispositions, draw, labels
 
 BAD = "def add(a, b):\n    return a - b\n"
@@ -190,6 +190,30 @@ def test_the_draw_leaves_out_every_excluded_id_and_the_manifest_must_follow_it(j
     write(path, json.dumps(swapped))
     with pytest.raises(study.Refused, match="draw order"):
         study.follows_draw(study.load_freeze(path), {"order": ordered, "seed": freeze["v9"]["seed"]})
+
+
+def test_c_t_and_e_trees_hold_the_base_commit_only_and_a_tree_with_more_history_is_refused(joint, monkeypatch):
+    # ruling 48 (coordinator, 2026-10-29): arms C, T and E get trees made like R's copy, checked before any arm runs
+    root, path, freeze, _ = joint
+    loaded = study.load_freeze(path)
+    task = loaded["v9"]["tasks"][0]
+    source, base = study.v9run._at(loaded["v9"], task["source"]), task["base_commit"]
+    write(source / "calc.py", GOOD)                                     # a later commit, as a fix commit might be
+    git(source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+        "commit", "-qam", "a later commit")
+    clone = study.trees.checkout(source, base, root / "full-clone")
+    assert "commit(s) besides the base commit" in arm_r.history_problem(clone, base)   # a full clone fails it
+    built = study.build_trees(loaded, root / "trees")
+    for found in built.values():
+        for side in ("base", "patched"):
+            assert arm_r.history_problem(found[side], base) == ""
+            objects = git(found[side], "cat-file", "--batch-all-objects", "--batch-check=%(objecttype) %(objectname)")
+            assert [line.split()[1] for line in objects.splitlines() if line.startswith("commit ")] == [base]
+        assert found["state"] == "non_empty" and "calc.py" in git(found["patched"], "status", "--porcelain")
+        assert git(found["base"], "status", "--porcelain").strip() == ""
+    monkeypatch.setattr(arm_r, "history_problem", lambda copy, base_commit: "the copy holds 1 commit(s) besides it")
+    with pytest.raises(study.Refused, match="never run"):
+        study.build_trees(loaded, root / "trees-refused")
 
 
 def test_prepare_writes_arm_2s_and_arm_rs_inputs_and_rs_copies_with_no_history(joint):

@@ -107,10 +107,10 @@ def history_problem(copy: Path, base_commit: str) -> str:
     return ""
 
 
-def make_copy(source: str | Path, base_commit: str, patch: str, dest: str | Path) -> Path:
-    """R's scratch copy in ``dest`` (which must not exist): the base commit only, fetched alone from ``source``, with
-    ``patch`` applied to the working tree and not committed. A copy with history beyond the base commit, or a patch
-    that does not apply, is refused."""
+def base_only(source: str | Path, base_commit: str, dest: str | Path) -> Path:
+    """A tree in ``dest`` (which must not exist) that holds the base commit only: a new repository, the base commit
+    fetched alone from ``source`` (``--depth=1``), checked out detached. A tree with history beyond it is refused
+    (``ValueError``). R's copy and arms C, T and E's trees are made this way (ruling 48)."""
     dest = Path(dest)
     dest.mkdir(parents=True)
     _git(dest, "init", "-q")
@@ -118,7 +118,18 @@ def make_copy(source: str | Path, base_commit: str, patch: str, dest: str | Path
     _git(dest, "checkout", "-q", "--detach", base_commit)
     problem = history_problem(dest, base_commit)
     if problem:
-        raise ValueError(f"R's copy holds history beyond the base commit: {problem}")
+        raise ValueError(f"the tree holds history beyond the base commit: {problem}")
+    return dest
+
+
+def make_copy(source: str | Path, base_commit: str, patch: str, dest: str | Path) -> Path:
+    """R's scratch copy in ``dest`` (which must not exist): the base commit only (``base_only``), with ``patch``
+    applied to the working tree and not committed. A copy with history beyond the base commit, or a patch that does
+    not apply, is refused."""
+    try:
+        dest = base_only(source, base_commit, dest)
+    except ValueError as exc:
+        raise ValueError(f"R's copy: {exc}") from None
     if trees.apply(dest, patch) != "non_empty":
         raise ValueError("the patch does not apply to R's copy, or changes nothing")
     return dest

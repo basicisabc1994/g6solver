@@ -353,6 +353,10 @@ this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility
     coordinator's ruling.
     Ruling (coordinator, 2026-10-29): accepted. The same history check must hold for the copies arms C, T and E use
     before the study's first run: a freeze-readiness item (a copy that fails it is refused, never run).
+    Built (2026-10-29, the coordinator's second ruling): arms C, T and E's base and patched trees are made as R's copy
+    is (`arm_r.base_only`), and `study.build_trees` checks every tree with `history_problem` after the patch is
+    applied, before any arm runs; a tree that fails it is refused and the study never runs. V9's own trees, V10's
+    calibration and the label step's reference-fix tree keep `trees.checkout`.
 
 49. **Collecting and keeping R's tests.** Every file in R's folder, at any depth, in path order, is collected before
     the copy is discarded; a test file outside the folder is never collected. They are then kept as arm E's are

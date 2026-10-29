@@ -192,15 +192,25 @@ def _patch_text(manifest: dict, task: dict) -> str:
 
 
 def build_trees(freeze: dict, work: Path) -> dict:
-    """Each task's base tree and patched tree, under ``work``, with the patch's state (``trees.apply``)."""
+    """Each task's base tree and patched tree, under ``work``, with the patch's state (``trees.apply``). Ruling 48:
+    each is made like R's copy (``arm_r.base_only``: the base commit only, fetched alone, the patch applied and not
+    committed), and every tree must pass ``arm_r.history_problem`` before any arm runs; one that does not is refused,
+    and the study never runs."""
     manifest, found = freeze["v9"], {}
     for index, task in enumerate(manifest["tasks"]):
-        source = v9run._at(manifest, task["source"])
+        source, base_commit = v9run._at(manifest, task["source"]), task["base_commit"]
         folder = Path(work) / folder_name(index, task["task_id"])
-        base = trees.checkout(source, task["base_commit"], folder / "base")
-        patched = trees.checkout(source, task["base_commit"], folder / "patched")
-        found[task["task_id"]] = {"state": trees.apply(patched, _patch_text(manifest, task)), "base": base,
-                                  "patched": patched}
+        try:
+            base = arm_r.base_only(source, base_commit, folder / "base")
+            patched = arm_r.base_only(source, base_commit, folder / "patched")
+        except ValueError as exc:
+            raise Refused(f"{task['task_id']}: {exc}; refused, never run") from None
+        state = trees.apply(patched, _patch_text(manifest, task))
+        for side, tree in (("base", base), ("patched", patched)):
+            problem = arm_r.history_problem(tree, base_commit)
+            if problem:
+                raise Refused(f"{task['task_id']}'s {side} tree: {problem}; refused, never run")
+        found[task["task_id"]] = {"state": state, "base": base, "patched": patched}
     return found
 
 
