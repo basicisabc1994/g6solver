@@ -437,10 +437,13 @@ def test_token_counts_and_the_answering_model_are_recorded_from_the_clients_usag
     assert (call["input_tokens"], call["output_tokens"], call["answered_by"], call["model"]) == (
         1234, 56, "claude-haiku-4-5-20251001", "claude-haiku-4-5")
     assert call["seconds"] >= 0 and call["model_calls"] == 1
-    [request] = client.requests   # no fallback model: the plain messages call, with the limits and the temperature
-    assert (request["model"], request["max_tokens"], request["temperature"]) == ("claude-haiku-4-5", 900, 0.0)
-    assert "betas" not in request and "fallbacks" not in request
+    [request] = client.requests   # no fallback model: the plain messages call, with the limits, and no sampling setting
+    assert (request["model"], request["max_tokens"]) == ("claude-haiku-4-5", 900)
+    assert "betas" not in request and "fallbacks" not in request and "temperature" not in request
     assert not hasattr(caller.recording, "beta")
+    pinned = FakeClient(json.dumps({"checks": []}))
+    verification_proposer.StudyCaller("claude-haiku-4-5", client=pinned, temperature=0.5).complete("s", "u")
+    assert pinned.requests[0]["temperature"] == 0.5   # sent only when a study sets one
 
 
 def test_every_request_and_reply_is_kept_and_the_context_selection_is_callable_on_its_own(tmp_path, monkeypatch,

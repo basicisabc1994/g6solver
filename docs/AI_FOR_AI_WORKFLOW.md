@@ -251,6 +251,23 @@ never an error.
 `search` is optional: `{"templates": false}` runs your free-form checks only, and lists each template instance
 as skipped; `{"test_adequacy": true}` also measures test adequacy. The configuration is in `scope.search`.
 
+`{"propose": true}` has G6 ask a model for checks, off unless you ask: the model you configured for G6
+(`G6_LLM_PROVIDER` in your key file; with none, no call is made), or, from Python, the caller you pass as `llm`.
+`"proposer": "templates_first"` (the default) asks template by template (with edge inputs for `example.v1` and
+`differential.v1`), then for at most 3 distinguishing scenarios, asked as questions, then for free-form tests
+only for the requirements no proposed instance applied to; `"proposer": "free_form"` asks for free-form tests
+only. Limits: `max_model_calls` (default 10), `max_input_chars` per request (60,000), `max_output_tokens` per
+reply (4,096) and `max_context_chars` (24,000). Reaching one is a skipped activity with its reason; a request
+past the input limit is never sent. Everything the model returns is untrusted data. Each reply must fit a closed
+schema, so a reply that claims a check is stated, adopted or confirmed is refused. An instance it proposes is
+checked by its template (its bindings' provenance is `model_hypothesis`). A free-form test is a file G6 names
+and places, run confined; a conftest, a configuration or a plugin is refused. What it proposes never passes a
+requirement and gives at most `insufficient_evidence`, with its reproduction. Without a boundary for the checks
+it would bring, no model is called. Every model call is an activity with the provider's token counts and the
+model that answered, where the caller gives them; every request and reply is in
+`assessment.completion.model_exchanges`. The repository context it sends is built by
+`g6.harness.verification_proposer.repository_context`, which you can call on its own.
+
 Every reply has `assessment.completion`, built from what ran: `demonstrated` (requirements passed on their
 stated checks, with the receipts), `not_established` (with what would settle each), `defects_reproduced`
 (failed stated and repository checks apart from unconfirmed proposed ones, each with its reproduction),
