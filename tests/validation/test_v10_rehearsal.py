@@ -65,6 +65,49 @@ def test_the_callers_stop_counts_the_worst_case_first_and_charges_the_ledger_and
         blocked.complete("s", "u")
 
 
+def test_the_key_check_needs_the_file_present_unconfined_and_unreachable_from_both_confined_runs(tmp_path,
+                                                                                                    monkeypatch):
+    class Ran:
+        def __init__(self, outcome):
+            self.outcome = outcome
+
+        def run(self, tree, tests, **kwargs):
+            return {"outcomes": {tests[0] + "::test_the_key_file_is_out_of_reach": self.outcome}}
+
+    def g6(result):
+        return lambda tree, **kwargs: {"assessment": {"completion": {"activities": [
+            {"activity": "proposed check", "check": "key", "result": result}]}}}
+
+    for present, confined, proposed, ok in ((True, "passed", "not_refuted", True), (False, "passed", "not_refuted", False),
+                                            (True, "failed", "not_refuted", False),
+                                            (True, "passed", "fails_on_base_too", False)):
+        monkeypatch.setattr(rehearsal, "review_patch", g6(proposed))
+        got = rehearsal.key_check(tmp_path / f"k{present}{confined}{proposed}", executor=Ran(confined),
+                                  present=lambda: present)
+        assert got["ok"] is ok, (present, confined, proposed)
+    assert "open(" in rehearsal.KEY_CHECK and rehearsal.KEY_PATH in rehearsal.KEY_CHECK
+
+
+def test_the_paid_steps_run_each_task_once_in_draw_order_and_arm_r_in_the_host_path_of_its_copy(tmp_path,
+                                                                                                    monkeypatch):
+    rehearsal.build(tmp_path)
+    ran = []
+    monkeypatch.setattr(launcher, "patch_and_self_review", lambda task_id, **kw: ran.append(("patch", task_id)) or {})
+    monkeypatch.setattr(launcher, "review_r", lambda task_id, **kw: ran.append(("r", task_id, kw["copy"])) or {})
+    monkeypatch.setattr(rehearsal, "_paid_context", lambda run, assets: {"docker": None, "assets": None,
+                                                                          "key": "made-up", "ledger": None})
+    (tmp_path / "patches").mkdir()
+    (tmp_path / "patches" / "dev-wallet.diff").write_text("", encoding="utf-8")       # attempted already
+    rehearsal.patches(tmp_path, assets=None, image="img")
+    assert ran == [("patch", "dev-codec")]
+    prepared = tmp_path / "prepared" / "arm_r"
+    prepared.mkdir(parents=True)
+    (prepared / "dev-codec.json").write_text(json.dumps({"task_id": "dev-codec", "copy": "/work/prepared/copies/c"}),
+                                             encoding="utf-8")
+    rehearsal.reviews(tmp_path, assets=None, image="img")
+    assert ran[-1] == ("r", "dev-codec", tmp_path / "prepared" / "copies" / "c")
+
+
 def test_arm_c_and_t_are_arm_as_rule_with_their_search_and_the_stopped_caller(tmp_path, monkeypatch):
     seen = {}
 

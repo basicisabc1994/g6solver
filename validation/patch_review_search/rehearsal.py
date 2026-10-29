@@ -24,6 +24,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+if __package__ in (None, ""):   # run as a script: the study's folder on the path, this folder's names not shadowing
+    import sys as _sys
+    _here = str(Path(__file__).resolve().parent)
+    if _sys.path and _sys.path[0] == _here:
+        _sys.path.pop(0)
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from g6.core.llm import LLMError
 from g6.harness.patch_review import review_patch
 from patch_review_search import arm_e as arm_e_script
@@ -174,6 +180,38 @@ def build(out: str | Path, *, g6_commit: str = "0" * 40) -> Path:
     return path
 
 
+#: Where the container holds the key file, read-only, for G6's own process (``g6.core.keys``, G6's home folder).
+KEY_PATH = "/root/.g6/.env"
+#: The key check's test: it passes only when the key file is out of reach (it never reads the file's text).
+KEY_CHECK = ("import os\n\nimport pytest\n\n\ndef test_the_key_file_is_out_of_reach():\n"
+             f"    assert not os.path.exists({KEY_PATH!r})\n    with pytest.raises(OSError):\n"
+             f"        open({KEY_PATH!r}, 'rb').close()\n")
+
+
+def key_check(work: str | Path, *, executor=None, present=lambda: os.path.isfile(KEY_PATH)) -> dict:
+    """Before the first paid call: the key file is in the container (asked of its existence only, unconfined), and out
+    of reach of a test run through the confined command and of a check G6 runs as it runs proposed checks."""
+    work = Path(work)
+    work.mkdir(parents=True, exist_ok=True)
+    _write(work, {"mod.py": "def f():\n    return 1\n"})
+    _git(work, "init", "-q")
+    _git(work, "add", ".")
+    _git(work, "-c", "user.name=Rehearsal", "-c", "user.email=rehearsal@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "base")
+    _write(work, {"mod.py": "def f():\n    return 2\n", "test_key_check.py": KEY_CHECK})
+    ran = (executor or Executor(list(CONFINED), confined=True, network=False)).run(
+        work, ["test_key_check.py"], timeout_s=120)
+    confined = ran["outcomes"].get("test_key_check.py::test_the_key_file_is_out_of_reach", "missing")
+    reply = review_patch(work, task="Return 2 from f.", requirements=[{"id": "R1", "text": "f returns 2", "checks": []}],
+                         proposed_checks=[{"id": "key", "requirement_id": "R1", "intent": "preserve",
+                                           "file": "test_g6_key_check.py", "source": KEY_CHECK}], timeout_s=300)
+    activities = ((reply.get("assessment") or {}).get("completion") or {}).get("activities") or []
+    proposed = next((a.get("result") for a in activities if a.get("check") == "key"), "missing")
+    found = {"key_file_present_unconfined": bool(present()), "confined_test": confined, "g6_proposed_check": proposed}
+    found["ok"] = found["key_file_present_unconfined"] and confined == "passed" and proposed == "not_refuted"
+    return found
+
+
 class StoppedCaller:
     """G6's caller behind the rehearsal's dollar stop and the arm's share: before each call, the most it could cost
     (each request character an input token, every output token it may ask for) is reserved on the ledger, and refused
@@ -277,4 +315,82 @@ def arm_e(patch: dict, *, c_calls: int, t_calls: int, share_left, meter) -> dict
                               share_left=share_left)
 
 
-__all__ = ["CONFINED", "FIXTURES", "StoppedCaller", "arm_c", "arm_e", "arm_t", "build"]
+#: Inside the container the rehearsal's folder is ``/work``; on the host it is the run's folder.
+CONTAINER_RUN = "/work"
+
+
+def _paid_context(run: Path, assets) -> dict:
+    """The host side of a paid step: the container client, V7's assets, the key (only through ``g6.core.keys``) and
+    the rehearsal's ledger."""
+    from g6.core import keys
+
+    return {"docker": launcher.v7.Docker(), "assets": launcher.v7.Assets.load(Path(assets)),
+            "key": keys.require(keys.Key("ANTHROPIC_API_KEY", "the rehearsal's Claude Code sessions", paid=True)),
+            "ledger": launcher.Ledger(Path(run) / "ledger.json", CAP_DOLLARS)}
+
+
+def patches(run: str | Path, *, assets, image: str) -> list[dict]:
+    """Patch generation and V9's arm 2 for each task in draw order, once each: a task with a captured patch is not run
+    again."""
+    from patch_review_utility import run as v9run
+
+    run = Path(run)
+    freeze = study.load_freeze(run / "freeze.json")
+    context, done = None, []
+    for task in freeze["v9"]["tasks"]:
+        if (run / "patches" / f"{task['task_id']}.diff").exists():
+            continue
+        context = context or _paid_context(run, assets)
+        done.append(launcher.patch_and_self_review(
+            task["task_id"], statement=task["statement"], requirements=v9run._requirements(task),
+            source=run / task["source"], docker=context["docker"], assets=context["assets"], image=image,
+            key=context["key"], ledger=context["ledger"], out=run, time_limit_s=freeze["v9"]["limits"]["arm_seconds"],
+            token_cap=freeze["v9"]["limits"]["token_cap"]))
+    return done
+
+
+def reviews(run: str | Path, *, assets, image: str) -> list[dict]:
+    """V10's arm R for each patch ``study.py prepare`` prepared (in the container), once each, in the host path of
+    its copy."""
+    run, context, done = Path(run), None, []
+    for path in sorted((run / "prepared" / "arm_r").glob("*.json")):
+        prepared = json.loads(path.read_text(encoding="utf-8"))
+        if (run / "r-sessions" / f"{prepared['task_id']}.json").exists():
+            continue
+        copy = run / Path(prepared["copy"]).relative_to(CONTAINER_RUN)
+        context = context or _paid_context(run, assets)
+        done.append(launcher.review_r(prepared["task_id"], prepared={k: v for k, v in prepared.items() if k != "copy"},
+                                      copy=copy, docker=context["docker"], assets=context["assets"], image=image,
+                                      key=context["key"], ledger=context["ledger"], sessions=run / "r-sessions"))
+    return done
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    check = commands.add_parser("key-check", help="show the key file out of reach of confined runs, before any call")
+    check.add_argument("--out", required=True)
+    for name in ("patches", "reviews"):
+        paid = commands.add_parser(name, help="a paid step, on the host: Claude Code sessions in containers")
+        paid.add_argument("--run", required=True)
+        paid.add_argument("--assets", required=True)
+        paid.add_argument("--image", required=True)
+    args = parser.parse_args(argv)
+    if args.command in ("patches", "reviews"):
+        done = (patches if args.command == "patches" else reviews)(args.run, assets=args.assets, image=args.image)
+        print(json.dumps([{k: (v.get("dollars") if isinstance(v, dict) else None) for k, v in item.items()
+                           if k != "patch_text"} for item in done]))
+        return 0
+    with tempfile.TemporaryDirectory(prefix="rehearsal-key-") as work:
+        found = key_check(Path(work) / "repo")
+    Path(args.out).write_text(json.dumps(found, indent=1) + "\n", encoding="utf-8")
+    print(json.dumps(found))
+    return 0 if found["ok"] else 1
+
+
+__all__ = ["CONFINED", "FIXTURES", "StoppedCaller", "arm_c", "arm_e", "arm_t", "build", "key_check"]
+
+if __name__ == "__main__":
+    raise SystemExit(main())
