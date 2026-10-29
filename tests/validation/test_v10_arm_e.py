@@ -114,15 +114,32 @@ def test_a_reply_is_a_json_object_of_files_and_anything_else_cannot_be_parsed():
             arm_e.parse(bad)
 
 
-def test_a_reply_that_is_one_fenced_block_around_the_json_is_read_and_nothing_looser():
-    # the paid rehearsal's third fault: the model wrapped its JSON in one Markdown fence, and every reply was a tool error
+def test_a_reply_holding_exactly_one_fenced_block_that_parses_is_read_whatever_prose_surrounds_it():
+    # the paid rehearsal's third fault, and the coordinator's ruling on it (2026-10-29): exactly one fenced block whose
+    # content parses as the registered object is read, prose before or after it ignored; the reading is counted
     body = reply(("tests/test_a.py", PASSES))
+    files = [{"path": "tests/test_a.py", "text": PASSES}]
+    assert arm_e.read(body) == (files, "json")
     for fenced in (f"```json\n{body}\n```", f"```\n{body}\n```\n", f"  ```json\n{body}\n```  "):
-        assert arm_e.parse(fenced) == [{"path": "tests/test_a.py", "text": PASSES}]
-    for bad in (f"Here are the tests:\n```json\n{body}\n```", f"```json\n{body}\n```\nAnd more.",
-                f"```json\n{body}\n```\n```json\n{body}\n```", f"```python\n{body}\n```"):
+        assert arm_e.read(fenced) == (files, "fenced") and arm_e.parse(fenced) == files
+    for prose in (f"Here are the tests:\n```json\n{body}\n```", f"```json\n{body}\n```\nAnd more.",
+                  f"Looking at this:\n\n1. **R1** first\n\n```json\n{body}\n```\nThat is all."):
+        assert arm_e.read(prose) == (files, "fenced_with_prose")
+    for bad in (f"```json\n{body}\n```\n```json\n{body}\n```",                 # two blocks: refused
+                f"Two:\n```json\n{body}\n```\nand\n```\n{{}}\n```",
+                "Here:\n```json\n{not json\n```", "```json\n[]\n```",          # one block that does not parse
+                f"Here are the tests: {body[:20]}", f"```json\n{body}"):       # no block, or one never closed
         with pytest.raises(arm_e.Unparseable):
-            arm_e.parse(bad)
+            arm_e.read(bad)
+
+
+def test_arm_e_counts_each_replys_reading(trees):
+    body = reply(("tests/test_sum.py", PASSES))
+    file = placed("tests/test_sum.py", PASSES)
+    runner = Recorded({("patched", file): [{"test_sum": "passed"}], ("base", file): [{"test_sum": "passed"}]})
+    got = run(trees, Model(body, f"Tests:\n```json\n{body}\n```"), runner, c_calls=2)
+    assert [x["reading"] for x in got["exchanges"]] == ["json", "fenced_with_prose"]
+    assert got["counts"]["readings"] == {"json": 1, "fenced": 0, "fenced_with_prose": 1}
 
 
 @pytest.mark.parametrize("path", ["conftest.py", "tests/a_test.py", "tests/test-a.py", "../test_a.py", "/test_a.py",

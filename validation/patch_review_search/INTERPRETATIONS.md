@@ -20,7 +20,12 @@ E's prompt and the repository context wait for verification search's proposer in
 2. **The reply format.** A reply is a JSON object `{"files": [{"path": ..., "text": ...}]}`. Anything else is a reply
    the frozen script cannot parse: a tool error. Ruled by the coordinator, provisionally: VS-5's frozen prompt fixes
    E's reply format, and it mirrors G6's proposer's format for free-form checks where it can, so parse failures are
-   comparable.
+   comparable. Ruling (coordinator, 2026-10-29): a reply that holds exactly one fenced block whose content parses as
+   the registered object is read, prose before or after it ignored; two or more fenced blocks, or none that parses,
+   are still a counted tool error; there is no re-ask, which would change E's call count and budget; the frozen prompt
+   is unchanged. Version 2's text says only that "a reply the frozen script cannot parse is a counted tool error for
+   E", so the ruling applies. Each exchange records its reading (`json`, `fenced` or `fenced_with_prose`, `arm_e.read`)
+   and E's counts total them. In the paid rehearsal's 14 replies: 13 `fenced`, 1 `fenced_with_prose`, none bare.
 
 3. **Which files are kept, and where they go.** The protocol keeps "only files named `test_*.py`, placed where G6
    places free-form checks". The script applies G6's whole rule for what a check file may be, which is narrower: the

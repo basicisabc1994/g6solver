@@ -165,19 +165,17 @@ def calls(c_calls: int, t_calls: int, *, cap: int) -> int:
     return min(max(int(c_calls), int(t_calls), 1), cap)
 
 
-#: A reply that is one Markdown fence around the JSON, and nothing else (the paid rehearsal's third fault: the model
-#: fenced its JSON, and every reply was refused).
-_FENCED = re.compile(r"\A\s*```(?:json)?[ \t]*\n(.*)\n```\s*\Z", re.DOTALL)
+#: A Markdown fenced block: a line opening with three backticks (and any language tag), its content, and a line
+#: closing it. The paid rehearsal's third fault: the model fenced its JSON, and the reply was refused.
+_BLOCK = re.compile(r"^[ \t]*```[^\n`]*\n(.*?)\n[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
+#: How a reply was read: the registered JSON object itself, one fenced block holding it and nothing else, or one fenced
+#: block holding it with prose before or after it (the coordinator's ruling, 2026-10-29).
+READINGS = ("json", "fenced", "fenced_with_prose")
 
 
-def parse(reply: str) -> list[dict]:
-    """The files of one reply, ``[{path, text}]``, or ``Unparseable``: a JSON object, or one fenced block holding it
-    and nothing else."""
-    fenced = _FENCED.match(reply) if isinstance(reply, str) else None
-    if fenced and "```" not in fenced.group(1):
-        reply = fenced.group(1)
+def _files(text: str) -> list[dict]:
     try:
-        found = json.loads(reply)
+        found = json.loads(text)
     except (TypeError, ValueError) as exc:
         raise Unparseable("the reply is not JSON") from exc
     files = found.get("files") if isinstance(found, dict) else None
@@ -185,6 +183,30 @@ def parse(reply: str) -> list[dict]:
                                               and isinstance(item.get("text"), str) for item in files):
         raise Unparseable('the reply is not {"files": [{"path": ..., "text": ...}]}')
     return [{"path": item["path"], "text": item["text"]} for item in files]
+
+
+def read(reply: str) -> tuple[list[dict], str]:
+    """The files of one reply, ``[{path, text}]``, and how it was read (``READINGS``), or ``Unparseable``. The reply
+    is the registered JSON object, or holds exactly one fenced block whose content is it, prose before or after it
+    ignored (the coordinator's ruling, 2026-10-29). Two or more fenced blocks, or none that parses, are refused."""
+    if not isinstance(reply, str):
+        raise Unparseable("the reply is not text")
+    try:
+        return _files(reply), "json"
+    except Unparseable as bare:
+        blocks = list(_BLOCK.finditer(reply))
+        if len(blocks) > 1:
+            raise Unparseable(f"the reply holds {len(blocks)} fenced blocks, and only one may hold the files") from None
+        if not blocks:
+            raise bare from None
+        files = _files(blocks[0].group(1))
+        alone = not reply[:blocks[0].start()].strip() and not reply[blocks[0].end():].strip()
+        return files, "fenced" if alone else "fenced_with_prose"
+
+
+def parse(reply: str) -> list[dict]:
+    """The files of one reply (``read``), without how it was read."""
+    return read(reply)[0]
 
 
 def file_problem(file: str) -> str:
@@ -440,7 +462,7 @@ def arm_e(*, ask, patched_tree: Path, base_tree: Path, patch: str, contract: str
             text = answer.get("text") if isinstance(answer, dict) else answer
             exchange.update(reply=text, usage=answer.get("usage") if isinstance(answer, dict) else None)
             try:
-                files = parse(text)
+                files, exchange["reading"] = read(text)
             except Unparseable as exc:
                 return failed(UNPARSEABLE, f"call {call}: {exc}")
             files_seen = files_seen or bool(files)
@@ -461,7 +483,8 @@ def arm_e(*, ask, patched_tree: Path, base_tree: Path, patch: str, contract: str
                  counts={"no_test_file": not files_seen, "none_kept": files_seen and not kept,
                          "kept_files": len(kept), "kept_tests": len(tests), "discarded": len(discarded),
                          "errors": sum(one["error"] for one in tests.values()),
-                         "findings": sum(one["finding"] for one in tests.values())})
+                         "findings": sum(one["finding"] for one in tests.values()),
+                         "readings": {name: sum(x.get("reading") == name for x in exchanges) for name in READINGS}})
     remaining = {test: one for test, one in tests.items() if not (one["fails_at_base"] or one["error"])}
     return {**found, "disposition": _combine(arm_1, "arm 1", tests, ARM_1),
             "e_filtered": _combine(arm_1, "arm 1", remaining, ARM_1),
