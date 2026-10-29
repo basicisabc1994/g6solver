@@ -158,6 +158,42 @@ def test_the_cost_record_gives_each_session_and_arm_and_leaves_another_models_se
     assert got["kind"] == "rehearsal on development fixtures, not study data"
 
 
+def test_the_committed_record_summarises_each_run_labels_other_models_and_names_no_path(tmp_path):
+    run = tmp_path / "runA"
+    (run / "patch-sessions").mkdir(parents=True)
+    session = {"kind": "patch", "task_id": "dev-codec", "model": launcher.MODEL, "model_calls": 4,
+               "usage": {"input_tokens": 10}, "cache_writes": None, "elapsed_s": 9.5, "dollars": 0.03,
+               "accounted_dollars": 0.02, "transcript": str(run / "patch-sessions" / "dev-codec.jsonl")}
+    (run / "patch-sessions" / "dev-codec.json").write_text(json.dumps(session), encoding="utf-8")
+    other = dict(session, task_id="dev-wallet", model="claude-sonnet-5-5")
+    (run / "patch-sessions" / "dev-wallet.json").write_text(json.dumps(other), encoding="utf-8")
+    (run / "key-check.json").write_text(json.dumps({"key_file_present_unconfined": True, "confined_test": "passed",
+                                                    "g6_proposed_check": "not_refuted", "ok": True}), encoding="utf-8")
+    arms_out = {"g6_commit": "c" * 40, "record": {"final": "f" * 64, "entries": 3},
+                "v9": {"gaming": {"contaminated": False, "findings": [], "vault_changes": [], "vault_incidents": []},
+                       "rows": [{"task_id": "dev-codec", "arms": {"tests": {"category": "accept", "detail": str(run)}}}]},
+                "v10": {"patches": [{"patch": "dev-codec", "arm_a": {"category": "insufficient_evidence"}, "arms": {
+                    "E": {"disposition": {"category": "accept", "error_kind": "", "detail": str(run)},
+                          "meter": {"calls": 1, "cents": 0.8}, "model_calls": 1, "seconds": 11.0,
+                          "findings": []}}}],
+                        "spending_differences": [], "reruns": []}}
+    (run / "arms.json").write_text(json.dumps(arms_out), encoding="utf-8")
+    (run / "ledger.json").write_text(json.dumps({"cap": 15.0, "spent": 0.5, "open": {}, "entries": []}),
+                                     encoding="utf-8")
+    got = rehearsal.record({"runA": run}, notes={"runA": "the first run"})
+    text = json.dumps(got)
+    assert str(tmp_path) not in text and "transcript" not in text                      # no private path
+    one = got["runs"]["runA"]
+    assert one["note"] == "the first run" and one["g6_commit"] == "c" * 40 and one["key_check"]["ok"] is True
+    assert [s["label"] for s in one["sessions"]] == ["the study's model", "not the study's model"]
+    assert one["v9"] == {"dev-codec": {"tests": "accept"}} and one["gaming"]["contaminated"] is False
+    assert one["v10"]["dev-codec"]["E"] == {"disposition": "accept", "error_kind": "", "calls": 1, "g6_calls": 1,
+                                            "dollars": 0.008, "seconds": 11.0, "findings": 0}
+    assert got["spent_dollars"] == 0.5 and got["cap_dollars"] == rehearsal.CAP_DOLLARS
+    assert got["projection"]["patch"]["observed"] == [0.03]                             # the study's model only
+    assert got["projection"]["E"]["observed"] == [0.008]
+
+
 def test_the_projection_gives_each_unit_a_low_a_high_and_a_cap_bound_for_the_real_runs_counts():
     units = {"patch": [0.02, 0.04], "self_review": [0.01], "review_r": [0.05], "C": [0.005], "T": [0.03], "E": [0.06]}
     got = rehearsal.projection(units)

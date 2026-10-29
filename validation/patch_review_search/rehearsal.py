@@ -443,6 +443,93 @@ def projection(units: dict[str, list[float]]) -> dict:
     return found
 
 
+#: The plumbing faults the rehearsal found, each changed test first in the scripts only (interpretation 79).
+FAULTS = (
+    {"found_in": "run 1", "fault": "the fixtures had no .gitignore, so the agent's own pytest run left bytecode that "
+     "V7's capture took as binary stubs git cannot apply", "change": "every fixture ignores bytecode",
+     "commit": "3abf377"},
+    {"found_in": "run 3", "fault": "V9's reader of G6's model calls summed every activity, so each of verification "
+     "search's calls was counted twice (2 for 1, 14 for 7; the cents agreed)",
+     "change": "the model call activities are counted once each", "commit": "5de86b9"},
+    {"found_in": "run 3", "fault": "arm E refused a reply the model had put in one Markdown fence, so E was a tool "
+     "error on both patches", "change": "arm E reads exactly one fenced block holding the JSON", "commit": "747cd6f"},
+    {"found_in": "run 4", "fault": "an agent that committed its change left nothing for V7's capture against HEAD, so "
+     "the patch would have counted as empty", "change": "the patch is captured against the task's base commit",
+     "commit": "9e9b9bb"},
+)
+
+
+def _read(path: Path):
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def record(runs: dict[str, str | Path], *, notes: dict[str, str] | None = None) -> dict:
+    """The rehearsal's record for the repository, from its run folders (``runs``: a name for each): per run the G6
+    commit, the key check, every session (labelled with whether it ran on the study's model), V9's arms and V10's arms
+    per patch with their calls, dollars, seconds and findings, the gaming scan, the record's hash and the labels; then
+    the faults found, the spend against the stop, and the projection from the study's model's sessions and arms. It
+    names no path: the run folders are temporary and private."""
+    found, units, spent = {}, {}, 0.0
+    for name, folder in runs.items():
+        folder = Path(folder)
+        cost, arms_out = costs(folder), _read(folder / "arms.json") or {}
+        sessions = [{**{k: v for k, v in s.items() if k != "study_model"},
+                     "label": "the study's model" if s["study_model"] else "not the study's model"}
+                    for s in cost["sessions"]]
+        for s in cost["projection_input"]["sessions"]:
+            units.setdefault(s["kind"], []).append(s["stop_dollars"])
+        v10 = {}
+        for row in (arms_out.get("v10") or {}).get("patches") or []:
+            v10[row["patch"]] = {"A": {"disposition": (row.get("arm_a") or {}).get("category")}}
+            for arm, output in row["arms"].items():
+                meter, disposition = output.get("meter") or {}, output.get("disposition") or {}
+                dollars = round(float(meter.get("cents") or 0) / 100, 6)
+                v10[row["patch"]][arm] = {"disposition": disposition.get("category"),
+                                          "error_kind": disposition.get("error_kind", ""), "calls": meter.get("calls"),
+                                          "g6_calls": output.get("model_calls"),
+                                          "dollars": dollars, "seconds": output.get("seconds"),
+                                          "findings": len(output.get("findings") or [])}
+                if arm in ("C", "T", "E"):
+                    units.setdefault(arm, []).append(dollars)
+        gaming = (arms_out.get("v9") or {}).get("gaming") or {}
+        results = {}
+        v9_results, v10_results = _read(folder / "results" / "v9-results.json"), _read(
+            folder / "results" / "v10-results.json")
+        if v9_results:
+            results["v9"] = {"labels": {r["task_id"]: r["label"] for r in v9_results["tasks"]},
+                             "feasibility": v9_results["feasibility"]["result"],
+                             "verdict": v9_results["verdict"]["verdict"]}
+        if v10_results:
+            results["v10"] = {"counts": {k: v10_results["counts"][k] for k in ("defective", "correct")},
+                              "feasibility": v10_results["feasibility"]["result"],
+                              "criteria": {str(c["criterion"]): c["result"]
+                                           for c in v10_results["feasibility"]["criteria"]},
+                              "verdict": v10_results["verdict"]["verdict"],
+                              "not_built": len(v10_results["not_built"])}
+        ledger = _read(folder / "ledger.json") or {}
+        spent = max(spent, float(ledger.get("spent") or 0))
+        v10_out = arms_out.get("v10") or {}
+        found[name] = {
+            "note": (notes or {}).get(name, ""), "g6_commit": arms_out.get("g6_commit")
+            or (_read(folder / "freeze.json") or {}).get("g6_commit"), "key_check": _read(folder / "key-check.json"),
+            "sessions": sessions,
+            "v9": {row["task_id"]: {arm: (v or {}).get("category") for arm, v in row["arms"].items()}
+                   for row in (arms_out.get("v9") or {}).get("rows") or []},
+            "v10": v10, "gaming": {"contaminated": gaming.get("contaminated"),
+                                   **{k: len(gaming.get(k) or []) for k in ("findings", "vault_changes",
+                                                                             "vault_incidents")}} if gaming else None,
+            "spending_differences": [{k: d.get(k) for k in ("patch", "arm", "metered_calls", "reported_calls",
+                                                             "metered_cents", "reported_cents")}
+                                     for d in v10_out.get("spending_differences") or []],
+            "reruns": [{"patch": r.get("patch"), "arm": r.get("arm"),
+                        "reproducible": (r.get("result") or {}).get("reproducible")}
+                       for r in v10_out.get("reruns") or []],
+            "record": {k: (arms_out.get("record") or {}).get(k) for k in ("final", "entries")} if arms_out else None,
+            "results": results, "ledger_spent_after": ledger.get("spent")}
+    return {"kind": "rehearsal on development fixtures, not study data", "seed": SEED, "cap_dollars": CAP_DOLLARS,
+            "spent_dollars": spent, "runs": found, "faults": list(FAULTS), "projection": projection(units)}
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -455,7 +542,17 @@ def main(argv: list[str] | None = None) -> int:
         paid.add_argument("--run", required=True)
         paid.add_argument("--assets", required=True)
         paid.add_argument("--image", required=True)
+    summary = commands.add_parser("record", help="the rehearsal's record for the repository, naming no path")
+    summary.add_argument("--run", action="append", required=True, help="name=folder, once for each run")
+    summary.add_argument("--note", action="append", default=[], help="name=text")
+    summary.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    if args.command == "record":
+        found = record(dict(item.split("=", 1) for item in args.run),
+                       notes=dict(item.split("=", 1) for item in args.note))
+        Path(args.out).write_text(json.dumps(found, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps({"spent_dollars": found["spent_dollars"], "totals": found["projection"]["totals"]}))
+        return 0
     if args.command in ("patches", "reviews"):
         done = (patches if args.command == "patches" else reviews)(args.run, assets=args.assets, image=args.image)
         print(json.dumps([{"task_id": item["task_id"], "dollars": item.get("dollars")} if "task_id" in item else

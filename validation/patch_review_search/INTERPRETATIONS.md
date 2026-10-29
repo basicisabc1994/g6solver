@@ -566,10 +566,9 @@ Items from 77 cover the paid rehearsal (`rehearsal.py`), on development fixtures
 79. **What the rehearsal found and changed.** Four faults, each fixed test first: the fixtures had no `.gitignore`, so
     the agent's own pytest run left bytecode that V7's capture took as binary stubs git cannot apply (every fixture now
     ignores bytecode, as a real repository does); V9's reader of G6's model calls counted each of verification
-    search's calls twice (it now counts the `model call` activities once each); and arm E refused a reply the model
-    had put in one Markdown fence (it now reads exactly one fenced block); and an agent that committed its change left
-    nothing for V7's capture against HEAD (the launcher now captures against the task's base commit). Two observations,
-    unchanged: arm R's tests'
-    folder also holds the bytecode of running them, which collection reads and keeping discards and counts; and a
-    patch that adds no test leaves arm A, and so C and T, with insufficient evidence (V9 item 1), so their findings come
-    from the proposer alone. For the coordinator's ruling.
+    search's calls twice (it now counts the `model call` activities once each); arm E refused a reply the model had put
+    in one Markdown fence (it now reads exactly one fenced block); and an agent that committed its change left nothing
+    for V7's capture against HEAD (the launcher now captures against the task's base commit). Two observations,
+    unchanged: arm R's tests' folder also holds the bytecode of running them, which collection reads and keeping
+    discards and counts; and a patch that adds no test leaves arm A, and so C and T, with insufficient evidence (V9
+    item 1), so their findings come from the proposer alone. For the coordinator's ruling.
