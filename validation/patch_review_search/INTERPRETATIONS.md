@@ -1,7 +1,11 @@
 # V10: how the scripts read the protocol
 
-Where `docs/validation/patch_review_search/PROTOCOL.md` (version 1, registered on the verification search branch)
-leaves a mechanic open, the scripts in this folder read it as below. A reading is marked for the coordinator's ruling
+Where `docs/validation/patch_review_search/PROTOCOL.md` leaves a mechanic open, the scripts in this folder read it as
+below. Items 1 to 44 were written against version 1, registered on the verification search branch. Items from 45
+read version 2, registered in commit 683308d on the `claude/v10-amend` branch, whose file has the SHA-256
+`715dce8a8167d8c1efb7abb7d5b35f8831caee5317b4b8b230d9b805d77852b4`; it depends on V9's protocol, version 2, SHA-256
+`39a7859e9e44e852328ad545aa440b12849ac5b281c20d9b41eb65e6f58a0000`. Version 2's numbers and names (arm E's run
+count n, the repositories P) replace version 1's in every item. A reading is marked for the coordinator's ruling
 until it is ruled, and then carries the ruling. Items 1 to 14 cover arm E's run mechanics (`arm_e.py`); the model call,
 E's prompt and the repository context wait for verification search's proposer interface (VS-5).
 
@@ -308,7 +312,8 @@ Items 42 to 44 cover the report check (`report_check.py`), the comparison of sta
     V10 version 2's findings table says so. The rest of item 44 is accepted.
 
 Items from 45 cover version 2 of the protocol: arm R (`arm_r.py`), its place in the driver and the measures, and
-V9 version 2's broken tasks as V10 inherits them.
+V9 version 2's broken tasks as V10 inherits them. The version 2 items of both studies share one numbering for ruling:
+this file's 45 to 57 and 63, and V9's 58 to 62 (`validation/patch_review_utility/INTERPRETATIONS.md`).
 
 45. **Where arm R writes its tests.** G6 places a free-form check in a folder of its own, `g6_check_` and the first 12
     hexadecimal digits of the SHA-256 of its text, inside the folder its file names (`src/g6/harness/

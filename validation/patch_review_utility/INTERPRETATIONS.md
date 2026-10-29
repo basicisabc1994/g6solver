@@ -1,6 +1,10 @@
 # How the V9 scripts read the protocol
 
-The protocol (`docs/validation/patch_review_utility/PROTOCOL.md`, version 1) leaves some details open. This file
+The protocol (`docs/validation/patch_review_utility/PROTOCOL.md`) leaves some details open. Items 1 to 19 were
+written against version 1. Version 2, registered in commit 683308d on the `claude/v10-amend` branch, has the SHA-256
+`39a7859e9e44e852328ad545aa440b12849ac5b281c20d9b41eb65e6f58a0000`; its broken-task items are 58 to 62 below, numbered
+after V10's version 2 items (45 to 57, in `validation/patch_review_search/INTERPRETATIONS.md`) so that each item for
+ruling has one number across both studies. This file
 records how the scripts in this folder read each one, and which reading the study's coordinator ruled on. The
 feasibility freeze entry hashes this file together with the scripts; the entry point records its digest in every
 results file. Changing a reading after a freeze changes the hash and is a deviation, logged as the protocol requires.
