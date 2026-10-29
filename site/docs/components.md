@@ -96,6 +96,7 @@ Every component works on its own. *Requires* lists the other components it impor
 | `reasoning` | Reasoning: budgets, honest comparisons and voting for multi-call reasoning. | python | — | — |
 | `reliability_pipeline` | g6.reliability_pipeline — task intake, stage values, the curated failure-mode skills and the premortem's bounded replay checks. | python | — | intent_engine |
 | `safety_engine` | g6.safety_engine — trusted runtime ceilings for one run: the policy, the counters, the pre-action check. | python | — | — |
+| `self_maintenance` | g6.self_maintenance — names the constraint of a measured workflow and plans the next maintenance ticket within a token budget, running nothing. | python + cli + mcp | `identify_constraint`, `plan` | action_gating, agent_claude, agent_codex, agents, operator, safety_engine |
 | `self_training` | Governed self-modification: the promotion authority for proposed harness changes, one governed improvement cycle, and a maturity scorecard. | python | — | — |
 | `shared_workspace` | g6.workspace.shared_workspace — lets several agents share one workspace folder without overwriting each other's work: the first write wins and a stale one is refused. | python + cli + mcp | `read`, `write`, `lock`, `unlock`, `locks`, `conflicts` | — |
 | `solver` | g6.solver — run a goal through a fixed 15-step table of step functions you supply. | python | — | — |

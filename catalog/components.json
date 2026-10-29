@@ -1835,6 +1835,27 @@
     "vetting": null
   },
   {
+    "name": "self_maintenance",
+    "summary": "g6.self_maintenance \u2014 names the constraint of a measured workflow and plans the next maintenance ticket within a token budget, running nothing.",
+    "maturity": "beta",
+    "maturity_reason": "read-only constraint identification and simulated ticket ranking over caller measurements; no scheduler, and the live agent path refuses in this release",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "identify_constraint",
+      "plan"
+    ],
+    "requires": [
+      "action_gating",
+      "agent_claude",
+      "agent_codex",
+      "agents",
+      "operator",
+      "safety_engine"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
     "name": "self_training",
     "summary": "Governed self-modification: the promotion authority for proposed harness changes, one governed improvement cycle, and a maturity scorecard.",
     "maturity": "beta",

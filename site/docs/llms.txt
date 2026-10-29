@@ -1,6 +1,6 @@
 # G6
 
-> Open-source (Apache-2.0) harness for AI agents: it checks an agent's work, gates its risky actions, and labels every result for what the evidence shows (verified, qualified-draft, blocked-escalated). 36 components in the core harness, extensions in families of their own, 11 bundles, the end-to-end `g6.harness`. Python 3.12+, MCP server `g6-mcp` (the main surface), `g6` CLI. Local-first: Ollama or the user's own key; no account, no hosted service.
+> Open-source (Apache-2.0) harness for AI agents: it checks an agent's work, gates its risky actions, and labels every result for what the evidence shows (verified, qualified-draft, blocked-escalated). 37 components in the core harness, extensions in families of their own, 11 bundles, the end-to-end `g6.harness`. Python 3.12+, MCP server `g6-mcp` (the main surface), `g6` CLI. Local-first: Ollama or the user's own key; no account, no hosted service.
 
 ## Start here
 

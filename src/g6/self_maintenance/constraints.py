@@ -41,7 +41,6 @@ class ConstraintAssessment:
     evidence: str
     observations: tuple[tuple[str, float], ...]
     steps: tuple[str, ...]
-    verified: bool = False
 
 
 def identify_constraint(stages: Sequence[StageMeasurement]) -> ConstraintAssessment:
@@ -59,7 +58,7 @@ def identify_constraint(stages: Sequence[StageMeasurement]) -> ConstraintAssessm
                                     "subordinate: avoid optimizing unrelated stages ahead of constraint",
                                     "elevate: increase limiting capacity only after independent evidence",
                                     "repeat: remeasure; the constraint can move",
-                                ), False)
+                                ))
 
 
 @dataclass(frozen=True)

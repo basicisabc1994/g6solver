@@ -149,6 +149,10 @@ PLAIN: dict[str, tuple[str, str, str]] = {
                       "Hard limits for one run: a stop switch, allowed actions, and ceilings on steps, tool calls, "
                       "files changed, time and cost; it also spots tests that were weakened",
                       "runaway runs, and agents that weaken tests to pass them"),
+    "self_maintenance": ("The maintenance planner",
+                         "Finds the stage of a measured workflow that limits it most and picks the next fix that raises "
+                         "it most within a token budget, without running anything",
+                         "effort spent on low-value tasks first"),
     "self_training": ("Change approval",
                       "Decides whether a proposed change to the harness may go live; safety rules and failed tests "
                       "can only make that decision stricter",
@@ -167,7 +171,7 @@ PLAIN: dict[str, tuple[str, str, str]] = {
 # one in the single column that says what it is for. A test fails when a registered core component is in no column, or
 # in two, or a column names one that is not registered.
 TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis")),
+    ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis", "self_maintenance")),
     ("Know", ("context", "grounding", "causal", "graph_reasoning", "complexity")),
     ("Reason", ("formal", "lean", "algebra", "datalog", "prolog", "model_checking", "optimisation", "reasoning",
                 "solver", "debate", "algorithm_design")),

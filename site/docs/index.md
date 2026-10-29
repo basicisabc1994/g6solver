@@ -42,7 +42,7 @@ combine, and bundles package them for one problem each.
 
 -   **Open and composable**
 
-    36 components in the core harness, each usable alone, with their dependencies declared, and extensions in
+    37 components in the core harness, each usable alone, with their dependencies declared, and extensions in
     families of their own. Over MCP, the CLI or Python. Read every line.
 
 </div>

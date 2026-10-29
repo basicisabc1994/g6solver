@@ -4,7 +4,7 @@
 
 Every way of failing G6 names, the components in the library that guard against it today, and the ones whose own use can cause it. A component built in a vetted area guards nothing until its certificate is current.
 
-240 failure modes: 149 guarded by at least one component, 91 with no guard yet.
+240 failure modes: 150 guarded by at least one component, 90 with no guard yet.
 
 | Failure mode | Code | Guarded by | Can be caused by | Built, awaiting its certificate |
 |---|---|---|---|---|
@@ -90,7 +90,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | tests run in a repository that can change during the run | `live_working_tree` | — | `workforce` | — |
 | a model lost in too much context | `long_context_degradation` | `context` | — | — |
 | messages between agents lost or mixed up | `lost_agent_message` | `agent_nanoclaw` | — | — |
-| effort spent on low-value tasks first | `low_value_first` | — | — | — |
+| effort spent on low-value tasks first | `low_value_first` | `self_maintenance` | — | — |
 | model output that does not match the expected structure | `malformed_model_output` | `grounding` | — | — |
 | a manual deployment step done wrong, or impossible to repeat | `manual_deploy_error` | — | — | — |
 | a wrong or planted entry in stored memory, used as if true | `memory_poisoning` | `ctx_ace` | — | — |
@@ -181,7 +181,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a maths claim accepted without a machine-checked proof | `unchecked_maths_claim` | `lean` | — | — |
 | a message released without checking its coverage or tone | `unchecked_message_release` | — | — | — |
 | a plan from an agent or a model followed without checking each step against what its actions need | `unchecked_plan` | `cog_arch_gps` | `goal_engine` | — |
-| a self-change that slips past its own checks | `unchecked_self_change` | `metaharness`, `self_training` | — | — |
+| a self-change that slips past its own checks | `unchecked_self_change` | `metaharness`, `self_maintenance`, `self_training` | — | — |
 | a multi-step workflow failing in a step nobody checked | `unchecked_step` | — | — | — |
 | a task sent to a paid or unsuitable model nobody chose | `unchosen_model` | `llm_router` | — | — |
 | a paid outside service used without the person choosing it | `unchosen_paid_service` | `adapt_image`, `adapt_voice` | — | — |
@@ -244,7 +244,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a law or ruling from another jurisdiction given as the one asked about | `wrong_jurisdiction` | `australian_legal_corpus` | — | — |
 | a poor solution from the wrong optimisation method | `wrong_optimiser` | `optimisation` | — | — |
 | a plan based on wrong physical expectations | `wrong_physics_expectation` | — | — | — |
-| solving the wrong problem | `wrong_problem` | `intent_engine` | `adapt_library_synthesizer`, `component_creator` | — |
+| solving the wrong problem | `wrong_problem` | `intent_engine` | `adapt_library_synthesizer`, `component_creator`, `self_maintenance` | — |
 | harm or irreversibility underestimated | `wrong_risk_tier` | `reliability_pipeline` | — | — |
 | a wrong formula, root or integral stated with confidence | `wrong_symbolic_result` | `algebra` | — | — |
 | a transcript too empty or too long for the speech it came from | `wrong_transcript` | `adapt_voice` | — | — |

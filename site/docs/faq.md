@@ -129,7 +129,7 @@ MCP, a reply with no state is a `qualified-draft`, and nothing is `verified` wit
 
 ### What is a component?
 A small package that does one job, such as `grounding` (check claims against sources) or `action_gating` (allow, ask
-a person, or block). Each works on its own and declares any other component it imports. There are 36 in the core
+a person, or block). Each works on its own and declares any other component it imports. There are 37 in the core
 harness, and 60 extensions are in the library, each in a family for one kind of work; the
 [catalogue](components.md) is generated from the code. The two tables below list every one.
 
@@ -170,6 +170,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `reasoning` | Budgets, vote counting and side-by-side tests for multi-step reasoning, so a gain is measured, not assumed | Python-only | — |
 | `reliability_pipeline` | Takes a task in, checks it can be done, and names how it could fail before work starts | Python-only | — |
 | `safety_engine` | Hard limits for one run: a stop switch, allowed actions, and ceilings on steps, tool calls, files changed, time and cost; it also spots tests that were weakened | Python-only | — |
+| `self_maintenance` | Finds the stage of a measured workflow that limits it most and picks the next fix that raises it most within a token budget, without running anything | MCP | none |
 | `self_training` | Decides whether a proposed change to the harness may go live; safety rules and failed tests can only make that decision stricter | Python-only | — |
 | `solver` | Runs a goal through a fixed sequence of 15 problem-solving steps that you supply, and reports where it stopped | Python-only | — |
 | `workforce` | Fixes what done means before a coding task starts, has a person confirm it, then checks the agent's change against it | Python-only | — |
@@ -271,7 +272,7 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 17 of the 36 core components; the other 19 are
+Every extension in the library can be called over MCP, as can 18 of the 37 core components; the other 19 are
 Python-only for now. The tables above say which.
 
 An op a component marks sensitive, because it runs a program on your computer, reaches the network, spends money,

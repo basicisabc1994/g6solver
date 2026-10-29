@@ -9,11 +9,11 @@ A single trusted coordinator owns the ledger; multi-process scheduling needs a l
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from math import isfinite
 from pathlib import PurePosixPath
-from typing import Literal, Mapping, Sequence
+from typing import Literal, Sequence
 
 from g6.core.ledger import ChainLedger, digest
 

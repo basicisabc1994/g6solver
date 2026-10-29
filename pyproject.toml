@@ -182,7 +182,7 @@ source_modules = [
   "g6.intent_engine",
   "g6.invariants", "g6.lean", "g6.learning", "g6.llm_router", "g6.model_checking", "g6.navigator", "g6.operator",
   "g6.optimisation", "g6.prolog", "g6.reasoning", "g6.reliability_pipeline",
-  "g6.research", "g6.safety_engine", "g6.self_training", "g6.skills", "g6.solver", "g6.triage", "g6.workforce",
+  "g6.research", "g6.safety_engine", "g6.self_maintenance", "g6.self_training", "g6.skills", "g6.solver", "g6.triage", "g6.workforce",
   "g6.agents", "g6.code", "g6.cogarch", "g6.deploy", "g6.domains", "g6.embodied", "g6.integrations", "g6.jobs",
   "g6.knowledge", "g6.media", "g6.memory", "g6.ml", "g6.provers", "g6.sources", "g6.workspace",
 ]

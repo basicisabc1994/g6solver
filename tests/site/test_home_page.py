@@ -28,7 +28,7 @@ def test_the_catalogue_is_the_registry():
     library = {r["name"] for r in catalogue.library_extensions()}
     waiting = {r["name"] for r in catalogue.awaiting_review()}
     rows = catalogue.components()
-    assert {r["name"] for r in rows} == names - members and len(rows) == 36
+    assert {r["name"] for r in rows} == names - members and len(rows) == 37
     assert library == members - waiting and not library & waiting and library == {
         "adapt_audio", "adapt_automl", "adapt_bayesian", "adapt_blender", "adapt_comfyui", "adapt_diagrams",
         "adapt_django", "adapt_ffmpeg", "adapt_generative_art", "adapt_healing", "adapt_image",

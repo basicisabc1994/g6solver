@@ -1,4 +1,4 @@
-# G6 self-maintenance and self-evolution control plane (experimental)
+# G6 self-maintenance and self-evolution control plane
 
 ## Objective
 
@@ -46,8 +46,11 @@ Python: `g6.self_maintenance.kernel` supplies `BudgetPolicy`,
 `MaintenanceTicket`, `BudgetBook` and `rank_tickets`.
 `g6.self_maintenance.constraints` supplies TOC identification, safety envelope and
 `focus_plan`. `g6.self_maintenance.controller.run_one_cycle` calls an injected,
-host-owned coding agent and checker for **one preapproved disposable workspace**.
-`run_existing_agent` adapts Codex and Claude through existing G6 runtimes.
+host-owned coding agent and checker for **one disposable workspace**, and only after a
+person's approval in the operator's queue bound to that ticket, provider and day
+(`ActionQueue.request_run`, `cycle_binding`); the report names the approver.
+`run_existing_agent`, the live Codex and Claude path, refuses in this release
+(`G6_E_SELF_MAINTENANCE_LIVE_AGENT_OFF`) before any runtime is built.
 
 MCP: `g6_find("self maintenance")`, `g6_describe("self_maintenance")`,
 `g6_invoke("self_maintenance", "identify_constraint", ...)`, or
@@ -87,7 +90,7 @@ write the ledger or approve a change.
 Create one host-authored, reproducible ticket outside the protected code,
 specify real existing regression node IDs, record independent stage rates, and
 run `focus_plan` or the MCP read-only plan. Review the ranked decision.
-Call `run_one_cycle` with `operator_enabled=False` as dry run. Only an external
+Call `run_one_cycle` with no approval as a dry run (`simulation_only`). Only an external
 trusted orchestration service can authorize and provide the disposable workspace,
 sealed independent checker and allowed agent. Do not enable write mode by
 default. Compare the fix to an ordinary Codex/Claude run on the same tasks

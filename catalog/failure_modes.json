@@ -1163,7 +1163,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "self_maintenance"
+    ],
     "introduced_by": [],
     "planned": [],
     "awaiting_review": []
@@ -2464,6 +2466,7 @@
     "aliases": [],
     "guarded_by": [
       "metaharness",
+      "self_maintenance",
       "self_training"
     ],
     "introduced_by": [],
@@ -3376,7 +3379,8 @@
     ],
     "introduced_by": [
       "adapt_library_synthesizer",
-      "component_creator"
+      "component_creator",
+      "self_maintenance"
     ],
     "planned": [],
     "awaiting_review": []

@@ -77,8 +77,7 @@ def test_operator_disabled_does_not_run_agent_or_checker():
                            book=BudgetBook(), policy=BudgetPolicy(), day="2026-10-29",
                            workspace="/not/a/workspace",
                            agent_runner=lambda **kw: calls.append("agent"),
-                           independent_checker=lambda *a: calls.append("check"),
-                           operator_enabled=False)
+                           independent_checker=lambda *a: calls.append("check"))   # no approval: a simulation
     assert report.reason == "simulation_only"
     assert calls == []
 

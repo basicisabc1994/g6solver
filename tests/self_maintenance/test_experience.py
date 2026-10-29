@@ -13,7 +13,7 @@ def test_feedback_metrics_have_missingness_and_friction():
     rows = [UserSignal("first-time", i != 0, float(i + 1), 4 if i % 2 else 0,
                        i % 3, i == 0, True, True) for i in range(10)]
     result = summarize_experience(rows)
-    assert result.consented_sessions == 10
+    assert result.consenting_sessions == 10
     assert result.task_completion_rate == .9
     assert result.satisfaction_mean == 4
     assert result.accessibility_issues == 1
