@@ -382,6 +382,35 @@ def reviews(run: str | Path, *, assets, image: str) -> list[dict]:
     return done
 
 
+def costs(run: str | Path) -> dict:
+    """The rehearsal's cost record from a run's folder: each session (the patch session, arm 2, arm R) with its calls,
+    tokens by kind, seconds and dollars at the stop's rate and at each kind's own rate; each of arms C, T and E (and
+    R's judging) per patch, from the arms step's output; and what the projection may use. A session on another model
+    than the study's (``launcher.MODEL``) is kept and labelled, and left out of the projection (ruling on item 73)."""
+    run, sessions = Path(run), []
+    for folder in ("patch-sessions", "sessions", "r-sessions"):
+        for path in sorted((run / folder).glob("*.json")):
+            if path.name.endswith(".command.json"):
+                continue
+            item = json.loads(path.read_text(encoding="utf-8"))
+            sessions.append({"kind": item.get("kind"), "task": item.get("task_id"), "model": item.get("model"),
+                             "study_model": item.get("model") == launcher.MODEL, "calls": item.get("model_calls"),
+                             "tokens": item.get("usage"), "cache_writes": item.get("cache_writes"),
+                             "seconds": item.get("elapsed_s"), "stop_dollars": item.get("dollars"),
+                             "accounted_dollars": item.get("accounted_dollars")})
+    arms_out: dict[str, list] = {arm: [] for arm in "CTER"}
+    found = run / "arms.json"
+    for row in (json.loads(found.read_text(encoding="utf-8"))["v10"]["patches"] if found.is_file() else []):
+        for arm, output in row["arms"].items():
+            meter = output.get("meter") or {}
+            arms_out[arm].append({"task": row["patch"], "calls": meter.get("calls"),
+                                  "dollars": round(float(meter.get("cents") or 0) / 100, 6),
+                                  "seconds": output.get("seconds")})
+    return {"kind": "rehearsal on development fixtures, not study data", "sessions": sessions, "arms": arms_out,
+            "projection_input": {"sessions": [s for s in sessions if s["study_model"]],
+                                 "left_out": [s for s in sessions if not s["study_model"]]}}
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 

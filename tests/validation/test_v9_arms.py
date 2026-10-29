@@ -698,3 +698,16 @@ def test_confined_g6_and_direct_checks_accept_the_correct_patch_and_reject_the_u
     (repo / "calc.py").write_text("def add(a, b):\n    return b - a\n", encoding="utf-8")
     assert g6(repo, checks)["disposition"]["category"] == "defect_found"
     assert arms.direct_checks(repo, CONTRACT, checks, timeout_s=300)["disposition"]["category"] == "defect_found"
+
+
+def test_g6s_model_calls_are_counted_once_each_from_verification_searchs_own_activities():
+    # the paid rehearsal's second fault: each model call is its own activity carrying "model_calls": 1, and the
+    # proposer's stage activity carries the stage's total too, so summing every activity counted each call twice
+    reply = {"assessment": {"completion": {"activities": [
+        {"activity": "proposer stage", "stage": "example.v1", "model_calls": 2},
+        {"activity": "model call", "call": 1, "model_calls": 1}, {"activity": "model call", "call": 2, "model_calls": 1},
+        {"activity": "proposed check", "check": "g6p-1"}]}}}
+    assert arms.model_calls(reply) == {"count": 2, "source": "assessment.completion.activities (model call)"}
+    older = {"assessment": {"completion": {"activities": [{"activity": "review", "model_calls": 3}]}}}
+    assert arms.model_calls(older) == {"count": 3, "source": "assessment.completion.activities"}
+    assert arms.model_calls(None) == {"count": 0, "source": arms.MODEL_CALLS_NOT_REPORTED}

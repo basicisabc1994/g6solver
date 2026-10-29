@@ -216,6 +216,11 @@ def model_calls(reply: dict | None) -> dict:
     completion = ((reply or {}).get("assessment") or {}).get("completion")
     activities = completion.get("activities") if isinstance(completion, dict) else None
     if isinstance(activities, list):
+        # verification search records each model call as its own activity, and its stage activities repeat their
+        # calls' total, so its calls are counted once each, never summed (the paid rehearsal's second fault)
+        calls = [a for a in activities if isinstance(a, dict) and a.get("activity") == "model call"]
+        if calls:
+            return {"count": len(calls), "source": "assessment.completion.activities (model call)"}
         return {"count": sum(int(a.get("model_calls") or 0) for a in activities if isinstance(a, dict)),
                 "source": "assessment.completion.activities"}
     return {"count": 0, "source": MODEL_CALLS_NOT_REPORTED}

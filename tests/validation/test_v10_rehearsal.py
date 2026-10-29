@@ -135,6 +135,29 @@ def test_no_r_session_starts_that_rs_share_cannot_cover_at_its_worst(tmp_path, m
     assert ran == [] and json.loads((tmp_path / "freeze.json").read_text(encoding="utf-8"))["v10"]["cap_cents"] == 1500
 
 
+def test_the_cost_record_gives_each_session_and_arm_and_leaves_another_models_sessions_out(tmp_path):
+    def session(folder, task, kind, model, accounted):
+        (tmp_path / folder).mkdir(parents=True, exist_ok=True)
+        (tmp_path / folder / f"{task}.json").write_text(json.dumps({
+            "task_id": task, "kind": kind, "model": model, "model_calls": 3, "elapsed_s": 9.0, "dollars": accounted * 1.4,
+            "accounted_dollars": accounted, "usage": {"input_tokens": 10, "output_tokens": 5,
+                                                      "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20},
+            "cache_writes": {"ephemeral_5m_input_tokens": 20, "ephemeral_1h_input_tokens": 0}}), encoding="utf-8")
+    session("patch-sessions", "t1", "patch", launcher.MODEL, 0.04)
+    session("sessions", "t1", "self_review", launcher.MODEL, 0.01)
+    session("r-sessions", "t1", "review_r", "claude-sonnet-5-5", 0.05)
+    (tmp_path / "arms.json").write_text(json.dumps({"v10": {"patches": [{"patch": "t1", "arms": {
+        arm: {"meter": {"calls": 2, "cents": 1.5}, "seconds": 30.0, "disposition": {"category": "accept"}}
+        for arm in "CTER"}}]}}), encoding="utf-8")
+    got = rehearsal.costs(tmp_path)
+    by = {(row["kind"], row["task"]): row for row in got["sessions"]}
+    assert by[("patch", "t1")]["accounted_dollars"] == 0.04 and by[("patch", "t1")]["tokens"]["cache_read_input_tokens"] == 100
+    assert by[("review_r", "t1")]["study_model"] is False                    # not the study's model: kept, labelled
+    assert [row["kind"] for row in got["projection_input"]["sessions"]] == ["patch", "self_review"]
+    assert got["arms"]["C"] == [{"task": "t1", "calls": 2, "dollars": 0.015, "seconds": 30.0}]
+    assert got["kind"] == "rehearsal on development fixtures, not study data"
+
+
 def test_arm_c_and_t_are_arm_as_rule_with_their_search_and_the_stopped_caller(tmp_path, monkeypatch):
     seen = {}
 
