@@ -952,7 +952,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             placed.update(proposals.placed)
     # Verification search's structural checks (forbidden_dependency.v1), read from the files: one against a stated
     # contract that finds an import the patch adds and the contract forbids fails its requirement; one that finds none
-    # passes no requirement (the owner's ruling R-C1); a model's contract decides nothing.
+    # passes no requirement (the owner's ruling R-C1); an instance a model proposed decides nothing, whatever contract
+    # it names (reviewer B's B1).
     structural = list(prepared.structural) if prepared is not None else []
     for found in structural:
         if found["verdict"] == FAILED:
@@ -962,8 +963,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                             "reproduction": found["reproduction"]})
         elif found["verdict"] == "counterexample":
             reason("evidence", "unconfirmed_counterexample", f"{found['id']} (an instance of forbidden_dependency.v1 "
-                   "for a contract a model proposed): the patch adds an import that contract forbids; unconfirmed: "
-                   "a model's contract decides no requirement, and the imports are in assessment.completion")
+                   "a model proposed): the patch adds an import its contract forbids; unconfirmed: a model's "
+                   "proposal decides no requirement, and the imports are in assessment.completion")
 
     # Tier 2: the tests that touch the changed modules, only when tier 1 found no integrity problem and no defect.
     second: dict = {}

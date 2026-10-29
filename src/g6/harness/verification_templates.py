@@ -27,8 +27,8 @@ the five of this version:
   check, so ``defect_detected``. The owner's ruling R-C1: a check that finds none never passes its requirement, which
   keeps the status its stated checks give it; the contract holding is reported in the activity and in
   ``completion.preservation``, and as ``vacuous`` ("does not exercise the change") when the patch could not have
-  broken it (``_unexercised``). A contract a model proposed (``model_hypothesis``, which only G6's own code sets) gives
-  at most insufficient evidence.
+  broken it (``_unexercised``). An instance a model proposed (``model_hypothesis``, which only G6's own code sets)
+  gives at most insufficient evidence, whatever contract it names, the repository's included (reviewer B's B1).
   A part of a contract that matches no module of the package, and a module outside the package, are reported as out
   of scope, never as violations. It follows chains of imports inside the package as import-linter does (a forbidden
   contract with ``allow_indirect_imports`` checks direct ones only), with those inside functions included and those
@@ -1581,7 +1581,7 @@ def _not_applied(found: Prepared, one: TemplateInstance, definition: TemplateDef
     if not definition.text and not definition.formal:
         provenance = _contract_provenance(one)
         found.structural.append({"id": one.id, "requirement": one.requirement_id, "verdict": "not_run",
-                                 "normative": provenance != "model_hypothesis",
+                                 "normative": _normative(one),
                                  "contract_provenance": provenance, "activity": activity, "violations": []})
 
 
@@ -1671,6 +1671,13 @@ def _unsupported(options: dict, raw: list[dict]) -> list[str]:
 def _contract_provenance(one: TemplateInstance) -> str:
     contract = one.bindings.get("contract") if isinstance(one.bindings, dict) else None
     return "repository_stated" if contract == "repository" else one.provenance
+
+
+def _normative(one: TemplateInstance) -> bool:
+    """Whether ``one``'s result decides its requirement: never for an instance a model proposed
+    (``model_hypothesis``), whatever contract its bindings name, the repository's included (reviewer B's B1); its
+    failure is an unconfirmed finding, so at most insufficient evidence."""
+    return one.provenance != "model_hypothesis" and _contract_provenance(one) != "model_hypothesis"
 
 
 def _lines(value) -> list[str]:
@@ -2033,7 +2040,7 @@ def structural(tree: Tree, one: TemplateInstance) -> dict:
             text = ""
         violations.append({key: item[key] for key in ("rule", "from", "to", "file", "line", "lazy", "why", "chain")}
                           | {"text": text})
-    normative = provenance != "model_hypothesis"
+    normative = _normative(one)
     if violations:
         verdict = "failed" if normative else "counterexample"
     elif unparsed:
