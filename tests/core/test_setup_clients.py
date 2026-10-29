@@ -11,6 +11,7 @@ def test_setup_registers_explicit_client_with_absolute_interpreter_and_skills(tm
     monkeypatch.setenv("G6_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(setup, "isolation", lambda *a: 0)
+    monkeypatch.setattr(setup, "STEPS", ())   # STEPS holds the isolation step itself, as imported
     calls = []
     monkeypatch.setattr("g6.core.outside.find_program", lambda name: f"C:/tools/{name}.exe")
     monkeypatch.setattr("subprocess.run", lambda command, **kw: calls.append(command) or
@@ -27,6 +28,7 @@ def _registering(tmp_path, monkeypatch, returncode=0):
     monkeypatch.setenv("G6_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(setup, "isolation", lambda *a: 0)
+    monkeypatch.setattr(setup, "STEPS", ())   # STEPS holds the isolation step itself, as imported
     monkeypatch.setattr("g6.core.outside.find_program", lambda name: f"C:/tools/{name}.exe")
     monkeypatch.setattr("subprocess.run", lambda command, **kw: SimpleNamespace(returncode=returncode, stdout="",
                                                                                 stderr=""))
