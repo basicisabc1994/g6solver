@@ -150,6 +150,21 @@ def test_every_install_makes_g6s_own_environment_with_copies_first_and_says_why(
     assert "source .venv/bin/activate" in page and ".venv\\Scripts\\Activate.ps1" in page   # POSIX and PowerShell
 
 
+#: L1's line on the home page's quick start, directly before its two commands.
+FIRST_OWN_ENVIRONMENT = ("First make G6's own environment with python -m venv --copies .venv and activate it. Get "
+                         "started shows the commands for each system.")
+
+
+def test_the_home_pages_quick_start_first_makes_g6s_own_environment_and_links_get_started(client):
+    page = client.get("/").content.decode()
+    band = page.split('aria-labelledby="start"', 1)[1].split("</section>", 1)[0]
+    text = flat(band)
+    assert FIRST_OWN_ENVIRONMENT in text, text
+    assert text.index(FIRST_OWN_ENVIRONMENT) < text.index("git clone") < text.index('pip install ".[all]" && g6 setup')
+    before = band.split('<div class="cmd">', 1)[0]
+    assert 'href="/get-started/"' in before   # the line links to Get started
+
+
 def test_the_release_notes_say_what_ships_what_does_not_and_leave_the_version_to_the_owner():
     notes = shipped()["docs/releases/launch.md"]
     assert notes.startswith("# G6 VERSION-TO-BE-SET-BY-THE-OWNER")
