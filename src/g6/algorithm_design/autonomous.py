@@ -23,6 +23,7 @@ from typing import Literal, Mapping, Protocol
 
 from g6.algorithm_design.fusion import fuse
 from g6.algorithm_design.ir import DesignProblem
+from g6.algorithm_design.knowledge_bridge import catalog_plan, CatalogInsight
 from g6.algorithm_design.resources import DeviceBudget, ResourceEstimate, rank_options
 from g6.algorithm_design.search import search_algorithms
 from g6.coding_agent_gate.evidence import Evidence, VerifierResult
@@ -66,6 +67,7 @@ class DesignMission:
     max_attempts: int = 3
     timeout_per_run_s: int = 60
     execution_approved: bool = False
+    catalog_problem_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in ("algorithm", "swe", "combined") or not 1 <= self.max_attempts <= 5:
@@ -110,6 +112,8 @@ class AgentBrief:
     last_failed_tests: tuple[str, ...]
     last_failure_excerpt: str
     remaining_attempts: int
+    catalog_insights: tuple[CatalogInsight, ...] = ()
+    available_agent_operations: tuple[str, ...] = ()
 
 
 class ProposalAgent(Protocol):
@@ -230,6 +234,7 @@ class AgentReport:
     observations: tuple[TestObservation, ...]
     audit_head: str
     gate_verdict: str = "not_run"
+    catalog_insights: tuple[CatalogInsight, ...] = ()
 
 
 def run_agent(mission: DesignMission, producer: ProposalAgent,
@@ -245,7 +250,10 @@ def run_agent(mission: DesignMission, producer: ProposalAgent,
     change = mission.changed_symbols or (mission.package,)
     impact = impact_cone(cir, change)
     normative = tuple(sorted(o.id for o in mission.intent.obligations if o.normative))
-    search = search_algorithms(mission.problem, max_candidates=16)
+    knowledge = catalog_plan(mission.problem, problem_id=mission.catalog_problem_id)
+    from g6.algorithm_design.catalog import primitives
+    catalog = (*primitives(), *knowledge.typed_primitives)
+    search = search_algorithms(mission.problem, catalog=catalog, max_candidates=16)
     viable = []
     plans = []
     gaps = set()
@@ -269,7 +277,7 @@ def run_agent(mission: DesignMission, producer: ProposalAgent,
                obs: tuple[TestObservation, ...] = (), gate: str = "not_run") -> AgentReport:
         return AgentReport(state, reason, patch.algorithm_id if patch else "", patch, tuple(plans),
                            impact.impacted, normative, tuple(sorted(set(cir.unknowns) | set(impact.uncertainty))),
-                           len(obs), obs, ledger.head(), gate)
+                           len(obs), obs, ledger.head(), gate, knowledge.insights)
     if not normative:
         return result("blocked-escalated", "no_authoritative_obligations")
     if mission.mode != "swe" and not choices:
@@ -309,7 +317,8 @@ def run_agent(mission: DesignMission, producer: ProposalAgent,
         brief = AgentBrief(mission.problem.target, choices if mission.mode != "swe" else ("swe_refactor",),
                            tuple(f.root_cause for f in cir.findings), impact.impacted, normative,
                            tuple(sorted(gaps)), tuple(plans), tuple(sorted(seen)),
-                           last_failed, failure_excerpt, mission.max_attempts - i)
+                           last_failed, failure_excerpt, mission.max_attempts - i,
+                           knowledge.insights, knowledge.agent_operations)
         try:
             patch = producer.propose(brief)
         except Exception as exc:
