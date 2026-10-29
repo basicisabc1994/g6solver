@@ -23,8 +23,10 @@ before anything runs; ``python``, each repository's interpreter in its image; op
 test environment; and an ``image`` for every task: ``containers.py`` says how each arm runs there); optionally
 ``import_roots`` (per repository, the folders that make the patched code importable: ``PYTHONPATH`` for arm 1 and
 the labels, ``import_roots`` for G6's arms); ``suites`` (test paths
-per repository, for arm 1); ``vault`` (``roots``, ``id``, ``ledger``); ``audit`` (``audited``, ``label_errors``, or
-null); ``registered_size`` (or null); optional ``setup_effort`` and ``deviations``, copied into the results; and
+per repository, for arm 1); ``vault`` (``roots``, ``id``, ``ledger``); ``audit`` (``auditor``, ``audited``,
+``label_errors`` and ``errors``, each label error's ``task_id``, ``kind`` and ``test``; or null); ``broken_tasks``
+(required at a study level: the published-list check and the task screen, ``broken.py``); ``registered_size`` (or
+null); optional ``setup_effort`` and ``deviations``, copied into the results; and
 ``tasks``, each ``{task_id, repository, source (a git repository holding the base commit), base_commit, statement
 {problem_statement, requirements, interface}, patch, label_contract (inside the vault), self_review (arm 2's
 session record), transcripts}``.
@@ -49,7 +51,7 @@ if str(VALIDATION) not in sys.path:
     sys.path.insert(0, str(VALIDATION))
 
 from patch_review_utility import (  # noqa: E402
-    arms, containers, contract, executor, gaming, labels, self_review, stats, trees)
+    arms, broken, containers, contract, executor, gaming, labels, self_review, stats, trees)
 from patch_review_utility.environment import toolchain  # noqa: E402
 
 LEVELS = ("development", "feasibility", "confirmatory")
@@ -106,6 +108,7 @@ def load_manifest(path: str | Path) -> dict:
                               "timeout can be stopped by name")
     elif not isinstance(manifest.get("seed"), int):
         raise Refused("a development manifest gives its own integer seed")
+    _broken_tasks(manifest, path.parent)
     seconds = manifest["limits"]["arm_seconds"]
     if not isinstance(seconds, int) or not 1 <= seconds <= MAX_ARM_SECONDS:
         raise Refused(f"arm_seconds is a whole number from 1 to {MAX_ARM_SECONDS}, G6's own limit")
@@ -131,6 +134,29 @@ def load_manifest(path: str | Path) -> dict:
                 raise Refused(f"{repository}'s test environment: " + "; ".join(problems))
     manifest["_path"], manifest["_folder"] = path, path.parent
     return manifest
+
+
+def _broken_tasks(manifest: dict, folder: Path) -> None:
+    """The label audit's record and, at a study level (or whenever given), the freeze entry's published-list check and
+    task screen (PROTOCOL.md version 2, "Broken tasks"); no task the published list names is run."""
+    problems = broken.audit_problems(manifest.get("audit"))
+    if problems:
+        raise Refused("the label audit: " + "; ".join(problems))
+    entry = manifest.get("broken_tasks")
+    if entry is None and manifest["level"] not in STUDY_LEVELS:
+        return
+    problems = broken.frozen_problems(entry, auditor=(manifest.get("audit") or {}).get("auditor"))
+    if problems:
+        raise Refused("broken tasks: " + "; ".join(problems))
+    listed = entry["published_list"]
+    if listed["found"]:
+        try:
+            on_list = broken.published_ids((folder / listed["file"]).resolve(), listed["sha256"],
+                                           [task["task_id"] for task in manifest["tasks"]])
+        except (OSError, ValueError) as exc:
+            raise Refused(f"broken tasks: {exc}") from exc
+        if on_list:
+            raise Refused("tasks on the published list of broken tasks are excluded: " + ", ".join(sorted(on_list)))
 
 
 def _containers(manifest: dict) -> dict | None:
@@ -265,12 +291,42 @@ def calibrate(manifest: dict, output: str | Path) -> dict:
             found[task["task_id"]] = labels.calibrate(label_contract, reference_tree=reference, base_tree=base,
                                                       executor=run_with,
                                                       timeout_s=manifest["limits"]["calibration_seconds"])
+    screen, screen_bytes = _screen(manifest, vault, ledger)
+    why: dict[str, list[str]] = {t: ["the oracle controls"] for t, c in found.items() if not c.get("passed")}
+    for task in manifest["tasks"]:
+        said = (screen or {}).get("label_invalid", {}).get(task["task_id"])
+        if said:
+            why.setdefault(task["task_id"], []).append(f"the task screen: {said['test']}: {said['sentence']}")
     result = {"study": "V9", "level": manifest["level"], "g6_checkout": checkout,
               "executors": {task: ran.describe() for task, ran in executors.items()}, "toolchain": environment,
-              "vault": {"id": vault.vault_id, "digest": vault.digest}, "input_sha256": _digests(manifest, {}),
-              "tasks": found, "replace": sorted(t for t, c in found.items() if not c.get("passed"))}
+              "vault": {"id": vault.vault_id, "digest": vault.digest},
+              "input_sha256": _digests(manifest, {"screen": screen_bytes} if screen_bytes is not None else {}),
+              "tasks": found, "replace": sorted(why), "replaced_why": {t: "; ".join(why[t]) for t in sorted(why)},
+              "screen": screen}
     _write(output, result)
     return result
+
+
+def _screen(manifest: dict, vault, ledger) -> tuple[dict | None, bytes | None]:
+    """The task screen's findings, when the freeze entry switches it on (PROTOCOL.md version 2, "Broken tasks"), with
+    the record's bytes; its record names hidden tests, so a study level reads it only from inside the vault."""
+    screen = (manifest.get("broken_tasks") or {}).get("screen") or {}
+    if not screen.get("on"):
+        return None, None
+    path = _at(manifest, screen["record"])
+    if vault.covers(path):
+        data = labels.guarded_read(vault, "evaluator", path, ledger=ledger)
+    elif manifest["level"] in STUDY_LEVELS:
+        raise Refused("a study level keeps the task screen's record inside the vault: it names the hidden tests")
+    else:
+        data = path.read_bytes()
+    try:
+        found = broken.screened(json.loads(data))
+    except ValueError as exc:
+        raise Refused(f"the task screen: {exc}") from exc
+    if found["screener"] != screen["screener"]:
+        raise Refused("the task screen's record is not by the screener its freeze entry names")
+    return found, data
 
 
 # --- arm 2's session inputs ---------------------------------------------------------------------------------------------
@@ -406,6 +462,10 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
             row["label_detail"] = {key: labelled.get(key) for key in ("failed", "by_origin", "disagreement",
                                                                        "infrastructure_errors", "retried",
                                                                        "unlabelled_because")}
+    # the label audit's kinds, recorded before this run: a label-invalid patch leaves the primary analysis
+    audited = broken.audit(manifest.get("audit"), {row["task_id"]: row["label"] for row in rows})
+    for row in rows:
+        row["label_invalid"] = audited is not None and row["task_id"] in audited["label_invalid"]
     analysis = stats.analyse(rows, seed=manifest["seed"])
     counts = analysis["counts"]
     result = {
@@ -420,6 +480,8 @@ def run(manifest: dict, calibration_path: str | Path, output: str | Path) -> dic
         "tasks": rows, "a5": a5,
         "gaming": {"findings": findings, "contaminated": contaminated, "vault_changes": vault_changes,
                    "vault_incidents": incidents},
+        "broken_tasks": {**(manifest.get("broken_tasks") or {}), "audit": audited,
+                         "note": "" if audited is not None else broken.NOT_CHECKED},
         "experiment_1": analysis, "feasibility": stats.feasibility(rows),
         "verdict": stats.verdict(level=manifest["level"], contaminated=contaminated, audit=manifest.get("audit"),
                                  registered_size=manifest.get("registered_size"), defective=counts["defective"],

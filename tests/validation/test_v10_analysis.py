@@ -398,8 +398,19 @@ def test_criteria_1_and_2_hold_arm_r_too_and_a_session_past_its_limits_is_counte
     assert by[2]["result"] == "not met" and "R" in by[2]["why"]               # 120 cents is past R's 75
 
 
+def test_a_label_invalid_patch_is_left_out_of_every_measure_and_kept_by_the_sensitivity_analysis(tmp_path):
+    tasks = [dict(t, label_invalid=t["task_id"] == "d3") for t in TASKS]
+    got = study(tmp_path, tasks, ARMS)
+    assert got["counts"]["label_invalid"] == ["d3"] and got["counts"]["defective"] == 3
+    assert got["rates"]["A"]["false_acceptance"]["of"] == 3 and got["discovery"]["T"]["of"] == 3
+    kept = got["sensitivity_label_invalid_kept"]
+    assert kept["kept"] == ["d3"] and kept["rates"]["A"]["false_acceptance"]["of"] == 4
+    assert kept["discovery"]["T"]["of"] == 4 and kept["headline"]["M"] == got["headline"]["M"]   # d3: arm 1 rejected
+    assert study(tmp_path / "none", TASKS, ARMS)["counts"]["label_invalid"] == []
+
+
 def test_the_verdict_is_contamination_then_criterion_6_then_inconclusive_with_v9s_audit_beside(tmp_path):
-    audit = {"sample": 10, "label_errors": 1, "by_kind": {"1": 1}, "label_invalid": ["d3"]}
+    audit = {"audited": 10, "label_errors": 1, "by_kind": {"1": 1}, "label_invalid": ["d3"], "kind_4": 0}
     got = study(tmp_path, TASKS, ARMS, gaming=[], v9_audit=audit)["verdict"]
     assert got["verdict"] == "inconclusive" and got["v9_feasibility_audit"]["by_kind"] == {"1": 1}
     assert got["v9_feasibility_audit"]["upper_bound"] == pytest.approx(analysis.stats.clopper_pearson_upper(1, 10))

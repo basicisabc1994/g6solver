@@ -23,6 +23,10 @@ Patches left out of the primary analysis (empty, not applying, or with no label 
 persisted) are counted, and the sensitivity analysis counts each as defective: an empty or non-applying patch as
 accepted by no arm, since none reviewed it; an unlabelled patch with the dispositions the arms gave it.
 
+Label-invalid patches (version 2, "Broken tasks": rows marked ``label_invalid`` from the label audit's kinds) are left
+out of every primary rate and every hypothesis, and so of verdict 3; they are counted and listed, and a second
+sensitivity analysis keeps them as labelled. Stopping a level's draw counts labels before the audit (``stopping``).
+
 **Verdicts** ("Verdicts"): the first that applies, with the label audit's one-sided 95% Clopper-Pearson upper bound.
 
 **Experiment 2** ("Design of Experiment 2"): time per correct disposition, the median of each reviewer's ratio, a
@@ -54,6 +58,7 @@ DIRECT_SELF = (
     ("H1", "false acceptance: G6 minus the agent's own review", "defective", "g6", "self_review"),
     ("H3", "correct acceptance: the agent's own review minus G6", "correct", "self_review", "g6"),
 )
+STOPPING_NOTE = "labels before the label audit: stopping a level's draw counts label-invalid patches too"
 LABEL_ERROR_LIMIT = 0.15
 TOOL_ERROR_LIMIT = 0.10
 TARGET_RATIO = 0.75
@@ -205,7 +210,9 @@ def analyse(rows: list[dict], *, seed: int) -> dict:
     ``seed`` is the level's seed; the bootstrap uses ``seed + 1``."""
     boot_seed = seed + 1
     non_empty = [r for r in rows if r["patch"] == "non_empty"]
-    classes = {label: [r for r in non_empty if r.get("label") == label] for label in ("correct", "defective")}
+    invalid = [r for r in non_empty if r.get("label_invalid") is True]
+    every = {label: [r for r in non_empty if r.get("label") == label] for label in ("correct", "defective")}
+    classes = {label: [r for r in found if r.get("label_invalid") is not True] for label, found in every.items()}
     rates = {arm: {"false_acceptance": _rate(classes["defective"], arm),
                    "correct_acceptance": _rate(classes["correct"], arm)} for arm in ARMS}
     hypotheses = [difference(name, text, classes[label], x, y, seed=boot_seed, margin=margin)
@@ -239,19 +246,26 @@ def analyse(rows: list[dict], *, seed: int) -> dict:
                    "rates": {arm: {"false_acceptance": _rate(widened, arm)} for arm in ARMS},
                    "hypotheses": [difference(name, text, widened, x, y, seed=boot_seed)
                                   for name, text, label, x, y, _ in HYPOTHESES if label == "defective"]}
+    kept = {"kept": len(invalid),
+            "rates": {arm: {"false_acceptance": _rate(every["defective"], arm),
+                            "correct_acceptance": _rate(every["correct"], arm)} for arm in ARMS},
+            "hypotheses": [difference(name, text, every[label], x, y, seed=boot_seed, margin=margin)
+                           for name, text, label, x, y, margin in HYPOTHESES]}
     return {"counts": {"tasks": len(rows), "non_empty": len(non_empty),
                        "empty": sum(r["patch"] == "empty" for r in rows),
                        "not_applying": sum(r["patch"] == "not_applying" for r in rows),
-                       "unlabelled": len(unlabelled),
+                       "unlabelled": len(unlabelled), "label_invalid": len(invalid),
                        "correct": len(classes["correct"]), "defective": len(classes["defective"])},
-            "unlabelled": [r["task_id"] for r in unlabelled],
+            "unlabelled": [r["task_id"] for r in unlabelled], "label_invalid": [r["task_id"] for r in invalid],
+            "stopping": {"defective": len(every["defective"]), "correct": len(every["correct"]), "note": STOPPING_NOTE},
             "rates": rates, "hypotheses": hypotheses,
             "experiment_1": experiment_1([h["result"] for h in hypotheses]),
             "secondary_self_review": secondary, "secondary_g6_minus_self_review": direct,
             "per_repository": per_repository,
             "tallies": {arm: tally([r["arms"].get(arm) for r in non_empty]) for arm in ARMS},
             "correct_not_accepted": correct_not_accepted, "detection_by_category": detection, "costs": costs,
-            "sensitivity_empty_as_defective": sensitivity, "bootstrap_seed": boot_seed}
+            "sensitivity_empty_as_defective": sensitivity, "sensitivity_label_invalid_kept": kept,
+            "bootstrap_seed": boot_seed}
 
 
 def feasibility(rows: list[dict]) -> dict:

@@ -88,7 +88,8 @@ def layout(tmp_path, monkeypatch):
                 "executor": {"command": list(study.executor.DEFAULT_COMMAND), "confined": False, "network": None},
                 "suites": {"fixture/calc": ["tests"]},
                 "vault": {"roots": ["vault"], "id": "v9-development", "ledger": "ledger.jsonl"},
-                "audit": None, "registered_size": None, "tasks": tasks}
+                "audit": None, "registered_size": None, "tasks": tasks,
+                "broken_tasks": {"published_list": {"found": False}, "screen": {"on": False}}}
     path = write(tmp_path / "manifest.json", json.dumps(manifest))
     return tmp_path, path, manifest
 
@@ -130,7 +131,9 @@ def test_a_development_study_runs_from_calibration_to_one_results_file(layout, m
     assert rows["dev-correct"]["checks_cited"] == ["tests/test_more.py"]
     analysis = results["experiment_1"]
     assert analysis["counts"] == {"tasks": 3, "non_empty": 2, "empty": 1, "not_applying": 0, "unlabelled": 0,
-                                  "correct": 1, "defective": 1}
+                                  "label_invalid": 0, "correct": 1, "defective": 1}
+    assert results["broken_tasks"]["audit"] is None and results["broken_tasks"]["note"] == study.broken.NOT_CHECKED
+    assert results["broken_tasks"]["published_list"] == {"found": False}
     assert analysis["rates"]["self_review"]["false_acceptance"]["rate"] == 1.0
     assert results["feasibility"]["result"] == "feasible"
     assert results["verdict"]["verdict"] == "inconclusive" and results["level"] == "development"
@@ -218,6 +221,79 @@ def test_a_container_environment_runs_each_task_in_its_own_image_with_g6s_toolch
     write(manifest_path, json.dumps(manifest))
     local = study.load_manifest(manifest_path)
     assert study.g6_command(local, local["tasks"][0]) is None             # development runs G6 on the host
+
+
+def test_a_study_level_freezes_the_list_check_and_the_screen_and_refuses_a_task_on_the_published_list(layout):
+    root, manifest_path, manifest = layout
+    commit = "0123456789abcdef0123456789abcdef01234567"
+    feasibility = {**manifest, "level": "feasibility", "g6_commit": commit,
+                   "executor": {**manifest["executor"], "confined": True, "network": False}}
+    write(manifest_path, json.dumps({k: v for k, v in feasibility.items() if k != "broken_tasks"}))
+    with pytest.raises(study.Refused, match="broken_tasks"):
+        study.load_manifest(manifest_path)
+    listed = write(root / "broken-tasks.csv", "instance_id\nsomething-else\n")
+    found = {"found": True, "source": "https://example.invalid/broken-tasks.csv", "file": "broken-tasks.csv",
+             "sha256": hashlib.sha256(listed.read_bytes()).hexdigest()}
+    entry = {"published_list": found, "screen": {"on": False}}
+    write(manifest_path, json.dumps({**feasibility, "broken_tasks": entry}))
+    assert study.load_manifest(manifest_path)["broken_tasks"] == entry
+    write(manifest_path, json.dumps({**feasibility, "broken_tasks": {**entry, "published_list": {**found,
+                                                                                                  "sha256": "f" * 64}}}))
+    with pytest.raises(study.Refused, match="SHA-256"):
+        study.load_manifest(manifest_path)
+    write(listed, "instance_id\ndev-defective\n")
+    on_list = {**found, "sha256": hashlib.sha256(listed.read_bytes()).hexdigest()}
+    write(manifest_path, json.dumps({**feasibility, "broken_tasks": {**entry, "published_list": on_list}}))
+    with pytest.raises(study.Refused, match="published list"):
+        study.load_manifest(manifest_path)
+    screened = {"published_list": {"found": False}, "screen": {"on": True, "screener": "A", "record": "vault/s.json"}}
+    audited = {"auditor": "A", "audited": 0, "label_errors": 0, "errors": []}
+    write(manifest_path, json.dumps({**feasibility, "broken_tasks": screened, "audit": audited}))
+    with pytest.raises(study.Refused, match="not the label auditor"):
+        study.load_manifest(manifest_path)
+
+
+def test_the_screen_marks_a_task_label_invalid_and_calibration_lists_it_for_replacement_with_its_sentence(layout):
+    root, manifest_path, manifest = layout
+    sentence = "test_hidden.py::test_add requires a sum the statement never asks for."
+    write(root / "vault" / "screen.json", json.dumps({"screener": "S", "tasks": {
+        "dev-correct": {"label_invalid": False, "weak_tests": True},
+        "dev-defective": {"label_invalid": True, "test": "test_hidden.py::test_add", "sentence": sentence},
+        "dev-empty": {"label_invalid": False}}}))
+    entry = {"published_list": {"found": False}, "screen": {"on": True, "screener": "S", "record": "vault/screen.json"}}
+    write(manifest_path, json.dumps({**manifest, "broken_tasks": entry}))
+    calibration = root / "vault" / "calibration.json"
+    study.main(["calibrate", "--manifest", str(manifest_path), "--output", str(calibration)])
+    calibrated = json.loads(calibration.read_text(encoding="utf-8"))
+    assert calibrated["replace"] == ["dev-defective"]
+    assert calibrated["replaced_why"] == {"dev-defective": f"the task screen: test_hidden.py::test_add: {sentence}"}
+    assert calibrated["screen"]["weak_tests"] == ["dev-correct"] and calibrated["screen"]["screener"] == "S"
+    write(manifest_path, json.dumps({**manifest, "broken_tasks": {**entry, "screen": {**entry["screen"],
+                                                                                      "screener": "T"}}}))
+    with pytest.raises(study.Refused, match="screener"):
+        study.main(["calibrate", "--manifest", str(manifest_path), "--output", str(calibration)])
+
+
+def test_the_audits_kinds_leave_a_label_invalid_patch_out_of_the_primary_analysis(layout, monkeypatch):
+    root, manifest_path, manifest = layout
+    stand_ins(monkeypatch)
+    audit = {"auditor": "A", "audited": 2, "label_errors": 1,
+             "errors": [{"task_id": "dev-defective", "kind": "2", "test": "test_audit.py::test_behaviour"}]}
+    write(manifest_path, json.dumps({**manifest, "audit": audit}))
+    calibration = root / "vault" / "calibration.json"
+    study.main(["calibrate", "--manifest", str(manifest_path), "--output", str(calibration)])
+    study.main(["run", "--manifest", str(manifest_path), "--calibration", str(calibration),
+                "--output", str(root / "results.json")])
+    results = json.loads((root / "results.json").read_text(encoding="utf-8"))
+    rows = {row["task_id"]: row for row in results["tasks"]}
+    assert rows["dev-defective"]["label"] == "defective" and rows["dev-defective"]["label_invalid"] is True
+    assert rows["dev-correct"]["label_invalid"] is False
+    counts = results["experiment_1"]["counts"]
+    assert counts["defective"] == 0 and counts["label_invalid"] == 1 and counts["correct"] == 1
+    assert results["experiment_1"]["stopping"]["defective"] == 1                   # labels before the audit
+    assert results["broken_tasks"]["audit"]["label_invalid"] == ["dev-defective"]
+    assert results["broken_tasks"]["audit"]["by_kind"]["2"] == 1 and results["broken_tasks"]["note"] == ""
+    assert results["verdict"]["label_error_bound"] == study.stats.clopper_pearson_upper(1, 2)
 
 
 def test_the_cited_checks_are_the_patchs_test_files_still_on_the_tree(tmp_path):

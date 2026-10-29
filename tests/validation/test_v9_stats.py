@@ -166,7 +166,7 @@ def test_tallies_keep_every_kind_of_not_accepted_and_the_sensitivity_counts_empt
     rows.append(make_row("t9", "r1", None, tests=None, self_review=None, g6=None, direct=None, patch="empty"))
     got = stats.analyse(rows, seed=3)
     assert got["counts"] == {"tasks": 3, "non_empty": 2, "empty": 1, "not_applying": 0, "unlabelled": 0,
-                             "correct": 1, "defective": 1}
+                             "label_invalid": 0, "correct": 1, "defective": 1}
     assert got["tallies"]["self_review"]["tool_error_or_refusal"] == 1
     assert got["tallies"]["self_review"]["error_kinds"] == {"refusal": 1}
     assert got["correct_not_accepted"]["g6"] == {"insufficient_evidence": 1}
@@ -187,6 +187,23 @@ def test_an_unlabelled_patch_is_left_out_counted_and_counted_as_defective_in_the
     # every arm reviewed it, so its acceptances count as false acceptances here (an empty patch has none)
     assert sensitivity["rates"]["g6"]["false_acceptance"] == {"accepted": 1, "of": 2, "rate": 0.5}
 
+
+def test_label_invalid_patches_are_left_out_of_every_rate_and_hypothesis_kept_by_a_sensitivity_analysis():
+    table = ([("r1", "defective", True, True, False, True)] * 3 + [("r1", "defective", True, True, True, True)] * 2
+             + [("r1", "correct", True, True, True, True)] * 4)
+    rows = rows_of(table)
+    for row in rows[3:5]:
+        row["label_invalid"] = True                                    # the audit's kinds 1 to 3, labelled defective
+    got = stats.analyse(rows, seed=3)
+    assert got["counts"]["defective"] == 3 and got["counts"]["label_invalid"] == 2 and got["label_invalid"] == ["t3",
+                                                                                                                "t4"]
+    assert got["rates"]["g6"]["false_acceptance"] == {"accepted": 0, "of": 3, "rate": 0.0}
+    assert got["hypotheses"][0]["n"] == 3
+    assert got["stopping"] == {"defective": 5, "correct": 4, "note": stats.STOPPING_NOTE}   # labels before the audit
+    kept = got["sensitivity_label_invalid_kept"]
+    assert kept["kept"] == 2 and kept["rates"]["g6"]["false_acceptance"] == {"accepted": 2, "of": 5, "rate": 0.4}
+    assert [h["name"] for h in kept["hypotheses"]] == ["H1", "H2", "H3"] and kept["hypotheses"][0]["n"] == 5
+    assert got["sensitivity_empty_as_defective"]["rates"]["g6"]["false_acceptance"]["of"] == 3
 
 def test_g6_is_also_compared_with_the_agents_own_review_directly_with_no_verdict():
     table = [("r1", "defective", False, True, False, False)] * 4 + [("r1", "correct", True, True, False, True)] * 4

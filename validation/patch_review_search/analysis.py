@@ -12,7 +12,8 @@ oracle controls and V9's arms, arm 3 being this study's arm A); and the reruns o
 
 **The patches** are V9's non-empty, labelled tasks, paired across every arm by task. An arm with no disposition on a
 patch does not accept it, and is counted (``missing``). Unlabelled patches and those the record excludes are counted
-and left out of every rate.
+and left out of every rate. So are V9's label-invalid patches (V9's protocol, version 2, "Broken tasks"), which a
+sensitivity analysis keeps (``sensitivity_label_invalid_kept``: every arm's rates, discovery and headline counts).
 
 **Primary measures**, per arm (A, C, T, E, R), each also per repository:
 
@@ -259,8 +260,10 @@ def feasibility(v9: dict, outputs: dict[str, dict], limits: dict | None, compari
     return {"result": outcome, "criteria": found}
 
 
-def _patches(entries: list[dict], v9: dict, reference: list[dict]) -> tuple[list[dict], dict]:
-    """The analysed patches, each with every arm's disposition, findings and cost; and the counts."""
+def _patches(entries: list[dict], v9: dict, reference: list[dict], *, keep_invalid: bool = False
+             ) -> tuple[list[dict], dict]:
+    """The analysed patches, each with every arm's disposition, findings and cost; and the counts. V9's label-invalid
+    patches are left out unless ``keep_invalid`` (the sensitivity analysis)."""
     outputs: dict[str, dict] = {}
     findings: dict[tuple[str, str], list[dict]] = {}
     excluded = {"empty": 0, "not_applying": 0}
@@ -276,8 +279,9 @@ def _patches(entries: list[dict], v9: dict, reference: list[dict]) -> tuple[list
     tasks = v9["tasks"]
     non_empty = [task for task in tasks if task.get("patch") == "non_empty"]
     labelled = [task for task in non_empty if task.get("label") in ("correct", "defective")]
+    invalid = [task["task_id"] for task in labelled if task.get("label_invalid") is True]
     rows = []
-    for task in labelled:
+    for task in labelled if keep_invalid else [task for task in labelled if task["task_id"] not in invalid]:
         found = outputs.get(task["task_id"], {})
         arms = {"A": task["arms"].get("g6"), **{arm: (found.get(arm) or {}).get("disposition") for arm in RUN_ARMS}}
         arms.update(E_filtered=(found.get("E") or {}).get("e_filtered", arms["E"]),
@@ -298,7 +302,7 @@ def _patches(entries: list[dict], v9: dict, reference: list[dict]) -> tuple[list
                      "accepted_by": {"1": _accepts(arms["1"]), "2": _accepts(arms["2"])},
                      "dispositions": arms, "findings": reruns, "cost": cost, "outputs": found})
     counts = {"tasks": len(tasks), "non_empty": len(non_empty), "excluded": excluded,
-              "unlabelled": [task["task_id"] for task in non_empty if task not in labelled],
+              "unlabelled": [task["task_id"] for task in non_empty if task not in labelled], "label_invalid": invalid,
               "defective": sum(row["label"] == "defective" for row in rows),
               "correct": sum(row["label"] == "correct" for row in rows),
               "repositories": sorted({row["repository"] for row in rows})}
@@ -503,12 +507,13 @@ def verdict(outputs: dict[str, dict], gaming: list[dict] | None, found: dict, v9
     gaming checks (``gaming``, with the scans of R's transcripts the record holds) found an arm reading the label
     contract, the reference fix or the vault, or using the network from a check or a command a session ran;
     ``oracle_inadequate`` when feasibility criterion 6 fails; ``inconclusive`` otherwise. V9's feasibility label audit
-    (``v9_audit``: its sample, label errors, errors by kind and label-invalid patches) is reported beside it, with its
+    (``v9_audit``: V9's ``broken.audit`` summary, its patches audited, label errors, errors by kind and label-invalid
+    patches; by default the one V9's results hold) is reported beside it, with its
     one-sided 95% upper bound, and decides nothing. No verdict without the gaming scan."""
     scans = {patch: (arms.get("R") or {}).get("gaming") for patch, arms in outputs.items()}
     audit = None if v9_audit is None else {
         **v9_audit, "upper_bound": stats.clopper_pearson_upper(int(v9_audit.get("label_errors", 0)),
-                                                               int(v9_audit.get("sample", 0)))}
+                                                               int(v9_audit.get("audited", 0)))}
     beside = {"v9_feasibility_audit": audit,
               "r_git_commands": {patch: scan["git_commands"] for patch, scan in scans.items() if scan}}
     if gaming is None:
@@ -530,8 +535,12 @@ def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], lim
     rows, counts = _patches(entries, v9, reference)
     seed = int(v9["seed"]) + 2
     found = _measures(entries, rows, counts, v9, limits, committed, seed, resamples)
-    return {**found, "headlines": headlines(found),
-            "verdict": verdict(_outputs(entries), gaming, found["feasibility"], v9_audit)}
+    every, _ = _patches(entries, v9, reference, keep_invalid=True)
+    kept = {"kept": counts["label_invalid"], "rates": {name: _rates(every, name) for name in ARMS},
+            "discovery": {arm: _discovery(every, arm) for arm in ARMS}, "headline": _headline(every)}
+    audit = v9_audit if v9_audit is not None else (v9.get("broken_tasks") or {}).get("audit")
+    return {**found, "sensitivity_label_invalid_kept": kept, "headlines": headlines(found),
+            "verdict": verdict(_outputs(entries), gaming, found["feasibility"], audit)}
 
 
 def _measures(entries, rows, counts, v9, limits, committed, seed, resamples) -> dict:

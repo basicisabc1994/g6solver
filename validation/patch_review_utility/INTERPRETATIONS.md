@@ -185,3 +185,48 @@ cases against the earlier code (commit 7ee1fb4), and kept as a test, `tests/vali
 `test_v9s_90_percent_bootstrap_is_what_it_was_before_it_took_a_confidence`, on three fixed cases whose intervals the
 earlier code gave. The executor also reports each test's phases (set-up, call, teardown) beside its outcome, for V10's
 arm E; V9's outcomes are unchanged. Ruled by the coordinator: accepted.
+
+Version 2, "Broken tasks" (`broken.py`, with `draw.py`, `stats.py` and `run.py`):
+
+58. **The freeze entry's broken-task fields.** The manifest's `broken_tasks`, required at a study level, records the
+    published-list check (`published_list`: `{"found": false}`, or `{"found": true}` with its `source`, its `file`
+    and the file's `sha256`) and the task screen (`screen`: `{"on": false}`, or `{"on": true}` with its `screener` and
+    its `record`). A screener who is also the audit's named `auditor` is refused. The entry is copied into the results.
+    For the coordinator's ruling.
+
+59. **A published list's IDs.** Its format is not known in advance, so every pool ID its file holds as a whole ID
+    (not as part of a longer one: bounded by characters other than letters, digits, underscores and hyphens) is
+    excluded, and the file is read only when its SHA-256 is the one the entry records. The draw's caller adds these
+    IDs to the excluded ones (`broken.published_ids`, then `draw.order`), and the entry point refuses a manifest
+    holding a task on the list. For the coordinator's ruling.
+
+60. **The task screen and the replacement.** The screen's record is `{"screener", "tasks": {task_id:
+    {"label_invalid", "test", "sentence", "weak_tests"}}}`; a task marked label-invalid names the test and the
+    behaviour in one sentence. The record names hidden tests, so a study level reads it only from inside the vault,
+    and only when it is by the screener the entry names; its digest joins the calibration's inputs. Calibration lists
+    a label-invalid task for replacement beside the tasks that fail the oracle controls, with the reason "the task
+    screen: <test>: <sentence>", and lists the tasks with weak tests, which are kept. `draw.replacements` logs each
+    replacement with the next task in order not already taking another's place. For the coordinator's ruling.
+
+61. **The label audit's kinds.** The audit's record (the manifest's `audit`) is `{"auditor", "audited",
+    "label_errors", "errors"}`, with one entry per label error: its `task_id`, its `kind` (1 to 4, or "other") and the
+    auditor's `test`. A patch is label-invalid when its error is of kinds 1 to 3 and the run labelled it defective. An
+    error of kinds 1 to 3 on a patch not labelled defective cannot make it label-invalid: it is counted as a label
+    error, its patch is kept, and it is reported as `inconsistent`. Every label error, label-invalid ones included,
+    counts toward the audit's bound. The kinds are fixed before the results are unblinded because the audit is an
+    input to `run`, hashed with the manifest into the results, and `run` is the step that writes the labels beside
+    the arms' outputs. Open: the auditor compares a judgement with the label, and the entry point computes the labels
+    only within `run`. Giving the auditor the labels without the arms' outputs needs a label step inside the vault
+    before `run`, which the scripts do not have. For the coordinator's ruling.
+
+62. **Counting after exclusions.** Label-invalid patches are left out of every primary rate, the per-repository rates,
+    detection by category, every hypothesis and comparison with the agent's own review, and so verdict 3, which
+    counts the primary analysis's defective patches. They are counted and listed. Tallies, costs and the feasibility
+    criteria still cover every non-empty patch, since the protocol's counting after exclusions names only the primary
+    rates, the hypotheses and verdict 3; so the criterion that G6 gave both results still reads a label-invalid
+    patch's label. The sensitivity analysis that counts
+    empty patches as defective leaves label-invalid ones out, and a second one keeps them as labelled: every arm's
+    rates and the three hypotheses, reported and deciding nothing. `stopping` counts labels before the audit, with
+    label-invalid patches. The results report the audit's summary: its errors by kind, the label-invalid patches and
+    the number of errors of the fourth kind. Without an audit, no patch is left out, and the results say the labels
+    were not checked for broken tasks, with OpenAI's estimate. For the coordinator's ruling.

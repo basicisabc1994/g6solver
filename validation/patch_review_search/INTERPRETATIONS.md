@@ -391,3 +391,11 @@ V9 version 2's broken tasks as V10 inherits them.
     interval, and the note the protocol asks for beside K_R: that M is chosen by V9's arm 2, which uses R's model on
     nearly R's prompt. Similarity to the hidden tests, still not built, covers the checks C, T, E and R wrote. For the
     coordinator's ruling.
+
+63. **V9's label-invalid patches in V10.** V10 reads V9's results, whose rows mark each label-invalid patch
+    (`label_invalid`, from V9's label audit). Such a patch is left out of every V10 measure, as V9 leaves it out of
+    its primary rates, and listed in the counts. A sensitivity analysis keeps it: every arm's false and correct
+    acceptance, discovery and headline counts with V9's label-invalid patches kept as labelled. Feasibility counts
+    every non-empty patch, as before, since its criteria do not read labels. The verdict reads V9's audit summary
+    from V9's results unless another is given, and reports it beside the verdict with its one-sided 95% bound. For
+    the coordinator's ruling.
