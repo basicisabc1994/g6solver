@@ -1,6 +1,6 @@
 ---
 name: using-g6
-description: Use when constructing AI applications from checkable components, investigating repeated failures, testing redesign hypotheses, or reviewing claims and risky actions against evidence.
+description: Use when finishing a Python coding task (review the patch with G6 before saying it is done), constructing AI applications from checkable components, investigating repeated failures, testing redesign hypotheses, or reviewing claims and risky actions against evidence.
 ---
 
 # Using G6
@@ -8,6 +8,30 @@ description: Use when constructing AI applications from checkable components, in
 G6 is a library of primitives for AI building AI. An agent can construct an application, propose a redesign,
 and measure it against frozen checks. Treat improved performance as a hypothesis, never a consequence of composition.
 The evaluator, authorization rules and promotion gate remain outside the candidate's writable scope.
+
+## Before you say a coding task is done
+
+For a Python patch, call `g6_review_patch` before you tell the person the task is done. It needs host permission
+`patch_review.review`, which the person grants with `g6 setup`; never change permissions yourself.
+
+1. Turn the task into numbered requirements, `{"id": "R1", "text": ..., "checks": [...]}`, each with the pytest
+   node ids that check it where such a test exists. A requirement with no check stays not established; say so.
+2. Call `g6_review_patch` with the repository's folder, the task and the requirements, then poll `metaharness_job`
+   until the review ends.
+3. Show the person the reply's `assessment["report"]` verbatim. Do not summarise it into a better result.
+
+Then the repair loop:
+
+- Fix what G6 reproduced: each failed check, each test of the changed code that now fails, each counterexample.
+- On the next call, add each earlier reproduction as a stated check of its requirement (a proposed check's
+  reproduction is a test file: add it to the repository's tests and list its node id), so the person can see the fix
+  passes the original counterexample.
+- Review again, and show the new report.
+- Stop after 3 rounds, when a round changes nothing, or when the report says only the person can decide.
+
+The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope
+(every stated requirement passed its stated checks; never proof the patch is complete). Never call a patch verified
+or correct, and never merge it: merging is the person's decision, made separately.
 
 ## Find
 
@@ -31,12 +55,6 @@ Use `g6_compose` with data-only stages. Connect downstream fields explicitly wit
 Evidence kinds must match; similar field names do not establish equivalent meaning. Code transformations require
 reviewed Python adapters. A contract-checked report establishes structural checks, not application correctness.
 Plain `>>` does not check contracts. Read the assurance gaps and preserve all upstream limitations.
-
-For Python patches, `g6_review_patch` takes the task and requirements, each with the pytest ids that check it, and
-runs them confined. It requires host permission `patch_review.review`. Its outcome is one of: test integrity
-compromised, defect detected, insufficient evidence, or supported within scope (every stated requirement passed its
-stated checks; never proof the patch is complete). Relay each requirement's evidence, the requirements with no
-adequate check, and the note that the specification may be incomplete. Merging always needs separate approval.
 
 ## Fit
 
