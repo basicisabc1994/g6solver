@@ -4,8 +4,10 @@
 g6.goal_engine — declare a goal as a tree of subtasks with guardrails, checkpoints, resource bounds and breakpoints,
 then read those controls against what an executor reports, without executing anything (audit 013 §11).
 
-Capability label: ``implemented``. Nothing in this package executes a goal, generates a subtask, or
-halts or pauses work. It describes a declared plan and evaluates its controls; an executor you write must call
+Capability label: ``implemented``. Nothing in this package executes a goal, or halts or pauses work. The planner
+itself still generates no subtask: subtasks come from you, or, through ``propose_goal_tree``, from a proposer you
+inject (over MCP, the model you configured, at most 100 calls), and that tree is a proposal until a person or a mission
+accepts it. It describes a declared plan and evaluates its controls; an executor you write must call
 ``evaluate_controls`` before each node's work and obey the report.
 
     from g6.core.approval_authority import ApprovalAuthority
@@ -49,6 +51,7 @@ Not ported from the archive's ``goal_engine`` (audit 013):
 * the ``skill/`` plugin (agents, hooks with a hard-coded home path, commands, the aggregated MCP server) and the
   documentation that promised enforced halts and human gates (GE-001, GE-012, GE-017).
 """
+from g6.goal_engine.block import GoalEngineBlock, GoalEngineInput
 from g6.goal_engine.controls import (
     ApprovalRecord,
     ControlReport,
@@ -69,13 +72,19 @@ from g6.goal_engine.schema import (
 )
 
 __g6_component__ = True
-__g6_maturity__ = "beta"  # no block: Python API only
-__g6_requires__: tuple[str, ...] = ()
-# Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
+__g6_block__ = "GoalEngineBlock"
+__g6_model__ = "llm"      # g6_invoke gives the block the model the person configured, by this keyword
+__g6_maturity__ = "beta"  # the package's label; the block carries its own (component_maturity), which is the one read
+__g6_sensitive_ops__: tuple[str, ...] = ()
+__g6_requires__: tuple[str, ...] = ("align_prompt_library",)
+# Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause (a proposed tree
+# followed without checking each step).
 __g6_mitigates__: tuple[str, ...] = ("goal_drift", "budget_overrun")
-__g6_introduces__: tuple[str, ...] = ()
+__g6_introduces__: tuple[str, ...] = ("unchecked_plan",)
+__g6_outside__ = ()
+__g6_extras__: dict[str, tuple[str, ...]] = {}
 
 __all__ = ["DEFAULT_MAX_DEPTH", "HAZARDS", "ApprovalRecord", "BreakpointSpec", "CheckpointSpec", "ControlReport",
-           "ControlResult", "DroppedNode", "GoalSpec", "GuardrailSpec", "Observation", "PauseRequest", "PlanNode",
-           "PlanTree", "ResourceBoundsSpec", "Verdict", "build_plan_tree", "evaluate_controls", "list_predicates",
-           "register_predicate", "release_pause"]
+           "ControlResult", "DroppedNode", "GoalEngineBlock", "GoalEngineInput", "GoalSpec", "GuardrailSpec",
+           "Observation", "PauseRequest", "PlanNode", "PlanTree", "ResourceBoundsSpec", "Verdict", "build_plan_tree",
+           "evaluate_controls", "list_predicates", "register_predicate", "release_pause"]

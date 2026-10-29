@@ -154,7 +154,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `epistemic_integrity` | Grades the evidence behind each claim and holds back a high-stakes conclusion the evidence cannot carry | MCP | none |
 | `evidence` | Gives the final verdict on a piece of work: verified, a qualified draft, or blocked, with every gap named | Python-only | — |
 | `formal` | Settles small logic questions exactly with a solver, and labels each answer for what it is | MCP | none |
-| `goal_engine` | Holds the subtasks you declare as a tree and checks them against what your executor reports | Python-only | — |
+| `goal_engine` | Holds the subtasks you declare as a tree and checks them against what your executor reports | MCP | none |
 | `graph_reasoning` | Works out how true each label on a network is, such as who counts as popular or which link can be trusted, as a range from false to true, from your facts and rules, and shows how each range was reached | MCP | none |
 | `grounding` | Finds the passages in your sources behind a claim and says how well they support it | MCP | none |
 | `guards` | Flags a fixed list of English phrasings of prompt injection; a paraphrase passes | Python-only | — |
@@ -271,7 +271,7 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 16 of the 36 core components; the other 20 are
+Every extension in the library can be called over MCP, as can 17 of the 36 core components; the other 19 are
 Python-only for now. The tables above say which.
 
 An op a component marks sensitive, because it runs a program on your computer, reaches the network, spends money,

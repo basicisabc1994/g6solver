@@ -2449,7 +2449,9 @@
     "guarded_by": [
       "cog_arch_gps"
     ],
-    "introduced_by": [],
+    "introduced_by": [
+      "goal_engine"
+    ],
     "planned": [],
     "awaiting_review": []
   },

@@ -180,7 +180,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | financial risk and compliance gaps left unchecked | `unchecked_financial_risk` | — | — | — |
 | a maths claim accepted without a machine-checked proof | `unchecked_maths_claim` | `lean` | — | — |
 | a message released without checking its coverage or tone | `unchecked_message_release` | — | — | — |
-| a plan from an agent or a model followed without checking each step against what its actions need | `unchecked_plan` | `cog_arch_gps` | — | — |
+| a plan from an agent or a model followed without checking each step against what its actions need | `unchecked_plan` | `cog_arch_gps` | `goal_engine` | — |
 | a self-change that slips past its own checks | `unchecked_self_change` | `metaharness`, `self_training` | — | — |
 | a multi-step workflow failing in a step nobody checked | `unchecked_step` | — | — | — |
 | a task sent to a paid or unsuitable model nobody chose | `unchosen_model` | `llm_router` | — | — |

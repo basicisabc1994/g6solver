@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 import pytest
 from g6.goal_engine.decomposition import GoalTree, propose_goal_tree
 from g6.goal_engine import GoalSpec

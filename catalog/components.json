@@ -1416,10 +1416,14 @@
     "name": "goal_engine",
     "summary": "g6.goal_engine \u2014 holds the subtasks you declare as a tree and checks them against what your executor reports.",
     "maturity": "beta",
-    "maturity_reason": "",
-    "surface": "python",
-    "ops": [],
-    "requires": [],
+    "maturity_reason": "a bounded breadth-first proposal loop over a model the caller configures, tested with scripted models for the call bound, malformed and oversized replies and a reply claiming a state; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "propose_goal_tree"
+    ],
+    "requires": [
+      "align_prompt_library"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },

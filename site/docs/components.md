@@ -72,7 +72,7 @@ Every component works on its own. *Requires* lists the other components it impor
 | `epistemic_integrity` | Epistemic integrity: deterministic claim adjudication and evidence gating. | python + cli + mcp | `adjudicate` | — |
 | `evidence` | g6.evidence — the certificate issuer: what a mission's evidence supports, and nothing more. | python | — | — |
 | `formal` | g6.formal — decide logic questions exactly, optimisation included, with Z3 or pure Python, and label every answer. | python + cli + mcp | `check_contract`, `check_sat`, `check_validity`, `check_entailment`, `find_counterexample`, `check_propositional`, `optimise`, `unsat_core`, `simplify`, `eliminate_quantifiers`, `count_models`, `check_equivalence`, `belnap_eval`, `belnap_table`, `modal_eval`, `frame_check` | — |
-| `goal_engine` | g6.goal_engine — holds the subtasks you declare as a tree and checks them against what your executor reports. | python | — | — |
+| `goal_engine` | g6.goal_engine — holds the subtasks you declare as a tree and checks them against what your executor reports. | python + cli + mcp | `propose_goal_tree` | align_prompt_library |
 | `graph_reasoning` | g6.graph_reasoning — work out the truth interval of each label on a graph's nodes and edges from facts and rules, and check every interval before it is reported. | python + cli + mcp | `reason`, `query`, `explain`, `check` | — |
 | `grounding` | Grounding: find the source passages behind a claim, and say honestly how well they support it. | python + cli + mcp | `check_claim`, `check_claims`, `coverage` | — |
 | `guards` | g6.guards — flags a fixed list of English phrasings of prompt injection; a paraphrase passes. | python | — | — |
