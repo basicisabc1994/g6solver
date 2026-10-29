@@ -56,7 +56,8 @@ KINDS = ("patch", "self_review", "review_r")
 #: Each kind's caps: turns, wall clock (arm 2 and arm R have V9's arm 2 limit, 30 minutes) and dollars.
 CAPS = {"patch": {"max_turns": 40, "wall_clock_s": 1200, "max_usd": 1.50},
         "self_review": {"max_turns": 20, "wall_clock_s": 1800, "max_usd": 0.75},
-        "review_r": {"max_turns": 30, "wall_clock_s": 1800, "max_usd": 1.00}}
+        # arm R: V9's arm 2 budget, as version 2 registers it ("the same model and budget"), so arm 2's turns
+        "review_r": {"max_turns": 20, "wall_clock_s": 1800, "max_usd": 1.00}}
 MASK = "<the key, masked>"
 #: How V7's statuses read as V9's session endings.
 ENDED = {"finished": "completed", "timeout": "timed_out", "cap_turns": "token_cap", "cap_cost": "token_cap",

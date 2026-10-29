@@ -114,6 +114,15 @@ def test_a_session_is_claude_code_headless_with_the_registered_flags_and_the_key
     assert got["tokens"] == 6300 and got["session_id"] == "sess-1" and got["transcript"] == "t1.jsonl"
 
 
+def test_arm_r_has_arm_2s_turn_cap_and_wall_clock_limit(tmp_path):
+    # version 2 registers arm R "with the same model and budget" as V9's arm 2, and "V9's arm 2 wall-clock limit and
+    # token cap"; so its turn cap is arm 2's (the coordinator's ruling, 2026-10-29)
+    assert launcher.CAPS["review_r"]["max_turns"] == launcher.CAPS["self_review"]["max_turns"] == 20
+    assert launcher.CAPS["review_r"]["wall_clock_s"] == launcher.CAPS["self_review"]["wall_clock_s"] == 1800
+    claude = launcher.claude_args(caps=launcher.CAPS["review_r"])
+    assert claude[claude.index("--max-turns") + 1] == "20"
+
+
 def test_a_stream_line_that_holds_the_key_is_written_with_the_key_masked(tmp_path):
     docker = FakeDocker(stream(leak=True))
     ledger = launcher.Ledger(tmp_path / "ledger.json", cap=15.0)

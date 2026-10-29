@@ -57,9 +57,9 @@ sessions will be several times larger. The proposal:
   kinds, cache reads included**. That is
   about 14 times the largest arm 2 session seen, which is room for 20 turns of a context of about 100,000 tokens. A
   session past it abstains (V9's arm 2 rule). Plus the launcher's 20 turns and $0.75.
-- **Arm R:** V9's arm 2 limits, as the protocol says: the same 1,800 seconds and 2,000,000 tokens. Plus the launcher's
-  30 turns and $1.00. Whether R's turn cap should be arm 2's 20 is for the coordinator: the protocol names R's time
-  and token limits, not its turns.
+- **Arm R:** V9's arm 2 limits, as the protocol says: the same 1,800 seconds and 2,000,000 tokens, and arm 2's 20
+  turns (ruled 2026-10-29: version 2 registers R "with the same model and budget" as V9's arm 2). Plus the launcher's
+  $1.00, against arm 2's $0.75.
 
 ## 4. V9's spending cap
 
