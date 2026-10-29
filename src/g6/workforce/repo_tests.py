@@ -174,6 +174,12 @@ SAID = {
     # PENDING copy (pool compatibility): a G6_REPO_PYTHON that names no Python.
     "repo_python": ("{setting} {problem}: {value!r}. Set it, where you start G6, to the full path of the Python that "
                     "has your repository's dependencies, or unset it"),
+    # PENDING copy (reviewer B's critical item): an environment whose confined run would read a folder G6 does not open.
+    "repo_reads": ("a confined run of {python} would read {folder!r}, which is outside the repository and holds no "
+                   "Python standard library (it is the base installation the environment's pyvenv.cfg names, or "
+                   "where the environment's folder leads), so G6 does not open it to the tests and ran nothing. Make "
+                   "the environment again (python -m venv), or set {setting}, where you start G6, to the full path of "
+                   "the Python that has your repository's dependencies"),
     # PENDING copy (review M1): why a run that loaded the tree's code from elsewhere, or cannot say, gets no receipt.
     "shadowed_withheld": ("no test receipt: the run loaded the repository's own modules from outside it, an installed "
                           "copy in place of its files ({modules})"),
@@ -1118,17 +1124,48 @@ def interpreter(repo: Path) -> str:
     """The Python that runs the repository's tests: the one ``G6_REPO_PYTHON`` names in G6's own environment
     (``_chosen_python``: a refusal when it names none), else the repository's own virtual environment (``.venv`` or
     ``venv`` at its top), else the one running G6 (``python`` on PATH in a frozen build, which has no interpreter of
-    its own)."""
+    its own). Either of the first two only when each folder a confined run of it reads is one G6 opens
+    (``_opened``); else a refusal before anything is copied or run."""
     chosen = _chosen_python()
-    if chosen:
-        return chosen
+    if chosen:   # the folder the person named, and its environment; never what its pyvenv.cfg names
+        folder = Path(chosen).parent
+        named = folder.parent if os.name == "posix" and folder.name == "bin" else folder
+        return _opened(repo, chosen, f"the Python {REPO_PYTHON} names", own=(str(named), *_environment_of(chosen)))
     for folder in (".venv", "venv"):
         for exe in (repo / folder / "Scripts" / "python.exe", repo / folder / "bin" / "python"):
             if exe.is_file():
-                return str(exe)
+                return _opened(repo, str(exe), f"the repository's own {folder}")
     if getattr(sys, "frozen", False) or not sys.executable:
         return "python"
     return sys.executable
+
+
+#: A folder that holds a Python's standard library: a base installation (CPython's, on POSIX or Windows, or a source
+#: build's; PyPy's).
+_STANDARD_LIBRARY = ("Lib/os.py", "lib*/python3*/os.py", "lib*/pypy3*/os.py", "lib-python/3*/os.py")
+
+
+def _opened(repo: Path, python: str, what: str, own: tuple[str, ...] = ()) -> str:
+    """``python``, when each folder its confined run reads besides the repository (``confine.interpreter_paths``: the
+    base installation the environment's ``pyvenv.cfg`` names, and the environment's folder, its links followed; and
+    ``_environment_of``) is inside the repository, one G6's own interpreter reads, one of ``own`` (the folder the
+    person's setting names, and its environment), or holds a Python's standard library. Else a refusal
+    (``G6_E_REPO_PYTHON_INVALID``),
+    with nothing run: the boundary binds those folders, read only, so a ``home`` the repository (or the patch) writes
+    in a ``pyvenv.cfg`` would open any folder of the person's to the tests (reviewer B's critical item)."""
+    def key(path: str) -> str:
+        return os.path.normcase(os.path.realpath(path))
+
+    top = key(str(repo))
+    opened = {key(path) for path in (*(confine.interpreter_paths(sys.executable) if sys.executable else ()), *own)}
+    for folder in dict.fromkeys([*confine.interpreter_paths(python), *_environment_of(python)]):
+        here = key(folder)
+        if (here == top or here.startswith(top.rstrip(os.sep) + os.sep) or here in opened
+                or any(any(Path(here).glob(pattern)) for pattern in _STANDARD_LIBRARY)):
+            continue
+        raise RepoRefused(REPO_PYTHON_INVALID, SAID["repo_reads"].format(python=what, folder=folder,
+                                                                         setting=REPO_PYTHON))
+    return python
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

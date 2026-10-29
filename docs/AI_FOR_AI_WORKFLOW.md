@@ -336,7 +336,11 @@ The tests run with the Python that `G6_REPO_PYTHON` names where you start G6 (a 
 environment, or a system Python that holds the repository's dependencies), else the repository's own `.venv`
 or `venv`, else G6's own; `scope.environment.interpreter_source` says which (`setting`, `repository` or
 `g6`). Only G6's own environment sets it, never a request, and a setting that names no Python is a refusal
-(`G6_E_REPO_PYTHON_INVALID`). The tests see none of your environment but what `G6_REPO_ENV` gives them, a
+(`G6_E_REPO_PYTHON_INVALID`). So is an environment whose confined run would read a folder outside the repository
+that holds no Python standard library, before anything runs: the base installation its `pyvenv.cfg` names (the
+`home` line, which the repository or the patch can write) must be a real one, and the repository's own `.venv` must
+not lead out of it, since the boundary opens those folders, read only, to the tests. The tests see none of your
+environment but what `G6_REPO_ENV` gives them, a
 JSON object of variable names to text set where you start G6 (`{"QT_QPA_PLATFORM": "offscreen"}`, say);
 names that would change how G6 runs them (`PYTHON...`, `LD_...`, `DYLD_...`, `PYTEST_...`, `G6_...`,
 `COV_CORE_...`, `PATH`, `HOME`, `USERPROFILE`, `TMP`, `TEMP`, `TMPDIR`) are refused (`G6_E_REPO_ENV_INVALID`).

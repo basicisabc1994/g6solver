@@ -333,3 +333,140 @@ def test_a_touched_test_that_did_not_pass_at_the_base_either_leaves_the_outcome_
     got = review_patch(root, task="Repair add.", requirements=STATED)
     assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
     assert "derived_test_not_compared" not in [code for _, code in _codes(got)]
+
+# --- reviewer B's critical item: what a confined run reads, never a folder the repository names ----------------------
+# Everything here is fake: a home folder the test makes, with a fake key in its .ssh. Never a real private folder.
+
+FAKE_KEY = "FAKE-SSH-KEY-not-a-real-one\n"
+READS_KEY = "def test_read():\n    assert open({path!r}).read().startswith('FAKE-SSH-KEY')\n"
+PYTHON_IN = ("Scripts", "python.exe") if sys.platform == "win32" else ("bin", "python")
+
+
+def _person(tmp_path, monkeypatch) -> Path:
+    """A home folder of the test's own (HOME names it), holding .ssh with a fake key."""
+    home = tmp_path / "people" / "someone"
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "id_probe").write_text(FAKE_KEY, encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+def _environment(folder: Path, home: str | None, *, starts: str = "") -> Path:
+    """A virtual environment at ``folder``: its pyvenv.cfg names ``home`` (none when None), and its Python is a script
+    that starts ``starts`` (POSIX), or an empty file that is never started."""
+    python = folder.joinpath(*PYTHON_IN)
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text(f'#!/bin/sh\nexec {starts} "$@"\n' if starts else "", encoding="utf-8")
+    python.chmod(0o755)
+    if home is not None:
+        (folder / "pyvenv.cfg").write_text(f"home = {home}\nversion = 3.12\n", encoding="utf-8")
+    return python
+
+
+def _installation() -> str:
+    """A pyvenv.cfg ``home`` that names a real Python installation: the folder holding the base interpreter."""
+    return sys.base_prefix if sys.platform == "win32" else str(Path(sys.base_prefix) / "bin")
+
+
+def _repo_in(home: Path) -> Path:
+    """The repository's folder, inside the person's home folder (as the probe has it)."""
+    root = home / "code" / "repo"
+    root.mkdir(parents=True)
+    return root
+
+
+def _commit(root: Path) -> Path:
+    """The base commit, with what the folder holds (its .venv too): a wrong ``add`` and a stated check that passes only
+    if it can read the fake key; the patch repairs ``add``."""
+    _write(root, {"calc.py": BAD, "test_leak.py": READS_KEY.format(path=str(root.parents[1] / ".ssh" / "id_probe"))})
+    _git(root, "init", "-q")
+    _git(root, "add", "-f", ".")
+    _git(root, "commit", "-qm", "base")
+    _write(root, {"calc.py": GOOD})
+    return root
+
+
+LEAK = [{"id": "R1", "text": "the check reads the key", "checks": ["test_leak.py::test_read"]}]
+
+
+@pytest.mark.parametrize("named", ["its pyvenv.cfg names the folder", "its pyvenv.cfg names the folder's bin",
+                                   "the environment is a link to the folder"])
+def test_a_repository_environment_that_would_open_a_folder_of_the_persons_is_refused_before_anything_runs(
+        tmp_path, monkeypatch, started, named):
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(repo_tests.REPO_PYTHON, raising=False)
+    home = _person(tmp_path, monkeypatch)
+    root = _repo_in(home)
+    if named == "the environment is a link to the folder":
+        if sys.platform == "win32":
+            pytest.skip("a link needs a privilege on Windows")
+        _environment(home / ".ssh", None)   # a Python in the person's folder, and .venv a link to that folder
+        (root / ".venv").symlink_to(home / ".ssh", target_is_directory=True)
+    else:   # on POSIX a home that ends in bin names the folder above it
+        _environment(root / ".venv", str(home / ".ssh" / "bin") if named.endswith("bin") else str(home / ".ssh"))
+    _commit(root)
+    got = review_patch(root, task="Repair add.", requirements=LEAK)
+    assert got["ok"] is False and got["completion_state"] == "blocked-escalated", got.get("assessment")
+    said = got["warning_card"]["message"]
+    assert got["warning_card"]["code"] == repo_tests.REPO_PYTHON_INVALID, said
+    assert ".ssh" in said and "standard library" in said and repo_tests.REPO_PYTHON in said, said
+    assert "icacls" not in said and "grant" not in said   # never a request to open the folder
+    assert started == []   # no test process was started
+
+
+@pytest.mark.parametrize("home", ["a real installation", "a folder inside the repository", "none"])
+def test_a_repository_environment_that_reads_only_an_installation_and_itself_is_used(tmp_path, monkeypatch, home):
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(repo_tests.REPO_PYTHON, raising=False)
+    root = _repo(tmp_path / "repo", {"calc.py": GOOD})
+    named = {"a real installation": _installation(), "a folder inside the repository": str(root / "py"),
+             "none": None}[home]
+    python = _environment(root / ".venv", named)
+    assert repo_tests.interpreter(root) == str(python)
+
+
+def test_the_setting_reads_its_own_environment_and_an_installation_never_a_folder_its_pyvenv_cfg_names(
+        tmp_path, monkeypatch):
+    """G6_REPO_PYTHON names the person's environment, whose own folder (outside the repository) a run reads; the
+    base installation its pyvenv.cfg names must be one, as for the repository's own (one inside the repository is
+    the repository's text)."""
+    from g6.workforce import repo_tests
+
+    home = _person(tmp_path, monkeypatch)
+    root = _repo(tmp_path / "repo", {"calc.py": GOOD})
+    poetry = _environment(tmp_path / "poetry-env", _installation())
+    monkeypatch.setenv(repo_tests.REPO_PYTHON, str(poetry))
+    assert repo_tests.interpreter(root) == str(poetry)
+    inside = _environment(root / ".tox" / "py312", str(home / ".ssh"))
+    monkeypatch.setenv(repo_tests.REPO_PYTHON, str(inside))
+    with pytest.raises(repo_tests.RepoRefused) as refused:
+        repo_tests.interpreter(root)
+    assert refused.value.code == repo_tests.REPO_PYTHON_INVALID and ".ssh" in str(refused.value)
+
+
+@pytest.mark.parametrize("home", ["a real installation", "a folder of the person's"])
+def test_confined_a_repository_environment_never_opens_a_folder_of_the_persons(tmp_path, monkeypatch, bwrap_backend,
+                                                                               home):
+    """Reviewer B's probe (probe_cross_venv_home_bind.py): the repository's committed .venv, whose Python starts G6's
+    own base interpreter. The control reads a real installation, and the fake key stays out of sight (the check
+    fails); the planted pyvenv.cfg names the fake .ssh, and the review is refused before anything runs."""
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(repo_tests.REPO_PYTHON, raising=False)
+    person = _person(tmp_path, monkeypatch)
+    root = _repo_in(person)
+    _environment(root / ".venv", _installation() if home == "a real installation" else str(person / ".ssh"),
+                 starts=sys.executable)
+    _commit(root)
+    got = review_patch(root, task="Repair add.", requirements=LEAK, timeout_s=120)
+    if home == "a real installation":
+        assessment = got["assessment"]
+        assert assessment["scope"]["environment"]["interpreter_source"] == "repository", assessment["scope"]
+        assert assessment["scope"]["environment"]["isolation"]["backend"] == "bubblewrap"
+        assert assessment["outcome"] == "defect_detected", assessment["reasons"]   # the key was not there to read
+        assert [(r["id"], r["status"]) for r in assessment["requirements"]] == [("R1", "failed")]
+    else:
+        assert got["ok"] is False and got["warning_card"]["code"] == repo_tests.REPO_PYTHON_INVALID, got
+        assert "assessment" not in got
