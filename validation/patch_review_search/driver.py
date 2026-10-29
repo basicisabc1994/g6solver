@@ -257,7 +257,8 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
         if not isinstance(run, ChildArm):
             return once(patch, arm, lambda share_left, meter: run(patch, search=search, share_left=share_left,
                                                                   meter=meter))
-        with tempfile.TemporaryDirectory(prefix="v10-arm-") as folder:
+        # as V9's in_child: a killed child's log may still be held on Windows, so its folder may be left behind
+        with tempfile.TemporaryDirectory(prefix="v10-arm-", ignore_cleanup_errors=True) as folder:
             meter = FileMeter(Path(folder) / "meter.jsonl")
             return once(patch, arm, lambda share_left, meter: _in_child(
                 run, patch, search=search, share_cents=spending.share - spending.spent[arm], meter=meter,

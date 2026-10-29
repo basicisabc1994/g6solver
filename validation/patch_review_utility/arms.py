@@ -533,7 +533,8 @@ def in_child(arm: str, tree: Path, requirements: list[dict], checks: list[str], 
     staged beside the job, the child reviews the image's ``/app``, and a container past its limit is stopped by name."""
     start = _clock()
     limit = timeout_s + KILL_GRACE_S if kill_after_s is None else kill_after_s
-    with tempfile.TemporaryDirectory(prefix="v9-arm-") as folder:
+    # on Windows a killed child's process may still hold its log for a moment: its folder is then left, never an error
+    with tempfile.TemporaryDirectory(prefix="v9-arm-", ignore_cleanup_errors=True) as folder:
         job, reply, log = Path(folder) / "job.json", Path(folder) / "reply.json", Path(folder) / "child.log"
         name = f"v9-{os.urandom(8).hex()}"
         if command is None:
