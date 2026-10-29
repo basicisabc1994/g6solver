@@ -721,6 +721,24 @@
     "vetting": null
   },
   {
+    "name": "algorithm_design",
+    "summary": "g6.algorithm_design \u2014 suggests catalogued algorithms for a stated problem, estimates their cost, and runs a fixed set of algorithm kernels that check each answer.",
+    "maturity": "beta",
+    "maturity_reason": "a fixed catalogue, bundled ontology metadata, a bounded type-directed search and fusion with the change-impact map, tested on catalogued problems and missing preconditions; proposals only, qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "primitives",
+      "ontology",
+      "search",
+      "fuse"
+    ],
+    "requires": [
+      "complexity"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
     "name": "align_prompt_library",
     "summary": "g6.workspace.align_prompt_library \u2014 keeps every version of a prompt, spec or test set by the SHA-256 of its content, so a result can cite the exact version it used.",
     "maturity": "beta",
@@ -865,6 +883,23 @@
       "keep_operators"
     ],
     "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "complexity",
+    "summary": "g6.complexity \u2014 maps a Python package's modules, state and effects from its source, without running it, and lists what a change can reach.",
+    "maturity": "beta",
+    "maturity_reason": "a static atlas, reverse impact cone and simplification proposals over a file map, tested on small packages and hostile input sizes; nothing runs, and every answer is qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "atlas",
+      "impact",
+      "simplify"
+    ],
+    "requires": [
+      "design_governance"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },

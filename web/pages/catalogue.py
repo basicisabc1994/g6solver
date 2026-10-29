@@ -36,6 +36,12 @@ PLAIN: dict[str, tuple[str, str, str]] = {
                 "finding a derivative, an integral or the inverse of a matrix, and checks each answer a second, "
                 "independent way before handing it over",
                 "a wrong formula, root or integral stated with confidence"),
+    "algorithm_design": ("The algorithm designer",
+                         "Suggests textbook algorithms that fit the problem you describe, estimates what each would "
+                         "cost within your limits, and runs a fixed set of standard algorithms on your data, checking "
+                         "each answer a second way",
+                         "reimplementing a method that already exists, or a plan called the best when nobody proved "
+                         "it"),
     "causal": ("The cause-and-effect checker",
                "Works out from your diagram of what causes what whether data can show the effect of one thing on "
                "another and which variables to control for, then estimates the effect and tries to knock it down",
@@ -47,6 +53,10 @@ PLAIN: dict[str, tuple[str, str, str]] = {
     "coding_agent_gate": ("The coding-agent check",
                           "Checks a coding agent's work before it acts and again before it says the job is done",
                           "an agent reporting a fix that the evidence does not back up"),
+    "complexity": ("The change-impact map",
+                   "Reads a Python package's source without running it, maps its modules, shared state and side "
+                   "effects, and lists everything a change could reach and what it must keep",
+                   "a change that alters behaviour outside the part it was meant to touch"),
     "context": ("The context builder",
                 "Packs just the files and notes a model call needs, within a size limit, each marked with where it "
                 "came from",
@@ -158,9 +168,9 @@ PLAIN: dict[str, tuple[str, str, str]] = {
 # in two, or a column names one that is not registered.
 TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Learn", ("metaharness", "learning", "distillation", "abstraction", "cegis")),
-    ("Know", ("context", "grounding", "causal", "graph_reasoning")),
+    ("Know", ("context", "grounding", "causal", "graph_reasoning", "complexity")),
     ("Reason", ("formal", "lean", "algebra", "datalog", "prolog", "model_checking", "optimisation", "reasoning",
-                "solver", "debate")),
+                "solver", "debate", "algorithm_design")),
     ("Plan", ("intent_engine", "reliability_pipeline", "goal_engine", "navigator", "workforce")),
     ("Act safely", ("action_gating", "action_logic", "safety_engine", "guards", "csf", "coding_agent_gate",
                     "self_training")),

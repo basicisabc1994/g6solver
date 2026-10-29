@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from g6.algorithm_design import DesignProblem, fuse, search_algorithms
-from g6.algorithm_design.ir import AlgorithmPrimitive
 from g6.algorithm_design.ontology_adapter import retrieve_ontology
 from g6.complexity import FrozenIntent, Obligation, Requirement, build_atlas, impact_cone
 from g6.complexity.ir import Hypothesis

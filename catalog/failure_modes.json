@@ -617,7 +617,9 @@
     "guarded_by": [
       "epistemic_integrity"
     ],
-    "introduced_by": [],
+    "introduced_by": [
+      "complexity"
+    ],
     "planned": [],
     "awaiting_review": []
   },
@@ -755,7 +757,9 @@
     "guarded_by": [
       "reliability_pipeline"
     ],
-    "introduced_by": [],
+    "introduced_by": [
+      "algorithm_design"
+    ],
     "planned": [],
     "awaiting_review": []
   },
@@ -1538,7 +1542,9 @@
     "severity": "medium",
     "requires_human_review": false,
     "aliases": [],
-    "guarded_by": [],
+    "guarded_by": [
+      "complexity"
+    ],
     "introduced_by": [
       "meta_programming"
     ],
@@ -1784,6 +1790,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "algorithm_design",
       "ctx_library_mapper"
     ],
     "introduced_by": [],
@@ -2742,6 +2749,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "complexity",
       "design_governance"
     ],
     "introduced_by": [],
@@ -2786,6 +2794,7 @@
     "requires_human_review": false,
     "aliases": [],
     "guarded_by": [
+      "algorithm_design",
       "optimisation"
     ],
     "introduced_by": [],

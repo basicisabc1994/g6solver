@@ -128,7 +128,7 @@ MCP, a reply with no state is a `qualified-draft`, and nothing is `verified` wit
 
 ### What is a component?
 A small package that does one job, such as `grounding` (check claims against sources) or `action_gating` (allow, ask
-a person, or block). Each works on its own and declares any other component it imports. There are 34 in the core
+a person, or block). Each works on its own and declares any other component it imports. There are 36 in the core
 harness, and 60 extensions are in the library, each in a family for one kind of work; the
 [catalogue](components.md) is generated from the code. The two tables below list every one.
 
@@ -140,9 +140,11 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `action_gating` | Before an agent acts, decides whether it may go ahead, must ask a person first, or is blocked | MCP | `budget_check`, `budget_policy`, `budget_record` |
 | `action_logic` | Rules from research on how complex decisions fail: act in small steps, watch for early warnings, and change course when the evidence turns | MCP | none |
 | `algebra` | Does exact algebra and calculus for you, such as simplifying a formula, solving an equation, or finding a derivative, an integral or the inverse of a matrix, and checks each answer a second, independent way before handing it over | MCP | `sage_evaluate`, `sage_version` |
+| `algorithm_design` | Suggests textbook algorithms that fit the problem you describe, estimates what each would cost within your limits, and runs a fixed set of standard algorithms on your data, checking each answer a second way | MCP | none |
 | `causal` | Works out from your diagram of what causes what whether data can show the effect of one thing on another and which variables to control for, then estimates the effect and tries to knock it down | MCP | none |
 | `cegis` | Fills the gaps in a code template, then hunts for an input that breaks it, and repeats until none is left in the range you set | Python-only | — |
 | `coding_agent_gate` | Checks a coding agent's work before it acts and again before it says the job is done | MCP | none |
+| `complexity` | Reads a Python package's source without running it, maps its modules, shared state and side effects, and lists everything a change could reach and what it must keep | MCP | none |
 | `context` | Packs just the files and notes a model call needs, within a size limit, each marked with where it came from | Python-only | — |
 | `csf` | Works out an upper limit on how likely an agent you describe is to reach an unsafe state, and checks rules it must always keep | Python-only | — |
 | `datalog` | Works out everything that follows from your facts and rules, such as who reports to whom or what a change can reach, and shows how each answer was derived | MCP | `assert_facts`, `reset` |
@@ -268,7 +270,7 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 14 of the 34 core components; the other 20 are
+Every extension in the library can be called over MCP, as can 16 of the 36 core components; the other 20 are
 Python-only for now. The tables above say which.
 
 An op a component marks sensitive, because it runs a program on your computer, reaches the network, spends money,

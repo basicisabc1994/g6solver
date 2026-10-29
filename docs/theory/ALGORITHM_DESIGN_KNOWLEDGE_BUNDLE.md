@@ -15,7 +15,7 @@ They were missing in the initial CIR/algorithm-design proposal, which had accept
 ```python
 from g6.algorithm_design.knowledge import bundled_ontology, bundled_problem_index, search_bundled_ontology
 
-print(len(bundled_problem_index()["problems"]))  # 75 indexed titles
+print(len(bundled_problem_index()["problems"]))  # 75 indexed sections, each described in G6's own words
 candidates = search_bundled_ontology(problem_id="shortest_paths", established_features=())
 for candidate in candidates:
     print(candidate.algorithm_id, candidate.status, candidate.missing_features)

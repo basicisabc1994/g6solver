@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Mapping
 
-from g6.code.design_governance.graph import build, module_of
+from g6.code.design_governance.graph import build
 from g6.complexity.ir import CIR, ComplexityFinding, Dependency, Effect, FrozenIntent, Snapshot, StateVariable
 from g6.core.ledger import digest
 
