@@ -53,7 +53,7 @@ if sys.path and Path(sys.path[0] or ".").resolve() == HERE:
 if str(VALIDATION) not in sys.path:
     sys.path.insert(0, str(VALIDATION))
 
-from patch_review_search import analysis, arm_r, bindings, driver, record, reruns, runner  # noqa: E402
+from patch_review_search import analysis, arm_r, bindings, driver, record, reruns, runner, secondary  # noqa: E402
 from patch_review_utility import broken, labels, trees  # noqa: E402
 from patch_review_utility import draw as v9draw  # noqa: E402
 from patch_review_utility import run as v9run  # noqa: E402
@@ -117,6 +117,10 @@ def load_freeze(path: str | Path) -> dict:
         raise Refused(f"the spending cap and its shares: {exc}") from exc
     if not (v10.get("arm_r") or {}).get("sessions") or not isinstance(v10["arm_r"].get("prices"), dict):
         raise Refused("the freeze file names arm R's sessions folder and the frozen price list")
+    try:   # the similarity measure and its threshold are frozen in the entry (version 2, "Safeguards")
+        secondary.check_similarity(v10.get("similarity"))
+    except ValueError as exc:
+        raise Refused(f"the freeze file's similarity measure: {exc}") from exc
     bound = v10.get("bindings") or {}
     if set(bound) != {"C", "T", "E"}:
         raise Refused("the freeze file binds arms C, T and E, each as module:function")
@@ -327,10 +331,25 @@ def label(freeze: dict, *, arms_path, record_path, committed: str, calibration, 
     reference = _on_reference_fix(freeze, entries, rows, vault, ledger, work / "reference")
     limits = {key: v10[key] for key in ("cap_cents", "call_cap", "limit_s", "grace_s")} | {"shares": v10.get("shares")}
     arm_a_gaming = [item for item in v9["gaming"]["findings"] if str(item.get("source", "")).startswith("g6:")]
+    similar = _similarity(freeze, entries, vault, ledger)
     v10_found = analysis.analyse(record_path, committed, v9=v9, reference=reference, limits=limits,
-                                 gaming=arm_a_gaming)
+                                 gaming=arm_a_gaming, similarity=similar)
     write_json(out / "v10-results.json", v10_found)
     return {"v9": v9, "v10": v10_found}
+
+
+def _similarity(freeze: dict, entries: list[dict], vault, ledger) -> dict:
+    """The similarity of every model-written check the record holds to its task's hidden tests, measured here, inside
+    the vault, after the arms' record was hashed (version 2, "Secondary measures"), by the frozen measure."""
+    manifest = freeze["v9"]
+    by_id = {task["task_id"]: task for task in manifest["tasks"]}
+    outputs: dict[str, dict] = {}
+    for entry in entries:
+        if entry["kind"] == "arm":
+            outputs.setdefault(entry["data"]["patch"], {})[entry["data"]["arm"]] = entry["data"]["output"]
+    hidden = {patch: secondary.hidden_texts(labels.load(vault, v9run._at(manifest, by_id[patch]["label_contract"]),
+                                                        ledger=ledger)) for patch in outputs}
+    return secondary.measure_similarity(outputs, hidden, freeze["v10"]["similarity"])
 
 
 def _on_reference_fix(freeze: dict, entries: list[dict], rows: list[dict], vault, ledger, work: Path) -> list[dict]:

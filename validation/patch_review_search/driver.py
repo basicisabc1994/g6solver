@@ -63,7 +63,7 @@ from pathlib import Path
 from g6.core import component_process
 from patch_review_search.metering import NOTHING, FileMeter, InfrastructureFailure, Meter
 from patch_review_search import arm_r as arm_r_script
-from patch_review_search import report_check, stated_checks
+from patch_review_search import report_check, secondary, stated_checks
 from patch_review_search.record import Record
 from patch_review_utility.arms import stated_check_verdicts
 from patch_review_utility.arms import KILL_GRACE_S, RESEARCH_FLAG, ROOTS
@@ -343,6 +343,10 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, arm_r, spending: Spending
 
     comparison = stated_checks.compare(rows)     # feasibility criterion 5, recorded before any label is read
     record.add("comparison", comparison)
+    # two secondary measures that need no label, recorded before the record's hash so they are frozen before the labels
+    applicability, formal = secondary.template_applicability(rows), secondary.formal_path(rows)
+    record.add("template_applicability", applicability)
+    record.add("formal_path", formal)
     reruns = []
     for patch, row in zip(patches, rows):
         found_by = {"A": list(patch.get("arm_a_findings") or []),
@@ -350,11 +354,11 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, arm_r, spending: Spending
         for arm, findings in found_by.items():
             for reproduction in findings:
                 found = {"patch": patch["id"], "arm": arm, "node": reproduction.get("node"),
-                         "result": rerun(patch, arm, reproduction)}
+                         "code": reproduction.get("code"), "result": rerun(patch, arm, reproduction)}
                 reruns.append(found)
                 record.add("rerun", found)
     counts = {reason: sum(item["reason"] == reason for item in excluded) for reason in EXCLUDED}
-    return {"patches": rows, "comparison": comparison,
+    return {"patches": rows, "comparison": comparison, "template_applicability": applicability, "formal_path": formal,
             "excluded": {"counts": counts, "patches": [dict(item) for item in excluded]},
             "reruns": reruns, "retries": retries, "proposer_failures": failures, "spending_differences": differences,
             "tallies": {arm: tally([row["arms"][arm]["disposition"] for row in rows]) for arm in ARMS},

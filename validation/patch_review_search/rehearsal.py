@@ -33,7 +33,7 @@ if __package__ in (None, ""):   # run as a script: the study's folder on the pat
 from g6.core.llm import LLMError
 from g6.harness.patch_review import review_patch
 from patch_review_search import arm_e as arm_e_script
-from patch_review_search import launcher, runner, study
+from patch_review_search import launcher, runner, secondary, study
 from patch_review_utility import arms, contract, draw
 from patch_review_utility.executor import Executor
 
@@ -181,6 +181,7 @@ def build(out: str | Path, *, g6_commit: str = "0" * 40) -> Path:
         "v10": {"cap_cents": 1500.0, "shares": None, "limit_s": LIMIT_S, "grace_s": 60, "call_cap": CALL_CAP,
                 "rerun_timeout_s": 120, "arm_e": {"runs": RUNS, "run_s": RUN_S},
                 "arm_r": {"sessions": "r-sessions", "prices": launcher.PRICES},
+                "similarity": dict(secondary.PROPOSED_SIMILARITY),
                 "bindings": {arm: f"{__name__}:arm_{arm.lower()}" for arm in "CTE"}}}
     path = out / "freeze.json"
     path.write_text(json.dumps(freeze, indent=1) + "\n", encoding="utf-8")

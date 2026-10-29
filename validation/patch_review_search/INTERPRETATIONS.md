@@ -590,3 +590,37 @@ Items from 77 cover the paid rehearsal (`rehearsal.py`), on development fixtures
     missing. Arm R's collection skips `__pycache__` folders and `.pyc` files outright, so there is nothing to discard
     and count. Arms E and R keep each kept file's text in their output, for the similarity measure after the labels.
     Ruled by the coordinator (2026-10-29) for arm A and R's bytecode; the token counts for the coordinator's ruling.
+
+81. **The six secondary measures that were not built** (`secondary.py`), each read only from what the record holds:
+    - **Template applicability (arm T)** is recorded by the driver before the record's hash, so before any label: for
+      each template, the patches where an instance of it was applied (a `template instance` activity), refused (a
+      refused `proposal` of its stage and no instance applied; G6's reasons), or not chosen (its proposer stage
+      replied with no instance, or was skipped, with G6's reason). A refusal on a patch where another of its instances
+      applied is listed beside (`refused_too`). Proposer stages that are not templates (`scenarios`, `free_form`) are
+      left out.
+    - **The formal path (arm T)**, recorded the same way: the `state_invariant.v1` instances (and `access_rule.v1`'s
+      multi-step form, which goes through it) whose three-part record is in T's activities, once each. A model is
+      "built" when its instance reached the formal path, "searched" when the model checker ran on it, vacuous,
+      conflicting or undecided by its contract check; the traces found, those reproduced on the code, `model_only`,
+      `not_replayable` and `not_replayed`. A refused `state_invariant.v1` proposal counts as over the limits when G6's
+      reason names a limit ("at most", "limit", "exceeds", "too many"...); every refusal is listed with its reason.
+    - **Test adequacy (arm T)**, after the labels: a patch is `survived` when a requirement's mutation run had a mutant
+      survive, `none_survived` when mutants ran and none survived, and `no_mutation_run` otherwise (no T report, or no
+      mutant ran). The difference in defective share between the first two rows has Newcombe's hybrid score interval
+      for two independent proportions at 95% (method 10 of his 1998 paper, checked against his example (a)).
+    - **Reason codes**: per arm A, C and T (E's and R's findings are tests with no reason code), the number of
+      findings with each code and the four shares, each with the bootstrap's percentile interval at 95%: tasks
+      resampled within each repository with all their findings, from V9's seed plus two, the same task sets as the
+      paired differences' bootstrap. A rerun recorded without its code is counted under "not recorded"; the driver now
+      keeps each rerun's code.
+    - **Similarity to the hidden tests**, in the label step, inside the vault, after the arms' record is hashed: each
+      model-written check the record holds (a search arm's findings from proposed checks, whose text the record keeps;
+      every kept file of arms E and R) against its task's hidden tests (each hidden test file, and the lines its test
+      patch adds). The measure the scripts propose, `token_containment.v1`: the share of the check's Python tokens
+      (comments and layout left out) that lie in runs of at least 8 tokens a hidden test text holds in the same order,
+      the largest over the task's hidden texts; above the threshold when more than 0.5. The freeze file must name the
+      measure, `min_run` and the threshold, or the study does not start. The findings in checks above it are listed,
+      and the headline counts are given again without them (`headline_without_similar`). A search arm's other
+      proposed checks are not in the record with their text, so they are not measured.
+    - **Input and output tokens**: item 80.
+    For the coordinator's ruling: the similarity measure, its run length and its threshold above all.

@@ -64,7 +64,8 @@ def setup(tmp_path):
                "tasks": []},
         "v10": {"cap_cents": 400.0, "shares": None, "limit_s": 300, "grace_s": 30, "call_cap": 4,
                 "rerun_timeout_s": 120, "arm_e": {"runs": 1, "run_s": 120},
-                "arm_r": {"sessions": "r-sessions", "prices": PRICES}, "bindings": dict(bindings.STAND_INS)}}
+                "arm_r": {"sessions": "r-sessions", "prices": PRICES}, "bindings": dict(bindings.STAND_INS),
+                "similarity": {"measure": "token_containment.v1", "min_run": 8, "threshold": 0.5}}}
     freeze_path = write(tmp_path / "freeze.json", json.dumps(freeze))
     tasks = [{"task_id": name, "repository": "fixture/calc", "source": "source", "base_commit": base,
               "statement": {"problem_statement": "add returns the difference.", "requirements": "- add adds.",

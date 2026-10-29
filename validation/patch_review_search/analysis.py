@@ -51,16 +51,20 @@ C's numbers beside arm T's, never in their place. A sentence one of whose number
 not printed, and the report says why: the first when M is zero (the protocol's own rule), the false and correct
 acceptance rates never one without the other.
 
-**Not built yet**, until VS-4 and VS-5 settle their fields: template applicability (arm T), the formal path's counts
-(arm T), whether surviving mutants predict defects (test adequacy, arm T), similarity to the hidden tests of the checks
-C, T, E and R wrote, the per-reason-code shares over findings with their bootstrap, and token counts. Measure 3 for
-V9's arms 1 and 4 is not computed: their findings are not rerun by V10's driver.
+**The secondary measures** (``secondary``): template applicability and the formal path's counts (arm T), from the
+entries the driver recorded before the record's hash; test adequacy against the label, with Newcombe's interval for two
+independent proportions; each reason code's findings and shares, each with the bootstrap's interval over tasks and
+all their findings; and, when the label step measured it, the similarity of the model-written checks to the hidden
+tests, with the headline counts also given without the findings above the threshold (``headline_without_similar``).
+Measure 6 gives each arm's tokens by kind as its meter counted them. Measure 3 for V9's arms 1 and 4 is not computed:
+their findings are not rerun by V10's driver.
 """
 from __future__ import annotations
 
 import statistics
 from statistics import NormalDist
 
+from patch_review_search import secondary
 from patch_review_search.record import verify
 from patch_review_utility import gaming as gaming_scan
 from patch_review_utility import stats
@@ -81,10 +85,9 @@ PAIRS = (("C", "A"), ("T", "A"), ("C", "E"), ("T", "E"), ("T", "C"),
          *((arm, v9) for arm in ("C", "T", "E", "R") for v9 in V9_ARMS))
 #: The arms whose findings are also counted filtered (version 2, "Secondary measures").
 FILTERED = ("E", "R")
-NOT_BUILT = ("template applicability (arm T)", "the formal path's counts (arm T)",
-             "whether surviving mutants predict defects (arm T)",
-             "similarity to the hidden tests of the checks C, T, E and R wrote",
-             "per-reason-code shares over findings, with their bootstrap")
+#: Every secondary measure of version 2 is built (``secondary``); this stays for the report's shape.
+NOT_BUILT: tuple[str, ...] = ()
+NOT_RECORDED = "not recorded: the record was written before the driver kept this measure"
 #: The tokens measure 6 reports per arm, as the provider reports them (each arm's meter counts them by kind).
 TOKEN_KINDS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 #: Said beside K_R (version 2, "Measures", 4).
@@ -316,16 +319,18 @@ def _patches(entries: list[dict], v9: dict, reference: list[dict], *, keep_inval
     return rows, counts
 
 
-def _actionable(row: dict, arm: str, filtered: bool = False) -> list[dict]:
+def _actionable(row: dict, arm: str, filtered: bool = False, excluded: frozenset = frozenset()) -> list[dict]:
     """The arm's reproducible findings on the patch (actionable on a defective one); ``filtered``: without the tests
-    that also failed at the base in more than half of the arm's own base runs (arms E and R)."""
+    that also failed at the base in more than half of the arm's own base runs (arms E and R); ``excluded``: without
+    the findings ``(patch, arm, node)`` named there (those above the similarity threshold)."""
     tests = ((row["outputs"].get(arm) or {}).get("tests") or {}) if filtered else {}
     return [item for item in row["findings"].get(arm, []) if (item.get("result") or {}).get("reproducible") is True
-            and not (tests.get(item.get("node")) or {}).get("fails_at_base")]
+            and not (tests.get(item.get("node")) or {}).get("fails_at_base")
+            and (row["id"], arm, item.get("node")) not in excluded]
 
 
-def _discovers(row: dict, arm: str, filtered: bool = False) -> bool:
-    return arm != "2" and bool(_actionable(row, arm, filtered))
+def _discovers(row: dict, arm: str, filtered: bool = False, excluded: frozenset = frozenset()) -> bool:
+    return arm != "2" and bool(_actionable(row, arm, filtered, excluded))
 
 
 def _rates(rows: list[dict], name: str) -> dict:
@@ -365,18 +370,18 @@ def _sets(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return [row for row in both if row["label"] == "defective"], [row for row in both if row["label"] == "correct"]
 
 
-def _counts(rows: list[dict], arm: str, filtered: bool = False) -> dict:
+def _counts(rows: list[dict], arm: str, filtered: bool = False, excluded: frozenset = frozenset()) -> dict:
     m, l_ = _sets(rows)
-    k = sum(_discovers(row, arm, filtered) for row in m)
-    k_ref = sum(any((item["reference"] or {}).get("compatible") is True for item in _actionable(row, arm, filtered))
-                for row in m)
-    j = sum(bool(_actionable(row, arm, filtered)) for row in l_)
+    k = sum(_discovers(row, arm, filtered, excluded) for row in m)
+    k_ref = sum(any((item["reference"] or {}).get("compatible") is True
+                    for item in _actionable(row, arm, filtered, excluded)) for row in m)
+    j = sum(bool(_actionable(row, arm, filtered, excluded)) for row in l_)
     return {"K": rate(k, len(m)), "K_ref": rate(k_ref, len(m)), "J": rate(j, len(l_))}
 
 
-def _headline(rows: list[dict]) -> dict:
+def _headline(rows: list[dict], excluded: frozenset = frozenset()) -> dict:
     m, l_ = _sets(rows)
-    return {"M": len(m), "L": len(l_), "arms": {arm: _counts(rows, arm) for arm in ARMS},
+    return {"M": len(m), "L": len(l_), "arms": {arm: _counts(rows, arm, excluded=excluded) for arm in ARMS},
             "notes": {"K_R": K_R_NOTE}}
 
 
@@ -533,7 +538,8 @@ def verdict(outputs: dict[str, dict], gaming: list[dict] | None, found: dict, v9
 
 
 def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], limits: dict | None = None,
-            gaming: list[dict] | None = None, v9_audit: dict | None = None, resamples: int = stats.RESAMPLES) -> dict:
+            gaming: list[dict] | None = None, v9_audit: dict | None = None, resamples: int = stats.RESAMPLES,
+            similarity: dict | None = None) -> dict:
     """The primary measures, the feasibility criteria and the verdict (the module docstring), from a record that
     verifies against ``committed``. ``limits``: the frozen ``cap_cents``, ``call_cap``, ``limit_s``, ``grace_s`` and
     ``shares``; ``gaming``: the gaming scan's findings over the other arms' traces; ``v9_audit``: V9's feasibility
@@ -546,7 +552,17 @@ def analyse(record_path, committed: str, *, v9: dict, reference: list[dict], lim
     kept = {"kept": counts["label_invalid"], "rates": {name: _rates(every, name) for name in ARMS},
             "discovery": {arm: _discovery(every, arm) for arm in ARMS}, "headline": _headline(every)}
     audit = v9_audit if v9_audit is not None else (v9.get("broken_tasks") or {}).get("audit")
+    recorded = {kind: next((e["data"] for e in entries if e["kind"] == kind), None)
+                for kind in ("template_applicability", "formal_path")}
+    excluded = frozenset(tuple(item) for item in (similarity or {}).get("above") or [])
     return {**found, "sensitivity_label_invalid_kept": kept, "headlines": headlines(found),
+            "secondary": {**{kind: data if data is not None else {"not_recorded": NOT_RECORDED}
+                             for kind, data in recorded.items()},
+                          "test_adequacy": secondary.adequacy(rows),
+                          "reason_codes": secondary.reason_codes(rows, seed=seed, resamples=resamples)},
+            "similarity": similarity if similarity is not None else {
+                "not_computed": "the label step gave no similarity measure"},
+            "headline_without_similar": _headline(rows, excluded) if similarity is not None else None,
             "verdict": verdict(_outputs(entries), gaming, found["feasibility"], audit)}
 
 

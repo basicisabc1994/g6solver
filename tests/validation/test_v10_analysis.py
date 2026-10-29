@@ -206,6 +206,39 @@ def test_costs_per_arm_and_tool_errors_by_kind(tmp_path):
     assert got["tool_errors"]["C"]["error_kinds"] == {"time_out": 1}
 
 
+def test_the_secondary_measures_come_from_the_record_and_the_labels_and_none_is_left_unbuilt(tmp_path):
+    path = tmp_path / "record.jsonl"
+    kept = record.Record(path)
+    for patch, found_arms in ARMS.items():
+        for arm in ("C", "T", "E", "R"):
+            kept.add("arm", {"patch": patch, "arm": arm, "output": found_arms[arm]})
+    kept.add("template_applicability", {"templates": {"example.v1": {"applied": ["d1"]}}, "no_report": []})
+    kept.add("formal_path", {"total": {"models_built": 0}, "per_patch": {}, "refusals": []})
+    kept.add("rerun", {**finding("d1", "T", "a.py::t1"), "code": "unconfirmed_failure"})
+    got = analysis.analyse(path, kept.final, v9={"seed": SEED, "tasks": TASKS}, reference=[], resamples=200)
+    found = got["secondary"]
+    assert found["template_applicability"]["templates"]["example.v1"]["applied"] == ["d1"]
+    assert found["formal_path"]["total"] == {"models_built": 0}
+    assert found["test_adequacy"]["table"]["no_mutation_run"] == {"defective": 4, "correct": 2}
+    assert found["reason_codes"]["T"]["unconfirmed_failure"]["findings"] == 1 and got["not_built"] == []
+    assert got["similarity"]["not_computed"] and got["headline_without_similar"] is None
+    older = study(tmp_path / "older", TASKS, ARMS)["secondary"]          # a record from before the driver kept them
+    assert "not recorded" in older["template_applicability"]["not_recorded"]
+
+
+def test_findings_above_the_similarity_threshold_are_listed_and_the_headline_counts_given_without_them(tmp_path):
+    reruns = [finding("d1", "T", "a.py::t1"), finding("d2", "T", "a.py::t"), finding("c1", "T", "b.py::t")]
+    similar = {"spec": {"measure": "token_containment.v1", "min_run": 8, "threshold": 0.5}, "patches": {},
+               "above": [["d1", "T", "a.py::t1"]]}
+    got = study(tmp_path, TASKS, ARMS, reruns=reruns, similarity=similar)
+    assert got["similarity"]["above"] == [["d1", "T", "a.py::t1"]]
+    # M is d1, d2 and d4 (defective, accepted by V9's arms 1 and 2); T's findings on d1 and d2 are reproducible
+    with_all, without = got["headline"]["arms"]["T"]["K"], got["headline_without_similar"]["arms"]["T"]["K"]
+    assert got["headline"]["M"] == got["headline_without_similar"]["M"] == 3
+    assert (with_all["count"], without["count"]) == (2, 1)
+    assert got["headline_without_similar"]["arms"]["C"] == got["headline"]["arms"]["C"]   # only the flagged one
+
+
 def test_input_and_output_tokens_per_arm_are_what_each_arms_meter_counted_as_the_provider_reported_them(tmp_path):
     arms = {name: outputs() for name in ARMS}
     for name, found in arms.items():

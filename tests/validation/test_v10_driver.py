@@ -257,6 +257,25 @@ def test_every_finding_is_rerun_after_every_arm_has_run_on_every_patch():
     assert got["reruns"][0]["result"] == {"reproducible": True}
 
 
+def test_template_applicability_and_the_formal_path_are_recorded_before_the_reruns_and_each_rerun_keeps_its_code():
+    repro = {"file": "g6_check_0123456789ab/test_a.py", "text": "def test_a():\n    assert 0\n",
+             "node": "g6_check_0123456789ab/test_a.py", "code": "unconfirmed_failure"}
+    report = {"assessment": {"completion": {"activities": [
+        {"activity": "proposer stage", "stage": "example.v1", "result": "replied"},
+        {"activity": "template instance", "check": "g6p-example-1", "template": "example.v1"}]}}}
+    t = Arm("T", {"p0": [{"own": make(ABSTAIN, "x"), "model_calls": 1, "spent_cents": 1.0, "findings": [repro],
+                          "report": report}]})
+    record = driver.Record()
+    got, _, _ = study(patches(ACCEPTED), t=t, rerun=lambda patch, arm, reproduction: {"reproducible": True},
+                      record=record)
+    kinds = [entry["kind"] for entry in record.entries]
+    assert kinds.index("template_applicability") < kinds.index("rerun") and "formal_path" in kinds
+    applied = next(e["data"] for e in record.entries if e["kind"] == "template_applicability")
+    assert applied["templates"]["example.v1"]["applied"] == ["p0"]
+    assert got["template_applicability"] == applied and got["formal_path"]["total"]["models_built"] == 0
+    assert [e["data"]["code"] for e in record.entries if e["kind"] == "rerun"] == ["unconfirmed_failure"]
+
+
 def test_arm_as_findings_are_rerun_too_and_every_arm_run_is_timed():
     repro = {"file": "tests/test_calc.py", "text": "def test_add():\n    assert 0\n", "node": "tests/test_calc.py::test_add"}
     items = [{"id": "p0", "draw_index": 0, "arm_a": DEFECTIVE, "arm_a_findings": [repro]}]

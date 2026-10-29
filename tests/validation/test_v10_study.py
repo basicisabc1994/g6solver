@@ -27,6 +27,7 @@ MORE = "from calc import add\n\n\ndef test_more():\n    assert add(1, 1) == 2\n"
 R_TEST = "from calc import add\n\n\ndef test_r():\n    assert add(2, 3) == 5\n"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 PRICES = {"model-x": {"input_tokens": 3.0, "output_tokens": 15.0}}
+SIMILARITY = {"measure": "token_containment.v1", "min_run": 8, "threshold": 0.5}
 
 
 def git(root: Path, *args: str) -> str:
@@ -108,7 +109,7 @@ def joint(tmp_path, monkeypatch):
         "v10": {"cap_cents": 400.0, "shares": None, "limit_s": 300, "grace_s": 30, "call_cap": 4,
                 "rerun_timeout_s": 120, "arm_e": {"runs": 1, "run_s": 120},
                 "arm_r": {"sessions": "r-sessions", "prices": PRICES},
-                "bindings": dict(bindings.STAND_INS)}}
+                "similarity": dict(SIMILARITY), "bindings": dict(bindings.STAND_INS)}}
     path = write(tmp_path / "freeze.json", json.dumps(freeze))
     return tmp_path, path, freeze, ordered
 
@@ -155,7 +156,10 @@ def test_the_entry_point_refuses_to_start_without_a_freeze_file_naming_a_g6_comm
     root, path, freeze, _ = joint
     assert study.load_freeze(path)["g6_commit"] == COMMIT
     for broken_freeze, why in (({**freeze, "g6_commit": None}, "G6 commit"), ({**freeze, "g6_commit": "abc"}, "G6 commit"),
-                               ({**freeze, "study": "V9"}, "freeze file")):
+                               ({**freeze, "study": "V9"}, "freeze file"),
+                               ({**freeze, "v10": {**freeze["v10"], "similarity": None}}, "similarity"),
+                               ({**freeze, "v10": {**freeze["v10"], "similarity": {**SIMILARITY, "threshold": 2}}},
+                                "similarity")):
         write(path, json.dumps(broken_freeze))
         with pytest.raises(study.Refused, match=why):
             study.load_freeze(path)
@@ -248,6 +252,8 @@ def test_the_labels_are_read_only_after_the_committed_hash_and_both_studies_resu
     calibration = root / "vault" / "calibration.json"
     study.v9run.calibrate(loaded["v9"], calibration)
     study.prepare(loaded, order, root / "prepared")
+    session(root, "dev-correct", (root / "patches" / "dev-correct.diff").read_text(encoding="utf-8"),
+            root / "prepared" / "arm_r" / "dev-correct.json")
     got = study.arms(loaded, order, calibration=calibration, prepared=root / "prepared", work=root / "work",
                      record_path=root / "record.jsonl", output=root / "arms.json")
     with pytest.raises(record.RecordRefused):
@@ -264,3 +270,8 @@ def test_the_labels_are_read_only_after_the_committed_hash_and_both_studies_resu
     assert v10["study"] == "V10" and v10["record"]["committed"] == got["record"]["final"]
     assert v10["counts"]["defective"] == 1 and v10["counts"]["correct"] == 1
     assert set(v10["rates"]) >= set(analysis.ARMS) and done["v10"]["feasibility"]["criteria"]
+    # similarity, measured in the label step inside the vault: R's test is the hidden test with another name
+    assert v10["similarity"]["spec"] == SIMILARITY and set(v10["similarity"]["patches"]) == set(ordered)
+    (checked,) = v10["similarity"]["patches"]["dev-correct"]["R"]
+    assert checked["above"] is True and checked["similarity"] == pytest.approx(12 / 18, abs=1e-6)
+    assert v10["headline_without_similar"] is not None and v10["secondary"]["template_applicability"]
