@@ -465,3 +465,6 @@ Items from 70 cover the cost calibration (`calibration.py`), development calibra
     totals and means per patch. It is labelled development calibration, says it is not study data and that it
     informs the owner's spending cap only, and is written only to its output path, never to the freeze file or to
     anything of G6's. For the coordinator's ruling.
+
+Where the work stands: slices J (items 45 to 63, with V9's 58 to 62) and K (items 64 to 72) are complete, every item
+awaiting the coordinator's ruling; the launch slice came next, and nothing of J or K was left part-done.
