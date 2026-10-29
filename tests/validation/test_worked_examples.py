@@ -115,8 +115,9 @@ TASK = we.Task(id="black-5634", project="psf/black", full_name="psf/black", lice
 
 def test_base_dockerfile_installs_g6_as_the_readme_says():
     text = we.base_dockerfile()
-    assert "python3 -m venv --copies /opt/g6" in text
-    assert '"/opt/g6src[all]"' in text and "FROM g6-a2-linux" in text
+    assert "cd /opt/g6src && python3 -m venv --copies .venv" in text
+    assert '/opt/g6src/.venv/bin/pip install -q --no-cache-dir ".[all]"' in text and "FROM g6-a2-linux" in text
+    assert we.G6PY == "/opt/g6src/.venv/bin/python3"
 
 
 def test_task_dockerfile_keeps_the_fix_out_of_reach():
@@ -373,6 +374,21 @@ def test_a_failed_key_check_starts_no_agent(tmp_path):
     assert not any(we.CLAUDE in call and "-p" in call for call in docker.calls)
     assert not any(call[:2] == ["run", "-d"] and call[call.index("--name") + 1].startswith("g6we-run-")
                    for call in docker.calls)
+
+
+def test_selfcheck_needs_the_fix_to_pass_and_nothing_to_fail(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, FakeDocker())
+    seen = []
+
+    def oracle_run(ctx_, task, *, patch=None, folder=None, label="", **_):
+        seen.append(label)
+        ok = {"t::a": "passed", "t::b": "passed"}
+        return {"results": ok if label == "gold" else {"t::a": "failed", "t::b": "passed"}}
+
+    monkeypatch.setattr(we, "_oracle_run", oracle_run)
+    assert we.selfcheck(ctx, TASK)["ok"] and seen == ["gold", "empty"]
+    monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {"results": {"t::a": "passed", "t::b": "passed"}})
+    assert not we.selfcheck(ctx, TASK)["ok"]          # a check an empty patch passes shows nothing
 
 
 def test_the_task_list_is_in_the_plans_order():

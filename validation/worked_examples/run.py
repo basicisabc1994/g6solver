@@ -57,7 +57,8 @@ HOME = "/home/tester"
 WORK = f"{HOME}/work"
 CLAUDE = "/usr/local/bin/claude"
 CLAUDE_SHA256 = "4d704a8aecbe038affa3000f498ae17c1b4f753add8facb8764120affc99b658"
-G6PY = "/opt/g6/bin/python3"
+G6SRC = "/opt/g6src"
+G6PY = f"{G6SRC}/.venv/bin/python3"
 WE = "/opt/we"
 PROXY_PORT = 3128
 MODEL_HOSTS = ("api.anthropic.com:443",)
@@ -168,16 +169,17 @@ def write_in(docker: Docker, ctr: str, dest: str, text: str, *, user: str = USER
 
 # --- images ---------------------------------------------------------------------------------------------------------------
 def base_dockerfile() -> str:
-    """G6 as the README installs it at the commit run (PLAN.md section 9): its own environment made with ``python -m
-    venv --copies``, then ``pip install "<source>[all]"``; Claude Code 2.1.309; on ``g6-a2-linux``."""
+    """G6 as the README installs it at the commit run (PLAN.md section 9): in G6's source folder, its own environment
+    ``.venv`` made with ``python -m venv --copies``, then ``pip install ".[all]"`` there (``g6`` on the path stands
+    in for activating it); Claude Code 2.1.309; on ``g6-a2-linux``."""
     return f"""FROM {FROM_IMAGE}
 COPY claude {CLAUDE}
 COPY g6src.tar /tmp/g6src.tar
 RUN chmod 755 {CLAUDE} \\
- && mkdir -p /opt/g6src && tar -xf /tmp/g6src.tar -C /opt/g6src && rm /tmp/g6src.tar \\
- && python3 -m venv --copies /opt/g6 \\
- && cd /opt/g6src && /opt/g6/bin/pip install -q --no-cache-dir "/opt/g6src[all]" \\
- && ln -s /opt/g6/bin/g6 /usr/local/bin/g6 \\
+ && mkdir -p {G6SRC} && tar -xf /tmp/g6src.tar -C {G6SRC} && rm /tmp/g6src.tar \\
+ && cd {G6SRC} && python3 -m venv --copies .venv \\
+ && {G6SRC}/.venv/bin/pip install -q --no-cache-dir ".[all]" \\
+ && ln -s {G6SRC}/.venv/bin/g6 /usr/local/bin/g6 \\
  && mkdir -p {WE}/rounds && chown -R 1000:1000 {WE} \\
  && {G6PY} -c "import g6; print(g6.__version__)"
 """
@@ -826,6 +828,30 @@ def check(ctx: Context, task: Task, run_rel: str | None = None) -> dict[str, Any
     return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p)}, "finished")
 
 
+def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
+    """The independent check's own control (no model): the maintainers' fix, given as if it were the agent's patch,
+    must pass it, and an empty patch must fail it. A check that cannot tell them apart says nothing about a run."""
+    v = latest(ctx.archive, "validate", task.id)
+    if v is None:
+        raise SystemExit("validate the task first")
+    f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
+    folder = ctx.archive.start("selfcheck", task.id, g6_commit=ctx.g6.get("commit"))
+    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    gold = folder.fresh_path("gold.patch")
+    got = ctx.docker("run", "--rm", "--network", "none", oracle, "cat", "/oracle/fix.patch", timeout=600)
+    checked(got, "the fix's patch")
+    gold.write_bytes(got.stdout or b"")
+    empty = folder.fresh_path("empty.patch")
+    empty.write_bytes(b"")
+    rows = {}
+    for label, patch in (("gold", gold), ("empty", empty)):
+        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label)
+        rows[label] = {"patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p)}
+    ok = bool(rows["gold"]["passes"]) and not rows["empty"]["passes"]
+    return folder.finish({"ok": ok, **{k: {"passes": r["passes"], "failing": len(r["failing"]),
+                                           "patch_applied": r["patch_applied"]} for k, r in rows.items()}}, "finished")
+
+
 def replay(ctx: Context, task: Task, code: str, test: Path) -> dict[str, Any]:
     folder = ctx.archive.start("replay", task.id, code=code, test=test.name)
     patch = None if code == "fix" else Path(code)
@@ -945,8 +971,8 @@ def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("base", "images", "validate", "freecheck", "dryrun", "run", "check", "replay",
-                                        "show"))
+    ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "dryrun", "run", "check",
+                                        "replay", "show"))
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -972,7 +998,8 @@ def main(argv: list[str] | None = None) -> int:
         result = build_images(archive, task, g6["commit"])
     else:
         ctx = Context(archive=archive, docker=Docker(), key_reader=read_key, issue_reader=read_issue, g6=g6)
-        result = {"validate": lambda: validate(ctx, task), "freecheck": lambda: freecheck(ctx, task),
+        result = {"validate": lambda: validate(ctx, task), "selfcheck": lambda: selfcheck(ctx, task),
+                  "freecheck": lambda: freecheck(ctx, task),
                   "dryrun": lambda: run_task(ctx, task, dry=True),
                   "run": lambda: run_task(ctx, task), "check": lambda: check(ctx, task, args.run_rel),
                   "replay": lambda: replay(ctx, task, args.code, args.test)}[args.command]()
