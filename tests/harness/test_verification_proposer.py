@@ -534,7 +534,7 @@ def test_the_mcp_tool_takes_the_proposer_and_keeps_its_envelope_codes_and_label(
         if "job_id" not in job:
             return job
         for _ in range(400):
-            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
             if got.get("status") in ("completed", "failed"):
                 assert got["status"] == "completed", got
                 return got["result"]

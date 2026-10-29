@@ -11,8 +11,9 @@ The owner sets the version number above before release.
   and test-runner files with the base commit for the signs of weakening it knows how to find, runs the other tests
   that touch the changed modules, and returns one outcome: test integrity compromised, defect detected, insufficient
   evidence, or supported within scope. The reply's readable report (`assessment.report`) puts what G6 reproduced
-  first, then what is not established, then what the person decides. A caller may also give proposed checks and
-  template instances; neither ever passes a requirement.
+  first, then what is not established, then what the person decides. Over MCP the reply is compact, so that it fits
+  in a client's tool result; the full assessment is saved in G6's state folder. A caller may also give proposed
+  checks and template instances; neither ever passes a requirement.
 - **Setup for both clients.** `g6 setup --client claude --allow patch_review.review` (or `--client codex`) registers
   the installation with the client, installs the `using-g6` skill for it, allows patch review, and ends by showing the
   first review call. When the client already has an entry called `g6`, setup stops and says how to replace it.

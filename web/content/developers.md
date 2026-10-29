@@ -108,7 +108,8 @@ compromised, defect detected, insufficient evidence, or supported within scope. 
 stated requirement passed its stated checks, not that the patch does everything the task needs. Each requirement gets
 its own evidence, and merging always needs a separate approval. It returns a job: poll `metaharness_job`. The reply's
 `assessment.report` is the review as Markdown, for the agent to show the person verbatim: what G6 reproduced first,
-then what is not established, then what the person decides. The `using-g6` skill tells the agent to fix what G6
+then what is not established, then what the person decides. The reply is compact; its `full_assessment` names the file
+in G6's state folder that holds every field, and `metaharness_job` with `detail="full"` returns them all. The `using-g6` skill tells the agent to fix what G6
 reproduced, add each earlier reproduction as a stated check, and review again, for at most three rounds.
 
 ## Choose a model

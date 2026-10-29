@@ -735,7 +735,7 @@ def test_the_mcp_tool_takes_proposed_checks_and_keeps_its_envelope_and_codes(rep
         job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Make add sum.",
                                                               "requirements": R1, **arguments}))
         for _ in range(400):
-            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
             if got.get("status") in ("completed", "failed"):
                 assert got["status"] == "completed", got
                 return got["result"]
@@ -798,7 +798,7 @@ def test_over_mcp_a_deeply_nested_probe_still_gives_a_readable_reply(repo, monke
                                                                   "requirements": R1,
                                                                   "proposed_checks": [deep, shallow]}))
             for _ in range(400):
-                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
                 if got.get("status") in ("completed", "failed"):
                     return got
                 await asyncio.sleep(0.05)

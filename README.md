@@ -88,7 +88,8 @@ is done. The skill tells it how:
 2. It calls `g6_review_patch` with the repository's folder, the task and the requirements, and polls
    `metaharness_job` until the review ends.
 3. It shows you the reply's readable report (`assessment.report`) as it is: what G6 reproduced first, then what is not
-   established, then what you decide.
+   established, then what you decide. The reply is compact; the full assessment is saved in G6's state folder
+   (`~/.g6/reviews/`).
 4. When G6 reproduces a defect, it fixes it and reviews again, with each earlier reproduction added as a stated check,
    so you can see the fix pass the original counterexample. It stops after three rounds, when a round changes nothing,
    or when the report says only you can decide.

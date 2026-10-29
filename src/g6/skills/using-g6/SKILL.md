@@ -37,7 +37,7 @@ For a Python task, work in this order, lean in words.
 6. **Review.** Call `g6_review_patch` with the requirements and their stated checks, the template instances and any
    `proposed_checks` of your own, then poll `metaharness_job`. It needs host permission `patch_review.review`, which
    the person grants with `g6 setup`; never change permissions yourself. Show the reply's `assessment["report"]`
-   verbatim.
+   verbatim. The full assessment, each reproduction's text included, is in the file its full_assessment names.
 7. **Repair.** Fix what G6 reproduced. Add each earlier reproduction as a stated check (a proposed check's
    reproduction is a test file: add it to the repository's tests and list its node id), so the person sees the fix
    pass the original counterexample. Review again. Stop after 3 rounds, when a round changes nothing, or when the
