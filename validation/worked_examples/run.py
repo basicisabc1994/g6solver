@@ -173,16 +173,20 @@ def write_in(docker: Docker, ctr: str, dest: str, text: str, *, user: str = USER
 
 
 # --- images ---------------------------------------------------------------------------------------------------------------
-def base_dockerfile() -> str:
+def base_dockerfile(variant: str = "") -> str:
     """G6 as the README installs it at the commit run (PLAN.md section 9): in G6's source folder, its own environment
     ``.venv`` made with ``python -m venv --copies``, then ``pip install ".[all]"`` there (``g6`` on the path stands
-    in for activating it); Claude Code 2.1.309; on ``g6-a2-linux``."""
+    in for activating it); Claude Code 2.1.309; on ``g6-a2-linux``. Round 2 (``variant`` "r2") first makes its one
+    G6-side change (``round2_g6.py``) to the source G6 is installed from."""
+    round2 = (f" && python3 /tmp/round2_g6.py {G6SRC}/src/g6/harness && rm /tmp/round2_g6.py \\\n"
+              if variant == ROUND2 else "")
+    copy = "COPY round2_g6.py /tmp/round2_g6.py\n" if variant == ROUND2 else ""
     return f"""FROM {FROM_IMAGE}
 COPY claude {CLAUDE}
 COPY g6src.tar /tmp/g6src.tar
-RUN chmod 755 {CLAUDE} \\
+{copy}RUN chmod 755 {CLAUDE} \\
  && mkdir -p {G6SRC} && tar -xf /tmp/g6src.tar -C {G6SRC} && rm /tmp/g6src.tar \\
- && cd {G6SRC} && python3 -m venv --copies .venv \\
+{round2} && cd {G6SRC} && python3 -m venv --copies .venv \\
  && {G6SRC}/.venv/bin/pip install -q --no-cache-dir ".[all]" \\
  && ln -s {G6SRC}/.venv/bin/g6 /usr/local/bin/g6 \\
  && mkdir -p {WE}/rounds && chown -R 1000:1000 {WE} \\
@@ -237,9 +241,84 @@ USER {USER}
 """
 
 
-def image_names(task: Task, g6_commit: str) -> tuple[str, str]:
-    short = g6_commit[:12]
+def image_names(task: Task, g6_commit: str, variant: str = "") -> tuple[str, str]:
+    short = g6_commit[:12] + (f"-{variant}" if variant else "")
     return f"g6we-task:{task.id}-{short}", f"g6we-oracle:{task.id}-{short}"
+
+
+def base_tag(g6_commit: str, variant: str = "") -> str:
+    return f"g6we-base:{g6_commit[:12]}" + (f"-{variant}" if variant else "")
+
+
+# --- round 2: G6 with its own model (PLAN.md section 9) -------------------------------------------------------------------
+ROUND2 = "r2"
+G6_MODEL = "claude-sonnet-5-5"
+G6_ALLOWANCE_USD = 5.00      # what a round 2 run may spend on G6's own model calls, on top of the agent's stop
+KEY_FILE = f"{HOME}/.g6/.env"
+ROUND2_PATCH = HERE / "round2_g6.py"
+
+
+def g6_key_file(key: str) -> str:
+    """G6's key file in a round 2 container: its model, through the anthropic provider, and the key."""
+    return "\n".join(["G6_LLM_PROVIDER=anthropic", f"G6_LLM_MODEL={G6_MODEL}", f"ANTHROPIC_API_KEY={key}"]) + "\n"
+
+
+def write_key_file(docker: Any, ctr: str, key: str) -> None:
+    """G6's key file, owner-only, written through standard input: the key is never on a command line."""
+    checked(docker("exec", "-i", "-u", USER, ctr, "sh", "-c",
+                   f'umask 077 && mkdir -p "{HOME}/.g6" && chmod 700 "{HOME}/.g6" && cat > "{KEY_FILE}" && '
+                   f'chmod 600 "{KEY_FILE}"', input=g6_key_file(key).encode("utf-8")), "G6's key file")
+
+
+def _completions(obj: Any) -> list[list]:
+    """Every ``completion.activities`` list under ``obj``, outermost first."""
+    found = []
+    if isinstance(obj, dict):
+        comp = obj.get("completion")
+        if isinstance(comp, dict) and isinstance(comp.get("activities"), list):
+            found.append(comp["activities"])
+        for key, value in obj.items():
+            if key != "completion":
+                found += _completions(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            found += _completions(value)
+    return found
+
+
+#: The proposer's reply limit in round 2 (``round2_g6.py``): the most output a call can be billed for, its thinking
+#: included, which the reply's text does not show.
+G6_MAX_OUTPUT_TOKENS = 4_096
+#: At most this many characters to a token, for a call whose token counts G6's caller did not report: an upper bound
+#: (code and English run nearer four).
+CHARS_PER_TOKEN_LOW = 2
+
+
+def g6_model_cost(assessments: Iterable[Any]) -> dict[str, Any]:
+    """G6's own model calls in the given full assessments (one ``completion.activities`` list each), priced at the
+    published prices with no cache discount assumed (PLAN.md section 9). G6's Anthropic caller reports no token
+    counts, so a call without them is counted at an upper bound: its request's characters over
+    ``CHARS_PER_TOKEN_LOW`` in, and the reply limit (``G6_MAX_OUTPUT_TOKENS``) out."""
+    calls, bounded, tokens_in, tokens_out, usd = 0, 0, 0, 0, 0.0
+    for assessment in assessments:
+        lists = _completions(assessment)
+        for activity in (lists[0] if lists else []):
+            if not isinstance(activity, dict) or activity.get("activity") != "model call":
+                continue
+            calls += 1
+            if activity.get("input_tokens") is None or activity.get("output_tokens") is None:
+                bounded += 1
+                usage = {"input_tokens": -(-int(activity.get("input_chars") or 0) // CHARS_PER_TOKEN_LOW),
+                         "output_tokens": G6_MAX_OUTPUT_TOKENS}
+            else:
+                usage = {k: activity.get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                                       "cache_creation_input_tokens")}
+            tokens_in += int(usage.get("input_tokens") or 0)
+            tokens_out += int(usage.get("output_tokens") or 0)
+            answered = str(activity.get("answered_by") or "")
+            usd += c.usage_cost(usage, answered if answered in c.PRICES else G6_MODEL)
+    return {"calls": calls, "calls_counted_at_upper_bound": bounded, "input_tokens": tokens_in,
+            "output_tokens": tokens_out, "usd": round(usd, 6)}
 
 
 # --- the hook that saves each round's patch, and the patch capture -------------------------------------------------------
@@ -388,17 +467,25 @@ done = subprocess.run([str(root / ".venv/bin/python"), "-m", "pytest", "-q", "-p
 said = re.findall(r"AssertionError: seen: ([a-z_,]+)", done.stdout + done.stderr)
 known = {"own_env_name", "own_env_value", "proc_env_name", "proc_env_value", "key_file"}
 channels = sorted(set(",".join(said).split(",")) & known) if said else []   # pytest's summary line cuts names short
+acts = ((a.get("completion") or {}).get("activities") or [])
+calls = [{k: x.get(k) for k in ("input_tokens", "output_tokens", "input_chars", "output_chars", "answered_by", "stage",
+                                 "result")} for x in acts
+         if isinstance(x, dict) and x.get("activity") == "model call"]
 print(json.dumps({"confined": {"R1": status.get("R1"), "outcome": a.get("outcome"), "backend": backend,
                                "code": (got.get("warning_card") or {}).get("code")},
-                  "control": {"exit": done.returncode, "channels": [x for x in channels if x]}}))
+                  "control": {"exit": done.returncode, "channels": [x for x in channels if x]},
+                  "g6_model_calls": calls}))
 '''
 
 
-def key_check_ok(found: Mapping[str, Any]) -> bool:
-    """The confined test passed under bubblewrap, and the unconfined control saw the key by name."""
+def key_check_ok(found: Mapping[str, Any], *, key_file: bool = False) -> bool:
+    """The confined test passed under bubblewrap, and the unconfined control saw the key by name (and, in round 2,
+    G6's key file too)."""
     confined, control = found.get("confined") or {}, found.get("control") or {}
+    seen = control.get("channels") or []
     return (confined.get("R1") == "passed_on_stated_checks" and confined.get("backend") == "bubblewrap"
-            and control.get("exit") not in (0, None) and "own_env_name" in (control.get("channels") or []))
+            and control.get("exit") not in (0, None) and "own_env_name" in seen
+            and (not key_file or "key_file" in seen))
 
 
 # --- the rounds, read from the transcript ---------------------------------------------------------------------------------
@@ -468,6 +555,8 @@ def extract_rounds(objects: Iterable[Mapping[str, Any]],
                     parsed = json.loads(text)
                 except ValueError:
                     continue
+                if name.endswith("g6_review_patch") and isinstance(parsed, dict) and parsed.get("job_id"):
+                    rounds[-1]["job_id"] = str(parsed["job_id"])
                 for found in _reports(parsed)[:1]:
                     rounds[-1].update(outcome=found.get("outcome"), report=found.get("report"), assessment=found)
                 inner = parsed.get("result") if isinstance(parsed, dict) and isinstance(parsed.get("result"), dict) \
@@ -550,6 +639,8 @@ class Context:
     proxy_source: Path = PROXY
     environ: Mapping[str, str] | None = None
     tree_reader: Callable[[Task], str] | None = None    # upstream's tree for the base commit (default: GitHub's API)
+    variant: str = ""            # "r2": round 2, G6 with its own model (PLAN.md section 9)
+    prior_spent: float = 0.0     # what earlier rounds spent, under the same $100 stop
 
     def client_env(self, key: str | None = None) -> dict[str, str]:
         base = dict(self.environ) if self.environ is not None else {
@@ -588,21 +679,30 @@ def copy_out(docker: Any, ctr: str, src: str, dest: Path) -> bool:
     return cp.returncode == 0 and dest.exists()
 
 
-def key_check(ctx: Context, task: Task, image: str, key: str, tag: str) -> dict[str, Any]:
-    """PLAN.md section 4: in a container of its own from the run's image, with no network."""
+def key_check(ctx: Context, task: Task, image: str, key: str, tag: str, *, net: str = "",
+              px: str = "") -> dict[str, Any]:
+    """PLAN.md section 4: in a container of its own from the run's image, with no network; in round 2 with G6's key
+    file in place, on the run's network (``net``, way out through ``px``), so its review can ask G6's model."""
     name = f"g6we-keyprobe-{tag}"
     try:
-        checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *SECURITY, "-u", USER,
+        # round 2's check reviews with G6's model, so it sits on the run's network, whose one way out is the proxy
+        network = ["--network", net] if net else ["--network", "none"]
+        checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", *network, *SECURITY, "-u", USER,
                            "-e", f"HOME={HOME}", image, "tail", "-f", "/dev/null", timeout=600), "key check container")
-        done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-e", "ANTHROPIC_API_KEY", name, G6PY, "-I",
-                          "-", input=keyprobe_driver().encode("utf-8"), env=ctx.client_env(key), timeout=1200)
+        if ctx.variant == ROUND2:
+            write_key_file(ctx.docker, name, key)     # round 2: G6's own key file, which the confined test must not see
+        proxy = ([a for e in (f"HTTPS_PROXY=http://{px}:{PROXY_PORT}", f"HTTP_PROXY=http://{px}:{PROXY_PORT}",
+                              "NO_PROXY=localhost,127.0.0.1") for a in ("-e", e)] if px else [])
+        done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-e", "ANTHROPIC_API_KEY", *proxy, name,
+                          G6PY, "-I", "-", input=keyprobe_driver().encode("utf-8"), env=ctx.client_env(key),
+                          timeout=1800)
         try:
             found = json.loads(out(done).splitlines()[-1])
         except (ValueError, IndexError):
             found = {"error": f"the driver printed nothing readable (exit {done.returncode})"}
     finally:
         ctx.docker("rm", "-f", name, timeout=300)
-    found["ok"] = key_check_ok(found)
+    found["ok"] = key_check_ok(found, key_file=ctx.variant == ROUND2)
     return found
 
 
@@ -639,10 +739,11 @@ def refusal(ctx: Context, task: Task) -> str:
     v = latest(ctx.archive, "validate", task.id)
     if v is None or not v["record"].get("ok") or not v["record"].get("fail_to_pass"):
         return "the task has no finished validation with a FAIL_TO_PASS test"
-    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     if v["record"].get("oracle_image_id") != out(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}")):
         return "the task's validation was not made on the images this run would use"
-    ok, why = c.may_start(c.spent(ctx.archive.rows()))
+    need = c.RUN_STOP_USD + (G6_ALLOWANCE_USD if ctx.variant == ROUND2 else 0.0)
+    ok, why = c.may_start(c.spent(ctx.archive.rows()) + ctx.prior_spent, need=need)
     return "" if ok else f"the $100 stop: {why}"
 
 
@@ -674,7 +775,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         return {"status": "refused", "why": why, "task": task.id}
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
-    task_image, _ = image_names(task, str(ctx.g6["commit"]))
+    task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     tag = uuid.uuid4().hex[:10]
     common = {"g6_commit": ctx.g6.get("commit"), "g6_image": ctx.g6.get("image"), "task_image": task_image,
               "model": c.MODEL}
@@ -684,12 +785,21 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     try:
         title, text = ctx.issue_reader(task)
         record["image_id"] = out(ctx.docker("image", "inspect", task_image, "--format", "{{.Id}}"))
-        record["key_check"] = key_check(ctx, task, task_image, key, tag)
+        round2 = ctx.variant == ROUND2
+        if round2:
+            net, px = start_net(ctx, tag)      # round 2's key check asks G6's model, through the run's proxy
+        record["key_check"] = key_check(ctx, task, task_image, key, tag, net=net if round2 else "",
+                                        px=px if round2 else "")
         run.write_json("key_check.json", record["key_check"])
+        if round2:
+            record["key_check_g6"] = g6_model_cost([{"completion": {"activities": [
+                {**x, "activity": "model call"} for x in record["key_check"].get("g6_model_calls") or []]}}])
+            record["cost_usd"] = record["key_check_g6"]["usd"]
         if not record["key_check"]["ok"]:
             status = "key_check_failed"
             return run.finish(record, status)
-        net, px = start_net(ctx, tag)
+        if not round2:
+            net, px = start_net(ctx, tag)
         agent = f"g6we-run-{task.id}-{tag}"
         checked(ctx.docker("run", "-d", "--name", agent, "--label", "g6we=1", "--network", net, *LIMITS, *SECURITY,
                            "-u", USER, "-e", f"HOME={HOME}", "-w", task.repo, task_image, "tail", "-f", "/dev/null",
@@ -715,6 +825,8 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         record["g6_setup_exit"] = setup.returncode
         if setup.returncode != 0:
             raise RuntimeError(f"g6 setup exited {setup.returncode}")
+        if round2:
+            write_key_file(ctx.docker, agent, key)     # G6's model and its key, where g6.core.keys reads them
         write_in(ctx.docker, agent, f"{WE}/round_hook.sh", hook_script(task.repo, base), mode="755")
         write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings())
         if dry:
@@ -754,7 +866,9 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         drain.join(timeout=30)
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         result = tally.result or {}
-        record.update(status_detail=status_of(stop, tally), cost_usd=tally.cost_usd, stream_usd=round(tally.stream_usd, 6),
+        record.update(status_detail=status_of(stop, tally), agent_usd=tally.cost_usd,
+                      cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0), 6),
+                      stream_usd=round(tally.stream_usd, 6),
                       result_usd=tally.result_usd, reported_usd=result.get("total_cost_usd"),
                       model_calls=tally.model_calls, num_turns=result.get("num_turns"), usage=tally.usage,
                       result_subtype=result.get("subtype"), session_id=tally.session_id,
@@ -766,10 +880,21 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
             final.write_bytes(b"")
         record["final_patch_bytes"] = final.stat().st_size
         record["final_patch_sha256"] = c.sha256_file(final)
+        if round2:   # G6's key file never leaves the container
+            checked(ctx.docker("exec", "-u", USER, agent, "rm", "-f", KEY_FILE, timeout=60), "remove G6's key file")
         for src, name in ((f"{WE}/rounds", "rounds"), (f"{HOME}/.claude/projects", "claude_projects"),
                           (f"{HOME}/.g6", "g6_home")):
             copy_out(ctx.docker, agent, src, run.path / name)
             redact_tree(run.path / name, ctx.archive.redact)
+        saved: dict[str, Any] = {}
+        if round2:
+            for path in sorted((run.path / "g6_home" / "reviews").glob("*.json")):
+                try:
+                    saved[path.stem] = json.loads(path.read_text(encoding="utf-8"))
+                except ValueError:
+                    continue
+            record["g6_model"] = {**g6_model_cost(saved.values()), "reviews_saved": len(saved)}
+            record["cost_usd"] = round(record["cost_usd"] + record["g6_model"]["usd"], 6)
         objects = []
         for line in (run.path / "stream.jsonl").read_text(encoding="utf-8").splitlines():
             try:
@@ -777,6 +902,10 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
             except ValueError:
                 continue
         rounds = extract_rounds(objects, archived_resolver(run.path))
+        for one in rounds:      # round 2: what G6's own model proposed in this round's review
+            if one.get("job_id") in saved:
+                one["proposer"] = observe.proposer_summary(saved[one["job_id"]])
+                one["g6_model"] = g6_model_cost([saved[one["job_id"]]])
         run.write_json("rounds.json", rounds)
         record["rounds"] = len(rounds)
         record["outcomes"] = [r["outcome"] for r in rounds]
@@ -804,7 +933,7 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
                 folder: c.RunFolder | None = None, label: str = "") -> dict[str, Any]:
     """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
     a patch), the maintainers' test files when ``tests``, extra files, then pytest on ``modules``."""
-    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
     try:
@@ -842,7 +971,7 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
 
 def validate(ctx: Context, task: Task) -> dict[str, Any]:
     run = ctx.archive.start("validate", task.id, g6_commit=ctx.g6.get("commit"))
-    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     oracle_id = checked(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}"), "the oracle image")
     base = _oracle_run(ctx, task, folder=run, label="base")
     fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed")
@@ -881,7 +1010,7 @@ def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
         raise SystemExit("validate the task first")
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
     folder = ctx.archive.start("selfcheck", task.id, g6_commit=ctx.g6.get("commit"))
-    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     gold = folder.fresh_path("gold.patch")
     got = ctx.docker("run", "--rm", "--network", "none", oracle, "cat", "/oracle/fix.patch", timeout=600)
     checked(got, "the fix's patch")
@@ -914,7 +1043,7 @@ def g6replay(ctx: Context, task: Task, code: str, args_file: Path) -> dict[str, 
     a patch, with the review arguments in ``args_file`` (JSON: task, requirements and the like; the repository is the
     task's). No model is called."""
     folder = ctx.archive.start("g6replay", task.id, code=code, args=args_file.name)
-    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-replay-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"code": code, "args": json.loads(args_file.read_text(encoding="utf-8"))}
     try:
@@ -949,10 +1078,58 @@ def replay(ctx: Context, task: Task, code: str, test: Path) -> dict[str, Any]:
     return folder.finish(body, "finished")
 
 
+MODELCHECK = """import json, time
+from g6.core.llm import provider_from_env
+llm = provider_from_env()
+started = time.monotonic()
+try:
+    text, error = llm.complete("You answer with one word.", "Reply with the word OK.", max_tokens=256), ""
+except Exception as exc:
+    text, error = "", type(exc).__name__ + ": " + " ".join(str(exc).split())[:300]
+inner = getattr(llm, "_inner", None) or getattr(llm, "inner", None) or llm
+print(json.dumps({"caller": type(inner).__name__, "model": getattr(inner, "model", None), "reply": text[:40],
+                  "error": error, "seconds": round(time.monotonic() - started, 2)}))
+"""
+
+
+def modelcheck(ctx: Context, task: Task) -> dict[str, Any]:
+    """Round 2, before its first paid run (PLAN.md section 9): one call to G6's model from a container of the task's
+    image, with G6's key file in place, through the run's proxy; its cost is counted at an upper bound."""
+    key = ctx.key_reader()
+    ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
+    task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
+    folder = ctx.archive.start("modelcheck", task.id, g6_commit=ctx.g6.get("commit"))
+    tag = uuid.uuid4().hex[:10]
+    name, net, px, body = f"g6we-modelcheck-{tag}", "", "", {}
+    try:
+        net, px = start_net(ctx, tag)
+        checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", net, *SECURITY, "-u", USER,
+                           "-e", f"HOME={HOME}", task_image, "tail", "-f", "/dev/null", timeout=600), "model check")
+        write_key_file(ctx.docker, name, key)
+        done = ctx.docker("exec", "-i", "-u", USER, "-e", f"HOME={HOME}", "-e", f"HTTPS_PROXY=http://{px}:{PROXY_PORT}",
+                          "-e", f"HTTP_PROXY=http://{px}:{PROXY_PORT}", "-e", "NO_PROXY=localhost,127.0.0.1", name, G6PY,
+                          "-I", "-", input=MODELCHECK.encode("utf-8"), timeout=600)
+        try:
+            body = json.loads(out(done).splitlines()[-1])
+        except (ValueError, IndexError):
+            body = {"error": f"no readable reply (exit {done.returncode}): {err(done)[-300:]}"}
+        body["egress"] = egress(ctx, px, folder.fresh_path("egress.jsonl"))
+    finally:
+        for one in (name, px):
+            if one:
+                ctx.docker("rm", "-f", one, timeout=300)
+        if net:
+            ctx.docker("network", "rm", net, timeout=120)
+    bound = g6_model_cost([{"completion": {"activities": [{"activity": "model call", "input_chars": 50,
+                                                            "input_tokens": None, "output_tokens": None}]}}])
+    body["ok"] = bool(body.get("reply")) and not body.get("error")
+    return folder.finish({**body, "cost_usd": bound["usd"], "cost_source": "upper bound"}, "finished")
+
+
 def freecheck(ctx: Context, task: Task) -> dict[str, Any]:
     """Before the first paid run (PLAN.md section 9): one confined review with the README's install and a linked
     ``.venv``, with a placeholder in the key's place (no key is read, no model is called)."""
-    task_image, _ = image_names(task, str(ctx.g6["commit"]))
+    task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     folder = ctx.archive.start("freecheck", task.id, g6_commit=ctx.g6.get("commit"))
     found = key_check(ctx, task, task_image, "placeholder-not-a-key-0000", uuid.uuid4().hex[:10])
     return folder.finish(found, "finished")
@@ -984,13 +1161,14 @@ def build(docker: Docker, context: Path, tag: str, folder: c.RunFolder, name: st
     return out(docker("image", "inspect", tag, "--format", "{{.Id}}"))
 
 
-def build_base(archive: c.Archive, ref: str, claude: Path, docker: Docker | None = None) -> dict[str, Any]:
+def build_base(archive: c.Archive, ref: str, claude: Path, docker: Docker | None = None,
+               variant: str = "") -> dict[str, Any]:
     docker = docker or Docker()
     commit = git_commit(ref)
     if c.sha256_file(claude) != CLAUDE_SHA256:
         raise SystemExit("Claude Code's binary is not the registered build")
-    folder = archive.start("build", "base", ref=ref, g6_commit=commit)
-    ctx_dir = archive.root / "build" / f"base-{commit[:12]}"
+    folder = archive.start("build", "base", ref=ref, g6_commit=commit, variant=variant)
+    ctx_dir = archive.root / "build" / (f"base-{commit[:12]}" + (f"-{variant}" if variant else ""))
     ctx_dir.mkdir(parents=True, exist_ok=True)
     tar = ctx_dir / "g6src.tar"
     made = subprocess.run(["git", "-C", str(REPO_ROOT), "-c", "core.autocrlf=false", "archive", "--format=tar", "-o",
@@ -999,23 +1177,27 @@ def build_base(archive: c.Archive, ref: str, claude: Path, docker: Docker | None
         raise SystemExit("git archive failed")
     if not (ctx_dir / "claude").is_file():
         shutil.copyfile(claude, ctx_dir / "claude")
-    (ctx_dir / "Dockerfile").write_bytes(base_dockerfile().encode("utf-8"))
-    tag = f"g6we-base:{commit[:12]}"
+    if variant == ROUND2:
+        shutil.copyfile(ROUND2_PATCH, ctx_dir / "round2_g6.py")
+    (ctx_dir / "Dockerfile").write_bytes(base_dockerfile(variant).encode("utf-8"))
+    tag = base_tag(commit, variant)
     image = build(docker, ctx_dir, tag, folder, "base", [f"we.g6.commit={commit}"])
     rec = {"ref": ref, "g6_commit": commit, "image": tag, "image_id": image, "contains_required": contains_required(commit),
+           "variant": variant, "round2_patch_sha256": c.sha256_file(ROUND2_PATCH) if variant == ROUND2 else None,
            "source_tar_sha256": c.sha256_file(tar), "claude_sha256": CLAUDE_SHA256, "from": FROM_IMAGE,
            "from_id": out(docker("image", "inspect", FROM_IMAGE, "--format", "{{.Id}}"))}
     return folder.finish(rec, "finished")
 
 
-def build_images(archive: c.Archive, task: Task, g6_commit: str, docker: Docker | None = None) -> dict[str, Any]:
+def build_images(archive: c.Archive, task: Task, g6_commit: str, docker: Docker | None = None,
+                 variant: str = "") -> dict[str, Any]:
     docker = docker or Docker()
-    folder = archive.start("build", task.id, g6_commit=g6_commit)
-    task_image, oracle = image_names(task, g6_commit)
+    folder = archive.start("build", task.id, g6_commit=g6_commit, variant=variant)
+    task_image, oracle = image_names(task, g6_commit, variant)
     rec: dict[str, Any] = {"task_image": task_image, "oracle_image": oracle}
-    for tag, text, name in ((task_image, task_dockerfile(task, f"g6we-base:{g6_commit[:12]}"), "task"),
+    for tag, text, name in ((task_image, task_dockerfile(task, base_tag(g6_commit, variant)), "task"),
                             (oracle, oracle_dockerfile(task, task_image), "oracle")):
-        d = archive.root / "build" / f"{name}-{task.id}-{g6_commit[:12]}"
+        d = archive.root / "build" / (f"{name}-{task.id}-{g6_commit[:12]}" + (f"-{variant}" if variant else ""))
         d.mkdir(parents=True, exist_ok=True)
         (d / "Dockerfile").write_bytes(text.encode("utf-8"))
         docker("image", "rm", "-f", tag, timeout=600)     # a failed build must never leave an older image in its place
@@ -1095,8 +1277,8 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "dryrun", "run", "check",
-                                        "replay", "g6replay", "show", "progress", "rounds"))
+    ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "modelcheck", "dryrun",
+                                        "run", "check", "replay", "g6replay", "show", "progress", "rounds"))
     ap.add_argument("--args", type=Path, help="g6replay: a JSON file of the review's arguments")
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
@@ -1107,10 +1289,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--code")
     ap.add_argument("--test", type=Path)
     ap.add_argument("--kind", default="validate", help="show: validate, run, check, freecheck, replay or build")
+    ap.add_argument("--round", type=int, choices=(1, 2), default=1,
+                    help="2: round 2, G6 with its own model (its archive is round2/ inside the worked examples' one)")
     args = ap.parse_args(argv)
-    archive = c.Archive(c.archive_root(args.archive))
+    first = c.Archive(c.archive_root(args.archive))
+    variant = ROUND2 if args.round == 2 else ""
+    archive = c.Archive(first.root / "round2") if variant else first
+    prior = c.spent(first.rows()) if variant else 0.0     # one $100 stop for both rounds
     if args.command == "base":
-        print(json.dumps(build_base(archive, args.ref, args.claude or default_claude()), indent=1))
+        print(json.dumps(build_base(archive, args.ref, args.claude or default_claude(), variant=variant), indent=1))
         return 0
     if args.command == "progress":
         print(json.dumps(progress(archive, args.task), indent=1))
@@ -1133,11 +1320,12 @@ def main(argv: list[str] | None = None) -> int:
     task = task_by_id(args.task)
     g6 = g6_info(args.g6)
     if args.command == "images":
-        result = build_images(archive, task, g6["commit"])
+        result = build_images(archive, task, g6["commit"], variant=variant)
     else:
-        ctx = Context(archive=archive, docker=Docker(), key_reader=read_key, issue_reader=read_issue, g6=g6)
+        ctx = Context(archive=archive, docker=Docker(), key_reader=read_key, issue_reader=read_issue, g6=g6,
+                      variant=variant, prior_spent=prior)
         result = {"validate": lambda: validate(ctx, task), "selfcheck": lambda: selfcheck(ctx, task),
-                  "freecheck": lambda: freecheck(ctx, task),
+                  "freecheck": lambda: freecheck(ctx, task), "modelcheck": lambda: modelcheck(ctx, task),
                   "dryrun": lambda: run_task(ctx, task, dry=True),
                   "run": lambda: run_task(ctx, task), "check": lambda: check(ctx, task, args.run_rel),
                   "replay": lambda: replay(ctx, task, args.code, args.test),

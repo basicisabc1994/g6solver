@@ -112,6 +112,44 @@ def observe(objects: Iterable[Mapping[str, Any]], *, saved: Mapping[str, str] | 
                               for r in reviews)}}
 
 
+def _assessment(obj: Any) -> dict | None:
+    """The first dict under ``obj`` holding ``completion`` (G6's full assessment), outermost first."""
+    if isinstance(obj, dict):
+        if isinstance(obj.get("completion"), dict):
+            return obj
+        for value in obj.values():
+            found = _assessment(value)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = _assessment(value)
+            if found is not None:
+                return found
+    return None
+
+
+def proposer_summary(saved: Any) -> dict[str, Any]:
+    """Round 2: what G6's own model did in one review (its full assessment, as G6 saved it): the outcome and reasons,
+    the proposer's stages and model calls, the checks and template instances it proposed (ids ``g6p-``) with their
+    results, the proposals G6 refused, the defects reproduced and the next actions (where a reproduction's command
+    is)."""
+    a = _assessment(saved) or {}
+    acts = [x for x in (a.get("completion") or {}).get("activities") or [] if isinstance(x, dict)]
+    calls = [x for x in acts if x.get("activity") == "model call"]
+    return {"outcome": a.get("outcome"),
+            "reasons": [(r.get("stage"), r.get("code")) for r in a.get("reasons") or [] if isinstance(r, dict)],
+            "stages": [{k: x.get(k) for k in ("stage", "result", "reason") if x.get(k) is not None}
+                       for x in acts if x.get("activity") == "proposer stage"],
+            "model_calls": len(calls), "model_call_errors": sum(1 for x in calls if x.get("result") == "error"),
+            "proposed": [{"check": x.get("check"), "template": x.get("template", ""), "result": x.get("result")}
+                         for x in acts if str(x.get("check", "")).startswith("g6p-")],
+            "refused": [{k: x.get(k) for k in ("stage", "requirement", "reason")}
+                        for x in acts if x.get("activity") == "proposal"],
+            "defects_reproduced": (a.get("completion") or {}).get("defects_reproduced") or [],
+            "next_actions": a.get("next_actions") or []}
+
+
 def observe_run(folder: Any) -> dict[str, Any]:
     """``observe`` on an archived run folder: its ``stream.jsonl``, with the replies Claude Code saved to files read
     from the run's ``claude_projects`` copy."""

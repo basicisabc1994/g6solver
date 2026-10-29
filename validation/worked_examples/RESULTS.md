@@ -10,8 +10,9 @@ about how often G6 helps.**
 - The trails (transcripts, every round's patch, G6's replies, logs) are in the local archive, outside the repository.
 
 **State (2026-10-29):**
-- All ten runs are done: runs 1 to 5 on G6 2680cc9, runs 6 to 10 on G6 a923002.
-- Spent: $1.84 of the $100 stop.
+- Round 1 (G6 alone): all ten runs are done, runs 1 to 5 on G6 2680cc9 and runs 6 to 10 on G6 a923002.
+- Round 2 (G6 with its own model, G6 9ad134d): all ten runs are done (see "Round 2: G6 with its own model").
+- Spent: $13.48 of the $100 stop ($1.84 in round 1, $11.64 in round 2).
 - If the security review of W1 to W5 leads to a fix pass, runs 6 to 10 stay as made, on a923002.
 
 ## How the runs were made
@@ -201,3 +202,91 @@ These are worked examples. They show what happened in these ten runs and say not
   - template refusals did not say what was wrong. W4 fixed this: in run 8 a refusal named the missing binding and
     the next call was accepted.
 - **Spent:** $1.84 in all, of the $100 stop: $0.10 to $0.31 a run, 26 seconds to 5.4 minutes each.
+
+## Round 2: G6 with its own model
+
+**These are worked examples, not a study.** Each round 2 run is a new run of the same task: the agent writes a new
+patch, which can differ from its round 1 patch for reasons that have nothing to do with G6. So a difference between
+the rounds is not evidence that G6's model helps, and a sameness is not evidence that it does not. What follows says
+what happened in each run.
+
+**How round 2 was run** (PLAN.md section 9, "Round 2: G6 with its own model" and the two dated notes after it):
+
+- **G6:** commit 9ad134d, which includes the security review's fix pass, installed as its README says. Two lines in
+  the image's copy (`round2_g6.py`) put G6's check proposer (VS-5) on for every review, at the code's own limits:
+  `templates_first`, at most 10 model calls a review.
+- **G6's model:** claude-sonnet-5-5, through the `anthropic` provider. Its key is in G6's key file in the container
+  (owner-only), written only through standard input, and removed before G6's state folder is copied out.
+- **The agent, its container and its way out** are as in round 1. The task's repository is fetched from upstream.
+- **Before the first run:**
+  - one G6 model call from the container through the proxy replied, and only api.anthropic.com was reached;
+  - a dry run with no key passed the repository, hook and server checks.
+- **The key check before every run:** its own review asked G6's model while the confined test looked for the key.
+  The confined test found nothing; the unconfined control found the key in the environment and in G6's key file.
+- **Cost:** G6's caller reports no token counts, so each of G6's model calls is counted at an upper bound: the
+  request's characters over two in, the 4,096-token reply limit out. G6's costs below can only be overstated.
+
+| # | Task | Round 1 (G6 alone): G6's outcome, independent check | Round 2 (G6 + its model): G6 by round | What the proposer did | Round 2 independent check | Cost (agent + G6), time |
+|---:|---|---|---|---|---|---|
+| 1 | black #5634 | test integrity compromised (a harness false alarm); fails | 1: refused (template bindings); 2: not enough evidence; 3: supported within scope | 8 calls a review, 16 in all, all replied. Three free-form checks a review: 1 check error, 2 failing on the base too, because they could not import black (see below). No finding. | final **fails** (2 of 2 FAIL_TO_PASS), as in round 1 | $0.31 + $1.54, 4.7 min |
+| 2 | black #5521 | test integrity compromised (a harness false alarm); fails | 1: supported within scope | 8 calls. Three `differential.v1` instances (2 check errors, 1 refused for arguments `black.trans.TErr` cannot take) and 2 free-form checks (check errors): none could import black in G6's copy. No finding. | final **fails** (1 of 1 FAIL_TO_PASS), as in round 1 | $0.44 + $0.96, 8.1 min |
+| 3 | pydantic #14065 | G6's server did not start (2680cc9); passes | 1: test integrity compromised (`run_not_trusted`) | 8 calls; 2 free-form checks, both skipped after the integrity reason. No finding. | final **passes**, as in round 1 | $0.14 + $0.94, 2.8 min |
+| 4 | starlette #3720 | supported within scope; passes | 1: supported within scope | 9 calls; 3 `differential.v1` instances and 2 free-form checks, all run, none refuting the patch. No finding. | final **passes**, as in round 1 | $0.11 + $0.85, 1.5 min |
+| 5 | starlette #3718 | supported within scope; fails (a trailing-slash `root_path` regression) | 1: supported within scope | 8 calls; 2 free-form checks, both run, refuting nothing. No finding. | final **passes**: this run's patch keeps the trailing-slash case. G6 reproduced nothing, so the change is the agent's, not G6's | $0.12 + $0.82, 1.6 min |
+| 6 | pydantic #14052 | not enough evidence; fails | 1: not enough evidence (R2's whole-file check has skipped tests) | 9 calls; 2 `example.v1` and 2 `differential.v1` instances (1 refused) and 3 free-form checks, all run, none refuting the patch. No finding. | final **fails** (1 of 1 FAIL_TO_PASS: documented nested definitions), as in round 1 | $0.12 + $0.85, 3.5 min |
+| 7 | click #3769 | supported within scope; fails (`bar.update()` cases) | 1: supported within scope | 8 calls; 2 `differential.v1` instances and 2 free-form checks (all run, none refuting) and 2 `state_invariant.v1` instances (refused). No finding. | final **fails** (3 of 6 FAIL_TO_PASS: `bar.update()` still stops short), as in round 1 | $0.18 + $0.95, 3.8 min |
+| 8 | attrs #1593 | supported within scope; passes | 1: supported within scope | 7 calls; 2 `example.v1` and 4 `differential.v1` instances (2 refused; the rest run, none refuting). No finding. | final **passes**, as in round 1 | $0.14 + $0.89, 1.8 min |
+| 9 | fastapi #15077 | test integrity compromised (`.pdm-build`, a false alarm); passes | 1: supported within scope, with no integrity alarm (F8 at 9ad134d) | 8 calls; 3 `differential.v1` instances and 3 free-form checks, all run, none refuting. No finding. | final **passes**, as in round 1 | $0.18 + $0.95, 4.2 min |
+| 10 | click #3678 | supported within scope; fails on unstated details | 1: supported within scope | 8 calls; 4 `differential.v1` instances and 2 free-form checks, all run, none refuting. No finding. | final **fails** (10 of 10 FAIL_TO_PASS, on the internal name and the new warning, as in round 1); the issue's two examples pass on this patch | $0.15 + $0.95, 3.8 min |
+
+**What happened, run by run**
+
+1. **black #5634**
+   - **What the proposer gave:** each review asked G6's model 8 times, once a stage from `example.v1` to the
+     free-form checks.
+   - **Why its checks did not run:** the three free-form checks it proposed in each review could not be collected,
+     at the base or on the patch: `ModuleNotFoundError: No module named '_black_version'`. Black's build writes that
+     file at install time and git ignores it, and G6 runs a proposed check in a copy of the repository that leaves
+     ignored files out.
+   - **G6's verdicts:** one check was a check error and two failed on the base too. G6 put them under "for you to
+     decide", as its rule for checks a model proposed says, and reproduced nothing.
+   - **The agent's patch fails the same two maintainers' tests as in round 1** (an indented `# fmt: off`).
+2. **black #5521:** the same cause stopped every check the proposer made from importing black. One `differential.v1`
+   instance was refused because the call it described gave `black.trans.TErr` an argument twice.
+3. **pydantic #14065:** G6 gave "test integrity compromised" (`run_not_trusted`): in the tests that touch the changed
+   code, pytest's exit code and its own tallies disagreed. In round 1 the agent had seen one of those files,
+   `tests/test_main.py`, crash this environment at the base too. **It was a false alarm:** G6 gives the same reason on
+   the maintainers' fix (`run.py g6replay`). The proposer's two checks were then skipped.
+4. **starlette #3720,** 6 **pydantic #14052,** 7 **click #3769,** 8 **attrs #1593,** 9 **fastapi #15077** and
+   10 **click #3678:** the proposer's instances and checks ran, and none refuted the patch. G6 refused some instances
+   for their arguments, and every `state_invariant.v1` instance (run 7).
+   - In runs 6, 7 and 10 the patch still fails the maintainers' tests as in round 1. The proposer's checks did not
+     reach the cases those tests cover: documented nested definitions, `bar.update()`, and the help option's internal
+     name.
+   - In run 9 there was no integrity alarm: F8 at 9ad134d no longer treats pdm-backend's `.pdm-build` output as an
+     ignored input.
+5. **starlette #3718:** this run's patch passes the maintainers' tests, where round 1's failed on a trailing-slash
+   `root_path`. The proposer's two checks refuted nothing, and G6 reproduced nothing. **The difference comes from the
+   agent's new patch, not from G6.**
+
+**What round 2 shows, in plain words** (a worked example, not a study):
+
+- **The independent check:**
+  - in round 2, five final patches pass (runs 3, 4, 5, 8, 9) and five fail (1, 2, 6, 7, 10);
+  - in round 1, four passed and six failed;
+  - the one change, run 5, is the agent's different patch. G6 reproduced nothing in either round.
+- **What G6's model proposed:**
+  - G6's model was asked in every review: 7 to 9 calls a review, 89 in the ten runs' reviews and 80 more in the ten
+    key checks. All replied;
+  - it proposed 2 to 7 template instances and free-form checks a review, 51 in all;
+  - **none was a counterexample to a patch.** In black's repository none could even run, because G6's copy leaves
+    out the package's generated, git-ignored version file;
+  - so "ask, don't accuse" (a model's check gives at most "not enough evidence") was never tested;
+  - the proposer cannot see results between its calls. Where the patches fail, its checks missed the cases the
+    maintainers' tests cover.
+- **G6's own model path worked from the container in every run,** through the proxy to api.anthropic.com only. Its
+  calls record no token counts, so their cost is an upper bound.
+- **Replies were 5,671 to 8,956 characters,** none saved to a file. The agent showed the report whole in runs 4 and 5
+  and in one of run 1's two finished reviews, and summarised it elsewhere.
+- **Spent in round 2:** $11.64, which is $1.89 for the agent and $9.71 for G6's model at its upper bound, with the
+  one-call model check. Both rounds together: $13.48 of the $100 stop.
