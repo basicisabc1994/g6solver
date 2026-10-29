@@ -30,7 +30,10 @@
    that passed in the copy), or the run of those tests giving no result (``derived_test_not_compared``; the launch
    review's I4), a changed file of test data or a snapshot (one not Python under a ``tests``, ``test``, ``testing``
    or ``__snapshots__`` folder, which G6 does not compare: ``test_data_changed``, with a next action asking the
-   person to read its diff; the launch review's I3), a shortcut only the claim's text reports
+   person to read its diff; the launch review's I3), a module the tests could not import that a line the patch adds
+   imports (``patch_imports_missing_module``: the next action asks the person to check that it is the package
+   intended before installing anything, never to make the tests run; the launch review's I6), a shortcut only the
+   claim's text reports
    (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at
    its limit, a changed entry of a submodule git does not look into (``change_inside_submodule``: git cannot check
    the files a submodule holds), or such a submodule folder G6 could not hash (``submodule_not_hashed``). Each such
@@ -222,6 +225,14 @@ TEST_DATA_REASON = ("the patch changes test data or snapshots, which G6 does not
                     "value would look to it like any other change: {paths}")
 TEST_DATA_ASK = ("Read the diff of {path} (git diff {base} -- {path}): it is test data or a snapshot the patch "
                  "changed, which G6 does not compare; confirm the new values are intended, then review again.")
+#: The launch review's I6: a module a run could not import, and the import statements of the lines the patch adds.
+_NO_MODULE = re.compile(r"No module named '([\w.]+)'")
+_ADDED_IMPORT = re.compile(r"^\+[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import\b|import[ \t]+([^\n#;]+))", re.MULTILINE)
+# PENDING copy (the launch review's I6): ask, don't accuse; never "make those tests run here" for this case.
+MISSING_IMPORT_REASON = ("the tests could not import {names}, which the patch imports on a line it adds and which is "
+                         "not installed here")
+MISSING_IMPORT_ASK = ("The patch imports {name}, which is not installed here: check that it is the package you intend, "
+                      "and that it exists under that name, before installing anything.")
 #: The most ``import_roots`` a review takes.
 MAX_IMPORT_ROOTS = 8
 # PENDING copy (review C1): a run that loaded a changed module from outside the tree it tested (an installed copy).
@@ -382,6 +393,25 @@ def _test_data(change: repo_tests.Change) -> list[str]:
     ``__snapshots__`` folder (``TEST_DATA_FOLDERS``; the launch review's I3)."""
     return [rel for rel in change.files if not rel.lower().endswith(".py")
             and any(part.lower() in TEST_DATA_FOLDERS for part in PurePosixPath(rel).parts[:-1])]
+
+
+def _patch_imports_missing(change: repo_tests.Change, runs: list[dict]) -> list[str]:
+    """The modules ``runs`` could not import (``No module named ...``, in their output or their recorded messages) that
+    an import statement on a line the patch adds to a Python file names, itself, a package above it or a module below
+    it (the launch review's I6)."""
+    missing = {name for ran in runs for text in [ran.get("output") or "", *(ran.get("failure_messages") or {}).values()]
+               for name in _NO_MODULE.findall(str(text))}
+    if not missing:
+        return []
+    added = set()
+    for names, text in _diff_files(repo_tests.diff_text(change)):
+        if any(name.endswith(".py") for name in names):
+            for found in _ADDED_IMPORT.finditer(text):
+                added.update([found[1]] if found[1] else [part.split()[0] for part in found[2].split(",")
+                                                          if part.split()])
+    return sorted(name for name in missing if any(name == mine or mine.startswith(name + ".")
+                                                  or name.startswith(mine + ".") for mine in added
+                                                  if not mine.startswith(".")))
 
 
 def _collection_errors(output: str) -> set[str]:
@@ -558,10 +588,13 @@ def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", 
     return found
 
 
-def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str], structural=()) -> dict:
+def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, str], structural=(),
+                 missing: Collection[str] = ()) -> dict:
     """A requirement's status from its stated checks, and from ``structural``: the structural checks of a stated
     contract that name it and found an import the patch adds and the contract forbids (verification search's
-    ``forbidden_dependency.v1``), which fail it. The owner's ruling R-C1: a structural check never passes one."""
+    ``forbidden_dependency.v1``), which fail it. The owner's ruling R-C1: a structural check never passes one.
+    ``missing``: the modules the patch imports that are not installed here (the launch review's I6), which a check
+    that could not be collected is suggested to look at, never to make run."""
     checks = [{"id": check, "provenance": STATED, **verdicts[check]}
               for check in dict.fromkeys(norm[raw] for raw in req.checks)]
     checks += list(structural)
@@ -579,6 +612,11 @@ def _requirement(req: Requirement, verdicts: dict[str, dict], norm: dict[str, st
                 "suggested_test": f"{test}: {req.text}"}
     if failing:
         return {**out, "status": FAILED, "reason": "failed on its stated checks: " + ", ".join(failing)}
+    if unrun and missing and any(c["verdict"] == "collection_error" for c in checks):
+        return {**out, "status": NOT_ESTABLISHED, "reason": "stated checks did not run to a pass: " + ", ".join(unrun),
+                "suggested_test": f"check that {', '.join(missing)}, which the patch imports, is the package you "
+                                  f"intend and exists under that name, before installing anything; or add {test}: "
+                                  f"{req.text}"}
     if unrun:
         return {**out, "status": NOT_ESTABLISHED, "reason": "stated checks did not run to a pass: " + ", ".join(unrun),
                 "suggested_test": f"make those checks run here, or add {test}: {req.text}"}
@@ -960,6 +998,12 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                         f"{second.get('said', '')}")
                 unknowns.append(said)
                 reason("evidence", NOT_COMPARED, said)
+    # the launch review's I6: a module the patch imports that is not installed here is asked about, never put on the
+    # environment
+    missing = _patch_imports_missing(change, [ran for ran in (first, second) if ran.get("verdict") == "collection_error"])
+    if missing:
+        reason("evidence", "patch_imports_missing_module", MISSING_IMPORT_REASON.format(names=", ".join(missing)))
+    asks = [*(MISSING_IMPORT_ASK.format(name=name) for name in missing), *asks]
     follow_ups = [*asks, *_at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)]
     search = None
     formal = None
@@ -1043,7 +1087,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
 
     normative = [found for found in structural if found["normative"]]
     evaluated = [_requirement(req, verdicts, norm, [_structural_check(found) for found in normative
-                                                    if found["requirement"] == req.id and found["verdict"] == FAILED])
+                                                    if found["requirement"] == req.id and found["verdict"] == FAILED],
+                              missing=missing)
                  for req in stated]
     if search is not None:
         verification_search.annotate(evaluated, search)
@@ -1066,6 +1111,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         reason("evidence", "no_test_ran", "no test ran to a result")
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
+                  first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else "",
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
@@ -1225,7 +1271,9 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
 
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
-           adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None) -> dict:
+           adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="") -> dict:
+    """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
+    the general one (the launch review's I6: a module the patch imports that is not installed here)."""
     from g6.harness import verification_search   # the completion report, in every reply
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
@@ -1238,10 +1286,10 @@ def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, g
     else:
         outcome, why = SUPPORTED, []
     summary = _SUMMARY[outcome].format("; ".join(why[:5]))
-    next_actions = [_NEXT[outcome]]
+    next_actions = [first_action if first_action and outcome == INSUFFICIENT else _NEXT[outcome]]
     next_actions += [f"{req['id']}: {req['reason']}; suggested: {req['suggested_test']}" for req in evaluated
                      if "suggested_test" in req]
-    next_actions += list(follow_ups)
+    next_actions += [action for action in follow_ups if action != next_actions[0]]
     if unknowns:
         next_actions.append("Look into the unknowns yourself: G6 does not count them for or against the patch.")
     environment = {"isolation": ran.get("isolation"), "python": ran.get("python"),

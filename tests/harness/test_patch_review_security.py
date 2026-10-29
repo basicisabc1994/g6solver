@@ -500,3 +500,73 @@ def test_a_changed_file_outside_the_test_folders_leaves_the_outcome_as_it_was(tm
     _record(monkeypatch, lambda ids: result(ids))
     got = review_patch(root, task="Repair add.", requirements=DATA_CHECK)
     assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+# --- I6: a module the patch imports that is not installed here: ask, never blame the environment ---------------------
+
+MISSING = "not_a_real_pkg_xyz"
+CALC_TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
+ASK = ("The patch imports {name}, which is not installed here: check that it is the package you intend, and that it "
+       "exists under that name, before installing anything.")
+
+
+def _uncollectable(name: str) -> dict:
+    """A recorded run pytest could not collect: the import of ``name`` failed (the environment's, by G6's reading)."""
+    from g6.workforce import repo_tests
+
+    return {**result(), "verdict": "collection_error", "said": repo_tests.SAID["collection_error"],
+            "output": f"ERROR collecting test_calc.py\nE   ModuleNotFoundError: No module named '{name}'\n"
+                      "ERROR test_calc.py\n", "test_outcomes": {}, "collected_ids": []}
+
+
+def _no_run_text(got: dict) -> None:
+    import json
+
+    shown = json.dumps(got)
+    assert "make those tests run" not in shown and "make those checks run" not in shown
+    assert "make its stated checks run" not in shown
+
+
+@pytest.mark.parametrize(("line", "reported"), [
+    (f"import {MISSING}", MISSING),
+    (f"from {MISSING}.sub import thing", MISSING),
+    (f"import os, {MISSING}.sub as sub", f"{MISSING}.sub"),
+])
+def test_a_module_the_patch_imports_that_is_not_installed_is_asked_about_never_blamed_on_the_environment(
+        tmp_path, monkeypatch, line, reported):
+    root = _repo(tmp_path, {"calc.py": BAD, "test_calc.py": CALC_TEST})
+    _write(root, {"calc.py": f"{line}\n\n\n{GOOD}"})
+    _record(monkeypatch, lambda ids: _uncollectable(reported))
+    got = review_patch(root, task="Repair add.", requirements=STATED)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    found = [r for r in assessment["reasons"] if r["code"] == "patch_imports_missing_module"]
+    assert found and found[0]["stage"] == "evidence" and reported in found[0]["detail"], assessment["reasons"]
+    assert assessment["next_actions"][0] == ASK.format(name=reported), assessment["next_actions"]
+    _no_run_text(got)
+
+
+def test_a_missing_module_the_patch_does_not_import_leaves_the_review_as_it_was(tmp_path, monkeypatch):
+    """The base commit imports it already: the environment lacks a dependency, as before."""
+    root = _repo(tmp_path, {"calc.py": f"import {MISSING}\n\n\n{BAD}", "test_calc.py": CALC_TEST})
+    _write(root, {"calc.py": f"import {MISSING}\n\n\n{GOOD}"})
+    _record(monkeypatch, lambda ids: _uncollectable(MISSING))
+    got = review_patch(root, task="Repair add.", requirements=STATED)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert "patch_imports_missing_module" not in [code for _, code in _codes(got)]
+    assert assessment["next_actions"][0] == patch_review._NEXT["insufficient_evidence"]
+
+
+def test_confined_a_module_the_patch_imports_that_is_not_installed_is_asked_about(tmp_path, monkeypatch,
+                                                                                bwrap_backend):
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(repo_tests.REPO_PYTHON, raising=False)
+    root = _repo(tmp_path, {"calc.py": BAD, "test_calc.py": CALC_TEST})
+    _write(root, {"calc.py": f"import {MISSING}\n\n\n{GOOD}"})
+    got = review_patch(root, task="Repair add.", requirements=STATED, timeout_s=120)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert ("evidence", "patch_imports_missing_module") in _codes(got), assessment["reasons"]
+    assert assessment["next_actions"][0] == ASK.format(name=MISSING)
+    _no_run_text(got)
