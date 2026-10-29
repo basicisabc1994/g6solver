@@ -229,6 +229,7 @@ what happened in each run.
 |---:|---|---|---|---|---|---|
 | 1 | black #5634 | test integrity compromised (a harness false alarm); fails | 1: refused (template bindings); 2: not enough evidence; 3: supported within scope | 8 calls a review, 16 in all, all replied. Three free-form checks a review: 1 check error, 2 failing on the base too, because they could not import black (see below). No finding. | final **fails** (2 of 2 FAIL_TO_PASS), as in round 1 | $0.31 + $1.54, 4.7 min |
 | 2 | black #5521 | test integrity compromised (a harness false alarm); fails | 1: supported within scope | 8 calls. Three `differential.v1` instances (2 check errors, 1 refused for arguments `black.trans.TErr` cannot take) and 2 free-form checks (check errors): none could import black in G6's copy. No finding. | final **fails** (1 of 1 FAIL_TO_PASS), as in round 1 | $0.44 + $0.96, 8.1 min |
+| 3 | pydantic #14065 | G6's server did not start (2680cc9); passes | 1: test integrity compromised (`run_not_trusted`) | 8 calls; 2 free-form checks, both skipped after the integrity reason. No finding. | final **passes**, as in round 1 | $0.14 + $0.94, 2.8 min |
 
 **What happened, run by run**
 
