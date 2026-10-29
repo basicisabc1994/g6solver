@@ -319,6 +319,11 @@ other part is the components it draws on. [How it works](metaharness.md).
 No. It proposes and tests changes, and nothing goes live until you approve it. The only thing it does by itself is
 move back to a version you approved before, when the version in use falls behind it on live runs.
 
+For G6 itself, we're building a loop in which G6 maintains its own GitHub repository. It finds where G6 falls short,
+has coding agents work on it, checks their changes with its own review and opens pull requests. A maintainer reviews
+and merges every change. It's an open experiment in self-improvement infrastructure for AI agents:
+[read the design](https://github.com/basicisabc1994/g6solver/blob/main/docs/superpowers/specs/2026-10-29-self-improvement-loop-design.md).
+
 ### What can it change, and what can it never change?
 It can change which of your models runs each step, budgets, the prompt, learned hints, how many of your labelled
 examples to show, extra checks (added, never removed), optional pipeline steps, an admitted compiled shortcut for a
