@@ -287,3 +287,14 @@ Items 42 to 44 cover the report check (`report_check.py`), the comparison of sta
     Criterion 5 is met when every patch a search arm's own review accepted and arm A did not is on the list,
     not met when one is not, and inconclusive when any patch's results cannot be read, or the record holds no
     comparison. For the coordinator's ruling.
+
+44. **The runner's inputs, and arm A's findings.** The driver's patches are V9's non-empty tasks in the order V9's
+    results list them (its draw order), each with arm 3's disposition as arm A's, the review contract's ids, arm 3's
+    results on the stated checks and arm A's findings; V9's empty and non-applying tasks are the excluded patches, and
+    any other patch state is refused. Arm A's findings are, by the protocol's table of findings, its failed stated
+    checks: the defects its reply reproduced whose provenance is `stated` and code `check_failed`. A regression of the
+    repository's own tests (`derived_test_regressed`) also makes arm A's outcome `defect_detected`, but it is not a
+    stated check, and is not counted as a finding. Each finding's reproduction is the stated check's node, its file,
+    and that file's text on the patched tree V9 reviewed; one whose file is not on that tree is kept with no text, so
+    the reruns count it as not reproducible. A reply with no completion section (G6's review before verification
+    search, as at b3c342b) gives none. For the coordinator's ruling.

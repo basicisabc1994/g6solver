@@ -1,0 +1,127 @@
+{
+  "about": "one arm-3 reply (V9 arms.g6_review) on the development fixture record_reply.py builds; never task data",
+  "arm_3": {
+    "a5": {
+      "complete": true,
+      "missing": []
+    },
+    "defects_reproduced": {
+      "proposed_checks": [],
+      "stated_and_repository_checks": [
+        {
+          "check": "tests/test_calc.py::test_add",
+          "code": "check_failed",
+          "detail": "tests/test_calc.py::test_add: failed (failed: tests/test_calc.py::test_add)",
+          "provenance": "stated",
+          "reproduction": {
+            "arguments": [
+              "-p",
+              "no:cacheprovider",
+              "--rootdir=.",
+              "--confcutdir=.",
+              "-c",
+              "/dev/null",
+              "tests/test_calc.py::test_add"
+            ],
+            "artifact_digest": "5af634c8597ce876645db55cc78000b51e65ce039b953448c1f575ba71fc2341",
+            "base_commit": "589a0bc9c166ba50d72bab5681ddc752dec3ab8d",
+            "command": "python -m pytest -p no:cacheprovider --rootdir=. --confcutdir=. -c /dev/null tests/test_calc.py::test_add",
+            "environment": {},
+            "interpreter_source": "g6",
+            "node": "tests/test_calc.py::test_add",
+            "on": "the working tree under review",
+            "python": "/usr/local/bin/python"
+          },
+          "requirements": [
+            "R1"
+          ]
+        }
+      ]
+    },
+    "disposition": {
+      "accepted": false,
+      "category": "defect_found",
+      "cost": {
+        "model_calls": 0,
+        "processor_seconds": 0.13,
+        "seconds": 0.948
+      },
+      "detail": "tier_1:check_failed",
+      "error_kind": "",
+      "time_or_cap_reached": false
+    },
+    "model_calls": {
+      "count": 0,
+      "source": "assessment.completion.activities"
+    },
+    "row": {
+      "acceptable_by_fixture_spec": null,
+      "baseline_accept": false,
+      "case": "fixture",
+      "checks_run": [
+        {
+          "check": "stated checks and extra tests",
+          "command": "pytest tests/test_calc.py::test_add",
+          "seconds": 0.776,
+          "tier": 1,
+          "verdict": "failed"
+        }
+      ],
+      "checks_skipped": [
+        {
+          "check": "tests that touch the changed modules",
+          "reason": "tier 1 found a defect",
+          "tier": 2
+        },
+        {
+          "check": "mutation and old-against-new probes",
+          "reason": "tier 3 not run: mutation and old-against-new probes are not part of this version",
+          "tier": 3
+        }
+      ],
+      "completion_state": "qualified-draft",
+      "cost": {
+        "checks": 1,
+        "seconds": 0.948
+      },
+      "expected_outcome": null,
+      "g6_accept": false,
+      "g6_outcome": "defect_detected",
+      "isolation": {
+        "backend": "bubblewrap",
+        "container": null,
+        "network": false,
+        "profile": null,
+        "why": ""
+      },
+      "reason_codes": [
+        "tier_1:check_failed"
+      ],
+      "refused": false,
+      "requirements": {
+        "R1": "failed"
+      },
+      "tool_error": "",
+      "warning_code": "G6_E_PATCH_REVIEW"
+    },
+    "stated_checks": {
+      "tests/test_calc.py::test_add": "failed"
+    },
+    "trace": {
+      "commands": [
+        "pytest tests/test_calc.py::test_add"
+      ],
+      "isolation": [
+        {
+          "backend": "bubblewrap",
+          "container": null,
+          "network": false,
+          "profile": null,
+          "why": ""
+        }
+      ]
+    }
+  },
+  "g6_commit": "f786774319f34d82790eb53608f05c9ecb6537a1",
+  "recorded_with": "tests/validation/fixtures/v10_arm3/record_reply.py, in the Linux container with bubblewrap"
+}
