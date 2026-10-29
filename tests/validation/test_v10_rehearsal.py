@@ -158,6 +158,20 @@ def test_the_cost_record_gives_each_session_and_arm_and_leaves_another_models_se
     assert got["kind"] == "rehearsal on development fixtures, not study data"
 
 
+def test_the_projection_gives_each_unit_a_low_a_high_and_a_cap_bound_for_the_real_runs_counts():
+    units = {"patch": [0.02, 0.04], "self_review": [0.01], "review_r": [0.05], "C": [0.005], "T": [0.03], "E": [0.06]}
+    got = rehearsal.projection(units)
+    assert got["patch"]["low"] == pytest.approx(0.03 * 30) and got["patch"]["high"] == pytest.approx(0.04 * 45)
+    assert got["patch"]["cap_bound"] == pytest.approx((launcher.CAPS["patch"]["max_usd"] + launcher.MARGIN_USD) * 45)
+    assert got["T"]["observed"] == [0.03, *rehearsal.SMOKE_PER_REVIEW]           # the smoke's reviews are T's kind
+    worst = rehearsal.PROPOSER["max_model_calls"] * (rehearsal.PROPOSER["max_input_chars"] * rehearsal.PRICE_G6["input"]
+                                                     + rehearsal.PROPOSER["max_output_tokens"]
+                                                     * rehearsal.PRICE_G6["output"]) / 1e6
+    assert got["E"]["cap_bound"] == pytest.approx(worst * 30)
+    assert got["totals"]["V10"]["low"] == pytest.approx(sum(got[u]["low"] for u in ("C", "T", "E", "review_r")))
+    assert got["totals"]["V9"]["high"] == pytest.approx(got["patch"]["high"] + got["self_review"]["high"])
+
+
 def test_arm_c_and_t_are_arm_as_rule_with_their_search_and_the_stopped_caller(tmp_path, monkeypatch):
     seen = {}
 

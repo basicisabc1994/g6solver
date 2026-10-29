@@ -548,3 +548,28 @@ Items from 73 cover the session launcher (`launcher.py`), written for the paid r
     record prices each kind at its published rate where the usage says which (a five-minute write 1.25 times input,
     a one-hour one twice), else twice, and the projection gives that figure. Arm 2's token cap is set at the freeze
     from the rehearsal's measured totals by kind, cache reads included.
+
+Items from 77 cover the paid rehearsal (`rehearsal.py`), on development fixtures, before the freeze.
+
+77. **The rehearsal's G6 arms and their model.** Arms C, T and E call `claude-haiku-4-5`, the first smoke run's model
+    and V9's agent's, through `verification_proposer.StudyCaller`, with the smoke's proposer settings; each call's worst
+    case is reserved on the rehearsal's ledger first and its usage charged after. C and T are V9's arm 3 rule
+    (`arms.g6_review`) with their search configuration. E's prompt in the rehearsal (`E_SYSTEM`) is the rehearsal's:
+    E's frozen prompt is the freeze entry's. For the coordinator's ruling.
+
+78. **Every test run is confined.** In the rehearsal, V9's arm 1, the labels and the tests arms E and R wrote run with
+    bubblewrap (`CONFINED`: no network, only the run's copy and its plugin folder writable, the home folder not bound),
+    in the container where G6's process holds the key file; a key check before the first paid call showed the file out
+    of reach of a confined test and of a check G6 runs. The study itself runs them in each task's image, as V9 item 17
+    says. For the coordinator's ruling.
+
+79. **What the rehearsal found and changed.** Four faults, each fixed test first: the fixtures had no `.gitignore`, so
+    the agent's own pytest run left bytecode that V7's capture took as binary stubs git cannot apply (every fixture now
+    ignores bytecode, as a real repository does); V9's reader of G6's model calls counted each of verification
+    search's calls twice (it now counts the `model call` activities once each); and arm E refused a reply the model
+    had put in one Markdown fence (it now reads exactly one fenced block); and an agent that committed its change left
+    nothing for V7's capture against HEAD (the launcher now captures against the task's base commit). Two observations,
+    unchanged: arm R's tests'
+    folder also holds the bytecode of running them, which collection reads and keeping discards and counts; and a
+    patch that adds no test leaves arm A, and so C and T, with insufficient evidence (V9 item 1), so their findings come
+    from the proposer alone. For the coordinator's ruling.

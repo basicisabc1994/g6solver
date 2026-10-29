@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import threading
 import time
@@ -266,9 +267,19 @@ def _put(docker, box, folder: Path) -> None:
     docker.sh(box.agent, "git config --global --add safe.directory '*'")
 
 
+def capture_from(base: str) -> str:
+    """V7's capture (``git add -A``, the staged diff, then unstaged again), against the base commit rather than
+    ``HEAD``: an agent that commits its change still leaves its patch (the rehearsal's fourth fault)."""
+    if not re.fullmatch(r"[0-9a-f]{40}", base or ""):
+        raise ValueError("the base commit is 40 lower-case hexadecimal digits")
+    return ("repo=$(git -C /app rev-parse --show-toplevel 2>/dev/null || echo /app); "
+            f'cd "$repo" && git add -A 2>/dev/null; git diff --cached {base} > /tmp/v7_model.patch 2>/dev/null; '
+            "git reset -q 2>/dev/null; wc -c < /tmp/v7_model.patch; true")
+
+
 def patch_and_self_review(task_id: str, *, statement: dict | str, requirements: list[dict], source: Path, docker,
                           assets, image: str, key: str, ledger: Ledger, out: Path, time_limit_s: int,
-                          token_cap: int) -> dict:
+                          token_cap: int, base: str) -> dict:
     """The patch session on ``source`` (the base commit's tree), the patch captured as V7 captured it (V9's
     ``patches/<task>.diff``), then V9's arm 2 in the same session, resumed with arm 2's prompt (``sessions/<task>.json``,
     with its transcript beside it)."""
@@ -284,7 +295,7 @@ def patch_and_self_review(task_id: str, *, statement: dict | str, requirements: 
                                      interface=said.get("interface", "") or "No new interface.")
         written = run_session("patch", prompt=prompt, docker=docker, box=box, key=key, ledger=ledger,
                               record_dir=out / "patch-sessions", task_id=task_id, patch="", caps=CAPS["patch"])
-        docker.sh(box.agent, v7.CAPTURE, timeout=600)
+        docker.sh(box.agent, capture_from(base), timeout=600)
         target = out / "patches" / f"{task_id}.diff"
         target.parent.mkdir(parents=True, exist_ok=True)
         v7.checked(docker("cp", f"{box.agent}:/tmp/v7_model.patch", str(target), timeout=600), "capture the patch")

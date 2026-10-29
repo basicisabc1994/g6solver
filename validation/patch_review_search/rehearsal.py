@@ -352,7 +352,7 @@ def patches(run: str | Path, *, assets, image: str) -> list[dict]:
             task["task_id"], statement=task["statement"], requirements=v9run._requirements(task),
             source=run / task["source"], docker=context["docker"], assets=context["assets"], image=image,
             key=context["key"], ledger=context["ledger"], out=run, time_limit_s=freeze["v9"]["limits"]["arm_seconds"],
-            token_cap=freeze["v9"]["limits"]["token_cap"]))
+            token_cap=freeze["v9"]["limits"]["token_cap"], base=task["base_commit"]))
     return done
 
 
@@ -411,6 +411,38 @@ def costs(run: str | Path) -> dict:
                                  "left_out": [s for s in sessions if not s["study_model"]]}}
 
 
+#: The real run's counts, (low, high): V9's feasibility level takes tasks until 30 non-empty patches or 45 tasks
+#: attempted, so a patch session for each task attempted and arm 2 for each patch; arm R and V10's arms C, T and E on
+#: each non-empty patch.
+COUNTS = {"patch": (30, 45), "self_review": (30, 45), "review_r": (30, 30), "C": (30, 30), "T": (30, 30),
+          "E": (30, 30)}
+#: The first smoke run's dollars per proposer review (templates first, as arm T runs), from its record.
+SMOKE_PER_REVIEW = (0.021466, 0.029203)
+
+
+def projection(units: dict[str, list[float]]) -> dict:
+    """The real run's cost from the rehearsal's dollars per unit (``units``: each kind of session, and each of arms
+    C, T and E per patch; the study's model only): per unit a low (the mean times the low count), a high (the largest
+    times the high count) and a cap bound (each session's budget and margin, or a proposer review's worst case, times
+    the high count), and the totals for V9's patches and arm 2 and for V10's arms C, T, E and R. The fixtures are small
+    applications, so the low and the high are what fixture-sized work costs; a real repository's work sits between
+    them and the cap bound."""
+    worst_review = PROPOSER["max_model_calls"] * (PROPOSER["max_input_chars"] * PRICE_G6["input"]
+                                                  + PROPOSER["max_output_tokens"] * PRICE_G6["output"]) / 1e6
+    found = {}
+    for unit, (low_n, high_n) in COUNTS.items():
+        seen = list(units.get(unit) or []) + (list(SMOKE_PER_REVIEW) if unit == "T" else [])
+        bound = (launcher.CAPS[unit]["max_usd"] + launcher.MARGIN_USD) if unit in launcher.CAPS else worst_review
+        found[unit] = {"observed": seen, "counts": [low_n, high_n],
+                       "low": round(sum(seen) / len(seen) * low_n, 4) if seen else None,
+                       "high": round(max(seen) * high_n, 4) if seen else None, "cap_bound": round(bound * high_n, 4)}
+    found["totals"] = {study_name: {key: round(sum(found[u][key] or 0 for u in members), 4)
+                                    for key in ("low", "high", "cap_bound")}
+                       for study_name, members in (("V9", ("patch", "self_review")),
+                                                   ("V10", ("C", "T", "E", "review_r")))}
+    return found
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -426,8 +458,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command in ("patches", "reviews"):
         done = (patches if args.command == "patches" else reviews)(args.run, assets=args.assets, image=args.image)
-        print(json.dumps([{k: v.get("dollars") for k, v in item.items() if isinstance(v, dict)} or
-                          {"task_id": item.get("task_id"), "dollars": item.get("dollars")} for item in done]))
+        print(json.dumps([{"task_id": item["task_id"], "dollars": item.get("dollars")} if "task_id" in item else
+                          {k: v.get("dollars") for k, v in item.items() if isinstance(v, dict)} for item in done]))
         return 0
     with tempfile.TemporaryDirectory(prefix="rehearsal-key-") as work:
         found = key_check(Path(work) / "repo")

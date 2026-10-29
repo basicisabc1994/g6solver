@@ -162,7 +162,11 @@ def test_a_task_gets_its_patch_session_then_arm_2_in_the_same_session_with_v9s_p
     got = launcher.patch_and_self_review(
         "t1", statement="add returns the difference.", requirements=requirements, source=tmp_path,
         docker=docker, assets=None, image="img", key=KEY, ledger=ledger, out=tmp_path / "out",
-        time_limit_s=1800, token_cap=200_000)
+        time_limit_s=1800, token_cap=200_000, base="b" * 40)
+    # the rehearsal's fourth fault: an agent that commits its change left nothing for a capture against HEAD, so
+    # the patch is captured against the base commit, whatever the agent committed
+    capture = next(c for c in docker.commands if c[:1] == ["exec"] and "git diff --cached" in " ".join(c))
+    assert "git diff --cached " + "b" * 40 in " ".join(capture)
     assert (tmp_path / "out" / "patches" / "t1.diff").read_text(encoding="utf-8") == patch
     review = json.loads((tmp_path / "out" / "sessions" / "t1.json").read_text(encoding="utf-8"))
     assert review["patch_sha256"] == hashlib.sha256(patch.encode("utf-8")).hexdigest()
