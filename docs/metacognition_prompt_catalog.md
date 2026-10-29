@@ -1,10 +1,12 @@
 # G6 metacognition and critical-thinking prompt catalog
 
-The static `g6.workspace.align_prompt_library.metacognition` catalog is an
-optional collection of **candidate prompt templates**, not an alternative
-prompt store. Install with `install_catalog(Library(path))` into the existing
-append-only, SHA-256-addressed `align_prompt_library`, whose sensitive write
-policy must still be respected by callers. Importing this module never writes.
+The static `g6.workspace.align_prompt_library.metacognition` entries are
+candidate prompt templates in G6's one prompt catalogue
+(`g6.workspace.align_prompt_library.catalogue`), not an alternative prompt store.
+Each keeps its original stage and is tied to a work mode and a pipeline step.
+Installing the catalogue into the append-only, SHA-256-addressed
+`align_prompt_library` is the sensitive op `install_catalog`: over MCP it is refused
+unless the person who runs the server allows it. Importing either module never writes.
 
 ## Provenance and adaptation
 
@@ -38,27 +40,22 @@ All return structured JSON instructions and use strict
 ## Python example
 
 ```python
-from g6.workspace.align_prompt_library import Library
-from g6.workspace.align_prompt_library.metacognition import (
-    get_prompt, render_prompt, install_catalog,
-)
-from g6.workspace.align_prompt_library.library import placeholders
+from g6.workspace.align_prompt_library import catalogue
+from g6.workspace.align_prompt_library.library import Library, placeholders
 
-entry = get_prompt("ct-critical-review")
+entry = catalogue.entry("ct-critical-review")
 values = {key: "example" for key in placeholders(entry.template)}
-rendered = render_prompt(entry.name, values)
+rendered = catalogue.render(entry.name, values)
 assert rendered["template_digest"] == entry.digest
 
-library = Library("my-library.jsonl")
-install_catalog(library)  # Explicit sensitive persistent write.
-stored = library.get(entry.name)
+catalogue.install(path="my-library.jsonl")  # explicit persistent write; install_catalog over MCP
+stored = Library("my-library.jsonl").get(entry.name)
 assert stored["digest"] == entry.digest
 ```
-
 ## Evidence contract and limitations
 
-A generated critique is only another model-generated proposal. It cannot earn
-`verified`, alter a frozen evaluator, grant approvals or activate a revised
+A generated critique is only another model-generated proposal. It cannot raise
+a result's state, alter a frozen evaluator, grant approvals or activate a revised
 prompt. Prompt experiments must run through the G6 meta-harness's paired
 held-out evaluations and promotion process with human approval.
 

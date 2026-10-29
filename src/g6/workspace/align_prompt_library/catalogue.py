@@ -45,9 +45,9 @@ class CatalogueEntry:
                 "template": self.template}
 
 
-from g6.workspace.align_prompt_library import cognitive_prompts  # noqa: E402 - the entries use CatalogueEntry
+from g6.workspace.align_prompt_library import cognitive_prompts, metacognition  # noqa: E402 - they use CatalogueEntry
 
-ENTRIES: tuple[CatalogueEntry, ...] = cognitive_prompts.ENTRIES
+ENTRIES: tuple[CatalogueEntry, ...] = cognitive_prompts.ENTRIES + metacognition.ENTRIES
 _BY_NAME = {e.name: e for e in ENTRIES}
 
 

@@ -8,7 +8,7 @@ import pytest
 
 from g6.mcp import invoke_reply
 from g6.workspace import _envelope as E
-from g6.workspace.align_prompt_library import catalogue, library
+from g6.workspace.align_prompt_library import catalogue, library, metacognition
 from g6.workspace.align_prompt_library.library import Library, digest_of
 
 WorkspaceRefused = E.WorkspaceRefused
@@ -21,7 +21,9 @@ def home(tmp_path, monkeypatch):
 
 
 def test_every_entry_is_tied_to_a_mode_and_step_and_none_decides_a_gate():
-    assert len(catalogue.ENTRIES) == 14 and len({e.name for e in catalogue.ENTRIES}) == 14
+    assert len(catalogue.ENTRIES) == 27 and len({e.name for e in catalogue.ENTRIES}) == 27
+    assert {e.source.split(":", 1)[0] for e in catalogue.ENTRIES} == {"cognitive bootstrap pull request #4",
+                                                     "metacognition pull request #6"}
     for e in catalogue.ENTRIES:
         assert e.mode in catalogue.MODES and e.step in catalogue.STEPS and e.step != "gate"
         assert "$" not in e.template and e.digest == digest_of(e.template)
@@ -73,4 +75,10 @@ def test_install_when_allowed_stores_each_entry_once_and_never_takes_a_users_nam
 def test_the_catalogue_op_lists_entries_by_mode_and_step():
     reply = invoke_reply("align_prompt_library", "catalogue", '{"mode": "premortem", "step": "test"}')
     assert reply["completion_state"] == "qualified-draft" and reply["warning_card"]["code"] == "G6_E_LIBRARY_CATALOGUE"
-    assert [e["name"] for e in reply["result"]["entries"]] == ["cb-search-query"]
+    assert [e["name"] for e in reply["result"]["entries"]] == ["cb-search-query", "mc-research-needed"]
+
+
+def test_metacognition_keeps_no_render_or_install_of_its_own():
+    for name in ("render_prompt", "install_catalog", "get_prompt", "BY_NAME", "PromptDefinition", "CATALOG"):
+        assert not hasattr(metacognition, name), name
+    assert set(metacognition.ENTRIES) <= set(catalogue.ENTRIES)
