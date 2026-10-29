@@ -208,6 +208,34 @@ def test_the_records_are_the_ones_arm_2_and_arm_r_read(tmp_path):
     assert arm_r.cost_cents(got, launcher.PRICES) == pytest.approx(got["dollars"] * 100)
 
 
+def test_a_session_is_charged_the_result_records_usage_not_the_streamed_placeholders(tmp_path):
+    # the rehearsal's fifth fault: each streamed assistant message carries a placeholder output count (1 to 4), and
+    # only Claude Code's result record holds the invocation's totals, so the ledger under-charged every session
+    placeholder = {"input_tokens": 10, "output_tokens": 1, "cache_read_input_tokens": 500,
+                   "cache_creation_input_tokens": 100, "cache_creation": {"ephemeral_5m_input_tokens": 100}}
+    totals = {"input_tokens": 20, "output_tokens": 4000, "cache_read_input_tokens": 1000,
+              "cache_creation_input_tokens": 300,
+              "cache_creation": {"ephemeral_5m_input_tokens": 200, "ephemeral_1h_input_tokens": 100}}
+    lines = stream(usage=placeholder)
+    lines[-1] = {**lines[-1], "usage": totals}
+    docker = FakeDocker(lines)
+    ledger = launcher.Ledger(tmp_path / "ledger.json", cap=15.0)
+    box = launcher.v7.Box(docker, "agent-1", repo="/app", net=launcher.v7.Net(docker, "net", "proxy"))
+    got = launcher.run_session("review_r", prompt="Review it.", docker=docker, box=box, key=KEY, ledger=ledger,
+                               record_dir=tmp_path / "r", task_id="t1", patch="", caps=launcher.CAPS["review_r"])
+    assert got["usage"]["output_tokens"] == 4000 and got["tokens"] == 20 + 4000 + 1000 + 300
+    assert got["dollars"] == pytest.approx(launcher.dollars(totals)) and ledger.spent == pytest.approx(got["dollars"])
+    assert got["accounted_dollars"] == pytest.approx(launcher.accounted(totals))
+    assert got["cache_writes"] == {"ephemeral_5m_input_tokens": 200, "ephemeral_1h_input_tokens": 100}
+    assert got["usage_source"] == "result" and arm_r.cost_cents(got, launcher.PRICES) == pytest.approx(
+        got["dollars"] * 100)
+    lines = stream(usage=placeholder)                          # no result record: the streamed messages, said so
+    got = launcher.run_session("review_r", prompt="Review it.", docker=FakeDocker(lines), box=box, key=KEY,
+                               ledger=ledger, record_dir=tmp_path / "r2", task_id="t1", patch="",
+                               caps=launcher.CAPS["review_r"])
+    assert got["usage"]["output_tokens"] == 1 and got["usage_source"] == "streamed messages"
+
+
 def test_the_accounting_prices_a_five_minute_cache_write_at_its_own_rate_and_the_stop_at_the_higher(tmp_path):
     usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 1000,
              "cache_creation": {"ephemeral_5m_input_tokens": 800, "ephemeral_1h_input_tokens": 200}}

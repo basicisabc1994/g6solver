@@ -140,10 +140,38 @@ def claude_args(*, caps: dict, resume: str = "", model: str = MODEL, effort: str
     return args + (["--resume", resume] if resume else [])
 
 
-def _writes(tally) -> dict:
-    """Cache writes by lifetime, summed over the session's messages, for arm 2's token cap at the freeze."""
+USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def usages(tally) -> tuple[list[dict], str]:
+    """What a session is charged: Claude Code's result record's usage, the invocation's totals, when it arrived;
+    otherwise the streamed messages' usage, said so. A streamed message's output count is a placeholder (1 to 4
+    tokens), so only the result record's is the session's (the rehearsal's fifth fault)."""
+    found = (tally.result or {}).get("usage")
+    if isinstance(found, dict) and any(isinstance(found.get(k), int) for k in USAGE_KEYS):
+        return [dict(found)], "result"
+    return list(tally.usage_by_message.values()), "streamed messages"
+
+
+def retally(transcript: str | Path) -> dict:
+    """A recorded session's charge again from its transcript, as ``run_session`` now charges it: for the sessions
+    that ran before the fifth fault was fixed."""
+    tally = v7.Tally()
+    for line in Path(transcript).read_text(encoding="utf-8").splitlines():
+        try:
+            tally.feed(json.loads(line))
+        except (ValueError, AttributeError):
+            continue
+    charged, source = usages(tally)
+    return {"usage": {k: sum(int(u.get(k) or 0) for u in charged) for k in USAGE_KEYS}, "usage_source": source,
+            "dollars": round(sum(dollars(u) for u in charged), 6),
+            "accounted_dollars": round(sum(accounted(u) for u in charged), 6), "cache_writes": _writes(charged)}
+
+
+def _writes(charged: list[dict]) -> dict:
+    """Cache writes by lifetime, summed over what the session is charged, for arm 2's token cap at the freeze."""
     found = {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}
-    for usage in tally.usage_by_message.values():
+    for usage in charged:
         for kind, count in (usage.get("cache_creation") or {}).items():
             found[kind] = found.get(kind, 0) + int(count or 0)
     return found
@@ -215,19 +243,21 @@ def run_session(kind: str, *, prompt: str, docker, box, key: str, ledger: Ledger
         (record_dir / f"{task_id}.stderr.txt").write_text(
             b"".join(errors).decode("utf-8", errors="replace").replace(key, MASK), encoding="utf-8")
     finally:
-        cost = round(sum(dollars(u) for u in tally.usage_by_message.values()), 6)
-        ledger.settle(ident, cost, {"model_calls": tally.model_calls, "usage": tally.usage,
+        charged, source = usages(tally)
+        usage = {k: sum(int(u.get(k) or 0) for u in charged) for k in USAGE_KEYS}
+        cost = round(sum(dollars(u) for u in charged), 6)
+        ledger.settle(ident, cost, {"model_calls": tally.model_calls, "usage": usage, "usage_source": source,
                                     "reported_usd": (tally.result or {}).get("total_cost_usd")})
     status = v7.status_of(stop, tally)
     result = tally.result or {}
     record = {"task_id": task_id, "kind": kind, "patch_sha256": _sha256(patch),
               "answer": str(result.get("result") or ""), "ended": ENDED.get(status, "error"), "status": status,
-              "elapsed_s": round(time.monotonic() - started, 3), "tokens": sum(tally.usage.values()),
+              "elapsed_s": round(time.monotonic() - started, 3), "tokens": sum(usage.values()),
               "model_calls": tally.model_calls, "model": MODEL, "effort": EFFORT_NOTE,
               "claude_code": getattr(box, "claude_code", None),
-              "configuration_empty": getattr(box, "configuration_empty", None), "usage": tally.usage,
-              "cache_writes": _writes(tally), "dollars": cost,
-              "accounted_dollars": round(sum(accounted(u) for u in tally.usage_by_message.values()), 6),
+              "configuration_empty": getattr(box, "configuration_empty", None), "usage": usage,
+              "usage_source": source, "cache_writes": _writes(charged), "dollars": cost,
+              "accounted_dollars": round(sum(accounted(u) for u in charged), 6),
               "reported_usd": result.get("total_cost_usd"), "num_turns": result.get("num_turns"),
               "session_id": tally.session_id, "transcript": f"{task_id}.jsonl"}
     (record_dir / f"{task_id}.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")

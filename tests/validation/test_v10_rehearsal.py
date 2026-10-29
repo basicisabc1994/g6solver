@@ -194,6 +194,25 @@ def test_the_committed_record_summarises_each_run_labels_other_models_and_names_
     assert got["projection"]["E"]["observed"] == [0.008]
 
 
+def test_costs_reprices_a_recorded_session_from_its_transcripts_result_record_and_keeps_what_was_charged(tmp_path):
+    # the fifth fault, for sessions that ran before its fix: the transcript holds the result record's totals
+    folder = tmp_path / "run" / "patch-sessions"
+    folder.mkdir(parents=True)
+    totals = {"input_tokens": 50, "output_tokens": 4720, "cache_read_input_tokens": 135695,
+              "cache_creation_input_tokens": 8674, "cache_creation": {"ephemeral_5m_input_tokens": 8674}}
+    lines = [{"type": "assistant", "message": {"id": "m1", "usage": dict(totals, output_tokens=3)}},
+             {"type": "result", "subtype": "success", "result": "done", "usage": totals, "total_cost_usd": 0.048062}]
+    (folder / "dev-codec.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    (folder / "dev-codec.json").write_text(json.dumps({
+        "kind": "patch", "task_id": "dev-codec", "model": launcher.MODEL, "model_calls": 1, "elapsed_s": 45.0,
+        "usage": dict(totals, output_tokens=3), "dollars": 0.031, "accounted_dollars": 0.025,
+        "transcript": "dev-codec.jsonl"}), encoding="utf-8")
+    got = rehearsal.costs(tmp_path / "run")["sessions"][0]
+    assert got["tokens"]["output_tokens"] == 4720 and got["usage_source"] == "result"
+    assert got["stop_dollars"] == round(launcher.dollars(totals), 6) and got["charged_dollars"] == 0.031
+    assert got["accounted_dollars"] == pytest.approx(0.048062, abs=1e-6)               # Claude Code's own figure
+
+
 def test_the_projection_gives_each_unit_a_low_a_high_and_a_cap_bound_for_the_real_runs_counts():
     units = {"patch": [0.02, 0.04], "self_review": [0.01], "review_r": [0.05], "C": [0.005], "T": [0.03], "E": [0.06]}
     got = rehearsal.projection(units)

@@ -563,12 +563,16 @@ Items from 77 cover the paid rehearsal (`rehearsal.py`), on development fixtures
     of reach of a confined test and of a check G6 runs. The study itself runs them in each task's image, as V9 item 17
     says. For the coordinator's ruling.
 
-79. **What the rehearsal found and changed.** Four faults, each fixed test first: the fixtures had no `.gitignore`, so
+79. **What the rehearsal found and changed.** Five faults, each fixed test first: the fixtures had no `.gitignore`, so
     the agent's own pytest run left bytecode that V7's capture took as binary stubs git cannot apply (every fixture now
     ignores bytecode, as a real repository does); V9's reader of G6's model calls counted each of verification
     search's calls twice (it now counts the `model call` activities once each); arm E refused a reply the model had put
-    in one Markdown fence (it now reads exactly one fenced block); and an agent that committed its change left nothing
-    for V7's capture against HEAD (the launcher now captures against the task's base commit). Two observations,
+    in one Markdown fence (it now reads exactly one fenced block); an agent that committed its change left nothing
+    for V7's capture against HEAD (the launcher now captures against the task's base commit); and the launcher
+    charged a session the sum of its streamed messages' usage, whose output counts are placeholders, so every
+    session's output went uncharged (a session is now charged its result record's usage; Claude Code's own
+    `--max-budget-usd` had still held each session to its cap, and arm R's cost in V10's costs is read from the same
+    record, so it is now right too). Two observations,
     unchanged: arm R's tests' folder also holds the bytecode of running them, which collection reads and keeping
     discards and counts; and a patch that adds no test leaves arm A, and so C and T, with insufficient evidence (V9
     item 1), so their findings come from the proposer alone. For the coordinator's ruling.

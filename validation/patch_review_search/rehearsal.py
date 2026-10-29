@@ -393,11 +393,19 @@ def costs(run: str | Path) -> dict:
             if path.name.endswith(".command.json"):
                 continue
             item = json.loads(path.read_text(encoding="utf-8"))
+            transcript = path.parent / str(item.get("transcript") or f"{path.stem}.jsonl")
+            # priced again from the transcript's result record when it has one (the fifth fault); what the ledger
+            # charged at the time is kept beside it
+            again = launcher.retally(transcript) if transcript.is_file() else {
+                "usage": item.get("usage"), "usage_source": item.get("usage_source", "streamed messages"),
+                "dollars": item.get("dollars"), "accounted_dollars": item.get("accounted_dollars"),
+                "cache_writes": item.get("cache_writes")}
             sessions.append({"kind": item.get("kind"), "task": item.get("task_id"), "model": item.get("model"),
                              "study_model": item.get("model") == launcher.MODEL, "calls": item.get("model_calls"),
-                             "tokens": item.get("usage"), "cache_writes": item.get("cache_writes"),
-                             "seconds": item.get("elapsed_s"), "stop_dollars": item.get("dollars"),
-                             "accounted_dollars": item.get("accounted_dollars")})
+                             "tokens": again["usage"], "usage_source": again["usage_source"],
+                             "cache_writes": again["cache_writes"], "seconds": item.get("elapsed_s"),
+                             "stop_dollars": again["dollars"], "accounted_dollars": again["accounted_dollars"],
+                             "charged_dollars": item.get("dollars")})
     arms_out: dict[str, list] = {arm: [] for arm in "CTER"}
     found = run / "arms.json"
     for row in (json.loads(found.read_text(encoding="utf-8"))["v10"]["patches"] if found.is_file() else []):
@@ -456,6 +464,11 @@ FAULTS = (
     {"found_in": "run 4", "fault": "an agent that committed its change left nothing for V7's capture against HEAD, so "
      "the patch would have counted as empty", "change": "the patch is captured against the task's base commit",
      "commit": "9e9b9bb"},
+    {"found_in": "runs 1 to 5, seen after run 5", "fault": "each streamed assistant message carries a placeholder "
+     "output count (1 to 4 tokens), and the launcher charged their sum, so every session's output went uncharged "
+     "(Claude Code's own budget flag still held each session to its cap)", "change": "a session is charged its "
+     "result record's usage, the invocation's totals, and the record's sessions are priced again from their "
+     "transcripts", "commit": ""},
 )
 
 
