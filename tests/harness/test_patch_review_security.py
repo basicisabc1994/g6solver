@@ -570,3 +570,43 @@ def test_confined_a_module_the_patch_imports_that_is_not_installed_is_asked_abou
     assert ("evidence", "patch_imports_missing_module") in _codes(got), assessment["reasons"]
     assert assessment["next_actions"][0] == ASK.format(name=MISSING)
     _no_run_text(got)
+
+# --- M1: run_inconsistent only when G6's own per-test record agrees that every test passed ---------------------------
+
+PASSED_TALLY = {"tests": 2, "passed": 2, "failures": 0, "errors": 0, "skipped": 0, "collection": 0, "placed": 0,
+                "outside": 0, "expected": 2, "finished": 2}
+
+
+@pytest.mark.parametrize(("record", "verdict"), [
+    ({"failed_ids": [], "setup_errors": {}}, "run_inconsistent"),
+    ({"failed_ids": ["test_calc.py::test_add"], "setup_errors": {}}, "inconsistent_report"),
+    ({"failed_ids": [], "setup_errors": {"test_calc.py::test_add": "fixture 'db' not found"}}, "inconsistent_report"),
+])
+def test_an_exit_error_after_passes_is_run_inconsistent_only_when_no_test_is_recorded_as_failed(record, verdict):
+    from g6.workforce import repo_tests
+
+    assert repo_tests._judge(1, {**PASSED_TALLY, **record}, "", []) == verdict
+
+
+#: A runner file of the base commit that takes every failure out of pytest's JUnit report after it is written.
+REWRITES_REPORT = ("import re\n\n\ndef pytest_unconfigure(config):\n"
+                   "    path = getattr(config.option, 'xmlpath', None)\n"
+                   "    if path:\n"
+                   "        with open(path, encoding='utf-8') as handle:\n"
+                   "            text = handle.read()\n"
+                   "        text = re.sub(r'<failure[^>]*>.*?</failure>|<failure[^>]*/>', '', text, flags=re.S)\n"
+                   "        with open(path, 'w', encoding='utf-8') as handle:\n"
+                   "            handle.write(text)\n")
+
+
+def test_confined_a_report_that_hides_a_failure_g6_recorded_compromises_integrity(tmp_path, monkeypatch,
+                                                                                 bwrap_backend):
+    from g6.workforce import repo_tests
+
+    monkeypatch.delenv(repo_tests.REPO_PYTHON, raising=False)
+    root = _repo(tmp_path, {"calc.py": GOOD, "test_calc.py": CALC_TEST, "conftest.py": REWRITES_REPORT})
+    _write(root, {"calc.py": BAD})   # the stated check fails; the report says it passed
+    got = review_patch(root, task="Change add.", requirements=STATED, timeout_s=120)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "test_integrity_compromised", assessment["reasons"]
+    assert ("integrity", "run_not_trusted") in _codes(got), assessment["reasons"]

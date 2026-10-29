@@ -1273,7 +1273,9 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
     * a pass needs every test pytest meant to run (collected, less deselected: ``expected``) to have run to its end
       (``finished``); fewer, or a count that cannot be read, is "incomplete" (I3). ``run`` always sets ``expected``;
     * the owner's ruling (2026-10-29), asymmetric on purpose: an exit other than 0 and 2-5 after a session whose
-      tallies hold passes, no failure or error, and every test it meant to run finished, is ``run_inconsistent``
+      tallies hold passes, no failure or error, every test it meant to run finished, and whose own per-test record
+      (``_Counted``: ``failed_ids``, ``setup_errors``) holds no failure either (the launch review's M1), is
+      ``run_inconsistent``
       (not a pass, and no sign of tampering, since it cannot get a patch accepted: a GUI suite's X connection that
       fails at exit). Exit 0 with a failure, an error or fewer tests finished stays untrusted, as a tampered runner
       would show it."""
@@ -1304,7 +1306,9 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
         return FAILED if bad - outside - unplaced > 0 else "collection_error"
     complete = "expected" not in counts or (counts["expected"] is not None
                                             and counts["expected"] == counts.get("finished"))
-    if not bad and counts["passed"] > 0 and complete:
+    # the launch review's M1: and G6's own per-test record (``_Counted``) holds no failure and no setup error either
+    if (not bad and counts["passed"] > 0 and complete and not counts.get("failed_ids")
+            and not counts.get("setup_errors")):
         return RUN_INCONSISTENT
     return "inconsistent_report"
 
