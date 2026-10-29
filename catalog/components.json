@@ -724,16 +724,22 @@
     "name": "algorithm_design",
     "summary": "g6.algorithm_design \u2014 suggests catalogued algorithms for a stated problem, estimates their cost, and runs a fixed set of algorithm kernels that check each answer.",
     "maturity": "beta",
-    "maturity_reason": "a fixed catalogue, bundled ontology metadata, a bounded type-directed search and fusion with the change-impact map, tested on catalogued problems and missing preconditions; proposals only, qualified-draft at best",
+    "maturity_reason": "a fixed catalogue, bundled ontology metadata, hard-coded cost models, a bounded type-directed search, fusion with the change-impact map and 22 fixed kernels with instance checks, tested on their contract examples, missing preconditions and inputs past each bound; qualified-draft at best",
     "surface": "python + cli + mcp",
     "ops": [
       "primitives",
       "ontology",
       "search",
-      "fuse"
+      "estimate",
+      "fuse",
+      "list_kernels",
+      "run_kernel"
     ],
     "requires": [
-      "complexity"
+      "coding_agent_gate",
+      "complexity",
+      "harness",
+      "workforce"
     ],
     "sensitive_ops": [],
     "vetting": null

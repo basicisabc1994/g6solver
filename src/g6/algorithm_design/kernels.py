@@ -8,8 +8,9 @@ agent-produced code or claims formally proved asymptotic correctness.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import combinations
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Sequence
+
+from g6.algorithm_design.checked_kernels import ContractError
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,8 @@ class KernelResult:
     limitations: tuple[str, ...]
 
 
-class KernelUnavailable(ValueError):
-    pass
+class KernelUnavailable(ContractError):
+    """No kernel by that name, or input past a kernel's bound: a ``ContractError`` like every other refusal."""
 
 
 def _bounded_ints(items: Sequence[int], target: int, *, max_items: int, max_target: int) -> tuple[int, ...]:
@@ -129,19 +130,3 @@ def merge_sort(items: Sequence[Any], *, key: Callable[[Any], Any] | None = None,
                         ("permutation of inputs", "sorted by evaluated keys", "stable ties"),
                         ("Python's checked sort backend; not an independent sorting algorithm implementation",
                          "key function must run in independently confined host environment"))
-
-
-KERNELS: Mapping[str, Callable[..., KernelResult]] = {
-    "interval_earliest_finish": interval_earliest_finish,
-    "subset_sum_dp": subset_sum_dp,
-    "merge_sort": merge_sort,
-}
-
-
-def invoke_kernel(algorithm_id: str, /, *args: Any, **kwargs: Any) -> KernelResult:
-    """Higher-order invocation API. No arbitrary function-name execution."""
-    try:
-        fn = KERNELS[algorithm_id]
-    except KeyError as exc:
-        raise KernelUnavailable("algorithm has no independently checked callable kernel") from exc
-    return fn(*args, **kwargs)

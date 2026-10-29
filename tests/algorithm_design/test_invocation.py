@@ -2,7 +2,7 @@
 """Agent API must allow only fixed identifiers and typed declarative parameters."""
 import pytest
 from g6.algorithm_design.invocation import invoke, list_kernels
-from g6.algorithm_design.verified_kernels import ContractError
+from g6.algorithm_design.checked_kernels import ContractError
 
 def test_registry_is_whitelisted():
     names = {x.algorithm_id for x in list_kernels()}

@@ -5,6 +5,7 @@ sections and printed pages, never PDF pages or the book's own section titles."""
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -83,3 +84,79 @@ def test_the_bundled_data_cites_sections_and_printed_pages_only():
     for row in index["problems"]:                       # cited by section, described in G6's own words (ruling 5)
         assert "title" not in row and row["description"] and row["source"]["section"] == row["section"]
         assert set(row["source"]) == {"book_id", "section", "printed_page"}
+
+
+# --- Task 2 (PR #3): the kernels through one invoke path, cost estimates, typed primitives from the catalogue ---------
+
+#: Each kernel's contract example from tests/algorithm_design/test_checked_kernels.py, with its arguments named by the
+#: kernel's signature, plus the three kernels that came first (kernels.py).
+KERNEL_EXAMPLES = [
+    ("bfs", {"n": 3, "edges": [[0, 1]]}),
+    ("dijkstra", {"n": 3, "edges": [[0, 1, 3], [1, 2, 1], [0, 2, 9]]}),
+    ("kahn", {"n": 2, "edges": [[0, 1], [1, 0]]}),
+    ("weighted_interval_dp", {"intervals": [[0, 2, 4], [2, 4, 9], [0, 4, 10]]}),
+    ("gale_shapley", {"proposers": [[0, 1], [0, 1]], "receivers": [[0, 1], [0, 1]]}),
+    ("edmonds_karp", {"n": 3, "edges": [[0, 1, 3], [1, 2, 2]]}),
+    ("kruskal", {"n": 3, "edges": [[0, 1, 1], [1, 2, 2], [0, 2, 10]]}),
+    ("vertex_cover_2approx", {"n": 3, "edges": [[0, 1], [1, 2]]}),
+    ("tree_independent_set", {"n": 3, "edges": [[0, 1], [1, 2]]}),
+    ("subset_sum_mitm", {"weights": [2, 3, 8], "target": 5}),
+    ("knapsack_dp", {"weights": [2, 3], "values": [3, 5], "capacity": 4}),
+    ("bellman_ford", {"n": 3, "edges": [[0, 1, 1], [1, 2, -3]]}),
+    ("vertex_cover_fpt", {"n": 3, "edges": [[0, 1], [1, 2]], "k": 1}),
+    ("set_cover_greedy", {"universe": [1, 2], "sets": [[1], [2]]}),
+    ("sequence_align_dp", {"left": "cat", "right": "cut"}),
+    ("huffman", {"weights": [4, 4]}),
+    ("held_karp_tsp", {"distances": [[0, 2, 4], [2, 0, 3], [4, 3, 0]]}),
+    ("randomized_quicksort", {"items": [9, 1, 1]}),
+    ("treewidth_independent_set", {"n": 3, "edges": [[0, 1], [1, 2]], "bags": [[0, 1], [1, 2]], "bag_tree": [[0, 1]]}),
+    ("subset_sum_dp", {"weights": [3, 7, 10], "target": 13}),
+    ("interval_earliest_finish", {"intervals": [[0, 5], [0, 2], [2, 4], [4, 7]]}),
+    ("merge_sort", {"items": [3, 1, 2]}),
+]
+
+
+def test_list_kernels_names_all_22_through_one_entrypoint():
+    r = invoke_reply("algorithm_design", "list_kernels", "{}")["result"]
+    assert len(r["kernels"]) == 22 and {k["entrypoint"] for k in r["kernels"]} == {"g6.algorithm_design.invocation.invoke"}
+    assert {k["algorithm_id"] for k in r["kernels"]} == {a for a, _ in KERNEL_EXAMPLES}
+
+
+@pytest.mark.parametrize("algorithm_id,parameters", KERNEL_EXAMPLES)
+def test_every_kernel_runs_over_mcp_and_says_how_its_answer_was_checked(algorithm_id, parameters):
+    r = invoke_reply("algorithm_design", "run_kernel", json.dumps({"algorithm_id": algorithm_id, "parameters": parameters}))
+    assert r["completion_state"] == "qualified-draft" and r["warning_card"]["code"] == "G6_E_ALGO_KERNEL_CHECKED"
+    assert r["result"]["verification"] and r["result"]["algorithm_id"] == algorithm_id and check_envelope(r) == []
+
+
+@pytest.mark.parametrize("algorithm_id,parameters", [                  # Review Focus 5: one past each stated bound
+    ("held_karp_tsp", {"distances": [[0] * 15 for _ in range(15)]}),
+    ("subset_sum_mitm", {"weights": [1] * 33, "target": 3}),
+    ("vertex_cover_fpt", {"n": 31, "edges": [], "k": 1}),
+    ("no_such_kernel", {})])
+def test_a_kernel_past_its_bound_is_refused_quickly(algorithm_id, parameters):
+    started = time.monotonic()
+    r = invoke_reply("algorithm_design", "run_kernel", json.dumps({"algorithm_id": algorithm_id, "parameters": parameters}))
+    assert r["warning_card"]["code"] == "G6_E_ALGO_KERNEL_REFUSED" and time.monotonic() - started < 2
+    assert r["completion_state"] == "blocked-escalated" and check_envelope(r) == []
+
+
+def test_more_than_16_parameter_keys_is_refused_at_the_door():
+    params = {"algorithm_id": "bfs", "parameters": {f"k{i}": 0 for i in range(17)}}
+    assert invoke_reply("algorithm_design", "run_kernel", json.dumps(params))["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
+
+
+def test_estimate_refuses_what_the_device_disallows_and_what_it_cannot_model():
+    device = {"ram_bytes": 8_000_000, "scratch_bytes": 0, "max_operations": 1_000_000, "allow_pseudopolynomial": False}
+    r = invoke_reply("algorithm_design", "estimate", json.dumps({"algorithms": ["knapsack_dp", "unknown_primitive"],
+                                                                "dimensions": {"n": 100, "W": 1000}, "device": device}))["result"]
+    by = {e["algorithm_id"]: e for e in r["estimates"]}
+    assert not by["knapsack_dp"]["eligible"] and "pseudo_polynomial_disallowed" in by["knapsack_dp"]["reasons"]
+    assert by["unknown_primitive"]["reasons"] == ["missing_hard_coded_cost_model"] and r["warning_card"]["code"] == "G6_E_ALGO_ESTIMATE"
+
+
+def test_search_with_a_problem_id_adds_only_reviewed_typed_primitives():
+    p = {"representations": ["intervals"], "target": "maximum_compatible_intervals",
+         "established_properties": ["unit_reward", "intervals"], "problem_id": "interval_scheduling"}
+    r = invoke_reply("algorithm_design", "search", json.dumps(p))["result"]
+    assert any(c["steps"] == ["interval_earliest_finish"] for c in r["candidates"])

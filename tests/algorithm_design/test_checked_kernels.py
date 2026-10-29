@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Bounded independent reference checks for the expanded algorithm library."""
-from itertools import combinations, permutations
+from itertools import combinations
 import random
 import pytest
-from g6.algorithm_design.verified_kernels import (
+from g6.algorithm_design.checked_kernels import (
     bfs, dijkstra, kahn, weighted_interval_dp, vertex_cover_2approx, gale_shapley,
     tree_independent_set, edmonds_karp, kruskal, subset_sum_mitm, knapsack_dp,
     bellman_ford, vertex_cover_fpt, set_cover_greedy, sequence_align_dp, huffman,

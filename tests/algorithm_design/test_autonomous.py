@@ -6,10 +6,10 @@ Fake-runner tests do not establish platform isolation or end-to-end production e
 from dataclasses import replace
 
 from g6.algorithm_design.autonomous import (
-    AgentReport, DesignMission, PatchProposal, TestObservation, run_agent,
+    DesignMission, PatchProposal, TestObservation, run_agent,
 )
 from g6.algorithm_design.ir import DesignProblem
-from g6.algorithm_design.resources import DeviceBudget, estimate, rank_options
+from g6.algorithm_design.resources import DeviceBudget, estimate
 from g6.complexity.ir import FrozenIntent, Obligation, Requirement
 
 

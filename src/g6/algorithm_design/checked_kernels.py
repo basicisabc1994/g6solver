@@ -14,7 +14,7 @@ from collections import deque
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import combinations
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 
 class ContractError(ValueError):
@@ -22,7 +22,7 @@ class ContractError(ValueError):
 
 
 @dataclass(frozen=True)
-class CertifiedResult:
+class CheckedResult:
     algorithm_id: str
     output: Any
     witness: Any
@@ -88,7 +88,7 @@ def _verify_potentials(n: int, edges: tuple[tuple[int, int, int], ...], source: 
                 raise AssertionError("violated distance inequality")
 
 
-def bfs(n: int, edges: Sequence[tuple[int, int]], source: int = 0) -> CertifiedResult:
+def bfs(n: int, edges: Sequence[tuple[int, int]], source: int = 0) -> CheckedResult:
     """Directed unweighted single-source shortest paths, O(V+E)."""
     _size(n, limit=1200)
     if n == 0 or not _integer(source, upper=n-1):
@@ -110,10 +110,10 @@ def bfs(n: int, edges: Sequence[tuple[int, int]], source: int = 0) -> CertifiedR
                 q.append(v)
     result = tuple(distances)
     _verify_potentials(n, es, source, result, tuple(parents))
-    return CertifiedResult("bfs", result, tuple(parents), "certificate_checked_instance", "O(V+E)")
+    return CheckedResult("bfs", result, tuple(parents), "certificate_checked_instance", "O(V+E)")
 
 
-def dijkstra(n: int, edges: Sequence[tuple[int, int, int]], source: int = 0) -> CertifiedResult:
+def dijkstra(n: int, edges: Sequence[tuple[int, int, int]], source: int = 0) -> CheckedResult:
     """Directed nonnegative integer shortest paths; heap algorithm."""
     from heapq import heappush, heappop
     _size(n, limit=1200)
@@ -136,12 +136,12 @@ def dijkstra(n: int, edges: Sequence[tuple[int, int, int]], source: int = 0) -> 
                 distances[v], parents[v] = du + w, u
                 heappush(heap, (du + w, v))
     _verify_potentials(n, es, source, tuple(distances), tuple(parents))
-    return CertifiedResult("dijkstra", tuple(distances), tuple(parents),
+    return CheckedResult("dijkstra", tuple(distances), tuple(parents),
                            "certificate_checked_instance", "O((V+E) log V) arithmetic operations",
                            ("integer bit-complexity is additional",))
 
 
-def kahn(n: int, edges: Sequence[tuple[int, int]]) -> CertifiedResult:
+def kahn(n: int, edges: Sequence[tuple[int, int]]) -> CheckedResult:
     """Topological ordering or independently checked directed-cycle witness."""
     _size(n, limit=600)
     es = _edges(n, edges, limit=12000, weighted=False)
@@ -163,7 +163,7 @@ def kahn(n: int, edges: Sequence[tuple[int, int]]) -> CertifiedResult:
         rank = {v: i for i, v in enumerate(order)}
         if len(rank) != n or any(rank[u] >= rank[v] for u, v, _ in es):
             raise AssertionError("invalid topological ordering")
-        return CertifiedResult("kahn", tuple(order), tuple(order), "certificate_checked_instance", "O(V+E)")
+        return CheckedResult("kahn", tuple(order), tuple(order), "certificate_checked_instance", "O(V+E)")
     # Explicit cycle extraction from the remaining induced subgraph (not merely a boolean).
     active = {i for i in range(n) if indeg[i] > 0}
     color = [0] * n
@@ -190,11 +190,11 @@ def kahn(n: int, edges: Sequence[tuple[int, int]]) -> CertifiedResult:
             visit(u)
     if cycle is None or any((a, b, 1) not in es for a, b in zip(cycle, cycle[1:])):
         raise AssertionError("cycle witness missing or invalid")
-    return CertifiedResult("kahn", None, cycle, "certificate_checked_instance", "O(V+E)",
+    return CheckedResult("kahn", None, cycle, "certificate_checked_instance", "O(V+E)",
                            ("output None indicates a directed cycle",))
 
 
-def weighted_interval_dp(intervals: Sequence[tuple[int, int, int]]) -> CertifiedResult:
+def weighted_interval_dp(intervals: Sequence[tuple[int, int, int]]) -> CheckedResult:
     """Maximum-weight compatible subset, nonnegative integer rewards."""
     _size(len(intervals), limit=500)
     items = []
@@ -234,11 +234,11 @@ def weighted_interval_dp(intervals: Sequence[tuple[int, int, int]]) -> Certified
         return max(check(j-1), w + check(sum(1 for end in ends[:j-1] if end <= b)))
     if val != check(len(items)):
         raise AssertionError("independent optimum check disagrees")
-    return CertifiedResult("weighted_interval_dp", val, tuple(chosen),
+    return CheckedResult("weighted_interval_dp", val, tuple(chosen),
                            "independently_checked_instance", "O(n log n) arithmetic operations")
 
 
-def vertex_cover_2approx(n: int, edges: Sequence[tuple[int, int]]) -> CertifiedResult:
+def vertex_cover_2approx(n: int, edges: Sequence[tuple[int, int]]) -> CheckedResult:
     """A maximal matching supplies both the cover and the <=2OPT certificate."""
     _size(n, limit=2000)
     es = _edges(n, edges, limit=12000, weighted=False)
@@ -255,12 +255,12 @@ def vertex_cover_2approx(n: int, edges: Sequence[tuple[int, int]]) -> CertifiedR
     if len({u for edge in matching for u in edge}) != 2 * len(matching):
         raise AssertionError("not a matching")
     # Every cover needs >=|matching| vertices; constructed cover = 2|matching|.
-    return CertifiedResult("vertex_cover_2approx", tuple(sorted(used)), tuple(matching),
+    return CheckedResult("vertex_cover_2approx", tuple(sorted(used)), tuple(matching),
                            "approximation_certificate_checked", "O(V+E)",
                            ("2-approximation, not exact optimum",))
 
 
-def gale_shapley(proposers: Sequence[Sequence[int]], receivers: Sequence[Sequence[int]]) -> CertifiedResult:
+def gale_shapley(proposers: Sequence[Sequence[int]], receivers: Sequence[Sequence[int]]) -> CheckedResult:
     """Strict complete preference lists, proposer-optimal stable matching."""
     n = len(proposers)
     _size(n, limit=200)
@@ -298,13 +298,13 @@ def gale_shapley(proposers: Sequence[Sequence[int]], receivers: Sequence[Sequenc
         for r in proposers[p][:proposers[p].index(r0)]:
             if rank[r][p] < rank[r][matched[r]]:
                 raise AssertionError("blocking pair")
-    return CertifiedResult("gale_shapley", tuple(partners), tuple(partners),
+    return CheckedResult("gale_shapley", tuple(partners), tuple(partners),
                            "stable_matching_certificate_checked", "O(n^2)",
                            ("proposer-optimality relies on standard Gale-Shapley theorem",))
 
 
 def tree_independent_set(n: int, edges: Sequence[tuple[int, int]],
-                         weights: Sequence[int] | None = None) -> CertifiedResult:
+                         weights: Sequence[int] | None = None) -> CheckedResult:
     """Maximum-weight independent set in an undirected forest."""
     _size(n, limit=500)
     es = _edges(n, edges, limit=1500, weighted=False, directed=False)
@@ -364,13 +364,13 @@ def tree_independent_set(n: int, edges: Sequence[tuple[int, int]],
         return no if blocked else max(no, ws[u] + sum(check(v, True) for v in children))
     if value != sum(check(r, False) for r in roots):
         raise AssertionError("independent tree recurrence disagrees")
-    return CertifiedResult("tree_independent_set", value, tuple(sorted(chosen)),
+    return CheckedResult("tree_independent_set", value, tuple(sorted(chosen)),
                            "independently_checked_instance", "O(V+E)",
                            ("requires a forest, not an arbitrary graph",))
 
 
 def edmonds_karp(n: int, edges: Sequence[tuple[int, int, int]],
-                 source: int = 0, sink: int | None = None) -> CertifiedResult:
+                 source: int = 0, sink: int | None = None) -> CheckedResult:
     """Integer max-flow with a max-flow/min-cut optimality certificate."""
     _size(n, limit=120)
     if sink is None:
@@ -448,12 +448,12 @@ def edmonds_karp(n: int, edges: Sequence[tuple[int, int, int]],
     capacity = sum(cap for u, v, cap in es if u in cut and v not in cut)
     if sink in cut or capacity != flow_value:
         raise AssertionError("max-flow/min-cut certificate failed")
-    return CertifiedResult("edmonds_karp", flow_value,
+    return CheckedResult("edmonds_karp", flow_value,
                            {"flow_by_edge": flows, "source_cut": tuple(sorted(cut)), "cut_capacity": capacity},
                            "primal_dual_optimality_certificate_checked", "O(V E^2) arithmetic operations")
 
 
-def kruskal(n: int, edges: Sequence[tuple[int, int, int]]) -> CertifiedResult:
+def kruskal(n: int, edges: Sequence[tuple[int, int, int]]) -> CheckedResult:
     """Minimum spanning forest; checks optimality using the cycle property."""
     _size(n, limit=140)
     es = _edges(n, edges, limit=1500, directed=False)
@@ -506,12 +506,12 @@ def kruskal(n: int, edges: Sequence[tuple[int, int, int]]) -> CertifiedResult:
             paths.extend((to, node, max(maximum, weight)) for to, weight in forest[node] if to != prev)
         if not found:
             raise AssertionError("missing path in forest")
-    return CertifiedResult("kruskal", sum(es[i][2] for i in chosen), tuple(chosen),
+    return CheckedResult("kruskal", sum(es[i][2] for i in chosen), tuple(chosen),
                            "cycle_property_optimality_certificate_checked", "O(E log E) algorithm; O(EV) verifier",
                            ("supports nonnegative integer weights and disconnected forests",))
 
 
-def subset_sum_mitm(weights: Sequence[int], target: int) -> CertifiedResult:
+def subset_sum_mitm(weights: Sequence[int], target: int) -> CheckedResult:
     """Exact meet-in-middle with a witness, small bounded exhaustive NO oracle."""
     _size(len(weights), limit=32)
     if not _integer(target, upper=10**12) or any(not _integer(x, upper=10**12) for x in weights):
@@ -540,13 +540,13 @@ def subset_sum_mitm(weights: Sequence[int], target: int) -> CertifiedResult:
             reachable |= {s + weight for s in reachable if s + weight <= target}
         if target in reachable:
             raise AssertionError("false NO result")
-    return CertifiedResult("subset_sum_mitm", found is not None, found,
+    return CheckedResult("subset_sum_mitm", found is not None, found,
                            "independently_checked_instance" if found is None else "witness_checked_instance",
                            "O(n 2^(n/2)) time; O(2^(n/2)) memory",
                            ("exponential; n capped at 32",))
 
 
-def knapsack_dp(weights: Sequence[int], values: Sequence[int], capacity: int) -> CertifiedResult:
+def knapsack_dp(weights: Sequence[int], values: Sequence[int], capacity: int) -> CheckedResult:
     """Exact integer 0/1 knapsack with independent recurrence value check."""
     n = len(weights)
     _size(n, limit=100)
@@ -579,12 +579,12 @@ def knapsack_dp(weights: Sequence[int], values: Sequence[int], capacity: int) ->
         return max(without, values[i]+verify(i+1, space-weights[i])) if weights[i] <= space else without
     if score != verify(0, capacity):
         raise AssertionError("independent knapsack optimum disagrees")
-    return CertifiedResult("knapsack_dp", score, tuple(chosen),
+    return CheckedResult("knapsack_dp", score, tuple(chosen),
                            "independently_checked_instance", "O(nW) pseudo-polynomial",
                            ("not polynomial in binary length of W",))
 
 
-def bellman_ford(n: int, edges: Sequence[tuple[int, int, int]], source: int = 0) -> CertifiedResult:
+def bellman_ford(n: int, edges: Sequence[tuple[int, int, int]], source: int = 0) -> CheckedResult:
     """Shortest paths with negative weights, or a reachable negative-cycle witness."""
     _size(n, limit=300)
     if n == 0 or not _integer(source, upper=n - 1):
@@ -607,7 +607,7 @@ def bellman_ford(n: int, edges: Sequence[tuple[int, int, int]], source: int = 0)
             break
     if last is None:
         _verify_potentials(n, es, source, tuple(dist), tuple(pred))
-        return CertifiedResult("bellman_ford", tuple(dist), tuple(pred),
+        return CheckedResult("bellman_ford", tuple(dist), tuple(pred),
                                "shortest_path_certificate_checked", "O(VE)")
     # A relaxation on the nth round guarantees a reachable negative cycle.
     x = last
@@ -631,12 +631,12 @@ def bellman_ford(n: int, edges: Sequence[tuple[int, int, int]], source: int = 0)
         reach |= {v for u, v, _ in es if u in reach}
     if cycle[0] not in reach:
         raise AssertionError("negative cycle not reachable")
-    return CertifiedResult("bellman_ford", None,
+    return CheckedResult("bellman_ford", None,
                            {"cycle": tuple(cycle), "edge_ids": tuple(edge_ids)},
                            "negative_cycle_certificate_checked", "O(VE)")
 
 
-def vertex_cover_fpt(n: int, edges: Sequence[tuple[int, int]], k: int) -> CertifiedResult:
+def vertex_cover_fpt(n: int, edges: Sequence[tuple[int, int]], k: int) -> CheckedResult:
     """Exact bounded-k vertex-cover decision via edge branching, with a NO search-tree certificate."""
     _size(n, limit=30)
     if not _integer(k, upper=12):
@@ -674,11 +674,11 @@ def vertex_cover_fpt(n: int, edges: Sequence[tuple[int, int]], k: int) -> Certif
             status = "independently_checked_instance"
         else:
             status = "branching_search_exhausted_not_independently_verified"
-    return CertifiedResult("vertex_cover_fpt", witness is not None, witness, status,
+    return CheckedResult("vertex_cover_fpt", witness is not None, witness, status,
                            "O(2^k poly(V+E))", ("fixed-parameter, not uniform polynomial in k",))
 
 
-def set_cover_greedy(universe: Sequence[int], sets: Sequence[Sequence[int]]) -> CertifiedResult:
+def set_cover_greedy(universe: Sequence[int], sets: Sequence[Sequence[int]]) -> CheckedResult:
     """Greedy unweighted set cover and an inspectable greedy-step approximation witness."""
     _size(len(universe), limit=2000)
     _size(len(sets), limit=1000)
@@ -709,19 +709,21 @@ def set_cover_greedy(universe: Sequence[int], sets: Sequence[Sequence[int]]) -> 
         missing -= subsets[idx]
     if missing or len(chosen) != len(set(chosen)):
         raise AssertionError("invalid cover witness")
-    return CertifiedResult("set_cover_greedy", tuple(chosen), tuple(gains),
+    return CheckedResult("set_cover_greedy", tuple(chosen), tuple(gains),
                            "greedy_trace_and_coverage_checked", "polynomial in total input size",
                            ("H_|U| approximation relies on standard greedy set-cover theorem",))
 
 
-def sequence_align_dp(left: str, right: str) -> CertifiedResult:
+def sequence_align_dp(left: str, right: str) -> CheckedResult:
     """Exact unit-cost Levenshtein distance with independently checked edit script."""
     if not isinstance(left, str) or not isinstance(right, str) or len(left) * len(right) > 100_000:
         raise ContractError("bounded text sequence lengths required")
     n, m = len(left), len(right)
     dp = [[0]*(m+1) for _ in range(n+1)]
-    for i in range(n+1): dp[i][0] = i
-    for j in range(m+1): dp[0][j] = j
+    for i in range(n+1):
+        dp[i][0] = i
+    for j in range(m+1):
+        dp[0][j] = j
     for i in range(1,n+1):
         for j in range(1,m+1):
             dp[i][j] = min(dp[i-1][j]+1, dp[i][j-1]+1,
@@ -731,7 +733,8 @@ def sequence_align_dp(left: str, right: str) -> CertifiedResult:
     while i or j:
         if i and j and dp[i][j] == dp[i-1][j-1]+(left[i-1]!=right[j-1]):
             steps.append(("match" if left[i-1]==right[j-1] else "replace", left[i-1],right[j-1]))
-            i -= 1; j -= 1
+            i -= 1
+            j -= 1
         elif i and dp[i][j] == dp[i-1][j]+1:
             steps.append(("delete", left[i-1], ""))
             i-=1
@@ -761,11 +764,11 @@ def sequence_align_dp(left: str, right: str) -> CertifiedResult:
         previous = row
     if dp[n][m] != previous[m]:
         raise AssertionError("independent distance check disagrees")
-    return CertifiedResult("sequence_align_dp", edits, tuple(steps),
+    return CheckedResult("sequence_align_dp", edits, tuple(steps),
                            "independently_checked_instance", "O(nm) time and space")
 
 
-def huffman(weights: Sequence[int]) -> CertifiedResult:
+def huffman(weights: Sequence[int]) -> CheckedResult:
     """Optimal binary prefix-code lengths; zero weights permitted; one symbol uses length 1."""
     from heapq import heapify, heappop, heappush
     n = len(weights)
@@ -773,7 +776,7 @@ def huffman(weights: Sequence[int]) -> CertifiedResult:
     if n == 0 or any(not _integer(w, upper=10**9) for w in weights):
         raise ContractError("nonempty nonnegative integer frequency list required")
     if n == 1:
-        return CertifiedResult("huffman", (1,), {0:"0"}, "prefix_code_checked_instance",
+        return CheckedResult("huffman", (1,), {0:"0"}, "prefix_code_checked_instance",
                                "O(n log n)", ("single symbol code length 1 convention",))
     heap = [(w,i,i) for i,w in enumerate(weights)]
     heapify(heap)
@@ -803,17 +806,18 @@ def huffman(weights: Sequence[int]) -> CertifiedResult:
     sums=sorted(weights)
     total=0
     while len(sums)>1:
-        a=sums.pop(0); b=sums.pop(0)
+        a=sums.pop(0)
+        b=sums.pop(0)
         total+=a+b
         sums.append(a+b)
         sums.sort()
     if sum(w*lengths[i] for i,w in enumerate(weights))!=total:
         raise AssertionError("Huffman merge optimum differs")
-    return CertifiedResult("huffman", lengths, codes, "prefix_code_and_merge_cost_checked",
+    return CheckedResult("huffman", lengths, codes, "prefix_code_and_merge_cost_checked",
                            "O(n log n) algorithm", ("optimality uses Huffman merging theorem",))
 
 
-def held_karp_tsp(distances: Sequence[Sequence[int]]) -> CertifiedResult:
+def held_karp_tsp(distances: Sequence[Sequence[int]]) -> CheckedResult:
     """Held-Karp exact Hamiltonian tour from/to vertex 0, bounded n<=14."""
     n=len(distances)
     _size(n,limit=14)
@@ -829,12 +833,15 @@ def held_karp_tsp(distances: Sequence[Sequence[int]]) -> CertifiedResult:
         return min(distances[u][v]+cost(v,mask|(1<<(v-1)))
                    for v in range(1,n) if not mask & (1<<(v-1)))
     answer=cost(0,0)
-    path=[0]; mask=0; u=0
+    path=[0]
+    mask=0
+    u=0
     while mask != (1<<(n-1))-1:
         v=next(v for v in range(1,n) if not mask & (1<<(v-1))
                and distances[u][v]+cost(v,mask|(1<<(v-1)))==cost(u,mask))
         path.append(v)
-        mask|=1<<(v-1);u=v
+        mask|=1<<(v-1)
+        u=v
     path.append(0)
     if set(path[1:-1])!=set(range(1,n)) or sum(distances[a][b] for a,b in zip(path,path[1:]))!=answer:
         raise AssertionError("invalid tour witness")
@@ -847,12 +854,12 @@ def held_karp_tsp(distances: Sequence[Sequence[int]]) -> CertifiedResult:
         evidence="independently_checked_instance"
     else:
         evidence="dp_recurrence_and_tour_checked"
-    return CertifiedResult("held_karp_tsp", answer, tuple(path), evidence,
+    return CheckedResult("held_karp_tsp", answer, tuple(path), evidence,
                            "O(n^2 2^n) time; O(n 2^n) space",
                            ("exponential; exhaustive oracle only for n<=8",))
 
 
-def randomized_quicksort(items: Sequence[int], *, seed: int = 0) -> CertifiedResult:
+def randomized_quicksort(items: Sequence[int], *, seed: int = 0) -> CheckedResult:
     """Random pivot quicksort, deterministic seeded replay, independent order/permutation check."""
     import random
     _size(len(items), limit=1500)
@@ -860,7 +867,8 @@ def randomized_quicksort(items: Sequence[int], *, seed: int = 0) -> CertifiedRes
         raise ContractError("integer keys and deterministic 32-bit seed required")
     rng=random.Random(seed)
     def recurse(arr):
-        if len(arr)<2: return arr
+        if len(arr)<2:
+            return arr
         pivot=arr[rng.randrange(len(arr))]
         small=[x for x in arr if x<pivot]
         equal=[x for x in arr if x==pivot]
@@ -869,14 +877,14 @@ def randomized_quicksort(items: Sequence[int], *, seed: int = 0) -> CertifiedRes
     output=tuple(recurse(list(items)))
     if output != tuple(sorted(items)):
         raise AssertionError("quicksort oracle disagrees")
-    return CertifiedResult("randomized_quicksort", output, {"seed":seed},
+    return CheckedResult("randomized_quicksort", output, {"seed":seed},
                            "independently_checked_instance", "expected O(n log n); worst O(n^2)",
                            ("not cryptographic randomness",))
 
 
 def treewidth_independent_set(n: int, edges: Sequence[tuple[int,int]],
                               bags: Sequence[Sequence[int]], bag_tree: Sequence[tuple[int,int]],
-                              weights: Sequence[int] | None = None) -> CertifiedResult:
+                              weights: Sequence[int] | None = None) -> CheckedResult:
     """Exact weighted independent set on a supplied, verified tree decomposition.
 
     The trusted verifier checks edge coverage, running intersection, the bag-tree
@@ -904,23 +912,35 @@ def treewidth_independent_set(n: int, edges: Sequence[tuple[int,int]],
             not _integer(x,upper=len(bs)-1) for x in pair) or pair[0]==pair[1]:
             raise ContractError("invalid decomposition-tree edge")
         u,v=pair
-        adj[u].append(v);adj[v].append(u)
-    par=[-1]*len(bs);order=[0]; visited={0}
+        adj[u].append(v)
+        adj[v].append(u)
+    par=[-1]*len(bs)
+    order=[0]
+    visited={0}
     for u in order:
         for v in adj[u]:
-            if v==par[u]: continue
-            if v in visited: raise ContractError("bag graph contains cycle")
-            visited.add(v);par[v]=u;order.append(v)
-    if len(visited)!=len(bs): raise ContractError("bag graph disconnected")
+            if v==par[u]:
+                continue
+            if v in visited:
+                raise ContractError("bag graph contains cycle")
+            visited.add(v)
+            par[v]=u
+            order.append(v)
+    if len(visited)!=len(bs):
+        raise ContractError("bag graph disconnected")
     for v in range(n):
         present={i for i,row in enumerate(bs) if v in row}
-        if not present: raise ContractError("vertex missing from decomposition")
-        todo=[next(iter(present))]; found=set(todo)
+        if not present:
+            raise ContractError("vertex missing from decomposition")
+        todo=[next(iter(present))]
+        found=set(todo)
         for u in todo:
             for w in adj[u]:
                 if w in present and w not in found:
-                    found.add(w);todo.append(w)
-        if found!=present: raise ContractError("running intersection property violated")
+                    found.add(w)
+                    todo.append(w)
+        if found!=present:
+            raise ContractError("running intersection property violated")
     for u,v,_ in es:
         if not any(u in row and v in row for row in bs):
             raise ContractError("edge absent from every bag")
@@ -933,28 +953,35 @@ def treewidth_independent_set(n: int, edges: Sequence[tuple[int,int]],
         local_edges=[(bag.index(u),bag.index(v)) for u,v,_ in es if u in bag and v in bag]
         d={}
         for mask in range(1<<len(bag)):
-            if any(mask>>u&1 and mask>>v&1 for u,v in local_edges): continue
+            if any(mask>>u&1 and mask>>v&1 for u,v in local_edges):
+                continue
             score=sum(weights[v] for i,v in enumerate(bag) if v in fresh and mask>>i&1)
             feasible=True
             for child in adj[t]:
-                if par[child]!=t: continue
+                if par[child]!=t:
+                    continue
                 overlap=set(bag)&set(bs[child])
                 expected={v for i,v in enumerate(bag) if v in overlap and mask>>i&1}
                 options=[(value, childmask) for childmask,value in dp[child].items()
                          if {v for i,v in enumerate(bs[child]) if v in overlap and childmask>>i&1}==expected]
                 if not options:
-                    feasible=False; break
+                    feasible=False
+                    break
                 value, childmask=max(options, key=lambda item:(item[0],-item[1]))
                 score+=value
                 chosen_child[t,mask,child]=childmask
-            if feasible: d[mask]=score
-        if not d: raise AssertionError("no feasible bag assignments")
+            if feasible:
+                d[mask]=score
+        if not d:
+            raise AssertionError("no feasible bag assignments")
         dp[t]=d
     rootmask=max(dp[0],key=lambda m:(dp[0][m],-m))
     optimum=dp[0][rootmask]
-    selected=set();pending=[(0,rootmask)]
+    selected=set()
+    pending=[(0,rootmask)]
     while pending:
-        t,mask=pending.pop();bag=bs[t]
+        t,mask=pending.pop()
+        bag=bs[t]
         pbag=set(bs[par[t]]) if par[t]>=0 else set()
         selected.update(v for i,v in enumerate(bag) if v not in pbag and mask>>i&1)
         pending.extend((v,chosen_child[t,mask,v]) for v in adj[t] if par[v]==t)
@@ -963,10 +990,11 @@ def treewidth_independent_set(n: int, edges: Sequence[tuple[int,int]],
     if n<=17:
         brute=max(sum(weights[i] for i in range(n) if mask>>i&1) for mask in range(1<<n)
                   if all(not(mask>>u&1 and mask>>v&1) for u,v,_ in es))
-        if brute!=optimum: raise AssertionError("independent optimum oracle disagrees")
+        if brute!=optimum:
+            raise AssertionError("independent optimum oracle disagrees")
         status="independently_checked_instance"
     else:
         status="decomposition_and_dp_recurrence_checked"
-    return CertifiedResult("treewidth_independent_set",optimum,tuple(sorted(selected)),status,
+    return CheckedResult("treewidth_independent_set",optimum,tuple(sorted(selected)),status,
                            "O(bags * 2^width * poly(width, degree)) for given decomposition",
                            ("decomposition discovery cost not included",))

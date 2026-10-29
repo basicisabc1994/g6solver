@@ -1,4 +1,4 @@
-# Autonomous G6 Algorithm Design + Complexity/SWE agent (experimental)
+# Autonomous G6 Algorithm Design + Complexity/SWE agent
 
 The programmable agent is *not* the verifier. Production execution requires:
 - a frozen `DesignMission` with explicit intent, scope, snapshot, tests, compute limits, and execution approval;
