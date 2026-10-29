@@ -164,8 +164,8 @@ SEEN = {"planted": False, "g6": False, "home": [], "interfaces": ["lo"], "tmp_pl
 
 def _leaks(**seen: object) -> list[str]:
     return confine._bwrap_leaks({**SEEN, **seen}, planted="/tmp/g6_confine_planted_a/planted.txt",
-                                tmp_planted="/tmp/g6_confine_planted_b.txt", home="/home/owner",
-                                g6="/home/owner/.g6", allowed=set(), mounts={"g6_confine_probe_x"})
+                                tmp_planted="/tmp/g6_confine_planted_b.txt", home="/srv/stand-in-home",
+                                g6="/srv/stand-in-home/.g6", allowed=set(), mounts={"g6_confine_probe_x"})
 
 
 def test_the_self_check_holds_where_tmp_holds_only_the_runs_own_mount_points() -> None:

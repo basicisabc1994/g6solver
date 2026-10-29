@@ -380,6 +380,10 @@ def test_the_self_check_sees_the_hosts_tmp_where_a_run_would_bind_it(bwrap_backe
 
     reads = confine.interpreter_paths(sys.executable)
     home, g6 = os.path.realpath(os.path.expanduser("~")), os.path.realpath(g6_home())
+    # the home folder's entries that hold paths the run may read (a checkout in the home folder, as on CI's runners),
+    # as bubblewrap's own test run allows them
+    allowed = {Path(read).relative_to(home).parts[0] for read in reads
+               if Path(read).is_relative_to(home) and Path(read) != Path(home)}
     with confine.run_folder("g6_test_canary_") as cwd, tempfile.TemporaryDirectory(prefix="g6_test_private_") as own, \
             tempfile.NamedTemporaryFile(dir="/tmp", prefix="g6_test_planted_") as planted:
         os.mkdir(os.path.join(own, "tmp"), 0o700)
@@ -395,7 +399,7 @@ def test_the_self_check_sees_the_hosts_tmp_where_a_run_would_bind_it(bwrap_backe
             assert done.returncode == 0, done.stderr
             seen = json.loads(done.stdout.decode("utf-8").splitlines()[-1])
             return confine._bwrap_leaks(seen, planted=ABSENT, tmp_planted=planted.name,
-                                        home=home, g6=g6, allowed=set(),
+                                        home=home, g6=g6, allowed=allowed,
                                         mounts=confine._tmp_mounts([*reads, *read_only, cwd]))
 
         clean, bound = leaks(()), leaks(("/tmp",))
