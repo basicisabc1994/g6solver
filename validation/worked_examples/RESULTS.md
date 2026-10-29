@@ -10,9 +10,9 @@ about how often G6 helps.**
 - The trails (transcripts, every round's patch, G6's replies, logs) are in the local archive, outside the repository.
 
 **State (2026-10-29):**
-- Runs 1 to 8 are done: runs 1 to 5 on G6 2680cc9, runs 6 to 8 on G6 a923002.
-- Runs 9 and 10 are next.
-- Spent: $1.50 of the $100 stop.
+- Runs 1 to 9 are done: runs 1 to 5 on G6 2680cc9, runs 6 to 9 on G6 a923002.
+- Run 10 is next.
+- Spent: $1.70 of the $100 stop.
 - If the security review of W1 to W5 leads to a fix pass, runs 6 to 10 stay as made, on a923002.
 
 ## How the runs were made
@@ -110,6 +110,7 @@ Before each paid run:
 | 6 | pydantic/pydantic (MIT) | [#14041](https://github.com/pydantic/pydantic/issues/14041), [#14052](https://github.com/pydantic/pydantic/pull/14052) | 1: insufficient evidence | none | fail; final **fails** (1 of 1 FAIL_TO_PASS) | $0.16, 26 s |
 | 7 | pallets/click (BSD-3-Clause) | [#3571](https://github.com/pallets/click/issues/3571), [#3769](https://github.com/pallets/click/pull/3769) | 1: supported within scope | none | fail; final **fails** (3 of 6 FAIL_TO_PASS) | $0.20, 1.5 min |
 | 8 | python-attrs/attrs (MIT) | [#1575](https://github.com/python-attrs/attrs/issues/1575), [#1593](https://github.com/python-attrs/attrs/pull/1593) | 1: refused (template bindings); 2: supported within scope | none | pass, pass; final **passes** | $0.15, 1.8 min |
+| 9 | fastapi/fastapi (MIT) | [#15401](https://github.com/fastapi/fastapi/issues/15401), [#15077](https://github.com/fastapi/fastapi/pull/15077) | 1: test integrity compromised | 1, false alarm | pass; final **passes** | $0.20, 1.7 min |
 
 **What happened, run by run**
 
@@ -132,6 +133,16 @@ Before each paid run:
    - **On the second call** the agent's `example.v1` instance was accepted, and G6 gave "supported within its stated
      scope".
    - **The patch passes the maintainers' tests.**
+9. **fastapi #15077**
+   - **G6's finding:** the integrity reason `ignored_file_can_change_tests`, on `.pdm-build/fastapi.pth`.
+   - **Where the file comes from:** the project's build backend, pdm-backend. Its editable install, the project's own
+     development install, writes `.pdm-build/` with a `.gitignore` of its own that ignores everything in it. This
+     harness did not make it, and a developer's install of fastapi makes the same file.
+   - **The finding was a false alarm.** G6 gives the same reason on the maintainers' fix (`run.py g6replay`). Because
+     of it, G6 ran neither the base comparison nor the tests that touch the changed code.
+   - **The agent asked rather than acting.** W3b's text says to track or remove such a file. The agent instead asked
+     the person whether removing or force-tracking it is acceptable, and did not do either.
+   - **The patch passes the maintainers' tests.**
 
 **What the runs show about W1 to W5** (from `observe.py`, read from each archived transcript)
 
@@ -140,6 +151,7 @@ Before each paid run:
 | 6 | connected, 20 tools | 5,730 characters, in the transcript | yes | none |
 | 7 | connected, 20 tools | 6,645, in the transcript | yes | none |
 | 8 | connected, 20 tools | 2,682 (the refusal) and 5,405, in the transcript | yes (as a Markdown quote) | refused once for bindings, then accepted |
+| 9 | connected, 20 tools | 5,645, in the transcript | no: the agent summarised it | none |
 
 For comparison, at 2680cc9 (runs 1 to 5), every finished reply was 64,108 to 242,490 characters, and Claude Code
 saved each to a file. No report was shown whole, and in run 3 G6's server did not start.
@@ -148,5 +160,4 @@ saved each to a file. No report was shown whole, and in run 3 G6's server did no
 
 | # | Task |
 |---:|---|
-| 9 | fastapi #15077 |
 | 10 | click #3678 |
