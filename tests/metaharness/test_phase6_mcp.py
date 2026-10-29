@@ -34,6 +34,13 @@ TOOLS = {"metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "
          "metaharness_run"}
 
 
+@pytest.fixture(autouse=True)
+def _metaharness_allowed(monkeypatch):
+    # the tools that run a workflow's code are sensitive operations the person allows (the security review's F2;
+    # tests/metaharness/test_forged_confirmation.py shows them refused by default)
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "metaharness")
+
+
 def test_rollback_prompt_and_action_are_bound_to_store_head(tmp_path):
     surface = _surface(tmp_path)
     refused, question, binding = surface.rollback_check("arith", 0)
@@ -47,7 +54,7 @@ def test_rollback_prompt_and_action_are_bound_to_store_head(tmp_path):
 def test_data_only_application_over_real_mcp_client(tmp_path, monkeypatch):
     monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("G6_ALLOW_UNCONFINED", "1")
-    monkeypatch.delenv("G6_MCP_SENSITIVE", raising=False)
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "metaharness")   # the meta-harness only: patch review stays refused
     surface = Surface(workflow_root=tmp_path / "workflows")
     server = build_server(surface)
 

@@ -118,6 +118,12 @@ code proposals with a hypothesis, diagnosis, evaluation, decisions, approval, ru
 It discovers `.g6/workflows/` in the project and `$G6_HOME/workflows/` (project takes precedence).
 `G6_METAHARNESS` remains an explicit Python configuration override.
 
+The tools that run a workflow's code, `metaharness_run`, `metaharness_evaluate_start` and `metaharness_evaluate`, are
+sensitive operations: the person who registers the server allows them in `G6_MCP_SENSITIVE` (`metaharness.run`,
+`metaharness.evaluate_start`, `metaharness.evaluate`, or `metaharness` for all three). A workflow counts as confirmed
+only when G6 recorded the person's confirmation in its state folder: a confirmation a project's own files carry does
+not count, and a person confirms such a workflow again before it runs.
+
 Use `metaharness_evaluate_start` and `metaharness_job` for long evaluations. Jobs are process-local;
 a server restart loses handles and must never be interpreted as success. Inspect the workflow's ledger afterward.
 `metaharness_run` runs the approved version as a job. Approval may happen in the proposing session through

@@ -40,6 +40,11 @@ Merging stays the person's decision.
   started in, the project's, where a line could name a class for G6's server to import and build. G6's server now
   turns the version check off and reads no such file; what a person sets in the environment
   (`FASTMCP_CHECK_FOR_UPDATES`, `FASTMCP_ENV_FILE`) is kept.
+- **A meta-harness workflow a project ships is never confirmed for the person.** G6 finds workflows in the project's
+  folder, and a workflow's confirmation lived in its own files there, so a project could ship one confirmed under any
+  name, and G6 ran it. A confirmation now counts only when G6 recorded it in its own state folder when a person
+  confirmed; and the tools that run a workflow's code over MCP are refused unless the person allows them in
+  `G6_MCP_SENSITIVE` (`metaharness.run`, `metaharness.evaluate_start`, `metaharness.evaluate`).
 - **A false alarm on pdm-backend's build output, found by a worked example.** pdm-backend's editable install writes a
   git-ignored `.pdm-build/` folder with a `.pth` file in it, which Python never reads from there, and G6 counted it as
   a file that could change the tests. G6 now leaves `.pdm-build/` out of its scan of ignored files, as it does

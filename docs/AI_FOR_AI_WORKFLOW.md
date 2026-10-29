@@ -69,7 +69,11 @@ cases and an independent host evaluator before making a performance claim.
 1. Confirm the returned workflow digest through `metaharness_confirm` and the client's prompt.
 2. Inspect or diagnose the baseline. Propose a change with `metaharness_propose_code`, a JSON mapping
    of filenames to source in `files_json`, and a falsifiable `hypothesis`.
-3. Call `metaharness_evaluate_start`; poll `metaharness_job` until a result or failure is reported.
+3. Call `metaharness_evaluate_start`; poll `metaharness_job` until a result or failure is reported. The tools that
+   run the workflow's code (`metaharness_run`, `metaharness_evaluate_start`, `metaharness_evaluate`) need host
+   permission `metaharness` (or each one, `metaharness.run` and so on) in `G6_MCP_SENSITIVE`, and a workflow runs only
+   once a person confirmed it, as G6 records under its state folder: a confirmation a project's files carry does not
+   count.
 4. Give the returned report and proposal digests to `metaharness_decide`. Preserve the recovery reasons.
 5. Only a recommend decision can proceed to `metaharness_approve`. Same-session client-mediated consent
    is permitted. Missing elicitation, refusal or changed evidence never activates a version.
