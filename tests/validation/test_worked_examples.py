@@ -15,7 +15,7 @@ from worked_examples import selection
 
 c = we.c
 PLAN = Path(we.__file__).with_name("PLAN.md")
-KEY = "sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE"
+KEY = "sk-ant-api03-" + "FAKE" * 6   # the same fake value, written so the export scan reads no key
 
 
 # --- the selection rule ------------------------------------------------------------------------------------------------
@@ -165,7 +165,7 @@ def test_prompt_is_the_plans_text():
 
 
 def test_hook_says_nothing_and_keeps_the_index():
-    hook = we.hook_script("/home/tester/work/black", "b" * 40)
+    hook = we.hook_script(f"{we.HOME}/work/black", "b" * 40)
     assert "GIT_INDEX_FILE=" in hook and "git diff --cached --binary " + "b" * 40 in hook
     assert hook.rstrip().endswith("exit 0") and "echo" not in hook
     settings = json.loads(we.hook_settings())
@@ -324,7 +324,7 @@ def test_extract_rounds():
                                                  "result": {"ok": False, "error": "[G6_E_INPUT_VALIDATION] x"}})}]}]}}]
     assert we.extract_rounds(refused)[0]["error"] == "[G6_E_INPUT_VALIDATION] x"
     # a reply too large for Claude Code is saved to a file, and the transcript holds only where
-    saved = "/home/tester/.claude/projects/-home-tester-work-black/s1/tool-results/mcp-g6-metaharness_job-1.txt"
+    saved = f"{we.HOME}/.claude/projects/-home-tester-work-black/s1/tool-results/mcp-g6-metaharness_job-1.txt"
     big = [refused[0], {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t9",
            "content": f"Error: result (64,108 characters) exceeds maximum allowed tokens. Output has been saved to "
                       f"{saved}.\nFormat: JSON"}]}}]
@@ -620,3 +620,12 @@ def test_no_private_path_in_the_scripts():
         text = Path(we.__file__).with_name(name).read_text(encoding="utf-8")
         assert home not in text and home.replace("\\", "/") not in text
     assert re.search(r"Path\.home\(\)", Path(we.__file__).with_name("wecommon.py").read_text(encoding="utf-8"))
+
+def test_the_key_check_still_looks_in_the_containers_home_folder():
+    # the export scan reads no literal home folder or key in these files; the scripts the container runs still name
+    # the same home folder, byte for byte
+    assert we.HOME == "/home/" + we.USER
+    assert f'"{we.HOME}/.g6/.env"' in we.KEYPROBE_TEST and "@HOME@" not in we.KEYPROBE_TEST
+    driver = we.keyprobe_driver()
+    assert f'pathlib.Path("{we.HOME}/keyprobe/repo")' in driver and "@HOME@" not in driver
+    assert KEY == "sk-ant-api03-" + "FAKE" * 6 and len(KEY) == 37

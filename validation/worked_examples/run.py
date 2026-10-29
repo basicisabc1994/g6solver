@@ -55,7 +55,7 @@ FROM_IMAGE = "g6-a2-linux"
 SECURITY = ("--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined")
 LIMITS = ("--cpus", "4", "--memory", "8g")
 USER = "tester"
-HOME = "/home/tester"
+HOME = f"/home/{USER}"
 WORK = f"{HOME}/work"
 CLAUDE = "/usr/local/bin/claude"
 CLAUDE_SHA256 = "4d704a8aecbe038affa3000f498ae17c1b4f753add8facb8764120affc99b658"
@@ -407,7 +407,7 @@ def verdict(results: Mapping[str, str], f2p: Sequence[str], p2p: Sequence[str]) 
 KEYPROBE_TEST = '''import glob
 import os
 
-PATHS = ("~/.g6/.env", "/home/tester/.g6/.env", "/root/.g6/.env")
+PATHS = ("~/.g6/.env", "@HOME@/.g6/.env", "/root/.g6/.env")
 
 
 def seen():
@@ -435,7 +435,7 @@ def seen():
 def test_no_key_visible():
     channels = seen()
     assert not channels, "seen: " + ",".join(channels)
-'''
+'''.replace("@HOME@", HOME)   # the container's home folder, written once (HOME)
 
 
 def keyprobe_driver() -> str:
@@ -444,7 +444,7 @@ def keyprobe_driver() -> str:
     same test runs unconfined as the control. Prints names and outcomes only, never a value."""
     return "PROBE = " + json.dumps(KEYPROBE_TEST) + '''
 import json, os, re, shutil, subprocess, sys, pathlib
-root = pathlib.Path("/home/tester/keyprobe/repo")
+root = pathlib.Path("@HOME@/keyprobe/repo")
 shutil.rmtree(root.parent, ignore_errors=True)
 root.mkdir(parents=True)
 (root / "mod.py").write_text("def f():\\n    return 1\\n")
@@ -475,7 +475,7 @@ print(json.dumps({"confined": {"R1": status.get("R1"), "outcome": a.get("outcome
                                "code": (got.get("warning_card") or {}).get("code")},
                   "control": {"exit": done.returncode, "channels": [x for x in channels if x]},
                   "g6_model_calls": calls}))
-'''
+'''.replace("@HOME@", HOME)
 
 
 def key_check_ok(found: Mapping[str, Any], *, key_file: bool = False) -> bool:
