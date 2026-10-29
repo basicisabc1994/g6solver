@@ -519,3 +519,58 @@ The evidence page lists a study once it has run; V10 gets its tile when its firs
 - **Review:** a fresh, read-only agent session reviewed the draft against V9's protocol, the plan's §0 and the design.
   It found 1 blocking, 20 important and 20 minor problems, and this version addresses each. No person has reviewed this
   version yet.
+
+## V9, version 2 (registered 2026-10-29; not run) — useful patch review, with broken benchmark tasks handled
+
+This entry re-registers V9. The entry "V9" above stays as it is; for every level of the study, version 2 replaces
+version 1.
+
+- **Protocol:** `docs/validation/patch_review_utility/PROTOCOL.md`, version 2,
+  `39a7859e9e44e852328ad545aa440b12849ac5b281c20d9b41eb65e6f58a0000`. Its section "Changes from version 1" lists every
+  change.
+- **Why:** OpenAI's audit of SWE-bench Pro's public tasks ("Separating signal from noise in coding evaluations", 8 July
+  2026) estimates that about 30% of them are broken. The owner decided on 2026-10-29 that a published list of broken
+  tasks is excluded, and that the label audit treats a hidden test enforcing something the task does not state as
+  label-invalid: left out of the primary analysis, counted and reported.
+- **Changed from the entry V9:** the section "Broken tasks" (four kinds, the published-list check at each freeze, a
+  kind recorded for each label error the audit finds, and an optional task screen by a screener who is not the label
+  auditor, which runs only if the owner switches it on at a freeze); label-invalid patches are left out of every rate,
+  every hypothesis and verdict 3, and a sensitivity analysis keeps them.
+- **Unchanged from the entry V9:** the plan, the exclusions and the pool it names (not read for this entry), the arms,
+  the hypotheses and margins, the draw and the seed formula, the label and oracle-control rules, the audit's size and
+  bound, the analysis, Experiment 2 and the order of verdicts. What is left to the feasibility entry is as before, plus
+  the published-list check and whether the screen runs.
+- **State:** no task drawn, no patch generated, no arm run, no label auditor named. No published list of broken tasks
+  had been found.
+- **Review:** see the entry "V10, version 2", whose review covered both protocols.
+
+## V10, version 2 (registered 2026-10-29; not run) — verification search, with a fresh reviewing agent (arm R)
+
+This entry re-registers V10. The entry "V10" above stays as it is; version 2 replaces version 1.
+
+- **Protocol:** `docs/validation/patch_review_search/PROTOCOL.md`, version 2,
+  `715dce8a8167d8c1efb7abb7d5b35f8831caee5317b4b8b230d9b805d77852b4`. Its section "Changes from version 1" lists every
+  change and names which details are the drafter's rulings.
+- **Plan:** as in the entry V10.
+- **Depends on:** V9's protocol, version 2, `39a7859e9e44e852328ad545aa440b12849ac5b281c20d9b41eb65e6f58a0000`, and the
+  same two conditions on how V9 is run as before.
+- **Frozen by this entry:** everything the entry V10 froze, with these changes:
+  - arm R (the owner's decision of 2026-10-29): a new Claude Code session that did not write the patch, with V9's
+    agent's model, version and effort and V9's arm 2 limits, given the review contract, the diff and a scratch copy
+    of the repository without history, under V9's arm 2 prompt with two registered changes, accepting by V9's arm 2
+    rule, and writing tests that count as findings by arm E's rule;
+  - the spending cap shared by four arms, a quarter each unless the freeze entry sets other shares;
+  - arm A's findings including regressions of the repository's own tests;
+  - the second verdict decided by feasibility criterion 6 alone, with V9's feasibility audit reported beside the
+    results;
+  - V9 version 2's handling of broken tasks.
+- **Left to the freeze entry,** in addition to what the entry V10 left: R's prompt, product version, session set-up,
+  and the script that sets up R's copy and collects its tests; the prices for R's model; and each arm's share of the
+  cap.
+- **State:** verification search is being built on development fixtures only and is not frozen. No task drawn, no
+  patch generated, no arm run.
+- **Review:** a fresh, read-only agent session reviewed the drafts of both protocols against the owner's decisions,
+  version 1 of each and §0. It found no blocking problem, 13 important and 4 minor ones, and a defect in V10 version
+  1's second verdict. This version addresses each, with one exception: the reviewer judged the optional task screen to
+  go beyond the owner's decision, and it is kept as an option that runs only if the owner switches it on. No person
+  has reviewed this version yet.
