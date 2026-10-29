@@ -40,6 +40,10 @@ Merging stays the person's decision.
   started in, the project's, where a line could name a class for G6's server to import and build. G6's server now
   turns the version check off and reads no such file; what a person sets in the environment
   (`FASTMCP_CHECK_FOR_UPDATES`, `FASTMCP_ENV_FILE`) is kept.
+- **A false alarm on pdm-backend's build output, found by a worked example.** pdm-backend's editable install writes a
+  git-ignored `.pdm-build/` folder with a `.pth` file in it, which Python never reads from there, and G6 counted it as
+  a file that could change the tests. G6 now leaves `.pdm-build/` out of its scan of ignored files, as it does
+  `build/` and `dist/`.
 
 ## What does not ship
 

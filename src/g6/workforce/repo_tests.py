@@ -1765,8 +1765,10 @@ _LOADABLE = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini
                        "tox.ini", "pyproject.toml", "sitecustomize.py", "usercustomize.py"})
 #: Folders the ignored-file scan does not enter: environments, caches and build output; and any folder holding a
 #: ``pyvenv.cfg``, a virtual environment whatever its name (review I9).
+#: ``.pdm-build``: pdm-backend's editable build output (a ``.pth`` Python never reads from there: worked example 9, F8).
 _UNSCANNED = frozenset({".git", ".venv", "venv", "env", ".tox", ".nox", ".direnv", ".eggs", "__pypackages__", ".conda",
-                        "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist"})
+                        "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "build", "dist",
+                        ".pdm-build"})
 #: An installed package's metadata folder: pytest loads, at start-up, every plugin one declares (an entry point in its
 #: ``pytest11`` group) when the folder's parent is on the import path (review C3).
 _METADATA = (".egg-info", ".dist-info")
