@@ -65,12 +65,36 @@ def test_a_finding_whose_file_is_not_on_the_patched_tree_is_kept_and_cannot_be_r
     assert found[0]["text"] is None and reruns.problem(found[0])
 
 
-def test_derived_regressions_and_a_reply_without_a_completion_section_give_no_arm_a_finding(trees):
+def test_a_regression_of_the_repositorys_own_tests_is_one_of_arm_as_findings(trees):
     _, patched = trees
     derived = json.loads(json.dumps(ARM_3))
     derived["defects_reproduced"]["stated_and_repository_checks"][0].update(provenance="derived",
                                                                             code="derived_test_regressed")
-    assert runner.arm_a_findings(task(arm_3=derived), patched) == []
+    found = runner.arm_a_findings(task(arm_3=derived), patched)
+    assert [(f["node"], f["code"]) for f in found] == [(record_reply.CHECK, "derived_test_regressed")]
+    assert found[0]["text"] == record_reply.FILES["tests/test_calc.py"]
+
+
+def test_a_search_arms_report_also_gives_its_proposed_checks_findings_but_never_a_model_only_trace(trees):
+    _, patched = trees
+    defects = json.loads(json.dumps(ARM_3["defects_reproduced"]))
+    repro = {"file": "tests/g6_check_0123456789ab/test_x.py", "text": "def test_x():\n    assert 0\n",
+             "node": "tests/g6_check_0123456789ab/test_x.py::test_x"}
+    defects["proposed_checks"] = [
+        {"check": "p1", "code": "unconfirmed_counterexample", "reproduction": repro},
+        {"check": "p2", "code": "unconfirmed_failure", "reproduction": repro,
+         "formal": {"correspondence": {"result": "not_reproduced"}}},
+        {"check": "p3", "code": "fails_on_base_too", "reproduction": repro}]
+    found = runner.findings(defects, patched, search_arm=True)
+    assert [f["check"] for f in found] == [record_reply.CHECK, "p1"] and found[1]["text"] == repro["text"]
+    assert [f["check"] for f in runner.findings(defects, patched)] == [record_reply.CHECK]
+
+
+def test_other_defects_and_a_reply_without_a_completion_section_give_no_arm_a_finding(trees):
+    _, patched = trees
+    other = json.loads(json.dumps(ARM_3))
+    other["defects_reproduced"]["stated_and_repository_checks"][0].update(code="run_not_trusted")
+    assert runner.arm_a_findings(task(arm_3=other), patched) == []
     assert runner.arm_a_findings(task(arm_3={**ARM_3, "defects_reproduced": None}), patched) == []
 
 

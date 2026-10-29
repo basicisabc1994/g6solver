@@ -277,7 +277,8 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, spending: Spending, recor
                 kind, reply = REPORT_CHECK, {**reply, "error": "the report failed the report check: " + "; ".join(
                     [*checked["missing"], *(f"{c['check']} ({c['provenance']}) is listed as passing {c['requirement']}"
                                             for c in checked["model_originated_passing"]),
-                     *checked["formal_problems"]])}
+                     *checked["formal_problems"],
+                     *(f"{c['check']} has no provenance" for c in checked["checks_without_provenance"])])}
             own = errored(kind, reply) if kind else reply["own"]
             arms[arm] = {"disposition": _search_disposition(arm_a, own), "own": own, "attempts": attempts,
                          "model_calls": reading["calls"], "meter": reading, **timing,

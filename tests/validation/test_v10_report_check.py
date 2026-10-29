@@ -32,7 +32,7 @@ def report(checks=None, completion=None, status="passed_on_stated_checks"):
 def test_a_complete_report_passes_and_the_three_parts_are_v9s_own_check():
     got = report_check.check(report(), ["R1"])
     assert got == {"complete": True, "missing": [], "completion_problems": [], "model_originated_passing": [],
-                   "formal_problems": []}
+                   "formal_problems": [], "checks_without_provenance": []}
     wrong = report_check.check(report(), ["R1", "R2"])
     assert wrong["complete"] is False and wrong["missing"] == a5.check(report(), ["R1", "R2"])["missing"]
 
@@ -63,6 +63,13 @@ def test_a_check_a_model_originated_listed_as_passing_a_requirement_fails_the_re
                                                 "provenance": provenance}]
     unpassed = report_check.check(report(checks=checks, status="not_established"), ["R1"])
     assert unpassed["model_originated_passing"] == []          # only a requirement it passes counts
+
+
+def test_a_search_arms_check_without_a_provenance_fails_its_report():
+    checks = [{"id": CHECK, "verdict": "passed", "provenance": "stated"}, {"id": "b.py::t", "verdict": "failed"}]
+    got = report_check.check(report(checks=checks, status="failed"), ["R1"])
+    assert got["complete"] is False and got["checks_without_provenance"] == [{"requirement": "R1", "check": "b.py::t"}]
+    assert got["model_originated_passing"] == []                   # a G6 fault, not a model's check passing
 
 
 def test_every_formal_result_keeps_its_three_parts_and_only_a_reproduced_trace_is_a_finding():

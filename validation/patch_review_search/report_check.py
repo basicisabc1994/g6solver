@@ -8,8 +8,10 @@ feasibility criterion 4). A frozen script checks every report of arms C and T be
    were reproduced (the stated and repository checks', and the proposed checks'), what was checked for preservation,
    test adequacy, open questions and the activities performed, each present in the form G6 gives it;
 3. that no check a model originated is listed as passing a requirement: a requirement whose status is
-   ``passed_on_stated_checks`` names only checks whose provenance is ``stated`` or ``derived`` (a check without a
-   provenance is a stated one, as in G6's review before provenance was recorded);
+   ``passed_on_stated_checks`` names only checks whose provenance is ``stated`` or ``derived``. Every check in a
+   search arm's report must carry a provenance: G6 at the verification search commit gives each one, so a check
+   without one fails the report (``checks_without_provenance``; ruled on item 42). Arm A's record, V9's arm 3, still
+   reads a check without a provenance as stated;
 4. that every formal result (the ``formal`` part of an activity or of a reproduced defect) gives its specification,
    its model and its correspondence to the code as separate parts, and that only a reproduced trace is reported as a
    finding about the code (a defect whose formal correspondence is ``reproduced``). A requirement's ``formal`` notes
@@ -45,16 +47,26 @@ def _completion(completion) -> list[str]:
     return problems
 
 
-def _model_originated(requirements) -> list[dict]:
-    found = []
+def _checks(requirements):
     for req in requirements if isinstance(requirements, list) else []:
-        if not isinstance(req, dict) or req.get("status") != "passed_on_stated_checks":
-            continue
-        for one in req.get("checks") or []:
-            provenance = one.get("provenance", "stated") if isinstance(one, dict) else "stated"
-            if provenance not in NOT_MODEL:
-                found.append({"requirement": req.get("id"), "check": one.get("id"), "provenance": provenance})
-    return found
+        if isinstance(req, dict):
+            for one in req.get("checks") or []:
+                if isinstance(one, dict):
+                    yield req, one
+
+
+def _model_originated(requirements) -> list[dict]:
+    """The checks a model originated that a requirement passed on (a check with no provenance is not read here)."""
+    return [{"requirement": req.get("id"), "check": one.get("id"), "provenance": one["provenance"]}
+            for req, one in _checks(requirements) if req.get("status") == "passed_on_stated_checks"
+            and "provenance" in one and one["provenance"] not in NOT_MODEL]
+
+
+def _without_provenance(requirements) -> list[dict]:
+    """The checks a search arm's report gives without a provenance: G6 at the verification search commit gives every
+    check one, so its absence is G6's fault, and the report fails (arm A's record reads none as stated)."""
+    return [{"requirement": req.get("id"), "check": one.get("id")} for req, one in _checks(requirements)
+            if "provenance" not in one]
 
 
 def _split(formal) -> bool:
@@ -93,6 +105,8 @@ def check(reply: dict, contract_ids: list[str]) -> dict:
     completion = _completion(assessment.get("completion"))
     missing = [*base["missing"], *(["completion_section"] if completion else [])]
     passing = _model_originated(assessment.get("requirements"))
+    unsourced = _without_provenance(assessment.get("requirements"))
     formal = _formal(assessment)
-    return {"complete": not (missing or passing or formal), "missing": missing, "completion_problems": completion,
-            "model_originated_passing": passing, "formal_problems": formal}
+    return {"complete": not (missing or passing or formal or unsourced), "missing": missing,
+            "completion_problems": completion, "model_originated_passing": passing, "formal_problems": formal,
+            "checks_without_provenance": unsourced}

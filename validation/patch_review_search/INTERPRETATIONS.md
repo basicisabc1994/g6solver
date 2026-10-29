@@ -269,14 +269,19 @@ Items 42 to 44 cover the report check (`report_check.py`), the comparison of sta
     must be present in the form G6 gives them: lists, and `defects_reproduced` with its two lists. Test adequacy must be
     present as a list for both search arms: the protocol's "where the arm measures it" cannot be told from an empty
     list. A check a model originated is any whose provenance is neither `stated` nor `derived` (`proposed`,
-    `adopted_proposal`, and `structural`, a template filled from a model's names); a check without a provenance is a
-    stated one. The formal results read are the `formal` parts of activities and defects; a requirement's `formal`
-    notes are G6's notes that a result is about the model only. The driver checks a search arm's report when its
-    result carries it (`report`), against the patch's `contract_ids`, and a report that fails is a tool error of the
-    kind `report_check_failed` (V9's A5 failure is `a5_report_incomplete`). Criterion 4 is met when every search arm's
-    output carries a report check and none lists a model-originated check as passing a requirement or a formal result
-    without its three parts; a report short of another part is a tool error, counted by criterion 1. While the outputs
-    carry no report check, criterion 4 is inconclusive. For the coordinator's ruling.
+    `adopted_proposal`, and `structural`, a template filled from a model's names). In a search arm's report, a check
+    with no provenance fails the report (`checks_without_provenance`). The formal results read are the `formal` parts
+    of activities and defects; a requirement's `formal` notes are G6's notes that a result is about the model only.
+    The driver checks a search arm's report when its result carries it (`report`), against the patch's
+    `contract_ids`, and a report that fails is a tool error of the kind `report_check_failed` (V9's A5 failure is
+    `a5_report_incomplete`). Criterion 4 is met when every search arm's output carries a report check and none lists a
+    model-originated check as passing a requirement or a formal result without its three parts; a report short of
+    another part is a tool error, counted by criterion 1. While the outputs carry no report check, criterion 4 is
+    inconclusive. Ruled by the coordinator: accepted, with one change: in a search arm's report, a check with no
+    provenance fails the report check (a tool error, `report_check_failed`), since the verification search commit
+    gives every check a provenance and its absence is a G6 fault; in arm A's record (V9's arm 3), a check with no
+    provenance stays a stated one. Counting `structural` as model-originated for criterion 4 is accepted: a
+    structural check never passes a requirement (the revised plan rule 2).
 
 43. **The comparison of stated-check results and criterion 5.** A result on the stated checks is each stated check's
     verdict by its id, as G6's reply gives it (V9's `arms.stated_check_verdicts`: the checks whose provenance is
@@ -286,15 +291,18 @@ Items 42 to 44 cover the report check (`report_check.py`), the comparison of sta
     compares them on every patch once every arm has run, and records the comparison before any label is read.
     Criterion 5 is met when every patch a search arm's own review accepted and arm A did not is on the list,
     not met when one is not, and inconclusive when any patch's results cannot be read, or the record holds no
-    comparison. For the coordinator's ruling.
+    comparison. Ruled by the coordinator: accepted.
 
 44. **The runner's inputs, and arm A's findings.** The driver's patches are V9's non-empty tasks in the order V9's
     results list them (its draw order), each with arm 3's disposition as arm A's, the review contract's ids, arm 3's
     results on the stated checks and arm A's findings; V9's empty and non-applying tasks are the excluded patches, and
-    any other patch state is refused. Arm A's findings are, by the protocol's table of findings, its failed stated
-    checks: the defects its reply reproduced whose provenance is `stated` and code `check_failed`. A regression of the
-    repository's own tests (`derived_test_regressed`) also makes arm A's outcome `defect_detected`, but it is not a
-    stated check, and is not counted as a finding. Each finding's reproduction is the stated check's node, its file,
-    and that file's text on the patched tree V9 reviewed; one whose file is not on that tree is kept with no text, so
-    the reruns count it as not reproducible. A reply with no completion section (G6's review before verification
-    search, as at b3c342b) gives none. For the coordinator's ruling.
+    any other patch state is refused. Arm A's findings are its failed stated checks (provenance `stated`, code
+    `check_failed`) and the regressions of the repository's own tests G6 ran (provenance `derived`, code
+    `derived_test_regressed`), and so are C's and T's. Each finding's reproduction is the check's or test's node, its
+    file, and that file's text on the patched tree V9 reviewed, rerun with V9's arm 1 command; one whose file is not on
+    that tree is kept with no text, so the reruns count it as not reproducible. A reply with no completion section
+    (G6's review before verification search, as at b3c342b) gives none. Ruled by the coordinator: changed: a
+    `derived_test_regressed` (a regression of the repository's own tests that G6 ran, outcome `defect_detected`) is
+    one of arm A's findings, and so C's and T's; its reproduction is the repository test's node id and the frozen
+    test command. V9's arm 1 counts the same evidence, and it cannot inflate the headline (M needs arm 1 to accept).
+    V10 version 2's findings table says so. The rest of item 44 is accepted.
