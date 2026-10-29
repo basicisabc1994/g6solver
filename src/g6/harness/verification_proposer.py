@@ -12,7 +12,9 @@ a reply is allowed to do, never the prompt:
 - a template instance is checked by the template's own schema and applicability (``verification_templates``), its
   bindings provenance ``model_hypothesis``, and its check compiled from the template's fixed text alone;
 - a free-form check is a test file G6 names (``test_g6_proposed_<n>.py``) and places, run confined in scratch copies
-  with no network; a proposed conftest, runner configuration or plugin declaration is refused;
+  with no network. A proposed conftest, runner configuration or plain plugin declaration (``pytest_plugins``) is
+  refused; a check that builds one at run time is not detected; either way, a proposed check never passes a
+  requirement;
 - a scenario is a question, text marked as proposed (at most ``MAX_SCENARIOS``).
 
 Nothing the model wrote runs in G6's process. What it proposed never passes a requirement and gives at most

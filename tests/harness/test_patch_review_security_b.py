@@ -208,3 +208,52 @@ def test_confined_the_patch_cannot_silence_a_counterexample(tmp_path, bwrap_back
     assert assessment["outcome"] == "insufficient_evidence", (version, assessment["reasons"])
     codes = {code for _, code in _codes(got)}
     assert codes & {"unconfirmed_counterexample", "check_error_on_patch"}, (version, codes)
+
+# --- B7: public text says what is true --------------------------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _words(text: str) -> str:
+    return " ".join(text.replace("`", "").split())
+
+
+def _read(rel: str) -> str:
+    return _words((ROOT / rel).read_text(encoding="utf-8"))
+
+
+def test_the_docs_say_what_the_plugin_check_refuses_and_what_it_does_not_detect():
+    from g6.harness import verification_proposer
+
+    guide = _read("docs/AI_FOR_AI_WORKFLOW.md")
+    assert ("A proposed conftest, a runner configuration and a plain plugin declaration (pytest_plugins) are "
+            "refused; a check that builds one at run time is not detected, and the checks you propose yourself are "
+            "not filtered for one; either way, a proposed check never passes a requirement.") in guide
+    assert "a conftest, a configuration or a plugin is refused" not in guide
+    proposer = _words(verification_proposer.__doc__)
+    assert ("A proposed conftest, runner configuration or plain plugin declaration (pytest_plugins) is refused; a "
+            "check that builds one at run time is not detected; either way, a proposed check never passes a "
+            "requirement") in proposer
+
+
+def test_the_docs_say_the_proposers_limits_hold_for_every_request_the_provider_receives():
+    from g6.harness import verification_proposer
+
+    assert ("Each holds for every request the provider receives: G6 counts and caps the provider itself, never a "
+            "retry around it.") in _read("docs/AI_FOR_AI_WORKFLOW.md")
+    assert '"max_context_chars" per call, each holding for every request the provider receives' in _read(
+        "src/g6/mcp/__init__.py")
+    assert "so each holds for every request the provider receives" in _words(verification_proposer.__doc__)
+
+
+def test_the_docs_say_a_model_proposed_instance_gives_at_most_insufficient_evidence_whatever_contract_it_names():
+    guide = _read("docs/AI_FOR_AI_WORKFLOW.md")
+    assert "(its bindings' provenance is model_hypothesis), whatever contract it names" in guide
+    assert "What it proposes gives at most insufficient_evidence, with its reproduction." in guide
+
+
+def test_the_readme_says_the_reproduction_is_the_repositorys_own_command_without_g6s_boundary():
+    readme = _read("README.md")
+    assert ("a reproduction you can run with plain pytest: the repository's own command, without G6's boundary "
+            "(with PYTHONPATH=src where G6 put src on the import path)") in readme
+    assert "the way G6 ran it" not in readme

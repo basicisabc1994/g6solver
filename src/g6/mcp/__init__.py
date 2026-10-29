@@ -195,7 +195,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         {"propose": true} has G6 ask the model you configured for G6 (G6_LLM_PROVIDER; none, no call) for checks:
         "proposer": "templates_first" (the default: template by template, then scenarios as questions, then free-form
         tests where no template applied) or "free_form" (free-form tests only), within "max_model_calls" (default
-        10), "max_input_chars", "max_output_tokens" and "max_context_chars" per call. Its replies are untrusted data:
+        10), "max_input_chars", "max_output_tokens" and "max_context_chars" per call, each holding for every request
+        the provider receives. Its replies are untrusted data:
         what it proposes runs as proposed checks do, never passes a requirement and gives at most
         insufficient_evidence; every model call, request and reply is in assessment.completion. Every reply
         has assessment.completion: what was demonstrated, what is not established, the defects reproduced,
