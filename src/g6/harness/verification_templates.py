@@ -1821,15 +1821,27 @@ def _package_files(tree: Tree, package: str, side: str) -> tuple[dict[str, str],
     return files, folder
 
 
-def _pattern(text: str) -> re.Pattern:
-    parts = [".+" if part == "**" else "[^.]+" if part == "*" else re.escape(part) for part in text.split(".")]
-    return re.compile(r"\.".join(parts))
+def _matches(pattern: str, name: str) -> bool:
+    """Whether a module's dotted ``name`` matches an ``ignore_imports`` pattern, part by part: ``*`` is one part,
+    ``**`` one or more, any other part itself. The parts of ``name`` a prefix of the pattern can reach are kept as a
+    set, so it takes at most as many steps as the pattern's parts times the name's, never a regular expression's
+    backtracking (reviewer B's B5: a rule of many ``**`` held G6's process for seconds, past every deadline)."""
+    parts = name.split(".")
+    reached = {0}   # how many of the name's parts the pattern so far has matched
+    for part in pattern.split("."):
+        if part == "**":
+            reached = set(range(min(reached) + 1, len(parts) + 1)) if reached else set()
+        else:
+            reached = {at + 1 for at in reached if at < len(parts) and part in ("*", parts[at])}
+        if not reached:
+            return False
+    return len(parts) in reached
 
 
 def _ignored(violation: dict, ignore: tuple[str, ...]) -> bool:
     for rule in ignore:
         found = _IGNORE.fullmatch(rule)
-        if found and _pattern(found[1]).fullmatch(violation["from"]) and _pattern(found[2]).fullmatch(violation["to"]):
+        if found and _matches(found[1], violation["from"]) and _matches(found[2], violation["to"]):
             return True
     return False
 
