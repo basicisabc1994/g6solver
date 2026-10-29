@@ -1,15 +1,17 @@
 # For developers and coding agents
 
+**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+
 G6 is a Python library (3.12 or 3.13). Every component works on its own and declares any other component it uses.
 `g6.harness` is the one place they are composed: a standard (a goal and its checks) runs through intake, plan,
 execute, adjudicate and remember.
 
 ```bash
-# From a clone of the repository (PyPI publishing comes with the first release):
+# From a clone of the repository (G6 is not on PyPI):
 pip install .               # core: pydantic + returns only
 pip install ".[all]"        # optional extras: MCP server, Anthropic SDK, abstraction tools, Z3
 g6 doctor                   # read-only check of the installation
-g6 setup                    # your choices for this computer, asked once (run it yourself)
+g6 setup --client claude --allow patch_review.review    # or --client codex (run it yourself)
 ```
 
 Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the one-time
@@ -86,8 +88,13 @@ simulated executor and an approval queue a person decides). `g6.research` is off
 ## Use it from your coding agent (MCP)
 
 ```bash
-claude mcp add g6 -- g6-mcp
+g6 setup --client claude --allow patch_review.review    # or --client codex; give --client twice for both
 ```
+
+Setup registers this installation with the client, with this installation's Python, started with `-P` so that the
+packages in the project's folder never replace G6's own, installs the `using-g6` skill for it, allows patch review, and ends by showing the first review call. If the client already has an entry called
+`g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
+For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
 Six discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_review_patch`;
 and thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
@@ -99,7 +106,11 @@ marks sensitive is refused over MCP unless the person who runs the server lists 
 with the tests that check it, in test runs inside an operating-system boundary. It returns one outcome: test integrity
 compromised, defect detected, insufficient evidence, or supported within scope. Supported within scope means every
 stated requirement passed its stated checks, not that the patch does everything the task needs. Each requirement gets
-its own evidence, and merging always needs a separate approval.
+its own evidence, and merging always needs a separate approval. It returns a job: poll `metaharness_job`. The reply's
+`assessment.report` is the review as Markdown, for the agent to show the person verbatim: what G6 reproduced first,
+then what is not established, then what the person decides. The reply is compact; its `full_assessment` names the file
+in G6's state folder that holds every field, and `metaharness_job` with `detail="full"` returns them all. The `using-g6` skill tells the agent to fix what G6
+reproduced, add each earlier reproduction as a stated check, and review again, for at most three rounds.
 
 ## Choose a model
 

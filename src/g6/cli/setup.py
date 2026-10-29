@@ -25,6 +25,26 @@ files, your key file ~/.g6/.env among them, and the programs it starts can reach
 computer needs for a boundary.
 """
 PROMPT = "Allow G6 to run such code without a boundary on this computer? [y/N] "
+#: How a client starts G6's server, after this installation's Python: with -P. The client starts it in the project's
+#: folder, and a plain ``-c`` puts that folder first on the import path, so a project's own ``pydantic`` or
+#: ``starlette`` would replace G6's and run in G6's process (worked examples, W1). -P keeps the folder off; -I would
+#: also drop PYTHONPATH and the user's site-packages, which the person sets, not the project.
+SERVER_ARGS = ("-P", "-c", "from g6.mcp import main; main()")
+#: How each client removes its existing g6 entry, so setup can register this installation in its place.
+REMOVE = {"claude": "claude mcp remove --scope user g6", "codex": "codex mcp remove g6"}
+#: Setup's closing lines when patch review is allowed: the first review call.
+FIRST_REVIEW = """
+The first review. In a Python repository, ask your coding agent for a change, then ask it to review the change with
+G6 before it says the task is done. Its call looks like this:
+  g6_review_patch(repo="<your repository's folder>", task="<what you asked for>",
+                  requirements=[{"id": "R1", "text": "<one thing the change must do>",
+                                 "checks": ["tests/test_example.py::test_it"]}])
+It returns a job: the agent polls metaharness_job until the review ends, then shows you assessment.report as it is.
+Merging stays your decision."""
+#: Setup's closing lines when patch review was left out of --allow.
+NOT_ALLOWED = """
+Patch review is not allowed in this registration, so g6_review_patch will refuse. To allow it, remove the entry
+('{remove}') and run g6 setup again with --allow patch_review.review."""
 
 Ask = Callable[[str], str]
 Say = Callable[[str], None]
@@ -153,18 +173,24 @@ def register_clients(args, clients: list[str], say: Say) -> int:
             command += [flag, f"G6_MCP_SENSITIVE={allowed}"]
         if args.model:
             command += [flag, f"G6_LLM_PROVIDER={args.model}"]
-        command += ["--", sys.executable, "-c", "from g6.mcp import main; main()"]
+        command += ["--", sys.executable, *SERVER_ARGS]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as exc:
             say(f"{client} registration did not finish: {type(exc).__name__}")
             return 2
         if result.returncode:
-            say(f"{client} refused registration. Inspect its existing g6 entry with '{client} mcp get g6'.")
+            say(f"{client} refused registration. Inspect its existing g6 entry with '{client} mcp get g6'; to "
+                f"replace it, remove it with '{REMOVE[client]}' and run g6 setup again.")
             return 2
         cli(["skills", "install", "--user", "--client", client])
-        say(f"Registered G6 for {client} with this installation's Python. Restart the client to load it.")
+        say(f"Registered G6 for {client} with this installation's Python, started with -P so that the packages in "
+            "the project's folder never replace G6's own. Restart the client to load it.")
     say("Local settings assume a trusted host. An agent with your account's unrestricted shell can change them.")
+    if "patch_review.review" in {item.strip() for item in allowed.split(",")}:
+        say(FIRST_REVIEW)
+    else:
+        say(NOT_ALLOWED.format(remove=" or ".join(REMOVE[client] for client in clients)))
     return 0
 
 

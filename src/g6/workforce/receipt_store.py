@@ -181,7 +181,9 @@ def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_
     """A receipt's body (schema ``g6.test_receipt/1``) for one confined run: ``before`` and ``after`` are the run's
     ``repo_tests.snapshot`` before and after it, digested as the patch review digests its ``artifact_digest``;
     ``found`` is the run's result; ``ignored`` the git-ignored Python files G6 did not judge, path to SHA-256
-    (``repo_tests.Ignored.other``), bound here because the digest leaves them out."""
+    (``repo_tests.Ignored.other``), bound here because the digest leaves them out. ``repo_env``: each variable
+    ``G6_REPO_ENV`` gave the tests, with the SHA-256 of its value, never the value; ``env_set_by_g6``: the variables G6
+    set itself (the folder Hypothesis keeps its database in)."""
     from g6 import __version__
 
     return {"schema": SCHEMA, "execution_id": uuid.uuid4().hex, "started_at": started_at, "finished_at": finished_at,
@@ -191,6 +193,7 @@ def _body(*, started_at: str, finished_at: str, before: dict, after: dict, base_
                       "deselected": int(found.get("deselected") or 0), "omitted": list(found.get("omitted_ids") or [])},
             "command": found.get("command", ""), "isolation": dict(found.get("isolation") or {}),
             "ignored_inputs": dict(sorted((ignored or {}).items())),
+            "repo_env": dict(found.get("repo_env") or {}), "env_set_by_g6": list(found.get("env_set_by_g6") or []),
             "result": {key: found.get(key) for key in ("verdict", "passed", "failed", "not_passed", "total",
                                                        "failed_ids", "completed", "degraded")}}
 

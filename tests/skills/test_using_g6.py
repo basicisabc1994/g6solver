@@ -108,6 +108,28 @@ def test_every_superpowers_skill_it_pairs_a_stage_with_is_vendored() -> None:
     assert "optional companions, not prerequisites" in TEXT and "using-superpowers" in vendored
 
 
+def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> None:
+    # owner, 2026-10-29: the delivery process names G6's templates; each must be one G6 has, and each parameter or
+    # binding it names one the review takes, never an option that does not exist
+    import g6.mcp
+    from g6.harness import verification_templates as templates
+
+    known = set(templates.TEMPLATES) | set(templates.FORMAL_TEMPLATES)
+    named = set(re.findall(r"`([a-z_]+\.v\d+)`", TEXT))
+    assert known <= named and named <= known, (known - named, named - known)
+    source = open(g6.mcp.__file__, encoding="utf-8").read()
+    signature = re.search(r"def g6_review_patch\((.*?)\) -> dict", source, re.S).group(1)
+    parameters = set(re.findall(r"(\w+):", signature))
+    forms = [definition.bindings for definition in {**templates.TEMPLATES, **templates.FORMAL_TEMPLATES}.values()]
+    forms += [templates.AccessBindings, templates.AccessStepsBindings]
+    fields = {name for form in forms if hasattr(form, "model_fields") for name in form.model_fields}
+    section = TEXT.split("## Deliver a coding task with G6", 1)[1].split("\n## ", 1)[0]
+    words = set(re.findall(r"`([a-z_]+)`", section)) - {"verified"}
+    tools = {word for word in words if word.startswith(("g6_", "metaharness_"))}
+    assert {"intent", "requirements", "template_instances", "proposed_checks"} <= words
+    assert words - tools <= parameters | fields, (words - tools) - (parameters | fields)
+
+
 def test_it_stays_short() -> None:
     body = TEXT.split("---", 2)[2]
     assert len(body.split()) <= MAX_WORDS

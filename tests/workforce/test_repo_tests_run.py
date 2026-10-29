@@ -331,7 +331,18 @@ OK = {"passed": 2, "failures": 0, "errors": 0, "skipped": 0}
     (0, OK, "", [], "passed"),
     (1, {"passed": 1, "failures": 1, "errors": 0, "skipped": 0}, "", [], "failed"),
     (0, {"passed": 0, "failures": 0, "errors": 0, "skipped": 2}, "", [], "inconsistent_report"),  # all skipped: no pass
-    (1, OK, "", [], "inconsistent_report"),
+    # the owner's ruling (2026-10-29), asymmetric on purpose: a non-zero exit after a session pytest counts as all
+    # passed is a run that cannot be counted as a pass, not a sign of tampering (it cannot get a patch accepted)...
+    (1, OK, "", [], "run_inconsistent"),
+    (134, OK, "", [], "run_inconsistent"),
+    (1, {**OK, "expected": 2, "finished": 2}, "", [], "run_inconsistent"),
+    # ...while what a tampered runner would show to be accepted stays untrusted: exit 0 with a failure, an error, or
+    # fewer tests finished than collected; and a non-zero exit with fewer finished, or with no pass, is not that case
+    (0, {"passed": 1, "failures": 1, "errors": 0, "skipped": 0}, "", [], "inconsistent_report"),
+    (0, {"passed": 1, "failures": 0, "errors": 1, "skipped": 0}, "", [], "inconsistent_report"),
+    (0, {**OK, "expected": 3, "finished": 2}, "", [], "incomplete"),
+    (1, {**OK, "expected": 3, "finished": 2}, "", [], "inconsistent_report"),
+    (1, {"passed": 0, "failures": 0, "errors": 0, "skipped": 2}, "", [], "inconsistent_report"),
     (0, NO_TALLY, "", [], "inconsistent_report"),
     (1, NO_TALLY, "ModuleNotFoundError: No module named 'pytest'", [], "pytest_not_found"),
     (5, NO_TALLY, "", [], "no_tests_collected"),
@@ -341,6 +352,21 @@ OK = {"passed": 2, "failures": 0, "errors": 0, "skipped": 0}
 ])
 def test_the_verdict_believes_only_an_exit_code_its_tallies_agree_with(code, counts, output, moved, verdict):
     assert rt._judge(code, counts, output, moved) == verdict
+
+
+#: A process that ends with an error after pytest's session passed (as a GUI test suite's X connection can at exit).
+EXITS_AFTER = "import atexit\nimport os\n\natexit.register(os._exit, 1)\n"
+
+
+def test_a_run_that_exits_with_an_error_after_every_test_passed_is_not_counted_as_a_pass(repo):
+    """The owner's ruling (2026-10-29): pytest's own tallies say every test passed, then the process exits 1."""
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "conftest.py", EXITS_AFTER)
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert found["verdict"] == "run_inconsistent", (found["verdict"], found["output"][-500:])
+    assert found["said"] == rt.SAID["run_inconsistent"]
+    assert found["passed"] == 2 and found["failed"] == 0
+    assert "passed by pytest's own count" in found["said"] and "exited with an error" in found["said"]
 
 
 def test_the_repositorys_own_virtual_environment_runs_its_tests(tmp_path):
@@ -474,7 +500,9 @@ def test_i4_the_run_says_which_python_ran_the_tests(repo, tmp_path):
     """G6's own interpreter, and the repository's own virtual environment (a real one, sharing G6's packages)."""
     found = rt.run(repo, ["tests/test_calc.py"])
     assert (found["interpreter_source"], found["python"]) == ("g6", sys.executable)
-    subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(repo / ".venv")],
+    # --copies: an environment linked to G6's own Python is refused (L1)
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", "--copies",
+                    str(repo / ".venv")],
                    check=True, capture_output=True, timeout=180)
     found = rt.run(repo, ["tests/test_calc.py"])
     assert (found["verdict"], found["interpreter_source"]) == (rt.FAILED, "repository")

@@ -35,7 +35,7 @@ import os
 import posixpath
 import tomllib
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -139,23 +139,30 @@ class TestWeakeningReport:
         return {**asdict(self), **envelope}
 
 
-def detect_test_weakening(before: Source, after: Source) -> TestWeakeningReport:
+def detect_test_weakening(before: Source, after: Source, *, tests: Collection[str] = ()) -> TestWeakeningReport:
     """Compare the tests and their configuration before and after a change; see the module docstring for the rules.
 
     ``before`` and ``after`` are each a mapping of path to text (``bytes`` is read as UTF-8) or a directory. Paths
-    are compared after normalisation (forward slashes, ``.`` and ``..`` folded). Raises ``TypeError`` for any other
-    input, and ``OSError`` when a snapshot directory cannot be read.
+    are compared after normalisation (forward slashes, ``.`` and ``..`` folded). ``tests``: Python files to compare as
+    test files whatever they are called (a repository's own ``python_files``, a file a test id names; patch review
+    gives them). Raises ``TypeError`` for any other input, and ``OSError`` when a snapshot directory cannot be read.
     """
     old, new = _files(before, "before"), _files(after, "after")
-    added_tests = any(_kind(p) == "test" for p in new.keys() - old.keys())
-    imported = _imported(old) if added_tests else frozenset()
+    named = frozenset(_normal(path) for path in tests if path.lower().endswith(".py"))
+
+    def kind_of(path: str) -> str:   # the path's kind, and a named Python file is a test file
+        kind = _kind(path)
+        return "test" if kind in ("other", "data") and path in named else kind
+
+    added_tests = any(kind_of(p) == "test" for p in new.keys() - old.keys())
+    imported = _imported(old, named) if added_tests else frozenset()
     reasons: list[str] = []
     checked: list[str] = []
     unread: list[str] = []
     data: list[str] = []
     others = 0
     for path in sorted(old.keys() | new.keys()):
-        kind, a, b = _kind(path), old.get(path), new.get(path)
+        kind, a, b = kind_of(path), old.get(path), new.get(path)
         if kind == "other":
             others += 1
             continue
@@ -536,11 +543,12 @@ def _marker_reasons(path: str, old: _Facts, new: _Facts) -> list[str]:
     return [f"{path}: adds {name} ({_MARKER_NOTE[name]})" for name in sorted(now) if now[name] > old.markers[name]]
 
 
-def _imported(files: Mapping[str, str]) -> frozenset[str]:
-    """Top-level module names the test and conftest files import (absolute imports only)."""
+def _imported(files: Mapping[str, str], named: frozenset[str] = frozenset()) -> frozenset[str]:
+    """Top-level module names the test and conftest files import (absolute imports only); ``named``: files to read
+    as test files whatever they are called."""
     names: set[str] = set()
     for path, text in files.items():
-        if _kind(path) not in ("test", "startup"):
+        if _kind(path) not in ("test", "startup") and path not in named:
             continue
         try:
             tree = ast.parse(text)

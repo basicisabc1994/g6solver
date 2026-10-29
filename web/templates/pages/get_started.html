@@ -8,6 +8,9 @@ section is content/install.md.{% endcomment %}
     <h1 class="display">Get started</h1>
     <p class="lede why">G6 works with the AI you already run, so there is nothing to replace. Add it, and your agent can
     check its own work, gate its actions and engineer itself to your task.</p>
+    <p class="lede">For a coding agent, start here: before your agent says a Python change is done, it asks G6 to
+    review the patch, shows you G6's report, and fixes what G6 reproduces. Merging stays your decision.</p>
+    <p><strong>Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.</strong></p>
     <p class="lede">Three ways to use G6, all on your own computer: from your agent, in your code, or as an app.</p>
 </header>
 
@@ -20,9 +23,14 @@ section is content/install.md.{% endcomment %}
         <ol class="band__body steps-list">
             <li>
                 <h3 class="h3">Install</h3>
-                <p>Until the first release, install from a copy of the code.</p>
+                <p>G6 installs from a copy of its code; it is not on PyPI.</p>
                 <div class="cmd"><code id="cmd-install">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
-pip install ".[mcp]"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-install">Copy</button></div>
+python -m venv --copies .venv
+source .venv/bin/activate          # PowerShell: .venv\Scripts\Activate.ps1
+pip install ".[all]"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-install">Copy</button></div>
+                <p class="small">G6 gets an environment of its own, made with <code>--copies</code>: on Linux, G6
+                cannot yet tell its own Python from a project environment linked to the same one, and refuses to
+                review then.</p>
                 {% comment %}CORE_SANDBOX-01 (owner ruling, 2026-10-27: refused without a boundary unless the person
                 allows it once): g6.core.confine's UNCONFINED_WARNING, word for word, as the README, g6 doctor and the
                 sensitive-op help say it.{% endcomment %}
@@ -30,14 +38,54 @@ pip install ".[mcp]"</code><button type="button" class="btn btn--small copy" dat
                 and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
                 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then
                 has your own rights: it can read your key file ~/.g6/.env and your other files, and its network guard
-                works inside Python only. You are responsible for what you run. <code>g6 doctor</code>
+                works inside Python only. You are responsible for what you run. Patch review needs an
+                operating-system boundary (Linux with bubblewrap, Windows after the one-time access grant): allowing
+                unconfined runs does not make it run, and on macOS it refuses. <code>g6 doctor</code>
                 says whether that code runs confined on your computer: on Linux, install the bubblewrap package for
                 the boundary; on Windows, it prints the one-time commands that grant the access. Then run
                 <code>g6 setup</code> once yourself, not your agent: where your computer has no boundary, it asks whether G6
                 may run such code without one.</p>
             </li>
             <li>
-                <h3 class="h3">Connect your agent</h3>
+                <h3 class="h3">Connect Claude Code or Codex</h3>
+                <p>Run this yourself, in a terminal, with <code>--client codex</code> for Codex, or give
+                <code>--client</code> twice for both:</p>
+                <div class="cmd"><code id="cmd-setup">g6 setup --client claude --allow patch_review.review</code><button type="button" class="btn btn--small copy" data-copy="#cmd-setup">Copy</button></div>
+                <p>It registers this installation with the client, with this installation's Python, started with
+                <code>-P</code> so that the packages in the project's folder never replace G6's own, installs the
+                <code>using-g6</code> skill for it, and allows patch review, the one sensitive operation the first
+                review needs. Restart the client afterwards. Setup's last lines show the first review call.</p>
+                <p class="small">If the client already has an entry called <code>g6</code>, setup leaves it as it is
+                and stops. See it with <code>claude mcp get g6</code> (or <code>codex mcp get g6</code>). To replace
+                it, remove it with <code>claude mcp remove --scope user g6</code> (or <code>codex mcp remove g6</code>),
+                then run <code>g6 setup</code> again.</p>
+            </li>
+            <li>
+                <h3 class="h3">The first review</h3>
+                <p>In a Python repository, ask your agent for a change, then ask it to review the change with G6
+                before it says the task is done. The skill tells it how:</p>
+                <ol style="list-style:decimal;padding-left:1.4em;max-width:36em;margin:0 0 10px;">
+                    <li>It turns the task into numbered requirements, each with the pytest tests that check it where
+                    such a test exists.</li>
+                    <li>It calls <code>g6_review_patch</code> with the repository's folder, the task and the
+                    requirements, and polls <code>metaharness_job</code> until the review ends.</li>
+                    <li>It shows you the reply's readable report (<code>assessment.report</code>) as it is: what G6
+                    reproduced first, then what is not established, then what you decide.</li>
+                    <li>When G6 reproduces a defect, it fixes it and reviews again, with each earlier reproduction added
+                    as a stated check, so you can see the fix pass the original counterexample. It stops after three
+                    rounds, when a round changes nothing, or when the report says only you can decide.</li>
+                </ol>
+                <p class="small">G6 runs the tests with the repository's own <code>.venv</code> or <code>venv</code>;
+                without one, with the Python running G6, which then needs pytest and the project's dependencies. For
+                Poetry, conda or another environment, see <code>G6_REPO_PYTHON</code> in the workflow guide in the
+                repository, <code>docs/AI_FOR_AI_WORKFLOW.md</code>.</p>
+                <p class="small">The outcome is one of: test integrity compromised, defect detected, insufficient
+                evidence, or supported within scope. Supported within scope means every stated requirement passed its
+                stated checks; it is not proof that the patch does everything the task needs. Merging stays your
+                decision.</p>
+            </li>
+            <li>
+                <h3 class="h3">Another agent or client</h3>
                 <div class="tabs" data-tabs>
                     <div class="tabs__list" role="tablist" aria-label="Your agent or client">
                         {% for c in clients %}<button type="button" role="tab" id="tab-{{ c.key }}" aria-controls="panel-{{ c.key }}" aria-selected="{% if forloop.first %}true{% else %}false{% endif %}">{{ c.name }}</button>{% endfor %}
@@ -57,14 +105,17 @@ pip install ".[mcp]"</code><button type="button" class="btn btn--small copy" dat
                     </div>
                     {% endfor %}
                 </div>
+                <p class="small quiet">These register G6 without patch review. To allow it, give the server the
+                environment setting <code>G6_MCP_SENSITIVE=patch_review.review</code>, as <code>g6 setup</code> does for
+                Claude Code and Codex.</p>
                 <p class="small quiet">On Windows, if your agent cannot find <code>g6-mcp</code>, give its full path instead,
                 for example <code>C:\path\to\g6\.venv\Scripts\g6-mcp.exe</code>; in JSON, write each <code>\</code> as
                 <code>\\</code>.</p>
             </li>
             <li>
                 <h3 class="h3">Teach your agent to use G6</h3>
-                <p>The <code>using-g6</code> skill tells your agent which G6 step to take at each point of its work.
-                Run this in your project to copy it into <code>.claude/skills</code>, where Claude Code finds it; add
+                <p>The <code>using-g6</code> skill tells your agent which G6 step to take at each point of its work;
+                <code>g6 setup</code> installs it for Claude Code and Codex. To install it yourself, run this in your project to copy it into <code>.claude/skills</code>, where Claude Code finds it; add
                 <code>--user</code> to have it in every project. For another agent, copy that folder to wherever it
                 reads skills.</p>
                 <div class="cmd"><code id="cmd-skills">g6 skills install</code><button type="button" class="btn btn--small copy" data-copy="#cmd-skills">Copy</button></div>
@@ -76,8 +127,9 @@ pip install ".[mcp]"</code><button type="button" class="btn btn--small copy" dat
             </li>
             <li>
                 <h3 class="h3">Check it works</h3>
-                <p>Ask your agent which G6 tools it can see. It should list <code>g6_find</code>, <code>g6_describe</code>
-                and <code>g6_invoke</code>, and the meta-harness tools.</p>
+                <p>Ask your agent which G6 tools it can see. It should list <code>g6_review_patch</code>,
+                <code>g6_find</code>, <code>g6_describe</code> and <code>g6_invoke</code>, and the meta-harness
+                tools.</p>
             </li>
         </ol>
     </div>

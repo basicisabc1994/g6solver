@@ -1,6 +1,6 @@
 ---
 name: using-g6
-description: Use when constructing AI applications from checkable components, investigating repeated failures, testing redesign hypotheses, or reviewing claims and risky actions against evidence.
+description: Use when finishing a Python coding task (review the patch with G6 before saying it is done), constructing AI applications from checkable components, investigating repeated failures, testing redesign hypotheses, or reviewing claims and risky actions against evidence.
 ---
 
 # Using G6
@@ -8,6 +8,47 @@ description: Use when constructing AI applications from checkable components, in
 G6 is a library of primitives for AI building AI. An agent can construct an application, propose a redesign,
 and measure it against frozen checks. Treat improved performance as a hypothesis, never a consequence of composition.
 The evaluator, authorization rules and promotion gate remain outside the candidate's writable scope.
+
+## Deliver a coding task with G6
+
+For a Python task, work in this order, lean in words.
+
+1. **Intent.** Read the task, the project's docs and the code. Write the person's most likely intended design and
+   goals in a few lines. Pass them as `intent`, or as numbered `requirements`, `{"id": "R1", "text": ..., "checks":
+   [...]}`, each check a pytest node id.
+2. **This project's risks**, a premortem, not a generic list: edge cases, behaviour that must stay the same, who may do
+   what, data or money that must never be lost, state that must never go wrong, tests too weak to catch a defect, a
+   misleading environment, and G6 misreading the intent. Map each risk to a check: a repository test, a new
+   acceptance test, or one of G6's templates in `template_instances`: `example.v1` (a stated input gives a stated
+   result), `relation.v1` (round trip, idempotence, invariance or monotonicity), `access_rule.v1` (who may do what;
+   with `steps`, grant, share and revoke), `differential.v1` (nothing changes outside the change's scope),
+   `forbidden_dependency.v1` (layer rules) or `state_invariant.v1` (critical state). Each template's bindings, with one
+   valid instance: `references/templates.md`.
+3. **Hidden constraints.** Ask the person at most 3 questions, each a concrete scenario with the competing outcomes:
+   "for this input the original does A and the change would do B; which do you intend?" Probe the code for the rest.
+   Never assume an answer: an unanswered question stays open in the report.
+4. **Acceptance first, then test first.** Write acceptance tests for what the person's own users must be able to do,
+   through the product's real interface (its API, command line or handlers), and for usability and fitness for purpose
+   wherever a test can show it. They become the numbered requirements, each with its stated check. Then unit tests,
+   then the code.
+5. **Critical parts, formally.** Model them with `state_invariant.v1` (its `model` states the variables, actions and
+   invariants; its `actions` bind them to the code's operations; its `observe` reads each variable from the real
+   state). G6 searches the model and replays each trace it finds on the real code. A result about the model is about the model only; only a reproduced trace is a finding
+   about the code. A model never proves the code correct.
+6. **Review.** Call `g6_review_patch` with the requirements and their stated checks, the template instances and any
+   `proposed_checks` of your own, then poll `metaharness_job`. It needs host permission `patch_review.review`, which
+   the person grants with `g6 setup`; never change permissions yourself. Show the reply's `assessment["report"]`
+   verbatim. The full assessment, each reproduction's text included, is in the file its full_assessment names.
+7. **Repair.** Fix what G6 reproduced. Add each earlier reproduction as a stated check (a proposed check's
+   reproduction is a test file: add it to the repository's tests and list its node id), so the person sees the fix
+   pass the original counterexample. Review again. Stop after 3 rounds, when a round changes nothing, or when the
+   report says only the person can decide.
+8. **Honesty.** Never call a patch verified, and never merge for the person. G6 cannot judge usability by itself;
+   acceptance tests and the person's confirmation do. The report's not-established list is the to-do list. For
+   specialised needs, find more components with `g6_find` (formal tools, grounding of claims).
+
+The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope
+(every stated requirement passed its stated checks; never proof the patch is complete).
 
 ## Find
 
@@ -31,12 +72,6 @@ Use `g6_compose` with data-only stages. Connect downstream fields explicitly wit
 Evidence kinds must match; similar field names do not establish equivalent meaning. Code transformations require
 reviewed Python adapters. A contract-checked report establishes structural checks, not application correctness.
 Plain `>>` does not check contracts. Read the assurance gaps and preserve all upstream limitations.
-
-For Python patches, `g6_review_patch` takes the task and requirements, each with the pytest ids that check it, and
-runs them confined. It requires host permission `patch_review.review`. Its outcome is one of: test integrity
-compromised, defect detected, insufficient evidence, or supported within scope (every stated requirement passed its
-stated checks; never proof the patch is complete). Relay each requirement's evidence, the requirements with no
-adequate check, and the note that the specification may be incomplete. Merging always needs separate approval.
 
 ## Fit
 

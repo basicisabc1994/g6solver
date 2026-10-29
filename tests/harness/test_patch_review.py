@@ -8,6 +8,7 @@ confined pytest runs (Linux bubblewrap) and skip elsewhere; the others replace G
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -272,6 +273,107 @@ def test_a_changed_runner_configuration_compromises_test_integrity(repo, monkeyp
                for r in got["assessment"]["reasons"])
 
 
+def test_a_weakened_test_file_marked_skip_worktree_still_compromises_test_integrity(repo, monkeypatch):
+    """The VS-3 review's fix pass, C2: git's skip-worktree mark hides the weakened file from git's own diff; G6 compares
+    it with the base commit's text, as every other tracked file."""
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_calc.py").write_text(TEST.replace("assert add(-2, -3) == -5", "assert True"))
+    _git(repo, "update-index", "--skip-worktree", "test_calc.py")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "test_weakened" and "test_negative" in r["detail"] for r in got["assessment"]["reasons"])
+
+
+def test_a_changed_runner_configuration_marked_assume_unchanged_still_compromises_test_integrity(repo, monkeypatch):
+    """The VS-3 review's fix pass, C2: git's assume-unchanged mark hides the changed pytest.ini from git's own diff."""
+    (repo / "pytest.ini").write_text("[pytest]\naddopts = -q\n")
+    _commit(repo, "a runner configuration")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "pytest.ini").write_text("[pytest]\naddopts = -q -k 'not negative'\n")
+    _git(repo, "update-index", "--assume-unchanged", "pytest.ini")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "runner_configuration_changed" and "pytest.ini" in r["detail"]
+               for r in got["assessment"]["reasons"])
+
+
+#: The review of VS-4 and the VS-3 fix pass, its finding 1: the weakened test is the same size as the original, so a
+#: stat cache that trusts the size and the modification time alone cannot tell them apart.
+WEAK_SAME_SIZE = TEST.replace("assert add(-2, -3) == -5", "assert True".ljust(len("assert add(-2, -3) == -5")))
+OLD = 1_600_000_000
+
+
+def _forge_index(repo: Path, rel: str, blob: str) -> None:
+    """Write ``blob`` as ``rel``'s object name in the repository's own index, keeping the stat values the index holds
+    for the file as it is now, and the index's checksum right: git then trusts its stat cache and reads the file as
+    unchanged."""
+    import hashlib
+    import struct
+
+    path = repo / ".git" / "index"
+    data = bytearray(path.read_bytes())
+    assert data[:4] == b"DIRC"
+    version, count = struct.unpack(">II", data[4:12])
+    assert version == 2, version
+    position = 12
+    for _ in range(count):
+        end = data.index(b"\0", position + 62)
+        name = bytes(data[position + 62:end]).decode()
+        if name == rel:
+            data[position + 40:position + 60] = bytes.fromhex(blob)
+        position += (62 + len(name.encode())) // 8 * 8 + 8
+    data[-20:] = hashlib.sha1(bytes(data[:-20])).digest()
+    path.write_bytes(bytes(data))
+
+
+@pytest.mark.parametrize("how", ["replace-ref", "stat-cache-config", "forged-index-entry"])
+def test_a_weakened_test_hidden_through_git_s_own_records_still_compromises_test_integrity(repo, monkeypatch, how):
+    """Change detection never trusts what the patch author controls in .git: B, a replace ref that makes the base
+    commit's blob read as the weakened text; C, a configuration that trusts the size and the modification time
+    alone, with a same-size edit and its time put back; D2, an index entry written with the file's real stat values
+    and the base commit's object name. G6 compares the working tree's content with the base commit's blobs."""
+    for rel in ("calc.py", "test_calc.py"):
+        os.utime(repo / rel, (OLD, OLD))
+    _git(repo, "update-index", "--refresh")   # the index records the files' times as they now are
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_calc.py").write_text(WEAK_SAME_SIZE)
+    os.utime(repo / "test_calc.py", (OLD, OLD))
+    base_blob = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD:test_calc.py"], capture_output=True,
+                               text=True, check=True).stdout.strip()
+    if how == "replace-ref":
+        weak = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "test_calc.py"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+        _git(repo, "replace", base_blob, weak)
+    elif how == "stat-cache-config":
+        _git(repo, "config", "core.trustctime", "false")
+        _git(repo, "config", "core.checkStat", "minimal")
+    else:
+        _git(repo, "update-index", "test_calc.py")   # the weakened file's real stat values, then the base's name
+        _forge_index(repo, "test_calc.py", base_blob)
+    shown = subprocess.run(["git", "-C", str(repo), "diff", "HEAD", "--name-only"], capture_output=True, text=True,
+                           check=True).stdout.split()
+    assert "test_calc.py" not in shown   # git itself is fooled: the probe reaches the defect
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised", got["assessment"]["reasons"]
+    assert any(r["code"] == "test_weakened" and "test_negative" in r["detail"] for r in got["assessment"]["reasons"])
+    assert "test_calc.py" in got["assessment"]["scope"]["changed_files"]
+
+
+def test_a_correct_patch_on_a_checkout_with_windows_line_endings_stays_supported(repo, monkeypatch):
+    """The control: git's line-ending conversion (core.autocrlf) leaves an untouched file unchanged, so a correct patch
+    never reads as a change to its tests."""
+    _git(repo, "config", "core.autocrlf", "true")
+    (repo / "test_calc.py").write_bytes(TEST.replace("\n", "\r\n").encode())
+    (repo / "calc.py").write_bytes(GOOD.replace("\n", "\r\n").encode())
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert got["assessment"]["scope"]["changed_files"] == ["calc.py"]
+
+
 def _pytest_config_names() -> set[str]:
     """The configuration files the installed pytest looks for by name: its ``CONFIG_LOADERS_BY_NAME`` (pytest 9.2 on),
     else the file names ``locate_config`` holds as constants (earlier versions); a skip that says so when neither
@@ -409,6 +511,30 @@ def test_a_run_that_cannot_be_believed_compromises_test_integrity(repo, monkeypa
     assert got["assessment"]["outcome"] == "test_integrity_compromised"
     assert "run_not_trusted" in _reasons(got)
     assert _requirement(got, "R1")["status"] != "passed_on_stated_checks"
+
+
+@pytest.mark.parametrize("tier", [1, 2])
+def test_a_run_that_exits_with_an_error_after_every_test_passed_is_insufficient_evidence(repo, monkeypatch, tier):
+    """The owner's ruling (2026-10-29), asymmetric on purpose: pytest's own tallies say every test passed and the
+    process then exited with an error. That cannot get a patch accepted, so it is not an integrity problem; nothing is
+    counted as passed on it."""
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    exited = result([ADD, NEGATIVE], verdict="run_inconsistent", said=repo_tests.SAID["run_inconsistent"])
+    passing = result([ADD, NEGATIVE])
+    derived = ["test_more.py::test_zero", ADD, NEGATIVE]   # the tests that touch the changed module
+    Recorded(monkeypatch, {(ADD, NEGATIVE): exited if tier == 1 else passing},
+             default=result(derived, verdict="run_inconsistent") if tier == 2 else result(derived))
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert ("evidence", "run_inconsistent") in [(r["stage"], r["code"]) for r in assessment["reasons"]]
+    assert not any(r["stage"] == "integrity" for r in assessment["reasons"])
+    if tier == 1:
+        assert {_requirement(got, ident)["status"] for ident in ("R1", "R2")} == {"not_established"}
+    assert got["completion_state"] == "qualified-draft"
 
 
 def test_a_run_that_began_on_another_tree_compromises_integrity_whatever_the_gate_says(repo, monkeypatch):
@@ -572,7 +698,9 @@ def test_a_derived_test_failing_on_base_and_patch_is_pre_existing_not_a_defect(r
          "commit", "-qm", "legacy")
     (repo / "calc.py").write_text(GOOD)
     derived = result([ADD, NEGATIVE], ["test_legacy.py::test_legacy"])
-    not_on_base = {"verdict": "not_run", "said": "old tests not run: the old-code baseline did not pass"}
+    # as repo_tests.run_before gives it: the base run happened and failed (with no baseline it never ran: launch I4)
+    not_on_base = {"verdict": "not_run", "said": "old tests not run: the old-code baseline did not pass",
+                   "baseline": "failed"}
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]),
                                   ("test_calc.py", "test_legacy.py"): derived},
                     on_base={"test_legacy.py": not_on_base})
@@ -803,6 +931,183 @@ def test_grounding_is_reported_and_does_not_decide_the_outcome(repo, monkeypatch
     assert grounding["sources"]["spec"]["authority"] == "caller-supplied"
 
 
+# --- where requirements and checks came from (verification search, part 1) -------------------------------------------
+
+def _decided(got) -> dict:
+    """What a reply decides (as ``test_patch_review_off_path.decided``)."""
+    assessment = got.get("assessment") or {}
+    return {"completion_state": got.get("completion_state"), "outcome": assessment.get("outcome"),
+            "requirements": [(r["id"], r["status"]) for r in assessment.get("requirements", [])],
+            "reasons": [(r["stage"], r["code"]) for r in assessment.get("reasons", [])],
+            "merge": (got.get("merge") or {}).get("status"), "unknowns": len(assessment.get("unknowns", []))}
+
+
+def test_each_requirement_and_each_check_says_where_it_came_from(repo, monkeypatch):
+    """A requirement the caller states is ``stated``, of kind ``requirement``; a check the caller cites is ``stated``,
+    and tier 2's tests of the changed modules are ``derived``. The envelope's evidence items are as they were."""
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
+             at_base=result([], [ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    for found in got["assessment"]["requirements"]:
+        assert (found["provenance"], found["kind"]) == ("stated", "requirement")
+        assert [check["provenance"] for check in found["checks"]] == ["stated"]
+    assert [(run["check"], run["provenance"]) for run in got["assessment"]["scope"]["checks_run"]] == [
+        ("stated checks and extra tests", "stated"), ("tests that touch the changed modules", "derived"),
+        (patch_review.AT_BASE, "stated")]
+    assert got["evidence"] and all("provenance" not in item for item in got["evidence"])
+    # a derived test replayed at the base commit stays derived
+    (repo / "calc.py").write_text(POSITIVE_ONLY)
+    regressed = {**result([ADD], [NEGATIVE]), "baseline": "passed", "patched": "failed"}
+    Recorded(monkeypatch, {(ADD,): result([ADD]), ("test_calc.py",): result([ADD], [NEGATIVE])},
+             on_base={"test_calc.py": regressed})
+    found = review(repo, [SUM[0]])
+    assert "derived_test_regressed" in _reasons(found)
+    assert [(run["check"], run["provenance"]) for run in found["assessment"]["scope"]["checks_run"]] == [
+        ("stated checks and extra tests", "stated"), ("tests that touch the changed modules", "derived"),
+        ("base-commit comparison", "derived")]
+
+
+def test_the_check_provenances_later_phases_use_are_named_and_unused():
+    import typing
+
+    assert typing.get_args(patch_review.CheckProvenance) == (
+        "stated", "derived", "structural", "proposed", "adopted_proposal")
+    assert typing.get_args(patch_review.RequirementProvenance) == (
+        "stated", "repository_stated", "person_confirmed", "inferred", "model_hypothesis")
+    assert patch_review.NORMATIVE == {"stated", "repository_stated", "person_confirmed"}
+
+
+@pytest.mark.parametrize("extra", [{"provenance": "person_confirmed"}, {"provenance": "model_hypothesis"},
+                                   {"kind": "preserve"}, {"merged_from": ["intent.non_goals.0"]}])
+def test_a_request_cannot_say_where_its_requirements_came_from(repo, monkeypatch, extra):
+    """Only G6 (or Python code that builds a ``Requirement``) sets these: an agent cannot mark its own requirement as
+    confirmed by the person, nor turn one into a preservation obligation."""
+    runs = Recorded(monkeypatch, default=result([ADD]))
+    got = review(repo, [{**SUM[0], **extra}])
+    _refused(got, "G6_E_INPUT_VALIDATION")
+    assert "set by G6" in got["warning_card"]["message"] and runs.calls == []
+
+
+@pytest.mark.parametrize("provenance, listed_as", [("model_hypothesis", "proposals"), ("inferred", "assumptions")])
+def test_a_requirement_no_one_stated_gets_no_status_and_changes_no_outcome(repo, monkeypatch, provenance, listed_as):
+    """Rule 11: only stated, repository-stated and person-confirmed requirements are normative. A model's reading, or
+    an inference, given through the Python API, is listed and nothing more: no status, no part in the outcome, and its
+    checks never run, even one that names a stated test or a path outside the repository."""
+    from g6.harness.patch_review import Requirement
+
+    (repo / "calc.py").write_text(GOOD)
+    runs = Recorded(monkeypatch, {(ADD,): result([ADD]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    hypothesis = Requirement(id="H1", text="add rejects floats", checks=[NEGATIVE, "../outside.py"],
+                             provenance=provenance)
+    plain = review(repo, [SUM[0]])
+    got = review(repo, [SUM[0], hypothesis])
+    assert _decided(got) == _decided(plain) and got["assessment"]["outcome"] == "supported_within_scope"
+    assert not any(NEGATIVE in ids for _, ids in runs.calls), runs.calls
+    assessment = got["assessment"]
+    assert "H1" not in assessment["requirements_without_adequate_check"]
+    assert not any("H1" in text for text in [*assessment["next_actions"], *assessment["unknowns"],
+                                             *(r["detail"] for r in assessment["reasons"])])
+    if listed_as == "proposals":
+        [entry] = assessment["proposals"]
+        assert (entry["id"], entry["provenance"], entry["checks"]) == ("H1", "model_hypothesis",
+                                                                      [NEGATIVE, "../outside.py"])
+    else:
+        assert assessment["proposals"] == []
+        [entry] = assessment["scope"]["assumptions"]
+        assert (entry["id"], entry["source"], entry["normative"]) == ("H1", "inferred", False)
+    assert not {"status", "reason", "suggested_test"} & set(entry)
+    # alone, it is no requirement stated
+    assert _decided(review(repo, [hypothesis])) == _decided(review(repo, []))
+
+
+@pytest.mark.parametrize("provenance", ["repository_stated", "person_confirmed"])
+def test_a_requirement_the_repository_states_or_the_person_confirmed_is_assessed(repo, monkeypatch, provenance):
+    from g6.harness.patch_review import Requirement
+
+    (repo / "calc.py").write_text(POSITIVE_ONLY)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD], [NEGATIVE])})
+    got = review(repo, [SUM[0], Requirement(**SUM[1], provenance=provenance)])
+    assert got["assessment"]["outcome"] == "defect_detected"
+    second = _requirement(got, "R2")
+    assert (second["status"], second["provenance"]) == ("failed", provenance)
+
+
+INTENT = {"goal": "Repair addition for positive and negative integers.",
+          "success_criteria": ["Add returns the sum of two negative integers.", "add returns 0 for 0 and 0"],
+          "non_goals": ["change the signature of add"],
+          "assumptions": [{"statement": "inputs are integers", "source": "explicit"},
+                          {"statement": "callers use Python 3.12", "source": "inferred"}],
+          "success_checks": {"add returns 0 for 0 and 0": {"kind": "contains", "value": "0"}}}
+
+
+def test_an_intents_items_are_assessed_as_caller_stated(repo, monkeypatch):
+    """Its success criteria are requirements and its non-goals obligations to keep behaviour, each not established
+    until a check is stated for it (here R2, with the same text, states one); its assumptions are listed with their
+    source; nothing new runs."""
+    (repo / "calc.py").write_text(GOOD)
+    runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo, intent=INTENT)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence" and got["completion_state"] == "qualified-draft"
+    assert {r["id"]: (r["status"], r["kind"], r["provenance"]) for r in assessment["requirements"]} == {
+        "R1": ("passed_on_stated_checks", "requirement", "stated"),
+        "R2": ("passed_on_stated_checks", "requirement", "stated"),
+        "intent.success_criteria.1": ("not_established", "requirement", "stated"),
+        "intent.non_goals.0": ("not_established", "preserve", "stated")}
+    assert _requirement(got, "R2")["merged_from"] == ["intent.success_criteria.0"]
+    assert assessment["requirements_without_adequate_check"] == ["intent.success_criteria.1", "intent.non_goals.0"]
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"]] == [("evidence", "requirement_without_check")] * 2
+    assert "passes at the base commit and on the patch" in _requirement(got, "intent.non_goals.0")["suggested_test"]
+    assert [(a["id"], a["source"], a["normative"]) for a in assessment["scope"]["assumptions"]] == [
+        ("intent.assumptions.0", "explicit", True), ("intent.assumptions.1", "inferred", False)]
+    assert any("intent.success_checks" in unknown and "names no repository test" in unknown
+               for unknown in assessment["unknowns"])
+    assert runs.calls == [("in_place", (ADD, NEGATIVE)), ("in_place", ("test_calc.py",))]
+    assert check_envelope(got) == []
+
+
+def test_an_intent_stated_in_full_by_the_requirements_can_be_supported_and_is_still_a_qualified_draft(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo, intent={"goal": "Repair addition.", "success_criteria": [r["text"] for r in SUM]})
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+    assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+    assert [r["id"] for r in got["assessment"]["requirements"]] == ["R1", "R2"]
+
+
+def test_an_intent_of_assumptions_only_changes_no_decided_field(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    assumed = review(repo, intent={"goal": "Repair addition.", "assumptions": INTENT["assumptions"]})
+    assert _decided(assumed) == _decided(review(repo)) == _decided(review(repo, intent=None))
+    assert len(assumed["assessment"]["scope"]["assumptions"]) == 2
+
+
+@pytest.mark.parametrize("intent, said", [
+    ("repair addition", "object"),
+    ({"success_criteria": ["add sums"]}, "goal"),
+    ({"goal": "g", "non_goal": ["keep the API"]}, "non_goal"),
+    ({"goal": "g", "success_criteria": ["  "]}, "success_criteria"),
+    ({"goal": "g", "assumptions": [{"statement": "s", "source": "certain"}]}, "source"),
+    ({"goal": "g", "success_criteria": ["x" * 20_001]}, "success_criteria"),
+])
+def test_an_invalid_intent_is_refused_before_anything_runs(repo, monkeypatch, intent, said):
+    runs = Recorded(monkeypatch, default=result([ADD]))
+    stored = _stored()
+    got = review(repo, intent=intent)
+    _refused(got, "G6_E_INPUT_VALIDATION")
+    assert "intent" in got["warning_card"]["message"] and said in got["warning_card"]["message"]
+    assert runs.calls == [] and _stored() == stored
+
+
+def test_a_requirement_id_an_intent_item_also_has_is_refused(repo, monkeypatch):
+    Recorded(monkeypatch, default=result([ADD]))
+    clash = [{"id": "intent.non_goals.0", "text": "add sums", "checks": [ADD]}]
+    _refused(review(repo, clash, intent={"goal": "g", "non_goals": ["keep the API"]}), "G6_E_INPUT_VALIDATION")
+
+
 # --- refusals: no outcome, never a detection --------------------------------------------------------------------------
 
 def _stored() -> int:
@@ -899,7 +1204,7 @@ def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes(repo, m
             job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
                                                                   "requirements": SUM}))
             for _ in range(400):
-                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
                 if got.get("status") in ("completed", "failed"):
                     return tool, got
                 await asyncio.sleep(0.05)
@@ -912,6 +1217,64 @@ def test_the_mcp_tool_takes_requirements_and_describes_the_four_outcomes(repo, m
     assert got["status"] == "completed", got
     assert got["result"]["assessment"]["outcome"] == "supported_within_scope"
     assert [r["id"] for r in got["result"]["assessment"]["requirements"]] == ["R1", "R2"]
+
+
+def test_the_mcp_tool_takes_an_intent_and_refuses_an_invalid_one_with_a_code(repo, monkeypatch):
+    """The intent is additive: the reply keeps the same envelope (completion_state, warning_card, evidence,
+    request_id, run_id, a G6_E_* code) and is never better than qualified-draft. An object that is not an intent
+    contract is a refusal with G6_E_INPUT_VALIDATION; a value that is not an object is refused by the tool's own
+    schema, as any mistyped parameter is, and the server goes on answering."""
+    pytest.importorskip("fastmcp")
+    import asyncio
+
+    from fastmcp import Client
+
+    from g6.mcp import build_server
+
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "patch_review.review")
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    server = build_server()
+
+    def data(reply) -> dict:
+        return reply.data if isinstance(reply.data, dict) else reply.structured_content
+
+    async def finished(client, arguments) -> dict:
+        job = data(await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                              "requirements": SUM, **arguments}))
+        for _ in range(400):
+            got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"], "detail": "full"}))
+            if got.get("status") in ("completed", "failed"):
+                assert got["status"] == "completed", got
+                return got["result"]
+            await asyncio.sleep(0.05)
+        raise AssertionError("the review job did not finish")
+
+    async def flow():
+        tool = (await server.get_tools())["g6_review_patch"]
+        async with Client(server) as client:
+            plain = await finished(client, {})
+            with_intent = await finished(client, {"intent": INTENT})
+            refused = await finished(client, {"intent": {"goal": "g", "non_goal": ["keep the API"]}})
+            mistyped = await client.call_tool("g6_review_patch", {"repo": str(repo), "task": "Repair addition.",
+                                                                  "intent": "repair addition"}, raise_on_error=False)
+            after = await finished(client, {})
+        return tool, plain, with_intent, refused, mistyped, after
+
+    tool, plain, with_intent, refused, mistyped, after = asyncio.run(flow())
+    assert "intent" in tool.parameters["properties"] and "intent" in tool.description
+    assert with_intent["assessment"]["outcome"] == "insufficient_evidence"
+    assert "intent.non_goals.0" in [r["id"] for r in with_intent["assessment"]["requirements"]]
+    for got in (plain, with_intent):
+        assert got["completion_state"] == "qualified-draft" and got["warning_card"]["code"] == "G6_E_PATCH_REVIEW"
+        assert check_envelope(got) == [] and got["request_id"] and "run_id" in got
+    assert set(with_intent) == set(plain)
+    assert [set(item) for item in with_intent["evidence"]] == [set(item) for item in plain["evidence"]]
+    assert refused["completion_state"] == "blocked-escalated" and check_envelope(refused) == []
+    assert refused["warning_card"]["code"] == "G6_E_INPUT_VALIDATION" and "non_goal" in refused["warning_card"]["message"]
+    assert "assessment" not in refused and "Traceback" not in str(refused)
+    assert mistyped.is_error and "Traceback" not in str(mistyped.content)
+    assert after["assessment"]["outcome"] == "supported_within_scope"
 
 
 @pytest.mark.parametrize("raised, code", [
@@ -1002,6 +1365,134 @@ def test_the_trial_counts_acceptances_from_the_outcome(repo, monkeypatch):
     assert (fewer["g6_acceptances"], fewer["g6_tool_errors"]) == (0, 1)
 
 
+# --- a submodule folder git never set up (openlibrary's shape in the study pool) -------------------------------------
+
+#: The commit a gitlink names: made up, so git holds no copy of it, as in the study pool's images.
+GITLINK = "0123456789abcdef0123456789abcdef01234567"
+LIB_TEST = "from lib import VALUE\n\n\ndef test_value():\n    assert VALUE == 7\n"
+
+
+def _with_submodule(repo, *, link: bool = False) -> None:
+    """vendor/lib populated and committed as a gitlink with no .git inside; with ``link``, openlibrary's tracked link
+    ``lib -> vendor/lib/lib`` and test_lib.py, which imports through it (a skip where links cannot be made)."""
+    (repo / "vendor" / "lib" / "lib").mkdir(parents=True)
+    (repo / "vendor" / "lib" / "lib" / "__init__.py").write_text("VALUE = 7\n")
+    (repo / "vendor" / "lib" / "x.py").write_text("X = 1\n")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{GITLINK},vendor/lib")
+    if link:
+        try:
+            os.symlink("vendor/lib/lib", repo / "lib", target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"this system cannot make a symbolic link ({exc})")
+        (repo / "test_lib.py").write_text(LIB_TEST)
+    _commit(repo, "a submodule folder")   # git add . leaves the gitlink entry as it is
+
+
+def _submodule_unknowns(got) -> list[str]:
+    return [unknown for unknown in got["assessment"]["unknowns"] if "vendor/lib" in unknown]
+
+
+def test_a_correct_patch_beside_a_submodule_folder_keeps_its_outcome(repo, monkeypatch):
+    """The patch and runs of test_a_correct_patch_is_supported_within_its_stated_scope, beside openlibrary's shape,
+    which the review refused before: the same outcome, and an unknown saying git cannot check the folder's files."""
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "supported_within_scope", assessment
+    assert assessment["scope"]["changed_files"] == ["calc.py"]
+    [unknown] = _submodule_unknowns(got)
+    assert unknown.startswith("git cannot check the files inside vendor/lib"), unknown
+
+
+@pytest.mark.parametrize("how", ["pointed at another commit", "removed"])
+def test_a_patch_that_changes_the_submodule_entry_is_insufficient_evidence_not_an_integrity_problem(repo, monkeypatch,
+                                                                                                    how):
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    if how == "removed":
+        _git(repo, "rm", "-q", "--cached", "vendor/lib")
+    else:
+        _git(repo, "update-index", "--cacheinfo", f"160000,{'f' * 40},vendor/lib")
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment
+    assert [(r["stage"], r["code"]) for r in assessment["reasons"] if "vendor/lib" in r["detail"]] == [
+        ("evidence", "change_inside_submodule")], assessment["reasons"]
+    assert not any(r["stage"] == "integrity" for r in assessment["reasons"]), assessment["reasons"]
+    assert any(unknown.startswith("git cannot check the files inside vendor/lib") for unknown in
+               _submodule_unknowns(got))
+
+
+@pytest.mark.xfail(strict=True, reason="a known limit: git holds no copy of this submodule's commit (as in every "
+                                       "openlibrary image of the pool), so nothing here says what its files were at "
+                                       "the base commit; the review says so as an unknown and cannot see this change")
+def test_a_patch_changing_a_file_inside_a_submodule_folder_is_insufficient_evidence(repo, monkeypatch):
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "vendor" / "lib" / "x.py").write_text("X = 2\n")
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]
+    assert "change_inside_submodule" in _reasons(got)
+
+
+def test_a_submodule_folder_g6_could_not_hash_is_insufficient_evidence(repo, monkeypatch):
+    from g6.workforce import repo_tests
+
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 1)
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])})
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]
+    assert _reasons(got) == {"submodule_not_hashed"}
+    assert any("vendor/lib" in r["detail"] for r in got["assessment"]["reasons"])
+
+
+def _during_the_review(monkeypatch, act) -> None:
+    """Every run of the review passes, and ``act`` happens while each runs (someone running the code in their own
+    shell, say)."""
+    def execute(root, ids, *, timeout_s, change=None, roots=()):
+        act()
+        return {rel: result([ADD, NEGATIVE]) for rel in ids} if change is not None else result([ADD, NEGATIVE])
+
+    monkeypatch.setattr(patch_review, "_execute", execute)
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda *args, **kwargs: {"verdict": "not_run", "said": "no run was recorded"})
+
+
+def test_bytecode_written_in_a_submodule_folder_during_the_review_is_no_accusation(repo, monkeypatch):
+    """Review I2 (the reviewer's P2): Python writes vendor/lib/lib/__pycache__ when the vendored code runs once in
+    someone's shell while the review runs; the patch itself is correct."""
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+
+    def bytecode() -> None:
+        cache = repo / "vendor" / "lib" / "lib" / "__pycache__"
+        cache.mkdir(exist_ok=True)
+        (cache / "__init__.cpython-312.pyc").write_bytes(b"\0" * 16)
+
+    _during_the_review(monkeypatch, bytecode)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
+
+
+def test_a_submodule_folder_g6_stops_hashing_during_the_review_is_insufficient_evidence_not_a_change(repo,
+                                                                                                    monkeypatch):
+    """Review I2: hashed at the start, over a cap at the end, is a folder G6 did not hash, never one that changed."""
+    from g6.workforce import repo_tests
+
+    _with_submodule(repo)
+    (repo / "calc.py").write_text(GOOD)
+    _during_the_review(monkeypatch, lambda: monkeypatch.setattr(repo_tests, "COPY_MAX_FILES", 1))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert _reasons(got) == {"submodule_not_hashed"}
+
+
 # --- real confined runs (Linux bubblewrap; run in Docker on Windows) ---------------------------------------------------
 
 def test_confined_a_correct_patch_is_supported_and_a_defect_is_named(repo, bwrap_backend):
@@ -1037,6 +1528,25 @@ def test_confined_receipts_make_the_gate_g6_observed_and_a_forged_one_does_not(r
     faked = review(repo)
     assert [r["receipt_status"] for r in faked["gate"]["receipts"]] == ["unknown", "unknown"]
     assert faked["gate"]["evidence_basis"] == "caller-declared"
+
+
+def test_confined_a_process_that_exits_with_an_error_after_a_passing_session_is_insufficient_evidence(repo,
+                                                                                                       bwrap_backend):
+    """The owner's ruling (2026-10-29), from a GUI suite whose X connection failed at exit after 65 passes: the base
+    commit's conftest makes the process exit 1 after pytest's session passed. A correct patch is then neither
+    supported nor accused of tampering."""
+    (repo / "conftest.py").write_text("import atexit\nimport os\n\natexit.register(os._exit, 1)\n")
+    _git(repo, "add", "conftest.py")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-qm", "a conftest that exits 1 at the end")
+    (repo / "calc.py").write_text(GOOD)
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert "run_inconsistent" in _reasons(got) and not any(r["stage"] == "integrity" for r in assessment["reasons"])
+    assert {_requirement(got, ident)["status"] for ident in ("R1", "R2")} == {"not_established"}
+    assert assessment["scope"]["checks_run"][0]["verdict"] == "run_inconsistent"
+    assert assessment["scope"]["environment"]["isolation"]["backend"] == confine.BUBBLEWRAP
 
 
 HOOK = ("import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n"
@@ -1183,3 +1693,18 @@ def test_confined_a_derived_regression_is_a_defect_and_a_pre_existing_failure_is
     assert found["assessment"]["outcome"] == "defect_detected", found["assessment"]
     assert any(r["code"] == "derived_test_regressed" and "test_zero.py" in r["detail"]
                for r in found["assessment"]["reasons"])
+
+
+def test_confined_a_correct_patch_beside_a_submodule_imported_through_a_link_is_supported(repo, bwrap_backend):
+    """openlibrary's shape end to end: the tests import the vendored package through the tracked link, in place and,
+    for the run against the base commit's code, in a copy."""
+    _with_submodule(repo, link=True)
+    (repo / "calc.py").write_text(GOOD)
+    got = review(repo, [*SUM, {"id": "R3", "text": "the vendored package gives its value",
+                               "checks": ["test_lib.py::test_value"]}])
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "supported_within_scope", assessment
+    assert [r["receipt_status"] for r in assessment["scope"]["receipts"]] == ["matched", "matched"]
+    # the copy made for the base commit's run held the link and the folder: the check passed there too
+    assert ("test_lib.py::test_value passes against the base commit's code too, so it may not exercise the change"
+            in assessment["unknowns"]), assessment["unknowns"]

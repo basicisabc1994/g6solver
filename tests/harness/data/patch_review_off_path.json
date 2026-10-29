@@ -1,0 +1,159 @@
+{
+  "generated_from": "cd52d48",
+  "how": "replies() of tests/harness/test_patch_review_off_path.py, in confined runs (bubblewrap), before any verification search code existed",
+  "cases": {
+    "correct": {
+      "ok": true,
+      "completion_state": "qualified-draft",
+      "warning_code": "G6_E_PATCH_REVIEW",
+      "outcome": "supported_within_scope",
+      "requirements": [
+        [
+          "R1",
+          "passed_on_stated_checks"
+        ],
+        [
+          "R2",
+          "passed_on_stated_checks"
+        ]
+      ],
+      "reasons": [],
+      "merge": "requires_separate_approval",
+      "unknowns": 0
+    },
+    "unfixed": {
+      "ok": true,
+      "completion_state": "qualified-draft",
+      "warning_code": "G6_E_PATCH_REVIEW",
+      "outcome": "defect_detected",
+      "requirements": [
+        [
+          "R1",
+          "failed"
+        ],
+        [
+          "R2",
+          "failed"
+        ]
+      ],
+      "reasons": [
+        [
+          "tier_1",
+          "check_failed"
+        ],
+        [
+          "tier_1",
+          "check_failed"
+        ]
+      ],
+      "merge": "requires_separate_approval",
+      "unknowns": 0
+    },
+    "weakened-test": {
+      "ok": true,
+      "completion_state": "qualified-draft",
+      "warning_code": "G6_E_PATCH_REVIEW",
+      "outcome": "test_integrity_compromised",
+      "requirements": [
+        [
+          "R1",
+          "not_established"
+        ],
+        [
+          "R2",
+          "not_established"
+        ]
+      ],
+      "reasons": [
+        [
+          "integrity",
+          "test_weakened"
+        ],
+        [
+          "integrity",
+          "test_weakened"
+        ],
+        [
+          "integrity",
+          "test_weakened"
+        ],
+        [
+          "integrity",
+          "gate_shortcut"
+        ],
+        [
+          "evidence",
+          "check_did_not_run"
+        ],
+        [
+          "evidence",
+          "check_did_not_run"
+        ],
+        [
+          "evidence",
+          "no_test_ran"
+        ]
+      ],
+      "merge": "requires_separate_approval",
+      "unknowns": 0
+    },
+    "runner-changed": {
+      "ok": true,
+      "completion_state": "qualified-draft",
+      "warning_code": "G6_E_PATCH_REVIEW",
+      "outcome": "test_integrity_compromised",
+      "requirements": [
+        [
+          "R1",
+          "passed_on_stated_checks"
+        ],
+        [
+          "R2",
+          "passed_on_stated_checks"
+        ]
+      ],
+      "reasons": [
+        [
+          "integrity",
+          "runner_configuration_changed"
+        ]
+      ],
+      "merge": "requires_separate_approval",
+      "unknowns": 0
+    },
+    "unchecked-requirement": {
+      "ok": true,
+      "completion_state": "qualified-draft",
+      "warning_code": "G6_E_PATCH_REVIEW",
+      "outcome": "insufficient_evidence",
+      "requirements": [
+        [
+          "R1",
+          "passed_on_stated_checks"
+        ],
+        [
+          "R2",
+          "not_established"
+        ]
+      ],
+      "reasons": [
+        [
+          "evidence",
+          "requirement_without_check"
+        ]
+      ],
+      "merge": "requires_separate_approval",
+      "unknowns": 0
+    },
+    "stale-artifact": {
+      "ok": false,
+      "completion_state": "blocked-escalated",
+      "warning_code": "G6_E_PATCH_STALE",
+      "outcome": null,
+      "requirements": [],
+      "reasons": [],
+      "merge": null,
+      "unknowns": 0
+    }
+  }
+}

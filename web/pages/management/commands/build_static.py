@@ -100,9 +100,13 @@ def build(out: Path) -> list[str]:
     if problems:
         return problems
 
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True)
+    if out.exists():   # emptied, never removed: a preview server may hold the folder itself
+        for child in out.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+    out.mkdir(parents=True, exist_ok=True)
     (out / MARKER).write_text("Made by `manage.py build_static`; it empties this folder on the next build.\n")
     for path, html in pages.items():
         target = out / path.strip("/") / "index.html"

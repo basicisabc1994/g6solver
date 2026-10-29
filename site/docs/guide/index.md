@@ -345,16 +345,19 @@ G6 is free and open source (Apache-2.0). It runs on your own computer and needs 
 
 ```
 git clone https://github.com/basicisabc1994/g6solver && cd g6solver
+python -m venv --copies .venv                           # G6's own environment, with a copy of Python
+source .venv/bin/activate                               # PowerShell: .venv\Scripts\Activate.ps1
 pip install ".[all]"
 g6 doctor
 ```
 
-(PyPI publishing comes with the first release.)
+(G6 is not on PyPI.) G6 gets an environment of its own, made with `--copies`: on Linux, G6 cannot yet tell its own
+Python from a project environment linked to the same one, and refuses to review then.
 
-**As an MCP server for Claude Code:**
+**As an MCP server for Claude Code or Codex:**
 
 ```
-claude mcp add g6 -- g6-mcp
+g6 setup --client claude --allow patch_review.review    # or --client codex
 ```
 
 **For Cursor and other MCP clients**, add this to the client's MCP configuration:
