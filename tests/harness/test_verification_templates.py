@@ -1477,13 +1477,26 @@ def test_review_m1_test_adequacy_never_reads_a_link_to_a_file_outside_the_reposi
     _patch(root, {"app.py": "def double(x):\n    return x + x\n"})
     Tiers(monkeypatch)
     Mutants(monkeypatch)
-    got = review(root, [{"id": "R1", "text": "double doubles", "checks": ["tests/test_app.py::test_double"]}],
-                 search={"test_adequacy": True})
+    requirements = [{"id": "R1", "text": "double doubles", "checks": ["tests/test_app.py::test_double"]}]
+    got = review(root, requirements, search={"test_adequacy": True})
     assert "OUTSIDE-SECRET-1234" not in json.dumps(got)
-    [adequacy] = got["assessment"]["completion"]["test_adequacy"]
+    # the launch review's I2 (d63f40a): a .py link the patch adds could put any code under a name Python imports, an
+    # integrity finding, so test adequacy is not run in the review (it would run under tests that may be weakened)
+    assert got["assessment"]["outcome"] == "test_integrity_compromised"
+    found = [r for r in got["assessment"]["reasons"] if r["code"] == "changed_file_can_change_tests"]
+    assert found and "settings.py" in found[0]["detail"], got["assessment"]["reasons"]
+    assert any("settings.py" in u and "outside the repository" in u for u in got["assessment"]["unknowns"])
+    # test adequacy itself, asked directly, still leaves the link out unread
+    change = repo_tests.change(root)
+    stated = [patch_review.Requirement.model_validate(req) for req in requirements]
+    norm = {raw: raw for req in requirements for raw in req["checks"]}
+    entries, _ = verification_search.measure_adequacy(
+        change, stated, norm, {"tests/test_app.py::test_double": {"verdict": "passed", "detail": ""}},
+        deadline=time.monotonic() + 60, base_seconds=1.0)
+    [adequacy] = entries
     left = [s for s in adequacy["skipped"] if s["file"] == "settings.py"]
     assert left and "outside the repository" in left[0]["reason"], adequacy
-    assert any("settings.py" in u and "outside the repository" in u for u in got["assessment"]["unknowns"])
+    assert "OUTSIDE-SECRET-1234" not in json.dumps(entries)
 
 
 # --- the review's import roots, and a run that loaded the changed code from elsewhere -----------------------------------
