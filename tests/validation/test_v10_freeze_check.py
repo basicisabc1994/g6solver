@@ -104,6 +104,50 @@ def test_g6s_search_must_take_each_search_arms_configuration_as_the_driver_gives
                                                 "T": {"templates": True, "test_adequacy": True}}
 
 
+PATCH_REVIEW_SOURCE = ("search = verification_search.not_run(checks, where, INTEGRITY_SKIP, origins)\n"
+                       "search = _stage(stopped, 'checks', verification_search.search, change, checks, where)\n")
+
+
+def test_the_search_arms_observer_needs_g6s_search_and_not_run_in_the_shape_it_watches(monkeypatch):
+    fake = types.ModuleType("g6.harness.verification_search")
+    fake.search = lambda change, checks, placed, *, deadline, artifact, origins=None, roots=(): None
+    fake.not_run = lambda checks, placed, why, origins=None: None
+    fake.ProposedCheck = type("ProposedCheck", (), {"model_fields": {"id": 1, "requirement_id": 1, "intent": 1,
+                                                                     "file": 1, "source": 1}})
+    monkeypatch.setitem(sys.modules, "g6.harness.verification_search", fake)
+    monkeypatch.setattr(freeze_check, "_source", lambda module: PATCH_REVIEW_SOURCE)
+    assert probe("the search arms' check observer") == {"search": ["change", "checks", "placed"],
+                                                        "not_run": ["checks", "placed"]}
+    fake.search = lambda checks, change, placed, *, deadline: None
+    with pytest.raises(freeze_check.Missing, match="search"):
+        probe("the search arms' check observer")
+    fake.search = lambda change, checks, placed, *, deadline: None
+    monkeypatch.setattr(freeze_check, "_source", lambda module: "from g6.harness.verification_search import search\n")
+    with pytest.raises(freeze_check.Missing, match="through the module"):
+        probe("the search arms' check observer")
+
+
+def test_the_formal_paths_limit_words_and_codes_must_be_the_ones_the_secondary_measure_reads(monkeypatch):
+    from patch_review_search import secondary
+    envelope = types.ModuleType("g6.model_checking.envelope")
+    envelope.INPUT_TOO_LARGE, envelope.OUTPUT_TOO_LARGE = ("G6_E_MODEL_CHECK_INPUT_TOO_LARGE",
+                                                           "G6_E_MODEL_CHECK_OUTPUT_TOO_LARGE")
+    envelope.TIME_LIMIT_TOO_LONG = "G6_E_MODEL_CHECK_TIME_LIMIT_TOO_LONG"
+    templates = types.ModuleType("g6.harness.verification_templates")
+    monkeypatch.setitem(sys.modules, "g6.model_checking.envelope", envelope)
+    monkeypatch.setitem(sys.modules, "g6.harness.verification_templates", templates)
+    words = "\n".join(f'raise Inapplicable(f"{fragment}")' for fragment in secondary.G6_LIMIT_WORDS)
+    monkeypatch.setattr(freeze_check, "_source", lambda module: words)
+    assert probe("the formal path's limit words and codes")["codes"] == sorted(secondary.OVER_LIMIT_CODES)
+    monkeypatch.setattr(freeze_check, "_source", lambda module: words.replace("is above the limit", "exceeds the limit"))
+    with pytest.raises(freeze_check.Missing, match="words"):
+        probe("the formal path's limit words and codes")
+    monkeypatch.setattr(freeze_check, "_source", lambda module: words)
+    envelope.INPUT_TOO_LARGE = "G6_E_MODEL_CHECK_TOO_LARGE"
+    with pytest.raises(freeze_check.Missing, match="codes"):
+        probe("the formal path's limit words and codes")
+
+
 def test_the_check_writes_its_report_and_fails_loudly_when_a_required_group_is_missing(tmp_path, capsys):
     out = tmp_path / "report.json"
     assert freeze_check.main(["--g6-src", str(freeze_check.REPOSITORY), "--require", "base", "--output", str(out)]) == 0

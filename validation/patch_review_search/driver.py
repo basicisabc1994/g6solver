@@ -300,6 +300,8 @@ def study(patches: list[dict], *, arm_c, arm_t, arm_e, arm_r, spending: Spending
                          "model_calls": reading["calls"], "meter": reading, **timing,
                          "spent_cents": reply.get("spent_cents"),
                          "reasons": list(reply.get("reasons") or []), "findings": list(reply.get("findings") or []),
+                         # the text of every proposed check it ran, for the similarity measure after the labels
+                         "checks": list(reply.get("checks") or []),
                          "attribution": _attribution(arm_a, own, reply),
                          "proposer_failure": reply.get("proposer_failure"),
                          # whether the search stage ran a check to a pass or a fail (feasibility criterion 3), as

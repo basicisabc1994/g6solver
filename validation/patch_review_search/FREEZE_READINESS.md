@@ -12,9 +12,9 @@ as ruled**. Written 2026-10-29, after the paid rehearsal on the development fixt
 | 3 | Per-session time and token caps, from the rehearsal's totals by kind | for the owner |
 | 4 | V9's spending cap: $60 for the patch sessions and arm 2 | ready |
 | 5 | V10's spending cap and each arm's share | for the owner |
-| 6 | Ruling 48: the history check on the copies arms C, T and E use | not ready |
+| 6 | Ruling 48: the history check on the copies arms C, T and E use | ready |
 | 7 | Ruling 66: OpenAI's published list of broken tasks | not ready |
-| 8 | The six secondary measures that were not built | ready, one reading for a ruling |
+| 8 | The six secondary measures that were not built | ready |
 | 9 | The label-only step inside the vault | not built, as ruled |
 
 ## 1. G6's commit
@@ -86,15 +86,15 @@ run out if R averages more than $0.67 a patch, while at fixture size C would use
 
 ## 6. Ruling 48: the history check on C, T and E's copies
 
-**Not ready.** Ruling 48 says the history check that arm R's copy passes (`arm_r.history_problem`) must hold for the
+**Ready.** Ruling 48 says the history check that arm R's copy passes (`arm_r.history_problem`) must hold for the
 copies arms C, T and E use before the study's first run, and that a copy that fails it is refused, never run.
 
-C, T and E's trees are built by `study.build_trees` with V9's `trees.checkout`, a full clone of the task's source. So
-they hold every commit and every ref the source holds, including any after the base commit, and nothing checks them.
-
-What it needs, test first: build those trees the way R's copy is built (the base commit only), or run
-`history_problem` on each and refuse the run when it fails. Then the freeze-readiness check confirms it on the pool's
-task images.
+Built, test first: C, T and E's base and patched trees are now made as R's copy is (`arm_r.base_only`: a new
+repository, the base commit alone fetched with `--depth=1`, checked out detached, the patch applied and not
+committed). `study.build_trees` checks every tree with `history_problem` before any arm runs; a tree that fails it is
+refused and the study never runs. The test gives the source a later commit: a full clone fails the check, and the new
+trees pass it with the base commit as their only commit object. V9's own trees, V10's calibration and the label
+step's reference-fix tree keep `trees.checkout`.
 
 ## 7. Ruling 66: the published list of broken tasks
 
@@ -111,7 +111,7 @@ pages, which were not looked at here.
 
 ## 8. The six secondary measures
 
-**Ready, with one reading for a ruling.** Each is built, test first, on fakes (interpretations 80 and 81). They are
+**Ready.** Each is built, test first, on fakes (interpretations 80 and 81). They are
 in `secondary.py`, `analysis.py`, `driver.py`, `study.py` and `metering.py`:
 
 - **Template applicability (arm T):** recorded by the driver before the record's hash, so before any label is seen.
@@ -123,9 +123,11 @@ in `secondary.py`, `analysis.py`, `driver.py`, `study.py` and `metering.py`:
 - **The per-reason-code shares:** each share has the bootstrap's interval over tasks with all their findings.
 - **Input and output tokens:** each arm's meter counts them by kind.
 
-The freeze file must now name the similarity measure: its run length and threshold are frozen (`v10.similarity`). The
-scripts propose `token_containment.v1` with runs of 8 tokens and a threshold of 0.5. That measure, run length and
-threshold are for the coordinator's ruling.
+The freeze file must name the similarity measure, its run length and its threshold (`v10.similarity`): ruled
+2026-10-29, `token_containment.v1` with runs of 8 tokens and a threshold of 0.5. Similarity covers every proposed
+check C and T ran, whose texts the search arms now keep, and "refused for exceeding the limits" is read from G6's
+codes where its record has them and from its pinned words where it does not. `freeze_check` checks both at the
+frozen commit, and both pass at 0c2a4f98e4.
 
 ## 9. The label-only step inside the vault
 

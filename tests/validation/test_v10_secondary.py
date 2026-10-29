@@ -79,18 +79,55 @@ def test_the_formal_path_counts_come_from_arm_ts_activities_on_state_invariant_i
                           correspondence={"result": "not_replayed", "reason": "about the model only"})),
         act("symbolic search", instance="g6p-relation-7", template="relation.v1",       # not the formal path
             formal={"specification": {"template": "relation.v1"}, "correspondence": {"result": "not_searched"}}),
-        act("proposal", stage="state_invariant.v1", requirement="R2", result="refused",
-            reason="its instance was refused: bindings.model: at most 8 variables"),
+        # refusals: G6's structured code where its record has one, its own words (pinned below) where none
+        act("model check", instance="g6p-si-11", template="state_invariant.v1", operation="check_invariant",
+            verdict="refused", code="G6_E_MODEL_CHECK_INPUT_TOO_LARGE", reason="the model has 70 state variables"),
+        act("model check", instance="g6p-si-12", template="state_invariant.v1", operation="check_invariant",
+            verdict="refused", code="G6_E_MODEL_CHECK_UNSUPPORTED", reason="a term outside the grammar"),
+        act("template instance", check="g6p-si-8", template="state_invariant.v1", requirement="R4", result="refused",
+            reason="the model is over model_checking's limits: the model has 70 state variables; the limit is 64"),
+        act("template instance", check="g6p-ar-9", template="access_rule.v1", requirement="R5", result="refused",
+            reason="depth 60 is above the limit of 20 steps for a search whose traces are replayed"),
+        act("template instance", check="g6p-si-10", template="state_invariant.v1", requirement="R6", result="refused",
+            reason="x is a Real: the replay reads Int or Bool variables only"),
+        act("template instance", check="g6p-ar-13", template="access_rule.v1", requirement="R7", result="refused",
+            reason="not the formal path's refusal"),                                           # left out
         act("proposal", stage="state_invariant.v1", requirement="R3", result="refused",
             reason="its instance was refused: bindings.observe: must be a dotted name"))
     got = secondary.formal_path([driver_row("p1", found), driver_row("p2", report())])
-    assert got["per_patch"]["p1"] == {"models_built": 6, "refused_over_limits": 1, "refused_other": 1, "vacuous": 1,
+    assert got["per_patch"]["p1"] == {"models_built": 6, "refused_over_limits": 3, "refused_other": 3, "vacuous": 1,
                                       "conflicting": 1, "undecided": 0, "searched": 4, "traces_found": 4,
                                       "traces_reproduced": 1, "model_only": 1, "not_replayable": 1,
                                       "not_replayed": 1}
     assert got["per_patch"]["p2"]["models_built"] == 0 and got["total"]["traces_found"] == 4
-    assert [(r["patch"], r["requirement"], r["over_limits"]) for r in got["refusals"]] == [
-        ("p1", "R2", True), ("p1", "R3", False)]
+    assert [(r["instance"] or r["requirement"], r["over_limits"], r["read_from"]) for r in got["refusals"]] == [
+        ("g6p-si-11", True, "code"), ("g6p-si-12", False, "code"), ("g6p-si-8", True, "reason text"),
+        ("g6p-ar-9", True, "reason text"), ("g6p-si-10", False, "reason text"), ("R3", False, "reason text")]
+
+
+@pytest.mark.parametrize("reason", [
+    # G6's own words for a state model over the limits, as verification_templates._state_invariant writes them at the
+    # launch commit the rehearsal ran (0c2a4f98e4); a change of wording must fail here, and freeze_check reads them too
+    "the model is over model_checking's limits: the model has 70 state variables; the limit is 64",
+    "depth 60 is above the limit of 20 steps for a search whose traces are replayed",
+    "traces 9 is above the limit of 5 replayed traces",
+    "the model has 60 state variables; with the 11 G6 adds to keep each trace's history (a step counter and one per "
+    "step), that is over model_checking's limit of 64"])
+def test_g6s_exact_words_for_a_model_over_the_limits_are_read_as_over_the_limits(reason):
+    assert secondary.over_limits_by_reason(reason) is True
+
+
+@pytest.mark.parametrize("reason", ["the model is above model_checking's limits: 70 variables",
+                                    "depth 60 exceeds the limit of 20 steps", "traces 9 is above the limit of 5 traces",
+                                    "too many state variables", "its instance was refused: List should have at most 8"])
+def test_other_words_are_not_read_as_over_the_limits(reason):
+    assert secondary.over_limits_by_reason(reason) is False
+
+
+def test_the_over_limit_codes_are_g6s_model_checking_refusals():
+    assert secondary.OVER_LIMIT_CODES == frozenset({"G6_E_MODEL_CHECK_INPUT_TOO_LARGE",
+                                                    "G6_E_MODEL_CHECK_OUTPUT_TOO_LARGE",
+                                                    "G6_E_MODEL_CHECK_TIME_LIMIT_TOO_LONG"})
 
 
 # --- test adequacy (arm T) against the label --------------------------------------------------------------------------
@@ -191,6 +228,22 @@ def test_the_hidden_tests_are_a_contracts_hidden_test_files_and_the_lines_its_te
                                                         "@@ -1 +1,2 @@\n x = 1\n+def test_p():\n+    assert x\n"}},
         {"origin": "withheld_specification", "overlay": {"files": {"spec.py": "secret"}, "patch": ""}}]}
     assert secondary.hidden_texts(contract) == [HIDDEN, "def test_p():\n    assert x\n"]
+
+
+def test_a_search_arms_every_proposed_check_is_measured_from_the_texts_it_kept_findings_or_not():
+    # the coordinator's ruling on item 81: C and T keep the text of every proposed check they ran, and all are measured
+    copied = HIDDEN.replace("test_add", "test_mine")
+    template_text = "TEMPLATE = 'example.v1'\nBINDINGS = {'function': 'calc.add'}\n"
+    outputs = {"p1": {"C": {"checks": [
+        {"check": "g6p-check-1", "placed": "g6_check_a/test_c.py", "text": copied, "ran": True},
+        {"check": "g6p-example-2", "placed": "g6_check_b/test_g6_example.py", "text": template_text, "ran": True}],
+        "findings": [{"check": "g6p-check-1", "node": "g6_check_a/test_c.py", "file": "g6_check_a/test_c.py",
+                      "text": copied, "code": "unconfirmed_failure"}]}}}
+    got = secondary.measure_similarity(outputs, {"p1": [HIDDEN]}, SPEC)
+    measured = got["patches"]["p1"]["C"]
+    assert [(c["check"], c["above"], c["findings"]) for c in measured] == [
+        ("g6p-check-1", True, ["g6_check_a/test_c.py"]), ("g6p-example-2", False, [])]
+    assert got["above"] == [["p1", "C", "g6_check_a/test_c.py"]] and got["patches"]["p1"]["T"] == []
 
 
 def test_similarity_is_measured_on_every_model_written_check_the_record_holds_and_flags_those_above_the_threshold():

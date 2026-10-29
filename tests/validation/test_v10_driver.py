@@ -263,8 +263,9 @@ def test_template_applicability_and_the_formal_path_are_recorded_before_the_reru
     report = {"assessment": {"completion": {"activities": [
         {"activity": "proposer stage", "stage": "example.v1", "result": "replied"},
         {"activity": "template instance", "check": "g6p-example-1", "template": "example.v1"}]}}}
+    checks = [{"check": "g6p-example-1", "placed": "g6_check_b/test_g6_example.py", "text": "x = 1\n", "ran": True}]
     t = Arm("T", {"p0": [{"own": make(ABSTAIN, "x"), "model_calls": 1, "spent_cents": 1.0, "findings": [repro],
-                          "report": report}]})
+                          "report": report, "checks": checks}]})
     record = driver.Record()
     got, _, _ = study(patches(ACCEPTED), t=t, rerun=lambda patch, arm, reproduction: {"reproducible": True},
                       record=record)
@@ -274,6 +275,7 @@ def test_template_applicability_and_the_formal_path_are_recorded_before_the_reru
     assert applied["templates"]["example.v1"]["applied"] == ["p0"]
     assert got["template_applicability"] == applied and got["formal_path"]["total"]["models_built"] == 0
     assert [e["data"]["code"] for e in record.entries if e["kind"] == "rerun"] == ["unconfirmed_failure"]
+    assert got["patches"][0]["arms"]["T"]["checks"] == checks              # every check's text, for similarity
 
 
 def test_arm_as_findings_are_rerun_too_and_every_arm_run_is_timed():

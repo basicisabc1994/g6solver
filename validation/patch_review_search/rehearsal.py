@@ -17,6 +17,7 @@ the time, recorded, and not the frozen commit.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -265,6 +266,39 @@ def _ledger() -> launcher.Ledger:
     return launcher.Ledger(path, cap)
 
 
+@contextlib.contextmanager
+def observed_checks():
+    """Every check verification search is given during a review, run (``search``) or listed as not run
+    (``not_run``), each ``{check, requirement, placed, sha256, text, ran}`` by its id: the text of every proposed check
+    a search arm ran, kept for the similarity measure (the coordinator's ruling on item 81). G6's review reaches both
+    functions through the module's attributes when it calls them, so they are watched for the review's length and
+    put back after it, whatever happens; nothing G6 does changes. ``freeze_check`` checks that shape at the frozen
+    commit."""
+    from g6.harness import verification_search as vs
+
+    seen: dict[str, dict] = {}
+    originals = {"search": vs.search, "not_run": vs.not_run}
+
+    def watched(name: str):
+        original = originals[name]
+
+        def call(*args, **kwargs):
+            checks, placed = args[1:3] if name == "search" else args[:2]
+            for one in checks:
+                seen.setdefault(str(one.id), {"check": str(one.id), "requirement": getattr(one, "requirement_id", None),
+                                              "placed": (placed or {}).get(one.id), "text": one.source,
+                                              "sha256": hashlib.sha256(one.source.encode("utf-8")).hexdigest(),
+                                              "ran": name == "search"})
+            return original(*args, **kwargs)
+        return call
+
+    vs.search, vs.not_run = watched("search"), watched("not_run")
+    try:
+        yield seen
+    finally:
+        vs.search, vs.not_run = originals["search"], originals["not_run"]
+
+
 def _search_arm(patch: dict, search: dict, share_left, meter) -> dict:
     caller = StoppedCaller(study_caller(), _ledger(), meter, share_left)
     settings = {**search, **PROPOSER, "proposer": "templates_first" if search.get("templates") else "free_form"}
@@ -275,8 +309,9 @@ def _search_arm(patch: dict, search: dict, share_left, meter) -> dict:
         return kept["reply"]
 
     tree = Path(patch["trees"]["patched"])
-    done = arms.g6_review(tree, patch["requirements"], list(patch.get("checks_cited") or []), timeout_s=LIMIT_S,
-                          review=review)
+    with observed_checks() as seen:
+        done = arms.g6_review(tree, patch["requirements"], list(patch.get("checks_cited") or []), timeout_s=LIMIT_S,
+                              review=review)
     reply = kept.get("reply") or {}
     activities = ((reply.get("assessment") or {}).get("completion") or {}).get("activities") or []
     ran = any(str(a.get("check", "")).startswith("g6p-") and a.get("result") not in (
@@ -289,7 +324,7 @@ def _search_arm(patch: dict, search: dict, share_left, meter) -> dict:
             "spent_cents": meter.reading()["cents"],
             "reasons": [r.get("code") for r in (reply.get("assessment") or {}).get("reasons") or []],
             "findings": runner.findings(arms.defects_reproduced(reply), tree, search_arm=True),
-            "report": reply or None, "search_stage": {"ran_to_result": ran},
+            "report": reply or None, "search_stage": {"ran_to_result": ran}, "checks": list(seen.values()),
             "deadline_in_search": arms._ran_out(reply), "proposer_failure": failed}
 
 

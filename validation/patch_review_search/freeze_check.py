@@ -69,6 +69,11 @@ class Missing(Exception):
     """A feature that is not there, or not in the shape the study reads."""
 
 
+def _source(module) -> str:
+    """A G6 module's source text, as a probe reads it."""
+    return inspect.getsource(module)
+
+
 def need(condition, why: str) -> None:
     if not condition:
         raise Missing(why)
@@ -279,6 +284,31 @@ def _probes() -> list[tuple[str, str, object]]:
              "review_patch takes no search setting")
         return "review_patch(search=...)"
 
+    def check_observer():
+        # rehearsal.observed_checks keeps the text of every check verification search is given (item 81's ruling)
+        vs = g6("g6.harness.verification_search")
+        shapes = {"search": ["change", "checks", "placed"], "not_run": ["checks", "placed"]}
+        found = {}
+        for name, wanted in shapes.items():
+            found[name] = list(inspect.signature(getattr(vs, name)).parameters)[:len(wanted)]
+            need(found[name] == wanted, f"verification_search.{name} takes {found[name]}, not {wanted} first")
+        need({"id", "requirement_id", "source"} <= set(getattr(vs.ProposedCheck, "model_fields", {})),
+             "a proposed check has no id, requirement_id or source")
+        source = _source(g6("g6.harness.patch_review"))
+        need("verification_search.search" in source and "verification_search.not_run(" in source,
+             "the review no longer reaches search and not_run through the module, so the observer cannot see them")
+        return found
+
+    def limit_words():
+        from patch_review_search import secondary
+        envelope = g6("g6.model_checking.envelope")
+        codes = {envelope.INPUT_TOO_LARGE, envelope.OUTPUT_TOO_LARGE, envelope.TIME_LIMIT_TOO_LONG}
+        need(codes == set(secondary.OVER_LIMIT_CODES), f"model_checking's limit codes are {sorted(codes)}")
+        source = _source(g6("g6.harness.verification_templates"))
+        missing = [words for words in secondary.G6_LIMIT_WORDS if words not in source]
+        need(not missing, "the formal path's limit words changed: " + "; ".join(missing))
+        return {"codes": sorted(codes), "words": len(secondary.G6_LIMIT_WORDS)}
+
     return [("review_patch", "base", review_patch), ("UNTRUSTED", "base", untrusted),
             ("arm 4's review helpers", "base", mirrored), ("deadline reason codes", "base", deadline_codes),
             ("runner functions", "base", runner), ("_moved", "base", moved), ("the arms import", "base", arms_import),
@@ -292,7 +322,9 @@ def _probes() -> list[tuple[str, str, object]]:
             ("verification_search", "search", search), ("check limits", "search", limits),
             ("check file rule", "search", file_rule), ("placement", "search", placement),
             ("placements", "search", placements), ("n and each run's limit", "search", parameters),
-            ("search settings", "search", settings), ("review_patch's search setting", "search", search_parameter)]
+            ("search settings", "search", settings), ("review_patch's search setting", "search", search_parameter),
+            ("the search arms' check observer", "search", check_observer),
+            ("the formal path's limit words and codes", "search", limit_words)]
 
 
 def probe(src: str) -> list[dict]:

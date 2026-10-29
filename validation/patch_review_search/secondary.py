@@ -45,8 +45,26 @@ Z95 = NormalDist().inv_cdf(0.5 + CONFIDENCE / 2)
 #: ``free_form``) is not a template.
 TEMPLATE = re.compile(r"[a-z_]+\.v\d+")
 FORMAL = "state_invariant.v1"
-#: A refusal whose reason names a limit (G6's own words for its limits on a state model).
-OVER_LIMITS = re.compile(r"\b(at most|limit|limits|exceeds?|exceeding|too (many|long|large|deep))\b", re.IGNORECASE)
+#: Over the limits, read from G6's structured record where it has one: a model check refused with one of these codes
+#: (``g6.model_checking.envelope``; the coordinator's ruling on item 81).
+OVER_LIMIT_CODES = frozenset({"G6_E_MODEL_CHECK_INPUT_TOO_LARGE", "G6_E_MODEL_CHECK_OUTPUT_TOO_LARGE",
+                              "G6_E_MODEL_CHECK_TIME_LIMIT_TOO_LONG"})
+#: Over the limits, read from G6's own words where its record has no code: a refused instance's reason as
+#: ``verification_templates._state_invariant`` writes it (pinned by the tests and by ``freeze_check``, so a change of
+#: wording fails loudly).
+OVER_LIMIT_REASONS = (re.compile(r"the model is over model_checking's limits: "),
+                      re.compile(r"depth \d+ is above the limit of \d+ steps for a search whose traces are replayed"),
+                      re.compile(r"traces \d+ is above the limit of \d+ replayed traces"),
+                      re.compile(r"the model has \d+ state variables; with the \d+ G6 adds to keep each trace's history "
+                                 r"\(a step counter and one per step\), that is over model_checking's limit of \d+"))
+#: The words of ``OVER_LIMIT_REASONS`` as G6's source writes them (``freeze_check`` requires each at the frozen commit).
+G6_LIMIT_WORDS = ("the model is over model_checking's limits: ",
+                  "is above the limit of {MAX_FORMAL_DEPTH} steps for a search whose traces ",
+                  "is above the limit of {MAX_TRACES} replayed traces",
+                  "state variables; with the {1 + b.depth} G6 adds to ",
+                  "keep each trace's history (a step counter and one per step), that is over model_checking's ",
+                  "limit of {MAX_VARIABLES}")
+ACCESS = "access_rule.v1"
 #: The reason code of a rerun recorded without one (a record written before the driver kept it).
 NO_CODE = "not recorded"
 ADEQUACY_NOTE = "in this version of G6 test adequacy changes no outcome (PROTOCOL.md, version 2)"
@@ -128,9 +146,32 @@ def _formal_records(activities: list[dict]) -> dict[str, dict]:
     return found
 
 
+def over_limits_by_reason(reason: str) -> bool:
+    """Whether a refusal's reason is G6's own words for a state model over the limits (``OVER_LIMIT_REASONS``)."""
+    return any(pattern.search(str(reason or "")) for pattern in OVER_LIMIT_REASONS)
+
+
+def _refusal(row: dict, a: dict) -> dict | None:
+    """A refusal on the formal path, read from G6's code where the activity has one and from its words otherwise; None
+    for an activity that is not one."""
+    kind, reason = a.get("activity"), str(a.get("reason") or "")
+    template = str(a.get("template") or a.get("stage") or "")
+    if kind == "model check" and a.get("verdict") == "refused" and a.get("code"):
+        over, read_from = a["code"] in OVER_LIMIT_CODES, "code"
+    elif kind == "template instance" and a.get("result") == "refused" and (
+            template == FORMAL or (template == ACCESS and over_limits_by_reason(reason))):
+        over, read_from = over_limits_by_reason(reason), "reason text"
+    elif kind == "proposal" and a.get("result") == "refused" and a.get("stage") == FORMAL:
+        over, read_from = over_limits_by_reason(reason), "reason text"
+    else:
+        return None
+    return {"patch": row["patch"], "instance": a.get("instance") or a.get("check"), "requirement": a.get("requirement"),
+            "code": a.get("code"), "reason": reason[:300], "over_limits": over, "read_from": read_from}
+
+
 def formal_path(rows: list[dict]) -> dict:
     """The formal path's counts per patch and in total (the module docstring), from arm T's activities, and every
-    refused ``state_invariant.v1`` instance with G6's reason and whether that reason names a limit."""
+    refusal on it: a refused model check, read by its code; a refused instance or proposal, read by G6's words."""
     per_patch, refusals = {}, []
     for row in rows:
         activities = _activities(_t_report(row))
@@ -150,16 +191,15 @@ def formal_path(rows: list[dict]) -> dict:
             counts["not_replayable"] += result == "not_replayable"
             counts["not_replayed"] += result == "not_replayed"
         for a in activities:
-            if a.get("activity") == "proposal" and a.get("result") == "refused" and a.get("stage") == FORMAL:
-                over = bool(OVER_LIMITS.search(str(a.get("reason") or "")))
-                counts["refused_over_limits" if over else "refused_other"] += 1
-                refusals.append({"patch": row["patch"], "requirement": a.get("requirement"),
-                                 "reason": str(a.get("reason") or "")[:300], "over_limits": over})
+            found = _refusal(row, a)
+            if found is not None:
+                counts["refused_over_limits" if found["over_limits"] else "refused_other"] += 1
+                refusals.append(found)
         per_patch[row["patch"]] = counts
     total = {key: sum(counts[key] for counts in per_patch.values()) for key in COUNTS}
     return {"per_patch": per_patch, "total": total, "refusals": refusals,
-            "note": "from arm T's activities, recorded before any label was read; a refusal counts as over the limits "
-                    "when G6's reason names a limit"}
+            "note": "from arm T's activities, recorded before any label was read; a refusal is over the limits by G6's "
+                    "code where its record has one, and by G6's own words where it has none"}
 
 
 # --- after the labels: test adequacy ---------------------------------------------------------------------------------
@@ -334,9 +374,15 @@ def hidden_texts(contract: dict) -> list[str]:
 
 
 def _written(arm: str, output: dict) -> list[dict]:
-    """The model-written checks the record holds for an arm on a patch, each ``{file, text, nodes}``: a search arm's
-    findings from proposed checks (a stated check's or a repository test's is not model-written); every kept file of
-    arms E and R, with the findings in it."""
+    """The model-written checks the record holds for an arm on a patch, each ``{check, file, text, nodes}``: every
+    proposed check a search arm ran, with the findings from it (the coordinator's ruling on item 81; a record from
+    before it holds only the findings from proposed checks, which are measured then); every kept file of arms E and
+    R, with the findings in it."""
+    if arm in ("C", "T") and isinstance(output.get("checks"), list):
+        findings = [f for f in output.get("findings") or [] if isinstance(f, dict)]
+        return [{"check": one.get("check"), "file": one.get("placed"), "text": one.get("text") or "",
+                 "nodes": [f.get("node") for f in findings if f.get("check") == one.get("check")]}
+                for one in output["checks"] if isinstance(one, dict)]
     if arm in ("C", "T"):
         return [{"file": f.get("file") or str(f.get("node") or ""), "text": f.get("text") or "",
                  "nodes": [f.get("node")]} for f in output.get("findings") or []
@@ -352,7 +398,7 @@ def measure_similarity(outputs: dict[str, dict], hidden: dict[str, list[str]], s
     """``similarity`` of every model-written check the record holds (``outputs``: each patch's arms' outputs) to its
     task's hidden tests (``hidden``: each patch's ``hidden_texts``): per patch and arm the checks with their similarity
     and whether it is above the threshold, and the findings in those above it (``above``: ``[patch, arm, node]``).
-    A search arm's other proposed checks are not in the record with their text, so they are not measured."""
+    A search arm's checks are every proposed check it ran, with their texts (``rehearsal.observed_checks``)."""
     spec = check_similarity(spec)
     patches, above = {}, []
     for patch, arms in outputs.items():
@@ -362,10 +408,11 @@ def measure_similarity(outputs: dict[str, dict], hidden: dict[str, list[str]], s
             for check in _written(arm, arms.get(arm) or {}):
                 score = similarity(check["text"], hidden.get(patch) or [], spec)
                 over = score > spec["threshold"]
-                measured.append({"file": check["file"], "similarity": round(score, 6), "above": over,
+                measured.append({**({"check": check["check"]} if check.get("check") else {}), "file": check["file"],
+                                 "similarity": round(score, 6), "above": over,
                                  "findings": [n for n in check["nodes"] if n]})
                 above += [[patch, arm, node] for node in check["nodes"] if node and over]
             patches[patch][arm] = measured
     return {"spec": spec, "patches": patches, "above": above,
-            "note": "measured in the label step, inside the vault, after the arms' record was hashed; a search arm's "
-                    "checks are measured where the record holds their text (its findings)"}
+            "note": "measured in the label step, inside the vault, after the arms' record was hashed, on every "
+                    "proposed check the search arms ran and every test arms E and R kept"}

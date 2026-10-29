@@ -6,7 +6,10 @@ Development fixtures only (two small applications written here, disjoint from ev
 caller and G6's review are fakes."""
 from __future__ import annotations
 
+import hashlib
 import json
+import sys
+import types
 
 import pytest
 
@@ -229,11 +232,48 @@ def test_the_projection_gives_each_unit_a_low_a_high_and_a_cap_bound_for_the_rea
     assert got["totals"]["V9"]["high"] == pytest.approx(got["patch"]["high"] + got["self_review"]["high"])
 
 
+def fake_search_module(monkeypatch):
+    """Verification search as G6's review reaches it: by the module's attributes, when it calls them."""
+    fake = types.ModuleType("g6.harness.verification_search")
+    fake.search = lambda change, checks, placed, *, deadline, **kwargs: "searched"
+    fake.not_run = lambda checks, placed, why, origins=None: "not run"
+    monkeypatch.setitem(sys.modules, "g6.harness.verification_search", fake)
+    return fake
+
+
+ONE = types.SimpleNamespace(id="g6p-check-1", requirement_id="R1", source="def test_a():\n    assert 1\n")
+TWO = types.SimpleNamespace(id="g6p-example-2", requirement_id="R2", source="TEMPLATE = 'example.v1'\n")
+PLACED = {"g6p-check-1": "g6_check_a/test_a.py", "g6p-example-2": "g6_check_b/test_g6_example.py"}
+
+
+def test_a_search_arm_keeps_the_text_of_every_check_verification_search_is_given_and_leaves_g6_as_it_was(
+        monkeypatch):
+    # the coordinator's ruling on item 81: the text of every proposed check C and T ran goes in the record
+    fake = fake_search_module(monkeypatch)
+    search, not_run = fake.search, fake.not_run
+    with rehearsal.observed_checks() as seen:
+        import g6.harness.verification_search as vs
+        assert vs.search(None, [ONE, TWO], PLACED, deadline=1.0) == "searched"
+        assert vs.not_run([ONE], PLACED, "the integrity stage stopped it") == "not run"
+    assert fake.search is search and fake.not_run is not_run                           # G6 is left as it was
+    assert list(seen.values()) == [
+        {"check": "g6p-check-1", "requirement": "R1", "placed": "g6_check_a/test_a.py", "text": ONE.source,
+         "sha256": hashlib.sha256(ONE.source.encode("utf-8")).hexdigest(), "ran": True},
+        {"check": "g6p-example-2", "requirement": "R2", "placed": "g6_check_b/test_g6_example.py", "text": TWO.source,
+         "sha256": hashlib.sha256(TWO.source.encode("utf-8")).hexdigest(), "ran": True}]
+    with pytest.raises(RuntimeError):
+        with rehearsal.observed_checks():
+            raise RuntimeError("a review that fails")
+    assert fake.search is search and fake.not_run is not_run                           # and after a failure too
+
+
 def test_arm_c_and_t_are_arm_as_rule_with_their_search_and_the_stopped_caller(tmp_path, monkeypatch):
     seen = {}
+    fake_search_module(monkeypatch)
 
     def review(tree, *, task, requirements, timeout_s, search=None, llm=None, **kwargs):
         seen.update(search=search, llm=llm, requirements=requirements)
+        sys.modules["g6.harness.verification_search"].search(None, [ONE], PLACED, deadline=1.0)
         return {"ok": True, "assessment": {"outcome": "supported_within_scope", "reasons": [],
                                           "requirements": [{"id": "R1", "status": "passed_on_stated_checks",
                                                             "checks": [{"id": "test_a.py", "verdict": "passed",
@@ -252,3 +292,4 @@ def test_arm_c_and_t_are_arm_as_rule_with_their_search_and_the_stopped_caller(tm
     assert isinstance(seen["llm"], rehearsal.StoppedCaller) and seen["requirements"][0]["checks"] == ["test_a.py"]
     assert got["own"]["category"] in dispositions.CATEGORIES and got["report"]["assessment"]
     assert got["search_stage"] == {"ran_to_result": True} and got["model_calls"] == 1 and got["findings"] == []
+    assert [(c["check"], c["text"]) for c in got["checks"]] == [("g6p-check-1", ONE.source)]

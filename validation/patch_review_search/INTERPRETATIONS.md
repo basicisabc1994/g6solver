@@ -628,3 +628,19 @@ Items from 77 cover the paid rehearsal (`rehearsal.py`), on development fixtures
       proposed checks are not in the record with their text, so they are not measured.
     - **Input and output tokens**: item 80.
     For the coordinator's ruling: the similarity measure, its run length and its threshold above all.
+    Ruling (coordinator, 2026-10-29): `token_containment.v1`, with runs of 8 tokens and a threshold of 0.5, is
+    accepted, and the reason codes per arm A, C and T are accepted. Two changes were ruled, and are built:
+    - Similarity covers every check C and T wrote, so each search arm keeps the text of every proposed check it ran
+      (`rehearsal.observed_checks`, which watches verification search's `search` and `not_run` for the review's
+      length and puts them back after it; the driver keeps the list as `checks`), and all of them are measured, a
+      search arm's findings matched to their checks by id. `freeze_check` requires, at the frozen commit, the shape
+      the observer watches: `search(change, checks, placed, ...)`, `not_run(checks, placed, ...)`, a proposed check's
+      `id`, `requirement_id` and `source`, and the review reaching both through the module. On G6's real review at
+      0c2a4f98e4, inside the container and with no model, it kept a proposed check's exact text.
+    - "Refused for exceeding the limits" is read from G6's structured record wherever it has one: a model check
+      refused with `G6_E_MODEL_CHECK_INPUT_TOO_LARGE`, `OUTPUT_TOO_LARGE` or `TIME_LIMIT_TOO_LONG`. A refused instance
+      or proposal carries no code, only its reason, so there the reason is read by G6's own four phrasings in
+      `verification_templates._state_invariant` (the model over model_checking's limits; the depth or the traces above
+      their limits; the history variables over model_checking's limit). They are pinned exactly by the tests and by a
+      `freeze_check` probe of the frozen commit's source, so a change of wording fails loudly. Each refusal is listed
+      with what it was read from (`code` or `reason text`).
