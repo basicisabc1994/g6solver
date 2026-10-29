@@ -940,6 +940,10 @@ def g6_info(g6: str) -> dict[str, Any]:
 
 
 def read_key() -> str:
+    """The key, through ``g6.core.keys`` from this checkout's ``src`` (``python -I`` puts nothing else on the path)."""
+    src = str(REPO_ROOT / "src")
+    if src not in sys.path:
+        sys.path.insert(0, src)
     from g6.core import keys
 
     return keys.require(keys.Key("ANTHROPIC_API_KEY", "the worked examples' Claude Code runs (the owner's key)",
