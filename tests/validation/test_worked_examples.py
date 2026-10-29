@@ -295,11 +295,12 @@ class FakeDocker:
                           "modelUsage": {c.MODEL: {"outputTokens": 1000}}}])
 
 
-def _ctx(tmp_path, docker, *, validated=True, g6_commit_ok=True):
+def _ctx(tmp_path, docker, *, validated=True, g6_commit_ok=True, oracle_id="sha256:img"):
     archive = c.Archive(tmp_path / "archive")
     if validated:
         v = archive.start("validate", TASK.id)
-        v.finish({"fail_to_pass": ["t::a"], "pass_to_pass": ["t::b"], "ok": True}, "finished")
+        v.finish({"fail_to_pass": ["t::a"], "pass_to_pass": ["t::b"], "ok": True, "oracle_image_id": oracle_id},
+                 "finished")
     return we.Context(archive=archive, docker=docker, key_reader=lambda: KEY, issue_reader=lambda t: ("T", "body"),
                       g6={"commit": "g" * 40, "image": "g6we-base:gggg", "contains_required": g6_commit_ok},
                       proxy_source=tmp_path / "proxy.py", environ={"PATH": "x"})
@@ -333,7 +334,8 @@ def test_a_run_passes_the_key_by_name_only_and_cleans_up_its_own(tmp_path):
 def test_a_run_refuses_before_any_start(tmp_path):
     (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
     for ctx, why in ((_ctx(tmp_path / "a", FakeDocker(), validated=False), "validat"),
-                     (_ctx(tmp_path / "b", FakeDocker(), g6_commit_ok=False), "commit")):
+                     (_ctx(tmp_path / "b", FakeDocker(), g6_commit_ok=False), "commit"),
+                     (_ctx(tmp_path / "d", FakeDocker(), oracle_id="sha256:older"), "images this run")):
         ctx.proxy_source = tmp_path / "proxy.py"
         rec = we.run_task(ctx, TASK)
         assert rec["status"] == "refused" and why in rec["why"]

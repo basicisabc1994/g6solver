@@ -605,6 +605,9 @@ def refusal(ctx: Context, task: Task) -> str:
     v = latest(ctx.archive, "validate", task.id)
     if v is None or not v["record"].get("ok") or not v["record"].get("fail_to_pass"):
         return "the task has no finished validation with a FAIL_TO_PASS test"
+    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    if v["record"].get("oracle_image_id") != out(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}")):
+        return "the task's validation was not made on the images this run would use"
     ok, why = c.may_start(c.spent(ctx.archive.rows()))
     return "" if ok else f"the $100 stop: {why}"
 
@@ -768,10 +771,13 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
 
 def validate(ctx: Context, task: Task) -> dict[str, Any]:
     run = ctx.archive.start("validate", task.id, g6_commit=ctx.g6.get("commit"))
+    _, oracle = image_names(task, str(ctx.g6["commit"]))
+    oracle_id = checked(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}"), "the oracle image")
     base = _oracle_run(ctx, task, folder=run, label="base")
     fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed")
     f2p, p2p = fail_to_pass(base.get("results") or {}, fixed.get("results") or {})
-    record = {"base": base, "fixed": fixed, "fail_to_pass": f2p, "pass_to_pass": p2p, "modules": task.test_modules,
+    record = {"oracle_image_id": oracle_id, "base": base, "fixed": fixed, "fail_to_pass": f2p, "pass_to_pass": p2p,
+              "modules": task.test_modules,
               "ok": bool(f2p), "why": "" if f2p else "no test fails on the parent's code and passes with the fix"}
     return run.finish(record, "finished")
 
@@ -873,6 +879,7 @@ def build_images(archive: c.Archive, task: Task, g6_commit: str, docker: Docker 
         d = archive.root / "build" / f"{name}-{task.id}-{g6_commit[:12]}"
         d.mkdir(parents=True, exist_ok=True)
         (d / "Dockerfile").write_bytes(text.encode("utf-8"))
+        docker("image", "rm", "-f", tag, timeout=600)     # a failed build must never leave an older image in its place
         rec[f"{name}_id"] = build(docker, d, tag, folder, name)
     return folder.finish(rec, "finished")
 
