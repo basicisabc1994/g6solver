@@ -189,3 +189,15 @@ archive and the table, marked as such. Results are described in plain words: wha
   not known here. Newest merges go first.
 - Anything about other models, other agents, or settings other than these.
 - G6's own components beyond what the agent chose to call.
+
+## 9. Changes after the plan's commit
+
+### 2026-10-29: a changed test data file is run through the test module that reads it (before any run)
+
+**Why.** Applying section 2 showed that one of the chosen tasks (psf/black #5521) has its test case only in a data
+file under `tests/data/cases/`, which a test module (`tests/test_format.py`) reads and runs, one test per file. Run directly, such a file is not a pytest module, so "those test files are run" (section 3) would run
+no test at all, and the task would be dropped for a reason that has nothing to do with the fix.
+
+**Change.** In sections 3 and 5, a changed or added file under the tests folder that holds no pytest test (no
+function or class pytest collects) is run through the test module of the project that reads it: that whole module is
+run in its place. The selection record names the module for each task. Nothing else changes.
