@@ -136,7 +136,7 @@ def test_the_home_page_says_the_thesis(client):
     page = client.get("/").content.decode()
     assert "AI builds.<br>Evidence<br>decides." in page
     # owner, 2026-10-23: the browser tab says what G6 does, not the thesis
-    assert "<title>G6: build agents from parts you can check" in page
+    assert "<title>G6: make AI agents check their own work" in page
     for step in ("Propose", "Test", "Gate", "Approve"):
         assert f">{step}<" in page, step
     assert 'claude mcp add g6 -- g6-mcp' in page

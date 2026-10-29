@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}G6: build agents from parts you can check{% endblock %}
-{% block meta_description %}For developers using Claude Code, Codex and other coding agents: G6 is a free, open-source framework that checks for made-up facts, unfinished work and risky actions before your agent says it's done.{% endblock %}
+{% block title %}G6: make AI agents check their own work{% endblock %}
+{% block meta_description %}For developers using Claude Code and Codex: a free, open-source tool your agent calls before it says a change is done. It runs the tests the change touches, looks for weakened tests, and shows each defect it reproduces with a command to see it yourself.{% endblock %}
 {% block content %}
 {% comment %}
 The home page (site design, docs/superpowers/specs/2026-10-19-g6-site-design.md §1b-1c). The lattice is G6's components
@@ -24,10 +24,11 @@ Copy is a draft for the owner's review in the live preview.
     </div>
     <div class="stage__copy wrap">
         <header class="hero">
-            <h1 class="display display--why" id="hero-title">Build agents<br>from parts<br>you can check.</h1>
-            <p class="lede strong why">An open-source library of AI components for reasoning, evidence, verification and action control.
-            Use parts alone, connect explicit contracts, or adapt a workflow to your task. G6 records what was checked
-            and what remains uncertain; application benefits must be demonstrated through testing.</p>
+            <h1 class="display display--why" id="hero-title">Now you can<br>make AI agents<br>check their<br>own work.</h1>
+            <p class="lede strong why">For developers using Claude Code and Codex: a free, open-source tool your agent
+            calls before it says a change is done. G6 runs the tests the change touches, confined where your computer
+            allows, looks for weakened tests, and shows each defect it reproduces with a command to check it yourself.
+            It says what it could not check, and does not prove a change correct.</p>
             <div class="actions">
                 <a href="{% url 'pages:get_started' %}" class="btn cta">Get started</a>
                 <a href="#loop" class="btn">See how it works</a>
