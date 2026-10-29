@@ -24,6 +24,12 @@
    "commit": "9e9b9bb",
    "fault": "an agent that committed its change left nothing for V7's capture against HEAD, so the patch would have counted as empty",
    "found_in": "run 4"
+  },
+  {
+   "change": "a session is charged its result record's usage, the invocation's totals, and the record's sessions are priced again from the stream each one kept",
+   "commit": "c377c62",
+   "fault": "each streamed assistant message carries a placeholder output count (1 to 4 tokens), and the launcher charged their sum, so every session's output went uncharged (Claude Code's own budget flag still held each session to its cap)",
+   "found_in": "runs 1 to 5, seen after run 5"
   }
  ],
  "kind": "rehearsal on development fixtures, not study data",
@@ -81,15 +87,15 @@
     30,
     45
    ],
-   "high": 3.5122,
-   "low": 1.26,
+   "high": 4.1011,
+   "low": 1.664,
    "observed": [
-    0.062752,
-    0.026825,
-    0.07805,
-    0.029588,
-    0.031053,
-    0.023734
+    0.084322,
+    0.03471,
+    0.091135,
+    0.037603,
+    0.054567,
+    0.030464
    ]
   },
   "review_r": {
@@ -98,14 +104,14 @@
     30,
     30
    ],
-   "high": 2.608,
-   "low": 1.8553,
+   "high": 3.9102,
+   "low": 2.5787,
    "observed": [
-    0.086935,
-    0.033913,
-    0.062433,
-    0.084522,
-    0.041408
+    0.13034,
+    0.051523,
+    0.076183,
+    0.114432,
+    0.057298
    ]
   },
   "self_review": {
@@ -114,27 +120,27 @@
     30,
     45
    ],
-   "high": 0.9257,
-   "low": 0.4389,
+   "high": 1.472,
+   "low": 0.6825,
    "observed": [
-    0.016774,
-    0.015331,
-    0.020572,
-    0.007523,
-    0.016117,
-    0.011459
+    0.026029,
+    0.024516,
+    0.032712,
+    0.012173,
+    0.023467,
+    0.017604
    ]
   },
   "totals": {
    "V10": {
     "cap_bound": 117.432,
-    "high": 5.8266,
-    "low": 3.7594
+    "high": 7.1288,
+    "low": 4.4828
    },
    "V9": {
     "cap_bound": 146.25,
-    "high": 4.4379,
-    "low": 1.6989
+    "high": 5.5731,
+    "low": 2.3465
    }
   }
  },
@@ -155,72 +161,92 @@
    "results": {},
    "sessions": [
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.032012,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 17512
+     },
      "calls": 4,
+     "charged_dollars": 0.082813,
      "kind": "patch",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 14.531,
-     "stop_dollars": 0.082813,
+     "stop_dollars": 0.045146,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 17512,
       "cache_read_input_tokens": 49793,
       "input_tokens": 8,
-      "output_tokens": 279
-     }
+      "output_tokens": 1027
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.012976,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 4568
+     },
      "calls": 3,
+     "charged_dollars": 0.029134,
      "kind": "patch",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 5.656,
-     "stop_dollars": 0.029134,
+     "stop_dollars": 0.016402,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 4568,
       "cache_read_input_tokens": 45750,
       "input_tokens": 6,
-      "output_tokens": 170
-     }
+      "output_tokens": 537
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.01071,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 1259
+     },
      "calls": 3,
+     "charged_dollars": 0.018649,
      "kind": "self_review",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 9.265,
-     "stop_dollars": 0.018649,
+     "stop_dollars": 0.011655,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 1259,
       "cache_read_input_tokens": 54056,
       "input_tokens": 6,
-      "output_tokens": 279
-     }
+      "output_tokens": 745
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.009437,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 1194
+     },
      "calls": 3,
+     "charged_dollars": 0.018485,
      "kind": "self_review",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 6.672,
-     "stop_dollars": 0.018485,
+     "stop_dollars": 0.010333,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 1194,
       "cache_read_input_tokens": 53136,
       "input_tokens": 6,
-      "output_tokens": 307
-     }
+      "output_tokens": 525
+     },
+     "usage_source": "result"
     }
    ],
    "spending_differences": [],
@@ -238,106 +264,136 @@
    "results": {},
    "sessions": [
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.017098,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 4861
+     },
      "calls": 4,
+     "charged_dollars": 0.034738,
      "kind": "patch",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 13.281,
-     "stop_dollars": 0.034738,
+     "stop_dollars": 0.020744,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 4861,
       "cache_read_input_tokens": 62588,
       "input_tokens": 8,
-      "output_tokens": 276
-     }
+      "output_tokens": 951
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.012938,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 4573
+     },
      "calls": 3,
+     "charged_dollars": 0.029065,
      "kind": "patch",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 8.484,
-     "stop_dollars": 0.029065,
+     "stop_dollars": 0.016368,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 4573,
       "cache_read_input_tokens": 45757,
       "input_tokens": 6,
-      "output_tokens": 161
-     }
+      "output_tokens": 528
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.007177,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 876
+     },
      "calls": 2,
+     "charged_dollars": 0.013289,
      "kind": "self_review",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 7.0,
-     "stop_dollars": 0.013289,
+     "stop_dollars": 0.007834,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 876,
       "cache_read_input_tokens": 35583,
       "input_tokens": 4,
-      "output_tokens": 266
-     }
+      "output_tokens": 504
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.010691,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 1397
+     },
      "calls": 3,
+     "charged_dollars": 0.019588,
      "kind": "self_review",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 9.969,
-     "stop_dollars": 0.019588,
+     "stop_dollars": 0.011739,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 1397,
       "cache_read_input_tokens": 53138,
       "input_tokens": 6,
-      "output_tokens": 336
-     }
+      "output_tokens": 725
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.014736,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 6721
+     },
      "calls": 2,
+     "charged_dollars": 0.035613,
      "kind": "review_r",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 10.281,
-     "stop_dollars": 0.035613,
+     "stop_dollars": 0.019777,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 6721,
       "cache_read_input_tokens": 28457,
       "input_tokens": 4,
-      "output_tokens": 303
-     }
+      "output_tokens": 697
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": null,
-     "cache_writes": null,
+     "accounted_dollars": 0.014964,
+     "cache_writes": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 6346
+     },
      "calls": 3,
+     "charged_dollars": 0.037617,
      "kind": "review_r",
      "label": "not the study's model",
      "model": "claude-sonnet-5-5",
      "seconds": 9.969,
-     "stop_dollars": 0.037617,
+     "stop_dollars": 0.019724,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 6346,
       "cache_read_input_tokens": 45555,
       "input_tokens": 6,
-      "output_tokens": 311
-     }
+      "output_tokens": 494
+     },
+     "usage_source": "result"
     }
    ],
    "spending_differences": [],
@@ -400,124 +456,136 @@
    },
    "sessions": [
     {
-     "accounted_dollars": 0.042692,
+     "accounted_dollars": 0.064262,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 26746
      },
      "calls": 5,
+     "charged_dollars": 0.062752,
      "kind": "patch",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 40.766,
-     "stop_dollars": 0.062752,
+     "stop_dollars": 0.084322,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 26746,
       "cache_read_input_tokens": 91627,
       "input_tokens": 42,
-      "output_tokens": 11
-     }
+      "output_tokens": 4325
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.022557,
+     "accounted_dollars": 0.030441,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 5692
      },
      "calls": 7,
+     "charged_dollars": 0.026825,
      "kind": "patch",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 19.219,
-     "stop_dollars": 0.026825,
+     "stop_dollars": 0.03471,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 5692,
       "cache_read_input_tokens": 152885,
       "input_tokens": 58,
-      "output_tokens": 19
-     }
+      "output_tokens": 1596
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.014678,
+     "accounted_dollars": 0.023933,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 2795
      },
      "calls": 4,
+     "charged_dollars": 0.016774,
      "kind": "self_review",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 20.359,
-     "stop_dollars": 0.016774,
+     "stop_dollars": 0.026029,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 2795,
       "cache_read_input_tokens": 111058,
       "input_tokens": 33,
-      "output_tokens": 9
-     }
+      "output_tokens": 1860
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.013327,
+     "accounted_dollars": 0.022512,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 2672
      },
      "calls": 4,
+     "charged_dollars": 0.015331,
      "kind": "self_review",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 19.89,
-     "stop_dollars": 0.015331,
+     "stop_dollars": 0.024516,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 2672,
       "cache_read_input_tokens": 99342,
       "input_tokens": 33,
-      "output_tokens": 4
-     }
+      "output_tokens": 1841
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.062854,
+     "accounted_dollars": 0.106259,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 32108
      },
      "calls": 9,
+     "charged_dollars": 0.086935,
      "kind": "review_r",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 85.328,
-     "stop_dollars": 0.086935,
+     "stop_dollars": 0.13034,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 32108,
       "cache_read_input_tokens": 225362,
       "input_tokens": 73,
-      "output_tokens": 22
-     }
+      "output_tokens": 8703
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.025279,
+     "accounted_dollars": 0.042889,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 11512
      },
      "calls": 5,
+     "charged_dollars": 0.033913,
      "kind": "review_r",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 35.593,
-     "stop_dollars": 0.033913,
+     "stop_dollars": 0.051523,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 11512,
       "cache_read_input_tokens": 107984,
       "input_tokens": 41,
-      "output_tokens": 10
-     }
+      "output_tokens": 3532
+     },
+     "usage_source": "result"
     }
    ],
    "spending_differences": [
@@ -664,104 +732,114 @@
    "results": {},
    "sessions": [
     {
-     "accounted_dollars": 0.058653,
+     "accounted_dollars": 0.071738,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 25863
      },
      "calls": 12,
+     "charged_dollars": 0.07805,
      "kind": "patch",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 33.469,
-     "stop_dollars": 0.07805,
+     "stop_dollars": 0.091135,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 25863,
       "cache_read_input_tokens": 260511,
       "input_tokens": 98,
-      "output_tokens": 35
-     }
+      "output_tokens": 2652
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.02514,
+     "accounted_dollars": 0.033155,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 5930
      },
      "calls": 8,
+     "charged_dollars": 0.029588,
      "kind": "patch",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 19.813,
-     "stop_dollars": 0.029588,
+     "stop_dollars": 0.037603,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 5930,
       "cache_read_input_tokens": 175717,
       "input_tokens": 66,
-      "output_tokens": 18
-     }
+      "output_tokens": 1621
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.017989,
+     "accounted_dollars": 0.030129,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 3444
      },
      "calls": 5,
+     "charged_dollars": 0.020572,
      "kind": "self_review",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 26.125,
-     "stop_dollars": 0.020572,
+     "stop_dollars": 0.032712,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 3444,
       "cache_read_input_tokens": 135929,
       "input_tokens": 41,
-      "output_tokens": 10
-     }
+      "output_tokens": 2438
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.006544,
+     "accounted_dollars": 0.011194,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 1305
      },
      "calls": 2,
+     "charged_dollars": 0.007523,
      "kind": "self_review",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 10.031,
-     "stop_dollars": 0.007523,
+     "stop_dollars": 0.012173,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 1305,
       "cache_read_input_tokens": 48712,
       "input_tokens": 17,
-      "output_tokens": 5
-     }
+      "output_tokens": 935
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.043433,
+     "accounted_dollars": 0.057183,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 25334
      },
      "calls": 6,
+     "charged_dollars": 0.062433,
      "kind": "review_r",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 29.078,
-     "stop_dollars": 0.062433,
+     "stop_dollars": 0.076183,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 25334,
       "cache_read_input_tokens": 116412,
       "input_tokens": 49,
-      "output_tokens": 15
-     }
+      "output_tokens": 2765
+     },
+     "usage_source": "result"
     }
    ],
    "spending_differences": [],
@@ -783,7 +861,7 @@
     "ok": true
    },
    "ledger_spent_after": 1.228919,
-   "note": "claude-haiku-4-5 end to end at f3411d10ce with the four fixes; arm E's codec reply began with prose before its fence and stays a tool error, so V10's criterion 1 is not met",
+   "note": "claude-haiku-4-5 end to end at f3411d10ce with the first four fixes; arm E's codec reply began with prose before its fence and stays a tool error, so V10's criterion 1 is not met; arm R's dollars under v10 are what the ledger charged before the fifth fix (its sessions' repriced dollars are under sessions)",
    "record": {
     "entries": 13,
     "final": "39621499a4f548c540ce4e716b1ea28e488f4d81efb2b91327e567a8d600b31a"
@@ -824,124 +902,136 @@
    },
    "sessions": [
     {
-     "accounted_dollars": 0.024547,
+     "accounted_dollars": 0.048062,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 8674
      },
      "calls": 6,
+     "charged_dollars": 0.031053,
      "kind": "patch",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 45.407,
-     "stop_dollars": 0.031053,
+     "stop_dollars": 0.054567,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 8674,
       "cache_read_input_tokens": 135695,
       "input_tokens": 50,
-      "output_tokens": 17
-     }
+      "output_tokens": 4720
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.019741,
+     "accounted_dollars": 0.026471,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 5324
      },
      "calls": 6,
+     "charged_dollars": 0.023734,
      "kind": "patch",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 17.313,
-     "stop_dollars": 0.023734,
+     "stop_dollars": 0.030464,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 5324,
       "cache_read_input_tokens": 129508,
       "input_tokens": 50,
-      "output_tokens": 17
-     }
+      "output_tokens": 1363
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.014235,
+     "accounted_dollars": 0.021585,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 2509
      },
      "calls": 4,
+     "charged_dollars": 0.016117,
      "kind": "self_review",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 16.844,
-     "stop_dollars": 0.016117,
+     "stop_dollars": 0.023467,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 2509,
       "cache_read_input_tokens": 110458,
       "input_tokens": 33,
-      "output_tokens": 4
-     }
+      "output_tokens": 1474
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.009877,
+     "accounted_dollars": 0.016022,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 2109
      },
      "calls": 3,
+     "charged_dollars": 0.011459,
      "kind": "self_review",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 13.515,
-     "stop_dollars": 0.011459,
+     "stop_dollars": 0.017604,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 2109,
       "cache_read_input_tokens": 72007,
       "input_tokens": 25,
-      "output_tokens": 3
-     }
+      "output_tokens": 1232
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.061524,
+     "accounted_dollars": 0.091434,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 30664
      },
      "calls": 10,
+     "charged_dollars": 0.084522,
      "kind": "review_r",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 61.922,
-     "stop_dollars": 0.084522,
+     "stop_dollars": 0.114432,
      "task": "dev-codec",
      "tokens": {
       "cache_creation_input_tokens": 30664,
       "cache_read_input_tokens": 229977,
       "input_tokens": 81,
-      "output_tokens": 23
-     }
+      "output_tokens": 6005
+     },
+     "usage_source": "result"
     },
     {
-     "accounted_dollars": 0.032732,
+     "accounted_dollars": 0.048622,
      "cache_writes": {
       "ephemeral_1h_input_tokens": 0,
       "ephemeral_5m_input_tokens": 11567
      },
      "calls": 8,
+     "charged_dollars": 0.041408,
      "kind": "review_r",
      "label": "the study's model",
      "model": "claude-haiku-4-5",
      "seconds": 35.281,
-     "stop_dollars": 0.041408,
+     "stop_dollars": 0.057298,
      "task": "dev-wallet",
      "tokens": {
       "cache_creation_input_tokens": 11567,
       "cache_read_input_tokens": 181237,
       "input_tokens": 65,
-      "output_tokens": 17
-     }
+      "output_tokens": 3195
+     },
+     "usage_source": "result"
     }
    ],
    "spending_differences": [],

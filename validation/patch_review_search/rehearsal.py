@@ -467,8 +467,8 @@ FAULTS = (
     {"found_in": "runs 1 to 5, seen after run 5", "fault": "each streamed assistant message carries a placeholder "
      "output count (1 to 4 tokens), and the launcher charged their sum, so every session's output went uncharged "
      "(Claude Code's own budget flag still held each session to its cap)", "change": "a session is charged its "
-     "result record's usage, the invocation's totals, and the record's sessions are priced again from their "
-     "transcripts", "commit": ""},
+     "result record's usage, the invocation's totals, and the record's sessions are priced again from the stream "
+     "each one kept", "commit": "c377c62"},
 )
 
 
