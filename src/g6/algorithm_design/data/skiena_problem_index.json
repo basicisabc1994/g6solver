@@ -1,0 +1,1056 @@
+{
+  "version": "0.1.0",
+  "scope": "catalog section titles only; not an extracted implementation catalog",
+  "count": 75,
+  "problems": [
+    {
+      "id": "skiena.12.1",
+      "title": "Dictionaries",
+      "section": "12.1",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.1",
+        "printed_page": 367,
+        "pdf_page": 377
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.2",
+      "title": "Priority Queues",
+      "section": "12.2",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.2",
+        "printed_page": 373,
+        "pdf_page": 383
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.3",
+      "title": "Suffix Trees and Arrays",
+      "section": "12.3",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.3",
+        "printed_page": 377,
+        "pdf_page": 387
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.4",
+      "title": "Graph Data Structures",
+      "section": "12.4",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.4",
+        "printed_page": 381,
+        "pdf_page": 391
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.5",
+      "title": "Set Data Structures",
+      "section": "12.5",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.5",
+        "printed_page": 385,
+        "pdf_page": 395
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.12.6",
+      "title": "Kd-Trees",
+      "section": "12.6",
+      "category": "data_structure",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "12.6",
+        "printed_page": 389,
+        "pdf_page": 399
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.1",
+      "title": "Solving Linear Equations",
+      "section": "13.1",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.1",
+        "printed_page": 395,
+        "pdf_page": 405
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.2",
+      "title": "Bandwidth Reduction",
+      "section": "13.2",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.2",
+        "printed_page": 398,
+        "pdf_page": 408
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.3",
+      "title": "Matrix Multiplication",
+      "section": "13.3",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.3",
+        "printed_page": 401,
+        "pdf_page": 411
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.4",
+      "title": "Determinants and Permanents",
+      "section": "13.4",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.4",
+        "printed_page": 404,
+        "pdf_page": 414
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.5",
+      "title": "Constrained and Unconstrained Optimization",
+      "section": "13.5",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.5",
+        "printed_page": 407,
+        "pdf_page": 417
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.6",
+      "title": "Linear Programming",
+      "section": "13.6",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.6",
+        "printed_page": 411,
+        "pdf_page": 421
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.7",
+      "title": "Random Number Generation",
+      "section": "13.7",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.7",
+        "printed_page": 415,
+        "pdf_page": 425
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.8",
+      "title": "Factoring and Primality Testing",
+      "section": "13.8",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.8",
+        "printed_page": 420,
+        "pdf_page": 430
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.9",
+      "title": "Arbitrary-Precision Arithmetic",
+      "section": "13.9",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.9",
+        "printed_page": 423,
+        "pdf_page": 433
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.10",
+      "title": "Knapsack Problem",
+      "section": "13.10",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.10",
+        "printed_page": 427,
+        "pdf_page": 437
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.13.11",
+      "title": "Discrete Fourier Transform",
+      "section": "13.11",
+      "category": "numeric",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "13.11",
+        "printed_page": 431,
+        "pdf_page": 441
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.1",
+      "title": "Sorting",
+      "section": "14.1",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.1",
+        "printed_page": 436,
+        "pdf_page": 446
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.2",
+      "title": "Searching",
+      "section": "14.2",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.2",
+        "printed_page": 441,
+        "pdf_page": 451
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.3",
+      "title": "Median and Selection",
+      "section": "14.3",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.3",
+        "printed_page": 445,
+        "pdf_page": 455
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.4",
+      "title": "Generating Permutations",
+      "section": "14.4",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.4",
+        "printed_page": 448,
+        "pdf_page": 458
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.5",
+      "title": "Generating Subsets",
+      "section": "14.5",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.5",
+        "printed_page": 452,
+        "pdf_page": 462
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.6",
+      "title": "Generating Partitions",
+      "section": "14.6",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.6",
+        "printed_page": 456,
+        "pdf_page": 466
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.7",
+      "title": "Generating Graphs",
+      "section": "14.7",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.7",
+        "printed_page": 460,
+        "pdf_page": 470
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.8",
+      "title": "Calendrical Calculations",
+      "section": "14.8",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.8",
+        "printed_page": 465,
+        "pdf_page": 475
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.9",
+      "title": "Job Scheduling",
+      "section": "14.9",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.9",
+        "printed_page": 468,
+        "pdf_page": 478
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.14.10",
+      "title": "Satisfiability",
+      "section": "14.10",
+      "category": "combinatorial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "14.10",
+        "printed_page": 472,
+        "pdf_page": 482
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.1",
+      "title": "Connected Components",
+      "section": "15.1",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.1",
+        "printed_page": 477,
+        "pdf_page": 487
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.2",
+      "title": "Topological Sorting",
+      "section": "15.2",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.2",
+        "printed_page": 481,
+        "pdf_page": 491
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.3",
+      "title": "Minimum Spanning Tree",
+      "section": "15.3",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.3",
+        "printed_page": 484,
+        "pdf_page": 494
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.4",
+      "title": "Shortest Path",
+      "section": "15.4",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.4",
+        "printed_page": 489,
+        "pdf_page": 499
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.5",
+      "title": "Transitive Closure and Reduction",
+      "section": "15.5",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.5",
+        "printed_page": 495,
+        "pdf_page": 505
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.6",
+      "title": "Matching",
+      "section": "15.6",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.6",
+        "printed_page": 498,
+        "pdf_page": 508
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.7",
+      "title": "Eulerian Cycle/Chinese Postman",
+      "section": "15.7",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.7",
+        "printed_page": 502,
+        "pdf_page": 512
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.8",
+      "title": "Edge and Vertex Connectivity",
+      "section": "15.8",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.8",
+        "printed_page": 505,
+        "pdf_page": 515
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.9",
+      "title": "Network Flow",
+      "section": "15.9",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.9",
+        "printed_page": 509,
+        "pdf_page": 519
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.10",
+      "title": "Drawing Graphs Nicely",
+      "section": "15.10",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.10",
+        "printed_page": 513,
+        "pdf_page": 523
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.11",
+      "title": "Drawing Trees",
+      "section": "15.11",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.11",
+        "printed_page": 517,
+        "pdf_page": 527
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.15.12",
+      "title": "Planarity Detection and Embedding",
+      "section": "15.12",
+      "category": "graph_polynomial",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "15.12",
+        "printed_page": 520,
+        "pdf_page": 530
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.1",
+      "title": "Clique",
+      "section": "16.1",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.1",
+        "printed_page": 525,
+        "pdf_page": 535
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.2",
+      "title": "Independent Set",
+      "section": "16.2",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.2",
+        "printed_page": 528,
+        "pdf_page": 538
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.3",
+      "title": "Vertex Cover",
+      "section": "16.3",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.3",
+        "printed_page": 530,
+        "pdf_page": 540
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.4",
+      "title": "Traveling Salesman Problem",
+      "section": "16.4",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.4",
+        "printed_page": 533,
+        "pdf_page": 543
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.5",
+      "title": "Hamiltonian Cycle",
+      "section": "16.5",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.5",
+        "printed_page": 538,
+        "pdf_page": 548
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.6",
+      "title": "Graph Partition",
+      "section": "16.6",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.6",
+        "printed_page": 541,
+        "pdf_page": 551
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.7",
+      "title": "Vertex Coloring",
+      "section": "16.7",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.7",
+        "printed_page": 544,
+        "pdf_page": 554
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.8",
+      "title": "Edge Coloring",
+      "section": "16.8",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.8",
+        "printed_page": 548,
+        "pdf_page": 558
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.9",
+      "title": "Graph Isomorphism",
+      "section": "16.9",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.9",
+        "printed_page": 550,
+        "pdf_page": 560
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.10",
+      "title": "Steiner Tree",
+      "section": "16.10",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.10",
+        "printed_page": 555,
+        "pdf_page": 565
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.16.11",
+      "title": "Feedback Edge/Vertex Set",
+      "section": "16.11",
+      "category": "graph_hard",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "16.11",
+        "printed_page": 559,
+        "pdf_page": 569
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.1",
+      "title": "Robust Geometric Primitives",
+      "section": "17.1",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.1",
+        "printed_page": 564,
+        "pdf_page": 574
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.2",
+      "title": "Convex Hull",
+      "section": "17.2",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.2",
+        "printed_page": 568,
+        "pdf_page": 578
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.3",
+      "title": "Triangulation",
+      "section": "17.3",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.3",
+        "printed_page": 572,
+        "pdf_page": 582
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.4",
+      "title": "Voronoi Diagrams",
+      "section": "17.4",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.4",
+        "printed_page": 576,
+        "pdf_page": 586
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.5",
+      "title": "Nearest Neighbor Search",
+      "section": "17.5",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.5",
+        "printed_page": 580,
+        "pdf_page": 590
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.6",
+      "title": "Range Search",
+      "section": "17.6",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.6",
+        "printed_page": 584,
+        "pdf_page": 594
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.7",
+      "title": "Point Location",
+      "section": "17.7",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.7",
+        "printed_page": 587,
+        "pdf_page": 597
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.8",
+      "title": "Intersection Detection",
+      "section": "17.8",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.8",
+        "printed_page": 591,
+        "pdf_page": 601
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.9",
+      "title": "Bin Packing",
+      "section": "17.9",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.9",
+        "printed_page": 595,
+        "pdf_page": 605
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.10",
+      "title": "Medial-Axis Transform",
+      "section": "17.10",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.10",
+        "printed_page": 598,
+        "pdf_page": 608
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.11",
+      "title": "Polygon Partitioning",
+      "section": "17.11",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.11",
+        "printed_page": 601,
+        "pdf_page": 611
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.12",
+      "title": "Simplifying Polygons",
+      "section": "17.12",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.12",
+        "printed_page": 604,
+        "pdf_page": 614
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.13",
+      "title": "Shape Similarity",
+      "section": "17.13",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.13",
+        "printed_page": 607,
+        "pdf_page": 617
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.14",
+      "title": "Motion Planning",
+      "section": "17.14",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.14",
+        "printed_page": 610,
+        "pdf_page": 620
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.15",
+      "title": "Maintaining Line Arrangements",
+      "section": "17.15",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.15",
+        "printed_page": 614,
+        "pdf_page": 624
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.17.16",
+      "title": "Minkowski Sum",
+      "section": "17.16",
+      "category": "geometry",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "17.16",
+        "printed_page": 617,
+        "pdf_page": 627
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.1",
+      "title": "Set Cover",
+      "section": "18.1",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.1",
+        "printed_page": 621,
+        "pdf_page": 631
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.2",
+      "title": "Set Packing",
+      "section": "18.2",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.2",
+        "printed_page": 625,
+        "pdf_page": 635
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.3",
+      "title": "String Matching",
+      "section": "18.3",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.3",
+        "printed_page": 628,
+        "pdf_page": 638
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.4",
+      "title": "Approximate String Matching",
+      "section": "18.4",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.4",
+        "printed_page": 631,
+        "pdf_page": 641
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.5",
+      "title": "Text Compression",
+      "section": "18.5",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.5",
+        "printed_page": 637,
+        "pdf_page": 647
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {      "id": "skiena.18.6",
+      "title": "Cryptography",
+      "section": "18.6",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.6",
+        "printed_page": 641,
+        "pdf_page": 651
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.7",
+      "title": "Finite State Machine Minimization",
+      "section": "18.7",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.7",
+        "printed_page": 646,
+        "pdf_page": 656
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.8",
+      "title": "Longest Common Substring/Subsequence",
+      "section": "18.8",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.8",
+        "printed_page": 650,
+        "pdf_page": 660
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    },
+    {
+      "id": "skiena.18.9",
+      "title": "Shortest Common Superstring",
+      "section": "18.9",
+      "category": "set_string",
+      "source": {
+        "book_id": "skiena_2008",
+        "section": "18.9",
+        "printed_page": 654,
+        "pdf_page": 664
+      },
+      "enrichment_status": "bibliographic_index_only",
+      "algorithms": []
+    }
+  ]
+}
