@@ -28,7 +28,9 @@
    failing on the patch where G6 cannot say it passed at the base commit (no failing test it can name, the time
    budget spent, a copy over its cap or a base run that never happened, a replay not read or not comparable, one
    that passed in the copy), or the run of those tests giving no result (``derived_test_not_compared``; the launch
-   review's I4), a shortcut only the claim's text reports
+   review's I4), a changed file of test data or a snapshot (one not Python under a ``tests``, ``test``, ``testing``
+   or ``__snapshots__`` folder, which G6 does not compare: ``test_data_changed``, with a next action asking the
+   person to read its diff; the launch review's I3), a shortcut only the claim's text reports
    (``claim_reports_shortcut``), no test ran, no change against the base, the scan for ignored files stopping at
    its limit, a changed entry of a submodule git does not look into (``change_inside_submodule``: git cannot check
    the files a submodule holds), or such a submodule folder G6 could not hash (``submodule_not_hashed``). Each such
@@ -212,6 +214,14 @@ SUBMODULE_NOT_HASHED = "{path}: G6 could not hash the files inside this submodul
 UNSEEN_REASON = ("git is told not to look at {paths} (assume-unchanged or skip-worktree, as a sparse checkout leaves "
                  "files), and it is not in the working tree, so G6 cannot compare it with the base commit")
 UNSEEN_UNKNOWN = "whether the patch changed {path} is unknown: git is told not to look at it, and it is not on the disk"
+#: The launch review's I3: the folders whose files other than Python are the tests' data (expected values, fixtures,
+#: golden files) or their snapshots, which G6 does not compare. Case is ignored, as for the test folders.
+TEST_DATA_FOLDERS = frozenset({"tests", "test", "testing", "__snapshots__"})
+# PENDING copy (the launch review's I3): changed test data, asked about, never an accusation.
+TEST_DATA_REASON = ("the patch changes test data or snapshots, which G6 does not compare, so a re-pinned expected "
+                    "value would look to it like any other change: {paths}")
+TEST_DATA_ASK = ("Read the diff of {path} (git diff {base} -- {path}): it is test data or a snapshot the patch "
+                 "changed, which G6 does not compare; confirm the new values are intended, then review again.")
 #: The most ``import_roots`` a review takes.
 MAX_IMPORT_ROOTS = 8
 # PENDING copy (review C1): a run that loaded a changed module from outside the tree it tested (an installed copy).
@@ -365,6 +375,13 @@ def _runner_changes(change: repo_tests.Change) -> list[str]:
             how = "added" if old is None else "removed" if new is None else "changed"
             found.append(f"{rel}: its {PYTEST_SECTIONS[name]} settings {how}")
     return found
+
+
+def _test_data(change: repo_tests.Change) -> list[str]:
+    """The changed files, added and deleted ones too, that are not Python and lie under a test folder or a
+    ``__snapshots__`` folder (``TEST_DATA_FOLDERS``; the launch review's I3)."""
+    return [rel for rel in change.files if not rel.lower().endswith(".py")
+            and any(part.lower() in TEST_DATA_FOLDERS for part in PurePosixPath(rel).parts[:-1])]
 
 
 def _collection_errors(output: str) -> set[str]:
@@ -833,6 +850,11 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                                                  else "")
         reason("evidence", "file_not_in_working_tree", UNSEEN_REASON.format(paths=shown))
         unknowns.extend(UNSEEN_UNKNOWN.format(path=rel) for rel in change.unseen[:10])
+    data = _test_data(change)   # the launch review's I3: ask, don't accuse
+    if data:
+        shown = ", ".join(data[:10]) + (f" and {len(data) - 10} more" if len(data) > 10 else "")
+        reason("evidence", "test_data_changed", TEST_DATA_REASON.format(paths=shown))
+    asks = [TEST_DATA_ASK.format(base=change.base_commit[:12], path=rel) for rel in data[:10]]
 
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
@@ -938,7 +960,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                         f"{second.get('said', '')}")
                 unknowns.append(said)
                 reason("evidence", NOT_COMPARED, said)
-    follow_ups = _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)
+    follow_ups = [*asks, *_at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots)]
     search = None
     formal = None
     # Each search stage through _stage: what G6's own work raises is its activity's error, never the review's (I2).

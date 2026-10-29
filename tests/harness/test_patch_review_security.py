@@ -470,3 +470,33 @@ def test_confined_a_repository_environment_never_opens_a_folder_of_the_persons(t
     else:
         assert got["ok"] is False and got["warning_card"]["code"] == repo_tests.REPO_PYTHON_INVALID, got
         assert "assessment" not in got
+
+# --- I3: changed test data and snapshots, which G6 does not compare: ask, don't accuse -------------------------------
+
+DATA = {"calc.py": BAD, "tests/test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"}
+DATA_CHECK = [{"id": "R1", "text": "add adds", "checks": ["tests/test_calc.py::test_add"]}]
+
+
+@pytest.mark.parametrize("rel", ["tests/data/expected.json", "tests/__snapshots__/test_calc.ambr",
+                                 "src/pkg/__snapshots__/view.ambr", "Testing/golden.txt"])
+def test_changed_test_data_or_a_snapshot_is_insufficient_evidence_and_the_person_is_asked(tmp_path, monkeypatch, rel):
+    root = _repo(tmp_path, {**DATA, rel: '{"sum": 5}\n'})
+    _write(root, {"calc.py": GOOD, rel: '{"sum": -1}\n'})   # re-pinned
+    _record(monkeypatch, lambda ids: result(ids))
+    got = review_patch(root, task="Repair add.", requirements=DATA_CHECK)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    found = [r for r in assessment["reasons"] if r["code"] == "test_data_changed"]
+    assert found and found[0]["stage"] == "evidence" and rel in found[0]["detail"], assessment["reasons"]
+    asked = [action for action in assessment["next_actions"] if rel in action]
+    assert asked and "diff" in asked[0], assessment["next_actions"]
+    assert "no sign that the tests" not in assessment["summary"]
+
+
+@pytest.mark.parametrize("changed", [{"README.md": "# calc, repaired\n"}, {"docs/tests.md": "how to test\n"}])
+def test_a_changed_file_outside_the_test_folders_leaves_the_outcome_as_it_was(tmp_path, monkeypatch, changed):
+    root = _repo(tmp_path, {**DATA, "README.md": "# calc\n", "docs/tests.md": "testing\n"})
+    _write(root, {"calc.py": GOOD, **changed})
+    _record(monkeypatch, lambda ids: result(ids))
+    got = review_patch(root, task="Repair add.", requirements=DATA_CHECK)
+    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]["reasons"]
