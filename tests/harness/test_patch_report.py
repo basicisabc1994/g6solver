@@ -66,6 +66,8 @@ def _common(report: str) -> None:
     assert "qualified draft" in lines[0].lower()
     assert not re.search(r"\d", _outside_code(lines[0]).split("(")[0]), lines[0]   # no score or count opens it
     assert "## How this was decided" in report
+    assert not re.search(r"\btier\b", report, re.IGNORECASE), report   # no internal names: plain ones
+    assert "/dev/null" not in report and "--confcutdir" not in report
     assert [line.split(":")[0].strip("-* ") for line in lines if line.startswith(("- **Proposed", "- **Tested",
                                                                                  "- **Gate", "- **Approve"))] == [
         "Proposed", "Tested", "Gate", "Approve"]
@@ -89,6 +91,12 @@ def test_confined_the_correct_patch_reads_supported_with_its_demonstrated_requir
     assert report.splitlines()[0].startswith("**Supported within its stated scope**")
     demonstrated = report.split("## Demonstrated on the stated checks", 1)[1].split("##", 1)[0]
     assert "`R1`" in demonstrated and "`R2`" in demonstrated and ADD in demonstrated
+    # the base code subtracts, so both stated checks fail there: they exercise the change, and the report says so
+    assert all("fails at the base commit, passes on the patch" in line for line in demonstrated.strip().splitlines())
+    tested = next(line for line in report.splitlines() if line.startswith("- **Tested"))
+    assert "the stated checks fail at the base commit, so they exercise the change" in tested, tested
+    assert "the stated checks" in tested and "tests that touch the changed code" in tested
+    assert "deeper checks (not run)" in tested
 
 
 def test_confined_a_defect_comes_first_with_a_command_that_reproduces_it(trial):
@@ -97,8 +105,9 @@ def test_confined_a_defect_comes_first_with_a_command_that_reproduces_it(trial):
     assert report.splitlines()[0].startswith("**A defect was found**")
     assert _sections(report)[0] == "Reproduced findings"
     findings = report.split("## Reproduced findings", 1)[1].split("##", 1)[0]
-    assert "`python -m pytest" in findings and NEGATIVE in findings and "`R2`" in findings
+    assert f"`python -m pytest {NEGATIVE}`" in findings and "`R2`" in findings   # the repository's plain command
     assert "not run at the base commit" in findings
+    assert "isolating options" in findings and "reproduction.command" in findings
 
 
 @pytest.mark.parametrize("case", ["weakened-test", "runner-changed"])
@@ -184,6 +193,24 @@ def test_the_report_is_cut_at_its_limit_and_says_where_the_rest_is(repo, monkeyp
     report = got["assessment"]["report"]
     _common(report)
     assert re.search(r"and \d+ more \(`assessment\.completion\.not_established`\)", report), report
+
+
+def test_base_evidence_is_said_in_plain_words_only_where_it_means_the_check_exercises_the_change(repo, monkeypatch):
+    """A requirement's stated check that fails at the base commit and passes on the patch exercises the change; for a
+    requirement that keeps behaviour, a failure at the base keeps its meaning and is not shown as that."""
+    (repo / "calc.py").write_text(GOOD)
+    _runs(monkeypatch)
+    monkeypatch.setattr(patch_review, "_execute_at_base",
+                        lambda change, ids, *, timeout_s, **_: {**result(failed=list(ids)), "isolation": {
+                            "backend": "synthetic-unit-fixture"}})
+    got = review_patch(repo, task="t", requirements=[
+        patch_review.Requirement(id="R1", text="adding stays as it was", kind="preserve", checks=[ADD]),
+        {"id": "R2", "text": "add returns the sum of two negative integers", "checks": [NEGATIVE]}])
+    assert "assessment" in got, got
+    demonstrated = got["assessment"]["report"].split("## Demonstrated on the stated checks", 1)[1].split("##", 1)[0]
+    lines = {line.split("`")[1]: line for line in demonstrated.strip().splitlines()}
+    assert "fails at the base commit, passes on the patch" in lines["R2"]
+    assert "passes on the patch" not in lines["R1"]
 
 
 def test_the_report_decides_nothing(repo, monkeypatch):

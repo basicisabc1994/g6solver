@@ -271,10 +271,13 @@ model that answered, where the caller gives them; every request and reply is in
 Every reply has `assessment.report`: the review as Markdown, at most about 40 lines, for you to show the
 person as it is. It comes in this order: a headline in plain words (the outcome, "qualified draft", "merging
 needs your separate approval"); the reproduced findings, integrity first, each failed check with its
-requirement, a one-line command that reproduces it with the repository's own test command, and whether a base
+requirement, the repository's plain command that reproduces it (such as `python -m pytest test_calc.py::test_add`;
+G6 ran it with its own isolating options, and the exact command is in `reproduction.command`), and whether a base
 run shows it passes at the base commit; what is not established and what would settle it; what was
-demonstrated; at most 3 questions and merging, for the person to decide; how it was decided (proposed, tested,
-gate, approve); and the standing note that the task's specification may be incomplete. It is derived from the
+demonstrated, with "fails at the base commit, passes on the patch" where the base run shows a requirement's
+checks exercise the change; at most 3 questions and merging, for the person to decide; how it was decided
+(proposed, tested, gate, approve), in plain names: the stated checks, tests that touch the changed code, deeper
+checks; and the standing note that the task's specification may be incomplete. It is derived from the
 other fields and decides nothing. Text from the repository or the request in it is shown inert, in code spans.
 
 Every reply has `assessment.completion`, built from what ran: `demonstrated` (requirements passed on their

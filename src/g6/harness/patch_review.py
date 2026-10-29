@@ -1062,7 +1062,10 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
                         f"({ran.get('verdict')}: {ran.get('said') or 'no result'})")
         return []
     actions = []
-    for check, found in _verdicts(passing, ran).items():
+    at_base = _verdicts(passing, ran)
+    if "isolation" in ran:   # each check's own verdict at the base commit, which the readable report says in words
+        runs[-1]["outcomes"] = {check: found["verdict"] for check, found in at_base.items()}
+    for check, found in at_base.items():
         if found["verdict"] != "passed":
             continue
         unknowns.append(f"{check} passes against the base commit's code too, so it may not exercise the change")
