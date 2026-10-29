@@ -114,6 +114,17 @@ def test_a_reply_is_a_json_object_of_files_and_anything_else_cannot_be_parsed():
             arm_e.parse(bad)
 
 
+def test_a_reply_that_is_one_fenced_block_around_the_json_is_read_and_nothing_looser():
+    # the paid rehearsal's third fault: the model wrapped its JSON in one Markdown fence, and every reply was a tool error
+    body = reply(("tests/test_a.py", PASSES))
+    for fenced in (f"```json\n{body}\n```", f"```\n{body}\n```\n", f"  ```json\n{body}\n```  "):
+        assert arm_e.parse(fenced) == [{"path": "tests/test_a.py", "text": PASSES}]
+    for bad in (f"Here are the tests:\n```json\n{body}\n```", f"```json\n{body}\n```\nAnd more.",
+                f"```json\n{body}\n```\n```json\n{body}\n```", f"```python\n{body}\n```"):
+        with pytest.raises(arm_e.Unparseable):
+            arm_e.parse(bad)
+
+
 @pytest.mark.parametrize("path", ["conftest.py", "tests/a_test.py", "tests/test-a.py", "../test_a.py", "/test_a.py",
                                   "tests\\test_a.py", "venv/test_a.py", ".hidden/test_a.py", "x.egg-info/test_a.py",
                                   "tests//test_a.py", "./test_a.py", "tests/__init__.py", "test_a.txt"])

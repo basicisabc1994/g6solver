@@ -165,8 +165,17 @@ def calls(c_calls: int, t_calls: int, *, cap: int) -> int:
     return min(max(int(c_calls), int(t_calls), 1), cap)
 
 
+#: A reply that is one Markdown fence around the JSON, and nothing else (the paid rehearsal's third fault: the model
+#: fenced its JSON, and every reply was refused).
+_FENCED = re.compile(r"\A\s*```(?:json)?[ \t]*\n(.*)\n```\s*\Z", re.DOTALL)
+
+
 def parse(reply: str) -> list[dict]:
-    """The files of one reply, ``[{path, text}]``, or ``Unparseable``."""
+    """The files of one reply, ``[{path, text}]``, or ``Unparseable``: a JSON object, or one fenced block holding it
+    and nothing else."""
+    fenced = _FENCED.match(reply) if isinstance(reply, str) else None
+    if fenced and "```" not in fenced.group(1):
+        reply = fenced.group(1)
     try:
         found = json.loads(reply)
     except (TypeError, ValueError) as exc:
