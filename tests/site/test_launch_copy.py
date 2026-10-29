@@ -132,6 +132,24 @@ def test_patch_review_says_the_patch_runs_in_pytests_own_process():
     assert OWN_PROCESS in section and PATCH_REVIEW_BOUNDARY in section
 
 
+#: L1 (the owner's decision): G6's own environment, made with --copies, and why.
+OWN_ENVIRONMENT = "python -m venv --copies"
+WHY_COPIES = ("on Linux, G6 cannot yet tell its own Python from a project environment linked to the same one, and "
+              "refuses to review then")
+
+
+def test_every_install_makes_g6s_own_environment_with_copies_first_and_says_why(client):
+    for name in ("README.md", "site/docs/index.md", "web/content/guide.md", "site/docs/guide/index.md",
+                 "docs/AI_FOR_AI_WORKFLOW.md", "docs/releases/launch.md"):
+        text = _plain((OSS / name).read_text(encoding="utf-8"))
+        assert OWN_ENVIRONMENT in text and WHY_COPIES in text, name
+        assert text.index(OWN_ENVIRONMENT) < text.index('pip install ".[all]"'), name   # made, then installed into
+    page = flat(client.get("/get-started/").content.decode())
+    assert OWN_ENVIRONMENT in page and WHY_COPIES in page, page
+    assert page.index(OWN_ENVIRONMENT) < page.index('pip install ".[all]"')
+    assert "source .venv/bin/activate" in page and ".venv\\Scripts\\Activate.ps1" in page   # POSIX and PowerShell
+
+
 def test_the_release_notes_say_what_ships_what_does_not_and_leave_the_version_to_the_owner():
     notes = shipped()["docs/releases/launch.md"]
     assert notes.startswith("# G6 VERSION-TO-BE-SET-BY-THE-OWNER")

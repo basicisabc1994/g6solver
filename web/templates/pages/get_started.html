@@ -25,7 +25,12 @@ section is content/install.md.{% endcomment %}
                 <h3 class="h3">Install</h3>
                 <p>G6 installs from a copy of its code; it is not on PyPI.</p>
                 <div class="cmd"><code id="cmd-install">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
+python -m venv --copies .venv
+source .venv/bin/activate          # PowerShell: .venv\Scripts\Activate.ps1
 pip install ".[all]"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-install">Copy</button></div>
+                <p class="small">G6 gets an environment of its own, made with <code>--copies</code>: on Linux, G6
+                cannot yet tell its own Python from a project environment linked to the same one, and refuses to
+                review then.</p>
                 {% comment %}CORE_SANDBOX-01 (owner ruling, 2026-10-27: refused without a boundary unless the person
                 allows it once): g6.core.confine's UNCONFINED_WARNING, word for word, as the README, g6 doctor and the
                 sensitive-op help say it.{% endcomment %}

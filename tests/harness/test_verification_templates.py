@@ -1710,7 +1710,9 @@ def _installed(tmp_path: Path, monkeypatch) -> Path:
     root = _repo(tmp_path, {"lib/calc/__init__.py": CALC_BASE,
                             "tests/test_other.py": "def test_other():\n    assert True\n"}, "app")
     env = tmp_path / "installed-env"
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(env)], check=True,
+    # --copies: an environment linked to G6's own Python is refused (L1)
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", "--copies", str(env)],
+                   check=True,
                    capture_output=True, timeout=180)
     python = env / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     site = Path(subprocess.run([str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],

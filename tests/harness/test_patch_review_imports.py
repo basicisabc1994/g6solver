@@ -50,7 +50,9 @@ def installed(tmp_path, monkeypatch):
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "base")
     env = tmp_path / "installed-env"
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(env)], check=True,
+    # --copies: an environment linked to G6's own Python is refused (L1); the person makes G6's own with --copies
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", "--copies", str(env)],
+                   check=True,
                    capture_output=True, timeout=180)
     python = env / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     site = Path(subprocess.run([str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
@@ -297,7 +299,9 @@ def test_the_runs_records_keep_what_the_run_left_out_or_could_not_see(installed,
 
 
 def _venv_in(folder: Path) -> tuple[Path, Path]:
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(folder)], check=True,
+    # --copies: an environment linked to G6's own Python is refused (L1)
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", "--copies", str(folder)],
+                   check=True,
                    capture_output=True, timeout=180)
     python = folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     site = Path(subprocess.run([str(python), "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],

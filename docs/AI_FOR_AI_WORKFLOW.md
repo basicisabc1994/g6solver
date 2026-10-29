@@ -6,8 +6,12 @@ promotion rules remain host-controlled. Better performance is a hypothesis to te
 
 ## Install and discover
 
-Use Python 3.12 or 3.13. From the checkout, install `pip install ".[all]"`, run `g6 doctor`, then
-`g6 setup --client claude --allow patch_review.review` or `g6 setup --client codex --allow patch_review.review`.
+Use Python 3.12 or 3.13. From the checkout, make G6's own environment with `python -m venv --copies .venv`
+and activate it (`source .venv/bin/activate`; in PowerShell `.venv\Scripts\Activate.ps1`), install
+`pip install ".[all]"`, run `g6 doctor`, then `g6 setup --client claude --allow patch_review.review` or
+`g6 setup --client codex --allow patch_review.review`. G6 gets an environment of its own, made with `--copies`:
+on Linux, G6 cannot yet tell its own Python from a project environment linked to the same one, and refuses to
+review then (`G6_E_REPO_PYTHON_INVALID`, before anything runs).
 Setup uses an absolute interpreter path, installs the using-g6 skill, and ends by showing the first review
 call. Existing skills are preserved. An existing MCP entry that the client refuses to replace must be
 inspected with that client's `mcp get g6` command; to replace it, remove it (`claude mcp remove --scope user

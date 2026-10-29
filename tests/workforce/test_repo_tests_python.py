@@ -121,7 +121,9 @@ def test_confined_a_run_with_a_python_the_person_chose_works_and_its_receipt_bin
     """A Python outside the repository and other than G6's own: a virtual environment made from G6's base Python that
     sees its packages (pytest among them), as a Poetry environment would."""
     env = tmp_path / "poetry-env"
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", str(env)], check=True,
+    # --copies: an environment linked to G6's own Python is refused (L1)
+    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", "--copies", str(env)],
+                   check=True,
                    capture_output=True, timeout=120)
     chosen = env / "bin" / "python"
     assert chosen.is_file() and str(chosen) != sys.executable

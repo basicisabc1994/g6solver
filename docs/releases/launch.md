@@ -49,6 +49,10 @@ Merging stays the person's decision.
 - **The patch runs where its tests run.** The patch's own code runs in pytest's own process, in the repository's own
   environment (its `.venv`, which the agent can change): a patch written to defeat the checks can make them report a
   pass, and G6 does not catch that.
+- **G6's own environment.** Install G6 into an environment of its own made with `python -m venv --copies`, then
+  `pip install ".[all]"` into it, then `g6 setup`: on Linux, G6 cannot yet tell its own Python from a project
+  environment linked to the same one, and refuses to review then (`G6_E_REPO_PYTHON_INVALID`, before anything
+  runs).
 - **Python first.** Patch review runs pytest on Python repositories only.
 - **What an outcome means.** Supported within scope means every stated requirement passed its stated checks; it is
   not proof that the patch does everything the task needs. The comparison for weakened tests is static and cannot

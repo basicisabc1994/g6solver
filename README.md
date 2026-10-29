@@ -50,10 +50,15 @@ agent:
 
 ```bash
 git clone https://github.com/basicisabc1994/g6solver && cd g6solver
+python -m venv --copies .venv                           # G6's own environment, with a copy of Python
+source .venv/bin/activate                               # PowerShell: .venv\Scripts\Activate.ps1
 pip install ".[all]"
 g6 doctor                                               # read-only: what this computer offers G6
 g6 setup --client claude --allow patch_review.review    # or --client codex; give --client twice for both
 ```
+
+G6 gets an environment of its own, made with `--copies`: on Linux, G6 cannot yet tell its own Python from a project
+environment linked to the same one, and refuses to review then.
 
 `g6 setup` registers this installation with the client (`claude mcp add` or `codex mcp add`, with this installation's
 Python), installs the `using-g6` skill for it, and allows patch review, the one sensitive operation the first review
