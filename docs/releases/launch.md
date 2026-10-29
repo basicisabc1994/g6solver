@@ -65,6 +65,10 @@ Merging stays the person's decision.
   environment linked to the same one, and refuses to review then (`G6_E_REPO_PYTHON_INVALID`, before anything
   runs).
 - **Python first.** Patch review runs pytest on Python repositories only.
+- **Files git ignores.** G6 does not compare files git ignores, so an untracked, git-ignored file the tests could load
+  puts test integrity in doubt. A `.py` file named like any module in the repository counts, wherever it is, so a
+  data fixture called `a.py` can raise it. The reply names each such file once; if they are data or not needed, track
+  them (`git add -f <path>`) or remove them, then review again.
 - **What an outcome means.** Supported within scope means every stated requirement passed its stated checks; it is
   not proof that the patch does everything the task needs. The comparison for weakened tests is static and cannot
   show that the tests are as strong as before.

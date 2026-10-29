@@ -225,6 +225,38 @@ TEST_DATA_REASON = ("the patch changes test data or snapshots, which G6 does not
                     "value would look to it like any other change: {paths}")
 TEST_DATA_ASK = ("Read the diff of {path} (git diff {base} -- {path}): it is test data or a snapshot the patch "
                  "changed, which G6 does not compare; confirm the new values are intended, then review again.")
+#: What the person does about git-ignored files the tests could load (worked examples, W3b): the next actions name each
+#: file once, the files named like a tracked module apart from the others; the outcome stays what it was.
+IGNORED_NAMED_ASK = ("{files}: untracked and git-ignored, but named like modules in the repository, so G6 cannot rule "
+                     "out that one replaces a module during the tests. If they are data or not needed, track them (git "
+                     "add -f <path>) or remove them, then review again.")
+IGNORED_OTHER_ASK = ("{files}: untracked and git-ignored, but pytest or Python could load them during the tests (a "
+                     "conftest, start-up or test file, bytecode, a compiled module, a link or a plugin declaration), "
+                     "and G6 does not compare them. Read them; if they are not needed, remove them, or track them (git "
+                     "add -f <path>) so that G6 compares them, then review again.")
+IGNORED_SHOWN = 10
+
+
+def _each_once(paths) -> list[str]:
+    """``paths`` in order, each once, without a folder that holds another of them (the file is shown, not its folder)."""
+    unique = list(dict.fromkeys(paths))
+    return [rel for rel in unique if not any(other.startswith(rel.rstrip("/") + "/") for other in unique)]
+
+
+def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
+    """The next actions for the git-ignored files ``scan`` found the tests could load."""
+    named = _each_once(scan.named_like_modules)
+    rest = [rel for rel in _each_once(scan.loadable) if rel not in set(named)]
+    asks = []
+    for files, ask in ((named, IGNORED_NAMED_ASK), (rest, IGNORED_OTHER_ASK)):
+        if files:
+            shown = ", ".join(files[:IGNORED_SHOWN]) + (
+                f" and {len(files) - IGNORED_SHOWN} more (git status --ignored lists them all)"
+                if len(files) > IGNORED_SHOWN else "")
+            asks.append(ask.format(files=shown))
+    return asks
+
+
 #: The launch review's I6: a module a run could not import, and the import statements of the lines the patch adds.
 _NO_MODULE = re.compile(r"No module named '([\w.]+)'")
 _ADDED_IMPORT = re.compile(r"^\+[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import\b|import[ \t]+([^\n#;]+))", re.MULTILINE)
@@ -899,7 +931,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
     if data:
         shown = ", ".join(data[:10]) + (f" and {len(data) - 10} more" if len(data) > 10 else "")
         reason("evidence", "test_data_changed", TEST_DATA_REASON.format(paths=shown))
-    asks = [TEST_DATA_ASK.format(base=change.base_commit[:12], path=rel) for rel in data[:10]]
+    asks = [*_ignored_asks(scan),
+            *(TEST_DATA_ASK.format(base=change.base_commit[:12], path=rel) for rel in data[:10])]
 
     # Tier 1: the stated checks and the extra tests, in one confined run.
     present = [i for i in ids if (root / i.partition("::")[0]).exists()]
