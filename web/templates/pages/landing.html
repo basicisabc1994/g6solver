@@ -227,6 +227,9 @@ Copy is a draft for the owner's review in the live preview.
                 <p class="lede quiet">No account and no hosted service: G6 runs on your computer.</p>
             </div>
             <div class="band__body">
+                <p class="small">First make G6's own environment with <code>python -m venv --copies .venv</code> and
+                activate it. <a class="link" href="{% url 'pages:get_started' %}">Get started</a> shows the commands
+                for each system.</p>
                 <div class="cmd"><code id="cmd-start">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
 pip install ".[all]" &amp;&amp; g6 setup --client claude --allow patch_review.review</code><button type="button" class="btn btn--small copy" data-copy="#cmd-start">Copy</button></div>
                 <p class="small quiet">For Codex, use <code>--client codex</code>. <a class="link" href="{% url 'pages:get_started' %}">The Get started page</a> shows the first review.</p>

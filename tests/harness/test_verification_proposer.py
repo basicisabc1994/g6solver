@@ -571,3 +571,79 @@ def test_confined_a_proposed_check_runs_in_a_copy_and_its_reproduction_needs_no_
     assert "g6" not in defect["reproduction"]["text"]
     placed = defect["reproduction"]["file"]
     assert placed.startswith(verification_search.FOLDER) and placed.endswith("/test_g6_proposed_1.py")
+
+
+# --- state_invariant.v1: the request says what the binding takes (the VS-5 smoke, df55a78: every instance refused) -----
+
+WALLET_BASE = ("class Wallet:\n    def __init__(self):\n        self.balance = 0\n\n\n"
+               "def new_wallet():\n    return Wallet()\n\n\n"
+               "def deposit(wallet, amount):\n    wallet.balance += amount\n\n\n"
+               "def withdraw(wallet, amount):\n    if amount <= wallet.balance:\n        wallet.balance -= amount\n\n\n"
+               "def balance(wallet):\n    return wallet.balance\n")
+WALLET = {"wallet.py": WALLET_BASE, "test_wallet.py": ("from wallet import balance, deposit, new_wallet\n\n\n"
+                                                       "def test_deposit():\n    w = new_wallet()\n"
+                                                       "    deposit(w, 5)\n    assert balance(w) == 5\n")}
+WALLET_PATCH = WALLET_BASE.replace("    if amount <= wallet.balance:\n        wallet.balance -= amount\n",
+                                   "    wallet.balance -= amount\n")
+WALLET_RULE = [{"id": "R1", "text": "the balance is never negative", "checks": ["test_wallet.py::test_deposit"]}]
+#: A binding shaped as state_invariant.v1 takes it.
+STATE = {"constructor": {"call": "wallet.new_wallet"},
+         "model": {"variables": {"bal": "Int", "act": "Int"}, "init": "(and (= bal 0) (= act 0))",
+                   "transition": "(or (and (= next_act 1) (= next_bal (+ bal 5))) "
+                                 "(and (= next_act 2) (= next_bal (- bal 3))))",
+                   "invariants": {"never_negative": "(>= bal 0)"}},
+         "action": "act", "actions": {"1": {"call": "wallet.deposit", "args": [5]},
+                                      "2": {"call": "wallet.withdraw", "args": [3]}},
+         "observe": {"bal": {"call": "wallet.balance"}}, "depth": 4, "traces": 6}
+#: The shape every reply of the smoke had (its exchanges.json): the model's own fields where the binding takes its parts.
+SMOKE = {"constructor": {"call": "wallet.new_wallet"}, "model": {"original_text": None}, "action": "operation",
+         "actions": {"encode_decode": {"call": "wallet.deposit", "args": []}},
+         "observe": {"result": {"call": "wallet.balance"}}, "depth": 3, "traces": 8, "search": "bounded"}
+
+
+def _proposing_state(bindings) -> Model:
+    return Model({"state_invariant.v1": {"instances": [{"requirement_id": "R1", "intent": "preserve",
+                                                        "bindings": bindings}]}})
+
+
+def test_the_state_invariant_request_shows_the_bindings_parts_and_an_example_that_fits(tmp_path, monkeypatch, ready):
+    from g6.harness import verification_templates as vt
+
+    root = _repo(tmp_path, WALLET, {"wallet.py": WALLET_PATCH})
+    Tiers(monkeypatch)
+    Runs(monkeypatch)
+    model = Model()
+    review(root, model=model, requirements=WALLET_RULE)
+    request = next(r for r in model.requests if r["stage"] == "state_invariant.v1")
+    [schema] = request["template"]["bindings_schemas"]
+    shown = schema["properties"]["model"]
+    assert set(shown["properties"]) == {"variables", "init", "transition", "invariants"}, shown
+    assert shown["additionalProperties"] is False and "next_" in shown["description"], shown
+    assert "Int state variable" in schema["properties"]["action"]["description"]
+    assert "whole number" in schema["properties"]["actions"]["description"]
+    assert "other than the action" in schema["properties"]["observe"]["description"]
+    vt.StateInvariantBindings.model_validate(request["template"]["example_bindings"])   # the example fits
+
+
+def test_a_state_invariant_reply_shaped_as_the_binding_is_applied(tmp_path, monkeypatch, ready):
+    root = _repo(tmp_path, WALLET, {"wallet.py": WALLET_PATCH})
+    Tiers(monkeypatch)
+    Runs(monkeypatch)
+    got = review(root, model=_proposing_state(STATE), requirements=WALLET_RULE)
+    assert [a for a in _activities(got, "proposal") if a["stage"] == "state_invariant.v1"] == []
+    assert got["assessment"]["scope"]["search"]["template_instances"] == 1
+    mine = [a for a in _activities(got) if a.get("check") == "g6p-state_invariant-1"]
+    assert mine and all(a.get("result") != "refused" for a in mine), mine
+    assert mine[0]["bindings_provenance"] == "model_hypothesis"
+
+
+def test_the_smokes_state_invariant_shape_is_refused_with_a_clear_reason(tmp_path, monkeypatch, ready):
+    root = _repo(tmp_path, WALLET, {"wallet.py": WALLET_PATCH})
+    Tiers(monkeypatch)
+    Runs(monkeypatch)
+    got = review(root, model=_proposing_state(SMOKE), requirements=WALLET_RULE)
+    [refused] = [a for a in _activities(got, "proposal") if a["stage"] == "state_invariant.v1"]
+    assert refused["result"] == "refused", refused
+    assert ("the model has no field original_text; it takes variables, init, transition and invariants"
+            in refused["reason"]), refused
+    assert got["assessment"]["scope"]["search"]["template_instances"] == 0

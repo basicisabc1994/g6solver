@@ -9,7 +9,7 @@ docs/validation/results/V2/calls.agentdojo-MIT.jsonl 6688b7e304e3362edc1f7b8f5ec
 # how Git Bash spells a Windows home folder, not anyone's real path.
 src/g6/skills/vendor/superpowers/subagent-driven-development/scripts/sdd-workspace 4fd9770e7a49b6bde488c0e92bac1b3bd01fcbdaf8f06b6c4efbe3a1abd99f86 windows-user-path
 #
-# G6's own guard against local paths (owner's ruling, 2026-10-29): its fixture PureWindowsPath("C:/Users/someone")
-# checks that personal() detects a Windows home folder. It is written plainly, never disguised: any value personal()
+# G6's own guard against local paths (owner's ruling, 2026-10-29): its fixture, a Windows home folder path, checks
+# that personal() detects one. It is written plainly, never disguised: any value personal()
 # detects, this scan rightly detects too, and a disguised literal would defeat the guard the file exists to provide.
 tests/test_no_local_paths.py f6b9b486f2f79a1f67fadbc49209436f6687d82fb6cbaa3a5e57d5f86f1cea06 windows-user-path

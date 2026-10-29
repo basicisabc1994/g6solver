@@ -279,6 +279,41 @@ def default_caller() -> LLMCaller:
     return provider_from_env()
 
 
+#: The VS-5 smoke (df55a78): state_invariant.v1's own schema shows its model as any object, so a model filled it with
+#: fields of its own and every instance was refused. The request shows the model's parts (``_state_schema``), what
+#: action, actions and observe take, and this example, which fits the binding.
+STATE_EXAMPLE = {"constructor": {"call": "counter.new_counter"},
+                 "model": {"variables": {"count": "Int", "op": "Int"}, "init": "(and (= count 0) (= op 0))",
+                           "transition": "(or (and (= next_op 1) (= next_count (+ count 1))) "
+                                         "(and (= next_op 2) (= next_count (- count 1))))",
+                           "invariants": {"never_negative": "(>= count 0)"}},
+                 "action": "op", "actions": {"1": {"call": "counter.increment"}, "2": {"call": "counter.decrement"}},
+                 "observe": {"count": {"call": "counter.value"}}, "depth": 4, "traces": 8}
+
+
+def _state_schema() -> dict:
+    """state_invariant.v1's bindings schema as the proposer shows it: its model as ``model_checking``'s state model
+    (variables, init, transition, invariants), and what action, actions and observe take."""
+    from g6.model_checking.schema import StateModel
+
+    schema = vt.StateInvariantBindings.model_json_schema()
+    shown = schema["properties"]
+    shown["model"] = {**StateModel.model_json_schema(), "description": (
+        "the abstract state machine, in SMT-LIB terms: variables maps each state variable to its sort (Int, Real or "
+        "Bool); init is a term over them; transition is a term over them and their next-state copies, written "
+        "next_<name> (next_count for count); invariants maps a plain name to a term over the state variables that "
+        "must hold after every step")}
+    shown["action"]["description"] = ("the name of an Int state variable of the model whose value at each step says "
+                                      "which operation led to it")
+    shown["actions"]["description"] = ("maps each value the action variable takes, written as a whole number ('1', "
+                                       "'2', ...), to the operation call that step makes on the real state (called "
+                                       "with the state first)")
+    shown["observe"]["description"] = ("maps each state variable the invariants read, other than the action "
+                                       "variable, to the call that reads its value on the real state (called with the "
+                                       "state first)")
+    return schema
+
+
 def _backend(caller: LLMCaller) -> LLMCaller:
     """The provider behind G6's ``EmptyRetry`` (``provider_from_env`` wraps every one in it), which the proposer's
     limits meter and cap: the retry would ask again, for more tokens, past both, and its attempts would be neither
@@ -411,9 +446,13 @@ class Proposer:
             definition = vt.REGISTRY[template]
             bindings = definition.bindings
             schemas = ([vt.AccessBindings.model_json_schema(), vt.AccessStepsBindings.model_json_schema()]
-                       if template == "access_rule.v1" else [bindings.model_json_schema()])
+                       if template == "access_rule.v1" else [_state_schema()] if template == "state_invariant.v1"
+                       else [bindings.model_json_schema()])
             edge = (" Include edge inputs: empty, zero, negative, the largest and smallest values a requirement names."
-                    if template in ("example.v1", "differential.v1") else "")
+                    if template in ("example.v1", "differential.v1") else
+                    " The bindings' model is an abstract state machine of the operations, in the parts its schema "
+                    "names; example_bindings is one that fits the schema." if template == "state_invariant.v1" else "")
+            shown = {"example_bindings": STATE_EXAMPLE} if template == "state_invariant.v1" else {}
             data = self._ask(template, (
                 f"Propose at most {MAX_PER_CALL} instances of template {template} that check the requirements on the "
                 "code the context shows, each naming a requirement, an intent the template takes "
@@ -421,7 +460,8 @@ class Proposer:
                 "it must bring) and bindings in one of the bindings schemas. Names are dotted names of the module and "
                 f"function as the files hold them.{edge} An empty list when the template does not fit."),
                 {"template": {"id": template, "obligation": definition.obligation,
-                              "assumptions": list(definition.assumptions), "bindings_schemas": schemas}}, _Instances)
+                              "assumptions": list(definition.assumptions), "bindings_schemas": schemas, **shown}},
+                _Instances)
             for item in (data or {}).get("instances", []):
                 self._instance(template, item)
         return list(self.found.instances)
