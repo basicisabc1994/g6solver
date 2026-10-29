@@ -71,6 +71,25 @@ def test_build_fails_on_a_relative_link(tmp_path, monkeypatch):
     assert [p for p in problems if "/bad/" in p] == ["/bad/: relative link ../somewhere/"]
 
 
+def test_a_rebuild_empties_its_folder_without_removing_the_folder_a_preview_server_holds(site, monkeypatch):
+    # the owner's preview server serves the upload folder; on Windows a folder a process holds cannot be removed, so a
+    # rebuild that removed the folder itself failed after emptying it. Fails while build() removes the folder itself
+    out, _ = site
+    (out / "stale.html").write_text("from an earlier build")
+    (out / "stale-folder").mkdir()
+    remove = shutil.rmtree
+
+    def held(path, *args, **kwargs):
+        if Path(path).resolve() == out.resolve():
+            raise PermissionError("the folder is being used by another process")
+        return remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", held)
+    assert build(out) == []
+    assert not (out / "stale.html").exists() and not (out / "stale-folder").exists()
+    assert (out / "index.html").is_file() and (out / "404.html").is_file()
+
+
 def test_build_refuses_a_folder_it_did_not_make(tmp_path):
     (tmp_path / "precious.txt").write_text("not a site build")
     problems = build(tmp_path)
