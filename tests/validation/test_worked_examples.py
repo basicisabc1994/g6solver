@@ -118,6 +118,11 @@ def test_base_dockerfile_installs_g6_as_the_readme_says():
     assert "cd /opt/g6src && python3 -m venv --copies .venv" in text
     assert '/opt/g6src/.venv/bin/pip install -q --no-cache-dir ".[all]"' in text and "FROM g6-a2-linux" in text
     assert we.G6PY == "/opt/g6src/.venv/bin/python3"
+    assert "round2_g6" not in text
+    r2 = we.base_dockerfile(we.ROUND2)
+    change = r2.index("round2_g6.py /opt/g6src/src/g6/harness/verification_search.py")
+    assert change < r2.index('pip install -q --no-cache-dir ".[all]"')    # made to the source G6 is installed from
+    assert we.base_tag("a" * 40, we.ROUND2) == "g6we-base:aaaaaaaaaaaa-r2"
 
 
 def test_task_dockerfile_keeps_the_fix_out_of_reach():
@@ -434,6 +439,44 @@ def test_a_dry_run_reads_no_key_and_has_no_way_out(tmp_path):
     assert all(r.get("kind") != "run" for r in ctx.archive.rows() if r.get("event") == "started")
 
 
+class KeyFileDocker(FakeDocker):
+    """The fake, with round 2's key check: the control sees G6's key file too."""
+
+    def __init__(self):
+        super().__init__()
+        self.inputs = []
+
+    def __call__(self, *args, input=None, timeout=None, env=None):
+        self.inputs.append(input)
+        if args[0] == "exec" and "keyprobe" in " ".join(args):
+            self.calls.append(list(args))
+            self.envs.append(env)
+            body = {"confined": {"R1": "passed_on_stated_checks", "backend": "bubblewrap"},
+                    "control": {"exit": 1, "channels": ["key_file", "own_env_name"]},
+                    "g6_model_calls": [{"input_chars": 2000, "input_tokens": None, "output_tokens": None}]}
+            return Done(json.dumps(body).encode())
+        return super().__call__(*args, input=input, timeout=timeout, env=env)
+
+
+def test_round2_gives_g6_its_key_file_only_through_stdin_and_takes_it_out(tmp_path):
+    (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
+    docker = KeyFileDocker()
+    ctx = _ctx(tmp_path, docker)
+    ctx.variant = we.ROUND2
+    rec = we.run_task(ctx, TASK)
+    assert rec["status"] == "finished" and rec["key_check"]["ok"]
+    writes = [i for i, call in enumerate(docker.calls) if any(we.KEY_FILE in a and "cat >" in a for a in call)]
+    assert len(writes) == 2                                   # the key check's container and the agent's
+    assert all(KEY not in " ".join(call) for call in docker.calls)
+    assert sum(1 for x in docker.inputs if x and KEY.encode() in x) == 2   # only ever on standard input
+    removed = next(i for i, call in enumerate(docker.calls) if call[-3:] == ["rm", "-f", we.KEY_FILE])
+    copied = next(i for i, call in enumerate(docker.calls) if call[:1] == ["cp"] and call[1].endswith(":" + we.HOME + "/.g6"))
+    assert writes[1] < removed < copied
+    probe = next(call for call in docker.calls if call[:2] == ["run", "-d"] and "keyprobe" in call[call.index("--name") + 1])
+    assert probe[probe.index("--network") + 1].startswith("g6wenet-")   # round 2's check reaches the model by the proxy
+    assert rec["key_check_g6"]["calls"] == 1 and rec["cost_usd"] >= rec["key_check_g6"]["usd"] > 0
+
+
 def test_a_tree_unlike_upstreams_starts_no_agent(tmp_path):
     (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
     docker = FakeDocker()
@@ -468,6 +511,57 @@ def test_selfcheck_needs_the_fix_to_pass_and_nothing_to_fail(tmp_path, monkeypat
     assert we.selfcheck(ctx, TASK)["ok"] and seen == ["gold", "empty"]
     monkeypatch.setattr(we, "_oracle_run", lambda *a, **k: {"results": {"t::a": "passed", "t::b": "passed"}})
     assert not we.selfcheck(ctx, TASK)["ok"]          # a check an empty patch passes shows nothing
+
+
+MINI_SEARCH = '''SEARCH_SETTINGS = {"templates": True, "test_adequacy": False}
+PROPOSER_FREE_FORM, PROPOSER_TEMPLATES_FIRST = "free_form", "templates_first"
+PROPOSER_SETTINGS = {"propose": False, "proposer": PROPOSER_TEMPLATES_FIRST, "max_model_calls": 10,
+                     "max_input_chars": 60_000, "max_output_tokens": 4_096, "max_context_chars": 24_000}
+
+
+def search_config(value) -> dict:
+    settings = {**SEARCH_SETTINGS, **PROPOSER_SETTINGS}
+    if value is None:
+        return settings
+    return {**settings, **value}
+'''
+
+
+def test_round2_forces_the_proposer_on_whatever_the_caller_passes():
+    from worked_examples import round2_g6
+
+    space: dict = {}
+    exec(round2_g6.patch(MINI_SEARCH), space)  # noqa: S102 - the test's own text
+    assert space["search_config"](None)["propose"] is True
+    got = space["search_config"]({"propose": False, "max_model_calls": 64, "proposer": "free_form",
+                                  "templates": False})
+    assert got["propose"] is True and got["max_model_calls"] == 10 and got["proposer"] == "templates_first"
+    assert got["templates"] is False                     # every other setting stays the caller's
+    with pytest.raises(ValueError):
+        round2_g6.patch(MINI_SEARCH.replace("        return settings\n", ""))   # an anchor gone: nothing written
+
+
+def test_round2_key_file_and_cost():
+    text = we.g6_key_file(KEY)
+    assert text.splitlines() == ["G6_LLM_PROVIDER=anthropic", "G6_LLM_MODEL=claude-sonnet-5-5",
+                                 f"ANTHROPIC_API_KEY={KEY}"]
+    assessment = {"completion": {"activities": [
+        {"activity": "model call", "input_tokens": 1_000_000, "output_tokens": 0, "answered_by": c.MODEL},
+        {"activity": "model call", "input_tokens": 0, "output_tokens": 100_000, "answered_by": c.MODEL},
+        {"activity": "proposer stage", "stage": "templates"}]}}
+    got = we.g6_model_cost([assessment])
+    assert got["calls"] == 2 and got["usd"] == pytest.approx(3.0) and got["calls_counted_at_upper_bound"] == 0
+    # G6's own caller gives no token counts: characters over two in, the whole reply limit out
+    unreported = {"completion": {"activities": [{"activity": "model call", "input_tokens": None,
+                                                 "output_tokens": None, "input_chars": 20_000, "output_chars": 900,
+                                                 "answered_by": "not given"}]}}
+    got = we.g6_model_cost([unreported])
+    assert got["calls_counted_at_upper_bound"] == 1 and got["input_tokens"] == 10_000
+    assert got["usd"] == pytest.approx((10_000 * 2.00 + 4_096 * 10.00) / 1e6)
+    assert we.key_check_ok({"confined": {"R1": "passed_on_stated_checks", "backend": "bubblewrap"},
+                            "control": {"exit": 1, "channels": ["own_env_name", "key_file"]}}, key_file=True)
+    assert not we.key_check_ok({"confined": {"R1": "passed_on_stated_checks", "backend": "bubblewrap"},
+                                "control": {"exit": 1, "channels": ["own_env_name"]}}, key_file=True)
 
 
 def test_the_task_list_is_in_the_plans_order():

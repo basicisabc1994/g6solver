@@ -27,10 +27,12 @@ WALL_CLOCK_S = 120 * 60
 #: Commits G6 must contain for a paid run (PLAN.md sections 4 and 9): the launch fix pass's Critical commit on the
 #: confined run's read paths (5dad0fe), and item L1 (2680cc9: an environment linked to G6's own Python refused up
 #: front; G6's own environment made with --copies), both on origin/claude/launch on 2026-10-29. From run 6, also
-#: a923002, the merge of the worked examples' launch fixes W1 to W5 (PLAN.md section 9, option B).
+#: a923002, the merge of the worked examples' launch fixes W1 to W5 (PLAN.md section 9, option B). From round 2, also
+#: 9ad134d, with the security review's fix pass F1 to F6 and F8 (PLAN.md section 9, "Round 2").
 REQUIRED_G6_COMMITS: tuple[str, ...] = ("5dad0fe7e0b933b274cd44443b449bef3864627a",
                                         "2680cc9d1afc9fa7c873b411573bd70c6134640b",
-                                        "a9230022ebf080859411aa5dc0c8ea3c42687d45")
+                                        "a9230022ebf080859411aa5dc0c8ea3c42687d45",
+                                        "9ad134d85dc543774057f427425cf543af923aa4")
 #: Anthropic's published prices, US dollars per million tokens, read on 2026-10-29 from
 #: https://platform.claude.com/docs/en/about-claude/pricing (PLAN.md §6). Haiku 5.5 at its prices for prompts over
 #: 100,000 tokens, which err high.
