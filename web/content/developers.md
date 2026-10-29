@@ -91,8 +91,8 @@ simulated executor and an approval queue a person decides). `g6.research` is off
 g6 setup --client claude --allow patch_review.review    # or --client codex; give --client twice for both
 ```
 
-Setup registers this installation with the client, with this installation's Python, installs the `using-g6` skill
-for it, allows patch review, and ends by showing the first review call. If the client already has an entry called
+Setup registers this installation with the client, with this installation's Python, started with `-P` so that the
+packages in the project's folder never replace G6's own, installs the `using-g6` skill for it, allows patch review, and ends by showing the first review call. If the client already has an entry called
 `g6`, setup stops; remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run setup again.
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 

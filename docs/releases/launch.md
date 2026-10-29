@@ -25,6 +25,16 @@ The owner sets the version number above before release.
 
 Merging stays the person's decision.
 
+## Fixed before release
+
+- **A security fix, found by a worked example.** `g6 setup` registered G6's MCP server as `python -c ...`. Claude
+  Code and Codex start the server in the project's folder, and `-c` puts that folder first on Python's import path.
+  So a project whose top-level package had the name of one of G6's dependencies replaced that dependency inside G6's
+  own server: in pydantic's repository the server did not start, and in starlette's repository it imported and ran
+  the repository's `starlette`, outside any boundary, with the person's rights. Setup now starts the server with
+  `python -P`, which keeps the project's folder off the import path. An entry made before this fix keeps the old
+  command: remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`) and run `g6 setup` again.
+
 ## What does not ship
 
 - **G6's own model calls in patch review.** Patch review makes no model call unless the caller turns on
