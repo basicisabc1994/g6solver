@@ -95,6 +95,43 @@ def test_the_launch_copy_claims_no_more_defects_found_and_no_time_saved(client):
         assert not CLAIMS.search(text), (where, CLAIMS.search(text).group(0))
 
 
+#: The launch review's I1 (the owner's ruling): patch review runs a patch only inside the boundary.
+PATCH_REVIEW_BOUNDARY = ("Patch review needs an operating-system boundary (Linux with bubblewrap, Windows after the "
+                         "one-time access grant): allowing unconfined runs does not make it run, and on macOS it "
+                         "refuses.")
+#: The launch review's I5: where the patch's own code runs, and what G6 does not catch.
+OWN_PROCESS = ("The patch's own code runs in pytest's own process, in the repository's own environment (its .venv, "
+               "which the agent can change): a patch written to defeat the checks can make them report a pass, and G6 "
+               "does not catch that.")
+
+
+def _plain(text: str) -> str:
+    return " ".join(text.replace("`", "").split())
+
+
+def test_patch_review_says_it_needs_the_boundary_whatever_the_person_allowed(client):
+    for name in ("README.md", "docs/releases/launch.md", "docs/AI_FOR_AI_WORKFLOW.md"):
+        assert PATCH_REVIEW_BOUNDARY in _plain((OSS / name).read_text(encoding="utf-8")), name
+    started = client.get("/get-started/").content.decode()
+    install = flat(started.split('id="from-agent"', 1)[1].split("</li>", 1)[0])
+    assert PATCH_REVIEW_BOUNDARY in install
+    notes = _plain((OSS / "docs/releases/launch.md").read_text(encoding="utf-8"))
+    assert "G6 refuses to run a patch or a repository's tests there unless the person allows it once" not in notes
+
+
+def test_patch_review_says_the_patch_runs_in_pytests_own_process():
+    readme = _plain((OSS / "README.md").read_text(encoding="utf-8"))
+    review = readme.split("## The first review", 1)[1].split(" ## ", 1)[0]
+    assert OWN_PROCESS in review
+    for name in ("docs/releases/launch.md", "docs/AI_FOR_AI_WORKFLOW.md"):
+        assert OWN_PROCESS in _plain((OSS / name).read_text(encoding="utf-8")), name
+    limits = _plain((OSS / "docs/releases/launch.md").read_text(encoding="utf-8")).split("## Limits", 1)[1]
+    assert OWN_PROCESS in limits
+    guide = _plain((OSS / "docs/AI_FOR_AI_WORKFLOW.md").read_text(encoding="utf-8"))
+    section = guide.split("## Reference application: review a Python patch", 1)[1].split(" ## ", 1)[0]
+    assert OWN_PROCESS in section and PATCH_REVIEW_BOUNDARY in section
+
+
 def test_the_release_notes_say_what_ships_what_does_not_and_leave_the_version_to_the_owner():
     notes = shipped()["docs/releases/launch.md"]
     assert notes.startswith("# G6 VERSION-TO-BE-SET-BY-THE-OWNER")

@@ -41,9 +41,14 @@ Merging stays the person's decision.
 ## Limits
 
 - **Isolation depends on the platform.** Linux confines the code G6 runs with bubblewrap (install the `bubblewrap`
-  package); Windows with an AppContainer, after the one-time access grant `g6 doctor` prints. macOS has no boundary
-  G6 can use: G6 refuses to run a patch or a repository's tests there unless the person allows it once with
-  `g6 setup`, and code allowed that way runs with the person's own rights.
+  package); Windows with an AppContainer, after the one-time access grant `g6 doctor` prints. Patch review needs an
+  operating-system boundary (Linux with bubblewrap, Windows after the one-time access grant): allowing unconfined
+  runs does not make it run, and on macOS it refuses. macOS has no boundary G6 can use; elsewhere in the library, G6
+  refuses to run untrusted code there unless the person allows it once with `g6 setup`, and code allowed that way
+  runs with the person's own rights.
+- **The patch runs where its tests run.** The patch's own code runs in pytest's own process, in the repository's own
+  environment (its `.venv`, which the agent can change): a patch written to defeat the checks can make them report a
+  pass, and G6 does not catch that.
 - **Python first.** Patch review runs pytest on Python repositories only.
 - **What an outcome means.** Supported within scope means every stated requirement passed its stated checks; it is
   not proof that the patch does everything the task needs. The comparison for weakened tests is static and cannot

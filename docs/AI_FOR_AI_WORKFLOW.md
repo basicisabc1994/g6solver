@@ -389,6 +389,11 @@ confined is a refusal: `blocked-escalated`, with no outcome. Merging is separate
 `requires_separate_approval`, coding-gate findings other than shortcuts are listed as merge reasons, and
 the application never merges code.
 
+Patch review needs an operating-system boundary (Linux with bubblewrap, Windows after the one-time access
+grant): allowing unconfined runs does not make it run, and on macOS it refuses. The patch's own code runs in
+pytest's own process, in the repository's own environment (its `.venv`, which the agent can change): a patch
+written to defeat the checks can make them report a pass, and G6 does not catch that.
+
 ## Boundary and validation status
 
 Linux requires a functioning bubblewrap installation; Windows uses AppContainer with the required access

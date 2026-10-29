@@ -33,7 +33,9 @@ pip install ".[all]"</code><button type="button" class="btn btn--small copy" dat
                 and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
                 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then
                 has your own rights: it can read your key file ~/.g6/.env and your other files, and its network guard
-                works inside Python only. You are responsible for what you run. <code>g6 doctor</code>
+                works inside Python only. You are responsible for what you run. Patch review needs an
+                operating-system boundary (Linux with bubblewrap, Windows after the one-time access grant): allowing
+                unconfined runs does not make it run, and on macOS it refuses. <code>g6 doctor</code>
                 says whether that code runs confined on your computer: on Linux, install the bubblewrap package for
                 the boundary; on Windows, it prints the one-time commands that grant the access. Then run
                 <code>g6 setup</code> once yourself, not your agent: where your computer has no boundary, it asks whether G6

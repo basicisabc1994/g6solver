@@ -70,7 +70,8 @@ and Windows before the one-time access grant), G6 refuses to run untrusted code 
 a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read
 your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for
 what you run. `G6_ALLOW_UNCONFINED=1`, set where you start G6, does the same as allowing it; `G6_REQUIRE_ISOLATION=1`
-refuses such code whatever you allowed.
+refuses such code whatever you allowed. Patch review needs an operating-system boundary (Linux with bubblewrap,
+Windows after the one-time access grant): allowing unconfined runs does not make it run, and on macOS it refuses.
 
 ## The first review
 
@@ -92,7 +93,9 @@ needs pytest and the project's dependencies. For Poetry, conda or another enviro
 
 The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope.
 Supported within scope means every stated requirement passed its stated checks; it is not proof that the patch does
-everything the task needs. Merging needs your separate decision.
+everything the task needs. Merging needs your separate decision. The patch's own code runs in pytest's own process,
+in the repository's own environment (its `.venv`, which the agent can change): a patch written to defeat the checks
+can make them report a pass, and G6 does not catch that.
 
 Not a programmer? Ready-made **bundles** (double-click apps) are described in the
 [install guide](site/docs/install.md).
