@@ -443,7 +443,7 @@ def extract_rounds(objects: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]
                 except ValueError:
                     continue
                 for found in _reports(parsed)[:1]:
-                    rounds[-1]["outcome"], rounds[-1]["report"] = found.get("outcome"), found.get("report")
+                    rounds[-1].update(outcome=found.get("outcome"), report=found.get("report"), assessment=found)
     return rounds
 
 
