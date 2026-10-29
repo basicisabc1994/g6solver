@@ -5,25 +5,52 @@ Fake-runner tests do not establish platform isolation or end-to-end production e
 """
 from dataclasses import replace
 
+import pytest
+
 from g6.algorithm_design.autonomous import (
-    DesignMission, PatchProposal, TestObservation, run_agent,
+    ApprovalRef, DesignMission, PatchProposal, TestObservation, run_agent,
 )
 from g6.algorithm_design.ir import DesignProblem
 from g6.algorithm_design.resources import DeviceBudget, estimate
 from g6.complexity.ir import FrozenIntent, Obligation, Requirement
+from g6.operator import ActionQueue, OperatorStore
+
+BASE_SOURCE = "def f(x):\n    return x + 1\n"
+QUEUE: dict = {}
+
+
+@pytest.fixture(autouse=True)
+def queue(tmp_path):
+    """The operator's queue a person approves a mission's runs in (P1: no bare approved flag)."""
+    store = OperatorStore(tmp_path / "operator.db")
+    scope = store.for_owner("dana")
+    QUEUE["queue"] = ActionQueue(scope)
+    QUEUE["venture"] = scope.create_venture("missions", caps={"model": 1.0, "cash": 0.0})["venture_id"]
+    yield QUEUE["queue"]
+    store.close()
 
 
 def _mission(*, mode="swe", attempts=3, approved=True):
     intent = FrozenIntent(
         (Requirement("r1", "Preserve public function output", "stated", "person"),),
         (Obligation("o1", "r1", "assert original behavior", "person", True),))
-    return DesignMission(
-        repo="/unused", files={"app/__init__.py": "", "app/logic.py": "def f(x):\n    return x + 1\n"},
+    mission = DesignMission(
+        repo="/unused", files={"app/__init__.py": "", "app/logic.py": BASE_SOURCE},
         package="app", source_root="", target_path="app/logic.py", tests=("tests/test_logic.py",),
         intent=intent, problem=DesignProblem(("sequence",), "membership"), environment_digest="env1",
         device=DeviceBudget(1_000_000, 100_000, 1_000_000),
-        dimensions={"n": 50}, mode=mode, max_attempts=attempts,
-        execution_approved=approved)
+        dimensions={"n": 50}, mode=mode, max_attempts=attempts)
+    if not approved:
+        return mission
+    q, venture = QUEUE["queue"], QUEUE["venture"]
+    item = q.request_run(venture, binding=mission.fingerprint, summary="run the mission's tests",
+                         requested_by="g6:algorithm_design")
+    q.approve(venture, item["action_id"], reviewer="ana")
+    return replace(mission, approval=ApprovalRef(venture, item["action_id"]))
+
+
+def _run_agent(mission, producer, runner):
+    return run_agent(mission, producer, runner, queue=QUEUE["queue"])
 
 
 class Producer:
@@ -41,6 +68,9 @@ class Runner:
     def __init__(self, verdicts):
         self.verdicts = iter(verdicts)
         self.sources = []
+
+    def baseline(self, *, tests, timeout_s):
+        return self.run(BASE_SOURCE, expected_path="app/logic.py", tests=tests, timeout_s=timeout_s)
 
     def run(self, source, *, expected_path, tests, timeout_s):
         import hashlib
@@ -77,7 +107,7 @@ def test_autonomous_repair_from_failing_baseline():
     mission = _mission()
     producer = Producer(["def f(x):\n    return x - 1\n", "def f(x):\n    return x + 2\n"])
     runner = Runner(["failed", "failed", "passed"])
-    report = run_agent(mission, producer, runner)
+    report = _run_agent(mission, producer, runner)
     assert report.completion_state == "qualified-draft"
     assert report.reason == "frozen_tests_passed_pending_independent_review"
     assert report.attempts == 3  # baseline plus two tested proposals
@@ -92,7 +122,7 @@ def test_agent_cannot_change_tests_or_scope():
     class Bad:
         def propose(self, brief):
             return PatchProposal("tests/test_logic.py", "assert True", "swe_refactor")
-    report = run_agent(mission, Bad(), Runner(["passed"]))
+    report = _run_agent(mission, Bad(), Runner(["passed"]))
     assert report.completion_state == "blocked-escalated"
     assert report.reason == "patch_outside_frozen_scope"
 
@@ -100,7 +130,7 @@ def test_agent_cannot_change_tests_or_scope():
 def test_budget_and_duplicate_stop():
     mission = _mission(attempts=3)
     source = "def f(x):\n    return x - 1\n"
-    report = run_agent(mission, Producer([source, source]), Runner(["passed", "failed"]))
+    report = _run_agent(mission, Producer([source, source]), Runner(["passed", "failed"]))
     assert report.reason == "identical_candidate_repeated"
 
 
@@ -108,19 +138,19 @@ def test_unconfined_baseline_refused():
     class Unsafe(Runner):
         def run(self, source, **kwargs):
             return replace(super().run(source, **kwargs), isolated=False)
-    report = run_agent(_mission(), Producer([]), Unsafe(["passed"]))
+    report = _run_agent(_mission(), Producer([]), Unsafe(["passed"]))
     assert report.reason == "baseline_not_independently_established"
 
 
 def test_no_permission_means_no_proposer_and_no_runner():
     producer = Producer(["def f(x): return 1"])
     runner = Runner(["passed"])
-    report = run_agent(_mission(approved=False), producer, runner)
+    report = _run_agent(_mission(approved=False), producer, runner)
     assert report.reason == "execution_not_approved"
     assert not producer.briefs and not runner.sources
 
 
 def test_algorithm_mode_requires_cost_feasible_choice():
     mission = replace(_mission(mode="algorithm"), device=DeviceBudget(1024, 0, 1))
-    report = run_agent(mission, Producer([]), Runner([]))
+    report = _run_agent(mission, Producer([]), Runner([]))
     assert report.reason == "no_cost_feasible_algorithm_design"

@@ -47,6 +47,19 @@ runs one of G6's 22 fixed algorithm kernels on your data, each checking its own 
 - `run_kernel`: the kernel `algorithm_id` on `parameters` (at most 16, plain data, named by the kernel's signature):
   its output, witness, complexity, limitations and `verification`, how that one answer was checked.
 
+## Python API
+
+The design mission, Python only and inert in this release: it stops before any test runs until an engineer is wired
+in (the Claude Code and Codex engineers come with the mission over MCP).
+
+- `autonomous.run_agent`: one bounded propose, test and repair loop over one file; nothing runs without a person's
+  approval in the operator's queue bound to the mission's fingerprint, and every decision goes to a hash-chained
+  ledger under the G6 home.
+- `autonomous.DesignMission`: the frozen intent, scope, tests and limits; its `fingerprint` is what an approval binds.
+- `autonomous.NoEngineer`: the engineer this release ships, which refuses (`G6_E_ALGO_NO_ENGINEER`).
+- `autonomous.RepoTestsRunner`: every run asks for an operating-system boundary; the baseline is receipted, a
+  candidate runs as a mutant and never is.
+
 ## Alone and composed
 
 Alone over MCP: `g6_invoke("algorithm_design", "search", '{"representations": ["sequence"], "target":

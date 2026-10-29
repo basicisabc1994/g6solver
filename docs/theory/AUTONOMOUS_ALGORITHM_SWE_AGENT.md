@@ -1,10 +1,10 @@
 # Autonomous G6 Algorithm Design + Complexity/SWE agent
 
 The programmable agent is *not* the verifier. Production execution requires:
-- a frozen `DesignMission` with explicit intent, scope, snapshot, tests, compute limits, and execution approval;
+- a frozen `DesignMission` with explicit intent, scope, snapshot, tests and compute limits, and a person's approval of it: a `run_approval` item in the operator's queue, decided by someone other than the requester and bound to the mission's `fingerprint`;
 - a `ProposalAgent.propose(AgentBrief) -> PatchProposal | None` implementation (your coding LLM adapter can implement this);
 - a host-owned `RepoTestsRunner` wired to `g6.workforce.repo_tests.run` with its established mutant-on-copy test path;
-- `G6_REQUIRE_ISOLATION=1` set **before** the host starts; on Linux/macOS today no backend is available and the run refuses;
+- an operating-system boundary: every run asks for one (`require_isolation`), so a run no backend would confine is refused before it starts; bubblewrap on Linux and AppContainer on Windows both count, read from confine's record of the run;
 - no direct modification of original tests or source repository by this controller.
 
 The hard-coded resource planner models abstract operations, RAM and scratch; it
@@ -28,25 +28,27 @@ establish algorithmic correctness; an accepted candidate is at most
 The current interface is intentionally pure Python rather than a second
 general planner or MCP host. It can be called from a coding mission or a
 CLI/MCP adapter after the host has approved the exact repository scope and
-execution. G6's `coding_agent_gate.verify_answer` is reused, and the
-`ChainLedger` records decision lineage in memory. The existing workforce
-database remains the authoritative repository for durable evidence if the
-calling mission persists receipts.
+execution. G6's `coding_agent_gate.verify_answer` is reused, and a hash-chained
+`ChainLedger` under the G6 home (`algorithm_design/missions.jsonl`) records each
+run's decisions, its approver and its baseline's receipt, every entry prefixed
+with the run's id; a second writer is refused as `ledger_conflict`.
 
 Important remaining gaps:
 - A concrete LLM/coding-agent adapter must supply proposals; no model is
   installed, implicitly called, or entitled to hidden test data by this module.
+  The engineer this release ships, `NoEngineer`, refuses before any test runs.
 - Resource estimates are planning heuristics. Full bit complexity, I/O costs,
   machine-specific benchmarks, parallel algorithms and accelerator kernels
-  need separately verified implementations.
-- Multi-file refactors, formal theorem proving, complete may-alias analysis,
-  automated proof checking and safe general-purpose execution on non-Windows
-  platforms are not built.
+  need separately checked implementations.
+- Multi-file refactors, formal theorem proving, complete may-alias analysis
+  and automated proof checking are not built.
 - The runner baseline policy accepts a known failing baseline for a repair,
   but requires all selected frozen tests to pass on the candidate.
-- `run_agent` is *not* a verified production merge gate. No review or approval
-  is inferred from a passing suite.
+- `run_agent` is *not* a production merge gate. No review or approval is
+  inferred from a passing suite.
 
-Run unit tests: `python -m pytest tests/algorithm_design/test_autonomous.py
-tests/complexity/test_cir_fusion.py`. These tests use fake host runners; actual
-AppContainer tests must be run on a configured Windows host.
+Run unit tests: `python -m pytest tests/algorithm_design/test_autonomous.py`,
+`tests/algorithm_design/test_mission_trust.py` and `tests/complexity/test_cir_fusion.py`,
+each in its own process; these use fake host runners.
+`tests/algorithm_design/test_mission_confined.py` runs a mission for real under
+bubblewrap on Linux (it skips elsewhere).

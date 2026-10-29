@@ -29,7 +29,7 @@ from g6.algorithm_design.search import search_algorithms
 __g6_component__ = True
 __g6_block__ = "AlgorithmDesignBlock"
 __g6_sensitive_ops__: tuple[str, ...] = ()
-__g6_requires__: tuple[str, ...] = ("coding_agent_gate", "complexity", "harness", "workforce")
+__g6_requires__: tuple[str, ...] = ("coding_agent_gate", "complexity", "harness", "operator", "workforce")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause (composition by
 # representation names alone leaves the meaning of each step's output an unchecked assumption).
 __g6_mitigates__: tuple[str, ...] = ("reinvented_method", "unproven_optimum")

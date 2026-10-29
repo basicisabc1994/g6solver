@@ -739,6 +739,7 @@
       "coding_agent_gate",
       "complexity",
       "harness",
+      "operator",
       "workforce"
     ],
     "sensitive_ops": [],
