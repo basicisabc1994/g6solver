@@ -1,14 +1,15 @@
-# Useful patch review: protocol, version 1 (registered, not executed)
+# Useful patch review: protocol, version 2 (registered, not executed)
 
 Does G6 reduce the work of checking an AI-written Python patch, while accepting at most 5 percentage points more
 defective patches than the repository's own tests do? The margin is set in advance; the hypotheses below give the
 exact tests.
 
 This protocol is registered in `docs/validation/REGISTRY.md` (entry V9) before any code for the scoped assessment is
-written and before any evaluation patch exists. The rules of `docs/validation/VALIDATION_PLAN.md` §0 apply except
-where the section "Deviations from the plan's rules" below names a deviation. G6's status while this study is open:
-early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
-established.
+written and before any evaluation patch exists. Version 2 changes only how broken benchmark tasks are handled; the
+section "Changes from version 1" lists each change, and it was registered before any task was drawn. The rules of
+`docs/validation/VALIDATION_PLAN.md` §0 apply except where the section "Deviations from the plan's rules" below names
+a deviation. G6's status while this study is open: early alpha. Individual capabilities have been tested; general
+application-level improvements have not yet been established.
 
 ## Why this study
 
@@ -90,9 +91,11 @@ feasibility freeze. Public benchmarks may be in model training data; that risk i
 
 **Excluded before any draw:** every ID listed anywhere in `docs/validation/results/V7/splits.json` or
 `docs/validation/results/V8/splits.draft.json`, and every task seen while building or tuning Steps 2 and 3. V8 is a
-draft and has opened none of its scored tasks; excluding them keeps V8 runnable later on its own tasks. If the pool
-after exclusions cannot reach the confirmatory size, the owner may release V8's draft IDs or name another pool before
-the confirmatory freeze; nothing else changes the pool.
+draft and has opened none of its scored tasks; excluding them keeps V8 runnable later on its own tasks. Also excluded
+before the draw: the IDs on a published list of broken tasks, if one exists at the level's freeze (see "Broken
+tasks"). If the pool after exclusions cannot reach the confirmatory size, the owner may release V8's draft IDs or name
+another pool before the confirmatory freeze; nothing else changes the pool. A later revision of the benchmark, for
+example one that removes broken tasks, is another pool, and only the owner may name it, before a freeze.
 
 **The draw, fixed now:**
 
@@ -107,8 +110,9 @@ the confirmatory freeze; nothing else changes the pool.
   confirmatory tasks are disjoint.
 - **Stopping depends on label counts only.** Confirmation draws until both classes reach the registered size, or the
   pool or the spending cap is exhausted. No arm's output is ever looked at to decide whether to continue.
-- A task whose environment does not build, or that fails the oracle controls, is replaced by the next task in order
-  before any patch is generated for it, and the replacement is logged.
+- A task whose environment does not build, that fails the oracle controls, or that the task screen marks
+  label-invalid (see "Broken tasks") is replaced by the next task in order before any patch is generated for it, and
+  the replacement is logged.
 
 **Patches.**
 
@@ -188,6 +192,52 @@ Confirmatory labels are adequate when the one-sided 95% Clopper–Pearson upper 
 most 15%. Otherwise, or without an audit, the confirmatory verdict is `oracle_inadequate`. Disagreements between the
 hidden tests and the withheld specification checks are reported.
 
+**Broken tasks.** OpenAI's audit of SWE-bench Pro's public tasks ("Separating signal from noise in coding
+evaluations", 8 July 2026, `openai.com/index/separating-signal-from-noise-coding-evaluations`) estimates that about
+30% of them are broken: their hidden tests cannot judge a patch by what the task asks. In our words, it names four
+ways this happens:
+
+1. **an unstated detail:** a hidden test requires something the task statement does not ask for;
+2. **an underspecified statement:** the statement allows more than one behaviour, and the hidden tests require one of
+   them;
+3. **a misleading statement:** the statement asks for something other than what the hidden tests require;
+4. **weak tests:** the hidden tests can pass a patch that does not do what the statement asks.
+
+The second and third kinds are read as cases of the first: in each, a hidden test enforces something the task does not
+state. On a task of these three kinds, a patch can do what the task asks and still be labelled defective. On a task of
+the fourth kind, a patch can be labelled correct without doing it. This study handles them as follows.
+
+- **A published list.** At each level's freeze, before that level's draw, the evaluator checks whether OpenAI or the
+  benchmark's maintainers have published the IDs of the tasks found broken. If they have, the list's source and hash
+  go in that freeze entry, and its IDs join the exclusions. When version 2 was registered, no such list had been
+  found.
+- **The label audit records a kind for each label error.** The auditor judges each patch without its label, as above.
+  When the auditor's test shows the label wrong, the auditor records which of the four kinds explains it, or "other".
+  The kind is recorded before any result is unblinded, and without seeing any arm's output, because it decides which
+  patches the primary analysis keeps.
+  - A patch labelled defective whose label rests only on hidden tests of the first three kinds is **label-invalid**.
+    It is left out of the primary analysis, counted as a label error and reported. A sensitivity analysis keeps it as
+    labelled.
+  - Every other label error counts as before, and its patch stays in the analysis. The number of label errors of the
+    fourth kind is reported beside the results.
+- **The task screen, an option the owner may switch on at a level's freeze.** It needs a screener, named by the owner
+  under the auditor's conditions, who is not the label auditor: a screener reads the hidden tests and could then
+  predict a patch's label, so the audit would no longer be blind. Before a task's patch is generated, the screener
+  reads the task statement (with its stated requirements and interface), the reference fix and the kept hidden tests.
+  The screener records whether a hidden test requires behaviour of the first three kinds, naming the test and the
+  behaviour in one sentence. Such a task is label-invalid. It is replaced, as a task that fails the oracle controls
+  is, and it is counted and reported with the screener's sentence. Weak tests (the fourth kind) are recorded, and the
+  task is kept. Unless the owner switches the screen on, it does not run.
+- **Without a label auditor,** no patch is left out under this rule. The report says that the labels were not checked
+  for broken tasks, and it gives the audit's estimate beside the results.
+
+The correction runs one way: labels of the fourth kind are counted but not corrected. Without the screen, only the
+audited sample is checked, and the rest of the primary analysis is not.
+
+**Counting after exclusions.** The primary rates, the hypotheses and verdict 3 count non-empty patches after
+label-invalid patches are left out. Stopping a level's draw counts labels before the audit, because the audit comes
+after the labels.
+
 ## Arms
 
 Every non-empty patch goes through every arm, so comparisons are paired by patch.
@@ -220,7 +270,8 @@ Tool errors and refusals count as not accepted, and are reported, never dropped.
 
 **Experiment 1, primary:**
 
-- **False acceptance rate:** defective patches accepted ÷ all non-empty defective patches.
+- **False acceptance rate:** defective patches accepted ÷ all non-empty defective patches. Here and in every rate
+  and hypothesis below, label-invalid patches are left out (see "Broken tasks").
 - **Correct acceptance rate:** correct patches accepted ÷ all non-empty correct patches.
 
 **Experiment 1, secondary:**
@@ -229,7 +280,8 @@ Tool errors and refusals count as not accepted, and are reported, never dropped.
 - detection by defect category;
 - model calls, processor time, wall-clock time and setup effort per arm;
 - each primary rate per repository;
-- the sensitivity analysis that counts empty and non-applying patches as defective.
+- the sensitivity analysis that counts empty and non-applying patches as defective;
+- the sensitivity analysis that keeps label-invalid patches as labelled (see "Broken tasks").
 
 **Experiment 2** outcomes are defined in its design section below.
 
@@ -283,7 +335,8 @@ that applies is the verdict:
 1. `contaminated_evaluation`: the gaming checks found an arm that read the label contract or the vault, used the
    network, or could change its evaluator.
 2. `oracle_inadequate`: the label audit's bound is above 15%, or there was no audit.
-3. `insufficient_failure_opportunities`: fewer non-empty defective patches than the registered size.
+3. `insufficient_failure_opportunities`: fewer non-empty defective patches than the registered size, after
+   label-invalid patches are left out.
 4. `unsafe_or_regressive`: hypothesis 1 or 2 is not met (unsafe), or hypothesis 3 is not met (regressive). The
    report says which.
 5. `component_validated_no_transfer`: Experiment 1 is met.
@@ -377,6 +430,8 @@ The 75% figure is a hypothesis to test, reported with its uncertainty, not an ex
 
 - G6's commit and configuration;
 - the pool's file hash, the excluded IDs and the seed's inputs;
+- whether a published list of broken tasks was found, with its source and hash if so, and whether the task screen
+  runs, with its screener;
 - the agent: product, version, model ID, effort, prompts, tool entitlements and network rule;
 - the arms' scripts, test commands, time limits, token caps, review prompt and verdict rule;
 - the scripts for the label contract, the review contract and the A5 report check;
@@ -426,6 +481,9 @@ The 75% figure is a hypothesis to test, reported with its uncertainty, not an ex
 - That G6 makes software correct in general, or finds defects outside the checks it runs.
 - That the result transfers to other repositories, other languages, other agents, or patches that are not
   AI-written.
+- That the labels are free of broken tasks. The screen and the audit find only what their readers recognise; the
+  correction runs one way (weak tests are counted, not corrected); without the screen only the audited sample is
+  checked; and without an auditor nothing is.
 - Objectives 2 and 3: composition of applications by agents, and self-improvement.
 
 ## Decisions the owner makes before the feasibility freeze
@@ -435,10 +493,32 @@ The 75% figure is a hypothesis to test, reported with its uncertainty, not an ex
 2. **The agent:** which one (Claude Code or Codex), its version, model and effort. Then the sessions, or the spending
    cap, for generating patches and running arm 2.
 3. **The label auditor**, who is needed for confirmation. Optionally, an independent author of withheld specification
-   checks.
+   checks. Optionally, the task screen, with a screener who is not the label auditor (see "Broken tasks").
 4. **Reviewers:** recruiting unfamiliar founders for Experiment 2.
 5. **The pool:** another one, if not the default. Later, if the confirmatory size cannot be reached, whether to
    release V8's draft IDs.
+
+## Changes from version 1
+
+Version 2 was registered on 2026-10-29, before any task was drawn, any patch was generated or any arm was run. No
+evaluation data had been read. After OpenAI's audit of SWE-bench Pro's public tasks was checked, the owner decided
+that a published list of broken tasks is excluded, and that the label audit treats a hidden test that enforces
+something the task does not state as label-invalid: left out, counted and reported. The task screen is the drafter's
+addition; it runs only if the owner switches it on at a freeze. Version 2 changes:
+
+1. the section "Broken tasks", with the four kinds, the published list, the audit's kinds, the optional task screen
+   and the counting after exclusions;
+2. under "Data", the exclusion of a published list of broken tasks, checked at each level's freeze, and the sentence
+   that a later revision of the benchmark is another pool;
+3. under "The draw", the replacement of a task the screen marks label-invalid;
+4. under "Outcomes", label-invalid patches left out of every rate and hypothesis, and the sensitivity analysis that
+   keeps them;
+5. under "Verdicts", verdict 3 counted after label-invalid patches are left out;
+6. under "Safeguards", the list check and the screen among the frozen items;
+7. under "What this study cannot show", the limits on finding broken tasks;
+8. under "Decisions the owner makes", the optional screen and its screener.
+
+Apart from these changes, the protocol is as in version 1.
 
 ## The registry entries this study will add
 
