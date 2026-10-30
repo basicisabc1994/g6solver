@@ -32,9 +32,10 @@ PROJECTS = ("attrs", "black", "click", "fastapi", "pydantic", "starlette")
 def named(text: str, tests: Iterable[str], files: Iterable[str]) -> list[str]:
     """What ``text`` names that it must not: a project, an issue number, a test's own name, or a file from the runs."""
     found = [word for word in PROJECTS if re.search(rf"\b{word}\b", text, re.I)]
-    found += re.findall(r"#\d+", text)
+    found += re.findall(r"#?\b\d{4,5}\b", text)
+    found += re.findall(r"[A-Za-z]:\\|/(?:home|Users)/", text)      # the text is pushed to a public branch
     names = {test.rpartition("::")[2].partition("[")[0] for test in tests} | {Path(f).name for f in files}
-    found += [name for name in sorted(names) if len(name) > 3 and name in text]
+    found += [name for name in sorted(names) if len(name) > 3 and name.lower() in text.lower()]
     return found
 
 
@@ -43,8 +44,8 @@ def failures(rows: Sequence[Mapping[str, Any]], archive: Path) -> list[DevFailur
     found = []
     for row in rows:
         folder = archive / row["run"]
-        report = (folder / "final_report.txt").read_text("utf-8", errors="replace")[:OUT_CHARS]
-        patch = (folder / "final.patch").read_text("utf-8", errors="replace")[:PATCH_CHARS]
+        report, patch = [(folder / name).read_text("utf-8", errors="replace")[:size] if (folder / name).is_file() else ""
+                         for name, size in (("final_report.txt", OUT_CHARS), ("final.patch", PATCH_CHARS))]
         found.append(DevFailure(case_id=row["task"], input="", output=f"{report}\n--- the patch ---\n{patch}",
                                 expected="the project's own tests for this bug pass", oracle="the project's own tests",
                                 failed_checks=tuple(row.get("tests") or ()), failure_codes=()))
@@ -58,8 +59,9 @@ class Metered:
         self.inner, self.cost_usd = inner, 0.0
 
     def complete(self, system: str, user: str, *, max_tokens: int = llm.DEFAULT_MAX_TOKENS) -> str:
+        self.cost_usd += len(system + user) * 4.00 / 2.5 / 1_000_000      # counted first: a failed call can still cost
         said = self.inner.complete(system, user, max_tokens=max_tokens)
-        self.cost_usd += (len(system + user) * 4.00 + len(said) * 20.00) / 2.5 / 1_000_000
+        self.cost_usd += len(said) * 20.00 / 2.5 / 1_000_000
         return said
 
 

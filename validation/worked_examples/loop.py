@@ -23,7 +23,7 @@ TRAILERS = ("Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n"
             "Claude-Session: https://claude.ai/code/session_016opK1M2VFbXVve6kiJtAxW")
 
 
-def tool(command: str, *args: str, timeout: int = 2400) -> str:
+def tool(command: str, *args: str, timeout: int = 7800) -> str:
     return subprocess.run([sys.executable, str(HERE / "run.py"), command, "--round", "3", *args], capture_output=True,
                           text=True, encoding="utf-8", errors="replace", timeout=timeout).stdout
 
@@ -92,7 +92,7 @@ def commit(path: Path, message: str) -> None:
     git = ["git", "-C", str(HERE)]
     subprocess.run([*git, "add", str(path)], check=True)
     subprocess.run([*git, "-c", "user.name=Claude", "-c", "user.email=noreply@anthropic.com", "commit", "-q", "-m",
-                    message + " [skip ci]", "-m", TRAILERS], check=True)
+                    message + " [skip ci]", "-m", TRAILERS, "--", str(path)], check=True)
     subprocess.run([*git, "push", "-q", "origin", "HEAD"], check=True)
 
 
@@ -116,8 +116,13 @@ def main() -> None:
             break
         path = we.HARNESS / f"G{n}.txt"
         if not path.is_file():
-            failed = [{**r, "run": r["run"]} for r in best if not r["passes"] and r["run"]]
-            text, bad = distill.distill(best_text, failed, root, caller, notes)
+            if spent(root) >= STOP_USD:
+                break
+            failed = [r for r in best if not r["passes"] and r["run"]]
+            try:
+                text, bad = distill.distill(best_text, failed, root, caller, notes)
+            except distill.llm.LLMError as exc:
+                text, bad = "", [f"the model call failed: {exc}"]
             folder = c.Archive(root).start("distill", f"G{n}", parent=best_arm)
             folder.write("text.txt", text)
             folder.finish({"cost_usd": caller.cost_usd, "named": bad, "parent": best_arm}, "finished" if text else "error")

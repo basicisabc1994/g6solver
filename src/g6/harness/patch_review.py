@@ -47,11 +47,11 @@
    module, where it came from, and the import root (``import_roots``) or editable install that would load the patch.
    Or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure of the
    change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
-   Or a requirement that passed only on checks in files the patch adds or changes (``checks_written_with_patch``): the
-   author's own tests share its reading of the task, so they show neither that it is wrong nor that it is right;
-4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks, at least one of them in a file the
-   patch does not touch, and integrity is intact. That is support on the checks named, never a claim that the patch does
-   everything the task needs.
+   Or a requirement with no independent check (``checks_written_with_patch``): each check is new with the patch, or
+   passes at the base commit too, so the author's own tests are all that speak for the change;
+4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks, at least one of them independent
+   of the patch (it exists at the base commit in an unchanged file and, for new behaviour, fails there), and integrity
+   is intact. That is support on the checks named, never a claim that the patch does everything the task needs.
 
 Each requirement reads ``passed_on_stated_checks``, ``failed`` or ``not_established`` (with a reason and a suggested
 test in words); G6 never invents a passing test. Checks adapt to cost: tier 1 (always) is the digest, integrity, and
@@ -1159,7 +1159,7 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                             "file, so the contract was not checked (why is in assessment.completion.activities)")
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
-    self_checked = ", ".join(_self_checked(evaluated, change, Path(root)))
+    self_checked = ", ".join(_self_checked(evaluated, change, Path(root), runs))
     if self_checked:
         reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
@@ -1330,16 +1330,18 @@ _NEXT = {
 
 #: Worked examples, round 3: the author's own tests share its reading of the task, so they cannot support the patch.
 SELF_CHECKED = "checks_written_with_patch"
-SELF_CHECKED_DETAIL = ("{ids}: every check that passed is in a file this patch adds or changes, so it may share the "
-                       "patch's reading of the task. Nothing shows the patch is wrong, and nothing independent of it "
-                       "shows it right")
-SELF_CHECKED_ASK = ("{ids}: state a check that exists at the base commit, in a file this patch does not touch, or tell "
-                    "the person this rests on the author's own tests. Do not rewrite tests to change this outcome.")
+SELF_CHECKED_DETAIL = ("{ids}: every check that passed is new with this patch or passes at the base commit too, so "
+                       "nothing independent of the patch shows its change works. This is not a finding against it")
+SELF_CHECKED_ASK = ("{ids}: this rests on the author's own tests, so tell the person that. Only a check the patch did "
+                    "not write and that fails at the base commit can change it. Do not rewrite tests to change it.")
 
 
-def _self_checked(evaluated: list[dict], change, root: Path) -> list[str]:
-    """The requirements that passed only on checks this patch wrote: a check whose file, or folder, holds a file the
-    patch adds or changes. At least one check it does not touch keeps a requirement out of this list."""
+def _self_checked(evaluated: list[dict], change, root: Path, runs: list[dict]) -> list[str]:
+    """The requirements with no independent check. A check is independent when it exists at the base commit, its file
+    is unchanged, a folder holds no test the patch adds or changes, and, unless the requirement only keeps behaviour,
+    it does not pass at the base commit too: an old test that passes there says nothing of the change."""
+    at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
+
     def written(check: str) -> bool:
         head = (root / check.partition("::")[0]).resolve()
         try:
@@ -1347,10 +1349,17 @@ def _self_checked(evaluated: list[dict], change, root: Path) -> list[str]:
         except ValueError:
             return False
         rel = "" if rel == "." else rel
-        return any(path == rel or not rel or path.startswith(rel + "/") for path in change.files)
+        inside = [path for path in change.files if not rel or path.startswith(rel + "/")]
+        if rel in change.files or any(repo_tests.is_test_related(path) for path in inside):
+            return True
+        return bool(rel) and not repo_tests._git(change.repo, "ls-tree", "--name-only", change.base_commit, "--", rel)
 
-    return [req["id"] for req in evaluated if req["status"] == PASSED_ON_CHECKS and all(
-        written(check["id"]) for check in req["checks"] if check["provenance"] == STATED)]
+    def independent(req: dict, check: dict) -> bool:
+        return (check["provenance"] == STATED and not written(check["id"])
+                and (req["kind"] == "preserve" or at_base.get(check["id"]) != "passed"))
+
+    return [req["id"] for req in evaluated if req["status"] == PASSED_ON_CHECKS
+            and not any(independent(req, check) for check in req["checks"])]
 
 
 #: What a requirement no one stated is (rule 11): listed, and nothing more.

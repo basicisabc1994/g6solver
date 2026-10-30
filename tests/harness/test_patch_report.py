@@ -383,3 +383,8 @@ def test_the_gate_says_when_a_proposed_check_could_not_be_judged():
         {"activity": "proposed check", "check": "D1", "result": "check_error"}]}}
     assert "1 proposed check could not be judged" in patch_report._gate_note(assessment)
     assert patch_report._gate_note({"outcome": "supported_within_scope", "completion": {"activities": []}}) == ""
+
+
+def test_the_gates_note_counts_only_proposed_and_template_checks():
+    assessment = {"completion": {"activities": [{"activity": "check run", "result": "check_error"}]}}
+    assert patch_report._gate_note(assessment) == ""

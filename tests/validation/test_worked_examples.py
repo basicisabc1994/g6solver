@@ -869,6 +869,8 @@ def test_distillation_refuses_text_naming_a_project_a_test_or_a_file():
     tests, files = ["tests/x.py::test_blank_lines[1]"], ["src/module_y.py"]
     assert distill.named("Read the issue. Check the edge cases.", tests, files) == []
     assert distill.named("In Pydantic fix #14052", tests, files) == ["pydantic", "#14052"]
+    assert distill.named("see issue 5634 in TEST_BLANK_LINES", tests, files) == ["5634", "test_blank_lines"]
+    assert distill.named(r"read C:\\Users\\x or /home/x", tests, files)
     assert distill.named("run test_blank_lines on module_y.py", tests, files) == ["module_y.py", "test_blank_lines"]
 
 
@@ -894,6 +896,14 @@ def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monk
         {"task": "z", "arm": "A", "repeat": 1, "run": "run/z/1", "status": "finished", "cost_usd": 0.3}) + "\n", "utf-8")
     again = loop.one(tmp_path, "g", "A", "z", 1)
     assert again["run"] == "run/z/1" and again["failing"] == 2 and again["cost_usd"] == 0.3
+
+
+def test_distillation_reads_a_failed_run_that_left_no_report(tmp_path):
+    pytest.importorskip("distill")
+    import distill
+    (tmp_path / "run").mkdir()
+    got = distill.failures([{"task": "x", "run": "run", "tests": ["t::a"]}], tmp_path)
+    assert got[0].failed_checks == ("t::a",) and "--- the patch ---" in got[0].output
 
 
 def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):

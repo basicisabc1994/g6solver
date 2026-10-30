@@ -306,7 +306,8 @@ def _steps(assessment: dict) -> list[str]:
 
 def _gate_note(assessment: dict) -> str:
     """What the gate's sentence must not hide: the proposed checks that never gave a result (worked examples, round 3)."""
-    count = sum(a.get("result") == "check_error" for a in (assessment.get("completion") or {}).get("activities") or [])
+    count = sum(a.get("result") == "check_error" and a.get("activity") in ("proposed check", "template instance")
+                for a in (assessment.get("completion") or {}).get("activities") or [])
     return f"; {count} proposed check{'s' if count != 1 else ''} could not be judged" if count else ""
 
 

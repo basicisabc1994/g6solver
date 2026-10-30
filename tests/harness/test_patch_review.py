@@ -19,6 +19,7 @@ from g6.core import component_process, confine
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.harness import patch_review
 from g6.harness.patch_review import review_patch
+from g6.workforce import repo_tests
 from g6.invariants import check_envelope
 
 BAD = "def add(a, b):\n    return a - b\n"
@@ -133,15 +134,16 @@ def test_a_correct_patch_is_supported_within_its_stated_scope(repo, monkeypatch)
 
 
 def test_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknown_with_a_next_action(repo, monkeypatch):
-    """Review I8 (probe S12): a check need not exercise the change; the owner's ruling makes one that passes against
-    the base commit's code too an unknown and a next action, never another outcome (a requirement to keep behaviour
-    passes at the base by design)."""
+    """Review I8 (probe S12): a check need not exercise the change, so one that passes against the base commit's code
+    too is an unknown and a next action. Since round 3 of the worked examples it also cannot lift a requirement for new
+    behaviour; a requirement to keep behaviour passes at the base by design, and that one still can."""
     (repo / "calc.py").write_text(GOOD)
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
                     at_base=result([ADD], [NEGATIVE]))   # R1's check passes on the unpatched code too
     got = review(repo)
     assessment = got["assessment"]
-    assert assessment["outcome"] == "supported_within_scope", assessment["reasons"]
+    assert [r["code"] for r in assessment["reasons"]] == ["checks_written_with_patch"]
+    assert "R1" in assessment["reasons"][0]["detail"] and "R2" not in assessment["reasons"][0]["detail"]
     assert runs.at_base_calls == [(ADD, NEGATIVE)]
     assert [u for u in assessment["unknowns"] if "base commit" in u and "may not exercise" in u] == [
         f"{ADD} passes against the base commit's code too, so it may not exercise the change"]
@@ -1679,7 +1681,7 @@ def test_confined_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknow
     _commit(repo, "sub")
     (repo / "calc.py").write_text(BAD + "\n\ndef sub(a, b):\n    return a - b\n# touched\n")
     got = review(repo, [{"id": "R1", "text": "add returns the sum", "checks": ["test_sub.py::test_sub"]}])
-    assert got["assessment"]["outcome"] == "supported_within_scope", got["assessment"]   # the ruling: an unknown only
+    assert [r["code"] for r in got["assessment"]["reasons"]] == ["checks_written_with_patch"]    # worked examples, round 3
     assert ("test_sub.py::test_sub passes against the base commit's code too, so it may not exercise the change"
             in got["assessment"]["unknowns"]), got["assessment"]["unknowns"]
     # survival: a check that fails on the base code (this patch fixes add) raises no such unknown
@@ -1722,7 +1724,7 @@ def test_confined_a_correct_patch_beside_a_submodule_imported_through_a_link_is_
     got = review(repo, [*SUM, {"id": "R3", "text": "the vendored package gives its value",
                                "checks": ["test_lib.py::test_value"]}])
     assessment = got["assessment"]
-    assert assessment["outcome"] == "supported_within_scope", assessment
+    assert [r["code"] for r in assessment["reasons"]] == ["checks_written_with_patch"], assessment    # R3 passes there too
     assert [r["receipt_status"] for r in assessment["scope"]["receipts"]] == ["matched", "matched"]
     # the copy made for the base commit's run held the link and the folder: the check passed there too
     assert ("test_lib.py::test_value passes against the base commit's code too, so it may not exercise the change"
@@ -1779,3 +1781,53 @@ def test_every_requirement_needs_its_own_untouched_check(repo, monkeypatch):
                                      {"id": "R2", "text": ONE, "checks": ["test_new.py::test_new"]}])["assessment"]
     assert got["outcome"] == "insufficient_evidence"
     assert "R2" in got["reasons"][0]["detail"] and "R1" not in got["reasons"][0]["detail"]
+
+
+def test_an_old_test_that_passes_at_the_base_commit_does_not_lift_a_requirement(repo, monkeypatch):
+    # the fresh review: any unrelated old test would otherwise lift the cap, and the next action said to cite one
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, default=result([ADD]), at_base=result([ADD]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": [ADD]}])["assessment"]
+    assert [r["code"] for r in got["reasons"]] == ["checks_written_with_patch"]
+
+
+def test_an_old_test_that_fails_at_the_base_commit_supports_a_requirement(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    Recorded(monkeypatch, default=result([ADD]), at_base=result((), [ADD]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": [ADD]}])["assessment"]
+    assert got["outcome"] == "supported_within_scope", got["reasons"]
+
+
+def test_a_requirement_to_keep_behaviour_passes_at_the_base_commit_by_design(repo, monkeypatch):
+    (repo / "calc.py").write_text(GOOD)
+    change = repo_tests.change(repo, "HEAD")
+    checks = [{"id": ADD, "provenance": "stated"}]
+    runs = [{"check": patch_review.AT_BASE, "outcomes": {ADD: "passed"}}]
+    for kind, expected in (("preserve", []), ("requirement", ["R1"])):
+        req = {"id": "R1", "status": patch_review.PASSED_ON_CHECKS, "kind": kind, "checks": checks}
+        assert patch_review._self_checked([req], change, repo, runs) == expected
+
+
+def test_a_check_in_an_ignored_file_is_not_independent(repo, monkeypatch):
+    # the fresh review: git-ignored, not named like a test, so the patch's changed files do not list it
+    (repo / ".gitignore").write_text("selfcheck.py\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "ignore")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "selfcheck.py").write_text(NEW_TEST)
+    Recorded(monkeypatch, default=result(["selfcheck.py::test_new"]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": ["selfcheck.py::test_new"]}])["assessment"]
+    assert "checks_written_with_patch" in [r["code"] for r in got["reasons"]]
+
+
+def test_a_folder_of_old_tests_stays_independent_of_a_change_to_source_alone(repo, monkeypatch):
+    # the fresh review: a folder check was capped because the source the patch changed sits in it
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "__init__.py").write_text("")
+    (repo / "pkg" / "test_old.py").write_text(NEW_TEST)
+    _git(repo, "add", ".")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "pkg")
+    (repo / "pkg" / "__init__.py").write_text("X = 1\n")
+    Recorded(monkeypatch, default=result(["pkg/test_old.py::test_new"]))
+    got = review(repo, requirements=[{"id": "R1", "text": ONE, "checks": ["pkg"]}])["assessment"]
+    assert got["outcome"] == "supported_within_scope", got["reasons"]

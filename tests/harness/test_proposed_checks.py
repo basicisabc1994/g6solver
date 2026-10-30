@@ -988,7 +988,7 @@ def test_confined_a_network_call_refused_through_a_client_library_is_a_check_err
         assert "operating-system error" in found["detail"] and "httpx" in found["detail"]
         # reviewer B's B2: it passes at the base commit, so the error on the patch alone is asked about, never nothing
         assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
-        assert [r["code"] for r in got["assessment"]["reasons"]] == ["check_error_on_patch"]
+        assert "check_error_on_patch" in [r["code"] for r in got["assessment"]["reasons"]]
 
 
 def test_confined_a_wrong_preserve_check_and_an_incomplete_fix_and_a_probe(repo, bwrap_backend):

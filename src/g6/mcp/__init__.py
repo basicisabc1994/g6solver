@@ -241,11 +241,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         insufficient_evidence (no requirement, a requirement with no check, a check that did not run or ran out of
         time, a run whose tests all passed by pytest's own count but whose process then exited with an error
         (run_inconsistent; exit 0 with a failure, an error or fewer tests finished is a run that cannot be believed),
-        a shortcut only the claim reports, a requirement that passed only on checks in files the patch adds or changes
+        a shortcut only the claim reports, a requirement with no check independent of the patch
         (checks_written_with_patch), or a proposed or compiled check's unconfirmed_counterexample or
         unconfirmed_failure);
-        supported_within_scope (every requirement passed its stated checks, at least one in a file the patch does not
-        touch: support on those checks only, never proof
+        supported_within_scope (every requirement passed its stated checks, at least one of them not written by the
+        patch and, for new behaviour, failing at the base commit: support on those checks only, never proof
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
         same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
