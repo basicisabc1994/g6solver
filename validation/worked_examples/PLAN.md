@@ -775,3 +775,16 @@ on every archived patch of the training bugs and on the maintainers' fix. No mod
 the scout's list of kinds of shape and G1's came after reading what training bugs' tests try; they name no bug, but they
 are not independent of those bugs. Arm T gives the comparison with the discussion alone. Only held-out bugs and fresh bugs
 can support a claim, and any fresh set is drawn by `selection.py`'s rule with this text frozen.
+
+**L5 on `black-5634`, and L6 (before any L6 run).** The outer loop worked: both gates passed and the checks ran. But both
+runs' probes were clean on patches the maintainers' tests reject, because the rule on silence left out the very shape that
+fails. Every failing patch on this bug, in all arms, fails the same 72 of `L3-1`'s cases, all where an indented scope
+meets a trailing comment, so several attempts would share the failure. Only `L3-1` listed that crossing and asserted exact
+output. L6 keeps exact assertions and stops relying on a scout's imagination: dimensions come from reading the code path as
+well as the issue; a seeded `test_random` composes inputs from all the building blocks, and the runner counts at least 300;
+there are two hidden scouts; and the principle applies to shapes the code treats alike, unless the repository shows they
+are meant to differ. The survey cited in the plan's verification-search section found biased random inputs reach
+distinguishing inputs sooner than a solver does.
+
+**This is the last change chosen from `black-5634`.** Three reviews of this work agree the loop has been tuned on one bug.
+After L6 the text is frozen and judged on bugs it has not seen.

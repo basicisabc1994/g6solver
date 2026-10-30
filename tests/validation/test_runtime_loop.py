@@ -236,6 +236,33 @@ def test_from_l5_the_prompt_carries_g1_and_no_way_to_waive():
     assert distill.named(we.LOOP_ADDENDUM_5, [], []) == []
 
 
+def test_l6_scouts_read_the_code_and_compose_at_random():
+    text = we.scout_prompt("L6")
+    assert we.SCOUT_V6 in text and we.SCOUT_V5 not in text and "test_random" in text and "in the code" in text
+    assert "test_random" not in we.scout_prompt("L5")
+    assert distill.named(we.SCOUT_V6, [], []) == []
+
+
+def test_two_hidden_scouts_from_l6_each_in_its_own_place():
+    assert we.hidden_scouts("L5") == 1 and we.hidden_scouts("M6") == 2 and we.hidden_scouts("L7") == 2
+    assert we.hidden_at(0) == (we.HIDDEN, we.HIDDEN_TREE)
+    assert we.hidden_at(1) == (f"{we.WE}/hidden2", f"{we.WE}/hidden2_tree.json")
+    text = we.scout_prompt("L6", hidden=True, at=1)
+    assert f"{we.WE}/hidden2/" in text or f"{we.WE}/hidden2 " in text
+    assert f"{we.WE}/hidden2_tree.json" in text and f"{we.WE}/probes" not in text
+
+
+def test_the_gate_counts_generated_inputs_when_it_is_asked_to():
+    assert we.scout_gate(CROSS, exit_code=1, collected=6, randoms=we.MIN_RANDOM) == []
+    assert f"12 of {we.MIN_RANDOM}" in we.scout_gate(CROSS, exit_code=1, collected=6, randoms=12)[0]
+    assert we.scout_gate(CROSS, exit_code=1, collected=6) == []
+
+
+def test_the_container_reports_the_generated_cases():
+    assert we.random_cases("exit=1\ncross=6\nrandom=300\n") == 300
+    assert we.random_cases("exit=1\n") == 0
+
+
 def test_arms_before_l5_keep_the_stop_hook_and_l5_has_the_outer_loop():
     assert we.has_hook("L1") and we.has_hook("M4") and not we.has_hook("L5")
     assert we.holds_loop("L5") and we.holds_loop("M7") and not we.holds_loop("L4")

@@ -120,7 +120,7 @@ a specific expected value taken from the issue, not from what the patched code r
 PROBE_RUN = f".venv/bin/python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider --rootdir={WE}/probes"
 PROBE_COLLECT = PROBE_RUN.replace(" -q --tb=short", " --collect-only -q")
 HIDDEN, HIDDEN_TREE, HELD_COPY = f"{WE}/hidden", f"{WE}/hidden_tree.json", "/tmp/we-held"
-MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS, MAX_REPAIRS = 4, 2.0, 12000, 200, 3
+MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS, MAX_REPAIRS, MIN_RANDOM = 4, 2.0, 12000, 200, 3, 300
 FAILED = re.compile(r"^(?:FAILED|ERROR) \S*?([^/\s]+\.py(?:::\S+)?)", re.M)
 SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
 the code it concerns, in the current directory, and work out what a complete fix must do.
@@ -182,6 +182,20 @@ SCOUT_V5 = f"""   Treat the shapes as dimensions. In {WE}/tree.json also give "d
    Assert the exact value required: compare whole outputs, not normalised forms, predicates or parts of them.
    Where the issue and the repository are silent on what a shape should do, write no probe for it and keep it out of the
    dimensions: list it with an empty probe. A wrong expectation is worse than a missing one.
+"""
+#: Arm L6 on: every failing patch on the hardest training bug failed where two dimensions cross that most scouts never
+#: listed, and the rule on silence made them list less. So dimensions come from the code, and a generator mixes them.
+SCOUT_V6 = f"""   Find the dimensions in the code as well as in the issue: read the functions the symptom passes through, and list
+   each kind of thing that can reach that point and each branch it can take there. In {WE}/tree.json also give
+   "dimensions": an object from each dimension's name to its list of values, as short strings. Write one test named
+   test_cross, parametrized with itertools.product over every dimension, that builds its input from each combination's
+   values. Skip a combination that cannot occur with pytest.skip inside the test; never leave it out.
+   Write one test named test_random, parametrized over at least {MIN_RANDOM} seeds: each seed composes an input at random
+   from the building blocks of all the dimensions, freely mixed, at random positions and depths, and checks the rule on
+   it. It finds the crossings nobody listed. The runner counts both tests and refuses the probes if cases are missing.
+   Assert the exact value required: compare whole outputs, not normalised forms, predicates or parts of them.
+   Apply the issue's principle to every shape the code treats alike. Leave a shape out only where the repository shows it
+   is meant to behave differently, and list it with an empty probe.
 """
 LOOP_ADDENDUM_5 = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
@@ -246,13 +260,27 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
     raise SystemExit(f"no task {task_id!r} in {path.name}")
 
 
-def scout_prompt(arm: str, *, hidden: bool = False) -> str:
+def hidden_at(i: int) -> tuple[str, str]:
+    """Where hidden scout ``i`` works: its probes' folder and its tree."""
+    place = f"{HIDDEN}{i + 1}" if i else HIDDEN
+    return place, f"{place}_tree.json"
+
+
+def hidden_scouts(arm: str) -> int:
+    return 2 if int(arm[1:]) >= 6 else 1
+
+
+def scout_prompt(arm: str, *, hidden: bool = False, at: int = 0) -> str:
     """The scout's prompt for arm ``L<n>`` or ``M<n>``: ``SCOUT_V2`` from generation 2 and ``SCOUT_V3`` from 3, then
-    ``SCOUT_V5`` alone from 5, before its critique. ``hidden``: the second scout's, whose work the agent never sees."""
+    ``SCOUT_V5`` alone from 5 and ``SCOUT_V6`` from 6, before its critique. ``hidden``: hidden scout ``at``'s, whose work
+    the agent never sees."""
     n = int(arm[1:])
-    extra = SCOUT_V5 if n >= 5 else (SCOUT_V2 if n >= 2 else "") + (SCOUT_V3 if n >= 3 else "")
+    extra = SCOUT_V6 if n >= 6 else SCOUT_V5 if n == 5 else (SCOUT_V2 if n >= 2 else "") + (SCOUT_V3 if n >= 3 else "")
     text = SCOUT_PROMPT.replace("5. Critique:", extra + "5. Critique:", 1)
-    return text.replace(f"{WE}/probes", HIDDEN).replace(f"{WE}/tree.json", HIDDEN_TREE) if hidden else text
+    if hidden:
+        place, tree = hidden_at(at)
+        text = text.replace(f"{WE}/probes", place).replace(f"{WE}/tree.json", tree)
+    return text
 
 
 def probes_at(where: str) -> str:
@@ -273,6 +301,11 @@ def crashes(output: str) -> int:
     """How many summary lines say a test failed with something other than an assertion or ``pytest.fail``."""
     return sum(1 for line in output.splitlines() if line.startswith("FAILED ")
                and not re.search(r" - (?:assert|AssertionError|Failed)", line))
+
+
+def random_cases(said: str) -> int:
+    got = re.search(r"^random=(\d+)$", said, re.M)
+    return int(got[1]) if got else 0
 
 
 def gate_numbers(said: str) -> tuple[int, int, int]:
@@ -330,12 +363,14 @@ def critic_prompt(number: int, title: str, text: str) -> str:
     return CRITIC_PROMPT.format(number=number, title=title, text=text)
 
 
-def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0) -> list[str]:
+def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, randoms: int | None = None) -> list[str]:
     """What is wrong with the scout's probes, by the runner's own count: G6's ``InputDomain`` says how many combinations
     the declared dimensions make, up to ``MAX_CROSS``. Empty when the fix may start."""
     from g6.cegis import InputDomain
 
     wrong = []
+    if randoms is not None and randoms < MIN_RANDOM:
+        wrong.append(f"test_random has {randoms} of {MIN_RANDOM} generated inputs")
     if broken:
         wrong.append(f"{broken} probes fail with an error, not an assertion: they test nothing until they run")
     if exit_code not in (0, 1):
@@ -1242,11 +1277,13 @@ def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> l
     run_them, count = probes_at(where), PROBE_COLLECT.replace(f"{WE}/probes", where)
     said = out(ctx.docker.sh(agent, f"COLUMNS=300 {run_them} {gate_flags()} > /tmp/we-gate.txt 2>&1; code=$?; "
                                     'grep "^FAILED" /tmp/we-gate.txt | head -c 400000; echo "exit=$code"; '
-                                    f'echo "cross=$({count} 2>/dev/null | grep -c test_cross)"; rm -f /tmp/we-gate.txt',
+                                    f'echo "cross=$({count} 2>/dev/null | grep -c test_cross)"; '
+                                    f'echo "random=$({count} 2>/dev/null | grep -c test_random)"; rm -f /tmp/we-gate.txt',
                              workdir=task.repo, timeout=300))
     code, collected, broken = gate_numbers(said)
     return scout_gate(out(ctx.docker.sh(agent, f"cat {tree} 2>/dev/null", timeout=60)), exit_code=code,
-                      collected=collected, broken=broken)
+                      collected=collected, broken=broken,
+                      randoms=random_cases(said) if int(ctx.arm[1:]) >= 6 else None)
 
 
 def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, title: str,
@@ -1297,26 +1334,30 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
                 "keep the first scout's work from the second")
         ctx.docker.sh(agent, f"mv {HOME}/.claude/projects {WE}/scout-projects; chown -R root:root {WE}/scout-projects; "
                              f"chmod -R go-rwx {WE}/scout-projects; true", user="root", timeout=60)
-        second = scout_prompt(ctx.arm, hidden=True).format(**filled)
-        run.write("hidden_prompt.txt", second)
-        session(args, second, "hidden_stream.jsonl")
-        held = (HIDDEN, HIDDEN_TREE)
-        left = probe_gate(ctx, task, agent, *held)
-        refused += left
-        if left:
-            _, left = checked_again(left, "hidden_stream_2.jsonl", *held)
-        run.write("hidden_at_base.txt", out(ctx.docker.sh(agent, f"{probes_at(HIDDEN)} 2>&1 | tail -c 8000",
-                                                          workdir=task.repo, timeout=300)))
-        copy_out(ctx.docker, agent, HIDDEN, run.path / "hidden_probes")
-        held_tree = scout_tree(out(ctx.docker.sh(agent, f"cat {HIDDEN_TREE} 2>/dev/null", timeout=60)) or "no tree")
-        run.write("hidden_tree.txt", held_tree["text"])
-        hidden = {"still_wrong": left, **{k: held_tree.get(k) for k in ("shapes", "open", "error")}}
-        checked(ctx.docker.sh(agent, f"mkdir -p {HIDDEN}; chown -R root:root {HIDDEN} {HIDDEN_TREE}; "
-                                     f"chmod -R go-rwx {HIDDEN} {HIDDEN_TREE}; mkdir -p {HOME}/.claude/projects; "
-                                     f"chown -R root:root {HOME}/.claude/projects; rm -rf {HOME}/.claude/projects/* "
-                                     f"{HOME}/.claude/todos {HOME}/.claude/shell-snapshots /tmp/*; "
-                                     f"chown -R {USER} {HOME}/.claude/projects; true", user="root", timeout=120),
-                "hide the second scout's work")
+        for i in range(hidden_scouts(ctx.arm)):
+            where, tree_at = hidden_at(i)
+            tag = f"hidden{i + 1}" if i else "hidden"
+            second = scout_prompt(ctx.arm, hidden=True, at=i).format(**filled)
+            run.write(f"{tag}_prompt.txt", second)
+            session(args, second, f"{tag}_stream.jsonl")
+            left = probe_gate(ctx, task, agent, where, tree_at)
+            refused += left
+            if left:
+                _, left = checked_again(left, f"{tag}_stream_2.jsonl", where, tree_at)
+            run.write(f"{tag}_at_base.txt", out(ctx.docker.sh(agent, f"{probes_at(where)} 2>&1 | tail -c 8000",
+                                                              workdir=task.repo, timeout=300)))
+            copy_out(ctx.docker, agent, where, run.path / f"{tag}_probes")
+            held_tree = scout_tree(out(ctx.docker.sh(agent, f"cat {tree_at} 2>/dev/null", timeout=60)) or "no tree")
+            run.write(f"{tag}_tree.txt", held_tree["text"])
+            hidden[tag] = {"still_wrong": left, **{k: held_tree.get(k) for k in ("shapes", "open", "error")}}
+            restore()
+            checked(ctx.docker.sh(agent, f"mkdir -p {where}; chown -R root:root {where} {tree_at}; chmod -R go-rwx {where} "
+                                         f"{tree_at}; mv {HOME}/.claude/projects {WE}/scout-projects-{tag}; chown -R "
+                                         f"root:root {WE}/scout-projects-{tag}; chmod -R go-rwx {WE}/scout-projects-{tag}; "
+                                         "true", user="root", timeout=60), "hide a scout's work from the next")
+        checked(ctx.docker.sh(agent, f"mkdir -p {HOME}/.claude/projects; rm -rf {HOME}/.claude/todos "
+                                     f"{HOME}/.claude/shell-snapshots /tmp/*; chown -R {USER} {HOME}/.claude/projects; "
+                                     "true", user="root", timeout=120), "clear what the scouts left")
     restore()
     checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes && chown -R root:root {WE}/probes && chmod -R a+rX,go-w "
                                  f"{WE}/probes; [ -f {WE}/tree.json ] && chown root:root {WE}/tree.json "
@@ -1342,18 +1383,22 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
 
     def check() -> tuple[set[str], str]:
         rounds[0] += 1
-        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {HIDDEN} ] && cp -r {HIDDEN} {HELD_COPY} && "
-                             f"chown -R {USER} {HELD_COPY}; true", user="root", timeout=60)
         failing, said = set(), []
-        for label, where in (("scout", f"{WE}/probes"), ("held", HELD_COPY)):
-            got = out(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(where)} --maxfail=10 -rfE 2>&1 | tail -c 12000",
-                                    workdir=task.repo, timeout=300))
+        for label, where in (("scout", f"{WE}/probes"),
+                             *((f"held{i}", hidden_at(i)[0]) for i in range(hidden_scouts(ctx.arm)))):
+            held = where != f"{WE}/probes"
+            if held:
+                ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && "
+                                     f"chown -R {USER} {HELD_COPY}; true", user="root", timeout=60)
+            got = out(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(HELD_COPY if held else where)} --maxfail=10 -rfE 2>&1 "
+                                           "| tail -c 12000", workdir=task.repo, timeout=300))
+            if held:
+                ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
             run.write(f"repair_check_{rounds[0]}_{label}.txt", got)
             ids = failed_ids(got)
             failing |= {f"{label}:{i}" for i in ids}
             if ids:
                 said.append(got)
-        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
         return failing, "\n\n".join(said)
 
     def ask(text: str, n: int) -> None:
