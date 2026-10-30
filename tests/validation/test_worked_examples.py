@@ -673,11 +673,12 @@ def test_round3_prompts_differ_only_as_the_plan_states():
         assert word not in a.split("Issue #")[0]             # arm A: Claude Code alone, told nothing of G6
     assert a.split("Issue #")[1] == b.split("Issue #")[1]    # the same issue text
     with pytest.raises(ValueError):
-        we.prompt(TASK, "T", "body", arm="D")
+        we.prompt(TASK, "T", "body", arm="E")
 
 
-def test_round3_addendum_names_no_bug_and_no_diagnosis():
-    text = we.ADDENDUM_C.lower()
+@pytest.mark.parametrize("addendum", ["ADDENDUM_C", "ADDENDUM_D"])
+def test_round3_addendum_names_no_bug_and_no_diagnosis(addendum):
+    text = getattr(we, addendum).lower()
     words = set()
     for t in we.load_tasks():
         words |= {t.id.lower(), t.full_name.lower(), t.name.lower(), str(t.issue), str(t.pr)}
@@ -685,7 +686,7 @@ def test_round3_addendum_names_no_bug_and_no_diagnosis():
     words |= {"fmt: off", "root_path", "trailing slash", "bar.update", "nested", "_click_default_help", "help option",
               "_black_version", "docstring", "progress", "warning", "pydantic", "black", "click", "starlette"}
     assert not [w for w in words if w in text]
-    assert len(we.ADDENDUM_C.split()) <= 200                 # short and factual
+    assert len(getattr(we, addendum).split()) <= 260         # short and factual
 
 
 def test_round3_claude_args_take_the_model_and_the_cap():
@@ -831,6 +832,19 @@ def test_round3_ledger_says_whether_g6_was_used(tmp_path):
     record = {"run": "r", "observed": {"tool_use": {"tool_search": 2, "g6_calls": 3}}}
     assert (we.r3_ledger(ctx.archive, record)["g6_calls"], we.r3_ledger(ctx.archive, record)["tool_search"]) == (3, 2)
     assert we.r3_ledger(ctx.archive, {"run": "r"})["g6_calls"] is None     # a run that never got that far says so
+
+
+def test_round3_arm_d_is_c_with_the_fallback_on_the_four_probe_bugs_only(tmp_path):
+    assert we.ADDENDUM_D.startswith(we.ADDENDUM_C) and "proposed_checks" in we.ADDENDUM_D
+    assert "expected value" in we.ADDENDUM_D
+    assert we.prompt(TASK, "t", "x", "D") != we.prompt(TASK, "t", "x", "C")
+    assert we.R3_PROBE == {(SONNET, t, "D", 1) for t in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
+    assert all(arm != "D" for _, _, arm, _ in we.r3_schedule(we.load_tasks()))    # the schedule's 100 runs are unchanged
+    ctx = _r3(tmp_path, "D", model=SONNET)
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    assert "already" in we.run_task(ctx, TASK)["why"]
+    ctx.model = HAIKU
+    assert "schedules no run" in we.run_task(ctx, TASK)["why"]
 
 
 def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):

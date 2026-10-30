@@ -491,3 +491,24 @@ review.
 
 **A finding kept for the report.** In both smoke runs G6 gave `supported_within_scope` on a patch the maintainers' tests
 reject. It says what it did not check, but this is the false acceptance the round exists to look at.
+
+### 2026-10-30: the probe's result, and arm D (before any run of arm D)
+
+**The result.** Sonnet's arm C ran real checks on all three bugs: on attrs-1593 two templates, on click-3678 and
+pydantic-14052 two `proposed_checks` each. All passed, and none found a defect. G6 gave `insufficient_evidence` on attrs
+(its patch passes the maintainers' tests) and on pydantic (fails 1), and `supported_within_scope` on click (fails 10).
+All three of G6's "supported" verdicts in round 3 so far are on patches the maintainers' tests reject. No `formal` or
+`model_checking` op has been called. The stricter gate is met, but the rest of round 3 stays held at the owner's choice.
+
+**Why arm D.** A read of the code found one escape hatch wired into a review, `proposed_checks`, which can build what
+a template cannot; the agent has to think of it, and neither a refusal, the addendum nor the skill's steps pointed there.
+G6 does not itself find from the source that a check needs another form: that is not built, and belongs after launch.
+
+**What changes.**
+- **In G6:** a template's refusal now names `proposed_checks` as the fallback. Only that text changes; no outcome does.
+  The commit is named in a note here before arm D runs, after a fresh review, on images built from it. Arms A, B and C
+  stay on `894597f`.
+- **Arm D:** arm C's addendum, plus: use `proposed_checks` when a template is refused or cannot express the inputs, and
+  make every check assert a specific expected value taken from the issue, so that it can fail. It names no bug.
+- **Runs:** Sonnet's arm D on black-5634, attrs-1593, click-3678 and pydantic-14052. Arm D is outside the 100 scheduled
+  runs and is reported as its own arm. Runs already made stay as they are. Same $100 stop; the proposer stays off.

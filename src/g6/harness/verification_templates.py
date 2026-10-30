@@ -1444,6 +1444,12 @@ def _forms(template: str, bindings: Any) -> list[tuple[str, type[BaseModel]]]:
     return [steps, single] if isinstance(bindings, dict) and "steps" in bindings else [single, steps]
 
 
+#: A template binds JSON values to names at the base commit, so some checks cannot be written as one (worked examples,
+#: round 3): every refusal says where such a check can go.
+FALLBACK = ("If a template cannot express this check (its inputs are not JSON values, or what it names exists only in "
+            "the patch), write it as a proposed_checks test file instead.")
+
+
 def bindings_help(template: str, bindings: Any = None) -> str:
     """What ``template``'s bindings are, the required first, and one valid instance of it."""
     said = []
@@ -1453,7 +1459,7 @@ def bindings_help(template: str, bindings: Any = None) -> str:
         said.append(f"{how}{template} needs bindings {', '.join(required)}"
                     + (f", and also takes {', '.join(optional)}" if optional else ""))
     return (f"{'; '.join(said)}. One valid instance: {json.dumps(EXAMPLES[template])}. Correct the instance and "
-            "review again.")
+            f"review again. {FALLBACK}")
 
 
 _PLAIN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
@@ -1655,7 +1661,8 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
         except (Inapplicable, ValueError, OSError, SyntaxError, repo_tests.RepoRefused) as exc:
             why = str(exc) if isinstance(exc, Inapplicable) else (
                 f"G6 could not read what it names ({type(exc).__name__})")
-            _not_applied(found, one, definition, {**_listing(one), "result": "refused", "reason": why})
+            _not_applied(found, one, definition, {**_listing(one), "result": "refused",
+                                                  "reason": f"{why} {FALLBACK}"})
         except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (the VS-3 review, I2)
             _not_applied(found, one, definition, {**_listing(one), "result": "error", "reason": vs.stopped(exc),
                                                   "stopped": f"template instance {one.id}"})

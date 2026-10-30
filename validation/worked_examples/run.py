@@ -111,7 +111,15 @@ ADDENDUM_C = """Before you say the fix is done, also check it with G6's formal t
 3. Repair what a check refutes, then review again with g6_review_patch. Stop when a review reproduces no new
    counterexample and every property you stated has been checked, or when the budget ends.
 In your final report, list each property, the tool that checked it, and what it gave."""
+#: Round 3, arm D (PLAN.md, 2026-10-30): C, and what to do when a template cannot say the check.
+ADDENDUM_D = ADDENDUM_C + """
+If a template instance is refused, or cannot express the inputs (they are not JSON values, or the function exists only
+in the patch), check the property with a proposed_checks test file instead. Every check, in whichever form, must assert
+a specific expected value taken from the issue, not from what the patched code returns, so that it can fail."""
 PROMPT_C = PROMPT.replace("\nIssue #{number}", "\n" + ADDENDUM_C.replace("{", "{{").replace("}", "}}")
+                          + "\n\nIssue #{number}", 1)
+
+PROMPT_D = PROMPT.replace("\nIssue #{number}", "\n" + ADDENDUM_D.replace("{", "{{").replace("}", "}}")
                           + "\n\nIssue #{number}", 1)
 
 
@@ -156,7 +164,7 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
 def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
     addendum."""
-    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C}
+    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D}
     if arm not in texts:
         raise ValueError(f"no arm {arm!r}")
     owner, name = task.project.split("/", 1)
@@ -362,6 +370,7 @@ R3_MODELS = ("claude-haiku-4-5", "claude-sonnet-5-5", "claude-fable-5-1")   # in
 R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "C", 1),
             (R3_MODELS[1], "attrs-1593", "C", 1), (R3_MODELS[1], "click-3678", "C", 1),
             (R3_MODELS[1], "pydantic-14052", "C", 1)}
+R3_PROBE = {(R3_MODELS[1], task, "D", 1) for task in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
 R3_ARMS = ("A", "B", "C")
 R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
 R3_CAP_USD = 100.00          # round 3's own hard stop, agent and G6 together
@@ -413,13 +422,13 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     key = (ctx.model, task.id, ctx.arm, ctx.repeat)
     if ctx.model not in R3_MODELS:
         return f"round 3 has no model {ctx.model!r}", 0.0, 0.0
-    if key not in sched:
+    if key not in sched and key not in R3_PROBE:
         return f"round 3 schedules no run {key}", 0.0, 0.0
     done = r3_done(rows)
     if key in done and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
-    if earlier and key not in R3_SMOKE:
+    if earlier and key not in R3_SMOKE and key not in R3_PROBE:
         return f"out of order: {len(earlier)} run(s) of an earlier model are left, first {earlier[0]}", 0.0, 0.0
     spent = c.spent(rows)
     fable_left = sum(1 for k in sched if k[0] == R3_MODELS[2] and k not in done)
@@ -905,7 +914,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     why = "" if dry else refusal(ctx, task)
     cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
     if round3:
-        if ctx.arm not in R3_ARMS or ctx.model not in R3_MODELS:
+        if ctx.arm not in (*R3_ARMS, "D") or ctx.model not in R3_MODELS:
             why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
         elif dry:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
@@ -1459,7 +1468,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--round", type=int, choices=(1, 2, 3), default=1,
                     help="2: round 2, G6 with its own model (its archive is round2/ inside the worked examples' one); "
                          "3: round 3, formal methods (round3/, with its own $100 stop and ledger)")
-    ap.add_argument("--arm", choices=R3_ARMS, help="round 3: A (no G6), B (G6 as shipped), C (G6 and the addendum)")
+    ap.add_argument("--arm", choices=(*R3_ARMS, "D"),
+                    help="round 3: A (no G6), B (G6 as shipped), C (G6 and the addendum), D (C and its fallback)")
     ap.add_argument("--model", choices=R3_MODELS, help="round 3: the agent's model")
     ap.add_argument("--repeat", type=int, default=1, help="round 3: 2 for Sonnet's second arm A run of a bug")
     ap.add_argument("--rerun-why", default="", help="round 3: make again a run that ended in error, saying why")
