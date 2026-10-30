@@ -154,6 +154,24 @@ def test_a_stated_check_that_passes_at_the_base_commit_too_is_an_unknown_with_a_
     assert [r["tier"] for r in scope["receipts"]] == [1, 2] and len(got["gate"]["receipts"]) == 2
 
 
+def test_a_stated_check_whose_test_file_cannot_load_at_the_base_commit_is_not_said_to_fail_there(repo, monkeypatch):
+    """The owner's pilot (2026-10-30): a test file that imports a name the patch adds cannot load against the base
+    commit's code, so none of its checks ran there. That is no failure at the base, and whether they exercise the
+    change is an unknown, never claimed."""
+    (repo / "calc.py").write_text(GOOD)
+    unloaded = result(verdict="failed", output="ERROR test_calc.py - ImportError: cannot import name 'sub' from 'calc'\n")
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE]), ("test_calc.py",): result([ADD, NEGATIVE])},
+             at_base=unloaded)
+    assessment = review(repo)["assessment"]
+    assert assessment["outcome"] == "supported_within_scope", assessment["reasons"]
+    base = next(run for run in assessment["scope"]["checks_run"] if run["check"] == "stated checks at the base commit")
+    assert base["outcomes"] == {ADD: "not_run", NEGATIVE: "not_run"}
+    assert [u for u in assessment["unknowns"] if "base commit" in u] == [
+        "whether the stated checks in test_calc.py exercise the change was not established: pytest could not load the "
+        "file against the base commit's code"]
+    assert "fails at the base commit" not in assessment["report"]
+
+
 def test_the_stated_checks_run_at_the_base_commit_only_when_nothing_else_decided(repo, monkeypatch):
     (repo / "calc.py").write_text(POSITIVE_ONLY)
     runs = Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD], [NEGATIVE])})

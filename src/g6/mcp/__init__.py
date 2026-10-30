@@ -305,7 +305,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                     "The baseline and generated candidates execute Python inside the configured boundary. "
                     "Future activation requires separate consent. Type your name; identity is recorded as given.")
         consent = await request_consent(ctx, question)
-        if consent.status != "accepted":
+        if consent.status in ("declined", "cancelled"):   # the person said no, or closed the form (the owner's pilot)
+            return consent_refusal(consent, next_action=(
+                "No change was made. The person declined or closed the form: ask the person whether they want to "
+                "confirm before calling metaharness_confirm again, and never offer another way to confirm."))
+        if consent.status != "accepted":   # no form, or no name with acceptance: the person can confirm in a terminal
             return consent_refusal(consent, next_action=(
                 f'From the project directory, the user can inspect with g6 workflow inspect {workflow}, then '
                 f'personally confirm with g6 workflow confirm {workflow} {workflow_digest} --as "Your name".'))

@@ -1188,11 +1188,29 @@ def _loaded_elsewhere(change, ran) -> str:
                      for rel, where in found.items())
 
 
+def _not_loaded(found: dict[str, dict], ran: dict) -> list[str]:
+    """The test files pytest could not load in ``ran``, the run against the base commit's code (one that imports a
+    name the patch adds, say), each holding a check of ``found``: none of those checks ran there, so each becomes
+    ``not_run``, never a failure at the base (the owner's pilot, 2026-10-30). Returns those files."""
+    full = _in_repository(ran)
+    broken = sorted({full(rel) for rel in _collection_errors(ran.get("output") or "")})
+    files = []
+    for check, verdict in found.items():
+        head = check.partition("::")[0].rstrip("/")
+        mine = [path for path in broken if path == head or path.startswith(head + "/")]
+        if verdict["verdict"] != "passed" and mine:
+            found[check] = {"verdict": "not_run", "detail": "its test file could not be loaded against the base "
+                                                            "commit's code"}
+            files += mine
+    return list(dict.fromkeys(files))
+
+
 def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots=()) -> list[str]:
     """Review I8, the owner's ruling: the stated checks that passed, as their test files are now, run against the
     base commit's code, only when nothing so far found a problem. One that passes there too may not exercise the
     change: an unknown, and a next action for each requirement it checks; never an outcome, since a requirement to
-    keep behaviour passes at the base by design. Returns those next actions."""
+    keep behaviour passes at the base by design. One whose test file could not be loaded there did not run there
+    (``_not_loaded``): whether it exercises the change is an unknown. Returns the next actions."""
     passing = [check for check in dict.fromkeys(norm[raw] for req in stated for raw in req.checks)
                if verdicts[check]["verdict"] == "passed"]
     if not passing or not change.files:
@@ -1219,6 +1237,9 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
         return []
     actions = []
     at_base = _verdicts(passing, ran)
+    for rel in _not_loaded(at_base, ran):
+        unknowns.append(f"whether the stated checks in {rel} exercise the change was not established: pytest could not "
+                        "load the file against the base commit's code")
     if "isolation" in ran:   # each check's own verdict at the base commit, which the readable report says in words
         runs[-1]["outcomes"] = {check: found["verdict"] for check, found in at_base.items()}
     for check, found in at_base.items():

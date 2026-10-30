@@ -132,6 +132,16 @@ def test_patch_review_says_the_patch_runs_in_pytests_own_process():
     assert OWN_PROCESS in section and PATCH_REVIEW_BOUNDARY in section
 
 
+#: The owner's pilot (2026-10-30): a workflow's files live in the project's .g6 folder, untracked unless ignored.
+IGNORE_G6 = ("A workflow's files live in the project's .g6/ folder: add .g6/ to the repository's .gitignore, or a later "
+             "patch review there counts them as part of the change.")
+
+
+def test_the_workflow_docs_say_to_ignore_g6s_project_folder():
+    for name in ("README.md", "docs/AI_FOR_AI_WORKFLOW.md"):
+        assert IGNORE_G6 in _plain((OSS / name).read_text(encoding="utf-8")), name
+
+
 #: L1 (the owner's decision): G6's own environment, made with --copies, and why.
 OWN_ENVIRONMENT = "python -m venv --copies"
 WHY_COPIES = ("on Linux, G6 cannot yet tell its own Python from a project environment linked to the same one, and "

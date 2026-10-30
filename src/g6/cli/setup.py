@@ -160,6 +160,9 @@ def register_clients(args, clients: list[str], say: Say) -> int:
                        for item in allowed.split(",")):
         say("--allow requires explicit component or component.operation names; wildcards are not supported.")
         return 2
+    from pathlib import Path
+    from g6.core import skills
+
     for client in clients:
         binary = find_program(client)
         if binary is None:
@@ -183,7 +186,12 @@ def register_clients(args, clients: list[str], say: Say) -> int:
             say(f"{client} refused registration. Inspect its existing g6 entry with '{client} mcp get g6'; to "
                 f"replace it, remove it with '{REMOVE[client]}' and run g6 setup again.")
             return 2
-        cli(["skills", "install", "--user", "--client", client])
+        # setup is the person's install step, so it brings this version's skill: an earlier install's copy left in
+        # place keeps its old instructions (the owner's pilot, 2026-10-30)
+        earlier = (Path.home() / f".{client}" / "skills" / skills.GUIDE).exists()
+        cli(["skills", "install", "--user", "--client", client, "--force"])
+        if earlier:
+            say(f"Replaced the earlier copy of the {skills.GUIDE} skill for {client} with this version's.")
         say(f"Registered G6 for {client} with this installation's Python, started with -P so that the packages in "
             "the project's folder never replace G6's own. Restart the client to load it.")
     say("Local settings assume a trusted host. An agent with your account's unrestricted shell can change them.")

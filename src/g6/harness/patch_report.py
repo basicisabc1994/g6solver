@@ -11,9 +11,12 @@ At most ``MAX_LINES`` lines, in this order:
    field), and whether a base run shows it passes there; then the unconfirmed findings of proposed or compiled checks;
 3. what is not established, each with its reason and what would settle it; then what was demonstrated on the stated
    checks, with "fails at the base commit, passes on the patch" where the base run shows a requirement's checks
-   exercise the change (with the findings and what is not established, the review contract and its evidence);
-4. what the person decides: at most 3 questions, and merging;
-5. how this was decided, one line per step: proposed, tested, gate, approve;
+   exercise the change (with the findings and what is not established, the review contract and its evidence); a
+   check that could not run at the base commit is never said to fail there;
+4. what the person decides: at most 3 questions, the unknowns G6 counts neither for nor against the patch, and
+   merging;
+5. how this was decided, one line per step: proposed, tested (with the proposed checks and template instances, each
+   with its result, which decide nothing), gate, approve;
 6. the standing note: the specification may be incomplete.
 
 A list cut at its room ends with "and N more" and names the field that holds the rest. Text the repository or the
@@ -55,6 +58,11 @@ RUNS = {"stated checks and extra tests": "the stated checks",
 #: Where the exact command G6 ran is, beside the repository's plain one.
 EXACT = ("G6 ran it with its own isolating options; the exact command is in "
          "`assessment.completion.defects_reproduced` (`reproduction.command`)")
+#: A proposed check's or template instance's result, in the Tested step (the owner's pilot, 2026-10-30).
+PROPOSED = {"not_refuted": "not refuted", "counterexample": "found a counterexample (above)",
+            "unconfirmed_failure": "fails on the patch (above)", "fails_on_base_too": "fails at the base commit too",
+            "behaviour_changed": "behaves differently from the base commit (a question, not a finding)",
+            "check_error": "could not be judged", "refused": "refused"}
 #: Reviewer B's B6: the caution a proposed or compiled check's reproduction carries, said on its line too.
 CAUTION = "Read it before you run it, or run it in a container."
 #: What the person does about git-ignored files the tests could load (worked examples, W3b), under that finding.
@@ -186,14 +194,63 @@ def _shown(assessment: dict) -> list[list[str]]:
 
 
 def _decide(assessment: dict) -> list[str]:
+    """The questions, then the unknowns themselves while they fit (only counted when they cannot), then merging,
+    which always ends the part."""
     questions = (assessment.get("completion") or {}).get("open_questions", [])[:3]
     lines = [f"- {code(q.get('question', ''), 300)}" for q in questions]
     unknowns = assessment.get("unknowns") or []
-    if unknowns:
+    room = BUDGET["decide"] - len(lines) - 1
+    if unknowns and room >= 2:
+        lines.append("- What G6 counts neither for nor against the patch:")
+        lines += ["  " + line if line.startswith("- and ") else line
+                  for line in _cut([[f"  - {code(_words(str(u)), 200)}"] for u in unknowns], room - 1,
+                                   "assessment.unknowns")]
+    elif unknowns:
         lines.append(f"- {len(unknowns)} unknown(s) G6 counts neither for nor against the patch "
                      f"({code('assessment.unknowns')}).")
     lines.append("- Merging: it needs your separate approval; G6 never merges.")
     return lines
+
+
+def _base_words(outcomes: dict) -> str:
+    """What the stated checks' run against the base commit's code shows: one that fails there exercises the change,
+    one that passes there too may not, and one that could not run there shows neither."""
+    total = len(outcomes)
+    fail = sum(verdict in ("failed", "timed_out") for verdict in outcomes.values())
+    passing = sum(verdict == "passed" for verdict in outcomes.values())
+    unrun = total - fail - passing
+    if fail == total:
+        return "the stated checks fail at the base commit, so they exercise the change"
+    if passing == total:
+        return "the stated checks pass at the base commit too, so they may not exercise the change"
+    if unrun == total:
+        return "the stated checks could not run at the base commit, so G6 cannot say whether they exercise the change"
+    one = {"fail": fail == 1, "pass": passing == 1}
+    parts = []
+    if fail:
+        parts.append(f"{fail} of the {total} stated checks {'fails' if one['fail'] else 'fail'} at the base commit "
+                     f"({'it exercises' if one['fail'] else 'they exercise'} the change)")
+    if passing:
+        verb = "passes" if one["pass"] else "pass"
+        pronoun = "it" if one["pass"] else "they"
+        parts.append(f"{passing} {verb} there too ({pronoun} may not exercise the change)" if fail else
+                     f"{passing} of the {total} stated checks {verb} at the base commit too ({pronoun} may not "
+                     "exercise the change)")
+    if unrun:
+        parts.append(f"{unrun} could not run there")
+    return ", ".join(parts)
+
+
+def _proposed(assessment: dict) -> str:
+    """The proposed checks and template instances that ran, each with its result, which decide nothing."""
+    own = [a for a in (assessment.get("completion") or {}).get("activities", [])
+           if a.get("activity") in ("proposed check", "template instance") and a.get("check")]
+    if not own:
+        return ""
+    shown = [f"{code(a['check'], 40)}" + (f" for {code(a['requirement'], 40)}" if a.get("requirement") else "")
+             + f": {PROPOSED.get(str(a.get('result')), code(a.get('result', ''), 30))}" for a in own[:3]]
+    more = f", and {len(own) - 3} more ({code('assessment.completion.activities')})" if len(own) > 3 else ""
+    return "the proposed checks and template instances, which decide nothing: " + ", ".join(shown) + more
 
 
 def _steps(assessment: dict) -> list[str]:
@@ -211,16 +268,14 @@ def _steps(assessment: dict) -> list[str]:
         name = RUNS.get(run.get("check"), str(run.get("check", "")))
         outcomes = run.get("outcomes") or {}
         if run.get("check") == "stated checks at the base commit" and outcomes:
-            failing = sum(verdict in ("failed", "timed_out") for verdict in outcomes.values())
-            shown.append("the stated checks fail at the base commit, so they exercise the change" if failing == len(
-                outcomes) else "the stated checks pass at the base commit too, so they may not exercise the change"
-                if not failing else f"{failing} of the {len(outcomes)} stated checks fail at the base commit (those "
-                                    "exercise the change), the others pass there too")
+            shown.append(_base_words(outcomes))
         elif run.get("verdict") == "run_inconsistent":   # the owner's ruling (2026-10-29): said plainly, no accusation
             shown.append(f"{name}: passed by pytest's own count, but the process exited with an error afterwards "
                          f"({code('run_inconsistent')}), so they are not counted as passed")
         else:
             shown.append(f"{name}: {code(run.get('verdict', ''), 30)}")
+    if _proposed(assessment):
+        shown.append(_proposed(assessment))
     ran = "; ".join(shown) or "no test ran"
     skipped = scope.get("checks_skipped") or []
     passed_over = "; ".join(

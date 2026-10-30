@@ -13,7 +13,8 @@ and activate it (`source .venv/bin/activate`; in PowerShell `.venv\Scripts\Activ
 on Linux, G6 cannot yet tell its own Python from a project environment linked to the same one, and refuses to
 review then (`G6_E_REPO_PYTHON_INVALID`, before anything runs).
 Setup uses an absolute interpreter path, installs the using-g6 skill, and ends by showing the first review
-call. Existing skills are preserved. An existing MCP entry that the client refuses to replace must be
+call. It replaces an earlier copy of its own using-g6 skill; other skills are left as they are. An existing MCP entry
+that the client refuses to replace must be
 inspected with that client's `mcp get g6` command; to replace it, remove it (`claude mcp remove --scope user
 g6` or `codex mcp remove g6`) and run setup again.
 
@@ -58,6 +59,9 @@ Call `metaharness_start` with this structure in `specification_json`:
   "seed": 20261027
 }
 ```
+
+A workflow's files live in the project's `.g6/` folder: add `.g6/` to the repository's `.gitignore`, or a later patch
+review there counts them as part of the change.
 
 This example deliberately has too few cases for activation. Supported checks are `exact`, `contains`
 and `number` with a finite nonnegative `tolerance`. Files must have flat portable Python names.
