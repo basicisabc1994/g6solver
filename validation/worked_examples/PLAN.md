@@ -429,3 +429,22 @@ Sonnet's two arm A runs of each bug side by side. Differences are described in p
 **Runs made again.** A run whose agent started is never made again for a better result. A run that ended in `error`
 (this plumbing) may be made again, with the reason recorded (`--rerun-why`); the failed attempt stays in the
 archive, the ledger and the table, marked as such.
+
+### 2026-10-30: round 3 runs on G6 894597f (before any paid run of round 3)
+
+Round 3's runs use G6 at `894597f` on `claude/formal-round`, built into round 3's images. It holds the generated-file
+copy and its review's fixes:
+- **The first review (of `286c173`)** found it safe with fixes: a generated file's content was never checked, so the
+  agent could write code into it and forge the base and the patch sides of a check; the file taken never reached the
+  review's reply; and the names were read at HEAD, not at the review's base.
+- **`894597f`** fixes all three, each with a test that failed first: a generated file is taken only if it parses as
+  literal data (a version string, its tuple, the build tools' type stub), its bytes read once, checked, copied and
+  hashed; `generated_copied` and `generated_left_out` reach the reply; and every copy made for a change reads the
+  names at the change's base. The scan also keeps to the copy's deadline.
+- **A second, fresh review (of `894597f`)** passed it with three minors, none of which can forge a pass, because both
+  copies hold the same bytes: an aliased `from __future__ import ... as TYPE_CHECKING` lets typing-only code run (it
+  can break imports, not call anything the agent wrote); a mutant run outside a review still reads the names at HEAD;
+  and a taken file could shadow an installed package of the same name if the base's configuration names it. They are
+  left for after round 3, and named here so that any import failure in a G6 check is read against them.
+
+Nothing else in G6 changes for round 3. Arms B and C both run this commit; arm A does not have G6.
