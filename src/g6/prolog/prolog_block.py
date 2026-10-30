@@ -10,9 +10,9 @@ and the others). ``ops`` and ``help`` answer anywhere. Each SWI-Prolog op return
 raised error. Unknown ops and unknown fields are refused by the typed input (``G6_E_INPUT_VALIDATION``), so no field
 can name an executable, a file to consult, a pack, a flag for SWI-Prolog or code to run in G6's process.
 
-The program and the goal must keep to the restricted syntax (:mod:`g6.prolog`), which is not a security boundary:
-SWI-Prolog runs as you, so run programs you do not trust inside your own sandbox, such as a container or a virtual
-machine.
+The program and the goal must keep to the restricted syntax (:mod:`g6.prolog`), which is not a security boundary.
+SWI-Prolog runs inside G6's operating-system boundary where one is ready, and elsewhere as you, so run programs you do
+not trust inside your own sandbox, such as a container or a virtual machine.
 """
 from __future__ import annotations
 

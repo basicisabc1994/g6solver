@@ -230,7 +230,7 @@ def test_too_many_pixels_is_refused_before_decoding(monkeypatch: pytest.MonkeyPa
 def test_without_pillow_the_reply_says_the_extra_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(images, "pillow", lambda: None)
     out = run(FakeLLM(), op="describe")
-    assert out["code"] == "G6_E_VISION_EXTRA_MISSING" and "pip install 'g6[image]'" in out["reason"]
+    assert out["code"] == "G6_E_VISION_EXTRA_MISSING" and "pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'" in out["reason"]
 
 
 # --- the ops ----------------------------------------------------------------------------------------------------------
@@ -305,4 +305,4 @@ def test_d6_over_mcp() -> None:
     info = describe_reply("ctx_vision")
     assert info["skill"] and info["outside"][0]["name"] == "tesseract" and info["extras"][0]["extra"] == "image"
     reply = invoke_reply("ctx_vision", "describe", json.dumps({"image_base64": b64(png())}))
-    assert reply["ok"] and reply["result"]["code"] == "G6_E_VISION_NO_MODEL"
+    assert not reply["ok"] and reply["result"]["code"] == "G6_E_VISION_NO_MODEL"

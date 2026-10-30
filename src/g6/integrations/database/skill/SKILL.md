@@ -107,7 +107,7 @@ Composed:
 ## What it needs
 
 - Nothing for SQLite: the standard library's `sqlite3`.
-- DuckDB and pg8000 come with the `db` extra: `pip install "g6[db]"` (DuckDB is MIT; pg8000 is BSD-3-Clause, with
+- DuckDB and pg8000 come with the `db` extra: `pip install "g6[db] @ git+https://github.com/basicisabc1994/g6solver"` (DuckDB is MIT; pg8000 is BSD-3-Clause, with
   scramp, MIT-0, and python-dateutil, Apache-2.0 or BSD). Without it, every op on such a connection says it is not
   installed.
 - **PostgreSQL**, for a `postgresql` connection: a server you run. G6 connects to the address in the operator's URL

@@ -332,7 +332,7 @@ def _answer(wf: Any, mission: dict, plan: Any, outcome: Outcome | None) -> str:
     for asked in wf.runtime.decisions.pending(mid):
         if asked["kind"] == "gate":
             lines.append(f"Waiting for your approval: {asked['question'][:300]} "
-                         "(python -m g6.workforce.decide list)")
+                         "(python -P -m g6.workforce.decide list)")
         else:
             lines.append("Waiting for your decision: the checks disagree about a result (the two interpretations "
                          "are below)")
@@ -495,7 +495,7 @@ def _disputes(wf: Any, mission_id: str, goals: dict) -> tuple[tuple[Interpretati
     reasons = _why(found.get("reasons") or []).removeprefix("the check failed: ")[:300]
     readings = (Interpretation("The result holds", f"the check(s) {', '.join(found.get('passed') or [])} passed {target}"),
                 Interpretation("The result is wrong", f"the check {found.get('failed')} failed it: {reasons}"))
-    unresolved = ("the checks disagree and none can be tried again, so a person decides: python -m "
+    unresolved = ("the checks disagree and none can be tried again, so a person decides: python -P -m "
                   f"g6.workforce.decide uphold|set-aside {mission_id} {found.get('failed')} --reason \"...\"")
     return readings, unresolved
 

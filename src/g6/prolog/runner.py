@@ -17,10 +17,14 @@ passed; the directory is removed afterwards. Memory: SWI-Prolog's stacks are cap
 ``--stack-limit``, half of ``memory_mb`` and at least 64 MB (:func:`stack_limit_mb`); the whole process is capped at
 ``memory_mb`` only on Windows, through the Job Object.
 
-This is a resource bound, not a sandbox, and the driver's restricted syntax is not a security boundary either:
-SWI-Prolog runs as you. Run programs you do not trust inside your own sandbox, such as a container or a virtual machine
-(owner, 2026-10-21). That is also why the ops that run it are sensitive: callable from Python, and over MCP only when
-the person who runs the server lists them in ``G6_MCP_SENSITIVE`` (owner, 2026-10-20).
+A run of the caller's program and goal goes through :mod:`g6.core.confine`, like every run of untrusted code: where a
+backend can confine it (bubblewrap on Linux, an AppContainer on Windows), SWI-Prolog reads only its own installation
+(``confine.program_paths``) and writes only the run directory, with no network; the run's ``isolation`` says how it
+ran, and where isolation is required and no backend can give it the run is refused before SWI-Prolog starts
+(``G6_E_ISOLATION_UNAVAILABLE``). ``swipl --version`` runs nothing of the caller's and is not planned. Elsewhere this is
+a resource bound, not a sandbox, and the driver's restricted syntax is not a security boundary either: SWI-Prolog
+runs as you. That is also why the ops that run it are sensitive: callable from Python, and over MCP only when the
+person who runs the server lists them in ``G6_MCP_SENSITIVE`` (owner, 2026-10-20).
 """
 from __future__ import annotations
 
@@ -32,7 +36,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from g6.core import component_process
+from g6.core import component_process, confine
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.prolog.envelope import OUTPUT_TOO_LARGE, RUN_FAILED, SWIPL_ENV, SWIPL_MISSING, TIME_LIMIT, Refusal
@@ -91,7 +96,7 @@ def _environment(root: Path) -> dict[str, str]:
 
 
 def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, cap: int, memory_mb: int,
-             record: dict[str, Any], end: bytes | None = None) -> tuple[int, str]:
+             record: dict[str, Any], end: bytes | None = None, confined: confine.Plan | None = None) -> tuple[int, str]:
     """Run ``argv`` under a time limit, an output cap and a memory cap, the process tree killed when one is passed.
     ``end``: the driver's last record; once it has stood :data:`HALT_GRACE_S` at the end of the output without the
     process exiting, the process is stopped and the run read as finished (POSIX only: the output is read in place with
@@ -118,7 +123,8 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
         try:
             with component_process.window(seconds, lambda: too_much() or ended()) as window:
                 code = component_process.run_process(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
-                                                     stderr=subprocess.STDOUT, memory_bytes=memory_mb * 1024 * 1024)
+                                                     stderr=subprocess.STDOUT, memory_bytes=memory_mb * 1024 * 1024,
+                                                     confined=confined)
         except component_process.ExecutionInterrupted as exc:
             if exc.stopped and too_much():
                 raise Refusal(OUTPUT_TOO_LARGE, f"SWI-Prolog's output passed its cap of {cap} bytes, so the run was "
@@ -130,6 +136,8 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
             record["halt"] = (f"SWI-Prolog wrote the driver's last record but did not exit within {HALT_GRACE_S:g} s, "
                               "so G6 stopped it and read the run as finished")
         except (OSError, ProcessTreeError) as exc:
+            if isinstance(exc, confine.NotStarted) and "isolation" in record:
+                record["isolation"] = confine.not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"SWI-Prolog could not be run to the end: {exc}"[:500]) from None
         finally:
             if window is not None:
@@ -151,7 +159,7 @@ def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: flo
     directory. Returns the exit code and the output. ``end``: the driver's last record (``driver.end_record``), so a
     run that wrote it and then hangs in ``halt`` is stopped after :data:`HALT_GRACE_S` and read (exit code 0; its
     record's ``exit_code`` is None and ``halt`` says so)."""
-    with tempfile.TemporaryDirectory(prefix="g6_prolog_", ignore_cleanup_errors=True) as tmp:
+    with confine.run_folder(prefix="g6_prolog_", ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         for sub in ("work", "tmp", "home"):
             (root / sub).mkdir()
@@ -163,7 +171,19 @@ def run(swipl: str, arguments: list[str], *, files: dict[str, str], seconds: flo
             (work / name).write_bytes(text.encode("utf-8"))
         argv = [swipl, *arguments]
         record["argv"] = list(argv)
-        return _execute(argv, work, _environment(root), seconds, cap, memory_mb, record, end)
+        confined = None
+        if DRIVER_FILE in arguments:   # the caller's program and goal: untrusted, so planned (a version run is not)
+            confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=confine.program_paths(swipl)))
+            record["isolation"] = confined.record()
+            said = confine.refused(confined)
+            if said:
+                raise Refusal(ISOLATION_UNAVAILABLE, said)
+        try:
+            return _execute(argv, work, _environment(root), seconds, cap, memory_mb, record, end, confined)
+        finally:
+            left = confined.release() if confined is not None else ""
+            if left:
+                record["isolation"] = {**record["isolation"], "cleanup": left}
 
 
 def version_run(record: dict[str, Any]):  # noqa: ANN201 -- g6.core.outside's Runner

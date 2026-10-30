@@ -83,7 +83,7 @@ Composed:
 
 ## What it needs
 
-AutoGen's AgentChat, behind the extra: `pip install 'g6[agents-autogen]'` (`autogen-agentchat` and `autogen-core`,
+AutoGen's AgentChat, behind the extra: `pip install 'g6[agents-autogen] @ git+https://github.com/basicisabc1994/g6solver'` (`autogen-agentchat` and `autogen-core`,
 MIT, with `jsonref`, `opentelemetry-api`, `protobuf` and Pillow, all permissive). Without it a run says so. A model:
 a `g6.core.llm` caller passed in from Python, or, for `run_team`, the one you configured for G6. From the library it
 uses `action_gating` and `safety_engine`, through the family's runtime. No outside program.

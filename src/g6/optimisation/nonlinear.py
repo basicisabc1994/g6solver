@@ -31,7 +31,7 @@ only benchmarks and separable sums (ADAPT_PYGAD-02). Here:
   the best point it saw; the convergence flag, the stop and the count are in the result.
 
 The best state is ``qualified-draft``: a search's answer is never proven optimal. SciPy is imported only when an op
-runs (``pip install 'g6[optim-nonlinear]'``); without it each op is ``G6_E_OPTIM_SCIPY_UNAVAILABLE``. Not ported: the
+runs (``pip install 'g6[optim-nonlinear] @ git+https://github.com/basicisabc1994/g6solver'``); without it each op is ``G6_E_OPTIM_SCIPY_UNAVAILABLE``. Not ported: the
 hand-written metaheuristics, the unchecked multi-objective search, the function registry, the history store, the
 planner, the production gate, pyMetaheuristic and pyMultiobjective (imported, never used), PyGAD's populations,
 replays, presets and sessions, and its CSV-reading hyperparameter objective.
@@ -283,7 +283,7 @@ def _scipy() -> tuple[Any, str]:
         return importlib.import_module("scipy.optimize"), str(importlib.import_module("scipy").__version__)
     except ImportError as exc:
         raise Refusal(SCIPY_UNAVAILABLE, f"SciPy is not importable here ({exc}); install it with "
-                                         "pip install 'g6[optim-nonlinear]'") from None
+                                         "pip install 'g6[optim-nonlinear] @ git+https://github.com/basicisabc1994/g6solver'") from None
 
 
 def _differential_evolution(objective: Callable[[Sequence[float]], float], bounds: list[tuple[float, float]],

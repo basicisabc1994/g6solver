@@ -20,6 +20,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import WarningCard
 from g6.lean.schema import LeanResult
 
@@ -71,6 +72,7 @@ INSTALL_LEAN = (f"Install Lean 4 with elan, Lean's toolchain manager, as the Lea
                 "Lake or Mathlib.")
 
 _ACTIONS = {
+    ISOLATION_UNAVAILABLE: ISOLATION_ACTION,
     LEAN_MISSING: INSTALL_LEAN,
     SOURCE_REFUSED: "Remove the control and invisible characters at the places named: a person reading the proof must "
                     "see what Lean reads.",

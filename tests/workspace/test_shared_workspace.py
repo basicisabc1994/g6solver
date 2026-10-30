@@ -241,7 +241,7 @@ def test_every_non_sensitive_op_round_trips_over_mcp(plan: str) -> None:
 def test_the_typed_input_refuses_unknown_ops_and_fields_and_says_what_is_missing() -> None:
     assert "G6_E_INPUT_VALIDATION" in _invoke("arbitrate")["error"]
     missing = _invoke("lock", task_id="t1", path="plan.md")
-    assert missing["ok"] and missing["result"]["code"] == E.INPUT_INVALID          # no holder
+    assert not missing["ok"] and missing["result"]["code"] == E.INPUT_INVALID      # no holder
     listed = get_registry().invoke("shared_workspace", "ops").unwrap()
     assert listed["ops"] == OPS and listed["sensitive"] == ["write"]
     assert len(get_registry().invoke("shared_workspace", "help").unwrap()["help"]) == len(OPS)

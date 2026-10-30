@@ -480,7 +480,7 @@ def test_g4_an_inspector_that_raises_removes_the_file(monkeypatch: pytest.Monkey
 def test_g4_a_png_without_pillow_is_refused_before_anything_is_drawn(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(block, "pillow", lambda: None)
     out = _invoke("bar", rows=SALES, x="month", y="sales", format="png", name="g4-nopil")
-    assert out["code"] == EXTRA_MISSING and "pip install 'g6[image]'" in out["reason"]
+    assert out["code"] == EXTRA_MISSING and "pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'" in out["reason"]
     assert "g4-nopil.png" not in _media_files()
 
 

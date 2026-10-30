@@ -62,6 +62,7 @@ def test_adapt_healing_01_the_patch_runs_in_the_sandbox_never_in_this_process(mo
     # Unconfined, so the run's label is known on every machine: this is about the child process, not the operating
     # system's confinement (tests/core's isolation tests).
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     sneaky = fenced("import builtins\nbuiltins.G6_HEAL_RAN = True\n\ndef mean(xs):\n    if not xs:\n        return 0\n"
                     "    return sum(xs) / len(xs)\n")
     out = heal(FakeLLM(default=sneaky))

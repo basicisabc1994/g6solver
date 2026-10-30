@@ -56,6 +56,23 @@ def read_link(text: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2)) if m else None
 
 
+def _api(url: str, token: str, path: str, body: dict | None = None) -> dict:
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url + path, data, {"Content-Type": "application/json", "X-G6-Token": token})
+    return json.loads(urllib.request.urlopen(req, timeout=60).read())
+
+
+def answer_first_run(url: str, token: str) -> str:
+    """Answer the page's first-run question as a person would, by the page's own request: an app that runs the
+    person's code asks, where no operating-system boundary can confine it (the macOS and Windows runners; Linux's has
+    bubblewrap), whether it may run without one. What was done, in words."""
+    state = _api(url, token, "api/isolation")
+    if not state.get("asks"):
+        return f"no question to answer (boundary: {state.get('boundary') or 'none needed'})"
+    _api(url, token, "api/isolation", {"choice": "allow"})
+    return f"no boundary here ({state.get('why')}); allowed on the first-run page, as the person would"
+
+
 def main(exe: str, bundle_id: str) -> int:
     inputs = agent_change_sample() if bundle_id == "agent-change-check" else SAMPLES[bundle_id]
     env = dict(os.environ, G6_HOME=tempfile.mkdtemp(), BROWSER="none")
@@ -72,6 +89,7 @@ def main(exe: str, bundle_id: str) -> int:
         url, token = link
         page = urllib.request.urlopen(url, timeout=10).read().decode()
         assert token not in page, "the page carries the token"
+        print(f"{bundle_id}: {answer_first_run(url, token)}", flush=True)
         req = urllib.request.Request(url + "api/run", json.dumps({"inputs": inputs}).encode(),
                                      {"Content-Type": "application/json", "X-G6-Token": token})
         # agent-change-check runs real tests and small deliberate mistakes in them, within its own time budget

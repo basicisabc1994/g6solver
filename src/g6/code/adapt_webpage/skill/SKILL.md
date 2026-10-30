@@ -78,7 +78,7 @@ acts such as sending, publishing and deploying, which these members do not provi
 A paid injected caller uses the person's key in their own `~/.g6/.env`, read through `g6.core.keys`, as approval to spend.
 
 No extra for build. `g6[web]` provides tinycss2 (BSD-3-Clause); if it is not installed, the requested CSS check
-blocks with `G6_E_CODE_CHECKER_NOT_INSTALLED` and `pip install "g6[web]"` instructions.
+blocks with `G6_E_CODE_CHECKER_NOT_INSTALLED` and `pip install "g6[web] @ git+https://github.com/basicisabc1994/g6solver"` instructions.
 `g6[render]` provides Playwright (Apache-2.0). Playwright Chromium is an outside program: install its browser
 yourself with `python -m playwright install chromium`. Its licences include BSD-3-Clause and third-party notices.
 Rendering is opt-in; an unrequested render is skipped. A requested render without Playwright or its browser

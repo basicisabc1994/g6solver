@@ -265,4 +265,4 @@ def test_d6_over_mcp() -> None:
     assert solved["ok"] and solved["result"]["plan"] == ["boil", "pour"]
     assert solved["completion_state"] == "qualified-draft"
     encoded = invoke_reply("cog_arch_gps", "encode", json.dumps({"description": "Make tea."}))
-    assert encoded["ok"] and encoded["result"]["code"] == "G6_E_GPS_NO_MODEL"
+    assert not encoded["ok"] and encoded["result"]["code"] == "G6_E_GPS_NO_MODEL"

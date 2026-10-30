@@ -9,7 +9,8 @@ description: Use when an agent works with people who may be in distress (a suppo
 person in crisis can be missed, and finding no listed phrase never means someone is all right. It is the jobs family's
 door to that one trigger for the whole library, a dated and sourced helpline directory, and the PHQ-9 and GAD-7
 scorers. A listed phrase in anything the person said gives `blocked-escalated` with `G6_E_DUTY_OF_CARE_CRISIS`: a short
-response written to safe-messaging practice and the crisis numbers, and nothing else. A response that breaks one of
+response written to safe-messaging practice and the crisis numbers, nothing else. `ok` is false; show `result`.
+A response that breaks one of
 its rules is withheld, the numbers still given (`G6_E_DUTY_OF_CARE_RESPONSE_REFUSED`); a check that cannot run is
 treated as a possible crisis (`G6_E_DUTY_OF_CARE_CHECK_FAILED`). From then on, every op naming that `run_id` and
 `subject` gives the same answer; a call naming another run or subject is not locked. Every other answer is

@@ -189,6 +189,7 @@ def test_a_certificate_never_lifts_a_change_whose_tests_ran_unconfined(discrimin
     owner's permissions (no operating-system isolation), so the certificate cannot support it and nothing lifts it."""
     _flag(monkeypatch, True)
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     mid = _start(discriminating_rig)
     wf = service.bind()
     done = _submit(discriminating_rig, mid, AFTER)
@@ -205,6 +206,7 @@ def test_a_certificate_never_supports_a_test_whose_controls_ran_unconfined(discr
     _flag(monkeypatch, True)
     real = confine._select
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     mid = _start(discriminating_rig)   # the controls run here
     monkeypatch.setattr(confine, "_select", real)
     wf = service.bind()

@@ -8,7 +8,12 @@ What a result can say, and nothing more:
 * ``counterexample_budget_exhausted``: ``max_iterations`` counterexamples and still none fits;
 * ``unsat``: an exhaustive search found no control that fits the examples (only an exhaustive search can say this);
 * ``timeout``: the wall-clock budget (or one candidate run's) ran out;
-* ``inconclusive``: nothing could be compared, or a non-exhaustive search found no fitting control.
+* ``inconclusive``: nothing could be compared, or a non-exhaustive search found no fitting control;
+* ``refused``: no candidate ran, because isolation was required and no operating-system backend could confine the
+  candidates' child (``G6_E_ISOLATION_UNAVAILABLE``; never a search result).
+
+``boundary["isolation"]`` says how the candidates' children ran (``g6.core.confine.summary`` of every run: the first
+that was not confined, else the first).
 
 ``completion_state`` is ``qualified-draft`` for the first and ``blocked-escalated`` otherwise, never ``verified``
 (audit 027: the archive's ``verified`` was vacuous on reachable paths); ``to_envelope`` gives the library envelope.
@@ -24,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from g6.cegis.runner import Runner, RunnerTimeout, SubprocessRunner
+from g6.cegis.runner import Runner, RunnerRefused, RunnerTimeout, SubprocessRunner
 from g6.cegis.sketch import Control, Sketch
 from g6.cegis.verify import (
     Counterexample,
@@ -36,11 +41,14 @@ from g6.cegis.verify import (
     answered,
     check_candidate,
 )
+from g6.core import confine
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import envelope_fields, warning_card
 
-Status = Literal["no_counterexample_in_domain", "counterexample_budget_exhausted", "unsat", "timeout", "inconclusive"]
+Status = Literal["no_counterexample_in_domain", "counterexample_budget_exhausted", "unsat", "timeout", "inconclusive",
+                 "refused"]
 _CODES = {"counterexample_budget_exhausted": "G6_E_CEGIS_BUDGET_EXHAUSTED", "unsat": "G6_E_CEGIS_UNSAT",
-          "timeout": "G6_E_CEGIS_TIMEOUT", "inconclusive": "G6_E_CEGIS_INCONCLUSIVE"}
+          "timeout": "G6_E_CEGIS_TIMEOUT", "inconclusive": "G6_E_CEGIS_INCONCLUSIVE", "refused": ISOLATION_UNAVAILABLE}
 
 
 @dataclass(frozen=True)
@@ -92,6 +100,14 @@ def cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner
           verifier: Verifier | None = None) -> CegisResult:
     """Synthesize a control for ``sketch`` that agrees with ``oracle`` on ``domain`` (and, with a ``verifier``, that
     the verifier finds no counterexample to)."""
+    with confine.recording() as runs:
+        return _cegis(sketch, oracle, domain=domain, runner=runner, max_iterations=max_iterations,
+                      timeout_s=timeout_s, max_exhaustive=max_exhaustive, verifier=verifier, runs=runs)
+
+
+def _cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner | None, max_iterations: int,
+           timeout_s: float, max_exhaustive: int, verifier: Verifier | None,
+           runs: list[dict[str, Any]]) -> CegisResult:
     runner = runner or SubprocessRunner()
     started = time.monotonic()
     inputs = domain.inputs()
@@ -108,7 +124,8 @@ def cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner
     def result(status: Status, iterations: int, reason: str = "", compared: int = 0) -> CegisResult:
         boundary = {"domain": domain.describe(), "answered": len(cases), "skipped": skipped, "compared": compared,
                     "search": methods[-1] if methods else None, "examples": len(examples),
-                    "elapsed_s": round(time.monotonic() - started, 3), "model_calls": 0}
+                    "elapsed_s": round(time.monotonic() - started, 3), "model_calls": 0,
+                    "isolation": confine.summary(runs)}
         if verifier is not None:  # audit 027, CG-004: what the verifier said in this run, not a default
             boundary["verifier"] = dict(said)
         program = sketch.instantiate(control) if control is not None else ""
@@ -124,6 +141,8 @@ def cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner
             found = runner.search(sketch, examples, max_exhaustive=max_exhaustive)
         except RunnerTimeout as exc:
             return result("timeout", iteration, str(exc))
+        except RunnerRefused as exc:
+            return result("refused", iteration - 1, str(exc))
         methods.append(found.method)
         trace.append({"iteration": iteration, "search": found.method, "tried": found.tried,
                       "found": found.control is not None})
@@ -137,6 +156,9 @@ def cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner
             checked = check_candidate(sketch, control, cases, skipped=skipped, runner=runner)
         except RunnerTimeout as exc:
             return result("timeout", iteration, str(exc))
+        except RunnerRefused as exc:
+            control = None
+            return result("refused", iteration, str(exc))
         trace[-1].update(check=checked.status, compared=checked.compared)
         if checked.status == "no_counterexample" and verifier is not None:
             outcome = verifier.find_counterexample(sketch, control, domain)
@@ -160,6 +182,9 @@ def cegis(sketch: Sketch, oracle: Oracle, *, domain: InputDomain, runner: Runner
                     confirmed = check_candidate(sketch, control, case, skipped=1 - len(case), runner=runner)
                 except RunnerTimeout as exc:
                     return result("timeout", iteration, str(exc), compared=checked.compared)
+                except RunnerRefused as exc:
+                    control = None
+                    return result("refused", iteration, str(exc), compared=checked.compared)
                 if confirmed.status != "counterexample":
                     said.update(outcome="counterexample_unconfirmed", degraded=True,
                                 degradation_reason="counterexample_unconfirmed", inputs=dict(outcome.inputs))

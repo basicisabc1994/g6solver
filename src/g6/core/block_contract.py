@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 The G6 authors
 
-"""BlockContract — mvp.core.block_contract
+"""BlockContract — g6.core.block_contract
 
 A block's self-declared promises about what it can do, what it costs,
-how it fails, and how a caller should verify it. Used by the reliability
-orchestrator to gate output instead of post-hoc enveloping.
+how it fails, and how a caller should verify it. They are declared structural obligations, not evidence that a block's
+output is right: the registry checks a block's typed input, composition (``g6.core.compose``) checks per-op required
+inputs, wiring and declared evidence kinds, strict composition also checks preconditions, outputs and stop
+conditions, and every other field is description.
 
 Worked example
 --------------
@@ -36,10 +38,10 @@ Design notes
   For wire transport, names are resolved via a ``PRECONDITION_REGISTRY``
   (deferred to v2).
 * ``human_review_required`` is either a ``bool`` or a string predicate name
-  (``"R2+"`` / ``"R3"``). The orchestrator resolves the predicate against
-  the active risk tier.
-* The permissive default (``_PERMISSIVE_DEFAULT``) lets unmigrated components
-  flow through the orchestrator unchanged.
+  (``"R2+"`` / ``"R3"``); ``requires_human_review_for_tier`` resolves it
+  against a risk tier for a caller that asks.
+* A contract that declares nothing (``is_permissive_default``) is the no-op
+  default of an unmigrated block; nothing is checked for it.
 """
 from __future__ import annotations
 
@@ -110,27 +112,13 @@ def _handle_contract_violation(error_code: str, detail: str) -> None:
 
 @dataclass(frozen=True)
 class FailureMode:
-    """A known way this block can go wrong.
-
-    Important — ``detector`` strings ARE runtime dispatch. The
-    orchestrator's ``verify_output`` looks each declared ``detector`` up
-    in ``DETECTOR_REGISTRY`` and invokes it against the block's output; a
-    True return flags the failure mode as fired (``domain_standard_passed``
-    → False, surfaced in ``checks_failed``). A declared-but-unregistered
-    detector fails closed (recorded as an unresolved check, never silently
-    ignored), and the fleet-drift gate
-    (``tests/mvp/reliability/test_fleet_drift.py``) asserts every declared
-    detector either resolves in the registry or is the empty string
-    (explicit documentation-only). Register implementations with
-    ``@register_detector``; ``detector=""`` marks a documented failure mode
-    with deliberately no runtime check. ``known_failure_modes`` also
-    populates the epistemic contract's ``forbidden_claims`` list and drift
-    reports. (This docstring previously described detectors as pure
-    documentation — stale since the verify_output dispatch loop landed.)
+    """A declared failure mode. Detector names are metadata unless an explicit caller
+    invokes the registered detector; declaring one does not establish runtime enforcement.
+    Strict compose executes preconditions and stop_conditions, not named detectors.
     """
 
     name: str                 # short identifier, e.g. "hallucinated_citation"
-    detector: str = ""        # DETECTOR_REGISTRY key dispatched by verify_output ("" = doc-only)
+    detector: str = ""        # a DETECTOR_REGISTRY name; no G6 code runs it ("" = none declared)
     severity: str = "medium"  # "low" | "medium" | "high"
     description: str = ""
     failure_type: str = FailureType.UNVERIFIED_OUTPUT.value
@@ -217,8 +205,8 @@ class ComponentReliabilityCard:
 
 @dataclass(frozen=True)
 class CostEstimate:
-    """Self-declared cost envelope. The truthfulness harness asserts
-    actual usage stays within ``tokens_p95 * 1.5`` of declared.
+    """Self-declared cost envelope. Nothing in G6 measures actual usage
+    against it; it is description.
     """
 
     tokens_p50: int = 0
@@ -227,57 +215,30 @@ class CostEstimate:
     usd_p95: float = 0.0
 
 
-#: Preconditions receive a context dict with these keys (populated by
-#: ``JobReliabilityOrchestrator.run_preflight``):
+#: Strict composition (``g6.core.compose``) calls each precondition with a
+#: context dict with these keys:
 #:
-#:   ``task``        — the raw task string
-#:   ``context``     — the caller-supplied context (often a dataclass instance
-#:                     or a dict; preconditions must handle ``None`` and
-#:                     accept-anything semantics)
-#:   ``constraints`` — caller-supplied constraints
-#:   ``job_name``    — the orchestrator's (stripped) job name
-#:   ``domain``      — the resolved domain (legal/medical/.../general)
+#:   ``task``        — the stage input's ``task`` field, or ``""``
+#:   ``context``     — the stage's input mapping (its params, mapped inputs
+#:                     and ``op``); preconditions must handle missing keys
+#:                     and accept-anything semantics
+#:   ``constraints`` — ``{}``: no caller constraints are passed today
+#:   ``job_name``    — the block's name
+#:   ``domain``      — the contract's domain (legal/medical/.../general)
 PreconditionContext = dict[str, Any]
 
 
 @dataclass(frozen=True)
 class BlockContract:
-    """What a block promises and how to check it.
+    """Self-declared contract metadata with explicit enforcement points.
 
-    Two kinds of field on this dataclass:
-
-      *Executable* — drive the orchestrator's runtime behaviour:
-        - ``preconditions``    → callables run during ``run_preflight``;
-                                 failures land in ``task_contract.missing_inputs``.
-        - ``stop_conditions``  → callables run during ``verify_output``;
-                                 any True flips ``domain_standard_passed=False``
-                                 and routes the envelope to BLOCKED_ESCALATED.
-        - ``human_review_required``    → predicate consulted by ``verify_output``.
-        - ``verification_method``      → appended to the epistemic verification
-                                         strategy; surfaced in warning cards.
-        - ``fallback_block``   → surfaced in the warning card's recommended
-                                 next step on any non-green status.
-
-      *Input contract* — drives the registry invoker's pre-validation:
-        - ``inputs_required_per_op`` → maps each op name to the tuple of
-          fields that op rejects when empty. The registry invoker checks
-          these before Pydantic ``model_validate`` and emits the canonical
-          ``[<NAME>_ERROR] <op>: <field> is required`` envelope. Empty dict
-          (the default) means no per-op enforcement — unmigrated behaviour.
-
-      *Documentation* — surface in envelopes / drift reports / human review
-      but do NOT drive dispatch:
-        - ``purpose``, ``inputs_required``, ``inputs_optional``, ``outputs``,
-          ``good_at``, ``bad_at``  — descriptive only.
-        - ``known_failure_modes``  — the list populates ``forbidden_claims``
-          on the epistemic contract (informational markers) and feeds the
-          drift detector's declared-vs-observed comparison. The
-          ``FailureMode.detector`` string is purely documentary; turn a
-          declared mode into an enforced gate by adding a matching
-          ``stop_conditions`` callable.
-        - ``cost_estimate``        — surfaces in drift's cost_drift finding
-          when actual p95 > declared p95 * 1.5; does not gate anything by
-          itself.
+    Registry invocation validates the block's typed input. Composition checks
+    per-operation required inputs, explicit wiring and declared evidence kinds;
+    strict compose additionally checks preconditions, outputs and stop conditions.
+    Plain >> performs no contract checks.
+    Human-review policies, guarantees, failure-mode names, cost and fallback fields
+    describe intended behaviour; they are not enforced merely by declaring them.
+    Passing structural checks does not validate application utility or correctness.
     """
 
     __contract_schema_version__: ClassVar[str] = "2.0"
@@ -286,12 +247,20 @@ class BlockContract:
     purpose: str = ""
     inputs_required: tuple[str, ...] = ()
     inputs_optional: tuple[str, ...] = ()
-    #: Per-op required fields — {op_name: (field, ...)}. Enforced by the
-    #: registry invoker before Pydantic validation. Empty = no enforcement.
+    #: Per-op required fields — {op_name: (field, ...)}. Composition checks them
+    #: before a stage runs (an op not listed falls back to ``inputs_required``);
+    #: registry invocation does not read them.
     inputs_required_per_op: dict[str, tuple[str, ...]] = field(default_factory=dict)
     preconditions: tuple[Callable[[PreconditionContext], bool], ...] = ()
     outputs: tuple[str, ...] = ()
     good_at: tuple[str, ...] = ()
+    #: Outputs are checked by strict compose; evidence kinds by composition in either mode; neither by plain >>.
+    #: Evidence kinds describe meaning, not truth.
+    outputs_per_op: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    evidence_inputs_per_op: dict[str, dict[str, str]] = field(default_factory=dict)
+    evidence_outputs_per_op: dict[str, dict[str, str]] = field(default_factory=dict)
+    side_effects: tuple[str, ...] = ()
+    guarantees: tuple[str, ...] = ()
     bad_at: tuple[str, ...] = ()
     known_failure_modes: tuple[FailureMode, ...] = ()
     mitigates_failure_modes: tuple[str, ...] = ()
@@ -301,10 +270,10 @@ class BlockContract:
     verification_method: str = "permissive_default"
     # bool, or one of: "R1+", "R2+", "R3"
     human_review_required: bool | str = False
-    #: Stop conditions receive the block's output (whatever object the
-    #: orchestrator's ``verify_output`` was given). Any callable that returns
-    #: True forces ``domain_standard_passed=False`` and routes the envelope
-    #: to BLOCKED_ESCALATED via ``completion_from_report``.
+    #: Strict composition calls each stop condition with the stage's output
+    #: mapping; one that returns True stops the composition with
+    #: ``G6_E_COMPOSITION_STOP_CONDITION``. Plain >> and registry invocation
+    #: do not call them.
     stop_conditions: tuple[Callable[[Any], bool], ...] = ()
     fallback_block: str | None = None
     domain: str = "general"
@@ -422,18 +391,17 @@ def permissive_default(name: str) -> BlockContract:
 
 PRECONDITION_REGISTRY: dict[str, Callable[[PreconditionContext], bool]] = {}
 STOP_CONDITION_REGISTRY: dict[str, Callable[[Any], bool]] = {}
-#: Registered detectors for ``FailureMode.detector`` strings. The orchestrator
-#: looks each declared detector up by name during ``verify_output`` and
-#: invokes it against the block's output; a True return value flags the
-#: matching failure mode as fired.
+#: Registered detectors for ``FailureMode.detector`` strings. No G6 code looks
+#: a declared detector up or runs it: a ``FailureMode.detector`` names a
+#: declared structural obligation, which a caller may resolve here and run
+#: against a block's output itself.
 #:
 #: Unlike preconditions (which receive a context dict) and stop conditions
 #: (which receive only the output), detectors receive the output object —
-#: the same input as stop conditions — but participate in the contract's
+#: the same input as stop conditions — but belong to the contract's
 #: ``known_failure_modes`` declaration rather than the orthogonal
-#: ``stop_conditions`` field. Use detectors for documented failure modes
-#: that need a runtime check; use stop conditions for hard-stops outside
-#: the failure-mode taxonomy.
+#: ``stop_conditions`` field. A check that must stop a composition belongs
+#: in ``stop_conditions``, which strict composition runs.
 DETECTOR_REGISTRY: dict[str, Callable[[Any], bool]] = {}
 
 
@@ -477,23 +445,11 @@ def register_detector(
 ) -> Any:
     """Register a failure-mode detector by name (default: ``fn.__name__``).
 
-    Mirrors ``register_precondition`` / ``register_stop_condition``. A
-    ``FailureMode("hallucination", detector="semantic_drift_detector", ...)``
-    on a contract becomes enforced when ``semantic_drift_detector`` is in
-    DETECTOR_REGISTRY — the orchestrator's ``verify_output`` calls it
-    against the block's output, and a True return value surfaces in the
-    envelope's ``checks_failed`` list with the failure-mode name and flips
-    ``domain_standard_passed`` to False.
-
-    The fleet-drift acceptance gate
-    (``tests/mvp/reliability/test_fleet_drift.py``) asserts every declared
-    detector either resolves here or is the empty string (explicit
-    documentation-only). At runtime, a declared-but-unresolved detector
-    FAILS CLOSED: ``job_reliability_orchestrator.verify_output`` records
-    ``"detector unresolved: <name>"`` in the verification report's
-    ``unverified_items`` (and ``checks_failed``), forces
-    ``domain_standard_passed`` to False, and routes the envelope to
-    BLOCKED_ESCALATED — it never fails open or silently passes.
+    Mirrors ``register_precondition`` / ``register_stop_condition``.
+    Registering a detector does not make G6 run it: no code path in G6
+    dispatches ``FailureMode.detector`` or ``DETECTOR_REGISTRY``, so a
+    declared detector is a declared structural obligation, not an enforced
+    check. A caller that wants the check runs it itself.
     """
     def _wrap(target: Callable[[Any], bool]) -> Callable[[Any], bool]:
         key = name or getattr(target, "__name__", None) or repr(target)
@@ -507,8 +463,8 @@ def register_detector(
 def _unresolved_precondition_factory(name: str) -> Callable[[PreconditionContext], bool]:
     """Return a precondition stand-in that FAILS CLOSED for an unknown name.
 
-    Returns False — i.e. the precondition is reported as unsatisfied so the
-    orchestrator's preflight routes the failure into ``task_contract.missing_inputs``
+    Returns False — i.e. the precondition is reported as unsatisfied, so strict
+    composition refuses the stage (``G6_E_COMPOSITION_PRECONDITION_FAILED``)
     rather than silently treating an unknown remote precondition as satisfied.
     """
     def _unresolved(_ctx: PreconditionContext) -> bool:
@@ -521,8 +477,8 @@ def _unresolved_stop_condition_factory(name: str) -> Callable[[Any], bool]:
     """Return a stop-condition stand-in that NEVER FIRES for an unknown name.
 
     Returns False — i.e. the stop condition is reported as "did not trigger"
-    so the orchestrator does not spuriously route to BLOCKED on a check the
-    local runtime doesn't recognise. Asymmetric with the precondition
+    so strict composition does not stop on a check the local runtime doesn't
+    recognise. Asymmetric with the precondition
     factory by design: a missing precondition should fail safe (treat as
     unmet), a missing stop check should fail open (allow the call).
     """
@@ -536,19 +492,10 @@ def _unresolved_detector_factory(name: str) -> Callable[[Any], bool]:
     """Return a detector stand-in that NEVER FIRES for an unknown name.
 
     Named and shaped like ``_unresolved_precondition_factory`` /
-    ``_unresolved_stop_condition_factory``, but its "never fires" fail-open
-    semantic applies ONLY to a stand-in callable produced during
-    cross-process ``contract_from_dict`` rehydration — it is not the live
-    runtime path. ``FailureMode.detector`` stays a plain string on the
-    contract; the single-process orchestrator resolves that string
-    directly against ``DETECTOR_REGISTRY`` in
-    ``job_reliability_orchestrator.verify_output``, and FAILS CLOSED when
-    the name is unresolved (``domain_standard_passed`` forced False,
-    ``"detector unresolved: <name>"`` recorded in
-    ``VerificationReport.unverified_items``, envelope routed to
-    BLOCKED_ESCALATED). The fleet-drift acceptance gate
-    (``tests/mvp/reliability/test_fleet_drift.py``) is the CI-side
-    fail-loud companion to that runtime fail-closed behaviour.
+    ``_unresolved_stop_condition_factory``. ``FailureMode.detector`` stays a
+    plain string on the contract and no G6 code dispatches detectors, so
+    nothing in G6 calls this stand-in; a caller that resolves detectors
+    itself decides what an unknown name means.
     """
     def _unresolved(_output: Any) -> bool:
         return False
@@ -576,6 +523,11 @@ def contract_to_dict(contract: BlockContract) -> dict[str, Any]:
         },
         "preconditions": [getattr(p, "__name__", str(p)) for p in contract.preconditions],
         "outputs": list(contract.outputs),
+        "outputs_per_op": {op: list(names) for op, names in contract.outputs_per_op.items()},
+        "evidence_inputs_per_op": contract.evidence_inputs_per_op,
+        "evidence_outputs_per_op": contract.evidence_outputs_per_op,
+        "side_effects": list(contract.side_effects),
+        "guarantees": list(contract.guarantees),
         "good_at": list(contract.good_at),
         "bad_at": list(contract.bad_at),
         "known_failure_modes": [asdict(fm) for fm in contract.known_failure_modes],
@@ -676,6 +628,11 @@ def contract_from_dict(payload: dict[str, Any]) -> BlockContract:
         },
         preconditions=preconditions,
         outputs=tuple(payload.get("outputs", ())),
+        outputs_per_op={op: tuple(names) for op, names in payload.get("outputs_per_op", {}).items()},
+        evidence_inputs_per_op=payload.get("evidence_inputs_per_op", {}),
+        evidence_outputs_per_op=payload.get("evidence_outputs_per_op", {}),
+        side_effects=tuple(payload.get("side_effects", ())),
+        guarantees=tuple(payload.get("guarantees", ())),
         good_at=tuple(payload.get("good_at", ())),
         bad_at=tuple(payload.get("bad_at", ())),
         known_failure_modes=failure_modes,

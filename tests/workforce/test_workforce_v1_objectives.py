@@ -313,6 +313,7 @@ def test_an_unconfined_bench_pass_closes_qualified_draft_and_says_why(wf, monkey
     # founder-d2 counts the repository's tests as independent; a run with the owner's permissions still cannot verify
     monkeypatch.setenv(coding_certificate.ENV_POLICY, coding_certificate.FOUNDER_D2)
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     mid = _planned(wf)
     ws.run(wf, mid)
     ws.submit(wf, mid, "patch", {"files": {"calc.py": FIXED}})

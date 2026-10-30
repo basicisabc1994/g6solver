@@ -1,6 +1,6 @@
 # Contribute
 
-G6 welcomes contributions: bug reports, new components, bundles, evaluations, and reproductions of our results.
+G6 welcomes contributions: bug reports, new components, worked examples, evaluations, and reproductions of our results.
 
 - **Report a problem:** open an issue on GitHub with the steps to reproduce it.
 - **Reproduce a result:** the [validation plan](https://github.com/basicisabc1994/g6solver/blob/main/docs/validation/VALIDATION_PLAN.md)
@@ -9,8 +9,8 @@ G6 welcomes contributions: bug reports, new components, bundles, evaluations, an
 - **Add a component:** every component works on its own, declares its dependencies (`__g6_requires__`), carries a
   capability label, and ships with tests, including at least one test that would fail if its main claim were false.
   Run `python tools/gen_catalog.py` so the [catalogue](components.md) matches the code.
-- **Build a bundle:** a bundle is a small configuration over existing components plus a test that runs it end to end
-  offline. A bundle is listed only once that test exists.
+- **Build a worked example:** a worked example (a bundle, in the code) is a small configuration over a restricted
+  subset of the components, plus a test that runs it end to end offline. It is listed only once that test exists.
 
 ## Security {#security}
 

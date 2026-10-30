@@ -70,8 +70,8 @@ update with `prior_sensitivity` and `predictive_check`, and preserve all warning
 Trusted host Python can call `predictive.register_statistic(name, function)` to add a pure bounded statistic; this
 is not a tool input, and the host is responsible for installed extension code.
 
-Over MCP, `sample_pymc` is refused on a surface with `block_sensitive=True`. The server owner must enable that
-sensitive op separately. Setting `dry_run=false` requests execution; it is no substitute for the action gate.
+Over MCP, `g6 invoke` and `g6.invoke`, `sample_pymc` is refused unless the person allows that sensitive op
+(`G6_MCP_SENSITIVE`, or `allow=` in their own `g6.invoke` call). Setting `dry_run=false` requests execution; it is no substitute for the action gate.
 The current `run_code` policy may hold the action for review even with the extra installed. No caller approval
 claim overrides it. Compiler probes, gate failures and child errors are reported; there is no automatic MH fallback.
 

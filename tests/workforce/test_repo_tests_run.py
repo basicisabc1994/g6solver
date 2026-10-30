@@ -156,6 +156,7 @@ def test_a_pytest_module_in_the_repository_cannot_stand_in_for_the_runner(repo):
     assert rt.run(repo, ["tests/test_calc.py"])["verdict"] == rt.FAILED
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_a_tracked_file_changed_during_the_run_is_named_whoever_changed_it(repo):
     """Review Focus 1: the run cannot tell the tests from another writer, so it says what changed, not who."""
     _write(repo, "tests/test_touch.py", "from pathlib import Path\n\n\ndef test_touch():\n"
@@ -164,6 +165,7 @@ def test_a_tracked_file_changed_during_the_run_is_named_whoever_changed_it(repo)
     assert (found["verdict"], found["changed"], found["said"]) == (rt.CHANGED, ["calc.py"], rt.SAID["changed"])
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_a_test_that_stages_a_file_changes_the_index_and_is_named(repo):
     _write(repo, "tests/test_stage.py", "import subprocess\nfrom pathlib import Path\n\n\ndef test_stage():\n"
                                         "    root = Path(__file__).parents[1]\n"
@@ -173,12 +175,14 @@ def test_a_test_that_stages_a_file_changes_the_index_and_is_named(repo):
     assert found["verdict"] == rt.CHANGED and "the staged files (the index)" in found["changed"]
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_known_limit_a_file_git_does_not_track_is_not_covered(repo):
     _write(repo, "tests/test_scratch.py", "from pathlib import Path\n\n\ndef test_scratch():\n"
                                           "    Path(__file__).with_name('scratch.txt').write_text('x')\n")
     assert rt.run(repo, ["tests/test_scratch.py"])["verdict"] == rt.PASSED
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_the_tests_see_none_of_the_callers_environment(repo, monkeypatch):
     monkeypatch.setenv("G6_REPO_TESTS_SECRET_PROBE", "secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-real-looking")
@@ -225,12 +229,25 @@ PROXY_TEST = ("import os\n\n\ndef test_proxy():\n"
               "    assert os.environ.get('NO_PROXY') == 'localhost,127.0.0.1,::1'\n")
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_programs_the_tests_start_are_pointed_at_no_proxy_unless_the_network_is_allowed(repo, monkeypatch):
     """The second half of the guard (ruling VR-R6): a program the tests start that honours a proxy reaches nothing."""
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")  # the caller's own proxy never crosses
     _write(repo, "tests/test_proxy.py", PROXY_TEST)
     assert rt.run(repo, ["tests/test_proxy.py"])["verdict"] == rt.PASSED
     assert rt.run(repo, ["tests/test_proxy.py"], network=True)["verdict"] == rt.FAILED
+
+
+def test_confined_tests_receive_no_model_keys_or_proxy_configuration(repo, monkeypatch, bwrap_backend):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "planted-not-a-key")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+    _write(repo, "tests/test_env.py",
+           "import os\n\ndef test_env():\n"
+           "    for key in ('OPENROUTER_API_KEY', 'HTTPS_PROXY', 'NO_PROXY', 'G6_LLM_BACKEND_OVERRIDE'):\n"
+           "        assert key not in os.environ\n"
+           "    assert os.path.realpath(os.environ['HOME']) == os.path.realpath(os.environ['TMP'])\n")
+    result = rt.run(repo, ["tests/test_env.py"])
+    assert result["verdict"] == rt.PASSED, result
 
 
 def _alive(pid: int) -> bool:
@@ -249,6 +266,7 @@ def _alive(pid: int) -> bool:
         return True
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_a_hung_test_and_the_process_it_started_end_at_the_time_bound(repo):
     """Review Focus 5."""
     _write(repo, "tests/test_hang.py",
@@ -313,7 +331,18 @@ OK = {"passed": 2, "failures": 0, "errors": 0, "skipped": 0}
     (0, OK, "", [], "passed"),
     (1, {"passed": 1, "failures": 1, "errors": 0, "skipped": 0}, "", [], "failed"),
     (0, {"passed": 0, "failures": 0, "errors": 0, "skipped": 2}, "", [], "inconsistent_report"),  # all skipped: no pass
-    (1, OK, "", [], "inconsistent_report"),
+    # the owner's ruling (2026-10-29), asymmetric on purpose: a non-zero exit after a session pytest counts as all
+    # passed is a run that cannot be counted as a pass, not a sign of tampering (it cannot get a patch accepted)...
+    (1, OK, "", [], "run_inconsistent"),
+    (134, OK, "", [], "run_inconsistent"),
+    (1, {**OK, "expected": 2, "finished": 2}, "", [], "run_inconsistent"),
+    # ...while what a tampered runner would show to be accepted stays untrusted: exit 0 with a failure, an error, or
+    # fewer tests finished than collected; and a non-zero exit with fewer finished, or with no pass, is not that case
+    (0, {"passed": 1, "failures": 1, "errors": 0, "skipped": 0}, "", [], "inconsistent_report"),
+    (0, {"passed": 1, "failures": 0, "errors": 1, "skipped": 0}, "", [], "inconsistent_report"),
+    (0, {**OK, "expected": 3, "finished": 2}, "", [], "incomplete"),
+    (1, {**OK, "expected": 3, "finished": 2}, "", [], "inconsistent_report"),
+    (1, {"passed": 0, "failures": 0, "errors": 0, "skipped": 2}, "", [], "inconsistent_report"),
     (0, NO_TALLY, "", [], "inconsistent_report"),
     (1, NO_TALLY, "ModuleNotFoundError: No module named 'pytest'", [], "pytest_not_found"),
     (5, NO_TALLY, "", [], "no_tests_collected"),
@@ -323,6 +352,21 @@ OK = {"passed": 2, "failures": 0, "errors": 0, "skipped": 0}
 ])
 def test_the_verdict_believes_only_an_exit_code_its_tallies_agree_with(code, counts, output, moved, verdict):
     assert rt._judge(code, counts, output, moved) == verdict
+
+
+#: A process that ends with an error after pytest's session passed (as a GUI test suite's X connection can at exit).
+EXITS_AFTER = "import atexit\nimport os\n\natexit.register(os._exit, 1)\n"
+
+
+def test_a_run_that_exits_with_an_error_after_every_test_passed_is_not_counted_as_a_pass(repo):
+    """The owner's ruling (2026-10-29): pytest's own tallies say every test passed, then the process exits 1."""
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "conftest.py", EXITS_AFTER)
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert found["verdict"] == "run_inconsistent", (found["verdict"], found["output"][-500:])
+    assert found["said"] == rt.SAID["run_inconsistent"]
+    assert found["passed"] == 2 and found["failed"] == 0
+    assert "passed by pytest's own count" in found["said"] and "exited with an error" in found["said"]
 
 
 def test_the_repositorys_own_virtual_environment_runs_its_tests(tmp_path):
@@ -456,13 +500,16 @@ def test_i4_the_run_says_which_python_ran_the_tests(repo, tmp_path):
     """G6's own interpreter, and the repository's own virtual environment (a real one, sharing G6's packages)."""
     found = rt.run(repo, ["tests/test_calc.py"])
     assert (found["interpreter_source"], found["python"]) == ("g6", sys.executable)
-    subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(repo / ".venv")],
+    # --copies: an environment linked to G6's own Python is refused (L1)
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", "--copies",
+                    str(repo / ".venv")],
                    check=True, capture_output=True, timeout=180)
     found = rt.run(repo, ["tests/test_calc.py"])
     assert (found["verdict"], found["interpreter_source"]) == (rt.FAILED, "repository")
     assert Path(found["python"]).is_relative_to(repo / ".venv")
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i5_git_unreadable_after_the_run_is_a_change_never_a_refusal(repo):
     """I5 (probe S4): a test that damages the index leaves git unable to read the repository after the run."""
     _write(repo, "tests/test_w.py", "from pathlib import Path\n\n\ndef test_w():\n"
@@ -495,6 +542,7 @@ def _kill(pid: int) -> None:
             pass
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i6_a_process_a_passing_test_leaves_running_ends_with_the_run(repo):
     """I6 (probe B2)."""
     _write(repo, "tests/test_left.py", LEAVES_A_CHILD)
@@ -507,6 +555,7 @@ def test_i6_a_process_a_passing_test_leaves_running_ends_with_the_run(repo):
         _kill(pid)
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i6_with_capture_off_a_leftover_process_neither_holds_the_run_nor_outlives_it(repo):
     """I6 (probe B3): the process holds the run's output; the run waits for pytest, not for its output to close."""
     _write(repo, "pytest.ini", "[pytest]\naddopts = -s\n")
@@ -545,6 +594,7 @@ def test_i6_the_output_kept_is_bounded_however_much_the_tests_print(repo):
     assert peak < 8 * 2**20, peak
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_i7_an_untracked_file_that_existed_before_the_run_is_covered(repo):
     """I7 (probe S5): the change's own new module, rewritten by a test."""
     _write(repo, "newmod.py", "def f():\n    return 1\n")
@@ -562,6 +612,7 @@ SETS_A_FLAG = ("import subprocess\nfrom pathlib import Path\n\n\ndef test_w():\n
                "    root.joinpath('calc.py').write_text('X = 1\\n')\n")
 
 
+@pytest.mark.usefixtures("unconfined")
 def test_m4_a_file_the_owner_marked_assume_unchanged_is_still_covered(repo):
     """M4 (probe S1): git's diff skips the file, so its bytes are read directly."""
     _write(repo, "settings.py", "DEBUG = False\n")
@@ -575,6 +626,7 @@ def test_m4_a_file_the_owner_marked_assume_unchanged_is_still_covered(repo):
 
 
 @pytest.mark.parametrize("flag", ["assume-unchanged", "skip-worktree"])
+@pytest.mark.usefixtures("unconfined")
 def test_m4_a_test_that_hides_a_file_from_git_and_rewrites_it_is_named(repo, flag):
     """M4 (probes S2, S3)."""
     _write(repo, "tests/test_w.py", SETS_A_FLAG.replace("FLAG", flag))
@@ -656,6 +708,57 @@ def test_m3_the_repositorys_own_config_in_a_test_folder_is_still_read(repo):
     _write(repo, "tests/pytest.ini", "[pytest]\naddopts = --deselect=test_calc.py::test_add\n")
     found = rt.run(repo, ["tests/test_calc.py"])
     assert (found["verdict"], found["passed"]) == (rt.PASSED, 1)
+
+
+@pytest.mark.parametrize("name", ["pytest.toml", ".pytest.toml"])
+def test_c1_a_pytest_toml_is_the_repositorys_own_config_and_no_empty_one_replaces_it(repo, tmp_path, name):
+    """Review C1: G6 did not know pytest.toml, so it read the folder as unconfigured and ran the tests with an empty
+    config of its own in place of the repository's."""
+    _write(repo, name, '[pytest]\naddopts = ["--deselect=tests/test_calc.py::test_add"]\n')
+    assert rt._config_args(repo, ["tests/test_calc.py"], tmp_path) == []
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert (found["verdict"], found["passed"]) == (rt.PASSED, 1)
+
+
+def test_i6_a_moved_test_file_is_replayed_at_its_old_path_at_the_base_commit(repo):
+    """Review I6 (probe S4): the base commit has no file at the new path, so the base run of a moved test file found
+    nothing to run, and a regression it showed on the patch read as a failure that predates the patch."""
+    from dataclasses import replace
+
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_neg.py", "from calc import add\n\n\ndef test_neg():\n    assert add(-2, -3) == -5\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "the base: add sums, and a negative test")
+    _write(repo, "calc.py", "def add(a, b):\n    return abs(a + b)\n\n\ndef sub(a, b):\n    return a - b\n")
+    (repo / "tests" / ".moved").mkdir()
+    git(repo, "mv", "tests/test_neg.py", "tests/.moved/test_neg.py")   # out of pytest's walk of tests/
+    change = rt.change(repo)
+    assert change.renamed == {"tests/test_neg.py": "tests/.moved/test_neg.py"}
+    rel = "tests/.moved/test_neg.py"
+    found = rt.run_before(replace(change, before={rel: (repo / rel).read_text(encoding="utf-8")}))[rel]
+    assert found["verdict"] == rt.FAILED, found
+    assert found["failed_ids"] == [f"{rel}::test_neg"]
+
+
+def test_i9_a_run_says_the_root_folder_pytest_named_its_tests_against(repo):
+    """Review I9(a): pytest names each test relative to its root folder, which a config below the top moves."""
+    assert rt.run(repo, ["tests/test_calc.py"])["rootdir"] == ""
+    _write(repo, "tests/pytest.ini", "[pytest]\n")
+    found = rt.run(repo, ["tests/test_calc.py"])
+    assert found["rootdir"] == "tests" and found["failed_ids"] == ["test_calc.py::test_add"]
+
+
+def test_i8_tests_as_they_are_now_run_against_the_base_commits_code(repo):
+    """Review I8: the stated checks, with the test files' text as it is now, against every other changed file as it
+    was at the base commit, in a copy; the repository itself is not touched."""
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_calc.py", TESTS + "\n\ndef test_new():\n    assert add(1, 1) == 2\n")
+    ids = ["tests/test_calc.py::test_add", "tests/test_calc.py::test_sub", "tests/test_calc.py::test_new"]
+    found = rt.run_at_base(rt.change(repo), ids)
+    assert found["verdict"] == rt.FAILED, found
+    assert sorted(found["failed_ids"]) == ["tests/test_calc.py::test_add", "tests/test_calc.py::test_new"]
+    assert found["test_outcomes"]["tests/test_calc.py::test_sub"]["call"] == "passed"
+    assert (repo / "calc.py").read_text(encoding="utf-8") == FIXED   # the patched tree is as it was
 
 
 def test_m9_a_repository_path_with_the_path_separator_in_it_runs(tmp_path):

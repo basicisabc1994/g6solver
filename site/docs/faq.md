@@ -5,6 +5,8 @@ Today's language models already hold the right kind of general intelligence. Wha
 put it to work, and G6 is built to be that way.
 {: .why }
 
+**Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
+
 ## Why G6
 
 ### Why does G6 exist?
@@ -44,7 +46,7 @@ for your work. It has two parts.
 
 G6 brings the tools, loops, prompts and code, the higher-order functions that compose them, and integrations with
 other systems. You use it through its MCP server (`g6-mcp`, the main surface), as a Python library, from the `g6`
-command line, or as a ready-made [bundle](bundles/index.md).
+command line, or as a ready-made [worked example](bundles/index.md).
 
 ### Where do the components come from?
 From studying how AI agents fail. Some 250 million tokens of agents' reasoning and failure traces were reviewed by
@@ -71,9 +73,10 @@ agents in the real world, on complex, open-ended work that needs human-level rea
 
 ### What can I do with it that I could not before?
 Build a specialist from the agent you already run and your own data, without training a model of your own: G6
-engineers the harness for your task on your examples, and your model's weights never change. Then cut what repeated
-work costs. Pay a frontier model once to engineer the harness, and run a small model on your own computer inside it,
-with no fee per call. Most real work is repeated work, so that is where the saving lands.
+engineers the harness for your task on your examples, and your model's weights never change. Then try to cut what
+repeated work costs: pay a frontier model once to engineer the harness, and run a small model on your own computer
+inside it, with no fee per call. Whether that saves anything on your work is for your own held-out examples to
+show.
 
 ### How far can it go on one task?
 Give it a task you can check and enough examples with known answers, and nothing in its design caps how far it can go
@@ -94,12 +97,23 @@ It is free, and all of it is open source under the Apache License 2.0, including
 plan, no hosted service and no account.
 
 ### Do I need to be a programmer?
-No. Use a [bundle](bundles/index.md): it opens a private page in your browser. Downloads come with the first release.
-Developers and coding agents use the library directly.
+No. There are two ways in that need no programming.
+
+- **Through your coding agent.** With Claude Code or Codex you can build software by describing what you want in
+  plain words, and G6 checks the agent's work before it tells you a task is done. Set it up once with the few commands
+  on [Get started](install.md); after that you only talk to your agent, for example: "Add a page where customers can
+  reset their password. Review the change with G6 before you tell me it's done." The agent writes the code; G6 runs
+  your project's tests in a sandbox, checks that no test was weakened, and gives the agent a short report to show you:
+  what it found, what it could not check, and what still needs your decision. G6 does not make the agent's work
+  correct, and it merges nothing: that stays your call. It reviews Python projects for now.
+- **With a worked example.** Download one and it opens a private page in your browser for one problem, such as
+  checking a draft against your sources. See [Worked examples](bundles/index.md).
+
+Developers use the library directly.
 
 ### Which AI model does it use?
 Yours. A free local model through Ollama, or your own Anthropic, OpenAI or OpenRouter key. G6 calls no model unless
-you choose one, and never picks a paid provider for you. Many components, and 6 of the 10 bundles that work today,
+you choose one, and never picks a paid provider for you. Many components, and 6 of the 10 worked examples that work today,
 need no model at all.
 
 ### Does my data leave my computer?
@@ -122,7 +136,7 @@ was handed cannot see the world. So components give their own work `qualified-dr
 It is built not to. No step raises a label. When results are combined, the overall label is the weakest one. Over
 MCP, a reply with no state is a `qualified-draft`, and nothing is `verified` without evidence.
 
-## Components and bundles
+## Components and worked examples
 
 ### What is a component?
 A small package that does one job, such as `grounding` (check claims against sources) or `action_gating` (allow, ask
@@ -257,7 +271,8 @@ never says the code is correct, and it raises no result's label. No qualified pe
 
 ### How do components compose?
 You can call them one by one, or let `g6.harness` compose them. A harness run takes a standard (a goal and its
-checks) through intake, plan, execute, adjudicate and remember. The evidence issuer decides the label.
+checks) through intake, plan, execute, adjudicate and remember. The evidence issuer writes a certificate; the
+run's label is a qualified draft at best, because the harness does not re-run your checks itself.
 `navigator.check_plan` checks a plan of component calls before anything runs.
 
 ### How mature are the components?
@@ -272,10 +287,11 @@ An op a component marks sensitive, because it runs a program on your computer, r
 deletes what it kept or changes your machine, is refused over MCP unless the person who runs the server lists it in
 `G6_MCP_SENSITIVE`. The tables name each one under "Ops refused over MCP". From Python, they run like any other op.
 
-### What is a bundle?
-A ready-made harness for one problem, such as checking a coding agent's "fixed it", reviewing a contract or checking
-GST. There are 11: 10 work today, and the compliance gap check is built and awaits its certificate. A bundle is listed
-only with a test that runs it end to end offline.
+### What is a worked example?
+G6 applied to one problem, such as checking a coding agent's "fixed it", reviewing a contract or checking GST. It does
+not package the whole system: it is a restricted subset of G6's components, set up for that problem and nothing else.
+The code and the releases page call it a bundle. There are 11: 10 work today, and the compliance gap check is built and
+awaits its certificate. A worked example is listed only with a test that runs it end to end offline.
 
 ## Safety
 
@@ -295,12 +311,15 @@ promotion gate rates the change low-risk, and you supply a rollback. A change th
 the evaluators, the safety rules) is blocked.
 
 ### Is G6 a sandbox?
-Not one to rely on alone. It runs tests and candidate code in bounded child processes. On Windows, once you have run
-the one-time access grant that `g6 doctor` prints, that code runs in an AppContainer: no network, and only its own run
-folder writable. Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time
-access grant), untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own
-rights: it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You
-are responsible for what you run. Do not use G6 as the only security boundary in front of a real executor.
+Not one to rely on alone. It runs tests and candidate code in bounded child processes, and only inside an
+operating-system boundary: on Linux, bubblewrap (install the `bubblewrap` package), with a private loopback and no
+other network, and only its own run folder writable; on Windows, once you have run the one-time access grant that
+`g6 doctor` prints, an AppContainer: no network, and only its own run folder writable. `g6 doctor` says which you have
+and what your computer needs. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows
+before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a
+repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read your
+key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible for what
+you run. Do not use G6 as the only security boundary in front of a real executor.
 
 ## The meta-harness
 
@@ -311,6 +330,11 @@ other part is the components it draws on. [How it works](metaharness.md).
 ### Does G6 now improve itself automatically?
 No. It proposes and tests changes, and nothing goes live until you approve it. The only thing it does by itself is
 move back to a version you approved before, when the version in use falls behind it on live runs.
+
+For G6 itself, we're building a loop in which G6 maintains its own GitHub repository. It finds where G6 falls short,
+has coding agents work on it, checks their changes with its own review and opens pull requests. A maintainer reviews
+and merges every change. It's an open experiment in self-improvement infrastructure for AI agents:
+[read the design](https://github.com/basicisabc1994/g6solver/blob/main/docs/superpowers/specs/2026-10-29-self-improvement-loop-design.md).
 
 ### What can it change, and what can it never change?
 It can change which of your models runs each step, budgets, the prompt, learned hints, how many of your labelled
@@ -354,7 +378,8 @@ held-out evidence.
 
 ### Can my coding agent use it? Can my agent approve a change?
 Your agent can propose, measure and read decisions over MCP. It cannot approve: `metaharness_approve` asks you
-directly through your client, and the session that proposed a change can never approve it.
+directly through your client, even in the session that proposed the change. G6 records the name you type as given;
+it does not check who you are.
 
 ### Can I share a tuned setup?
 Yes, as a profile pack. Whoever imports it gets a candidate that must win on their own held-out examples first; the

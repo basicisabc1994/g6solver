@@ -62,6 +62,65 @@ def test_the_change_is_what_git_reports(repo):
     assert found.base == "HEAD" and len(found.base_commit) == 40 and found.head == found.base_commit
 
 
+def _forge_index(repo: Path, rel: str, blob: str) -> None:
+    """Write ``blob`` as ``rel``'s object name in the repository's own index (version 2), keeping the stat values it
+    holds, with the index's checksum right: git then trusts its stat cache and reads the file as unchanged."""
+    import hashlib
+    import struct
+
+    path = repo / ".git" / "index"
+    data = bytearray(path.read_bytes())
+    version, count = struct.unpack(">II", data[4:12])
+    assert data[:4] == b"DIRC" and version == 2
+    position = 12
+    for _ in range(count):
+        end = data.index(b"\0", position + 62)
+        name = bytes(data[position + 62:end]).decode()
+        if name == rel:
+            data[position + 40:position + 60] = bytes.fromhex(blob)
+        position += (62 + len(name.encode())) // 8 * 8 + 8
+    data[-20:] = hashlib.sha1(bytes(data[:-20])).digest()
+    path.write_bytes(bytes(data))
+
+
+def test_the_snapshot_binds_a_changed_files_bytes_whatever_the_repositorys_index_says(repo):
+    """The review of VS-4 (snapshot, before the smoke): an index entry written with a changed file's real stat values
+    and the base commit's object name, beside a configuration that trusts size and time alone, keeps the file out of
+    git's own diff. The snapshot still holds the file's bytes, so two contents under one forged index differ."""
+    old = 1_600_000_000
+    rel = "tests/test_calc.py"
+    os.utime(repo / rel, (old, old))
+    git(repo, "update-index", "--refresh")
+    git(repo, "config", "core.trustctime", "false")
+    git(repo, "config", "core.checkStat", "minimal")
+    base_blob = git(repo, "rev-parse", f"HEAD:{rel}").strip()
+    first = TESTS.replace("assert sub(5, 3) == 2", "assert True".ljust(len("assert sub(5, 3) == 2")))
+    second = TESTS.replace("assert sub(5, 3) == 2", "assert 1".ljust(len("assert sub(5, 3) == 2")))
+    (repo / rel).write_text(first, encoding="utf-8")
+    os.utime(repo / rel, (old, old))
+    git(repo, "update-index", rel)
+    _forge_index(repo, rel, base_blob)
+    forged = (repo / ".git" / "index").read_bytes()
+    assert rel not in git(repo, "diff", "--name-only")   # git itself is fooled
+    one = rt.snapshot(repo)
+    (repo / rel).write_text(second, encoding="utf-8")
+    os.utime(repo / rel, (old, old))
+    (repo / ".git" / "index").write_bytes(forged)   # the very same index
+    two = rt.snapshot(repo)
+    assert rel in one and two[rel] == rt._digest(repo / rel)   # the bytes that are there now
+    assert one != two and one[rel] != two[rel]
+
+
+def test_read_at_gives_a_files_text_at_a_commit_or_none_when_it_was_not_there(repo):
+    base = git(repo, "rev-parse", "HEAD").strip()
+    (repo / "calc.py").write_text(FIXED, encoding="utf-8")
+    (repo / "new.py").write_text("X = 1\n", encoding="utf-8")
+    assert rt.read_at(repo, base, "calc.py") == BUGGY   # the commit's text, not the disk's
+    assert rt.read_at(repo, base, "new.py") is None and rt.read_at(repo, base, "tests/test_calc.py") == TESTS
+    with pytest.raises(rt.RepoRefused):
+        rt.read_at(repo, base, "../outside.py")
+
+
 def test_a_changed_test_files_text_at_the_base_is_gits_and_now_is_the_disks(repo):
     now = TESTS.replace("assert sub(5, 3) == 2", "assert sub(5, 3)")
     (repo / "tests" / "test_calc.py").write_text(now, encoding="utf-8")
@@ -272,6 +331,42 @@ def test_d3_a_deleted_test_file_and_an_unrelated_new_one_are_not_a_move(repo):
     found = rt.change(repo)
     assert found.renamed == {}
     assert verify.weakened_tests(found.before, found.after) == ["tests/test_calc.py: test file deleted"]
+
+
+def test_14b_a_test_file_is_named_with_the_case_pytest_matches_on_this_system():
+    """Review 14b: pytest matches ``test_*.py`` with the system's case rule (``fnmatch``, through
+    ``os.path.normcase``), so on Windows ``Test_Calc.py`` is a test file it collects."""
+    ignores_case = os.path.normcase("A") == "a"
+    assert rt.is_test_file("tests/test_calc.py") and not rt.is_test_file("tests/calc.py")
+    assert rt.is_test_file("tests/Test_Calc.py") is ignores_case
+    assert rt.is_test_file("tests/TEST_CALC.PY") is ignores_case
+
+
+def test_14b_the_tests_a_change_touches_name_a_test_file_with_the_case_pytest_matches(repo):
+    """Review 14b, its loose end: ``verify.run_set``, which picks the tests a change touches, matched names
+    case-sensitively, as ``is_test_file`` did."""
+    ignores_case = os.path.normcase("A") == "a"
+    assert (verify.run_set(repo, ["tests/Test_Calc.py"], candidates=[]) == ["tests/Test_Calc.py"]) is ignores_case
+    assert verify.run_set(repo, ["tests/test_calc.py"], candidates=[]) == ["tests/test_calc.py"]
+
+
+def test_c2_every_changed_test_related_file_is_read_then_and_now_and_a_move_keeps_its_old_text(repo):
+    """Review C2: the weakening scan gets each changed test file by either of pytest's default names, conftest.py,
+    and every Python file under a test folder, at the base and now; a moved one is keyed by its new path."""
+    (repo / "tests" / "helpers.py").write_text("def check():\n    assert True\n", encoding="utf-8")
+    (repo / "tests" / "calc_test.py").write_text("def test_c():\n    assert 1\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "helpers")
+    (repo / "tests" / "calc_test.py").write_text("def test_c():\n    pass\n", encoding="utf-8")
+    (repo / "conftest.py").write_text("\n", encoding="utf-8")
+    (repo / "tests" / "data.json").write_text("{}\n", encoding="utf-8")   # not Python: not read
+    (repo / "calc.py").write_text(FIXED, encoding="utf-8")                # not a test: not read
+    git(repo, "mv", "tests/helpers.py", "tests/checks.py")
+    before, after = rt.related_texts(rt.change(repo))
+    assert before == {"tests/calc_test.py": "def test_c():\n    assert 1\n",
+                      "tests/checks.py": "def check():\n    assert True\n"}
+    assert after == {"conftest.py": "\n", "tests/calc_test.py": "def test_c():\n    pass\n",
+                     "tests/checks.py": "def check():\n    assert True\n"}
 
 
 def test_d15_a_changed_conftest_or_setup_names_no_test_by_its_stem(repo):

@@ -84,7 +84,7 @@ def load_z3() -> Any:
     except Exception as exc:  # noqa: BLE001 - ImportError, or the native library failing to load
         raise Refusal(SOLVER_UNAVAILABLE,
                       f"z3-solver is not importable here ({type(exc).__name__}); install it with "
-                      "pip install 'g6[formal]', or use solver='propositional' for Boolean formulas") from None
+                      "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver', or use solver='propositional' for Boolean formulas") from None
     return z3
 
 

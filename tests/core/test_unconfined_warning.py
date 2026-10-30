@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Where no operating-system backend confines a run, G6 says so in one set of words wherever a person meets it
-(CORE_SANDBOX-01; owner ruling 2026-10-23: a warning, never a restriction, so nothing here refuses anything)."""
+(CORE_SANDBOX-01; owner ruling 2026-10-27: G6 refuses such a run unless the person allows it once; the refusal itself
+is tested in tests/core/test_isolation_choice.py, and here the run is allowed)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,24 +21,26 @@ def _words(text: str | None) -> str:
 
 def _off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, OFF))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 def test_the_warning_names_the_gap_and_ends_on_the_persons_responsibility() -> None:
-    # Fails if confine.UNCONFINED_WARNING loses the platforms, the key file, the network guard's limit or its last words.
+    # Fails if confine.UNCONFINED_WARNING loses the platforms, the refusal and how to allow it, the key file, the network
+    # guard's limit or its last words.
     said = confine.UNCONFINED_WARNING
     assert said.endswith("You are responsible for what you run.")
-    for words in ("Linux and macOS", "Windows before the one-time access grant", "~/.g6/.env", "your own rights",
-                  "inside Python only"):
+    for words in ("macOS, Linux without bubblewrap", "Windows before the one-time access grant", "G6 refuses",
+                  "allow it once with g6 setup", "~/.g6/.env", "your own rights", "inside Python only"):
         assert words in said
 
 
 def test_an_unconfined_sandbox_run_carries_the_warning_and_keeps_every_field(monkeypatch) -> None:
-    # Fails if confine.Plan.record stops adding "warning" when backend is None.
+    # Fails if confine.Plan.record stops adding "warning" when backend is None, or who allowed the run.
     _off(monkeypatch)
     run = sandbox.run_script("print(1)", timeout_s=30)
     assert run.status == "ok"
     assert run.isolation == {"backend": None, "why": OFF, "network": False, "container": None, "profile": None,
-                             "warning": confine.UNCONFINED_WARNING}
+                             "warning": confine.UNCONFINED_WARNING, "allowed_by": confine.ALLOW}
 
 
 def test_a_confined_record_carries_no_warning_and_a_child_that_never_started_does() -> None:

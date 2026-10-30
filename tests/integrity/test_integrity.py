@@ -59,3 +59,109 @@ def test_the_running_package_matches_its_own_freshly_built_manifest() -> None:
     manifest = build_manifest(Path(g6.__file__).resolve().parent)
     result = verify_installed(manifest, expected_manifest_sha256=manifest_sha256(manifest))
     assert result.matched and result.reliability_label == "verified"
+
+
+# --- G6's own re-check at the door (plan A1): the label is re-derived from the files, never taken from the fields ---
+
+def test_a_hand_built_pinned_result_is_not_verified() -> None:
+    """Anyone can construct an IntegrityResult that says matched and pinned; with no tree to re-check it is not
+    verified."""
+    from g6.integrity import IntegrityResult
+
+    forged = IntegrityResult(manifest_present=True, matched=True, pinned=True, missing=(), modified=(), unexpected=(),
+                             problems=())
+    assert forged.reliability_label == "qualified-draft"
+
+
+def test_a_tree_changed_after_the_check_is_not_verified(tmp_path) -> None:
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+    assert result.reliability_label == "verified"
+    (root / "a.py").write_text("A = 'edited after the check'\n")
+    assert result.reliability_label == "blocked-escalated"
+
+
+def test_a_result_claiming_a_pin_it_does_not_have_is_not_verified(tmp_path) -> None:
+    from dataclasses import replace
+
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    honest = verify_tree(root, manifest)                 # unpinned: a qualified draft
+    assert replace(honest, pinned=True).reliability_label != "verified"
+
+
+def test_the_recheck_plants_a_control_and_a_comparison_that_misses_it_vouches_for_nothing(tmp_path,
+                                                                                         monkeypatch) -> None:
+    from g6.integrity import tree
+
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+    monkeypatch.setattr(tree, "_differences", lambda actual, listed: ((), (), ()))   # a comparison that sees nothing
+    assert result.reliability_label != "verified"
+
+
+def test_g6s_integrity_recheck_promotes_only_what_it_rechecked(tmp_path) -> None:
+    """At the core door the pin is the caller's and the envelope's evidence is the re-check itself: the same witness
+    on an envelope that says something else is held."""
+    from dataclasses import asdict
+
+    from g6.core.door import door_envelope
+    from g6.core.reliability_envelope import ReliabilityEnvelope
+
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    pin = manifest_sha256(manifest)
+    value = {**asdict(verify_tree(root, manifest, expected_manifest_sha256=pin)), "completion_state": "verified"}
+    promoted = door_envelope("verified", producer=verify_tree, value=value,
+                             caller={"root": str(root), "expected_manifest_sha256": pin})
+    assert promoted["completion_state"] == "verified"
+    about_else = ReliabilityEnvelope(**{**promoted, "evidence": [{"summary": "the patient is fine"}]})
+    assert about_else.completion_state == "qualified-draft"
+    assert door_envelope("verified", producer=verify_tree, value=value,
+                         caller={"root": str(root)})["completion_state"] == "qualified-draft"
+
+
+def test_a_hand_built_result_with_its_own_correct_pin_is_not_verified(tmp_path) -> None:
+    """Only verify_tree, called with the caller's pin, makes a result G6 re-checks; a result that brings its own pin
+    is judging itself."""
+    from g6.integrity import IntegrityResult
+
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    forged = IntegrityResult(True, True, True, (), (), (), (), root=str(root.resolve()),
+                             manifest=tuple(sorted(manifest.items())), expected_manifest_sha256=manifest_sha256(manifest))
+    assert forged.reliability_label == "qualified-draft"
+
+
+def test_the_recheck_plants_a_control_through_the_real_hash(tmp_path, monkeypatch) -> None:
+    """A hash that ignores a file's content makes every tree agree with its manifest. Perturbing a digest in the
+    manifest text never reaches that hash; the control that flips one byte of a real file through it does."""
+    import hashlib
+
+    import g6.integrity as integrity
+
+    def file_blind(data: bytes) -> str:   # hashes manifest text (it holds "  ") but ignores every file's bytes
+        return hashlib.sha256(data if b"  " in data else b"").hexdigest()
+
+    monkeypatch.setattr(integrity, "_sha", file_blind)
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+    assert result.matched and result.reliability_label != "verified"
+
+
+def test_a_recheck_that_cannot_read_the_files_blocks_and_says_why(tmp_path, monkeypatch) -> None:
+    import g6.integrity as integrity
+
+    root = _tree(tmp_path)
+    manifest = build_manifest(root)
+    result = verify_tree(root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+
+    def unreadable(*args, **kwargs):
+        raise PermissionError("a.py: permission denied")
+
+    monkeypatch.setattr(integrity, "build_manifest", unreadable)
+    assert result.reliability_label == "blocked-escalated"
+    assert "permission denied" in result.recheck()[1]

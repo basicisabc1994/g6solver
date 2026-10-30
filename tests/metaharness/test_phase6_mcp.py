@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Meta-harness Phase 6: the MCP surface (envelope parity with Python; approval only from a person, through the
-client, and never from the session that proposed)."""
+client, including in the session that proposed; the name is recorded as given, not authenticated)."""
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +29,59 @@ if not hasattr(rig, "build"):
 
 CAREFUL = {"routing": {"answer": "local"}, "prompt": "CAREFUL: add the two numbers digit by digit."}
 TOOLS = {"metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",
-         "metaharness_diagnose", "metaharness_approve", "metaharness_rollback"}
+         "metaharness_diagnose", "metaharness_approve", "metaharness_rollback", "metaharness_start",
+         "metaharness_confirm", "metaharness_propose_code", "metaharness_evaluate_start", "metaharness_job",
+         "metaharness_run"}
+
+
+@pytest.fixture(autouse=True)
+def _metaharness_allowed(monkeypatch):
+    # the tools that run a workflow's code are sensitive operations the person allows (the security review's F2;
+    # tests/metaharness/test_forged_confirmation.py shows them refused by default)
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "metaharness")
+
+
+def test_rollback_prompt_and_action_are_bound_to_store_head(tmp_path):
+    surface = _surface(tmp_path)
+    refused, question, binding = surface.rollback_check("arith", 0)
+    assert refused is None
+    assert binding["profile_digest"] in question and binding["workflow_digest"] in question
+    surface.harness("arith").rollback(0, accepted_by="someone else")
+    got = surface.rollback("arith", 0, answer="Ada", binding=binding)
+    assert got["completion_state"] == "blocked-escalated"
+
+
+def test_data_only_application_over_real_mcp_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("G6_ALLOW_UNCONFINED", "1")
+    monkeypatch.setenv("G6_MCP_SENSITIVE", "metaharness")   # the meta-harness only: patch review stays refused
+    surface = Surface(workflow_root=tmp_path / "workflows")
+    server = build_server(surface)
+
+    async def consent(message, response_type, params, context):
+        assert "digest" in message and "Future activation requires separate consent" in message
+        return response_type(value="Ada")
+
+    async def flow():
+        async with Client(server, elicitation_handler=consent) as client:
+            specification = {"name": "echo", "task": "Echo {input}",
+                             "cases": [{"input": "a", "expected": "a"}, {"input": "b", "expected": "b"}],
+                             "baseline_code": {"main.py": "def solve(task):\n    return task.split(' ', 1)[1]\n"}}
+            made = _data(await client.call_tool("metaharness_start", {"specification_json": json.dumps(specification)}))
+            confirmed = _data(await client.call_tool("metaharness_confirm", {
+                "workflow": "echo", "workflow_digest": made["workflow_digest"]}))
+            assert confirmed["completion_state"] == "qualified-draft"
+            job = _data(await client.call_tool("metaharness_run", {"workflow": "echo", "task_input": "hello"}))
+            for _ in range(100):
+                result = _data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                if result.get("status") in ("completed", "failed"):
+                    break
+                await asyncio.sleep(0.05)
+            assert result["status"] == "completed" and result["result"]["output"] == "hello", result
+            refused = _data(await client.call_tool("g6_review_patch", {"repo": str(tmp_path), "task": "fix",
+                            "claim": "fixed", "sources": {}, "tests": []}))
+            assert refused["warning_card"]["code"] == "G6_E_SENSITIVE_COMPONENT_DENIED"
+    asyncio.run(flow())
 
 
 def _surface(tmp_path) -> Surface:
@@ -58,12 +110,13 @@ def test_mcp_replies_are_the_python_envelopes_as_json(tmp_path) -> None:
     surface = _surface(tmp_path)
     via_surface = surface.propose("arith", session="s1", profile=CAREFUL, proposer="bo")
     direct = as_json(surface.harness("arith").candidate(Profile.model_validate(CAREFUL), proposer="bo"))
+    assert via_surface["code"] == direct["code"] == "G6_E_META_PROPOSED"
     assert via_surface["warning_card"]["code"] == direct["warning_card"]["code"] == "G6_E_META_PROPOSED"
     assert set(via_surface) == set(direct) and check_envelope(via_surface) == []
     json.dumps(via_surface)   # JSON all the way down
 
 
-def test_over_mcp_only_a_person_through_another_session_approves(tmp_path) -> None:
+def test_over_mcp_declined_or_missing_client_consent_never_approves(tmp_path) -> None:
     surface = _surface(tmp_path)
     server = build_server(surface)
 
@@ -96,7 +149,7 @@ def test_over_mcp_only_a_person_through_another_session_approves(tmp_path) -> No
 
     out = asyncio.run(flow())
     assert out["decided"]["warning_card"]["code"] == S.RECOMMENDED
-    assert out["self"]["warning_card"]["code"] == S.APPROVER_IS_PROPOSER
+    assert out["self"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
     assert out["declined"]["warning_card"]["code"] == S.APPROVAL_REQUIRED
     assert out["approved"]["head_version"] == 1 and out["approved"]["completion_state"] == "qualified-draft"
     assert surface.harness("arith").store.versions()[-1]["accepted_by"] == "Ada"
@@ -114,7 +167,7 @@ async def _decided(client) -> dict:
                                                               "proposal_digest": p}))
 
 
-def test_the_proposing_session_is_refused_before_the_person_is_asked_and_told_how_to_approve(tmp_path) -> None:
+def test_proposing_session_can_present_digest_bound_client_consent(tmp_path) -> None:
     surface = _surface(tmp_path)
     asked = []
 
@@ -128,14 +181,16 @@ def test_the_proposing_session_is_refused_before_the_person_is_asked_and_told_ho
             return decided, _data(await agent.call_tool("metaharness_approve", {
                 "workflow": "arith", "decision_digest": decided["decision_digest"]}))
 
-    decided, refused = asyncio.run(flow())
+    decided, approved = asyncio.run(flow())
     assert decided["warning_card"]["code"] == S.RECOMMENDED
-    assert refused["warning_card"]["code"] == S.APPROVER_IS_PROPOSER and check_envelope(refused) == []
-    assert asked == []   # nobody was asked to type a name only to be refused
-    how = refused["next_action"]
-    assert f".activate('{decided['decision_digest']}', accepted_by=" in how
-    assert str(surface.harness("arith").workspace) in how and "MCP session other than the proposer's" in how
-    assert len(surface.harness("arith").store.versions()) == 1
+    assert approved["head_version"] == 1 and check_envelope(approved) == []
+    assert len(asked) == 1 and decided["decision_digest"] in asked[0]
+    assert decided["decision"]["candidate_digest"] in asked[0]
+    consent = approved["consent"]
+    assert consent["method"] == "mcp-elicitation"
+    assert consent["identity_authenticated"] is False
+    assert consent["decision_digest"] == decided["decision_digest"]
+    assert len(surface.harness("arith").store.versions()) == 2
 
 
 def test_a_change_proposed_over_mcp_is_approved_by_digest_from_python_in_another_process(tmp_path) -> None:
@@ -158,7 +213,7 @@ def test_a_change_proposed_over_mcp_is_approved_by_digest_from_python_in_another
     assert elsewhere.activate(decided["decision_digest"], accepted_by="Bo")["warning_card"]["code"] == S.STANDARD_CHANGED
 
 
-def test_another_server_process_asks_the_person_but_never_the_session_that_proposed(tmp_path) -> None:
+def test_another_server_process_can_present_the_recorded_proposal_for_consent(tmp_path) -> None:
     first = _surface(tmp_path)
 
     async def answer_ada(message, response_type, params, context):
@@ -172,8 +227,8 @@ def test_another_server_process_asks_the_person_but_never_the_session_that_propo
     proposer, = {r["session"] for r in first.harness("arith").ledger.rows("proposed_by")}
     wf, _ = rig.build(7)
     second = Surface({"arith": {"workflow": wf, "workspace": tmp_path / "ws", "clock": rig.Clock()}})
-    again = second.approve("arith", decided["decision_digest"], session=proposer, answer="Ada")
-    assert again["warning_card"]["code"] == S.APPROVER_IS_PROPOSER   # the proposing session is recorded, not held
+    refused, question = second.approval_check("arith", decided["decision_digest"], session=proposer)
+    assert refused is None and decided["decision_digest"] in question
 
     async def review() -> dict:
         async with Client(build_server(second), elicitation_handler=answer_ada) as reviewer:

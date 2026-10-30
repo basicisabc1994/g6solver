@@ -37,6 +37,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import WarningCard
 
 #: Stable codes. A refusal carries one of these; a qualified draft's warning card carries one of the card codes.
@@ -96,6 +97,10 @@ Task = Literal["classification", "regression"]
 State = Literal["qualified-draft", "blocked-escalated"]
 
 _ACTIONS = {
+    ISOLATION_UNAVAILABLE: "Nothing was fitted: G6 fits in a child process only inside an operating-system boundary, "
+                           "and none could confine it here. Run g6 doctor: it says what this computer needs. To fit "
+                           "without a boundary, with your own rights, the person at this computer chooses it once "
+                           "with g6 setup.",
     INPUT_INVALID: "Correct the input as the reason says and ask again.",
     SEED_MISSING: "Pass seed (an integer) and leave it out of the parameters: every fit, fold and resample is then "
                   "repeatable, and the seed is in the evidence.",

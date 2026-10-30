@@ -44,7 +44,7 @@ def ortools(module: str) -> Any:
             return importlib.import_module(module)
     except ImportError as exc:
         raise Refusal(SOLVER_UNAVAILABLE, f"OR-Tools is not importable here ({exc}); install it with "
-                                          "pip install 'g6[optim]'") from None
+                                          "pip install 'g6[optim] @ git+https://github.com/basicisabc1994/g6solver'") from None
 
 
 def version() -> str:

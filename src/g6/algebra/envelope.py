@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from g6.algebra.schema import AlgebraResult
+from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import WarningCard
 
 _P = "G6_E_ALGEBRA_"
@@ -65,13 +66,14 @@ ENGINE_ERROR = _P + "ENGINE_ERROR"
 PARSER_CODES = (PARSE_ERROR, CONSTRUCT_REFUSED, UNKNOWN_FUNCTION, UNKNOWN_SYMBOL, WRONG_ARGUMENTS, SYMBOL_INVALID,
                 EXPONENT_TOO_LARGE, FACTORIAL_TOO_LARGE, NUMBER_TOO_LARGE, INPUT_INVALID, INPUT_TOO_LARGE)
 
-INSTALL_CAS = "pip install 'g6[cas]'"
+INSTALL_CAS = "pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver'"
 #: Where SageMath comes from: ``G6_SAGE`` names the ``sage`` program, or ``sage`` is found on PATH.
 SAGE_ENV = "G6_SAGE"
 INSTALL_SAGE = (f"SageMath is a separate program under the GPL, so G6 never installs, bundles or imports it. Install it "
                 f"yourself as sagemath.org describes, then put sage on PATH or set {SAGE_ENV} to the sage program.")
 
 _ACTIONS = {
+    ISOLATION_UNAVAILABLE: ISOLATION_ACTION,
     PARSE_ERROR: "Correct the expression at the line and column given. Write every product with * (2*x, not 2x), "
                  "powers with ^ or **, and call functions with parentheses, such as sin(x).",
     CONSTRUCT_REFUSED: "Remove what the reason names: the language has numbers, declared symbols, + - * / ^, "

@@ -162,7 +162,7 @@ def _make(d: GenerativeArtInput) -> MediaResult:
     missing = _missing_extra()
     if missing:
         return refuse(d.op, EXTRA_MISSING, f"{' and '.join(missing)} not installed, so nothing can be drawn: "
-                                           "pip install 'g6[procedural]'", **_ids(d))
+                                           "pip install 'g6[procedural] @ git+https://github.com/basicisabc1994/g6solver'", **_ids(d))
     from g6.media.adapt_generative_art import render, techniques
 
     seed = d.seed if d.seed is not None else secrets.randbelow(2**32)
@@ -260,7 +260,7 @@ class ProceduralBackend:
 
     def available(self) -> str:
         missing = _missing_extra()
-        return f"{' and '.join(missing)} not installed: pip install 'g6[procedural]'" if missing else ""
+        return f"{' and '.join(missing)} not installed: pip install 'g6[procedural] @ git+https://github.com/basicisabc1994/g6solver'" if missing else ""
 
     def generate(self, request: ImageRequest) -> MediaResult:
         ids = {"request_id": request.request_id, "run_id": request.run_id}

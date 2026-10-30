@@ -36,6 +36,7 @@ def test_adapt_library_synthesizer_01_code_runs_only_in_sandbox(monkeypatch):
     # Unconfined, so the run's label is known on every machine: this is about the child process and its clean
     # environment, not the operating system's confinement (tests/core's isolation tests).
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     code = "def sum_values(values):\n    import os\n    assert 'G6_TEST_SECRET' not in os.environ\n    return sum(values)\n"
     out = run("run_checks", files={"implementation.py": code}, examples=EXAMPLES, dry_run=False)
     assert out["completion_state"] == "qualified-draft"
@@ -234,5 +235,5 @@ def test_pdf_missing_pypdf_blocks_with_family_install_code(monkeypatch):
     assert out["completion_state"] == "blocked-escalated"
     assert out["code"] == CHECKER_NOT_INSTALLED == "G6_E_CODE_CHECKER_NOT_INSTALLED"
     assert "pypdf is not installed" in out["warning_card"]["message"]
-    assert 'pip install "g6[docs]"' in out["warning_card"]["message"]
+    assert 'pip install "g6[docs] @ git+https://github.com/basicisabc1994/g6solver"' in out["warning_card"]["message"]
 # Removal: raise CodeRefused(CHECKER_NOT_INSTALLED, ...) in pdf_text's missing.txt branch.

@@ -1169,6 +1169,27 @@ def _python(program: str) -> bool:
     return same(sys.executable, program) or same(interpreter(), program)
 
 
+def _confined_program(program: str) -> tuple[str, bool]:
+    """Observe the payload, not G6's bubblewrap transport; identify exact core probes.
+
+    This is deliberately not a program-name allowlist: a component starting bwrap
+    itself is still recorded, and an undeclared payload remains undeclared.
+    """
+    from g6.core.confine import _Bubblewrap
+
+    frame = sys._getframe(2)
+    while frame is not None:
+        if frame.f_code in (_Bubblewrap.start.__code__, _Bubblewrap._probe.__code__,
+                            _Bubblewrap._features.__code__):
+            backend = frame.f_locals.get("self")
+            if program == getattr(backend, "program", None):
+                if frame.f_code is _Bubblewrap.start.__code__:
+                    return _program(frame.f_locals["argv"], None), False
+                return program, True
+        frame = frame.f_back
+    return program, False
+
+
 def _declared(program: str, outside: Iterable[Any]) -> bool:
     """``program`` is one ``outside`` (a component's ``__g6_outside__``) names: its command, or the program its
     environment variable names."""
@@ -1215,8 +1236,10 @@ def offline(outside: Iterable[Any] = ()) -> Iterator[list[str]]:
         return saved[3](program, method, path, *args, **kwargs)
 
     def launch(popen: object, args: object, executable: object, *rest: object, **kwargs: object) -> Any:
-        program = _program(args, executable)
-        if not _launched_by_core():
+        program, boundary_probe = _confined_program(_program(args, executable))
+        if boundary_probe:
+            pass  # Exact trusted backend feature/canary probe, not a component operation.
+        elif not _launched_by_core():
             reached.append(f"started {_stem(program) or program!r} itself, not through g6.core")
         elif not (_python(program) or _declared(program, programs)):
             reached.append(f"started {_stem(program) or program!r}, which its __g6_outside__ does not declare")
@@ -1280,7 +1303,7 @@ def _reply_problems(path: Path, gate: str, op: str, reply: Mapping[str, Any]) ->
     out = []
     if reply.get("completion_state") not in STATES:
         out.append(_runtime(path, gate, f"{op}: the reply's completion_state is {reply.get('completion_state')!r}"))
-    if not reply.get("ok"):
+    if "result" not in reply:   # no result: the refusal's own error carries the code (a blocked result has ok false too)
         if not OWN_CODE.match(str(reply.get("error", ""))):
             out.append(_runtime(path, gate, f"{op}: refusal carries no stable G6_E_ code of its own: "
                                             f"{str(reply.get('error', ''))[:160]}"))
@@ -1564,6 +1587,7 @@ else:
             with contextlib.redirect_stdout(io.StringIO()):
                 reply = invoke_reply(name, op, json.dumps(params))
             entry["reply"] = {k: reply.get(k) for k in ("ok", "error", "completion_state")}
+            entry["reply"]["has_result"] = "result" in reply
             entry["reply"]["result_state"] = (reply.get("result") or {}).get("completion_state") if isinstance(reply.get("result"), dict) else None
             card = (reply.get("result") or {}).get("warning_card") if isinstance(reply.get("result"), dict) else None
             entry["reply"]["own_code"] = isinstance(card, dict) and str(card.get("code", "")).startswith("G6_E_")
@@ -1634,9 +1658,10 @@ def _run_child(t: Target, extra: str, blocked: tuple[str, ...], families: list[s
             continue
         reply = entry["reply"]
         honest = any(word in entry["said"] for word in HONEST)
-        refused = not reply["ok"] or reply["result_state"] == "blocked-escalated"
+        # no result (the error carries the code), or a result that is blocked (its own card carries it)
+        refused = not reply["has_result"] or reply["result_state"] == "blocked-escalated"
         if refused:
-            coded = OWN_CODE.match(str(reply["error"] or "")) if not reply["ok"] else reply["own_code"]
+            coded = reply["own_code"] if reply["has_result"] else OWN_CODE.match(str(reply["error"] or ""))
             if not coded:
                 out.append(_runtime(where, "D9", f"without g6[{extra}], {op} refuses with no G6_E_ code of its own"))
             elif entry["fired"] and not honest:

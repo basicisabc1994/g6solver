@@ -38,11 +38,13 @@ def _through_every_entrypoint(backend: str, op: str, args: dict, capsys: pytest.
         "library": evaluate_action(action).to_response_dict(),
         "block": ActionGatingBlock().infer(ActionGatingInput(op="evaluate", action=action)).unwrap(),
         "registry": get_registry().invoke("action_gating", "evaluate", params).unwrap(),
-        "mcp": invoke_reply("action_gating", "evaluate", json.dumps(params))["result"],
+        "mcp": (mcp := invoke_reply("action_gating", "evaluate", json.dumps(params)))["result"],
         "native_op": evaluate_backend_op(backend, op, args),
     }
     capsys.readouterr()
-    assert cli(["invoke", "action_gating", "evaluate", json.dumps(params)]) == 0
+    # `g6 invoke` prints the result and exits 1 when the door's reply is not ok (a blocked-escalated decision)
+    assert mcp["ok"] is (mcp["completion_state"] != "blocked-escalated")
+    assert cli(["invoke", "action_gating", "evaluate", json.dumps(params)]) == (0 if mcp["ok"] else 1)
     evaluations["cli"] = json.loads(capsys.readouterr().out)
     found = {name: {k: ev["gate_decision"][k] for k in _FIELDS} for name, ev in evaluations.items()}
     ledger = ActionGatingStore(str(Path(tempfile.mkdtemp()) / "gate.db"))

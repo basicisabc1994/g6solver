@@ -2,7 +2,8 @@
 """``g6 doctor``: a read-only check of this installation. It writes nothing and calls no network.
 
 Each check is ``ok``, ``warn`` (works, with a limitation) or ``fail`` (something the user must fix),
-with a plain-language fix. Importing components is the only code it runs.
+with a plain-language fix. Importing components is the only code it runs, but for one test run on Linux: the
+isolation check starts bubblewrap's test run, in temporary folders it removes, as every first confined run does.
 
 ``g6 doctor --report <traceback file>`` (merged from the archive's diagnostic collector) builds one local error report
 from a saved Python traceback: the exception's name, each frame's file, line and function, and this installation's
@@ -32,10 +33,10 @@ from pathlib import Path
 from typing import Any
 
 EXTRAS = {
-    "mcp": (("fastmcp", "mcp"), "the g6-mcp server for coding agents", 'pip install "g6[mcp]"'),
-    "anthropic": (("anthropic",), "Claude as the AI model", 'pip install "g6[anthropic]"'),
+    "mcp": (("fastmcp", "mcp"), "the g6-mcp server for coding agents", 'pip install "g6[mcp] @ git+https://github.com/basicisabc1994/g6solver"'),
+    "anthropic": (("anthropic",), "Claude as the AI model", 'pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"'),
     "abstraction": (("hypothesis", "numpy"), "the abstraction component's property checks",
-                    'pip install "g6[abstraction]"'),
+                    'pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"'),
 }
 @dataclass(frozen=True)
 class Check:
@@ -148,7 +149,7 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
         has = bool(keys.get(key))
         if provider == "anthropic" and importlib.util.find_spec("anthropic") is None:
             return Check("AI model", "fail", "anthropic selected but the SDK is missing",
-                         'pip install "g6[anthropic]"')
+                         'pip install "g6[anthropic] @ git+https://github.com/basicisabc1994/g6solver"')
         unused = (f"; {key} is set in the environment, which G6 does not use"
                   if not has and env.get(key) else "")
         return Check("AI model", "ok" if has else "fail",
@@ -160,25 +161,33 @@ def _model(env: dict[str, str], keys: dict[str, str]) -> Check:
 
 def _isolation() -> Check:
     """Whether untrusted code (patches, generated scripts, a repository's tests) runs confined by the operating system
-    (``g6.core.confine``), read from the access lists alone: nothing is started or created here."""
+    (``g6.core.confine``). On Windows it is read from the access lists alone: nothing is started or created. On Linux
+    bubblewrap's test run starts, in temporary folders removed after it, since its settings alone cannot say whether
+    it works. ``fail`` only where the boundary leaked; otherwise ``warn``, with the fix for this system and whether G6
+    refuses such code here or the person allowed it (``confine.allowed_by``)."""
     from g6.core import confine
 
+    linux = sys.platform.startswith("linux")
     pythons = list(dict.fromkeys([sys.executable, *([os.environ["G6_PYTHON"]] if os.environ.get("G6_PYTHON") else [])]))
     for python in pythons:
-        name, why = confine.backend(python, probe=False)
+        name, why = confine.backend(python, probe=linux)
         if name is None:
-            # CORE_SANDBOX-01: a warning with what the person can do, never a refusal (owner ruling, 2026-10-23)
-            fix = why.partition("run once in a terminal")[2].partition(": ")[2]
-            return Check("isolation", "warn",
-                         f"{confine.UNCONFINED_WARNING} Here, untrusted code run with {python} runs with your "
-                         f"permissions: {why}",
-                         f"Run once in a terminal: {fix}" if fix else
-                         "Run G6 inside a virtual machine or a container of its own, or set G6_REQUIRE_ISOLATION=1 "
-                         "to have G6 refuse a run it cannot confine.")
+            # CORE_SANDBOX-01 (owner ruling, 2026-10-27): with no boundary G6 refuses untrusted code unless the person
+            # allowed it once; either way the person reads what this computer needs
+            allowed = "" if confine.required() else confine.allowed_by()
+            here = (f"Here no boundary can confine untrusted code run with {python}, and {allowed} allowed it, so it "
+                    "runs with your permissions" if allowed else
+                    f"Here no boundary can confine untrusted code run with {python}, so G6 refuses to run it")
+            return Check("isolation", "fail" if confine.BWRAP_LEAKED in why else "warn",
+                         f"{confine.UNCONFINED_WARNING} {here}: {why}",
+                         confine.fix_for(why) or "Run G6 inside a virtual machine or a container of its own, or, to run "
+                                                 "such code without a boundary, choose it once with g6 setup.")
     said = "started" if all(confine.started(python) for python in pythons) else "access list ok; not started"
-    return Check("isolation", "ok", f"{said}: untrusted code run with {', '.join(pythons)} can run in a Windows {name} "
-                                    "(no network, only its run folder writable; G6 test-starts each interpreter there "
-                                    "before its first confined run)")
+    where = ("inside bubblewrap (a private loopback and no other network, only its run folder writable; G6 "
+             "test-starts each interpreter there before its first confined run)" if name == confine.BUBBLEWRAP else
+             f"in a Windows {name} (no network, only its run folder writable; G6 test-starts each interpreter there "
+             "before its first confined run)")
+    return Check("isolation", "ok", f"{said}: untrusted code run with {', '.join(pythons)} can run {where}")
 
 
 def _components() -> list[Check]:

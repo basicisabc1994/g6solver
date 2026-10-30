@@ -44,7 +44,7 @@ def _invoke(op: str, **params: object) -> dict:
 
 def _crisis(reply: dict) -> bool:
     result = reply.get("result") or {}
-    return (reply["ok"] and reply["completion_state"] == "blocked-escalated"
+    return ("result" in reply and not reply["ok"] and reply["completion_state"] == "blocked-escalated"
             and result.get("code") == envelope.CRISIS and reply["warning_card"]["code"] == envelope.CRISIS)
 
 
@@ -166,7 +166,7 @@ def test_a_score_is_a_qualified_draft_score_computed_with_no_band() -> None:
 ])
 def test_a_missing_or_wrong_input_is_blocked_never_defaulted(op: str, params: dict, code: str) -> None:
     reply = _invoke(op, **params)
-    assert reply["ok"] and reply["completion_state"] == "blocked-escalated"
+    assert not reply["ok"] and reply["completion_state"] == "blocked-escalated"
     assert reply["result"]["code"] == code and reply["warning_card"]["code"] == code
     assert "total" not in reply["result"]
 
@@ -251,7 +251,7 @@ def test_input_too_large_to_scan_is_treated_as_a_possible_crisis() -> None:
     for _ in range(100):
         deep = [deep]
     reply = _invoke("screen", fields={"m": deep}, **_ids())
-    assert reply["ok"] and reply["completion_state"] == "blocked-escalated"
+    assert not reply["ok"] and reply["completion_state"] == "blocked-escalated"
     assert reply["result"]["code"] == envelope.CHECK_FAILED and reply["result"]["response"]
 
 
@@ -286,7 +286,7 @@ def test_when_the_rules_cannot_be_read_the_screen_fails_closed_with_the_director
 
     monkeypatch.setattr(crisis, "rules", broken)
     reply = _invoke("screen", fields={"m": "an ordinary day"}, **_ids())
-    assert reply["ok"] and reply["completion_state"] == "blocked-escalated"
+    assert not reply["ok"] and reply["completion_state"] == "blocked-escalated"
     assert reply["result"]["code"] == envelope.CHECK_FAILED and reply["result"]["directory"]["entries"]
 
 

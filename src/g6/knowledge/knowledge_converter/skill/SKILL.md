@@ -42,7 +42,7 @@ what it could not read. It converts what it is given and never fetches.
 - `nothing_readable` (`G6_E_KNOWLEDGE_NOTHING_READABLE`): no text at all, such as a PDF with no text layer or a page
   whose only text is hidden or written by scripts; `unread` lists the pages, or the hidden text.
 - `unsupported` (`G6_E_KNOWLEDGE_UNSUPPORTED_TYPE`), `not_installed` (`G6_E_KNOWLEDGE_EXTRA_MISSING`: pypdf is
-  missing, `pip install 'g6[docs]'`), `failed` (`G6_E_KNOWLEDGE_CONVERSION_FAILED`: not a PDF, encrypted, broken, or
+  missing, `pip install 'g6[docs] @ git+https://github.com/basicisabc1994/g6solver'`), `failed` (`G6_E_KNOWLEDGE_CONVERSION_FAILED`: not a PDF, encrypted, broken, or
   a PDF that declares more than 5000 pages, refused before any page is loaded).
 - `time_limit` (`G6_E_KNOWLEDGE_CONVERSION_TIME_LIMIT`): pypdf was still reading after 60 seconds and was stopped;
   nothing it read is used.
@@ -94,7 +94,7 @@ passages; `knowledge_manifest` keeps them and re-checks them later.
 
 ## What it needs
 
-pypdf 6.1 or later for PDFs (`pip install 'g6[docs]'`, BSD-3-Clause, no other package), run in a child process of
+pypdf 6.1 or later for PDFs (`pip install 'g6[docs] @ git+https://github.com/basicisabc1994/g6solver'`, BSD-3-Clause, no other package), run in a child process of
 the same Python; text, Markdown and HTML need nothing outside
 G6. No network, no model, no outside program. Kept bytes are read from `$G6_HOME/knowledge/fetched/`.
 

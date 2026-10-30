@@ -138,13 +138,15 @@ def run_tests_op(d: MetaProgrammingInput) -> dict[str, Any]:
     _parses(d.tests)
     ran = run_tests(d.source, d.tests, d.module, timeout_s=d.timeout_s)
     evidence = [{"kind": "test_run", "where": "g6.core.sandbox (a bounded child process, not G6's own)",
-                 "limits": ran["limits"], "status": ran["status"], "seconds": ran["seconds"],
+                 "limits": ran["limits"], "isolation": ran["isolation"], "status": ran["status"],
+                 "seconds": ran["seconds"],
                  "whose": "the caller's tests on the caller's code: a claim, not a check G6 made"}]
     fields = {k: ran[k] for k in ("collected", "results", "status", "stderr")}
     failed = [r for r in ran["results"] if r["outcome"] != "passed"]
     if not ran["collected"] or not ran["results"] or ran["status"] in ("timeout", "refused"):
-        why = ran["error"] or ("the run timed out" if ran["status"] == "timeout" else "the run did not report any "
-                               "test" if ran["collected"] in (None, 0) else ran["stderr"][-200:] or ran["status"])
+        why = ran["error"] or ("the run timed out" if ran["status"] == "timeout" else ran["stderr"][:600]
+                               if ran["status"] == "refused" else "the run did not report any test"
+                               if ran["collected"] in (None, 0) else ran["stderr"][-200:] or ran["status"])
         return refuse(COMPONENT, "run_tests", TESTS_DID_NOT_RUN, f"No test outcome to report: {why}.",
                       action=_ACTIONS[TESTS_DID_NOT_RUN], evidence=evidence, **_ids(d), **fields)
     if any(r["outcome"] == "unsupported" for r in ran["results"]):

@@ -103,7 +103,7 @@ Composed:
 - `render_dot` needs Graphviz (EPL-1.0), a program you install: `winget install graphviz`, `brew install graphviz`
   or `sudo apt install graphviz`, then `dot` on PATH or `G6_GRAPHVIZ_DOT` naming it. G6 never installs it; without it
   `render_dot` refuses with `G6_E_OUTSIDE_PROGRAM_MISSING` and the install steps.
-- A PNG needs `pip install "g6[image]"` (Pillow, to inspect it). Without it a PNG is refused with
+- A PNG needs `pip install "g6[image] @ git+https://github.com/basicisabc1994/g6solver"` (Pillow, to inspect it). Without it a PNG is refused with
   `G6_E_MEDIA_EXTRA_MISSING` before dot runs; SVG needs nothing.
 
 ## Examples

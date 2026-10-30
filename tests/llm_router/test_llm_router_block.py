@@ -108,7 +108,7 @@ def test_route_over_mcp_is_local_first_by_default():
 
 def test_a_blocked_answer_over_mcp_keeps_its_own_code():
     reply = invoke_reply("llm_router", "model_profile", json.dumps({"model": "openrouter/acme/none"}))
-    assert reply["ok"] is True and reply["completion_state"] == "blocked-escalated"
+    assert reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == "G6_E_ROUTER_UNKNOWN_MODEL" and check_envelope(reply) == []
 
 

@@ -17,7 +17,13 @@ time limit is the bound) and its whole process tree killed when a limit is passe
   ``SAGE_LOCAL`` and ``SAGE_VENV`` when they are set, with ``DOT_SAGE``, ``IPYTHONDIR`` and ``MPLCONFIGDIR`` inside the
   run directory.
 
-This is a resource bound, not a sandbox: both run as you. That is why the SageMath ops are sensitive.
+SageMath on the file built from the caller's expression goes through :mod:`g6.core.confine`, like every run of
+untrusted code: where a backend can confine it (bubblewrap on Linux, an AppContainer on Windows), it reads only its own
+installation (``confine.program_paths``, with ``SAGE_ROOT``, ``SAGE_LOCAL`` and ``SAGE_VENV``) and writes only the run
+directory, with no network; the run's ``isolation`` says how it ran, and where isolation is required and no backend
+can give it the run is refused before SageMath starts (``G6_E_ISOLATION_UNAVAILABLE``). ``sage --version`` and G6's own
+worker are not planned. Elsewhere this is a resource bound, not a sandbox: both run as you. That is why the SageMath
+ops are sensitive.
 """
 from __future__ import annotations
 
@@ -31,7 +37,8 @@ from pathlib import Path
 from typing import Any
 
 from g6.algebra.envelope import OUTPUT_UNRECOGNISED, RUN_FAILED, Refusal
-from g6.core import component_process
+from g6.core import component_process, confine
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.process_tree import ProcessTreeError
 
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
@@ -53,7 +60,8 @@ class Run:
 
 
 def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, cap: int, memory_mb: int,
-             record: dict[str, Any], stdin_path: Path | None = None, merge: bool = False) -> Run:
+             record: dict[str, Any], stdin_path: Path | None = None, merge: bool = False,
+             confined: confine.Plan | None = None) -> Run:
     """Run ``argv`` under a time limit, an output cap and a memory cap, the process tree killed when one is passed."""
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         def too_much() -> bool:
@@ -66,10 +74,12 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
                 code = component_process.run_process(argv, env=env, cwd=cwd,
                                                      stdin=source if source is not None else subprocess.DEVNULL,
                                                      stdout=out, stderr=subprocess.STDOUT if merge else err,
-                                                     memory_bytes=memory_mb * 1024 * 1024)
+                                                     memory_bytes=memory_mb * 1024 * 1024, confined=confined)
         except component_process.ExecutionInterrupted as exc:
             stopped = "output" if exc.stopped and too_much() else "time"
         except (OSError, ProcessTreeError) as exc:
+            if isinstance(exc, confine.NotStarted) and "isolation" in record:
+                record["isolation"] = confine.not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"the program could not be run to the end: {exc}"[:500]) from None
         finally:
             if source is not None:
@@ -138,7 +148,7 @@ def run_sage(sage: str, arguments: list[str], *, file_name: str = "", file_text:
              memory_mb: int, cap: int, record: dict[str, Any]) -> Run:
     """Run ``sage`` (from :func:`g6.algebra.sage.find_sage`) with ``arguments`` in a fresh directory, with
     ``file_text`` written there as ``file_name``, and remove the directory."""
-    with tempfile.TemporaryDirectory(prefix="g6_sage_", ignore_cleanup_errors=True) as tmp:
+    with confine.run_folder(prefix="g6_sage_", ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         for sub in ("work", "tmp", "home", "dot_sage", "ipython", "matplotlib"):
             (root / sub).mkdir()
@@ -148,7 +158,20 @@ def run_sage(sage: str, arguments: list[str], *, file_name: str = "", file_text:
         record["argv"] = list(argv)
         env = _environment(root, _SAGE_ENV) | {"DOT_SAGE": str(root / "dot_sage"), "IPYTHONDIR": str(root / "ipython"),
                                                "MPLCONFIGDIR": str(root / "matplotlib")}
-        return _execute(argv, root / "work", env, seconds, cap, memory_mb, record, merge=True)
+        confined = None
+        if file_text is not None:   # built from the caller's expression: untrusted, so planned (a version run is not)
+            reads = confine.program_paths(sage, *(env.get(key, "") for key in ("SAGE_ROOT", "SAGE_LOCAL", "SAGE_VENV")))
+            confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
+            record["isolation"] = confined.record()
+            said = confine.refused(confined)
+            if said:
+                raise Refusal(ISOLATION_UNAVAILABLE, said)
+        try:
+            return _execute(argv, root / "work", env, seconds, cap, memory_mb, record, merge=True, confined=confined)
+        finally:
+            left = confined.release() if confined is not None else ""
+            if left:
+                record["isolation"] = {**record["isolation"], "cleanup": left}
 
 
 __all__ = ["MAX_OUTPUT_BYTES", "OUTPUT_CAP_LIMIT", "Run", "call_worker", "run_sage"]

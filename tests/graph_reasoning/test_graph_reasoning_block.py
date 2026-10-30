@@ -96,7 +96,7 @@ def test_ops_and_help_answer(op: str) -> None:
 ])
 def test_a_refused_model_is_blocked_over_mcp_with_what_went_wrong(params: dict, code: str, says: str) -> None:
     reply = invoke_reply("graph_reasoning", "reason", json.dumps(params))
-    assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "blocked-escalated"
+    assert check_envelope(reply) == [] and reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == code and says in reply["result"]["reason"]
     assert reply["result"]["interpretation"] == []
 

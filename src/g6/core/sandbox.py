@@ -11,20 +11,23 @@ Linux the memory cap is on the whole address space unless the caller asks for th
 :data:`MEMORY_LIMITS`), for a child that maps large shared libraries whose address space it never uses. The files the
 script leaves in its directory come back, up to a size limit.
 
-Where :mod:`g6.core.confine` has a backend for the interpreter (a Windows AppContainer), the script also runs confined:
-it reads only the interpreter's folders and its own folder (and what Windows lets every AppContainer read: the system
-folders, Program Files), writes only its own folder and its run's container folder (deleted after it), reaches no
-network, this machine included, and the processes it starts are confined alike and end with it. Elsewhere, and on Windows until
-the owner's one-time grant lets the container read the interpreter, it is a resource bound, not an operating-system
-sandbox: the script runs as the same user and can read whatever that user can read, and the network guard covers
-Python's own socket class, not the operating system (see ``NETWORK_GUARD``). Each result says which (``isolation``:
-``{"backend": null, "why": ..., "warning": ...}`` when unconfined), and ``G6_REQUIRE_ISOLATION=1`` refuses a run that
-cannot be confined (``G6_E_ISOLATION_UNAVAILABLE``). The warning (``g6.core.confine.UNCONFINED_WARNING``):
+Where :mod:`g6.core.confine` has a backend for the interpreter (bubblewrap on Linux, a Windows AppContainer), the
+script also runs confined: it reads only the interpreter's folders and its own folder (and, on Windows, what every
+AppContainer may read: the system folders, Program Files), writes only its own folder (and, on Windows, its run's
+container folder, deleted after it), reaches no network, this machine included, and the processes it starts are
+confined alike and end with it. Where none can confine it (macOS, Linux without bubblewrap, and Windows until the
+owner's one-time grant lets the container read the interpreter), the script is refused and nothing runs (``status``
+``"refused"``, ``G6_E_ISOLATION_UNAVAILABLE``, :func:`isolation_refused`), unless the person allowed such runs on this
+computer (``confine.allowed_by``); ``G6_REQUIRE_ISOLATION=1`` refuses it whatever was allowed. An allowed run is a
+resource bound, not an operating-system sandbox: the script runs as the same user and can read whatever that user can
+read, and the network guard covers Python's own socket class, not the operating system (see ``NETWORK_GUARD``). Each
+result says which (``isolation``: ``{"backend": null, "why": ..., "warning": ..., "allowed_by": ...}`` when
+unconfined). The warning (``g6.core.confine.UNCONFINED_WARNING``):
 
-Where no operating-system backend confines it (Linux and macOS today, and Windows before the one-time access grant),
-untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has your own rights: it can
-read your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are
-responsible for what you run.
+Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and Windows before the one-time
+access grant), G6 refuses to run untrusted code for you (a patch, a generated script, a repository's tests) unless you
+allow it once with g6 setup. Code you allow then has your own rights: it can read your key file ~/.g6/.env and your
+other files, and its network guard works inside Python only. You are responsible for what you run.
 
 A confined child that cannot import G6 (its container cannot read the folder that holds the ``g6`` package) fails
 with that reason and the owner's grant in front of its own error (``confine.import_failure``).
@@ -34,6 +37,7 @@ from __future__ import annotations
 import math
 import os
 import signal
+import stat
 import sys
 import time
 from collections.abc import Mapping
@@ -42,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core import component_process, confine
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
 
 #: Environment variables the child may see (the interpreter needs these on Windows); nothing else is passed.
@@ -136,6 +141,12 @@ class ScriptRun:
     isolation: dict[str, Any] = field(default_factory=dict)
 
 
+def isolation_refused(run: Any) -> bool:
+    """Whether ``run`` (a :class:`ScriptRun`) was refused because no operating-system boundary could confine it: the
+    script never ran, so its empty output is no answer (``confine.IsolationRefused``)."""
+    return run.status == "refused" and str(run.stderr).startswith(f"[{ISOLATION_UNAVAILABLE}]")
+
+
 def interpreter() -> str | None:
     """The Python to run scripts with: ``G6_PYTHON``, else this one, else (in a frozen build) ``python`` on PATH."""
     if os.environ.get("G6_PYTHON"):
@@ -186,15 +197,18 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
     argv = [python, "-I", "-c", _BOOT, str(mem), str(cpu), str(file_mb * 1024 * 1024), rlimit, SCRIPT]
     started = time.monotonic()
     with confine.run_folder(prefix="g6_sandbox_") as cwd:
-        root = Path(cwd)
+        # Canonicalize the host-created root before untrusted execution (macOS's
+        # /var is an alias); output paths must still contain no child-created links.
+        root = Path(cwd).resolve(strict=True)
         for name, content in files.items():
             (root / name).write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
         (root / SCRIPT).write_text(source, encoding="utf-8")
         confined = confine.plan(confine.Confinement(read_write=(cwd,), read_only=confine.interpreter_paths(python)),
                                 python)
         isolation = confined.record()
-        if confined.backend is None and confine.required():
-            return ScriptRun("refused", None, "", confine.refusal(confined), limits=limits, isolation=isolation)
+        said = confine.refused(confined)
+        if said:
+            return ScriptRun("refused", None, "", said, limits=limits, isolation=isolation)
         if confined.backend is not None:
             limits.update(os_sandbox=True, network=_CONFINED_NETWORK)
             (root / TEMP).mkdir()
@@ -216,13 +230,12 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
             left = confined.release()   # the run's container profile: after the run, whatever happened
             if left:
                 isolation["cleanup"] = left
-        outputs, total = {}, 0
-        for path in sorted(root.iterdir()):
-            if path.is_file() and path.name not in files and path.name != SCRIPT:
-                size = path.stat().st_size
-                if total + size > max_output_bytes:
-                    break
-                outputs[path.name], total = path.read_bytes(), total + size
+        try:
+            outputs = _collect_outputs(root, set(files) | {SCRIPT}, max_output_bytes)
+        except (OSError, ValueError):
+            return ScriptRun("error", done.returncode, done.stdout.decode("utf-8", "replace"),
+                             "[G6_E_UNSAFE_OUTPUT] output collection refused a linked, special or changed file",
+                             seconds=time.monotonic() - started, limits=limits, isolation=isolation)
     seconds = time.monotonic() - started
     stdout, stderr = done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
     if confined.backend is not None and done.returncode != 0:
@@ -237,4 +250,39 @@ def run_script(source: str, files: Mapping[str, bytes | str] | None = None, *, t
                      isolation)
 
 
-__all__ = ["MEMORY_LIMITS", "NETWORK_GUARD", "ScriptRun", "interpreter", "memory_limit", "run_script"]
+def _collect_outputs(root: Path, excluded: set[str], limit: int) -> dict[str, bytes]:
+    """Read only ordinary files after all children have exited, never follow child-created links.
+
+    The trusted host must not mutate the run folder concurrently. POSIX O_NOFOLLOW and
+    inode comparison also reject a swapped file; reads remain bounded by actual bytes.
+    """
+    from g6.core.storage import contained, plain_file
+
+    outputs, total = {}, 0
+    for path in sorted(root.iterdir()):
+        if path.name in excluded:
+            continue
+        found = path.lstat()
+        if stat.S_ISDIR(found.st_mode) and not (getattr(found, "st_file_attributes", 0)
+                                               & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            continue  # outputs are flat; no recursion into child-owned directories
+        checked = plain_file(path)
+        contained(root, path, refuse_links=True)
+        if total + checked.st_size > limit:
+            break
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                     | getattr(os, "O_BINARY", 0))
+        with os.fdopen(fd, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
+                raise ValueError("output changed")
+            content = stream.read(limit - total + 1)
+        if total + len(content) > limit:
+            break
+        outputs[path.name] = content
+        total += len(content)
+    return outputs
+
+
+__all__ = ["MEMORY_LIMITS", "NETWORK_GUARD", "ScriptRun", "interpreter", "isolation_refused", "memory_limit",
+           "run_script"]

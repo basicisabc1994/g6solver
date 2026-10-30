@@ -74,7 +74,7 @@ the workflows file the server loads (`G6_METAHARNESS`); that is the operator's o
 The existing `space` remains available; tool arguments never import code. Promotion policy stays Python-only;
 no MCP op reaches it. These dedicated tools are not controlled by `G6_MCP_SENSITIVE`; there is no automatic paid fallback.
 
-Approval tools ask the person through MCP elicitation and reject the proposing session. If the client cannot ask,
+Approval tools ask through MCP elicitation, including in the proposing session, with digest-bound consent. If the client cannot ask,
 use the refusal's instructions for approval from another session or the person's Python process.
 
 ## What a person must approve

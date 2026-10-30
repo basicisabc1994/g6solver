@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """g6.cegis with a real Z3 (audit 027 §11, CG-008): survival controls, a real timeout, and the translation of a
-candidate checked against Python itself, run out of process. Skipped without z3-solver (``pip install 'g6[formal]'``).
+candidate checked against Python itself, run out of process. Skipped without z3-solver (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``).
 """
 from __future__ import annotations
 

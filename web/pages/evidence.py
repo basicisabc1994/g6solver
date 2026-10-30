@@ -360,9 +360,10 @@ def winners() -> list[dict]:
         approach, change = WINNING_CHANGE[(wf, best)]
         wins, losses, p = paired(rows, wf, best, "A")
         found.append({"key": wf, "dataset": WORKFLOWS[wf], "shape": TASK_SHAPE[wf], "arm": best, "label": ARMS[best],
+                      "selection": "post-hoc exploratory; not a registered policy",
                       "approach": approach, "change": change, "alone": arms[wf]["A"]["success"],
                       "value": arms[wf][best]["success"], "n": arms[wf][best]["n"], "wins": wins, "losses": losses,
-                      "p": p})
+                      "p": p, "p_scope": "unadjusted; selected after observing outcomes"})
     return found
 
 
@@ -373,6 +374,7 @@ def headline_facts() -> dict:
     top = max(arms, key=lambda wf: arms[wf]["D"]["success"] - arms[wf]["A"]["success"])
     rows = _rows("V6b")
     return {"n": sum(arms[wf]["A"]["n"] for wf in arms), "total": total, "model": MODEL,
+            "primary_total": total["D"], "primary_arm": "D",
             "best_total": sum(w["value"] for w in winners()),
             # where the prebuilt components won, against self-tuning, task by task (the study's own D_vs_G comparison)
             "components_vs_tuning": [(WORKFLOWS[wf], *paired(rows, wf, "G", "D")[:2]) for wf in ("massive", "mbpp")],

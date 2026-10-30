@@ -150,11 +150,14 @@ def run(payload: dict[str, Any], timeout_s: float, script: str = SCRIPT, *, file
     the files named in ``keep`` that the child wrote come back under ``"files"``. ``memory`` is what the
     :data:`MEMORY_MB` cap counts on POSIX (``g6.core.sandbox.MEMORY_LIMITS``): the address space, or the data segment
     for a child that maps large shared libraries."""
-    from g6.core.sandbox import run_script
+    from g6.core.errors import ISOLATION_UNAVAILABLE
+    from g6.core.sandbox import isolation_refused, run_script
 
     started = time.monotonic()
     done = run_script(script, {**(files or {}), JOB: json.dumps(payload)}, timeout_s=timeout_s, mem_mb=MEMORY_MB,
                       max_output_bytes=32 * 1024 * 1024, memory=memory)
+    if isolation_refused(done):   # nothing was fitted: the refusal and what to do, never "the fit failed"
+        raise MLError(ISOLATION_UNAVAILABLE, done.stderr[:700])
     if done.status == "timeout":
         raise MLError(DEADLINE, f"the fit did not finish within {timeout_s:g} s and was stopped")
     raw = done.outputs.get(RESULT)

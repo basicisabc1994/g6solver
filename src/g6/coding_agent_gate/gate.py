@@ -282,12 +282,16 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
                   verifier: VerifierResult | str | None = None, claims: Iterable[str] = (), task_contract: str = "",
                   risk_tier: str = "", author: str = "", require_task_contract: bool = True,
                   touched_paths: Iterable[str] | None = None,
-                  protected_paths_policy: ProtectedPathsPolicy | None = None) -> GateDecision:
+                  protected_paths_policy: ProtectedPathsPolicy | None = None, scanned_diff: str = "") -> GateDecision:
     """Check a drafted answer before it is reported as done.
 
     ``pass`` needs a counted evidence item and no finding. Readiness words ("verified", "all tests pass") need a
     passing run; on caller-declared evidence alone they also need the answer to say it is unverified. A negative
     signal (a failing exit code, a verifier ``fail``) is believed as given; a positive one needs structure.
+
+    ``scanned_diff``: a unified diff the host read itself (``g6_review_patch`` passes the working tree's diff against
+    its base). It is scanned for shortcuts and read for risk terms as a diff item's text is, and never counted as
+    evidence: it shows what changed, not that it works, so it leaves ``evidence_basis`` as the other items make it.
     """
     evidence = tuple(evidence)
     claims = [str(c) for c in claims if str(c).strip()]
@@ -295,7 +299,7 @@ def verify_answer(task: str, answer: str, *, evidence: Iterable[Evidence] = (),
     v = VerifierResult.parse(verifier)
     status = v.effective_status
     v_counted = status in ("pass", "fail") and (v.observed_by == "g6" or v.exit_code is not None)
-    said, diff = _lines(answer, *claims), _diffs(evidence)
+    said, diff = _lines(answer, *claims), "\n".join(part for part in (_diffs(evidence), scanned_diff) if part)
     tier, terms = tier_of(risk_tier, _lines(task, task_contract, diff), said)
     text_hits, diff_hits, claimed = shortcut_hits(said), scan_diff(diff), overclaims(said)
     passing = [e for e in counted if e.kind == "test" and e.exit_code == 0]

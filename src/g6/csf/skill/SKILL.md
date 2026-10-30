@@ -128,7 +128,7 @@ Composed:
 
 - **git**, for `GitCheckpoint` only. G6 finds it on `PATH` (`shutil.which("git")`). Install git from git-scm.com and
   put it on `PATH`. Without it the checkpoint raises `G6_E_CSF_GIT_UNAVAILABLE`.
-- **Z3**, for `check_z3` only: `pip install "g6[formal]"` (z3-solver). Everything else is pure Python on the standard
+- **Z3**, for `check_z3` only: `pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` (z3-solver). Everything else is pure Python on the standard
   library.
 
 ## Examples

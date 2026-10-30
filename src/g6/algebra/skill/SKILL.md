@@ -108,7 +108,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[cas]"` for SymPy. Without it every SymPy op is `blocked-escalated` with
+- `pip install "g6[cas] @ git+https://github.com/basicisabc1994/g6solver"` for SymPy. Without it every SymPy op is `blocked-escalated` with
   `G6_E_ALGEBRA_CAS_UNAVAILABLE` and the install line.
 - SageMath, only for `sage_evaluate` and `sage_version`. It is GPL, so G6 never installs, bundles or imports it:
   install it yourself as sagemath.org describes, then put `sage` on PATH or set `G6_SAGE` to the sage program. Over

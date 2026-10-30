@@ -13,6 +13,7 @@ response time.{% endcomment %}
     <h1>Security</h1>
     <p class="why">An AI agent that can run commands, change files or spend money can do real harm, and an AI system
     that improves itself must never be able to switch off the checks on it. G6 is built around both risks.</p>
+    <p><strong>Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.</strong></p>
     <p><strong>G6 runs on your own computer.</strong> It is a library and an MCP server you install yourself. There is
     no G6 service, account or server of ours behind it, so nothing you do with G6 reaches us.</p>
 
@@ -24,21 +25,23 @@ response time.{% endcomment %}
         lists it in <code>G6_MCP_SENSITIVE</code>.</li>
         <li><strong>The meta-harness changes nothing on its own.</strong> It proposes a change, tests it on held-out
         tasks, and waits for a person to approve it.</li>
-        <li><strong>A bundle's page is served only to your computer</strong> (127.0.0.1). It refuses requests from
-        other websites, and its controls need a random token made fresh each time the bundle starts.</li>
+        <li><strong>A worked example's page is served only to your computer</strong> (127.0.0.1). It refuses requests from
+        other websites, and its controls need a random token made fresh each time it starts.</li>
         <li><strong>A model provider's key stays on your computer.</strong> G6 reads a key only from your key file,
-        <code>~/.g6/.env</code>: a plain text file, not encrypted, that you write yourself. A bundle's page never takes
+        <code>~/.g6/.env</code>: a plain text file, not encrypted, that you write yourself. A worked example's page never takes
         a key, and G6 sends a key only to its provider. Delete its line to remove it.</li>
     </ul>
 
     <h2>What G6 is not</h2>
     <p>G6 is not a security boundary on its own: do not use it as the only check in front of something that acts in
-    the real world (see the <a href="{% url 'pages:faq' %}">FAQ</a>). On Windows, once you have run the one-time access
-    grant that <code>g6 doctor</code> prints, the code it runs for you runs in an AppContainer: no network, and only its
-    own run folder writable. Where no operating-system backend confines it (Linux and macOS today, and Windows before the
-    one-time access grant), untrusted code that G6 runs for you (a patch, a generated script, a repository's tests) has
-    your own rights: it can read your key file ~/.g6/.env and your other files, and its network guard works inside Python
-    only. You are responsible for what you run. G6 is open-source software provided "as is", without warranty, under the
+    the real world (see the <a href="{% url 'pages:faq' %}">FAQ</a>). G6 runs untrusted code for you only inside an
+    operating-system boundary: on Linux, bubblewrap, with a private loopback and no other network, and only its own
+    run folder writable; on Windows, once you have run the one-time access grant that <code>g6 doctor</code> prints,
+    an AppContainer: no network, and only its own run folder writable. Where no operating-system boundary can confine it (macOS, Linux without bubblewrap, and
+    Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a generated script,
+    a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own rights: it can read
+    your key file ~/.g6/.env and your other files, and its network guard works inside Python only. You are responsible
+    for what you run. G6 is open-source software provided "as is", without warranty, under the
     <a href="{% url 'pages:license' %}">Apache License 2.0</a>.</p>
 
     <h2>This website</h2>

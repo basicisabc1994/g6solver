@@ -1,0 +1,140 @@
+{
+  "client": "codex-cli 0.164.0",
+  "model_calls": 0,
+  "human_ui_tested": false,
+  "authenticated_identity": false,
+  "prompt_digest_bound": true,
+  "status": "protocol-pass",
+  "responses": {
+    "decline": {
+      "completion_state": "blocked-escalated",
+      "reliability_label": "blocked-escalated",
+      "warning_card": {
+        "code": "G6_E_META_APPROVAL_REQUIRED",
+        "message": "The client returned declined consent; no change was authorized.",
+        "suggested_action": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+        "severity": "amber",
+        "why": "The client returned declined consent; no change was authorized.",
+        "risks": [
+          "The client returned declined consent; no change was authorized."
+        ],
+        "verified": false,
+        "next_step": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\"."
+      },
+      "evidence": [],
+      "egress_notice": [],
+      "request_id": "7c80e4c52cb0",
+      "task_id": "",
+      "run_id": "ec341a15d6d8455b9bb6cbef929af904",
+      "degraded": true,
+      "degradation_reason": "The client returned declined consent; no change was authorized.",
+      "known_limitations": [],
+      "missing_checks": [],
+      "recommended_next_steps": [
+        "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\"."
+      ],
+      "risk_level": "",
+      "confidence": null,
+      "block_reason": "The client returned declined consent; no change was authorized.",
+      "required_human_decision": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+      "evidence_collected": [],
+      "safe_next_action": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+      "rollback_or_containment": "The operation was blocked before any state change; no rollback is required.",
+      "code": "G6_E_META_APPROVAL_REQUIRED",
+      "message": "The client returned declined consent; no change was authorized.",
+      "next_action": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+      "consent_status": "declined",
+      "consent_error_type": ""
+    },
+    "cancel": {
+      "completion_state": "blocked-escalated",
+      "reliability_label": "blocked-escalated",
+      "warning_card": {
+        "code": "G6_E_META_APPROVAL_REQUIRED",
+        "message": "The client cancelled the consent request. G6 cannot tell whether a prompt was displayed.",
+        "suggested_action": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+        "severity": "amber",
+        "why": "The client cancelled the consent request. G6 cannot tell whether a prompt was displayed.",
+        "risks": [
+          "The client cancelled the consent request. G6 cannot tell whether a prompt was displayed."
+        ],
+        "verified": false,
+        "next_step": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\"."
+      },
+      "evidence": [],
+      "egress_notice": [],
+      "request_id": "45aa28497dd1",
+      "task_id": "",
+      "run_id": "18a57e22a9d7419da4466bd8bda8fdeb",
+      "degraded": true,
+      "degradation_reason": "The client cancelled the consent request. G6 cannot tell whether a prompt was displayed.",
+      "known_limitations": [],
+      "missing_checks": [],
+      "recommended_next_steps": [
+        "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\"."
+      ],
+      "risk_level": "",
+      "confidence": null,
+      "block_reason": "The client cancelled the consent request. G6 cannot tell whether a prompt was displayed.",
+      "required_human_decision": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+      "evidence_collected": [],
+      "safe_next_action": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+      "rollback_or_containment": "The operation was blocked before any state change; no rollback is required.",
+      "code": "G6_E_META_APPROVAL_REQUIRED",
+      "message": "The client cancelled the consent request. G6 cannot tell whether a prompt was displayed.",
+      "next_action": "From the project directory, the user can inspect with g6 workflow inspect consent_probe, then personally confirm with g6 workflow confirm consent_probe 895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707 --as \"Your name\".",
+      "consent_status": "cancelled",
+      "consent_error_type": ""
+    },
+    "accept": {
+      "completion_state": "qualified-draft",
+      "reliability_label": "qualified-draft",
+      "warning_card": {
+        "code": "G6_E_META_CONFIRMED",
+        "message": "workflow confirmed and frozen. This records workflow state, not independently verified application behavior.",
+        "suggested_action": "Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation.",
+        "severity": "amber",
+        "why": "workflow confirmed and frozen. This records workflow state, not independently verified application behavior.",
+        "risks": [
+          "workflow confirmed and frozen. This records workflow state, not independently verified application behavior."
+        ],
+        "verified": false,
+        "next_step": "Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation."
+      },
+      "evidence": [],
+      "egress_notice": [],
+      "request_id": "24eaa862d03c",
+      "task_id": "",
+      "run_id": "984d50d006fd432194918c0c8cbf1d1a",
+      "degraded": true,
+      "degradation_reason": "Independent verification was not completed; qualified-draft does not imply an execution failure.",
+      "known_limitations": [
+        "workflow confirmed and frozen. This records workflow state, not independently verified application behavior."
+      ],
+      "missing_checks": [
+        "Independent verification was not completed for this output."
+      ],
+      "recommended_next_steps": [
+        "Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation."
+      ],
+      "risk_level": "medium",
+      "confidence": null,
+      "block_reason": "",
+      "required_human_decision": "",
+      "evidence_collected": [],
+      "safe_next_action": "",
+      "rollback_or_containment": "",
+      "code": "G6_E_META_CONFIRMED",
+      "message": "workflow confirmed and frozen",
+      "next_action": "Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation.",
+      "workflow_digest": "895d159245c878e6b81ce71bcebc34f3e1d31142312763a289120e5db68f4707",
+      "judging_sha256": "34afa553b6fc3dabeb493addc7c55cc74de3b828ef5229d3ec15172cad21fd6e",
+      "held_out_digest": "afc7d78c3d421606a3c2e5d980ae5d1329546828afb986607073b2ba59f55966",
+      "head_version": 0,
+      "head_profile": "96c7e9748931aa4eafb6d918366e85741ba9681e0e4217a68d66b0b793806acd",
+      "accept_risky": null,
+      "identity": "accepted_by is recorded as given"
+    }
+  },
+  "server_discovered": true
+}

@@ -456,3 +456,136 @@ the commit the entry names.
 - **Open before the freeze:** the ref and commit of G6's wheel; the pilot's measured costs.
 - **Not audited:** no second person has checked the order rule, A2's words, G6's check, the gaming-scan patterns or the
   verifier's reproduction of Harbor's.
+
+
+## V8 preparation ? draft, not frozen (2026-10-27)
+
+Protocol: `validation/v8_composition/PROTOCOL.md`; split: `results/V8/splits.draft.json`.
+The new split was drawn from the SHA-256-verified V2 parquet by reading only instance_id, repo and repo_language.
+Eight Python development tasks include two reused OpenLibrary pilots; 48 Python scored IDs are newly registered
+as a draft order, not a frozen scored study. No task statements, patches or hidden tests were inspected for the draw.
+The model candidate is the actual V7 runner's claude-sonnet-5-5, high effort, subject to availability and pricing
+calibration. Two-arm feasibility/effect estimation does not isolate composition's causal contribution.
+No paid execution or improvement claim is authorized until the protocol's outstanding gates are satisfied.
+
+## V9 (protocol registered 2026-10-28; not run) — useful patch review
+
+The evidence page lists a study once it has run; V9 gets its tile when its first outcome is appended.
+
+- **Protocol:** `docs/validation/patch_review_utility/PROTOCOL.md`, version 1,
+  `1f2f74c6151d2de2aa693fa1a8ec12de65416ab2b095e42fde5a117cf20f692d`. It tests objective 1 only (less human
+  verification effort without an unacceptable increase in accepted defects), for AI-written Python patches.
+- **Plan:** `docs/validation/VALIDATION_PLAN.md` `054a92de4483964c9118c72e27846817e9a33e351f04b6885aecd6de454bee1d`
+  (§0 governs, except the deviations the protocol lists).
+- **Exclusions, frozen:** every ID in `docs/validation/results/V7/splits.json`
+  `469e6f3dfac15ce1a492779c5c474d336cab4715a9da038db905f4858d174fc2` and in
+  `docs/validation/results/V8/splits.draft.json` `7aa7f025a297798e066c8e83641d973bb3511fe504edc5181961c0e0e1271e6b`.
+- **Pool:** the Python tasks of SWE-bench Pro, revision `2d52cb3df914a3fcf80c7f66738b3a88ae37fc50`, test parquet
+  `1067f72c1f43bbc578276888625db3b836cebb535546c9eaf824c5d5dd104a7f`, as V8 prepared it. Not read for this entry.
+- **Frozen by this entry:** the arms and their acceptance rules; the label and review contracts; the label, oracle-control
+  and audit rules; the draw rule and the seed formula; the three hypotheses with their margins (+5, +5 and +15 points);
+  Experiment 2's 75% target and safety constraint; the analysis; the order of verdicts. The owner may tighten a margin
+  or threshold before the feasibility freeze. Nothing is loosened.
+- **Left to the feasibility entry:** G6's frozen commit (the scoped assessment of Step 2 is not written yet), the agent
+  and its model, the scripts, the test commands, the time limits and caps, the auditor and the reviewers.
+- **State:** no task drawn, no patch generated, no arm run. The seed cannot be computed before G6's feasibility commit
+  exists.
+- **Review:** a fresh, read-only agent session reviewed the draft against the plan's amendments A2–A5 and §0. It
+  found 2 blocking, 10 important and 5 minor problems, and this version addresses each. No person has reviewed this
+  version yet.
+
+## V10 (protocol registered 2026-10-29; not run) — verification search on agent-written patches
+
+The evidence page lists a study once it has run; V10 gets its tile when its first outcome is appended.
+
+- **Protocol:** `docs/validation/patch_review_search/PROTOCOL.md`, version 1,
+  `2573c84e9d637716f131842717e16da6eed5aff23d0f47a1f0627531f1dd8494`. Feasibility only: it observes and tests no
+  hypothesis. It runs on V9's feasibility draw, patches, labels and contracts, and changes nothing V9 registered.
+- **Plan:** `docs/validation/VALIDATION_PLAN.md` `054a92de4483964c9118c72e27846817e9a33e351f04b6885aecd6de454bee1d`
+  (§0 governs, except the deviations the protocol lists).
+- **Depends on:** V9's protocol `1f2f74c6151d2de2aa693fa1a8ec12de65416ab2b095e42fde5a117cf20f692d`, and two conditions on
+  how V9 is run: V9's feasibility freeze names a G6 commit that includes verification search (off in V9's arms), and
+  V9's labels stay unread until this study's arms and reruns are recorded. If either fails, this study is not run on
+  V9's patches, and this registry says so.
+- **Frozen by this entry:** the arms (A, C, T and E, with V9's arms 1, 2 and 4 as comparators) and their acceptance
+  rules; what counts as a finding; the rerun rules and the meanings of reproducible, actionable and compatible with the
+  reference fix; the headline count and the only sentences the results permit; the primary and secondary measures; the
+  feasibility criteria; the order of verdicts; the report check; and what G6's frozen commit must provide. The owner may
+  tighten a limit or criterion before the freeze. Nothing is loosened.
+- **Left to the freeze entry:** G6's commit, the search configuration of arms C and T, the model and the hosted
+  interface, the sampling settings and per-call limits, the call cap, the number of runs per check, the seeds, the price
+  list, the owner's spending cap, the scripts and the similarity measure with its threshold.
+- **State:** no code for verification search written, no task drawn, no patch generated, no arm run.
+- **Review:** a fresh, read-only agent session reviewed the draft against V9's protocol, the plan's §0 and the design.
+  It found 1 blocking, 20 important and 20 minor problems, and this version addresses each. No person has reviewed this
+  version yet.
+
+## V9, version 2 (registered 2026-10-29; not run) — useful patch review, with broken benchmark tasks handled
+
+This entry re-registers V9. The entry "V9" above stays as it is; for every level of the study, version 2 replaces
+version 1.
+
+- **Protocol:** `docs/validation/patch_review_utility/PROTOCOL.md`, version 2,
+  `39a7859e9e44e852328ad545aa440b12849ac5b281c20d9b41eb65e6f58a0000`. Its section "Changes from version 1" lists every
+  change.
+- **Why:** OpenAI's audit of SWE-bench Pro's public tasks ("Separating signal from noise in coding evaluations", 8 July
+  2026) estimates that about 30% of them are broken. The owner decided on 2026-10-29 that a published list of broken
+  tasks is excluded, and that the label audit treats a hidden test enforcing something the task does not state as
+  label-invalid: left out of the primary analysis, counted and reported.
+- **Changed from the entry V9:** the section "Broken tasks" (four kinds, the published-list check at each freeze, a
+  kind recorded for each label error the audit finds, and an optional task screen by a screener who is not the label
+  auditor, which runs only if the owner switches it on at a freeze); label-invalid patches are left out of every rate,
+  every hypothesis and verdict 3, and a sensitivity analysis keeps them.
+- **Unchanged from the entry V9:** the plan, the exclusions and the pool it names (not read for this entry), the arms,
+  the hypotheses and margins, the draw and the seed formula, the label and oracle-control rules, the audit's size and
+  bound, the analysis, Experiment 2 and the order of verdicts. What is left to the feasibility entry is as before, plus
+  the published-list check and whether the screen runs.
+- **State:** no task drawn, no patch generated, no arm run, no label auditor named. No published list of broken tasks
+  had been found.
+- **Review:** see the entry "V10, version 2", whose review covered both protocols.
+
+## V10, version 2 (registered 2026-10-29; not run) — verification search, with a fresh reviewing agent (arm R)
+
+This entry re-registers V10. The entry "V10" above stays as it is; version 2 replaces version 1.
+
+- **Protocol:** `docs/validation/patch_review_search/PROTOCOL.md`, version 2,
+  `715dce8a8167d8c1efb7abb7d5b35f8831caee5317b4b8b230d9b805d77852b4`. Its section "Changes from version 1" lists every
+  change and names which details are the drafter's rulings.
+- **Plan:** as in the entry V10.
+- **Depends on:** V9's protocol, version 2, `39a7859e9e44e852328ad545aa440b12849ac5b281c20d9b41eb65e6f58a0000`, and the
+  same two conditions on how V9 is run as before.
+- **Frozen by this entry:** everything the entry V10 froze, with these changes:
+  - arm R (the owner's decision of 2026-10-29): a new Claude Code session that did not write the patch, with V9's
+    agent's model, version and effort and V9's arm 2 limits, given the review contract, the diff and a scratch copy
+    of the repository without history, under V9's arm 2 prompt with two registered changes, accepting by V9's arm 2
+    rule, and writing tests that count as findings by arm E's rule;
+  - the spending cap shared by four arms, a quarter each unless the freeze entry sets other shares;
+  - arm A's findings including regressions of the repository's own tests;
+  - the second verdict decided by feasibility criterion 6 alone, with V9's feasibility audit reported beside the
+    results;
+  - V9 version 2's handling of broken tasks.
+- **Left to the freeze entry,** in addition to what the entry V10 left: R's prompt, product version, session set-up,
+  and the script that sets up R's copy and collects its tests; the prices for R's model; and each arm's share of the
+  cap.
+- **State:** verification search is being built on development fixtures only and is not frozen. No task drawn, no
+  patch generated, no arm run.
+- **Review:** a fresh, read-only agent session reviewed the drafts of both protocols against the owner's decisions,
+  version 1 of each and §0. It found no blocking problem, 13 important and 4 minor ones, and a defect in V10 version
+  1's second verdict. This version addresses each, with one exception: the reviewer judged the optional task screen to
+  go beyond the owner's decision, and it is kept as an option that runs only if the owner switches it on. No person
+  has reviewed this version yet.
+
+## Worked examples on well-known Python projects (plan fixed 2026-10-29, before any run)
+
+Not a study: worked examples, mechanism demonstrations on real code; they show what happened in these runs and say
+nothing about how often G6 helps. They are separate from V9 and V10 and touch none of their material, code or budget.
+
+- **Plan:** `validation/worked_examples/PLAN.md`, `c2d9f6be6c0c90de932014b0c0f92197614c25a01180723f98feb7fa122b0c3f`.
+  It was fixed before any run, before any paid call and before any candidate task was looked at. It states the
+  selection rule for projects and tasks, the run procedure in the product's real flow (`g6 setup`, then headless
+  Claude Code with `claude-sonnet-5-5` and the `using-g6` skill), the independent check of every outcome against the
+  maintainers' later fix and tests, that every run the rule chose is reported, and a hard stop of $100 for all runs
+  together, separate from the rehearsal's $15 and V9's $60.
+- **Owner's decision:** 2026-10-29, to use the API credits before they expire on 4 November.
+- **State:** no project or task selected, no image built, no run, nothing spent.
+- **Changes:** none. A change is a new dated section at the end of the plan, written before the runs it affects.

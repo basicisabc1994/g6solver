@@ -47,7 +47,7 @@ NO_MODEL = _P + "NO_MODEL"
 TOOL_MISSING = _P + "TOOL_MISSING"
 AGENT_FAILED = _P + "AGENT_FAILED"
 LLM_DISABLED = "G6_E_LLM_DISABLED"
-INSTALL = "smolagents is not installed: pip install 'g6[agents-smolagents]'"
+INSTALL = "smolagents is not installed: pip install 'g6[agents-smolagents] @ git+https://github.com/basicisabc1994/g6solver'"
 _SELF = "agent_smolagents"
 _SAID = 4000
 

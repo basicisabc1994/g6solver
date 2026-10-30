@@ -13,6 +13,9 @@ import hashlib
 import re
 import time
 import uuid
+import threading
+from contextlib import contextmanager
+from functools import wraps
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -53,16 +56,19 @@ from g6.metaharness.schema import (
     SCHEMA,
     SELECTED,
     STANDARD_CHANGED,
+    WORKFLOW_INVALID,
     Profile,
     Proposal,
     Workflow,
     parse_profile,
     profile_diff,
 )
-from g6.metaharness.store import ProfileStore, RunLedger
+from g6.metaharness.store import APPROVED_KINDS, ProfileStore, RunLedger, _resolve
 
 #: The code that judges a change: pinned at confirmation, compared before every decision (MH-4).
 JUDGING_PATTERNS = ("metaharness/evaluate.py", "metaharness/gate.py", "metaharness/store.py", "metaharness/schema.py",
+                    "metaharness/declarative.py", "metaharness/api.py", "workspace/_coordination.py",
+                    "workspace/_envelope.py", "core/storage.py",
                     "metaharness/executor.py", "metaharness/measurement.py", "metaharness/promotion.py",
                     "metaharness/monitor.py", "metaharness/_code_safety.py", "metaharness/trace.py", "harness/*.py", "evidence/*.py", "reasoning/compare.py",
                     "reasoning/budget.py", "core/model_calls.py", "core/ledger.py", "core/stop.py", "invariants/*.py")
@@ -74,14 +80,35 @@ def judging_sha256() -> str:
 
 def _envelope(state: str, code: str, message: str, *, next_action: str = "", evidence: list | None = None,
               **extra: Any) -> dict[str, Any]:
-    env = envelope_fields(reliability_label=state, request_id=uuid.uuid4().hex[:12], run_id=uuid.uuid4().hex,
-                          evidence=evidence or [])
-    env["warning_card"] = warning_card(code, message, next_action or None)
+    # Qualified replies retain the invariant-required warning card, but explain
+    # the assurance limit rather than implying ordinary bookkeeping failed.
+    ordinary = {"G6_E_META_CREATED", "G6_E_META_CONFIRMED", "G6_E_META_INSPECT", "G6_E_META_PROPOSED"}
+    if state == "qualified-draft" and code in ordinary:
+        next_action = next_action or "Review the recorded consent, versions, evaluations and decisions; inspection does not execute the application."
+        card = warning_card(code, message + ". This records workflow state, not independently verified application behavior.", next_action)
+    else:
+        card = warning_card(code, message, next_action or None)
+    env = envelope_fields(reliability_label=state, warning_card=card,
+                          request_id=uuid.uuid4().hex[:12], run_id=uuid.uuid4().hex, evidence=evidence or [])
+    if next_action:
+        env["recommended_next_steps"] = [next_action]
     return {**env, "code": code, "message": message, "next_action": next_action, **extra}
 
 
 def _blocked(code: str, message: str, next_action: str = "", **extra: Any) -> dict[str, Any]:
     return _envelope("blocked-escalated", code, message, next_action=next_action, **extra)
+
+
+def _serialized(method):
+    @wraps(method)
+    def invoke(self, *args, **kwargs):
+        from g6.workspace._envelope import WorkspaceRefused
+        try:
+            with self._operation():
+                return method(self, *args, **kwargs)
+        except WorkspaceRefused:
+            return _blocked("G6_E_META_BUSY", "another operation owns this workflow; retry after it finishes")
+    return invoke
 
 
 def _now() -> str:
@@ -107,11 +134,56 @@ def _rebuilt(kind: str, body: dict[str, Any]) -> Proposal | EvaluationReport | G
     return GateDecision(**{**fields, "reasons": tuple(fields["reasons"]), "checks": tuple(fields.get("checks", ()))})
 
 
+#: Why a confirmation a workflow's own files carry is not the person's (the security review of W1-W5, F2): workflows are
+#: found in the folder G6 starts in, the project's, and a store there is a hash chain with no secret, so a project could
+#: ship one "confirmed" under any name. A confirmation counts only when G6 recorded it under its own state folder when a
+#: person confirmed (``confirmations_path``).
+NOT_RECORDED = ("the confirmation this workflow's own files carry was not recorded by G6 when a person confirmed it, "
+                "so it is not counted (a project's files can carry one)")
+
+
+def confirmations_path(workspace: Path) -> Path:
+    """Where G6 records a person's confirmation of the workflow in ``workspace``: under G6's state folder, by the
+    workspace's own path, never inside the workspace."""
+    import os
+
+    key = hashlib.sha256(os.path.normcase(str(workspace.resolve())).encode("utf-8")).hexdigest()
+    return g6_home() / "metaharness" / "confirmations" / f"{key}.json"
+
+
+def versions_path(workspace: Path) -> Path:
+    """Where G6 records each version it made the head of ``workspace``'s store here (the initial version a person's
+    confirmation starts, an activation and a rollback a person asked for, the monitor's demotion), beside the
+    confirmation (the fresh review of the F1-F8 fix pass, finding 2): a version row the project's files carry, or one
+    written into the store since, is never the version that runs."""
+    confirmation = confirmations_path(workspace)
+    return confirmation.parent.parent / "versions" / confirmation.name
+
+
+def _write_state(target: Path, data: Any) -> None:
+    """``data`` as JSON at ``target``, replaced whole (a reader sees the old file or the new one); ``OSError`` when it
+    cannot be written."""
+    import json
+    import os
+    import tempfile
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.parent.name}-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+            json.dump(data, out, sort_keys=True)
+        os.replace(name, target)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
 class MetaHarness:
     def __init__(self, workflow: Workflow, factory: ExecutorFactory | None, workspace: Path, *,
                  theories: TheoryStore | None, clock: Callable[[], float],
                  problems: list[tuple[str, str]]) -> None:
         self.workflow, self.workspace = workflow, workspace
+        self._operation_lock = threading.RLock()
+        self._operation_depth = 0
         self.theories, self._clock = theories, clock
         self.artifacts = ArtifactStore(workspace / "artifacts")
         self.factory = factory or (code_factory(workflow, self.artifacts) if workflow.code_root is not None
@@ -125,9 +197,15 @@ class MetaHarness:
         self._online: Strategy | None = None
         if not problems:
             workspace.mkdir(parents=True, exist_ok=True)
-            self.store = ProfileStore(workspace / "store.jsonl")
-            self.ledger = RunLedger(workspace / "ledger.jsonl")
-            problems += self._live_leaks()
+            try:
+                self.store = ProfileStore(workspace / "store.jsonl")
+                self.ledger = RunLedger(workspace / "ledger.jsonl")
+            except LedgerError as exc:   # a row breaks the store's rules, as a forged profile row does (I1): nothing runs
+                self.store = self.ledger = None
+                problems.append((WORKFLOW_INVALID, f"the workflow's store or run ledger does not verify ({exc}); "
+                                 f"remove its workspace ({workspace}) if you did not make it"))
+            else:
+                problems += self._live_leaks()
             self._problems = problems
         code, why = problems[0] if problems else ("G6_E_META_READY", "")
         self.envelope = (_blocked(code, "; ".join(p for _, p in problems), "Fix the workflow; then adapt again.",
@@ -136,6 +214,28 @@ class MetaHarness:
                          _envelope("qualified-draft", "G6_E_META_READY", "the workflow is valid; a person confirms it next",
                                    next_action="mh.confirm(accepted_by='<your name>')",
                                    workflow_digest=workflow.digest(), workspace=str(workspace)))
+
+    @contextmanager
+    def _operation(self):
+        """One complete operation per workspace across synchronous tools, jobs and processes.
+
+        Nested calls share the lock. Reload after acquiring it so waiting handles cannot
+        spend a hold-out use or activate from the ledger snapshot seen before waiting.
+        """
+        from g6.workspace._coordination import Coordination
+        with self._operation_lock:
+            if self._operation_depth or self._problems:
+                yield
+                return
+            with Coordination(self.workspace / ".operation").mutex():
+                if self._moved():
+                    self.store._chain.reload()
+                    self.ledger._chain.reload()
+                self._operation_depth += 1
+                try:
+                    yield
+                finally:
+                    self._operation_depth -= 1
 
     def _live_leaks(self) -> list[tuple[str, str]]:
         """A live episode can never be held-out evidence (owner ruling Q3): a held-out case whose id is a live run's, or
@@ -164,15 +264,65 @@ class MetaHarness:
             if confirmed is None:
                 return _blocked(NOT_CONFIRMED, "a person has not confirmed the workflow",
                                 "mh.confirm(accepted_by='<your name>')")
+            if not self._recorded_confirmation(confirmed):
+                return _blocked(NOT_CONFIRMED, NOT_RECORDED,
+                                "A person inspects the workflow and confirms it: mh.confirm(accepted_by='<your name>').")
             if confirmed["workflow_digest"] != self.workflow.digest():
                 return _blocked(STANDARD_CHANGED, "the workflow changed since it was confirmed; every earlier "
                                 "comparison is void", "Confirm the new workflow (a person), then baseline again.")
+            if not self._ours():
+                return _blocked(NOT_CONFIRMED, "no version of this workflow that a person approved here is recorded "
+                                "by G6, so none runs", "A person confirms the workflow again: "
+                                "mh.confirm(accepted_by='<your name>'); it starts from its initial version.")
         return None
 
+    def _recorded_confirmation(self, confirmed: Mapping[str, Any]) -> bool:
+        """Whether ``confirmed``, the store's latest confirmation, is the one G6 recorded under its state folder."""
+        import json
+
+        try:
+            return json.loads(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
+        except (OSError, ValueError):
+            return False
+
+    def _record_confirmation(self) -> None:
+        """Record the store's latest confirmation under G6's state folder (``confirmations_path``); ``OSError`` when it
+        cannot be written."""
+        _write_state(confirmations_path(self.workspace), self.store.confirmed())
+
+    def _ours(self) -> list[dict]:
+        """The store's version rows G6 recorded here as it appended them (``versions_path``), oldest first."""
+        import json
+
+        try:
+            recorded = {(int(number), str(profile)) for number, profile in
+                        json.loads(versions_path(self.workspace).read_text(encoding="utf-8"))}
+        except (OSError, ValueError, TypeError):
+            recorded = set()
+        return [row for row in self.store.versions() if (row["version"], row["profile_digest"]) in recorded]
+
+    def _append(self, kind: str, profile: Profile, **fields: Any) -> int:
+        """``store.append_version``, then recorded under G6's state folder; ``OSError`` when the record cannot be
+        written, and then the new row does not count."""
+        number = self.store.append_version(kind, profile, **fields)
+        self._record(number)
+        return number
+
+    def _record(self, number: int) -> None:
+        """Record the store's version ``number`` under G6's state folder (``versions_path``); ``OSError`` when the
+        record cannot be written."""
+        _write_state(versions_path(self.workspace), sorted(
+            {(row["version"], row["profile_digest"]) for row in self._ours()}
+            | {(number, self.store.versions()[number]["profile_digest"])}))
+
+    def _approved_here(self, version: int) -> bool:
+        """Whether ``version`` is a version a person approved here: an initial or activated version G6 recorded."""
+        return any(row["version"] == version and row["kind"] in APPROVED_KINDS for row in self._ours())
+
     def _head(self) -> tuple[int, Profile]:
-        head = self.store.head()
-        assert head is not None  # confirm writes version 0
-        return head
+        ours = self._ours()
+        assert ours  # a recorded confirmation starts a recorded version
+        return ours[-1]["version"], self.store.profile(ours[-1]["profile_digest"])
 
     def _vault_changed(self) -> dict[str, Any] | None:
         """The sealed held-out file, when there is one, must be exactly what was sealed (ECHA-10; audit 037)."""
@@ -248,6 +398,7 @@ class MetaHarness:
             ("store.jsonl", self.store.head_hash()), ("ledger.jsonl", self.ledger.head())))
 
     # --- the loop -----------------------------------------------------------------------------------------------
+    @_serialized
     def confirm(self, accepted_by: str, *, initial: Profile | Mapping[str, Any] | None = None) -> dict[str, Any]:
         """A person confirms the standard, the capabilities and the held-out provenance; the workflow is frozen."""
         refused = self._refusal(need_confirmed=False)
@@ -264,12 +415,27 @@ class MetaHarness:
             if not self.ledger.has("vault", vault.vault_id):
                 self.ledger.add_vault(vault.vault_id, vault.digest, files=len(vault.manifest), roots=len(vault.roots))
         existing = self.store.confirmed()
-        # a new workflow, or G6's judging code changed since (an upgrade): the person's confirmation pins it again
-        if existing is None or existing["workflow_digest"] != digest_now or existing.get("judging_sha256") != judging:
-            self.store.confirm(workflow_digest=digest_now, judging_sha256=judging,
-                               held_out_digest=self.workflow.suite.digest("held_out"), accepted_by=accepted_by,
-                               at=_now())
-        if self.store.head() is None:
+        # a new workflow, or G6's judging code changed since (an upgrade), or a confirmation G6 never recorded (one the
+        # workflow's own files carry, F2): the person's confirmation pins it again
+        if (existing is None or existing["workflow_digest"] != digest_now or existing.get("judging_sha256") != judging
+                or not self._recorded_confirmation(existing)):
+            try:
+                self.store.confirm(workflow_digest=digest_now, judging_sha256=judging,
+                                   held_out_digest=self.workflow.suite.digest("held_out"), accepted_by=accepted_by,
+                                   at=_now())
+            except LedgerError as exc:
+                return _blocked(APPROVAL_REQUIRED, f"the store refused the confirmation: {exc}",
+                                "Remove the workflow's folder if you did not make it, then create the workflow again.")
+        try:
+            self._record_confirmation()
+        except OSError as exc:
+            return _blocked(APPROVAL_REQUIRED, f"G6 could not record the confirmation in its state folder "
+                            f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
+                            "confirm again.")
+        # No version G6 recorded here (a new workflow, or one whose files carry versions: the fresh review of the F1-F8
+        # fix pass, finding 2): the workflow starts from the initial version this confirmation makes. A store holding
+        # versions already counts its version 0 only when it is exactly that version; no later row ever counts.
+        if not self._ours():
             first = initial if initial is not None else Profile(
                 routing={s: next(iter(self.workflow.models)) for s in self.workflow.steps},
                 pipeline=tuple(n for n, s in self.workflow.pipeline_steps.items() if s.mandatory))
@@ -277,15 +443,33 @@ class MetaHarness:
             problems = profile.problems_for(self.workflow) if profile else [(SCHEMA, why)]
             if problems:
                 return _blocked(SCHEMA, "; ".join(p for _, p in problems), "Fix the initial profile.")
-            self.store.append_version("initial", profile, at=_now(), accepted_by=accepted_by,
-                                      ledger_head=self.ledger.head())
+            versions = self.store.versions()
+            if versions and versions[0]["profile_digest"] != profile.digest():
+                return _blocked(APPROVAL_REQUIRED, "this workflow's store starts from an initial version other than "
+                                "the one this confirmation makes, so no version in it is one a person approved here",
+                                f"Remove the workflow's workspace ({self.workspace}) if you did not make it, then "
+                                "confirm again.")
+            try:
+                if versions:
+                    self._record(0)
+                else:
+                    self._append("initial", profile, at=_now(), accepted_by=accepted_by,
+                                 ledger_head=self.ledger.head())
+            except OSError as exc:
+                return _blocked(APPROVAL_REQUIRED, f"G6 could not record the initial version in its state folder "
+                                f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, "
+                                "then confirm again.")
         version, profile = self._head()
+        ours = {row["version"] for row in self._ours()}
+        not_counted = [row["version"] for row in self.store.versions() if row["version"] not in ours]
+        extra = {"versions_not_counted": not_counted} if not_counted else {}
         return _envelope("qualified-draft", "G6_E_META_CONFIRMED", "workflow confirmed and frozen",
-                         next_action="mh.baseline()", workflow_digest=digest_now, judging_sha256=judging,
+                         next_action="Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation.", workflow_digest=digest_now, judging_sha256=judging,
                          held_out_digest=self.workflow.suite.digest("held_out"), head_version=version,
                          head_profile=profile.digest(), accept_risky=self.workflow.accept_risky,
-                         identity="accepted_by is recorded as given")
+                         identity="accepted_by is recorded as given", **extra)
 
+    @_serialized
     def candidate(self, profile: Profile | Mapping[str, Any], *, proposer: str, strategy: str = "hand-written",
                   claim: Mapping[str, str] | None = None, source_run_ids: tuple[str, ...] = (),
                   parent_digests: tuple[str, ...] = ()) -> dict[str, Any]:
@@ -310,6 +494,7 @@ class MetaHarness:
                          next_action="mh.evaluate(proposal)", proposal=proposal, diff=proposal.diff,
                          candidate_digest=proposal.candidate_digest)
 
+    @_serialized
     def propose(self, strategy: Strategy, *, budget: int = 200, max_candidates: int = 3) -> dict[str, Any]:
         """Candidates from ``strategy``, which sees the dev split and the active version's dev failures only. Each is
         validated like a hand-written one; one already proposed is not proposed again."""
@@ -322,6 +507,7 @@ class MetaHarness:
                           artifacts=self.artifacts)
         return self._offer(view, strategy, f"auto:{strategy.name}", meter, max_candidates)
 
+    @_serialized
     def diagnose(self, *, budget: int = 200) -> dict[str, Any]:
         """Recovery and root cause (DECISIONS #27): why the active version fails on the dev split, and what can be done
         next: G6 components the meta-harness can try as candidates, and what only a person can unblock. It reads dev
@@ -386,6 +572,7 @@ class MetaHarness:
                          guard_flags=flagged, dev_success=view.dev_success, dev_calls_used=meter.used,
                          notes=list(view.notes))
 
+    @_serialized
     def select(self, proposals: Sequence[Proposal], *, block: int = 10, keep: float = 0.5,
                budget: int | None = None) -> dict[str, Any]:
         """Rank ``proposals`` on the selection split by racing (frontier design §4.2). It decides nothing: the winner
@@ -423,6 +610,7 @@ class MetaHarness:
                          ranking=result.ranking, winner=winner, cases_used=result.cases_used,
                          calls_used=result.calls_used, stopped=result.stopped)
 
+    @_serialized
     def baseline(self, *, budget: int | None = None) -> dict[str, Any]:
         """The active profile measured on dev and held-out against the negative control, with the power estimate."""
         refused = self._refusal() or self._vault_changed()
@@ -471,6 +659,7 @@ class MetaHarness:
                                   for c in report.cases if c["base"]["oracle"] != "unknown")],
             "run_ids": [c["candidate"]["run_id"] for c in report.cases]})
 
+    @_serialized
     def evaluate(self, proposal: Proposal, *, budget: int | None = None) -> dict[str, Any]:
         refused = self._refusal() or self._vault_changed()
         if refused:
@@ -500,6 +689,7 @@ class MetaHarness:
                          next_action="mh.decide(report)", report=report, success=report.success,
                          estimates=report.estimates, power=report.power)
 
+    @_serialized
     def decide(self, report: EvaluationReport, proposal: Proposal) -> dict[str, Any]:
         refused = self._refusal()
         if refused:
@@ -527,6 +717,7 @@ class MetaHarness:
                 "estimates": report.estimates, "negative_control": report.negative_control, "control": report.control,
                 "provenance": report.provenance, "proposer": decision.proposer, "gate_checks": list(decision.checks)}
 
+    @_serialized
     def activate(self, decision: GateDecision | str, accepted_by: str, *, candidate_digest: str = "") -> dict[str, Any]:
         """``decision``, or its digest: a decision recorded in this workspace by any process (one made over MCP among
         them) is rebuilt from the run ledger, checked against its digest and the report and proposal it names, and
@@ -572,11 +763,15 @@ class MetaHarness:
                             "candidate_digest='<the candidate_digest on the card>').", card=card, decision=decision)
         snap = self._snapshot(version + 1)
         try:
-            number = self.store.append_version("activate", proposal.candidate, at=_now(), accepted_by=who,
-                                               decision_digest=decision.digest(), proposer=decision.proposer,
-                                               ledger_head=self.ledger.head(), snapshot=snap)
+            number = self._append("activate", proposal.candidate, at=_now(), accepted_by=who,
+                                  decision_digest=decision.digest(), proposer=decision.proposer,
+                                  ledger_head=self.ledger.head(), snapshot=snap)
         except LedgerError as exc:
             return _blocked(APPROVAL_REQUIRED, f"the store refused the activation: {exc}")
+        except OSError as exc:
+            return _blocked(APPROVAL_REQUIRED, f"G6 could not record the activation in its state folder "
+                            f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
+                            "activate again.")
         return _envelope("qualified-draft", "G6_E_META_ACTIVATED", f"version {number} is active",
                          next_action="Live runs now use it; the monitor compares it with the previous version.",
                          head_version=number, head_profile=proposal.candidate_digest, snapshot=snap,
@@ -601,6 +796,7 @@ class MetaHarness:
                      decisions=self.workflow.harness_decisions(), memory=memory, producer=producer)
         return result, ctx.calls, round(max(0.0, self._clock() - start), 6)
 
+    @_serialized
     def run(self, task_input: str, *, shadow: Proposal | None = None) -> dict[str, Any]:
         """One live task under the active profile: the ``harness.run`` result, never relabelled, plus a ledger row.
 
@@ -671,6 +867,7 @@ class MetaHarness:
                     found.append((SCHEMA, f"{kind}: {exc}"))
         return found
 
+    @_serialized
     def admit_distillate(self, source: str, *, step: str = "answer",
                          training_case_ids: tuple[str, ...] = ()) -> dict[str, Any]:
         """R2: compiled code that would replace a model call for ``step``, admitted only by
@@ -707,6 +904,7 @@ class MetaHarness:
                          next_action=f"mh.candidate({{..., 'distillates': {{'{step}': '{sha}'}}}}, proposer=...)",
                          distillate=sha)
 
+    @_serialized
     def code_candidate(self, files: Mapping[str, str], *, proposer: str, strategy: str = "hand-written",
                        claim: Mapping[str, str] | None = None) -> dict[str, Any]:
         """A code-level change (owner ruling Q7): new contents for files in the workflow's ``code_root``, stored by
@@ -721,6 +919,7 @@ class MetaHarness:
         return self.candidate(base.model_dump(mode="json") | {"code": code}, proposer=proposer, strategy=strategy,
                               claim=claim)
 
+    @_serialized
     def train_adapter(self, spec: Any, *, model: str, examples: list[tuple[str, str]] | None = None,
                       trainer: Callable[..., Any] | None = None) -> dict[str, Any]:
         """LoRA (owner ruling Q8): train an adapter for a declared local model on the dev split (or ``examples``, which
@@ -753,8 +952,13 @@ class MetaHarness:
 
     # --- Phase 3: the monitor and opt-in online tuning --------------------------------------------------------------
     def _previous_approved(self) -> int | None:
-        current = self.store.current_approved()
-        earlier = [n for n in self.store.approved() if current is not None and n < current]
+        """The approved version before the one the head stands for, among the versions G6 recorded here (``_ours``):
+        an audit runs its code, and the monitor's demotion moves the head to it."""
+        ours = self._ours()
+        if not ours:
+            return None
+        current = _resolve(self.store.versions(), ours[-1]["version"])["version"]
+        earlier = [row["version"] for row in ours if row["kind"] in APPROVED_KINDS and row["version"] < current]
         return earlier[-1] if earlier else None
 
     def _audit(self, task_input: str, run_id: str, version: int, released: bool) -> dict[str, Any] | None:
@@ -778,6 +982,7 @@ class MetaHarness:
         return {"previous_version": previous, "model_calls": calls, "wall_clock_s": elapsed,
                 "note": "the previous approved version also ran on this task; its output is not returned"}
 
+    @_serialized
     def promotion(self, request=None) -> dict[str, Any]:
         """Read/tighten the optional readiness cap; an upward step needs its own measured report and person."""
         from g6.metaharness.promotion import PromotionRequest, assess
@@ -789,6 +994,7 @@ class MetaHarness:
                 return _blocked(SCHEMA, "invalid promotion request")
         return assess(self, request)
 
+    @_serialized
     def monitor(self) -> dict[str, Any]:
         """The drift test over the audited pairs since the head moved; it may demote to the previous approved version.
         It does not run while G6 is stopped."""
@@ -812,11 +1018,10 @@ class MetaHarness:
             return _envelope("qualified-draft", "G6_E_META_MONITOR", "no live drift detected", audit=summary, observations=observations, promotion=promotion,
                              next_action="Keep running; the monitor compares a share of runs with the previous version.")
         target = self.store.versions()[previous]
-        number = self.store.append_version("demote", self.store.profile(target["profile_digest"]), at=_now(),
-                                           accepted_by="monitor", target_version=previous,
-                                           ledger_head=self.ledger.head(),
-                                           reason=f"drift: mean difference {verdict.mean_difference} over "
-                                                  f"{verdict.pairs} audited runs > {verdict.threshold}")
+        number = self._append("demote", self.store.profile(target["profile_digest"]), at=_now(),
+                              accepted_by="monitor", target_version=previous, ledger_head=self.ledger.head(),
+                              reason=f"drift: mean difference {verdict.mean_difference} over "
+                                     f"{verdict.pairs} audited runs > {verdict.threshold}")
         self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
                                                          "now_version": number, "audit": summary})
         return _blocked(DRIFT_DEMOTED, f"version {version} fell behind the previous approved version on its audited "
@@ -824,6 +1029,7 @@ class MetaHarness:
                         "Re-evaluate the demoted candidate on a fresh held-out split before trying it again.",
                         audit=summary, head_version=number, observations=observations, promotion=promotion)
 
+    @_serialized
     def set_audit_rate(self, rate: float, accepted_by: str) -> dict[str, Any]:
         """A person may raise the share of audited runs; never below the workflow's floor."""
         refused = self._refusal()
@@ -844,6 +1050,7 @@ class MetaHarness:
         start = max((i for i, r in enumerate(rows) if r["_kind"] == "setting" and r.get("online_tuning")), default=-1)
         return sum(1 for r in rows[start + 1:] if r["_kind"] == "run" and r.get("purpose") == "live")
 
+    @_serialized
     def enable_online_tuning(self, strategy: Strategy, accepted_by: str, *, every: int = 32) -> dict[str, Any]:
         """Opt in (owner ruling Q3): every ``every`` live runs, ``strategy`` proposes from the live failures. What it
         proposes is a candidate only; a live run is never held-out evidence."""
@@ -862,6 +1069,7 @@ class MetaHarness:
         return _envelope("qualified-draft", "G6_E_META_SETTING", f"online tuning on, every {every} live runs",
                          next_action="Proposals it makes are candidates: evaluate, decide and approve each one.")
 
+    @_serialized
     def disable_online_tuning(self, accepted_by: str) -> dict[str, Any]:
         who = accepted_by.strip()
         if self._problems:
@@ -873,6 +1081,7 @@ class MetaHarness:
         self._online = None
         return _envelope("qualified-draft", "G6_E_META_SETTING", "online tuning off")
 
+    @_serialized
     def tune_online(self, strategy: Strategy, *, max_candidates: int = 2, budget: int = 100) -> dict[str, Any]:
         """Candidates from the failures of live runs under the active version (online tuning must be on)."""
         refused = self._refusal()
@@ -900,6 +1109,7 @@ class MetaHarness:
                             notes=("failures from live runs under the active version; no answers are known for them",))
         return self._offer(view, strategy, f"auto:online:{strategy.name}", DevBudget(budget), max_candidates)
 
+    @_serialized
     def rollback(self, version: int, accepted_by: str) -> dict[str, Any]:
         """A person moves the head back to an approved version; allowed while G6 is stopped (it starts no work)."""
         refused = self._refusal(allow_stopped=True)
@@ -909,15 +1119,21 @@ class MetaHarness:
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person must ask for a rollback (no empty or auto: name)")
         versions = self.store.versions()
-        if not 0 <= version < len(versions) or versions[version]["kind"] not in ("initial", "activate"):
-            return _blocked(APPROVAL_REQUIRED, f"version {version} is not a version a person approved")
+        if not self._approved_here(version):
+            return _blocked(APPROVAL_REQUIRED, f"version {version} is not a version a person approved here")
         profile = self.store.profile(versions[version]["profile_digest"])
-        number = self.store.append_version("rollback", profile, at=_now(), accepted_by=who, target_version=version,
-                                           ledger_head=self.ledger.head(), snapshot=self._snapshot(len(versions)))
+        try:
+            number = self._append("rollback", profile, at=_now(), accepted_by=who, target_version=version,
+                                  ledger_head=self.ledger.head(), snapshot=self._snapshot(len(versions)))
+        except OSError as exc:
+            return _blocked(APPROVAL_REQUIRED, f"G6 could not record the rollback in its state folder "
+                            f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
+                            "roll back again.")
         return _envelope("qualified-draft", "G6_E_META_ROLLED_BACK", f"version {number} points at version {version}",
                          head_version=number, head_profile=profile.digest())
 
     # --- Phase 4: profile packs ----------------------------------------------------------------------------------------
+    @_serialized
     def export(self, path: str | Path, *, version: int | None = None) -> dict[str, Any]:
         """A profile pack of the active (or a given approved) version, with the evidence recorded for it, stated."""
         if self._problems:
@@ -941,6 +1157,7 @@ class MetaHarness:
         return _envelope("qualified-draft", "G6_E_META_EXPORTED", f"version {number} exported", path=str(path),
                          content_digest=pack["content_digest"], hints=len(theories))
 
+    @_serialized
     def import_profile(self, path: str | Path, *, proposer: str,
                        routing: Mapping[str, str] | None = None) -> dict[str, Any]:
         """A pack as a candidate only: its stated evidence is ignored, its hints become candidate theories, and it must
@@ -969,15 +1186,17 @@ class MetaHarness:
         return {**made, "stated_evidence_ignored": pack.get("stated_evidence") or {}, "notes": notes,
                 "message": "imported as a candidate: it must win on this workflow's held-out split"}
 
+    @_serialized
     def inspect(self) -> dict[str, Any]:
         if self._problems:
             return self.envelope
-        return _envelope("qualified-draft", "G6_E_META_INSPECT", "history", versions=self.store.versions(),
+        return _envelope("qualified-draft", "G6_E_META_INSPECT", "Workflow history; this inspection executed no application code", versions=self.store.versions(),
                          confirmed=self.store.confirmed(), store_head=self.store.head_hash(),
                          ledger_head=self.ledger.head(), evaluations=self.ledger.rows("evaluation"),
                          decisions=[{k: r[k] for k in ("verdict", "code", "candidate_digest", "proposer")}
                                     for r in self.ledger.rows("decision")])
 
+    @_serialized
     def report(self) -> dict[str, Any]:
         """Claims tagged checked / measured / assumed (META_HARNESS_PLAN.md 5.6)."""
         if self._problems:

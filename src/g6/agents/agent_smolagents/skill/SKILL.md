@@ -96,7 +96,7 @@ Composed:
 
 ## What it needs
 
-smolagents, behind the extra: `pip install 'g6[agents-smolagents]'` (Apache-2.0, with `huggingface-hub`, `rich`,
+smolagents, behind the extra: `pip install 'g6[agents-smolagents] @ git+https://github.com/basicisabc1994/g6solver'` (Apache-2.0, with `huggingface-hub`, `rich`,
 `jinja2`, `requests`, Pillow and `python-dotenv`, all permissive). Without it a run says so. A model: a `g6.core.llm`
 caller passed in from Python, or, for `run`, the one you configured for G6. A Python for the sandbox (this one, or
 `G6_PYTHON`). From the library it uses `action_gating` and `safety_engine`, through the family's runtime. No hosted

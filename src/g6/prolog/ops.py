@@ -16,7 +16,8 @@
    finished (``exhausted``, or no answer at all), the search run again with a cap one higher must give the same
    answers in the same order and no more. A re-check that disagrees is ``G6_E_PROLOG_CERTIFICATE_REFUTED``.
 
-None of this is a security boundary: SWI-Prolog runs as you, so run programs you do not trust inside your own sandbox,
+None of this is a security boundary. Each run goes through G6's operating-system boundary where one is ready
+(:mod:`g6.prolog.runner`); elsewhere SWI-Prolog runs as you, so run programs you do not trust inside your own sandbox,
 such as a container or a virtual machine.
 
 ``qualified-draft`` is the best any op reaches: the answers follow from the program as SWI-Prolog runs it, and whether

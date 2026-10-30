@@ -24,6 +24,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from g6.core.errors import ISOLATION_ACTION, ISOLATION_UNAVAILABLE
 from g6.core.reliability_envelope import WarningCard
 from g6.model_checking.schema import ModelCheckResult
 
@@ -77,7 +78,7 @@ RUN_FAILED = _P + "RUN_FAILED"
 JAR_ENV = "G6_TLA2TOOLS_JAR"
 DIGEST_ENV = "G6_TLA2TOOLS_SHA256"
 JAVA_ENV = "G6_JAVA"
-INSTALL_Z3 = "pip install 'g6[formal]'"
+INSTALL_Z3 = "pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'"
 SUPPLY_JAR = (f"Download tla2tools.jar yourself from the TLA+ project's releases (G6 is tested on v1.7.4, whose SHA-256 "
               "is 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88), check it, set "
               f"{JAR_ENV} to its path and {DIGEST_ENV} to its SHA-256 (64 hex digits). G6 never downloads it, and runs "
@@ -99,6 +100,7 @@ TLC_VERDICTS = {"invariant_violated": TLC_INVARIANT_VIOLATED, "property_violated
                 "spec_error": TLC_SPEC_ERROR, "failed": TLC_FAILED, "unrecognised": TLC_UNRECOGNISED}
 
 _ACTIONS = {
+    ISOLATION_UNAVAILABLE: ISOLATION_ACTION,
     VIOLATION: "Read the trace: it starts in an initial state and each step follows the transition. Fix the model or "
                "the invariant, then check again.",
     DEADLOCK: "Read the trace to the state with no successor. Add the step it is missing, or allow it to stay put "

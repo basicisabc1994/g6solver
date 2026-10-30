@@ -22,9 +22,14 @@ temporary directory and home inside the run directory, and a heap limit. It runs
 :mod:`g6.core.component_process`: a time limit (default 60 seconds, at most 600), an output cap (4 MiB by default),
 and the whole process tree killed when either is passed; the directory is removed afterwards.
 
-This is a resource bound, not a sandbox: TLC runs as you and a spec can use TLC's own modules, which can write files
-(``Json``'s serialisers, for one). That is why :func:`tlc_check` and :func:`sany_parse` are sensitive: callable from
-Python, and over MCP only when the person who runs the server lists them in ``G6_MCP_SENSITIVE`` (owner, 2026-10-20).
+Every run goes through :mod:`g6.core.confine`, like every run of untrusted code: where a backend can confine it
+(bubblewrap on Linux, an AppContainer on Windows), Java reads only its own installation (``confine.program_paths``,
+with ``JAVA_HOME``) and writes only the run directory, with no network; the run's ``isolation`` says how it ran, and
+where isolation is required and no backend can give it the run is refused before Java starts
+(``G6_E_ISOLATION_UNAVAILABLE``). Elsewhere this is a resource bound, not a sandbox: TLC runs as you and a spec can use
+TLC's own modules, which can write files (``Json``'s serialisers, for one). That is why :func:`tlc_check` and
+:func:`sany_parse` are sensitive: callable from Python, and over MCP only when the person who runs the server lists
+them in ``G6_MCP_SENSITIVE`` (owner, 2026-10-20).
 
 TLC runs in ``-tool`` mode and its output is read by :mod:`g6.model_checking.tlc_output`. Its "no error" is reported
 as TLC's own verdict, ``qualified-draft`` at best; a violation is ``blocked-escalated`` with TLC's trace.
@@ -41,7 +46,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from g6.core import component_process
+from g6.core import component_process, confine
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.model_checking.envelope import (
@@ -221,7 +227,7 @@ def _stage(jar: Path, digest: str, into: Path) -> None:
 
 
 def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, cap: int, heap_mb: int,
-             record: dict[str, Any]) -> tuple[int, str]:
+             record: dict[str, Any], confined: confine.Plan | None = None) -> tuple[int, str]:
     """Run ``argv`` under a time limit and an output cap, the process tree killed when either is passed."""
     with tempfile.TemporaryFile() as out:
         def too_much() -> bool:
@@ -232,7 +238,7 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
             with component_process.window(seconds, too_much) as window:
                 code = component_process.run_process(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
                                                      stderr=subprocess.STDOUT,
-                                                     memory_bytes=(heap_mb + 1024) * 1024 * 1024)
+                                                     memory_bytes=(heap_mb + 1024) * 1024 * 1024, confined=confined)
         except component_process.ExecutionInterrupted as exc:
             if exc.stopped and too_much():
                 raise Refusal(OUTPUT_TOO_LARGE, f"the output passed its cap of {cap} bytes, so the run was stopped and "
@@ -240,6 +246,8 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
             raise Refusal(TIME_LIMIT, f"the run did not finish within {seconds:g} s, so it was stopped and its process "
                                       "tree killed") from None
         except (OSError, ProcessTreeError) as exc:
+            if isinstance(exc, confine.NotStarted) and "isolation" in record:
+                record["isolation"] = confine.not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"the program could not be run to the end: {exc}"[:500]) from None
         finally:
             if window is not None:
@@ -259,7 +267,7 @@ def _run_tool(state: dict[str, Any], *, engine: str, spec: str, module: str, con
     java = _java()
     record = state.setdefault("extra", {})
     record |= {"jar": str(jar), "jar_sha256": digest, "java": java, "module": module}
-    with tempfile.TemporaryDirectory(prefix="g6_tlc_", ignore_cleanup_errors=True) as tmp:
+    with confine.run_folder(prefix="g6_tlc_", ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         for sub in ("spec", "tools", "java_tmp", "home"):
             (root / sub).mkdir()
@@ -281,7 +289,18 @@ def _run_tool(state: dict[str, Any], *, engine: str, spec: str, module: str, con
         env |= {"TEMP": str(root / "java_tmp"), "TMP": str(root / "java_tmp"), "TMPDIR": str(root / "java_tmp"),
                 "HOME": str(root / "home")}
         state["engine"] = engine
-        return _execute(argv, root / "spec", env, seconds, cap, heap_mb, record)
+        reads = confine.program_paths(java, os.environ.get("JAVA_HOME", ""))
+        confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
+        record["isolation"] = confined.record()
+        said = confine.refused(confined)
+        if said:
+            raise Refusal(ISOLATION_UNAVAILABLE, said)
+        try:
+            return _execute(argv, root / "spec", env, seconds, cap, heap_mb, record, confined)
+        finally:
+            left = confined.release()
+            if left:
+                record["isolation"] = {**record["isolation"], "cleanup": left}
 
 
 def _first_errors(run: dict[str, Any]) -> str:

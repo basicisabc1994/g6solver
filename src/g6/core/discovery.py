@@ -23,6 +23,7 @@ from typing import Any
 
 from g6.core import vetting
 from g6.core.confine import UNCONFINED_WARNING
+from g6.core.door import THREAT_STATEMENT
 from g6.core.failure_modes import FailureModeRegistry, declared
 from g6.core.registry import get_registry
 from g6.core.skills import front_matter, skill_text
@@ -117,6 +118,12 @@ def find(query: str, limit: int = 5) -> list[dict[str, Any]]:
             matched = sorted(t for t in q if d.get(t))
             scored.append({"component": name, "score": round(score, 3), "matched": matched})
     scored.sort(key=lambda r: (-r["score"], r["component"]))
+    if re.search(r"\b(tune|improve|keeps failing|make my agent better)\b", query.lower()):
+        # Explicit workflow intent routing, reported separately from the lexical score.
+        score = max((row["score"] for row in scored), default=0) + 1
+        scored = [{"component": "metaharness", "score": score, "matched": ["workflow-improvement-intent"],
+                   "route": "metaharness_start", "basis": "explicit workflow intent"},
+                  *(row for row in scored if row["component"] != "metaharness")]
     return scored[:limit]
 
 
@@ -144,13 +151,28 @@ def describe(name: str) -> dict[str, Any]:
 
 
 HELP = (
+    "Build agents from parts you can check. Use a component alone, connect declared contracts with g6_compose, "
+    "or fit an application to a task with Propose -> Test -> Gate -> Approve. For AI building AI: "
+    "metaharness_start creates a data-only Python application workflow; metaharness_confirm asks for client consent; "
+    "diagnose, propose_code with a hypothesis, evaluate_start, poll metaharness_job, decide, approve, then run. "
+    "All meta-harness tool names begin metaharness_. Below 30 held-out cases is exploration only. "
+    "Generated-code activation also needs independent host-configured safety checks. g6_review_patch assesses a "
+    "Python patch against stated requirements in confined test runs, with host permission patch_review.review: "
+    "test_integrity_compromised, defect_detected, insufficient_evidence or supported_within_scope (support on the "
+    "stated checks only), and merging always needs separate approval. "
     "G6 discovery, in order: find(query) ranks components by what they say about themselves and the failures "
     "they guard against; describe(component) gives maturity, ops, dependencies, the failure modes it guards "
     "against and can cause, the programs and extras it needs from outside G6, and the component's skill; "
-    "invoke(component, op, "
-    "params) runs one op through the component's typed input and returns its own result unchanged; over MCP the "
-    "reply also carries completion_state and a warning_card. Results carry the component's reliability label; "
-    "discovery never upgrades it, and a result that reports no label is a qualified-draft. An op that needs a model "
+    "invoke(component, op, params_json), with params_json a JSON object of the op's parameters, runs one op through "
+    "the component's typed input; the reply carries ok, result or error, completion_state and a warning_card, and ok "
+    "is false whenever the state is blocked-escalated (a blocked result keeps its answer in result). Results carry "
+    "the component's reliability label; discovery never upgrades it, and a result that reports no label is a "
+    "qualified-draft. Over MCP, g6 invoke and g6.invoke in Python, a component's own "
+    "verified stands only when G6's own code re-runs a check at the door, against what you gave it, and reproduces "
+    "it; any other is held at qualified-draft (G6_E_PROMOTION_LAW, claimed_completion_state), and a re-check that "
+    "finds a mismatch blocks. No component you can reach through a door has such a re-check yet, so nothing that "
+    "comes through them is verified today; get_registry().invoke in Python is the raw library call beneath the "
+    "doors, the component's own answer unchecked. " + THREAT_STATEMENT + " An op that needs a model "
     "uses the one your user set in their key file (~/.g6/.env, for example G6_LLM_PROVIDER=claude_code); with none it "
     "is refused with a *_NO_MODEL code: then do that step yourself and call the op that checks it. A sensitive op (it "
     "runs a program, reaches the network or changes the machine) is refused over MCP unless your user lists it in "

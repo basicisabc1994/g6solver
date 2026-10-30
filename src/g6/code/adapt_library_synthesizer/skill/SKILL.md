@@ -89,7 +89,7 @@ A paid injected caller uses the person's key in their own `~/.g6/.env`, read thr
 
 No outside program. Supply an injected `g6.core.llm` caller for extraction/build.
 `g6[docs]` provides pypdf (BSD-3-Clause) for PDFs; if it is not installed, reading a PDF blocks with
-`G6_E_CODE_CHECKER_NOT_INSTALLED` and `pip install "g6[docs]"` instructions.
+`G6_E_CODE_CHECKER_NOT_INSTALLED` and `pip install "g6[docs] @ git+https://github.com/basicisabc1994/g6solver"` instructions.
 Text and capability operations need no extra. Paper URLs must use an allow-listed scholarly host; every redirect
 rechecks the host and core HTTP checks reject private addresses. No network service is used in examples.
 

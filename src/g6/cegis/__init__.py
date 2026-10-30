@@ -18,13 +18,14 @@ builtins table, a wall-clock allowance and a whole-tree kill; a memory cap (POSI
 macOS, which refuses the address-space limit), and on POSIX also CPU and file-size limits.
 
 An optional ``verifier`` (the ``Verifier`` protocol) checks a candidate the sampled check passed. ``Z3Verifier(spec)``
-asks Z3, through ``g6.formal`` (``pip install 'g6[formal]'``; imported only when a check runs), for an input of the
+asks Z3, through ``g6.formal`` (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``; imported only when a check runs), for an input of the
 whole domain on which the candidate breaks ``spec``, an SMT-LIB term over the arguments and ``result``. It answers
 ``Counterexample`` (fed back only after the candidate, run out of process, disagrees with the oracle there),
 ``NoCounterexample`` (a solver decision on your spec, so ``qualified-draft`` at most) or ``Inconclusive``: degraded,
 with ``z3_unknown``, ``z3_timeout``, ``z3_unavailable`` or ``z3_untranslatable``, and never read as a pass (CG-008).
 
-Limits: the child is not an operating-system sandbox (it runs as the same user); a result holds only on the
+Limits: the child runs inside an operating-system boundary only where ``g6.core.confine`` has one ready (elsewhere
+as the same user; ``boundary["isolation"]`` says which); a result holds only on the
 domain it names; the oracle is your own callable and runs in your process; Z3 reads only int and bool arithmetic,
 comparisons and conditionals. Not ported from the archive: the ``cegis_block`` spec-expression path (CG-003: it
 verified a spec against itself), the LLM agency legs, the MCP servers, the algorithm catalogue, the Z3 synthesizer (the

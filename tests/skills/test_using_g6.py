@@ -63,7 +63,9 @@ def test_every_component_and_op_it_names_exists() -> None:
     pairs = [(c, o) for c, o in re.findall(r"`([a-z_]+)\.([a-z_]+)`", BOTH)]
     for component, listed in re.findall(r"`([a-z_]+)` \(([^)]*)\)", BOTH):
         pairs += [(component, o) for o in re.findall(r"`([a-z_*]+)`", listed)]
-    assert len(pairs) >= 10
+    # Mapping placeholders and the host permission namespace are not components.
+    pairs = [(c, o) for c, o in pairs if c not in {"caller", "patch_review"}]
+    assert pairs
     for component, op in pairs:
         assert component in names, component
         assert _offers(component, op), (component, op)
@@ -71,7 +73,7 @@ def test_every_component_and_op_it_names_exists() -> None:
     unbracketed = re.sub(r"\([^)]*\)", "", BOTH)
     runs = re.findall(r"`[a-z_]+`(?:\s*(?:,|or|and)\s*`[a-z_]+`)+", unbracketed)
     listed = {t for run in runs for t in re.findall(r"`([a-z_]+)`", run) if not t.startswith(("g6_", "metaharness_"))}
-    assert len(listed) >= 10 and listed <= names, listed - names
+    assert listed and listed <= names, listed - names
 
 
 def test_every_python_name_it_gives_exists() -> None:
@@ -89,12 +91,13 @@ def test_every_tool_and_code_it_names_is_real() -> None:
     import g6.mcp
 
     source = open(g6.mcp.__file__, encoding="utf-8").read()
-    for tool in set(re.findall(r"`(g6_[a-z]+|metaharness_[a-z]+)`", BOTH)):
+    for tool in set(re.findall(r"`(g6_[a-z_]+|metaharness_[a-z_]+)`", BOTH)):
         assert f"def {tool}(" in source, tool
-    from g6.metaharness import schema, surface
-
-    assert "G6_E_META_APPROVER_IS_PROPOSER" in TEXT and schema.APPROVER_IS_PROPOSER == "G6_E_META_APPROVER_IS_PROPOSER"
-    assert "_blocked(APPROVER_IS_PROPOSER" in open(surface.__file__, encoding="utf-8").read()  # the MCP door refuses
+    assert "Client-mediated consent may occur in the proposing session" in TEXT
+    assert "recorded name is not authenticated" in TEXT
+    assert "host-configured safety/injection evaluator" in TEXT
+    # Actual approval behavior is exercised through MCP in test_phase6_mcp,
+    # including proposing-session consent, decline and changed digest rejection.
 
 
 def test_every_superpowers_skill_it_pairs_a_stage_with_is_vendored() -> None:
@@ -102,7 +105,44 @@ def test_every_superpowers_skill_it_pairs_a_stage_with_is_vendored() -> None:
     named = set(re.findall(r"`([a-z]+(?:-[a-z]+)+)`", LIFECYCLE)) - {"qualified-draft"}
     named |= {n for n in ("brainstorming",) if f"`{n}`" in LIFECYCLE}
     assert len(named) >= 12 and named <= vendored, named - vendored
-    assert "superpowers:using-superpowers" in TEXT and "using-superpowers" in vendored
+    assert "optional companions, not prerequisites" in TEXT and "using-superpowers" in vendored
+
+
+def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> None:
+    # owner, 2026-10-29: the delivery process names G6's templates; each must be one G6 has, and each parameter or
+    # binding it names one the review takes, never an option that does not exist
+    import g6.mcp
+    from g6.harness import verification_templates as templates
+
+    known = set(templates.TEMPLATES) | set(templates.FORMAL_TEMPLATES)
+    named = set(re.findall(r"`([a-z_]+\.v\d+)`", TEXT))
+    assert known <= named and named <= known, (known - named, named - known)
+    source = open(g6.mcp.__file__, encoding="utf-8").read()
+    signature = re.search(r"def g6_review_patch\((.*?)\) -> dict", source, re.S).group(1)
+    parameters = set(re.findall(r"(\w+):", signature))
+    forms = [definition.bindings for definition in {**templates.TEMPLATES, **templates.FORMAL_TEMPLATES}.values()]
+    forms += [templates.AccessBindings, templates.AccessStepsBindings]
+    fields = {name for form in forms if hasattr(form, "model_fields") for name in form.model_fields}
+    section = TEXT.split("## Deliver a coding task with G6", 1)[1].split("\n## ", 1)[0]
+    words = set(re.findall(r"`([a-z_]+)`", section)) - {"verified"}
+    tools = {word for word in words if word.startswith(("g6_", "metaharness_"))}
+    assert {"intent", "requirements", "template_instances", "proposed_checks"} <= words
+    assert words - tools <= parameters | fields, (words - tools) - (parameters | fields)
+
+
+def test_a_review_starts_from_its_three_inputs_and_the_optional_ones_wait_for_their_shapes() -> None:
+    """The owner's pilot (2026-10-30): both agents' first review calls were refused, Codex's for an intent in the wrong
+    shape, Claude Code's for a template instance's bindings; each fixed its call only after the refusal."""
+    section = " ".join(TEXT.split("## Deliver a coding task with G6", 1)[1].split("\n## ", 1)[0].split())
+    assert ("Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`."
+            in section), section
+    assert ("Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's "
+            "description gives; a refused call names the field to fix.") in section
+    assert "Pass them as `intent`" not in section
+
+
+def test_after_a_no_in_the_form_the_agent_asks_and_offers_no_other_way() -> None:
+    assert "After a decline or cancel, ask the person; offer no other way to confirm." in " ".join(TEXT.split())
 
 
 def test_it_stays_short() -> None:

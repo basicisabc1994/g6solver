@@ -116,7 +116,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[formal]"` for Z3 (`z3-solver`), imported only when a check runs. Without it every Z3 op is
+- `pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` for Z3 (`z3-solver`), imported only when a check runs. Without it every Z3 op is
   `blocked-escalated` with `G6_E_FORMAL_SOLVER_UNAVAILABLE` and the install line.
 - No outside program: `check_propositional` and the four-valued and modal ops are pure Python. No op runs code, writes
   a file or reaches the network, so none is sensitive.

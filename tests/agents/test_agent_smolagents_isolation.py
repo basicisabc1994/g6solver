@@ -73,6 +73,7 @@ def test_a_step_the_sandbox_refused_is_in_the_record_too(monkeypatch) -> None:
 
 def test_a_real_step_with_no_backend_is_recorded_unconfined_with_the_reason(monkeypatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, OFF))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     session = SandboxSession(timeout_s=30)
     output, printed, final = session.run("print(6 * 7)")
     record = session.record()

@@ -198,6 +198,7 @@ def test_patched_code_that_changes_the_original_repository_is_caught(root, monke
     # Unconfined, so the write lands and the bench's comparison after the run is what catches it; confined, the
     # operating system refuses the write (test_workforce_isolation).
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
     original = root / bench.REPOS / "v1" / "calc" / "calc.py"
     attack = f"from pathlib import Path\nPath({str(original)!r}).write_text('tampered', encoding='utf-8')\n"
     out = _run(files={"calc.py": attack + FIXED})

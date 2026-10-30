@@ -55,7 +55,7 @@ def test_the_using_g6_skill_is_one_command_away(page):
 
 
 def test_the_bundle_guide_is_on_the_page(page):
-    assert "Choose a bundle" in page and "blocked-escalated" in page
+    assert "Choose a worked example" in page and "blocked-escalated" in page
 
 
 def test_jev_on_openrouter_has_its_own_model_tab(page):
@@ -69,9 +69,9 @@ def test_the_page_says_keys_go_in_the_key_file(page):
 
 
 def test_where_a_person_installs_they_read_that_unconfined_code_runs_with_their_rights(client):
-    # CORE_SANDBOX-01 (owner ruling, 2026-10-23: warn, never restrict): the README's Install section, g6 doctor and the
-    # sensitive-op help say it in confine.UNCONFINED_WARNING's words. Fails while the get-started page's Install step,
-    # the developers page or a docs install page leaves the paragraph out
+    # CORE_SANDBOX-01 (owner ruling, 2026-10-27: refused without a boundary unless the person allows it once): the
+    # README's Install section, g6 doctor and the sensitive-op help say it in confine.UNCONFINED_WARNING's words. Fails
+    # while the get-started page's Install step, the developers page or a docs install page leaves the paragraph out
     from g6.core.confine import UNCONFINED_WARNING
 
     def flat(page: str) -> str:

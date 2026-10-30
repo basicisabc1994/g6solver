@@ -7,7 +7,7 @@ closed grammar, such as ``(= result (+ (* 3 x) 1))``. The candidate's return exp
 never run) into an SMT-LIB term; the domain becomes constraints (an integer argument whose values are a contiguous range
 is a bound, any other is the list of its values; a boolean argument is a ``Bool``). Z3 is asked for an input of the
 whole domain, not only the sampled part, on which the spec is false. Z3 runs in this process and is imported only
-then; without ``z3-solver`` (``pip install 'g6[formal]'``) every check is ``Inconclusive("z3_unavailable")``.
+then; without ``z3-solver`` (``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``) every check is ``Inconclusive("z3_unavailable")``.
 
 What it can answer:
 

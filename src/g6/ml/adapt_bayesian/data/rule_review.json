@@ -158,25 +158,547 @@
     }
   ],
   "reviewed": {
-    "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
-    "artifact_sha256": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
-    "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
-    "refusals": [
-      "MLError",
-      "NotConverged"
-    ],
+    "artifact_sha256": "6c3eaa96e9ad95e027a63c73e0c27b61064d5167a1d72453949ccfbbae0b8028",
     "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
     "sources_sha256": {
-      "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
-      "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
-      "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
-      "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
       "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
       "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
       "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+      "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+      "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+      "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+      "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+      "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
       "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
-      "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7",
-      "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597"
+      "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+    },
+    "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+    "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+    "refusals": [
+      "MLError",
+      "NotConverged"
+    ]
+  },
+  "delta_reviews": [
+    {
+      "kind": "independent-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "419e43fdc6f52d773c6c0e25cb787fda63bcb776",
+      "reviewed_commit": "6d16ef6a87afe148a9f36a747d6084e15ef8566f",
+      "prior_review_sha256": "664d95fea8d8a15a0503523a6c42280f23fa8f05c36f5afb7ad363fbce2b5cbd",
+      "prior_source_reader": "Claude Sonnet 5.5 (fresh independent reader after the cited-only change, 2026-10-25); the records of the other rules are kept from the earlier readers",
+      "prior_reviewed": {
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "artifact_sha256": "72c6e718f03e17cd233541f69ff0dfe922fb7b238e449a5f8ce02403ab1f8389",
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ],
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597"
+        }
+      },
+      "reviewed": {
+        "artifact_sha256": "b7a2647272ad5e543cf2daf39fe2388bd7a8e327afbe8a8cc5a628799bc427e1",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Independent review of certificate-bound implementation and import-manifest changes since the public base. Original source-clause, tier and rule findings retain their original reviewer attribution. This reader did not reread original source clauses or private quotes. This is no new medical, legal or domain endorsement, qualified-person approval, cryptographic signature, or claim of application benefit.",
+      "method": "Recomputed the public-base review hashes in an extracted src tree and confirmed exact equality to the existing reviewed record; recomputed current reviewed hashes and bound inputs; read the changed shared implementation and newly bound invariants modules; compared ASTs of every covered directly implementing function; independently hashed held files using the source-register mapping. No model identity is inferred.",
+      "finding": "Only artifact_sha256 differs. Rules, canonical source entries, cases, adapter and refusal-list hashes are unchanged, and every directly implementing covered function has an unchanged AST. Shared changes alter result promotion, contract metadata, confinement availability/refusals and output collection, without changing the covered rule computations. Previous source and rule findings can be retained with this explicitly scoped delta attestation. Task-contract floor modules leave the import manifest; door and invariants enter it, plus choices for ML. Review is evidence of kind review and raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "base_sha256": "eaaeff98975794904e96c4fa7db2841db55936c61a9f3c8e5fa705947116ba33",
+          "current_sha256": "9e185142d301ec48c48334927b4bab8c281aa8b4e320a4b41a35ad9f0dac989d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/action_gating/action_gating_block.py",
+          "base_sha256": "a305c05ec147074bc5ce121435c2fa26ea496f81c234b150d40263adcd803c11",
+          "current_sha256": "be07d46888e071ccc9cf3337319b3edeebf04f83b706fa483445cc75fd62ec2f",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/ai_block.py",
+          "base_sha256": "2e8db8569bc6aa2d972f834de1068a1ac96c626ff1c4f4b242253d523ff74f53",
+          "current_sha256": "1aec33e4a21b870ca395645397351df7876a25614541f23a6a2b87fde4385d4e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/block_contract.py",
+          "base_sha256": "848ecdd686750bbe460b996e7180d7f8f29e7d31d1c3cfda855a65fedaccf582",
+          "current_sha256": "4b0652f16e30c3c206abb0a5af28bb8088e226cfb403c04fbec64ec1d5578f59",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/choices.py",
+          "base_sha256": null,
+          "current_sha256": "940745fd97a352cdb207606c25052e4dc21c581983fa3bb3a23beedbc7215a7b",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/confine.py",
+          "base_sha256": "7465560b1155ee6da663e1f63bf7e560bb1e164fe49e78e6f52e71263da6d904",
+          "current_sha256": "190288d4b4a4af2f028cf89666c8327246f8e6464f6500a5e46fadd12041cb97",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/door.py",
+          "base_sha256": null,
+          "current_sha256": "2ca96c8cfa10912336fdc8ab35e8cce0bca8114569c76a21d27ecf31a22f52f7",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/core/errors.py",
+          "base_sha256": "d09cd107363a679986ebf2580e41b02d87573b22ae4c31fc72a23670f80e9a30",
+          "current_sha256": "d8757e459de463d15574ea1f0e803144e1f07906b1d87eae7fa713f4be16600b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/process_tree.py",
+          "base_sha256": "a9ff949d920ff6d8889e8eeab89a45af85c8784a319ae315da96570b115da485",
+          "current_sha256": "25378a0a2cad33ede6db5e2a0e45da7dc2163b8eae73cdfc8e0fd6e5e3e7f77b",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_custody.py",
+          "base_sha256": "0ea54329f0c2980352d0c6a58f0677d70d82df21c4a6850cdba7f1c30141bf23",
+          "current_sha256": "3bbe0b5d366a6d7ac07e62b46090dba08ba095b6669cefc865c650cdcb72d11d",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/promotion_evaluator.py",
+          "base_sha256": "70e5f1c0a69c860cd3e457f635cf3cdfb2506e633b4eb8d43a7978e148cdbcb8",
+          "current_sha256": "be078564781808ccaae54c9f00b8bab27d5dd4873264e262560aadf9e30da933",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/registry.py",
+          "base_sha256": "6aa40d37aa2b2ed1ea17e9f0a71d75156351c788c17028908c12174b1ad6f5ea",
+          "current_sha256": "ff2cec51b0f2c7c06b09780094b784f5674582ee3cfbd3b009d690b6a418cf5c",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/reliability_envelope.py",
+          "base_sha256": "9faaaf806a736e124688cdb52675426f80d457176f11b4e7227c8243f4fb923f",
+          "current_sha256": "af7e5db33803b37ab07a9dc9e10a28c26928b0a7c1a90773995553699cf7ec21",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/sandbox.py",
+          "base_sha256": "44f1c2ad1e288e36eb9e39a0afa76cde0cb86c56b97c487e71d5e41e4681e8b9",
+          "current_sha256": "4c4949948d459fa83208634e9da56de8709d8cf27c9b4ec58e520ecd85db291e",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/task_contract_verifier.py",
+          "base_sha256": "b59023581d8b77c373d0bd5a602604018aa10e9484d6df4ba358c05d41d262e8",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/core/verification/methods.py",
+          "base_sha256": "95f18f5b5dfebaccecd14509553a3a47f0c5ff8391b3561c52708350780e47f4",
+          "current_sha256": null,
+          "binding_change": "removed"
+        },
+        {
+          "path": "g6/invariants/__init__.py",
+          "base_sha256": null,
+          "current_sha256": "b0f23aed79f5c4a53c3148f2ed7759b6e3069b5005762c4efd1a115c346239e8",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/invariants/envelope.py",
+          "base_sha256": null,
+          "current_sha256": "8488151d0c49db70f170c8d13f9c1c9ab757501f0b2634f16a6c49f90e19d9ba",
+          "binding_change": "added"
+        },
+        {
+          "path": "g6/ml/_fit.py",
+          "base_sha256": "a94cccb758943130c2443df4ccc494a1c8c5238c9a5a73ca4b5dd8e5a339b64e",
+          "current_sha256": "d35ac3fbef386a70e3a5a36208e6b2c4adc6b2f033e4abe58229391bda694f36",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/ml/_types.py",
+          "base_sha256": "a9d39d044fc709b792c33471f45c80ce0e4343bd667e7dcefe94048a7c162e3c",
+          "current_sha256": "8d36a794047c9494122dd76fd76a35a290a88a0db09fde594a7a4d63ecd1523e",
+          "binding_change": "modified"
+        }
+      ],
+      "validation": {
+        "tests": "tests/core/test_door_promotion.py tests/core/test_isolation_choice.py tests/core/test_confine_child_secrets.py tests/core/test_confine_bwrap.py",
+        "result": "109 passed, 1 skipped in 4.35s",
+        "covered_rule_function_AST_changes": 0,
+        "held_file_hashes": "all matched the unchanged source register; source text not reread",
+        "limitations": "Selected unit tests do not constitute a live Linux bubblewrap or fresh clinical/source-content review. Issuance must still rerun its full held-source/quote precheck and gates against the final bytes."
+      }
+    },
+    {
+      "kind": "independent-version-only-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "60a0937468ee55f54e9a565e06842e23edc26dd9",
+      "reviewed_commit": "98be89a046381b8ceb6919c482e54fbd90f19dcc",
+      "prior_review_sha256": "ba3c5b5b1805cffc58532da6dddfe80eaf2b3a659e1331c8940a26a04eb701ed",
+      "prior_reviewed": {
+        "artifact_sha256": "b7a2647272ad5e543cf2daf39fe2388bd7a8e327afbe8a8cc5a628799bc427e1",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "ea9328a48d495558dba37ec50d49da0623cefda7f774c1dcad4f4f2be987ad94",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to the existing independent implementation delta review. Only the package version assignment changed among bound artifact inputs, from 0.1.1.dev0 to 0.1.1. Existing source reader attribution, source findings and earlier delta attestations are retained. No source clauses or private quotes were reread; no new medical, legal or domain endorsement or cryptographic signature.",
+      "method": "Confirmed commit 98be89a changes only src/g6/__init__.py and its bytes differ solely by that version literal; recomputed all five reviewed records. Substituting the prior version file into each current artifact manifest reproduces its prior artifact hash exactly. Intervening release preparation commits after the earlier review are outside these artifact inputs.",
+      "finding": "Only artifact_sha256 changes for every component. Rules, canonical source entries, cases, adapter and refusals are unchanged. This version-only change leaves all prior scoped findings intact. Review raises no label.",
+      "version_file": {
+        "path": "g6/__init__.py",
+        "previous_sha256": "9e185142d301ec48c48334927b4bab8c281aa8b4e320a4b41a35ad9f0dac989d",
+        "current_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec"
+      },
+      "validation": "Byte-exact version delta and prior artifact reconstruction passed for all five components. Final issuance remains responsible for its normal held-source/quote checks and gates."
+    },
+    {
+      "kind": "independent-platform-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-27",
+      "base_commit": "5eca6cc1b15d7b8526ef726d3e5555aed3078dd2",
+      "reviewed_commit": "3d1c78acea2efdb3e34b2235bcb97de962cf5eae",
+      "prior_review_sha256": "70382803387463ffa2b69495f9e74af34199eeba1424c751116985b966a3c19e",
+      "prior_reviewed": {
+        "artifact_sha256": "ea9328a48d495558dba37ec50d49da0623cefda7f774c1dcad4f4f2be987ad94",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "67f9da7c19441d2fcfd6511a1af0f587610671b0482917447e417f358418492f",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to existing independent delta attestations: sandbox trusted-root canonicalization only. Original source-reader attribution and rule findings remain unchanged. No source clauses or private quotes were reread; no new medical, legal or domain endorsement or cryptographic signature.",
+      "method": "Independently read the sandbox source delta, surrounding run_script/output collector, storage.contained and storage.plain_file. Confirmed the sole runtime source edit canonicalizes the host-created temporary root with resolve(strict=True), before input writes and untrusted execution. Substituting prior sandbox bytes into each affected artifact manifest reconstructs its prior artifact hash exactly.",
+      "finding": "Trusted parent aliases such as macOS /var are resolved before child execution. Output rejection still uses plain_file, contained(refuse_links=True), O_NOFOLLOW where available, regular-file and inode checks, and bounded reads. The trusted host must continue to avoid concurrent mutation of the run folder, as the collector documents. No child-created link exception was added. Covered computations, rules, source entries, cases, adapters and refusal hashes are unchanged; only artifact_sha256 changes for the three ML components. Existing scoped findings remain applicable and review raises no label.",
+      "source_delta": {
+        "path": "g6/core/sandbox.py",
+        "previous_sha256": "4c4949948d459fa83208634e9da56de8709d8cf27c9b4ec58e520ecd85db291e",
+        "current_sha256": "613073147c3e0148cb82e867cd044829f341c90b35e77441c6b5df7f10226063"
+      },
+      "validation": {
+        "independently_run": "tests/core/test_confine.py::test_sandbox_accepts_trusted_temp_parent_alias_but_refuses_child_links",
+        "environment": "g6-a2-linux Docker image; repository bind-mounted read-only; network disabled",
+        "result": "1 passed in 0.89s",
+        "limits": "This independently exercises the POSIX alias and child-link rejection, not a native macOS runtime or live bubblewrap test. Full certificate issuance checks remain required."
+      }
+    },
+    {
+      "kind": "independent-uat-delta-review",
+      "reviewer": "Codex independent certificate-renewal reader (/root/certificate_renewal)",
+      "date": "2026-10-28",
+      "base_commit": "1725c9df9c004b504ae6cbe092008a1c3ff25d53",
+      "reviewed_commit": "bbf484c453ce5c16b8fe024617616c60d810541c",
+      "prior_review_sha256": "ed59ef749fb5210c90842edd300ec0fae567560529b9ace0035ecbb883072969",
+      "prior_reviewed": {
+        "artifact_sha256": "67f9da7c19441d2fcfd6511a1af0f587610671b0482917447e417f358418492f",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "d7aac6da06764a2cc3ddfbb76d32d7d3339f1de6c31061f8000a50b9e92e127a",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to prior independent delta attestations: UAT-driven reliability explanation change in the bound shared envelope. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses or private quotes were reread; no new medical, legal or domain endorsement, authenticated identity or cryptographic signature is asserted.",
+      "method": "Reviewed actual reliability-envelope, MCP consent, metaharness and grounding changes, including explicit client outcome handling and preserved digest rechecks. Recomputed all five reviewed records, compared current bound artifact bytes with baseline1725c9d, and reconstructed each previous artifact hash by substituting its baseline reliability_envelope.py bytes.",
+      "finding": "The only changed bound input is core/reliability_envelope.py: after state reconciliation, degraded envelopes lacking a reason receive explanatory text. Existing specific reasons remain intact. This addition neither promotes a result nor bypasses replay. Rules, canonical source entries, cases, adapters and refusal hashes are unchanged; prior scoped findings remain applicable. MCP/metadata changes reviewed separately do not enter these five artifact manifests. The initially identified null-warning-card inconsistency was corrected before this frozen commit; lifecycle replies retain required warning cards. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/core/reliability_envelope.py",
+          "previous_sha256": "af7e5db33803b37ab07a9dc9e10a28c26928b0a7c1a90773995553699cf7ec21",
+          "current_sha256": "c853fca0b43906f17601d5282f355846c30ae5beef125e99dc9bd838fb1fb860"
+        }
+      ],
+      "validation": {
+        "independently_run": "tests/metaharness/test_uat_diagnostics.py tests/metaharness/test_phase6_mcp.py tests/core/test_kernel_promotion_law.py",
+        "result": "34 passed, 1 dependency deprecation warning in 3.88s",
+        "limits": "Focused local tests and static delta review; this reader did not independently perform the parent-reported Codex client probes or broad test runs. Full held-source/quote issuance gates remain required."
+      }
+    },
+    {
+      "kind": "independent-step1-door-delta-review",
+      "reviewer": "Claude Opus 5.5 independent certificate-renewal reader (fresh session; did not write commit 4151fed)",
+      "date": "2026-10-28",
+      "base_commit": "5733be2f0fd5719bf881d7f4a57b27f9e651490f",
+      "reviewed_commit": "02aa544be48283f68c4f81edc723479e15f9b997",
+      "prior_review_sha256": "35138a96c5b2f1e74054ead4bf0c893a6c41a2ac5755041e41f92adfa6f615fc",
+      "prior_reviewed": {
+        "artifact_sha256": "d7aac6da06764a2cc3ddfbb76d32d7d3339f1de6c31061f8000a50b9e92e127a",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "b82e07d5d8fb8221cf543b3f3d468b7d3fff2bf265bccdc27eba6d9b86f9006c",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to prior independent delta attestations: the Step 1 door delta in bound shared code (door_reply's ok, the shared checked call door.invoke_checked behind g6_invoke, g6 invoke and the new g6.invoke, and block_contract wording) and the unchanged modules it newly binds. Original source-reader attribution, rule findings and earlier delta attestations are retained. No original source clauses, held source bytes or private quotes were read; no new medical, legal, safety or domain endorsement, qualified-person approval, authenticated identity or cryptographic signature is asserted.",
+      "method": "Read git diff 5733be2..4151fed for core/door.py, g6/__init__.py, core/block_contract.py, cli/__init__.py, mcp/__init__.py, core/discovery.py and tests/conformance/kit.py, and every caller of door_reply and every reader of a door reply's ok in src. Compared ASTs with the base, docstrings stripped: block_contract.py is identical; door.py changes only door_reply's return and __all__ and adds functions; the helpers moved out of g6.mcp are identical to their base bodies. Then re-read the two corrections to core/block_contract.py's wording since 4151fed (5275b8a and 02aa544; 4051730 changed only a test): its AST is still identical to 5733be2 and 4151fed, each statement was checked against core/compose.py, core/registry.py and a search of src for precondition, stop-condition and detector dispatch, and in-memory blocks were composed in both modes (per-op required inputs, wiring and evidence kinds refused with or without strict; preconditions, declared outputs and stop conditions only with strict). Recomputed reviewed() for the base in an extracted 5733be2 src tree (equal to the existing reviewed record) and for the 02aa544 tree (equal to tools/issue_certificate.py --reviewed), diffed the two code manifests, and compared every bound file with 4151fed: core/block_contract.py is the only one changed since.",
+      "finding": "Only artifact_sha256 differs; rules, canonical source entries, cases, adapter and refusal hashes are unchanged. Changed bound inputs: core/door.py (door_reply's ok is now false when the door's state is blocked-escalated, while completion_state, the warning card and the result copy are computed exactly as before; it adds allowed_sensitive, is_allowed and person_model, moved unchanged from g6.mcp, and invoke_checked), g6/__init__.py (adds g6.invoke, a lazy wrapper over invoke_checked whose allow is a per-call set nothing retains) and core/block_contract.py (docstrings and comments only). No module is newly bound: this artifact already bound everything door.py now imports. No covered implementing function, adapter or ai_block path calls door_reply, invoke_checked or person_model; ai_block uses only door_envelope and corrected_result, which are unchanged. The sensitive-op policy is the same on all three surfaces, and over MCP only G6_MCP_SENSITIVE in the server's own environment can grant one. ok is derived from the state and never feeds it, so the delta raises no label and leaves the door rule as it was. block_contract's wording was corrected twice after this reader's first pass over 4151fed, which found it untrue: 5275b8a stopped crediting the registry with per-op required inputs (ComponentRegistry.invoke checks only the block's typed input; only composition reads inputs_required_per_op), and 02aa544 stopped calling evidence kinds strict-only (composition checks them in either mode). Its module docstring, BlockContract docstring and field comments are now true of core/compose.py and core/registry.py. Review raises no label.",
+      "input_changes": [
+        {
+          "path": "g6/__init__.py",
+          "previous_sha256": "f906e42799de46cbd3746e0ed0a810093adc778037708ae95fcdb03d47e775ec",
+          "current_sha256": "911d7b90db99b90c2f26563d38686738396e9ae876b263f65fc142254cacfacb",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/block_contract.py",
+          "previous_sha256": "4b0652f16e30c3c206abb0a5af28bb8088e226cfb403c04fbec64ec1d5578f59",
+          "current_sha256": "a60d4375d92695667f6eb8e197599aafa8e4317757f6932378de7022e74805d0",
+          "binding_change": "modified"
+        },
+        {
+          "path": "g6/core/door.py",
+          "previous_sha256": "2ca96c8cfa10912336fdc8ab35e8cce0bca8114569c76a21d27ecf31a22f52f7",
+          "current_sha256": "966d6a03976e66d0c883226067f998c2f40faa5d3f5002dca62454523762a9b0",
+          "binding_change": "modified"
+        }
+      ],
+      "validation": {
+        "independently_run": "At 02aa544: tests/core/test_contract_wording.py tests/core/test_compose.py; then those two with tests/core/test_invoke_parity.py tests/core/test_mcp_invoke_envelope.py tests/core/test_door_promotion.py tests/core/test_mcp_model_door.py tests/core/test_contract_serialization.py tests/jobs/test_duty_of_care_block.py; then tests/ml/test_sklearn.py tests/ml/test_automl.py tests/ml/test_bayesian.py tests/embodied/test_adapt_physical_ai.py tests/embodied/test_motion_grasp.py tests/embodied/test_embodied_merges.py tests/jobs/test_care_guards.py",
+        "result": "12 passed in 0.31s; 244 passed, 1 skipped, 1 dependency warning in 4.38s; then 192 passed, 16 skipped, 3 failed in 13.59s: test_sklearn's g5 test refused with G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued. At 4151fed the focused set without test_compose.py gave 232 passed, 1 skipped, and the component set gave the same 192, 16 and 3.",
+        "limits": "Static delta review and focused local tests on Windows only. The scikit-learn and FLAML extras are not installed (16 skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The composition probes used in-memory blocks, not the certified components. The reader is a fresh Claude session, not a different model from the commits' author. Full held-source and quote issuance gates remain required."
+      }
+    },
+    {
+      "kind": "independent-version-only-delta-review",
+      "reviewer": "Claude, a fresh read-only certificate-renewal reader (not the author of the code, the register or the cases)",
+      "date": "2026-10-29",
+      "base_commit": "6654b1958e5d451519c1bfc204bd551131a93573",
+      "reviewed_commit": "0a905ae29fed51274a75f51da4f001e0d32878f4",
+      "prior_review_sha256": "375234b7194999e5ac7d648250e915a9ebc95693f37215e6d26e6e821cb670b5",
+      "prior_reviewed": {
+        "artifact_sha256": "b82e07d5d8fb8221cf543b3f3d468b7d3fff2bf265bccdc27eba6d9b86f9006c",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "6c3eaa96e9ad95e027a63c73e0c27b61064d5167a1d72453949ccfbbae0b8028",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to the existing independent implementation delta review. Only the package version assignment changed among bound artifact inputs, from 0.1.1 to 0.2.0. Existing source reader attribution, source findings and earlier delta attestations are retained. No source clauses or private quotes were reread; no new medical, legal or domain endorsement or cryptographic signature.",
+      "method": "Listed every file git diff --name-only names between 6654b19 and 0a905ae and intersected that list with every input this certificate binds: its input manifest at 0a905ae (with and without this review file), certificate.json's imported_code list, the four harness_sha256 files, and every file in the component's input folders (its own folder, its register's folder and the family's underscore-prefixed shared folders). src/g6/__init__.py is the only bound file that changed, and no bound file was added or removed. Read git diff 6654b19 0a905ae for that file and checked its bytes: replacing the literal __version__ = \"0.1.1\" in the 6654b19 bytes with __version__ = \"0.2.0\" gives the 0a905ae bytes exactly. Checked that every bound input in the working tree equals its bytes at 0a905ae. Recomputed reviewed() for all five components at 0a905ae and compared each with the prior top-level reviewed record. Then rebuilt each artifact manifest from the 0a905ae input mapping with only g6/__init__.py replaced by its 6654b19 bytes, hashed it as reviewed() does (artifact_bytes of code_files), and compared it with the prior artifact_sha256. Commits between 6654b19 and 0a905ae that change files outside these inputs were not reviewed.",
+      "finding": "Only artifact_sha256 changes for every component. Rules, canonical source entries, cases, adapter and refusals are unchanged. Substituting the 0.1.1 version file reproduces each prior artifact_sha256 exactly. This version-only change leaves all prior scoped findings intact. Review raises no label.",
+      "version_file": {
+        "path": "g6/__init__.py",
+        "previous_sha256": "911d7b90db99b90c2f26563d38686738396e9ae876b263f65fc142254cacfacb",
+        "current_sha256": "fc9da36b4210db4eeb58a2a8e912e190174292e070094fffcbe22b6240c29cee"
+      },
+      "validation": "Bound-input intersection, byte-exact version delta, unchanged reviewed fields and prior artifact reconstruction passed for all five components. Static check on Windows only: no test, case, second route or falsifier was run. Final issuance remains responsible for its normal held-source/quote checks and gates."
     }
-  }
+  ]
 }

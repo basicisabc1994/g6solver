@@ -3,7 +3,7 @@
 
 An extension in the knowledge family. Converters are registered by media type: text and Markdown as they are, HTML
 through the standard library's parser (scripts, styles and hidden text dropped, the title kept apart) and PDF through
-pypdf's text layer (``pip install 'g6[docs]'``; never PyMuPDF). It converts the bytes it is given, or the bytes
+pypdf's text layer (``pip install 'g6[docs] @ git+https://github.com/basicisabc1994/g6solver'``; never PyMuPDF). It converts the bytes it is given, or the bytes
 ``knowledge_fetcher`` kept by their hash, and never fetches anything. A converted document records what converted it
 and what it could not read: a PDF page without a text layer is listed in ``unread`` (``partial``), and a source with
 no readable text at all is refused (``nothing_readable``), never returned as an empty document.

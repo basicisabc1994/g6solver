@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from g6.core.ai_block import AIBlock
+from g6.core.block_contract import BlockContract
 from g6.core.maturity import component_maturity
 from g6.core.reliability_envelope import warning_card
 from g6.core.result import Result
@@ -53,6 +54,16 @@ class GroundingInput(BaseModel):
     reason="lexical sentence support with negation/number conflict checks; not entailment; never verified",
 )
 class GroundingBlock(AIBlock[GroundingInput, dict, dict]):
+    __g6_block_contract__ = BlockContract(
+        name="grounding", purpose="Check claims against supplied sources; lexical support is not entailment.",
+        inputs_required_per_op={"check_claim": ("claim", "sources"), "check_claims": ("text", "sources"),
+                                "coverage": ("text", "sources")},
+        outputs_per_op={"check_claim": ("check", "completion_state"),
+                        "check_claims": ("checks", "completion_state"), "coverage": ("coverage", "completion_state")},
+        evidence_outputs_per_op={"check_claims": {"checks": "source-support-assessment"}},
+        verification_method="lexical_sentence_overlap", bad_at=("omissions", "stale sources", "proving behavioural correctness"),
+        guarantees=("reports support against supplied source text only",))
+
     def __init__(self, name: str = "grounding", state: dict | None = None) -> None:
         super().__init__(name=name, state=state or {})
 

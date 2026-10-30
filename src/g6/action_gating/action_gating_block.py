@@ -19,6 +19,7 @@ from g6.action_gating.explain import render_user_risk_message
 from g6.action_gating.operation_budget import OperationBudget
 from g6.action_gating.scope import ReviewScope
 from g6.core.ai_block import AIBlock
+from g6.core.block_contract import BlockContract
 from g6.core.maturity import component_maturity
 from g6.core.reliability_envelope import envelope_fields, warning_card
 from g6.core.result import Result
@@ -62,6 +63,14 @@ class ActionGatingInput(BaseModel):
 )
 class ActionGatingBlock(AIBlock[ActionGatingInput, dict, dict]):
     """Decide whether a proposed action may proceed. Advisory unless the caller obeys it."""
+    __g6_block_contract__ = BlockContract(
+        name="action_gating", purpose="Assess an action; never execute or authorize a real merge by itself.",
+        inputs_required_per_op={"evaluate": ("action",), "explain": ("action",)},
+        outputs_per_op={"evaluate": ("gate_decision", "completion_state"), "explain": ("message",)},
+        verification_method="model", bad_at=("authenticating action facts", "enforcing another executor"),
+        side_effects=("budget operations change local counters when authorized",),
+        guarantees=("evaluate does not execute the proposed action",))
+
 
     def __init__(self, name: str = "action_gating", state: dict | None = None,
                  *, budget: OperationBudget | None = None) -> None:

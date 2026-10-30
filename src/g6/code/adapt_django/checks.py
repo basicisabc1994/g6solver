@@ -8,7 +8,7 @@ try:
     import django
 except ImportError:
     raise CheckerUnavailable(CHECKER_NOT_INSTALLED,
-                             'Django is not installed; pip install "g6[django]" in the sandbox interpreter.')
+                             'Django is not installed; pip install "g6[django] @ git+https://github.com/basicisabc1994/g6solver" in the sandbox interpreter.')
 from django.core.management import execute_from_command_line
 import sys
 os.chdir(root)

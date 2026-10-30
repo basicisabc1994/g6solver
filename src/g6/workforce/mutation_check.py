@@ -112,14 +112,21 @@ def _on(node: ast.AST, lines: Collection[int] | None) -> bool:
                for line in range(first.end_lineno or first.lineno, then.lineno + 1))
 
 
+class Unfinished(Exception):
+    """``mutants`` reached its ``deadline`` before it had tried every node: each change copies the whole tree, so the
+    work grows with the square of the code's size."""
+
+
 def mutants(code: str, limit: int = MAX_MUTANTS, lines: Collection[int] | None = None, *,
-            calls: bool = False) -> list[Mutant]:
+            calls: bool = False, deadline: float | None = None,
+            clock: Callable[[], float] = time.monotonic) -> list[Mutant]:
     """Up to ``limit`` distinct single-change versions of ``code``, spread
     evenly across it, in source order; only on ``lines`` when given (a
     repository's changed lines, plan 2026-10-05-verify-task-real-repos; an
     operator counts on the lines between its operands, ``_on``). ``calls``
     adds one change, a call on one argument to its argument (RVC R6.7: a
-    mission certificate's controls). Unparseable code has none."""
+    mission certificate's controls). Unparseable code has none. ``deadline``
+    (on ``clock``): ``Unfinished`` once it passes, checked before each node."""
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
@@ -131,6 +138,8 @@ def mutants(code: str, limit: int = MAX_MUTANTS, lines: Collection[int] | None =
     for index, node in enumerate(nodes):
         if not hasattr(node, "lineno") or not _on(node, lines):
             continue
+        if deadline is not None and clock() >= deadline:
+            raise Unfinished(f"the time ran out after {index} of {len(nodes)} nodes")
         copy_tree = copy.deepcopy(tree)
         target = list(ast.walk(copy_tree))[index]
         before = _snip(target)
@@ -165,15 +174,16 @@ RunFn = Callable[[str, int], Any]  # (changed code, timeout_s) -> TestExecutionR
 
 def check(code: str, run: RunFn, *, budget_s: float, base_duration_s: float,
           limit: int = MAX_MUTANTS, clock: Callable[[], float] = time.monotonic,
-          lines: Collection[int] | None = None) -> dict:
+          lines: Collection[int] | None = None, candidates: list[Mutant] | None = None) -> dict:
     """Run the customer's tests against changed versions of their code.
 
     ``run`` executes the tests against the given code (the caller binds the
     tests and the sandbox). ``budget_s`` bounds the whole check's wall time.
-    ``lines``: only changes on these lines (``mutants``).
+    ``lines``: only changes on these lines (``mutants``). ``candidates``: the
+    changed versions, when the caller has already made them (``mutants``).
     Returns the record the run_tests payload carries as ``mutation_check``.
     """
-    candidates = mutants(code, limit, lines)
+    candidates = mutants(code, limit, lines) if candidates is None else candidates
     record: dict[str, Any] = {"ran": False, "tried": 0, "rejected": 0, "survived": [],
                               "rejections": [], "execution_ids": [], "stopped": ""}
     if not candidates:

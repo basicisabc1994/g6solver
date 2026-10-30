@@ -28,7 +28,7 @@ from g6.invariants import check_envelope
 from g6.mcp import invoke_reply
 
 SRC = Path(g6.algebra.__file__).parent
-needs_sympy = pytest.mark.skipif(not ops.sympy_installed(), reason="SymPy is not installed (pip install 'g6[cas]')")
+needs_sympy = pytest.mark.skipif(not ops.sympy_installed(), reason="SymPy is not installed (pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver')")
 SENSITIVE_WORDS = "sensitive: runs from Python, or over MCP only when the person running the server lists it in " \
                   "G6_MCP_SENSITIVE"
 NOTHING_ALLOWED: frozenset[str] = frozenset()
@@ -138,7 +138,7 @@ def test_the_sage_ops_are_refused_over_mcp_unless_the_server_allows_them(op: str
 @pytest.mark.parametrize("op", list(SAGE_CALLS))
 def test_a_sage_op_the_server_allows_runs_over_mcp_and_keeps_its_own_state(op: str, no_sage) -> None:
     reply = invoke_reply("algebra", op, json.dumps(SAGE_CALLS[op]), allow_sensitive=frozenset({f"algebra.{op}"}))
-    assert check_envelope(reply) == [] and reply["ok"] is True and reply["completion_state"] == "blocked-escalated"
+    assert check_envelope(reply) == [] and reply["ok"] is False and reply["completion_state"] == "blocked-escalated"
     assert reply["warning_card"]["code"] == SAGE_MISSING
 
 

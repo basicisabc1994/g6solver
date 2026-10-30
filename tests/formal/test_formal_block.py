@@ -18,7 +18,7 @@ from g6.invariants import check_envelope
 from g6.mcp import invoke_reply
 
 HAS_Z3 = importlib.util.find_spec("z3") is not None
-needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal]')")
+needs_z3 = pytest.mark.skipif(not HAS_Z3, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 STATES = {"qualified-draft", "blocked-escalated"}
 
 Z3_CALLS = {
@@ -92,8 +92,9 @@ def test_every_op_returns_a_valid_envelope_through_the_registry(op: str, params:
 @pytest.mark.parametrize(("op", "params"), CALLS)
 def test_every_op_keeps_its_state_through_g6_invoke(op: str, params: dict) -> None:
     reply = invoke_reply("formal", op, json.dumps(params))
-    assert check_envelope(reply) == [] and reply["ok"] is True
+    assert check_envelope(reply) == [] and "result" in reply
     assert reply["completion_state"] == EXPECTED[op][0] != "verified"
+    assert reply["ok"] is (reply["completion_state"] != "blocked-escalated")
     assert reply["warning_card"]["code"] == reply["result"]["warning_card"]["code"]
 
 

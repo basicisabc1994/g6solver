@@ -190,6 +190,31 @@ def test_weakest_label_wins():
         BundleResult("done", "x")
 
 
+def test_a_bundle_that_says_verified_is_held():
+    """Plan A1: a bundle may never claim more than G6 re-checked; its own verified is held at qualified-draft."""
+    from g6.invariants import check_envelope
+
+    def claims(inputs, llm):
+        return BundleResult("verified", "every row checked", rows=[{"row": 1}], code="G6_E_SAFE_ACTIONS")
+
+    out = run_bundle(Bundle("v", "V", "v", (Field("a", "A"),), claims), {"a": "1"})
+    assert out["completion_state"] == "qualified-draft" and out["claimed_completion_state"] == "verified"
+    assert out["warning_card"]["code"] == "G6_E_PROMOTION_LAW" and check_envelope(out) == []
+    assert out["rows"] == [{"row": 1}] and out["summary"] == "every row checked"
+    drafted = BundleResult("qualified-draft", "draft", code="G6_E_SAFE_ACTIONS").to_dict()
+    assert drafted["warning_card"]["code"] == "G6_E_SAFE_ACTIONS" and "claimed_completion_state" not in drafted
+
+
+@pytest.mark.parametrize("state", ["verified", "qualified-draft", "blocked-escalated"])
+def test_a_row_that_says_verified_is_held_the_same_way(state):
+    """A bundle's rows are its own word too: G6 does not re-run them, so no row reads as verified on the page."""
+    rows = [{"item": "a", "label": "verified"}, {"item": "b", "label": "Verified_Ready", "ok": True}]
+    out = BundleResult(state, "rows", rows=rows).to_dict()
+    expected = "qualified-draft" if state == "verified" else state
+    assert [r["label"] for r in out["rows"]] == [expected, expected] and out["rows"][1]["ok"] is True
+    assert rows[0]["label"] == "verified"   # the bundle's own result is not changed, only what the door hands on
+
+
 def test_cli_lists_bundles(capsys):
     from g6.cli import main
 

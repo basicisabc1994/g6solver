@@ -4,7 +4,7 @@ own worker process (:mod:`g6.algebra.runner`), so its time limit holds however l
 
 In order, stopping at the first that fails: the limits (``time_limit`` at most 120 seconds, 30 by default; a memory
 cap; an output cap); the input, read by :func:`g6.algebra.inputs.read`, every expression through G6's parser, with its
-codes, fields, lines and columns; SymPy installed (``pip install 'g6[cas]'``, checked without importing it); then the
+codes, fields, lines and columns; SymPy installed (``pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver'``, checked without importing it); then the
 worker, which answers and re-checks. When the time limit stops the worker before it answered, the op is
 ``G6_E_ALGEBRA_TIME_LIMIT``; when it stops it during the re-check, the answer is reported as not re-checked.
 

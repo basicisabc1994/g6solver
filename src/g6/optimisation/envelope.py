@@ -47,7 +47,7 @@ BEST_FOUND = "G6_E_OPTIM_BEST_FOUND"
 NOT_CONVERGED = "G6_E_OPTIM_NOT_CONVERGED"
 
 _ACTIONS = {
-    SOLVER_UNAVAILABLE: "Install OR-Tools: pip install 'g6[optim]'.",
+    SOLVER_UNAVAILABLE: "Install OR-Tools: pip install 'g6[optim] @ git+https://github.com/basicisabc1994/g6solver'.",
     INPUT_INVALID: "Correct the model as the reason says and run it again.",
     INPUT_TOO_LARGE: "Split the problem or reduce it below the limit the reason names.",
     TIME_LIMIT_TOO_LONG: "Give a time_limit of at most 60 seconds, or split the problem.",
@@ -64,7 +64,7 @@ _ACTIONS = {
     CERTIFICATE_REFUTED: "Do not use the answer: G6's own check contradicts it. The evidence keeps the refuted answer "
                          "and the failures; report it with them.",
     NOT_CHECKED: "Build results with g6.optimisation's functions; this one carries no check by G6.",
-    SCIPY_UNAVAILABLE: "Install SciPy: pip install 'g6[optim-nonlinear]'.",
+    SCIPY_UNAVAILABLE: "Install SciPy: pip install 'g6[optim-nonlinear] @ git+https://github.com/basicisabc1994/g6solver'.",
 }
 _CERTIFICATES = {
     "duals": "the duals (dual feasible, with no duality gap)",

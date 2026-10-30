@@ -1,0 +1,259 @@
+# AI-for-AI continuation — 27 October 2026
+
+## Accepted objective
+
+An AI discovers components, constructs an application, diagnoses failures, proposes a
+composition or code redesign, and tests it against a frozen baseline. Candidate code
+cannot modify the evaluator, authorization policy or promotion enforcement. Python
+patch review is the first proving ground, not the limit of the product.
+
+## Implementation sequence
+
+1. Recover A1/A2, finish trust enforcement, confinement and digest-bound consent.
+2. Strict composition with explicit adapters, evidence contracts and assurance reports.
+3. Expose the construction/redesign/evaluation/approval/run loop through MCP, using the
+   existing meta-harness. Preserve exploration-only operation below its evidence floor.
+4. Exercise successful and rejected redesigns, fresh installation and separate utility
+   measurements. Prepare v0.1.1; do not mutate v0.1.0 or publish automatically.
+5. Correct V8's model/split/attribution and budget registration before paid execution.
+
+## Recovery ledger
+
+- Public main checked with `git ls-remote`: 419e43fdc6f52d773c6c0e25cb787fda63bcb776.
+- Local export adds 3ad72c0 (honesty and installation fixes); retained as the base.
+- Workspace: Desktop/g6solver-continuation, branch codex/ai-for-ai-continuation.
+- Imported all 13 A1 commits through af7d9875ee and 10 A2 commits through f0e28bc923
+  from the private repository, filtering to oss/ and preserving original authors.
+- Ruling: work directly in an isolated public-layout clone. Private source history,
+  secrets and unrelated worktrees are not imported. Public/private history differs;
+  original source commits are recorded above for traceability.
+- Resolved CI workflow context divergence and overlapping MCP documentation during
+  import. Existing public workflow behaviour and the trust-door description retained.
+- Original A2 uncommitted documentation remains in its source worktree for review.
+- Baseline before import: 19 focused MCP/pipeline tests passed.
+- Publication, paid model studies and empirical improvement claims remain gated on
+  their actual evidence. No broadening of supported Python versions in this milestone.
+
+## Verification and limitations
+
+Record commands and results here as each implementation slice completes. Committed
+recovery is not itself evidence that the integrated code passes.
+
+### Trust hardening slice
+
+- Recovered baseline: 131 passed, 1 platform skip across door, pipeline and confinement tests.
+- New spawn-boundary tests failed for inherited credentials and unrestricted descriptors,
+  then passed after a common allowlist and descriptor guard were applied.
+- Adjacent confinement run: 55 passed, 1 platform skip. Added Linux real-child secret probe.
+- Scoped integrity evidence test failed on missing artifact digest, then passed with
+  explicit check version, claim, pattern scope and execution environment: 69 door/integrity tests passed.
+- Ruff and git diff --check passed for this slice.
+- Ruling: environment policy lives at the common confine.popen boundary; existing runners'
+  narrower environments still apply. This avoids relying on every caller to scrub secrets.
+
+### Composition and consent slice
+
+- Same-session elicitation tests failed under supported FastMCP, then passed after consent
+  was bound to recorded decision/candidate/proposal digests and recorded as unauthenticated.
+- Added strict composition, typed inputs, explicit field mappings, per-operation outputs,
+  evidence-kind declarations, stop/precondition checks and append-only assertion provenance.
+- Added data-only g6_compose and contracts for grounding, coding-agent gate and action gating.
+- 28 composition/MCP/approval tests passed; focused Ruff and whitespace checks passed.
+- Created .venv using declared FastMCP <3 (system installation was incompatible).
+- Initial broader run: core/integrity 2274 passed, 10 failed, 21 skipped; metaharness
+  289 passed, 20 failed, 1 skipped. Failures traced to missing optional dependencies and
+  default isolation refusal; rerunning with declared extras and Windows CI's explicit opt-in.
+  These opt-in tests are not OS-isolation evidence.
+
+### Application construction and reference workflow
+
+- Added data-only workflow creation and project/global discovery (project wins, explicit Python config overrides).
+- Added digest-bound confirmation, generated application code proposals with a hypothesis, bounded evaluation/run
+  jobs, terminal consent fallback, and rollback prompts bound to the workflow, profile and current version history.
+- Baseline files are frozen including the complete filename set; portable filenames cannot collide by case.
+  The declarative evaluator is included in the judging manifest frozen at confirmation.
+- Added a Python patch review application: actual selected pytest runs, source grounding, reviewed adapters,
+  coding gate and action gate. Receipts identify the working-tree digest, base commit, checks and environment.
+  Weakened tests, changed runner configuration, unconfined execution and stale artifacts block recommendation.
+- Ruling: source grounding remains lexical and caller-supplied; it cannot establish source freshness. The patch
+  application supplies no merge authority/action profile; even passing tests can leave the overall action blocked.
+  Its scoped observations are not merge authorization or complete patch correctness.
+- Ruling: declarative code workflows do not invent a successful independent safety/injection evaluation. They
+  can measure candidate improvements but need a host-configured patch_evaluator before activation, as the existing
+  gate requires. This limits turnkey code activation, rather than weakening the protected evaluator boundary.
+- Generated-code fixture: five observed paired wins; activation refused with five held-out cases. This tests the
+  mechanism, not empirical application benefit. Runtime opt-in used; not OS isolation evidence.
+- Setup registers explicitly selected Claude/Codex clients using the full interpreter path, preserves existing
+  skills, and stores an explicitly selected host model without exposing other settings. Registration syntax checked
+  against both installed CLIs. Tests use temporary configuration and mocked registration, not the user's settings.
+- 52 combined composition/MCP/reference tests passed; 35 setup/isolation-choice/skill tests passed; 11 terminal
+  workflow/MCP tests passed. Focused lint and whitespace checks passed.
+- Broader configured baseline: metaharness 309 passed, 1 skipped; core/integrity 2298 passed, 17 skipped and one
+  expected-tools-list failure, since fixed and covered by the focused discovery tests.
+- Recovered the nine remaining A2 documentation/site-test edits without changing their source worktree.
+
+### Validation, public claims and study preparation
+
+- Windows OS confinement: 51 passed with no global unconfined opt-in. Linux bubblewrap and secret probes:
+  10 passed inside a disposable Docker container with a read-only checkout and no network. These are boundary
+  tests, distinct from the Windows CI opt-in used for general regression tests.
+- Adjacent grounding/coding/action/bundle suites: 535 passed. Full source/test Ruff scan passed.
+- Core/integrity: 2305 passed, 17 skipped; one resolver-policy failure fixed by using outside.find_program.
+  Setup and resolver regression: 31 passed.
+- Harness/metaharness: 392 passed, 1 skipped; three import-layer guard tests failed on the new terminal entry point.
+  Ruling: permit exactly g6.cli -> g6.metaharness.surface, retaining the prohibition for components and core.
+  This admits the authorized terminal consent path without relaxing component layering. All 26 guardrail tests pass.
+- Added a real FastMCP Client create/confirm/job/run journey and sensitive patch-tool refusal test; it passes.
+- Public headline now reports fixed arm D separately from post-hoc best-per-dataset selection. Exploratory winners
+  carry selection and unadjusted-p-value caveats. Positioning preserves AI-for-AI as the objective, not a result.
+- V8 draft sampler verified the existing V2 parquet hash and read only three metadata columns: 8 Python dev tasks
+  (2 reused OpenLibrary pilots) and 48 scored IDs; no scored text inspected, no model call. Protocol and split remain
+  draft pending price/cap calibration, evaluator controls and final registration. Budget ceiling remaining $167.85.
+- v0.1.0 was not modified. Package development version becomes 0.1.1.dev0; no publication or shared-branch push.
+
+### Independent review fix pass
+
+- Final read-only review identified three material findings, documented in CONTINUATION_REVIEW.md.
+- Fixed a reproduced sandbox parent-read escape through a child-created symlink. Output collection now refuses
+  linked/special files and validates the bounded opened file. Synthetic sentinel only, no real secrets inspected.
+- Fixed overlapping evaluations spending the same held-out use: complete API operations acquire reentrant thread
+  and OS workspace locks, reload after locking, and MCP metadata writes share the transaction boundary. A busy
+  surface returns a refusal rather than blocking its async client. One-handle and separate-handle regressions pass.
+- Fixed stripped scratch HOME/USERPROFILE; explicit runtime paths survive only within the plan's writable mounts
+  (homes/caches) or readable mounts (Lean/Sage dependency roots). Secrets and import hooks remain excluded.
+- Updated boundary results: Windows 52 passed; Linux 12 passed. Adjacent runners 690 passed, 6 optional skips.
+  Full harness/metaharness after locking: 398 passed, 1 skipped. Import contracts: 3 kept, none broken.
+- Fresh built-wheel smoke passed with isolated settings, Codex skill, a composition and a separate stdio MCP process.
+  The final wheel was rebuilt with the review fixes and normalized LF source; its smoke also passed.
+- Documentation/tools broad run: 2767 passed, 2 skipped, 8 failures from stale generated catalogues and old homepage
+  assertions. Regenerated catalogues and updated expectations; rerun: 370 passed, 1 skipped, three
+  certificate-status failures. These exposed five stale independent passes, correctly refused by the registry.
+  Updated the FAQ and exact-library expectations to the unavailable status; final focused result below.
+- Ruling on review exclusions: actual client consent and usability/utility remain release gates; same-user shell and
+  malicious host-process code remain outside the stated boundary; arbitrary Python check external state is not
+  frozen by a source hash; real toolchain compatibility and job cancellation are unproven. No claim extends to them.
+
+### Final validation record
+
+- Workforce regression: 1498 passed, 18 skipped. This run began before the final review fixes; affected
+  confinement/runner and harness paths were separately rerun after those fixes, as recorded above.
+- Skills/component/composition regression: 967 passed. Adjacent gates/bundles: 535 passed.
+- Full source/test/validation Ruff and whitespace checks pass. Tracked-source public scan: zero findings
+  with --public-ci (no private terms list), using the exact 509e047 archive.
+- Certificate check refuses all five pre-existing certificates because independent review hashes differ
+  from current code. No signatures were fabricated or stale reviews reused. Available extensions: 55;
+  the five affected extensions remain awaiting review. This is an open release gate, not a passing check.
+- Development wheel: g6-0.1.1.dev0-py3-none-any.whl in the sibling g6-continuation-artifacts/dist folder.
+  Final installed-wheel smoke passes: isolated settings, skill install, composition, separate MCP process;
+  no model calls. No client configuration, public tag, release, or shared branch was changed.
+- Final FAQ and certificate-status regressions: 9 passed. The earlier three remaining site failures are resolved.
+
+### Release continuation trials
+
+- Actual Codex 0.164.0 and Claude Code 2.1.311 CLI setup succeeded in isolated temporary homes;
+  both registrations retained the exact interpreter and installed the client skill. No user settings changed.
+- Python 3.13.5 installed-wheel smoke passed; 39 selected composition/setup/workflow/MCP tests passed.
+- Codex direct app-server tool calls discover G6 and create workflows but deliver no consent prompt. G6
+  refuses confirmation and supplies the terminal fallback. Interactive human consent remains unverified.
+- Frozen six-case patch trial executed under Linux bubblewrap. The selected-test baseline accepts two
+  behaviorally wrong patches and one runner-policy violation; G6 blocks all six, including the correct patch.
+  Ruling: report these as synthetic engineering observations, not application utility or improved correctness.
+  Blocking everything and missing an unselected regression cannot substantiate the performance proposition.
+- Located original held source snapshots and private quote files outside the public checkout. A fresh
+  independent certificate reader verified every bound source hash and all 98 unchanged rule ASTs, reviewed
+  changed shared enforcement code, and passed 109 selected tests (1 skip). Scoped delta attestations preserve
+  the original source reader and findings; current bindings match all five components. Commit 185bd73.
+- Certificate numerical/seeded-defect prechecks are in progress with process-local Windows unconfined opt-in.
+  Initial runs lacked optional numerical packages and OS grants; they produced unknowns, not passes. These
+  mathematical checks are separate from actual OS boundary evidence. No certificate is renewed yet.
+- Detailed observations and remaining trials: docs/releases/RELEASE_TRIALS.md.
+
+- Release automation safeguard: removed asset clobbering, require an exact stable tag/source-version match,
+  refuse existing releases, and create drafts only. Six new tests failed before implementation; the guard and
+  adjacent workflow tests now pass (31 passed, 1 platform skip). The current development version is correctly
+  refused for tag v0.1.1. No workflow was dispatched and no GitHub object was changed.
+
+### Final release-candidate artifacts
+
+- All five prechecks passed: sklearn 35, automl 36, bayesian 29, physical 24, care 26 (150 total).
+  The first sklearn run was invalidated by a concurrent review-file update and discarded; its frozen rerun
+  passed. Seeded-mutant SyntaxWarnings caused PowerShell stderr records, not numerical failures.
+- Final source version 0.1.1 committed at 98be89a. Independent reader verified that version-only delta and supplied
+  supplemental attestations; all five bindings checked and committed at 09a6205 before issuance.
+- Normal issuance renewed all five certificates at a0f2995. All 150 receipts pass, no named gaps; all records
+  remain qualified-draft. All five normal offline --check reruns then exited 0 and reproduced committed records.
+- Restored the 60 available extensions in the FAQ/catalogue only after artifact inspection reported no problems.
+  Site/guard regressions: 15 passed. Generated catalogue checks and Ruff pass.
+- Final wheel 0.1.1 built twice with the same SOURCE_DATE_EPOCH: identical SHA256 recorded in wheel.json.
+  Installed-wheel MCP smokes pass on Python 3.12.11 and 3.13.5; all five certificate bindings match installed bytes.
+- Ruling: freezing a stable source version and preparing artifacts does not authorize release publication.
+  Real human consent/usability, application utility and final cross-platform CI remain separate gates.
+
+### Hosted release validation
+
+- Draft PR #1 contains the reviewed continuation stack. Windows, Linux and macOS bundle builds and offline
+  executable smokes passed in run 40450792761; no release job ran and no tag was created.
+- Initial PR conformance exposed two test-environment issues: the runtime recorder mistook the trusted bubblewrap
+  transport for the component payload, and GitHub's synthetic merge omitted the feature stack from first-parent
+  certificate history. Exact backend frame recognition now checks the payload; direct bwrap and undeclared payload
+  adversarial cases remain rejected. All 98 checker-fixture tests passed under real Linux bubblewrap.
+- CI now checks the exact PR head with full history. All three affected numerical certificates reproduce their
+  recorded positions on that head and fail on the synthetic merge in the controlled reproduction. Certificate
+  validation itself is unchanged. Preserve the reviewed history when integrating; squash/rebase/ordinary merge
+  require renewed history-bound records, not bypasses. Guard/backend tests: 32 passed, 1 platform skip; Ruff clean.
+- These CI/test-only changes leave packaged source, renewed certificates and reproducible wheel bytes unchanged.
+
+### Platform correction and pilot handoff
+
+- Hosted logs exposed a macOS trusted-parent alias refusal. Reproduced with a POSIX alias regression, fixed by
+  resolving the host-created run root before execution, and retained child-created-link refusal. Independent
+  reader reviewed commit 3d1c78a and supplied three scoped ML attestations committed at 9c521b3.
+- Linux: 108 passed, 19 platform skips across confinement/bubblewrap/repository tests. Windows selected confinement:
+  41 passed, 1 skip. Old dummy-key/proxy tests explicitly cover unconfined mode; a real bwrap case checks absence.
+- Normal renewal of all three affected certificates exited 0, committed at 20b21b8: 100 passing receipts. The two
+  unaffected records stay current. All five inspections report zero problems and 150 passing receipts total.
+- Refreshed wheel builds are byte-identical; installed-wheel/MCP smokes pass on Python 3.12 and 3.13. wheel.json
+  contains the new hash and source commit. Earlier bundle success does not cover this later source correction.
+- Full Ruff and import-boundary checks pass. Owner volunteered for both client pilots; OWNER_PILOT.md records
+  separate pending observations. This is an owner pilot, not the unfamiliar-user or application utility gate.
+
+### Owner UAT fixes (28 October)
+
+- Owner exercised discovery, lexical conflict handling, stop/continue composition controls, invalid mappings,
+  terminal consent, proposal separation, one AppContainer evaluation and missing-safety-evidence promotion refusal.
+  These are owner observations, not unfamiliar-user or utility evidence; see releases/UAT_ROUND_1.md.
+- Reproduced Codex prompt loss: FastMCP's primitive wrapper adds a top-level schema title, rejected by Codex's
+  typed schema parser, returning cancellation. Minimal SDK form schema now passes automated decline/cancel/accept
+  on isolated Codex 0.164.0 and installed 0.165.0. No model turns or human UI claims. Exact-version old/new comparison
+  reproduces the failure before the correction. Required nonempty string retained; empty auto-accept schemas avoided.
+- Consent diagnostics distinguish decline, cancellation, unavailable/invalid response and changed workflow.
+  Exception text is not exposed. Frozen digests are rechecked after consent; no activation policy relaxed.
+- Grounding contract now names lexical sentence overlap. All degraded replies explain assurance limitations.
+  Independent review caught mandatory warning-card compatibility; cards remain with useful lifecycle wording.
+- Corrected missing workspace dependency, obsolete mandatory-superpowers/same-session skill tests, portable pilot
+  wheel path and activation instructions. New diagnostics tests: 12 passed; combined focused run: 124 passed.
+  Core/grounding/invariants: 2394 passed, 19 skipped. Broader metaharness run in progress at source freeze.
+- All five certificates bind the changed reliability-envelope bytes; independent delta review and normal renewal
+  are required before the next wheel. Earlier wheel remains the owner's tested installation until upgraded.
+- Final broad meta-harness run: 336 passed, 1 skipped. Independent reviewer rerun: 34 passed. Full lint/import
+  contracts pass; public-CI source scan zero findings. No existing public tag or release changed.
+- Independent frozen delta attestation committed at 5b6c69a, preserving original attribution. All five normal
+  renewals exited 0 (150 passing receipts) and committed at d755589. Generated catalogue refreshed.
+- New wheel builds are byte-identical. Installed-wheel/MCP smokes pass on Python 3.12/3.13 and all five installed
+  certificate bindings inspect cleanly. New hash/source recorded in wheel.json. Real UI retest remains pending;
+  the old owner installation is unchanged until the owner upgrades and restarts the client.
+
+### Step 1: one meaning of a call across doors (28 October)
+
+- `ok` is false whenever the effective state is blocked-escalated; a blocked result keeps its answer in `result`, and
+  `g6 invoke` exits 1 when not ok. `g6.invoke` is a checked Python door with the same label correction, door rule and
+  sensitive-operation policy as MCP and the CLI; a parity test covers plain, sensitive, blocked and self-claimed
+  verified results. Drift fixes and contract wording ("declared structural obligations") are in the release notes.
+- The patch-review utility protocol (V9) was registered and frozen before any Step 2 code; the owner approved its
+  margins, agent and pool for the feasibility level only. No patch has been generated and nothing has been spent.
+- An independent reader declined to attest the contract wording twice until it was true of the code, then attested
+  the delta (55c8cc6). Normal issuance at that commit ran in a Linux container with no network and bubblewrap
+  confinement; the renewed records changed hashes and isolation only, no check result (6654b19).
+- CI passed all nine jobs on 6654b19. Ruff, the three import contracts and the diff check pass. Two builds with the
+  same SOURCE_DATE_EPOCH are byte-identical; installed-wheel/MCP smokes pass on Python 3.12.11 and 3.13.5 and all
+  five installed certificates inspect cleanly. New hash/source recorded in wheel.json. Nothing was published.

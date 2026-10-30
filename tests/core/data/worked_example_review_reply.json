@@ -1,0 +1,1108 @@
+{
+ "completion_state": "qualified-draft",
+ "reliability_label": "qualified-draft",
+ "warning_card": {
+  "code": "G6_E_PATCH_REVIEW",
+  "message": "Test integrity compromised: the tests may not be trustworthy for this patch (git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner/b.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner2/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/include_exclude_tests/b/dont_exclude/a.py, tests/data/nested_gitignore_tests/root/a.py, tests/data/nested_gitignore_tests/root/child/a.py and 1 more).",
+  "suggested_action": "Read the changed tests and runner files yourself: restore what the patch weakened, or confirm the change is intended, then review it again.",
+  "severity": "amber",
+  "why": "Test integrity compromised: the tests may not be trustworthy for this patch (git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner/b.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner2/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/include_exclude_tests/b/dont_exclude/a.py, tests/data/nested_gitignore_tests/root/a.py, tests/data/nested_gitignore_tests/root/child/a.py and 1 more).",
+  "risks": [
+   "Test integrity compromised: the tests may not be trustworthy for this patch (git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner/b.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner2/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/include_exclude_tests/b/dont_exclude/a.py, tests/data/nested_gitignore_tests/root/a.py, tests/data/nested_gitignore_tests/root/child/a.py and 1 more)."
+  ],
+  "verified": false,
+  "next_step": "Read the changed tests and runner files yourself: restore what the patch weakened, or confirm the change is intended, then review it again."
+ },
+ "evidence": [
+  {
+   "source": "g6.workforce.repo_tests",
+   "summary": "tier 1: pytest tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines tests/test_format.py: passed",
+   "authority": "host-observed",
+   "artifact_digest": "45d93d9359ad56219496b5b417a8a04e55ca4a2fa8657e620b91d0f800417955",
+   "base_commit": "eed1ebf8eb1d58da38994f6793ab15372c12909a",
+   "scope": "these test outcomes on this working tree; not complete correctness",
+   "tier": 1,
+   "check": "stated checks and extra tests",
+   "command": "pytest tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines tests/test_format.py",
+   "tests": [
+    "tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines",
+    "tests/test_format.py"
+   ],
+   "verdict": "passed",
+   "seconds": 28.923,
+   "passed": 305,
+   "failed": 0,
+   "skipped": 0,
+   "said": "",
+   "receipt": "",
+   "loaded_outside": {
+    "_pytest": "/work/black/.venv/lib/python3.12/site-packages/_pytest/__init__.py",
+    "_pytest._argcomplete": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_argcomplete.py",
+    "_pytest._code": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_code/__init__.py",
+    "_pytest._code.code": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_code/code.py",
+    "_pytest._code.source": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_code/source.py",
+    "_pytest._io": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/__init__.py",
+    "_pytest._io.pprint": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/pprint.py",
+    "_pytest._io.saferepr": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/saferepr.py",
+    "_pytest._io.terminalwriter": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/terminalwriter.py",
+    "_pytest._io.wcwidth": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/wcwidth.py",
+    "_pytest._py": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/__init__.py",
+    "_pytest._py.error": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/error.py",
+    "_pytest._py.path": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/path.py",
+    "_pytest._version": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_version.py",
+    "_pytest.approx": "/work/black/.venv/lib/python3.12/site-packages/_pytest/approx.py",
+    "_pytest.assertion": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/__init__.py",
+    "_pytest.assertion._compare_any": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_any.py",
+    "_pytest.assertion._compare_mapping": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_mapping.py",
+    "_pytest.assertion._compare_sequence": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_sequence.py",
+    "_pytest.assertion._compare_set": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_set.py",
+    "_pytest.assertion._guards": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_guards.py",
+    "_pytest.assertion._typing": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_typing.py",
+    "_pytest.assertion.compare_text": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/compare_text.py",
+    "_pytest.assertion.highlight": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/highlight.py",
+    "_pytest.assertion.rewrite": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/rewrite.py",
+    "_pytest.assertion.truncate": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/truncate.py",
+    "_pytest.assertion.util": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/util.py",
+    "_pytest.cacheprovider": "/work/black/.venv/lib/python3.12/site-packages/_pytest/cacheprovider.py",
+    "_pytest.capture": "/work/black/.venv/lib/python3.12/site-packages/_pytest/capture.py",
+    "_pytest.compat": "/work/black/.venv/lib/python3.12/site-packages/_pytest/compat.py",
+    "_pytest.config": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py",
+    "_pytest.config.argparsing": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/argparsing.py",
+    "_pytest.config.exceptions": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/exceptions.py",
+    "_pytest.config.findpaths": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/findpaths.py",
+    "_pytest.debugging": "/work/black/.venv/lib/python3.12/site-packages/_pytest/debugging.py",
+    "_pytest.deprecated": "/work/black/.venv/lib/python3.12/site-packages/_pytest/deprecated.py",
+    "_pytest.doctest": "/work/black/.venv/lib/python3.12/site-packages/_pytest/doctest.py",
+    "_pytest.faulthandler": "/work/black/.venv/lib/python3.12/site-packages/_pytest/faulthandler.py",
+    "_pytest.fixtures": "/work/black/.venv/lib/python3.12/site-packages/_pytest/fixtures.py",
+    "_pytest.freeze_support": "/work/black/.venv/lib/python3.12/site-packages/_pytest/freeze_support.py",
+    "_pytest.helpconfig": "/work/black/.venv/lib/python3.12/site-packages/_pytest/helpconfig.py",
+    "_pytest.hookspec": "/work/black/.venv/lib/python3.12/site-packages/_pytest/hookspec.py",
+    "_pytest.junitxml": "/work/black/.venv/lib/python3.12/site-packages/_pytest/junitxml.py",
+    "_pytest.legacypath": "/work/black/.venv/lib/python3.12/site-packages/_pytest/legacypath.py",
+    "_pytest.logging": "/work/black/.venv/lib/python3.12/site-packages/_pytest/logging.py",
+    "_pytest.main": "/work/black/.venv/lib/python3.12/site-packages/_pytest/main.py",
+    "_pytest.mark": "/work/black/.venv/lib/python3.12/site-packages/_pytest/mark/__init__.py",
+    "_pytest.mark.expression": "/work/black/.venv/lib/python3.12/site-packages/_pytest/mark/expression.py",
+    "_pytest.mark.structures": "/work/black/.venv/lib/python3.12/site-packages/_pytest/mark/structures.py",
+    "_pytest.monkeypatch": "/work/black/.venv/lib/python3.12/site-packages/_pytest/monkeypatch.py",
+    "_pytest.nodeid": "/work/black/.venv/lib/python3.12/site-packages/_pytest/nodeid.py",
+    "_pytest.nodes": "/work/black/.venv/lib/python3.12/site-packages/_pytest/nodes.py",
+    "_pytest.outcomes": "/work/black/.venv/lib/python3.12/site-packages/_pytest/outcomes.py",
+    "_pytest.pastebin": "/work/black/.venv/lib/python3.12/site-packages/_pytest/pastebin.py",
+    "_pytest.pathlib": "/work/black/.venv/lib/python3.12/site-packages/_pytest/pathlib.py",
+    "_pytest.pytester": "/work/black/.venv/lib/python3.12/site-packages/_pytest/pytester.py",
+    "_pytest.python": "/work/black/.venv/lib/python3.12/site-packages/_pytest/python.py",
+    "_pytest.raises": "/work/black/.venv/lib/python3.12/site-packages/_pytest/raises.py",
+    "_pytest.recwarn": "/work/black/.venv/lib/python3.12/site-packages/_pytest/recwarn.py",
+    "_pytest.reports": "/work/black/.venv/lib/python3.12/site-packages/_pytest/reports.py",
+    "_pytest.runner": "/work/black/.venv/lib/python3.12/site-packages/_pytest/runner.py",
+    "_pytest.scope": "/work/black/.venv/lib/python3.12/site-packages/_pytest/scope.py",
+    "_pytest.setuponly": "/work/black/.venv/lib/python3.12/site-packages/_pytest/setuponly.py",
+    "_pytest.setupplan": "/work/black/.venv/lib/python3.12/site-packages/_pytest/setupplan.py",
+    "_pytest.skipping": "/work/black/.venv/lib/python3.12/site-packages/_pytest/skipping.py",
+    "_pytest.stash": "/work/black/.venv/lib/python3.12/site-packages/_pytest/stash.py",
+    "_pytest.subtests": "/work/black/.venv/lib/python3.12/site-packages/_pytest/subtests.py",
+    "_pytest.terminal": "/work/black/.venv/lib/python3.12/site-packages/_pytest/terminal.py",
+    "_pytest.threadexception": "/work/black/.venv/lib/python3.12/site-packages/_pytest/threadexception.py",
+    "_pytest.timing": "/work/black/.venv/lib/python3.12/site-packages/_pytest/timing.py",
+    "_pytest.tmpdir": "/work/black/.venv/lib/python3.12/site-packages/_pytest/tmpdir.py",
+    "_pytest.tracemalloc": "/work/black/.venv/lib/python3.12/site-packages/_pytest/tracemalloc.py",
+    "_pytest.unittest": "/work/black/.venv/lib/python3.12/site-packages/_pytest/unittest.py",
+    "_pytest.unraisableexception": "/work/black/.venv/lib/python3.12/site-packages/_pytest/unraisableexception.py",
+    "_pytest.warning_types": "/work/black/.venv/lib/python3.12/site-packages/_pytest/warning_types.py",
+    "_pytest.warnings": "/work/black/.venv/lib/python3.12/site-packages/_pytest/warnings.py",
+    "click": "/work/black/.venv/lib/python3.12/site-packages/click/__init__.py",
+    "click._compat": "/work/black/.venv/lib/python3.12/site-packages/click/_compat.py",
+    "click._utils": "/work/black/.venv/lib/python3.12/site-packages/click/_utils.py",
+    "click.core": "/work/black/.venv/lib/python3.12/site-packages/click/core.py",
+    "click.decorators": "/work/black/.venv/lib/python3.12/site-packages/click/decorators.py",
+    "click.exceptions": "/work/black/.venv/lib/python3.12/site-packages/click/exceptions.py",
+    "click.formatting": "/work/black/.venv/lib/python3.12/site-packages/click/formatting.py",
+    "click.globals": "/work/black/.venv/lib/python3.12/site-packages/click/globals.py",
+    "click.parser": "/work/black/.venv/lib/python3.12/site-packages/click/parser.py",
+    "click.termui": "/work/black/.venv/lib/python3.12/site-packages/click/termui.py",
+    "click.testing": "/work/black/.venv/lib/python3.12/site-packages/click/testing.py",
+    "click.types": "/work/black/.venv/lib/python3.12/site-packages/click/types.py",
+    "click.utils": "/work/black/.venv/lib/python3.12/site-packages/click/utils.py",
+    "execnet": "/work/black/.venv/lib/python3.12/site-packages/execnet/__init__.py",
+    "execnet._version": "/work/black/.venv/lib/python3.12/site-packages/execnet/_version.py",
+    "execnet.gateway": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway.py",
+    "execnet.gateway_base": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway_base.py",
+    "execnet.gateway_bootstrap": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway_bootstrap.py",
+    "execnet.gateway_io": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway_io.py",
+    "execnet.multi": "/work/black/.venv/lib/python3.12/site-packages/execnet/multi.py",
+    "execnet.rsync": "/work/black/.venv/lib/python3.12/site-packages/execnet/rsync.py",
+    "execnet.rsync_remote": "/work/black/.venv/lib/python3.12/site-packages/execnet/rsync_remote.py",
+    "execnet.xspec": "/work/black/.venv/lib/python3.12/site-packages/execnet/xspec.py",
+    "fd7dcdb10166ebd4db98__mypyc": "/work/black/.venv/lib/python3.12/site-packages/fd7dcdb10166ebd4db98__mypyc.cpython-312-x86_64-linux-gnu.so",
+    "iniconfig": "/work/black/.venv/lib/python3.12/site-packages/iniconfig/__init__.py",
+    "iniconfig._parse": "/work/black/.venv/lib/python3.12/site-packages/iniconfig/_parse.py",
+    "iniconfig.exceptions": "/work/black/.venv/lib/python3.12/site-packages/iniconfig/exceptions.py",
+    "mypy_extensions": "/work/black/.venv/lib/python3.12/site-packages/mypy_extensions.py",
+    "packaging": "/work/black/.venv/lib/python3.12/site-packages/packaging/__init__.py",
+    "packaging._elffile": "/work/black/.venv/lib/python3.12/site-packages/packaging/_elffile.py",
+    "packaging._manylinux": "/work/black/.venv/lib/python3.12/site-packages/packaging/_manylinux.py",
+    "packaging._musllinux": "/work/black/.venv/lib/python3.12/site-packages/packaging/_musllinux.py",
+    "packaging._ranges": "/work/black/.venv/lib/python3.12/site-packages/packaging/_ranges.py",
+    "packaging.specifiers": "/work/black/.venv/lib/python3.12/site-packages/packaging/specifiers.py",
+    "packaging.tags": "/work/black/.venv/lib/python3.12/site-packages/packaging/tags.py",
+    "packaging.utils": "/work/black/.venv/lib/python3.12/site-packages/packaging/utils.py",
+    "packaging.version": "/work/black/.venv/lib/python3.12/site-packages/packaging/version.py",
+    "pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/__init__.py",
+    "pathspec._backends": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/__init__.py",
+    "pathspec._backends._utils": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/_utils.py",
+    "pathspec._backends.agg": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/agg.py",
+    "pathspec._backends.hyperscan": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/__init__.py",
+    "pathspec._backends.hyperscan._base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/_base.py",
+    "pathspec._backends.hyperscan.base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/base.py",
+    "pathspec._backends.hyperscan.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/gitignore.py",
+    "pathspec._backends.hyperscan.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/pathspec.py",
+    "pathspec._backends.re2": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/__init__.py",
+    "pathspec._backends.re2._base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/_base.py",
+    "pathspec._backends.re2.base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/base.py",
+    "pathspec._backends.re2.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/gitignore.py",
+    "pathspec._backends.re2.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/pathspec.py",
+    "pathspec._backends.simple": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/simple/__init__.py",
+    "pathspec._backends.simple.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/simple/gitignore.py",
+    "pathspec._backends.simple.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/simple/pathspec.py",
+    "pathspec._meta": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_meta.py",
+    "pathspec._typing": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_typing.py",
+    "pathspec._version": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_version.py",
+    "pathspec.backend": "/work/black/.venv/lib/python3.12/site-packages/pathspec/backend.py",
+    "pathspec.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/gitignore.py",
+    "pathspec.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/pathspec.py",
+    "pathspec.pattern": "/work/black/.venv/lib/python3.12/site-packages/pathspec/pattern.py",
+    "pathspec.patterns": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/__init__.py",
+    "pathspec.patterns.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/__init__.py",
+    "pathspec.patterns.gitignore.base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/base.py",
+    "pathspec.patterns.gitignore.basic": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/basic.py",
+    "pathspec.patterns.gitignore.spec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/spec.py",
+    "pathspec.patterns.gitwildmatch": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitwildmatch.py",
+    "pathspec.util": "/work/black/.venv/lib/python3.12/site-packages/pathspec/util.py",
+    "platformdirs": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/__init__.py",
+    "platformdirs._xdg": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/_xdg.py",
+    "platformdirs.api": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/api.py",
+    "platformdirs.pytest_plugin": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/pytest_plugin.py",
+    "platformdirs.unix": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/unix.py",
+    "platformdirs.version": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/version.py",
+    "pluggy": "/work/black/.venv/lib/python3.12/site-packages/pluggy/__init__.py",
+    "pluggy._caller": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_caller.py",
+    "pluggy._callers": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_callers.py",
+    "pluggy._compat": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_compat.py",
+    "pluggy._config": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_config.py",
+    "pluggy._decorators": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_decorators.py",
+    "pluggy._execution": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_execution.py",
+    "pluggy._hooks": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_hooks.py",
+    "pluggy._impl": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_impl.py",
+    "pluggy._manager": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_manager.py",
+    "pluggy._result": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_result.py",
+    "pluggy._tracing": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_tracing.py",
+    "pluggy._warnings": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_warnings.py",
+    "py": "/work/black/.venv/lib/python3.12/site-packages/py.py",
+    "py.error": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/error.py",
+    "py.path": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/path.py",
+    "pygments": "/work/black/.venv/lib/python3.12/site-packages/pygments/__init__.py",
+    "pygments.console": "/work/black/.venv/lib/python3.12/site-packages/pygments/console.py",
+    "pygments.filter": "/work/black/.venv/lib/python3.12/site-packages/pygments/filter.py",
+    "pygments.filters": "/work/black/.venv/lib/python3.12/site-packages/pygments/filters/__init__.py",
+    "pygments.formatter": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatter.py",
+    "pygments.formatters": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatters/__init__.py",
+    "pygments.formatters._mapping": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatters/_mapping.py",
+    "pygments.formatters.terminal": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatters/terminal.py",
+    "pygments.lexer": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexer.py",
+    "pygments.lexers": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/__init__.py",
+    "pygments.lexers._mapping": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/_mapping.py",
+    "pygments.lexers.diff": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/diff.py",
+    "pygments.lexers.python": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/python.py",
+    "pygments.modeline": "/work/black/.venv/lib/python3.12/site-packages/pygments/modeline.py",
+    "pygments.plugin": "/work/black/.venv/lib/python3.12/site-packages/pygments/plugin.py",
+    "pygments.regexopt": "/work/black/.venv/lib/python3.12/site-packages/pygments/regexopt.py",
+    "pygments.styles": "/work/black/.venv/lib/python3.12/site-packages/pygments/styles/__init__.py",
+    "pygments.styles._mapping": "/work/black/.venv/lib/python3.12/site-packages/pygments/styles/_mapping.py",
+    "pygments.token": "/work/black/.venv/lib/python3.12/site-packages/pygments/token.py",
+    "pygments.unistring": "/work/black/.venv/lib/python3.12/site-packages/pygments/unistring.py",
+    "pygments.util": "/work/black/.venv/lib/python3.12/site-packages/pygments/util.py",
+    "pytest": "/work/black/.venv/lib/python3.12/site-packages/pytest/__init__.py",
+    "pytokens": "/work/black/.venv/lib/python3.12/site-packages/pytokens/__init__.cpython-312-x86_64-linux-gnu.so",
+    "typing_extensions": "/work/black/.venv/lib/python3.12/site-packages/typing_extensions.py",
+    "xdist": "/work/black/.venv/lib/python3.12/site-packages/xdist/__init__.py",
+    "xdist._path": "/work/black/.venv/lib/python3.12/site-packages/xdist/_path.py",
+    "xdist._version": "/work/black/.venv/lib/python3.12/site-packages/xdist/_version.py",
+    "xdist.looponfail": "/work/black/.venv/lib/python3.12/site-packages/xdist/looponfail.py",
+    "xdist.newhooks": "/work/black/.venv/lib/python3.12/site-packages/xdist/newhooks.py",
+    "xdist.plugin": "/work/black/.venv/lib/python3.12/site-packages/xdist/plugin.py"
+   }
+  }
+ ],
+ "egress_notice": [],
+ "request_id": "1a4b10724676",
+ "task_id": "",
+ "run_id": "",
+ "degraded": true,
+ "degradation_reason": "Test integrity compromised: the tests may not be trustworthy for this patch (git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_",
+ "known_limitations": [
+  "Test integrity compromised: the tests may not be trustworthy for this patch (git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner/b.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner2/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/include_exclude_tests/b/dont_exclude/a.py, tests/data/nested_gitignore_tests/root/a.py, tests/data/nested_gitignore_tests/root/child/a.py and 1 more)."
+ ],
+ "missing_checks": [
+  "Independent verification was not completed for this output."
+ ],
+ "recommended_next_steps": [
+  "Read the changed tests and runner files yourself: restore what the patch weakened, or confirm the change is intended, then review it again."
+ ],
+ "risk_level": "medium",
+ "confidence": null,
+ "block_reason": "",
+ "required_human_decision": "",
+ "evidence_collected": [],
+ "safe_next_action": "",
+ "rollback_or_containment": "",
+ "ok": true,
+ "assessment": {
+  "outcome": "test_integrity_compromised",
+  "summary": "Test integrity compromised: the tests may not be trustworthy for this patch (git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner/b.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner2/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/include_exclude_tests/b/dont_exclude/a.py, tests/data/nested_gitignore_tests/root/a.py, tests/data/nested_gitignore_tests/root/child/a.py and 1 more).",
+  "reasons": [
+   {
+    "stage": "integrity",
+    "code": "ignored_file_can_change_tests",
+    "detail": "git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner/b.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner2/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/include_exclude_tests/b/dont_exclude/a.py, tests/data/nested_gitignore_tests/root/a.py, tests/data/nested_gitignore_tests/root/child/a.py and 1 more"
+   }
+  ],
+  "requirements": [
+   {
+    "id": "R1",
+    "text": "A file with an unterminated # fmt: off keeps its trailing blank lines",
+    "provenance": "stated",
+    "kind": "requirement",
+    "checks": [
+     {
+      "id": "tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines",
+      "provenance": "stated",
+      "verdict": "passed",
+      "detail": "1 test(s) passed"
+     }
+    ],
+    "status": "passed_on_stated_checks",
+    "reason": "passed on its stated checks: tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines"
+   },
+   {
+    "id": "R2",
+    "text": "Existing fmt: off/on/skip behaviour is unchanged",
+    "provenance": "stated",
+    "kind": "requirement",
+    "checks": [
+     {
+      "id": "tests/test_format.py",
+      "provenance": "stated",
+      "verdict": "passed",
+      "detail": "304 test(s) passed"
+     }
+    ],
+    "status": "passed_on_stated_checks",
+    "reason": "passed on its stated checks: tests/test_format.py"
+   }
+  ],
+  "requirements_without_adequate_check": [],
+  "specification_note": "The task's specification may be incomplete: G6 checks the requirements stated here, and it cannot rule out in general that the task needs something no requirement states.",
+  "proposals": [],
+  "scope": {
+   "artifact_digest": "45d93d9359ad56219496b5b417a8a04e55ca4a2fa8657e620b91d0f800417955",
+   "base_commit": "eed1ebf8eb1d58da38994f6793ab15372c12909a",
+   "changed_files": [
+    "src/black/comments.py",
+    "tests/test_black.py"
+   ],
+   "environment": {
+    "isolation": {
+     "backend": "bubblewrap",
+     "why": "",
+     "network": false,
+     "container": null,
+     "profile": null
+    },
+    "python": "/work/black/.venv/bin/python",
+    "interpreter_source": "repository",
+    "repo_env": {},
+    "env_set_by_g6": [
+     "HYPOTHESIS_STORAGE_DIRECTORY"
+    ],
+    "host_python_version": "3.12.14",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41"
+   },
+   "checks_run": [
+    {
+     "tier": 1,
+     "check": "stated checks and extra tests",
+     "command": "pytest tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines tests/test_format.py",
+     "tests": [
+      "tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines",
+      "tests/test_format.py"
+     ],
+     "verdict": "passed",
+     "seconds": 28.923,
+     "passed": 305,
+     "failed": 0,
+     "skipped": 0,
+     "said": "",
+     "receipt": "",
+     "provenance": "stated",
+     "loaded_outside": {
+      "_pytest": "/work/black/.venv/lib/python3.12/site-packages/_pytest/__init__.py",
+      "_pytest._argcomplete": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_argcomplete.py",
+      "_pytest._code": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_code/__init__.py",
+      "_pytest._code.code": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_code/code.py",
+      "_pytest._code.source": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_code/source.py",
+      "_pytest._io": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/__init__.py",
+      "_pytest._io.pprint": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/pprint.py",
+      "_pytest._io.saferepr": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/saferepr.py",
+      "_pytest._io.terminalwriter": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/terminalwriter.py",
+      "_pytest._io.wcwidth": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_io/wcwidth.py",
+      "_pytest._py": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/__init__.py",
+      "_pytest._py.error": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/error.py",
+      "_pytest._py.path": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/path.py",
+      "_pytest._version": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_version.py",
+      "_pytest.approx": "/work/black/.venv/lib/python3.12/site-packages/_pytest/approx.py",
+      "_pytest.assertion": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/__init__.py",
+      "_pytest.assertion._compare_any": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_any.py",
+      "_pytest.assertion._compare_mapping": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_mapping.py",
+      "_pytest.assertion._compare_sequence": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_sequence.py",
+      "_pytest.assertion._compare_set": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_compare_set.py",
+      "_pytest.assertion._guards": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_guards.py",
+      "_pytest.assertion._typing": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/_typing.py",
+      "_pytest.assertion.compare_text": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/compare_text.py",
+      "_pytest.assertion.highlight": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/highlight.py",
+      "_pytest.assertion.rewrite": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/rewrite.py",
+      "_pytest.assertion.truncate": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/truncate.py",
+      "_pytest.assertion.util": "/work/black/.venv/lib/python3.12/site-packages/_pytest/assertion/util.py",
+      "_pytest.cacheprovider": "/work/black/.venv/lib/python3.12/site-packages/_pytest/cacheprovider.py",
+      "_pytest.capture": "/work/black/.venv/lib/python3.12/site-packages/_pytest/capture.py",
+      "_pytest.compat": "/work/black/.venv/lib/python3.12/site-packages/_pytest/compat.py",
+      "_pytest.config": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py",
+      "_pytest.config.argparsing": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/argparsing.py",
+      "_pytest.config.exceptions": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/exceptions.py",
+      "_pytest.config.findpaths": "/work/black/.venv/lib/python3.12/site-packages/_pytest/config/findpaths.py",
+      "_pytest.debugging": "/work/black/.venv/lib/python3.12/site-packages/_pytest/debugging.py",
+      "_pytest.deprecated": "/work/black/.venv/lib/python3.12/site-packages/_pytest/deprecated.py",
+      "_pytest.doctest": "/work/black/.venv/lib/python3.12/site-packages/_pytest/doctest.py",
+      "_pytest.faulthandler": "/work/black/.venv/lib/python3.12/site-packages/_pytest/faulthandler.py",
+      "_pytest.fixtures": "/work/black/.venv/lib/python3.12/site-packages/_pytest/fixtures.py",
+      "_pytest.freeze_support": "/work/black/.venv/lib/python3.12/site-packages/_pytest/freeze_support.py",
+      "_pytest.helpconfig": "/work/black/.venv/lib/python3.12/site-packages/_pytest/helpconfig.py",
+      "_pytest.hookspec": "/work/black/.venv/lib/python3.12/site-packages/_pytest/hookspec.py",
+      "_pytest.junitxml": "/work/black/.venv/lib/python3.12/site-packages/_pytest/junitxml.py",
+      "_pytest.legacypath": "/work/black/.venv/lib/python3.12/site-packages/_pytest/legacypath.py",
+      "_pytest.logging": "/work/black/.venv/lib/python3.12/site-packages/_pytest/logging.py",
+      "_pytest.main": "/work/black/.venv/lib/python3.12/site-packages/_pytest/main.py",
+      "_pytest.mark": "/work/black/.venv/lib/python3.12/site-packages/_pytest/mark/__init__.py",
+      "_pytest.mark.expression": "/work/black/.venv/lib/python3.12/site-packages/_pytest/mark/expression.py",
+      "_pytest.mark.structures": "/work/black/.venv/lib/python3.12/site-packages/_pytest/mark/structures.py",
+      "_pytest.monkeypatch": "/work/black/.venv/lib/python3.12/site-packages/_pytest/monkeypatch.py",
+      "_pytest.nodeid": "/work/black/.venv/lib/python3.12/site-packages/_pytest/nodeid.py",
+      "_pytest.nodes": "/work/black/.venv/lib/python3.12/site-packages/_pytest/nodes.py",
+      "_pytest.outcomes": "/work/black/.venv/lib/python3.12/site-packages/_pytest/outcomes.py",
+      "_pytest.pastebin": "/work/black/.venv/lib/python3.12/site-packages/_pytest/pastebin.py",
+      "_pytest.pathlib": "/work/black/.venv/lib/python3.12/site-packages/_pytest/pathlib.py",
+      "_pytest.pytester": "/work/black/.venv/lib/python3.12/site-packages/_pytest/pytester.py",
+      "_pytest.python": "/work/black/.venv/lib/python3.12/site-packages/_pytest/python.py",
+      "_pytest.raises": "/work/black/.venv/lib/python3.12/site-packages/_pytest/raises.py",
+      "_pytest.recwarn": "/work/black/.venv/lib/python3.12/site-packages/_pytest/recwarn.py",
+      "_pytest.reports": "/work/black/.venv/lib/python3.12/site-packages/_pytest/reports.py",
+      "_pytest.runner": "/work/black/.venv/lib/python3.12/site-packages/_pytest/runner.py",
+      "_pytest.scope": "/work/black/.venv/lib/python3.12/site-packages/_pytest/scope.py",
+      "_pytest.setuponly": "/work/black/.venv/lib/python3.12/site-packages/_pytest/setuponly.py",
+      "_pytest.setupplan": "/work/black/.venv/lib/python3.12/site-packages/_pytest/setupplan.py",
+      "_pytest.skipping": "/work/black/.venv/lib/python3.12/site-packages/_pytest/skipping.py",
+      "_pytest.stash": "/work/black/.venv/lib/python3.12/site-packages/_pytest/stash.py",
+      "_pytest.subtests": "/work/black/.venv/lib/python3.12/site-packages/_pytest/subtests.py",
+      "_pytest.terminal": "/work/black/.venv/lib/python3.12/site-packages/_pytest/terminal.py",
+      "_pytest.threadexception": "/work/black/.venv/lib/python3.12/site-packages/_pytest/threadexception.py",
+      "_pytest.timing": "/work/black/.venv/lib/python3.12/site-packages/_pytest/timing.py",
+      "_pytest.tmpdir": "/work/black/.venv/lib/python3.12/site-packages/_pytest/tmpdir.py",
+      "_pytest.tracemalloc": "/work/black/.venv/lib/python3.12/site-packages/_pytest/tracemalloc.py",
+      "_pytest.unittest": "/work/black/.venv/lib/python3.12/site-packages/_pytest/unittest.py",
+      "_pytest.unraisableexception": "/work/black/.venv/lib/python3.12/site-packages/_pytest/unraisableexception.py",
+      "_pytest.warning_types": "/work/black/.venv/lib/python3.12/site-packages/_pytest/warning_types.py",
+      "_pytest.warnings": "/work/black/.venv/lib/python3.12/site-packages/_pytest/warnings.py",
+      "click": "/work/black/.venv/lib/python3.12/site-packages/click/__init__.py",
+      "click._compat": "/work/black/.venv/lib/python3.12/site-packages/click/_compat.py",
+      "click._utils": "/work/black/.venv/lib/python3.12/site-packages/click/_utils.py",
+      "click.core": "/work/black/.venv/lib/python3.12/site-packages/click/core.py",
+      "click.decorators": "/work/black/.venv/lib/python3.12/site-packages/click/decorators.py",
+      "click.exceptions": "/work/black/.venv/lib/python3.12/site-packages/click/exceptions.py",
+      "click.formatting": "/work/black/.venv/lib/python3.12/site-packages/click/formatting.py",
+      "click.globals": "/work/black/.venv/lib/python3.12/site-packages/click/globals.py",
+      "click.parser": "/work/black/.venv/lib/python3.12/site-packages/click/parser.py",
+      "click.termui": "/work/black/.venv/lib/python3.12/site-packages/click/termui.py",
+      "click.testing": "/work/black/.venv/lib/python3.12/site-packages/click/testing.py",
+      "click.types": "/work/black/.venv/lib/python3.12/site-packages/click/types.py",
+      "click.utils": "/work/black/.venv/lib/python3.12/site-packages/click/utils.py",
+      "execnet": "/work/black/.venv/lib/python3.12/site-packages/execnet/__init__.py",
+      "execnet._version": "/work/black/.venv/lib/python3.12/site-packages/execnet/_version.py",
+      "execnet.gateway": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway.py",
+      "execnet.gateway_base": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway_base.py",
+      "execnet.gateway_bootstrap": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway_bootstrap.py",
+      "execnet.gateway_io": "/work/black/.venv/lib/python3.12/site-packages/execnet/gateway_io.py",
+      "execnet.multi": "/work/black/.venv/lib/python3.12/site-packages/execnet/multi.py",
+      "execnet.rsync": "/work/black/.venv/lib/python3.12/site-packages/execnet/rsync.py",
+      "execnet.rsync_remote": "/work/black/.venv/lib/python3.12/site-packages/execnet/rsync_remote.py",
+      "execnet.xspec": "/work/black/.venv/lib/python3.12/site-packages/execnet/xspec.py",
+      "fd7dcdb10166ebd4db98__mypyc": "/work/black/.venv/lib/python3.12/site-packages/fd7dcdb10166ebd4db98__mypyc.cpython-312-x86_64-linux-gnu.so",
+      "iniconfig": "/work/black/.venv/lib/python3.12/site-packages/iniconfig/__init__.py",
+      "iniconfig._parse": "/work/black/.venv/lib/python3.12/site-packages/iniconfig/_parse.py",
+      "iniconfig.exceptions": "/work/black/.venv/lib/python3.12/site-packages/iniconfig/exceptions.py",
+      "mypy_extensions": "/work/black/.venv/lib/python3.12/site-packages/mypy_extensions.py",
+      "packaging": "/work/black/.venv/lib/python3.12/site-packages/packaging/__init__.py",
+      "packaging._elffile": "/work/black/.venv/lib/python3.12/site-packages/packaging/_elffile.py",
+      "packaging._manylinux": "/work/black/.venv/lib/python3.12/site-packages/packaging/_manylinux.py",
+      "packaging._musllinux": "/work/black/.venv/lib/python3.12/site-packages/packaging/_musllinux.py",
+      "packaging._ranges": "/work/black/.venv/lib/python3.12/site-packages/packaging/_ranges.py",
+      "packaging.specifiers": "/work/black/.venv/lib/python3.12/site-packages/packaging/specifiers.py",
+      "packaging.tags": "/work/black/.venv/lib/python3.12/site-packages/packaging/tags.py",
+      "packaging.utils": "/work/black/.venv/lib/python3.12/site-packages/packaging/utils.py",
+      "packaging.version": "/work/black/.venv/lib/python3.12/site-packages/packaging/version.py",
+      "pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/__init__.py",
+      "pathspec._backends": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/__init__.py",
+      "pathspec._backends._utils": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/_utils.py",
+      "pathspec._backends.agg": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/agg.py",
+      "pathspec._backends.hyperscan": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/__init__.py",
+      "pathspec._backends.hyperscan._base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/_base.py",
+      "pathspec._backends.hyperscan.base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/base.py",
+      "pathspec._backends.hyperscan.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/gitignore.py",
+      "pathspec._backends.hyperscan.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/hyperscan/pathspec.py",
+      "pathspec._backends.re2": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/__init__.py",
+      "pathspec._backends.re2._base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/_base.py",
+      "pathspec._backends.re2.base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/base.py",
+      "pathspec._backends.re2.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/gitignore.py",
+      "pathspec._backends.re2.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/re2/pathspec.py",
+      "pathspec._backends.simple": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/simple/__init__.py",
+      "pathspec._backends.simple.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/simple/gitignore.py",
+      "pathspec._backends.simple.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_backends/simple/pathspec.py",
+      "pathspec._meta": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_meta.py",
+      "pathspec._typing": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_typing.py",
+      "pathspec._version": "/work/black/.venv/lib/python3.12/site-packages/pathspec/_version.py",
+      "pathspec.backend": "/work/black/.venv/lib/python3.12/site-packages/pathspec/backend.py",
+      "pathspec.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/gitignore.py",
+      "pathspec.pathspec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/pathspec.py",
+      "pathspec.pattern": "/work/black/.venv/lib/python3.12/site-packages/pathspec/pattern.py",
+      "pathspec.patterns": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/__init__.py",
+      "pathspec.patterns.gitignore": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/__init__.py",
+      "pathspec.patterns.gitignore.base": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/base.py",
+      "pathspec.patterns.gitignore.basic": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/basic.py",
+      "pathspec.patterns.gitignore.spec": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitignore/spec.py",
+      "pathspec.patterns.gitwildmatch": "/work/black/.venv/lib/python3.12/site-packages/pathspec/patterns/gitwildmatch.py",
+      "pathspec.util": "/work/black/.venv/lib/python3.12/site-packages/pathspec/util.py",
+      "platformdirs": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/__init__.py",
+      "platformdirs._xdg": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/_xdg.py",
+      "platformdirs.api": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/api.py",
+      "platformdirs.pytest_plugin": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/pytest_plugin.py",
+      "platformdirs.unix": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/unix.py",
+      "platformdirs.version": "/work/black/.venv/lib/python3.12/site-packages/platformdirs/version.py",
+      "pluggy": "/work/black/.venv/lib/python3.12/site-packages/pluggy/__init__.py",
+      "pluggy._caller": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_caller.py",
+      "pluggy._callers": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_callers.py",
+      "pluggy._compat": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_compat.py",
+      "pluggy._config": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_config.py",
+      "pluggy._decorators": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_decorators.py",
+      "pluggy._execution": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_execution.py",
+      "pluggy._hooks": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_hooks.py",
+      "pluggy._impl": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_impl.py",
+      "pluggy._manager": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_manager.py",
+      "pluggy._result": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_result.py",
+      "pluggy._tracing": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_tracing.py",
+      "pluggy._warnings": "/work/black/.venv/lib/python3.12/site-packages/pluggy/_warnings.py",
+      "py": "/work/black/.venv/lib/python3.12/site-packages/py.py",
+      "py.error": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/error.py",
+      "py.path": "/work/black/.venv/lib/python3.12/site-packages/_pytest/_py/path.py",
+      "pygments": "/work/black/.venv/lib/python3.12/site-packages/pygments/__init__.py",
+      "pygments.console": "/work/black/.venv/lib/python3.12/site-packages/pygments/console.py",
+      "pygments.filter": "/work/black/.venv/lib/python3.12/site-packages/pygments/filter.py",
+      "pygments.filters": "/work/black/.venv/lib/python3.12/site-packages/pygments/filters/__init__.py",
+      "pygments.formatter": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatter.py",
+      "pygments.formatters": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatters/__init__.py",
+      "pygments.formatters._mapping": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatters/_mapping.py",
+      "pygments.formatters.terminal": "/work/black/.venv/lib/python3.12/site-packages/pygments/formatters/terminal.py",
+      "pygments.lexer": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexer.py",
+      "pygments.lexers": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/__init__.py",
+      "pygments.lexers._mapping": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/_mapping.py",
+      "pygments.lexers.diff": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/diff.py",
+      "pygments.lexers.python": "/work/black/.venv/lib/python3.12/site-packages/pygments/lexers/python.py",
+      "pygments.modeline": "/work/black/.venv/lib/python3.12/site-packages/pygments/modeline.py",
+      "pygments.plugin": "/work/black/.venv/lib/python3.12/site-packages/pygments/plugin.py",
+      "pygments.regexopt": "/work/black/.venv/lib/python3.12/site-packages/pygments/regexopt.py",
+      "pygments.styles": "/work/black/.venv/lib/python3.12/site-packages/pygments/styles/__init__.py",
+      "pygments.styles._mapping": "/work/black/.venv/lib/python3.12/site-packages/pygments/styles/_mapping.py",
+      "pygments.token": "/work/black/.venv/lib/python3.12/site-packages/pygments/token.py",
+      "pygments.unistring": "/work/black/.venv/lib/python3.12/site-packages/pygments/unistring.py",
+      "pygments.util": "/work/black/.venv/lib/python3.12/site-packages/pygments/util.py",
+      "pytest": "/work/black/.venv/lib/python3.12/site-packages/pytest/__init__.py",
+      "pytokens": "/work/black/.venv/lib/python3.12/site-packages/pytokens/__init__.cpython-312-x86_64-linux-gnu.so",
+      "typing_extensions": "/work/black/.venv/lib/python3.12/site-packages/typing_extensions.py",
+      "xdist": "/work/black/.venv/lib/python3.12/site-packages/xdist/__init__.py",
+      "xdist._path": "/work/black/.venv/lib/python3.12/site-packages/xdist/_path.py",
+      "xdist._version": "/work/black/.venv/lib/python3.12/site-packages/xdist/_version.py",
+      "xdist.looponfail": "/work/black/.venv/lib/python3.12/site-packages/xdist/looponfail.py",
+      "xdist.newhooks": "/work/black/.venv/lib/python3.12/site-packages/xdist/newhooks.py",
+      "xdist.plugin": "/work/black/.venv/lib/python3.12/site-packages/xdist/plugin.py"
+     }
+    }
+   ],
+   "checks_skipped": [
+    {
+     "tier": 2,
+     "check": "tests that touch the changed modules",
+     "reason": "tier 1 found an integrity problem"
+    },
+    {
+     "tier": 2,
+     "check": "stated checks at the base commit",
+     "reason": "an earlier check found a problem"
+    },
+    {
+     "tier": 3,
+     "check": "mutation and old-against-new probes",
+     "reason": "tier 3 not run: mutation and old-against-new probes are not part of this version"
+    }
+   ],
+   "receipts": [
+    {
+     "tier": 1,
+     "receipt": "",
+     "receipt_status": "not_supplied"
+    }
+   ],
+   "assumptions": [],
+   "search": {
+    "templates": true,
+    "test_adequacy": false,
+    "template_instances": 0,
+    "proposed_checks": 0,
+    "model_calls": 0
+   },
+   "import_roots": [],
+   "seconds": 29.74
+  },
+  "unknowns": [
+   "an ignored file G6 did not judge: src/_black_version.py",
+   "an ignored file G6 did not judge: tests/data/ignore_directory_gitignore_tests/abc.py",
+   "an ignored file G6 did not judge: tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner3/d.py",
+   "tier 1's test receipt did not match (not_supplied: no test receipt: git ignores files that could change this run, tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_multiple_sources/dir2/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/a.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner/b.py, tests/data/ignore_directory_gitignore_tests/large_ignored_dir_two/inner2/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/ignore_subfolders_gitignore_tests/subdir/subdir/c.py, tests/data/include_exclude_tests/b/dont_exclude/a.py, tests/data/nested_gitignore_tests/root/a.py, tests/data/nested_gitignore_tests/root/child/a.py), so the coding gate counted that run as caller-declared"
+  ],
+  "next_actions": [
+   "Read the changed tests and runner files yourself: restore what the patch weakened, or confirm the change is intended, then review it again.",
+   "Look into the unknowns yourself: G6 does not count them for or against the patch."
+  ],
+  "not_checked": [
+   "behaviour no stated check exercises",
+   "requirements the task needs but does not state",
+   "whether the tests are independent of the patch's author",
+   "source freshness",
+   "benefit relative to a baseline",
+   "merge authorisation"
+  ],
+  "completion": {
+   "demonstrated": [
+    {
+     "requirement": "R1",
+     "text": "A file with an unterminated # fmt: off keeps its trailing blank lines",
+     "kind": "requirement",
+     "checks": [
+      "tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines"
+     ],
+     "receipts": [
+      {
+       "tier": 1,
+       "receipt": "",
+       "receipt_status": "not_supplied"
+      }
+     ]
+    },
+    {
+     "requirement": "R2",
+     "text": "Existing fmt: off/on/skip behaviour is unchanged",
+     "kind": "requirement",
+     "checks": [
+      "tests/test_format.py"
+     ],
+     "receipts": [
+      {
+       "tier": 1,
+       "receipt": "",
+       "receipt_status": "not_supplied"
+      }
+     ]
+    }
+   ],
+   "not_established": [],
+   "defects_reproduced": {
+    "stated_and_repository_checks": [],
+    "proposed_checks": []
+   },
+   "preservation": [
+    {
+     "obligation": "the repository's tests that touch the changed modules",
+     "provenance": "repository_stated",
+     "result": "not run: tier 1 found an integrity problem",
+     "regressions": []
+    }
+   ],
+   "test_adequacy": [],
+   "open_questions": [],
+   "activities": [
+    {
+     "activity": "check run",
+     "tier": 1,
+     "what": "stated checks and extra tests",
+     "tests": [
+      "tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines",
+      "tests/test_format.py"
+     ],
+     "provenance": "stated",
+     "result": "passed",
+     "seconds": 28.923,
+     "model_calls": 0
+    },
+    {
+     "activity": "check run",
+     "tier": 2,
+     "what": "tests that touch the changed modules",
+     "result": "skipped",
+     "reason": "tier 1 found an integrity problem",
+     "seconds": 0,
+     "model_calls": 0
+    },
+    {
+     "activity": "check run",
+     "tier": 2,
+     "what": "stated checks at the base commit",
+     "result": "skipped",
+     "reason": "an earlier check found a problem",
+     "seconds": 0,
+     "model_calls": 0
+    },
+    {
+     "activity": "check run",
+     "tier": 3,
+     "what": "mutation and old-against-new probes",
+     "result": "skipped",
+     "reason": "tier 3 not run: mutation and old-against-new probes are not part of this version",
+     "seconds": 0,
+     "model_calls": 0
+    }
+   ]
+  },
+  "report": "**Test integrity is in doubt** (test_integrity_compromised). Qualified draft: merging needs your separate approval.\n\n## Reproduced findings\n- **Test integrity: a file git ignores could change the tests** (ignored_file_can_change_tests): `git ignores files that could change the tests: tests/data/gitignore_used_on_multiple_sources/dir1/a.py, tests/data/gitignore_used_on_mult...`\n\n## Not established\n- None.\n\n## Demonstrated on the stated checks\n- `R1` on `tests/test_black.py::test_fmt_off_to_eof_keeps_trailing_blank_lines`\n- `R2` on `tests/test_format.py`\n\n## For you to decide\n- 4 unknown(s) G6 counts neither for nor against the patch (`assessment.unknowns`).\n- Merging: it needs your separate approval; G6 never merges.\n\n## How this was decided\n- **Proposed:** the patch `45d93d9359ad` on base `eed1ebf8eb1d`, 2 requirement(s); checks from you (the stated checks).\n- **Tested:** the stated checks: `passed`; isolation `bubblewrap`; 29.7 seconds; tests that touch the changed code (not run: `the stated checks found an integrity problem`); the stated checks at the base commit (not run: `an earlier check found a problem`) and 1 more not run.\n- **Gate:** Test integrity is in doubt (test_integrity_compromised): a sign that the tests, their configuration or a run cannot be trusted comes before every other finding (ignored_file_can_change_tests).\n- **Approve:** waiting for you: merging needs your separate approval.\n\nThe task's specification may be incomplete: G6 checked the requirements as they were stated and cannot rule out something they leave out."
+ },
+ "merge": {
+  "status": "requires_separate_approval",
+  "reason": "G6 does not authorise merging. This assessment reports evidence from the stated checks; merging is a separate decision that needs its own approval.",
+  "reasons": [
+   "No answer text was supplied, so there is nothing to check."
+  ]
+ },
+ "gate": {
+  "verdict": "revise",
+  "completion_state": "qualified-draft",
+  "findings": [
+   {
+    "code": "empty_answer",
+    "severity": "revise",
+    "message": "No answer text was supplied, so there is nothing to check."
+   }
+  ],
+  "evidence_basis": "caller-declared",
+  "receipts": [
+   {
+    "receipt": "",
+    "receipt_status": "not_supplied"
+   }
+  ],
+  "warning_card": null,
+  "assurance": {
+   "status": "contract-checked",
+   "stages": [
+    {
+     "component": "patch_gate_adapter",
+     "operation": "adapt",
+     "implementation": "g6.harness.patch_review.GateAdapter",
+     "implementation_sha256": "59f0df743315f58ab37392f7eaaf1f5c36bebe4cb2c442ac31dc1506f0fa697b",
+     "contract": {
+      "name": "patch_gate_adapter",
+      "purpose": "",
+      "inputs_required": [
+       "task",
+       "claim",
+       "test_runs"
+      ],
+      "inputs_optional": [],
+      "inputs_required_per_op": {},
+      "preconditions": [],
+      "outputs": [
+       "task",
+       "answer",
+       "task_contract",
+       "evidence",
+       "verifier"
+      ],
+      "outputs_per_op": {},
+      "evidence_inputs_per_op": {},
+      "evidence_outputs_per_op": {},
+      "side_effects": [],
+      "guarantees": [
+       "does not convert source support into test evidence",
+       "a run that did not happen is not evidence",
+       "a run is G6-observed at the gate only through its stored receipt"
+      ],
+      "good_at": [],
+      "bad_at": [],
+      "known_failure_modes": [],
+      "mitigates_failure_modes": [],
+      "state_surface": {
+       "persistence": "none",
+       "queryable_via": "none",
+       "retention": "run"
+      },
+      "extension_points": null,
+      "cost_estimate": {
+       "tokens_p50": 0,
+       "tokens_p95": 0,
+       "wall_seconds_p95": 0,
+       "usd_p95": 0
+      },
+      "verification_method": "unit_tests_only",
+      "human_review_required": false,
+      "stop_conditions": [],
+      "fallback_block": null,
+      "domain": "general",
+      "standards": [],
+      "regulatory_ethical_constraints": [],
+      "evidence_standard": "",
+      "common_ai_failure_modes": [],
+      "required_sources_tools": [],
+      "source_ops": {
+       "declared_ops": [],
+       "source_capabilities": {},
+       "source_constraints": {},
+       "source_health": {},
+       "source_read": {},
+       "source_mutation_intent": {},
+       "source_mutation_apply": {},
+       "source_rollback_support": {},
+       "source_degradation_report": {},
+       "required_tools": [],
+       "allowed_mutation_surfaces": [],
+       "unsupported_ops": [],
+       "backend_constraints": {}
+      },
+      "review_level": "user_review",
+      "forbidden_claims": [],
+      "escalation_triggers": [],
+      "good_examples": [],
+      "unsafe_examples": [],
+      "usage_examples": [],
+      "prebuilt_templates": [],
+      "reliability_card": {
+       "version": 2,
+       "block_name": "patch_gate_adapter",
+       "purpose": "",
+       "inputs_required": [
+        "task",
+        "claim",
+        "test_runs"
+       ],
+       "inputs_optional": [],
+       "preconditions": [],
+       "outputs": [
+        "task",
+        "answer",
+        "task_contract",
+        "evidence",
+        "verifier"
+       ],
+       "strengths": [],
+       "limitations": [],
+       "known_failure_modes": [],
+       "cost_estimate": {
+        "tokens_p50": 0,
+        "tokens_p95": 0,
+        "wall_seconds_p95": 0,
+        "usd_p95": 0
+       },
+       "verification_method": "unit_tests_only",
+       "human_review_policy": "False",
+       "stop_conditions": [],
+       "fallback_workaround": "",
+       "domain": "general",
+       "standards": [],
+       "regulatory_ethical_constraints": [],
+       "evidence_standard": "",
+       "common_ai_failure_modes": [],
+       "required_sources_tools": [],
+       "source_ops": {
+        "declared_ops": [],
+        "source_capabilities": {},
+        "source_constraints": {},
+        "source_health": {},
+        "source_read": {},
+        "source_mutation_intent": {},
+        "source_mutation_apply": {},
+        "source_rollback_support": {},
+        "source_degradation_report": {},
+        "required_tools": [],
+        "allowed_mutation_surfaces": [],
+        "unsupported_ops": [],
+        "backend_constraints": {}
+       },
+       "review_level": "user_review",
+       "forbidden_claims": [],
+       "escalation_triggers": [],
+       "good_examples": [],
+       "unsafe_examples": [],
+       "usage_examples": [],
+       "prebuilt_templates": []
+      },
+      "version": 1
+     },
+     "inputs": {
+      "task": "caller.task",
+      "claim": "caller.claim",
+      "test_runs": "caller.test_runs"
+     },
+     "params": {}
+    },
+    {
+     "component": "coding_agent_gate",
+     "operation": "verify_answer",
+     "implementation": "g6.coding_agent_gate.coding_agent_gate_block.CodingAgentGateBlock",
+     "implementation_sha256": "300c5a6aa85601ac0add9006eac8825f87001d551e571beb29eda47a9849b517",
+     "contract": {
+      "name": "coding_agent_gate",
+      "purpose": "Assess declared coding evidence and G6's own test receipts, without running tests.",
+      "inputs_required": [],
+      "inputs_optional": [],
+      "inputs_required_per_op": {
+       "verify_answer": [
+        "task",
+        "answer"
+       ],
+       "preflight": [
+        "task"
+       ]
+      },
+      "preconditions": [],
+      "outputs": [],
+      "outputs_per_op": {
+       "verify_answer": [
+        "verdict",
+        "findings",
+        "completion_state"
+       ],
+       "preflight": [
+        "verdict",
+        "findings",
+        "completion_state"
+       ]
+      },
+      "evidence_inputs_per_op": {},
+      "evidence_outputs_per_op": {},
+      "side_effects": [],
+      "guarantees": [
+       "gate pass remains a qualified draft",
+       "evidence is G6-observed only through a stored G6 test receipt for the artifact digest its host bound it to, never one a caller sends"
+      ],
+      "good_at": [],
+      "bad_at": [
+       "authenticating caller evidence",
+       "executing tests"
+      ],
+      "known_failure_modes": [],
+      "mitigates_failure_modes": [],
+      "state_surface": {
+       "persistence": "none",
+       "queryable_via": "none",
+       "retention": "run"
+      },
+      "extension_points": null,
+      "cost_estimate": {
+       "tokens_p50": 0,
+       "tokens_p95": 0,
+       "wall_seconds_p95": 0,
+       "usd_p95": 0
+      },
+      "verification_method": "model",
+      "human_review_required": false,
+      "stop_conditions": [],
+      "fallback_block": null,
+      "domain": "general",
+      "standards": [],
+      "regulatory_ethical_constraints": [],
+      "evidence_standard": "",
+      "common_ai_failure_modes": [],
+      "required_sources_tools": [],
+      "source_ops": {
+       "declared_ops": [],
+       "source_capabilities": {},
+       "source_constraints": {},
+       "source_health": {},
+       "source_read": {},
+       "source_mutation_intent": {},
+       "source_mutation_apply": {},
+       "source_rollback_support": {},
+       "source_degradation_report": {},
+       "required_tools": [],
+       "allowed_mutation_surfaces": [],
+       "unsupported_ops": [],
+       "backend_constraints": {}
+      },
+      "review_level": "user_review",
+      "forbidden_claims": [],
+      "escalation_triggers": [],
+      "good_examples": [],
+      "unsafe_examples": [],
+      "usage_examples": [],
+      "prebuilt_templates": [],
+      "reliability_card": {
+       "version": 2,
+       "block_name": "coding_agent_gate",
+       "purpose": "Assess declared coding evidence and G6's own test receipts, without running tests.",
+       "inputs_required": [],
+       "inputs_optional": [],
+       "preconditions": [],
+       "outputs": [],
+       "strengths": [],
+       "limitations": [
+        "authenticating caller evidence",
+        "executing tests"
+       ],
+       "known_failure_modes": [],
+       "cost_estimate": {
+        "tokens_p50": 0,
+        "tokens_p95": 0,
+        "wall_seconds_p95": 0,
+        "usd_p95": 0
+       },
+       "verification_method": "model",
+       "human_review_policy": "False",
+       "stop_conditions": [],
+       "fallback_workaround": "",
+       "domain": "general",
+       "standards": [],
+       "regulatory_ethical_constraints": [],
+       "evidence_standard": "",
+       "common_ai_failure_modes": [],
+       "required_sources_tools": [],
+       "source_ops": {
+        "declared_ops": [],
+        "source_capabilities": {},
+        "source_constraints": {},
+        "source_health": {},
+        "source_read": {},
+        "source_mutation_intent": {},
+        "source_mutation_apply": {},
+        "source_rollback_support": {},
+        "source_degradation_report": {},
+        "required_tools": [],
+        "allowed_mutation_surfaces": [],
+        "unsupported_ops": [],
+        "backend_constraints": {}
+       },
+       "review_level": "user_review",
+       "forbidden_claims": [],
+       "escalation_triggers": [],
+       "good_examples": [],
+       "unsafe_examples": [],
+       "usage_examples": [],
+       "prebuilt_templates": []
+      },
+      "version": 1
+     },
+     "inputs": {
+      "task": "0.task",
+      "answer": "0.answer",
+      "task_contract": "0.task_contract",
+      "evidence": "0.evidence",
+      "verifier": "0.verifier"
+     },
+     "params": {}
+    }
+   ],
+   "checks": [
+    {
+     "stage": 0,
+     "typed_input": true,
+     "outputs_checked": true,
+     "completion_state": "qualified-draft"
+    },
+    {
+     "stage": 1,
+     "typed_input": true,
+     "outputs_checked": true,
+     "completion_state": "qualified-draft"
+    }
+   ],
+   "evidence": [
+    {
+     "stage": 0,
+     "authority": "producer-declared",
+     "record": {
+      "kind": "test",
+      "ref": "pytest 2 test id(s) in place",
+      "receipt": "",
+      "exit_code": 0
+     }
+    },
+    {
+     "stage": 1,
+     "authority": "producer-declared",
+     "record": {
+      "source": "coding_agent_gate.verify_answer",
+      "summary": "Coding-agent gate returned 'revise': No answer text was supplied, so there is nothing to check. (1 finding(s)).",
+      "verdict": "revise",
+      "checks_run": [
+       "answer_present",
+       "task_contract",
+       "evidence_structure",
+       "test_exit_codes",
+       "verifier_status",
+       "claims_have_files",
+       "readiness_claims",
+       "risk_tier",
+       "review_required",
+       "shortcut_tripwire(text)",
+       "shortcut_scan(diff)"
+      ],
+      "finding_codes": [
+       "empty_answer"
+      ],
+      "evidence_basis": "caller-declared"
+     }
+    },
+    {
+     "stage": 1,
+     "authority": "producer-declared",
+     "record": {
+      "source": "caller",
+      "summary": "test: pytest 2 test id(s) in place",
+      "kind": "test",
+      "ref": "pytest 2 test id(s) in place",
+      "observed_by": "caller",
+      "exit_code": 0
+     }
+    }
+   ],
+   "not_checked": [
+    "application benefit",
+    "complete behavioural correctness",
+    "producer-declared evidence authenticity"
+   ],
+   "integration_tests": [],
+   "application_validation": [],
+   "digest": "80312517bbe96852927a38c80f19423cc80ce3f91b43901656a7688ee66481fe"
+  }
+ },
+ "grounding": {
+  "status": "not run",
+  "reason": "no sources were given",
+  "decides_outcome": false
+ },
+ "artifact_digest": "45d93d9359ad56219496b5b417a8a04e55ca4a2fa8657e620b91d0f800417955"
+}

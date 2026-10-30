@@ -104,7 +104,7 @@ into a video.
 
 - Blender, installed by the person (blender.org/download), on PATH or named by `G6_BLENDER`. G6 never installs or
   bundles it (GPL; run as a separate program).
-- `pip install "g6[image]"` for Pillow, which inspects renders; without it `render` and `viewport_preview` refuse with
+- `pip install "g6[image] @ git+https://github.com/basicisabc1994/g6solver"` for Pillow, which inspects renders; without it `render` and `viewport_preview` refuse with
   `G6_E_MEDIA_EXTRA_MISSING` before Blender is started.
 
 ## Examples

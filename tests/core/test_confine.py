@@ -21,12 +21,31 @@ import pytest
 from g6.core import confine, sandbox
 from g6.core.errors import ISOLATION_UNAVAILABLE
 
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX temporary directory aliases")
+def test_sandbox_accepts_trusted_temp_parent_alias_but_refuses_child_links(tmp_path, monkeypatch, unconfined):
+    # macOS exposes /var through /private/var. Resolve the trusted run root before
+    # execution, while retaining rejection of links created by untrusted code.
+    parent = tmp_path / "real"
+    parent.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(parent, target_is_directory=True)
+    original = confine.run_folder
+    monkeypatch.setattr(confine, "run_folder", lambda **kw: original(dir=alias, **kw))
+    result = sandbox.run_script("open('answer.txt', 'w').write('42')")
+    assert result.status == "ok", result.stderr
+    assert result.outputs == {"answer.txt": b"42"}
+    result = sandbox.run_script("import os; os.symlink('input.txt', 'answer.txt')", {"input.txt": "42"})
+    assert result.status == "error" and "G6_E_UNSAFE_OUTPUT" in result.stderr
+    assert result.outputs == {}
+
 WINDOWS = sys.platform == "win32"
 windows_only = pytest.mark.skipif(not WINDOWS, reason="the AppContainer backend is Windows's")
 
 
 def _off(monkeypatch: pytest.MonkeyPatch, why: str = "unavailable: switched off by this test") -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, why))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 # --- with no backend: the run proceeds as before and says so ------------------------------------------------------------
@@ -61,7 +80,7 @@ def test_isolation_is_only_required_when_the_setting_says_so(monkeypatch, value)
     assert sandbox.run_script("print(1)", timeout_s=30).status == "ok"
 
 
-@pytest.mark.parametrize(("platform", "said"), [("linux", "not tested on this platform"), ("darwin", "macOS")])
+@pytest.mark.parametrize(("platform", "said"), [("darwin", "macOS"), ("freebsd14", "freebsd14")])
 def test_no_untested_backend_claims_isolation(monkeypatch, platform, said) -> None:
     monkeypatch.setattr(confine.sys, "platform", platform)
     name, why = confine.backend(sys.executable)

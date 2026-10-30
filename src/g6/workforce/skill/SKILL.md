@@ -13,18 +13,17 @@ certificate that says, test by test, what the evidence supports.
 ## When to use it
 
 - A test fails in a local repository and an agent is about to change code to make it pass.
-- You are worried the agent will "fix" the problem by editing or skipping the tests, or by changing the goal.
+- The agent may "fix" the problem by editing or skipping the tests, or by changing the goal.
 - You want the failure reproduced before anyone writes a fix.
 - You want to know whether a change to a test file weakened it (`verify.weakened_tests`), or whether the tests would
-  notice a small deliberate change to the code (`mutation_check.mutants` makes the changes; `mutation_check.check`
-  runs your tests on each).
+  notice a small deliberate change to the code (`mutation_check.check` runs your tests on each).
 
 ## When not to use it
 
 - A quick check of a drafted answer or a risky plan: use `coding_agent_gate` (`verify_answer`, `preflight`).
 - Tuning how your coding agent is run across many tasks: use `g6.metaharness` (its `coding` module uses
   `repo_tests.run` as the oracle).
-- The repository is not a git repository, holds submodules, or you need an operating-system sandbox that `g6 doctor`
+- The repository is not a git repository or holds submodules, or you need an operating-system sandbox `g6 doctor`
   says is unavailable.
 - No repository: a mission is yours to plan; only the code-change objective is compiled.
 
@@ -62,8 +61,8 @@ certificate that says, test by test, what the evidence supports.
 - `coding_learning.answer`: whether a change a learned probe disagrees with is intended (approve retires the probe).
 
 Each answer is recorded under the identity the approver returns, with a principal that says it was not authenticated
-(`coding_learning.approve` records the identity only). An `Approver` is any callable, so one an agent writes approves
-on its own; an agent hands the approver to the person and never answers for them. G6 cannot prove a person gave it.
+(`coding_learning.approve` records the identity only). One an agent writes approves on its own; an agent hands the
+approver to the person and never answers for them. G6 cannot prove a person gave it.
 
 ## Alone and composed
 
@@ -98,11 +97,11 @@ Composed:
 ## Blind spots
 
 - `runner_in_process` (code under test running with the owner's permissions): tests run in a child process, confined
-  by the operating system where G6 can (a repository in place read only, local servers failing), else as you, when no
+  by the operating system where G6 can (what that refuses: `repo_tests`' module documentation), else as you, when no
   pass verifies, as always on Linux and macOS for now.
 - `live_working_tree` (tests run in a repository that can change during the run): in-place runs use the repository
-  itself; git's view is compared before and after, but ignored files, files the run created, files outside the
-  repository and a change made and undone within the run are not covered.
+  itself; git's view is compared before and after, which misses what `repo_tests`' module documentation lists (ignored
+  files, say).
 - pytest only: Go and JavaScript tests are not run, and the reply says so. One test file that cannot be imported ends
   `repo_tests.run` as `collection_error`, with no result for the rest. It does not run the tests at the starting commit
   (a mission does), so a failure that predates the change is reported like one the change caused.
@@ -119,12 +118,13 @@ Composed:
 ## What it needs
 
 - **git** (the `git` command on PATH; one older than 2.31 is refused): missions, the bench's in-place runs and the
-  repository tests read and reset a working tree with it, with a clean environment, every config key that would start
-  a program switched off, and no transport. A repository with submodules is refused (`G6_E_GIT_SUBMODULE_REFUSED`).
+  repository tests read and reset a working tree with it, in a clean environment with no config key that starts a
+  program and no transport. A repository with submodules is refused (`G6_E_GIT_SUBMODULE_REFUSED`),
+  except that `repo_tests` accepts a submodule never set up (no `.git` in its folder) and hashes its files itself.
 - **pytest**, in the Python running G6 (found by importing it with `-I`): the mission bench runs
-  every test with G6's own interpreter, so the repository's imports must resolve there too; `repo_tests.run` and
-  in-place runs use the repository's own `.venv` or `venv` first. Not one of G6's own dependencies: `pip install
-  pytest`. No network and no account.
+  every test with it, so the repository's imports must resolve there too; `repo_tests.run` and
+  in-place runs use the Python `G6_REPO_PYTHON` names where you start G6 (a full path), then the repository's own
+  `.venv` or `venv`. Not one of G6's own dependencies: `pip install pytest`. No network and no account.
 
 ## Examples
 

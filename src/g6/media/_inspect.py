@@ -64,7 +64,7 @@ MIN_EXTENT = 1e-9
 READABLE = ("PNG", "JPEG", "WEBP", "GIF", "BMP", "TIFF")
 READABLE_NAMES = f"{', '.join(READABLE[:-1])} or {READABLE[-1]}"
 
-_PILLOW = "Pillow is not installed, so the image cannot be inspected: pip install 'g6[image]'"
+_PILLOW = "Pillow is not installed, so the image cannot be inspected: pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'"
 
 
 def pillow() -> Any:

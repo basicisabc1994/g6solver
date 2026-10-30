@@ -310,7 +310,7 @@ Under six named conditions, the optimizer converges to a Pareto-stationary point
 *Statement.* Assume A1 (exact stationarity), A2, A3, A4. Let K4 at each step compute the Désidéri direction d\_t = argmin over d in the convex hull of {g\_1, …, g\_{k+1}} of ‖d‖, and update θ\_{t+1} = θ\_t + η\_t d\_t with η\_t = c/√t. Then
 
 ```latex
-\min_{t \le T}\ \mathbb{E}\big[\operatorname{dist}\big(0,\ \operatorname{conv}\{\nabla_\theta F_i(\theta_t)\}\big)^2\big] \;\le\; \frac{C_0 + C_1 \sigma^2 \log T}{\sqrt{T}}
+\min_{t \le T}\ \mathbb{E}\big[\mathrm{dist}\big(0,\ \mathrm{conv}\{\nabla_\theta F_i(\theta_t)\}\big)^2\big] \;\le\; \frac{C_0 + C_1 \sigma^2 \log T}{\sqrt{T}}
 ```
 
 for constants C\_0, C\_1 depending on L, c, and the initial suboptimality. In particular θ\_t converges in expectation to a Pareto-stationary point.

@@ -24,7 +24,7 @@ from g6.mcp import describe_reply, invoke_reply
 
 #: A PDF is read by pypdf (g6[docs]); without it a PDF is an honest not-installed, which test_d9 checks on its own
 needs_pypdf = pytest.mark.skipif(importlib.util.find_spec("pypdf") is None,
-                                 reason="the PDF converter needs pypdf: pip install 'g6[docs]'")
+                                 reason="the PDF converter needs pypdf: pip install 'g6[docs] @ git+https://github.com/basicisabc1994/g6solver'")
 
 
 def _pdf(objs: list[bytes]) -> bytes:
@@ -283,7 +283,7 @@ def test_g4_text_that_is_not_utf8_is_read_with_the_bad_bytes_reported() -> None:
 def test_d9_without_pypdf_a_pdf_is_an_honest_not_installed_and_the_rest_still_converts(monkeypatch) -> None:
     monkeypatch.setattr(converters, "_pypdf", lambda: None)
     out = _run(data_base64=_b64(tiny_pdf(["x"])), media_type="application/pdf")
-    assert out["code"] == "G6_E_KNOWLEDGE_EXTRA_MISSING" and "pip install 'g6[docs]'" in out["reason"]
+    assert out["code"] == "G6_E_KNOWLEDGE_EXTRA_MISSING" and "pip install 'g6[docs] @ git+https://github.com/basicisabc1994/g6solver'" in out["reason"]
     assert "not installed" in out["warning_card"]["message"]
     assert _run(text="<p>still fine</p>", media_type="text/html")["outcome"] == "ok"
     listed = {t["media_type"]: t for t in _run("types")["types"]}

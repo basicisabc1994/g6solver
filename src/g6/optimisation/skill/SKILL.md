@@ -124,9 +124,9 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[optim]"` for OR-Tools, imported only when an op runs. Without it every solving op is
+- `pip install "g6[optim] @ git+https://github.com/basicisabc1994/g6solver"` for OR-Tools, imported only when an op runs. Without it solving ops are
   `blocked-escalated` with `G6_E_OPTIM_SOLVER_UNAVAILABLE` and the install line.
-- `pip install "g6[optim-nonlinear]"` for SciPy, used by `minimise` and `global_search`; without it they are
+- `pip install "g6[optim-nonlinear] @ git+https://github.com/basicisabc1994/g6solver"` for SciPy, used by `minimise` and `global_search`; without it they are
   `blocked-escalated` with `G6_E_OPTIM_SCIPY_UNAVAILABLE` and the install line.
 - No outside program. No op runs code, writes a file or reaches the network, so none is sensitive.
 

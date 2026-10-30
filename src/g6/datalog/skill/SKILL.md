@@ -99,7 +99,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[formal]"` for Z3, the second engine, imported only when an op runs. Without it the pure-Python
+- `pip install "g6[formal] @ git+https://github.com/basicisabc1994/g6solver"` for Z3, the second engine, imported only when an op runs. Without it the pure-Python
   engine answers alone (`G6_E_DATALOG_ONE_ENGINE`), and asking for `engine` `z3` is refused.
 - No outside program or network. Session writes are sensitive and refused over MCP unless the server allows them; all other ops remain read-only. State lives under state_path in datalog/sessions.db.
 

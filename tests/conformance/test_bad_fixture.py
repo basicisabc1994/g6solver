@@ -280,6 +280,35 @@ def test_offline_records_each_way_out_and_lets_g6_core_run_a_declared_program(tm
           "fetched GET https://example.com/")
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="real bubblewrap launch")
+def test_offline_does_not_blanket_allow_direct_bubblewrap():
+    binary = shutil.which("bwrap")
+    if binary is None:
+        pytest.skip("bubblewrap unavailable")
+    with kit.offline() as reached:
+        subprocess.run([binary, "--help"], capture_output=True, timeout=30, check=True)
+    assert any("itself, not through g6.core" in item for item in reached), reached
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_offline_still_checks_the_program_inside_bubblewrap(bwrap_backend, declared):
+    from g6.core import component_process, confine
+
+    program = outside.OutsideProgram(name="local fixture", purpose="test", install="system",
+                                     licence="system", command="true")
+    with confine.run_folder("g6_kit_payload_") as folder:
+        plan = confine.plan(confine.Confinement(read_write=(folder,)), sys.executable)
+        try:
+            with kit.offline((program,) if declared else ()) as reached, component_process.window(30):
+                done = component_process.run_contained(["/usr/bin/true"], env={}, cwd=folder, confined=plan)
+            assert done.returncode == 0
+            assert (not reached) is declared, reached
+            if not declared:
+                assert any("started 'true', which its __g6_outside__ does not declare" in item for item in reached)
+        finally:
+            plan.release()
+
+
 def test_d6_reports_the_skill_and_its_examples(bad: kit.Target) -> None:
     _says(kit.d6_describe(bad), "a skill named 'g6-wrong-name', not 'g6-bad-extension'")
     found = kit.d6_examples(bad)

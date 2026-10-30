@@ -9,7 +9,7 @@ In order, each step refusing with its own code:
    most :data:`MAX_ROWS` rows and :data:`MAX_COLUMNS` columns), and names DoWhy writes its own columns under refused;
 2. G6's pure-Python identification: the method's route (backdoor, instrumental variable or frontdoor) must identify
    the effect (``G6_E_CAUSAL_NOT_IDENTIFIABLE``, or ``METHOD_NOT_APPLICABLE`` naming the methods that fit);
-3. DoWhy (``pip install 'g6[causal]'``): ``CausalModel.identify_effect`` must agree with G6 (``ENGINES_DISAGREE``),
+3. DoWhy (``pip install 'g6[causal] @ git+https://github.com/basicisabc1994/g6solver'``): ``CausalModel.identify_effect`` must agree with G6 (``ENGINES_DISAGREE``),
    then ``estimate_effect`` with no effect modifiers (so linear regression fits the treatment plus the adjustment set
    alone), its confidence interval at DoWhy's 95% (analytic, or :data:`CI_BOOTSTRAP` bootstrap resamples);
 4. for linear regression, G6's own least-squares fit must match (``CERTIFICATE_REFUTED``);

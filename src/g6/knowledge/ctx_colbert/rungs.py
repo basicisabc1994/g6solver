@@ -187,7 +187,7 @@ class ColbertRung:
     def ready(self) -> str:
         missing = _missing("numpy", *(() if self.loader else ("pylate", "huggingface_hub")))
         if missing:
-            return f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not installed: pip install g6[colbert]"
+            return f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not installed: pip install 'g6[colbert] @ git+https://github.com/basicisabc1994/g6solver'"
         return cached(self.weights, self.cache)[1]
 
     def score(self, query: str, texts: Sequence[str]) -> list[float]:
@@ -216,7 +216,7 @@ class EmbeddingsRung:
         missing = _missing("numpy", *(() if self.loader else ("sentence_transformers", "huggingface_hub")))
         if missing:
             return (f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not installed: "
-                    "pip install g6[embeddings]")
+                    "pip install 'g6[embeddings] @ git+https://github.com/basicisabc1994/g6solver'")
         return cached(self.weights, self.cache)[1]
 
     def score(self, query: str, texts: Sequence[str]) -> list[float]:

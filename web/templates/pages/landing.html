@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}G6: make AI agents check their own work{% endblock %}
-{% block meta_description %}For developers using Claude Code, Codex and other coding agents: G6 is a free, open-source framework that checks for made-up facts, unfinished work and risky actions before your agent says it's done.{% endblock %}
+{% block meta_description %}For developers using Claude Code and Codex: a free, open-source tool your agent calls before it says a change is done. It runs the tests the change touches, looks for weakened tests, and shows each defect it reproduces with a command to see it yourself.{% endblock %}
 {% block content %}
 {% comment %}
 The home page (site design, docs/superpowers/specs/2026-10-19-g6-site-design.md §1b-1c). The lattice is G6's components
@@ -25,9 +25,10 @@ Copy is a draft for the owner's review in the live preview.
     <div class="stage__copy wrap">
         <header class="hero">
             <h1 class="display display--why" id="hero-title">Now you can<br>make AI agents<br>check their<br>own work.</h1>
-            <p class="lede strong why">For developers using Claude Code, Codex and other coding agents: a free,
-            open-source framework that checks for made-up facts, unfinished work and risky actions before your agent
-            says it's done.</p>
+            <p class="lede strong why">For developers using Claude Code and Codex: a free, open-source tool your agent
+            calls before it says a change is done. G6 runs the tests the change touches, looks for weakened tests, and
+            shows each defect it reproduces. It says what it could not check, and can check a change against a formal
+            mathematical model of what it must do, replaying counterexamples on your code.</p>
             <div class="actions">
                 <a href="{% url 'pages:get_started' %}" class="btn cta">Get started</a>
                 <a href="#loop" class="btn">See how it works</a>
@@ -38,9 +39,9 @@ Copy is a draft for the owner's review in the live preview.
         </header>
 
         <div class="answer">
-            <h2 class="display">G6<br>engineers<br>itself.</h2>
+            <h2 class="display">AI builds.<br>Evidence<br>decides.</h2>
             <p class="lede">A harness is everything around a model: what it sees, how its answers are checked, what it
-            may do. G6's harness learns, in four steps.</p>
+            may do. Agents can propose application redesigns through four steps of controlled experimentation; iterative self-improvement is made possible through metacognition over MCP.</p>
         </div>
 
         <ol class="steps" id="loop">
@@ -53,7 +54,7 @@ Copy is a draft for the owner's review in the live preview.
             <li class="step">
                 <span class="step__n">2</span>
                 <h2 class="h2">Test</h2>
-                <p class="lede">Each fix runs on held-out tasks no draft has seen. When one loses, G6 says why.</p>
+                <p class="lede">Each fix is compared with the baseline on registered held-out tasks. Independence depends on keeping those tasks from the proposer. When one loses, G6 says why.</p>
             </li>
             <li class="step">
                 <span class="step__n">3</span>
@@ -196,10 +197,10 @@ Copy is a draft for the owner's review in the live preview.
             </div>
             {% endfor %}
         </div>
-        <p class="ev__note">Grey is the model alone; black is G6. With its winning option for each task set, G6 solved
-        {{ facts.best_total }} of {{ facts.n }} tasks the model alone solved {{ facts.total.A }} of: a larger model's
+        <p class="ev__note">Grey is the model alone; black is G6. With the fixed self-tuning arm D, G6 solved
+        {{ facts.primary_total }} of {{ facts.n }} tasks the model alone solved {{ facts.total.A }} of: a larger model's
         judgement, distilled into a small model's harness, with no weights changed.
-        {% if speed.changes %}In the last development run, G6 found, tested and approved its own changes on
+        {% if speed.changes %}In the last development run, the G6 development fixture recorded tested changes on
         {% for c in speed.changes %}{{ c.dataset }} in {{ c.minutes }} minutes ({{ c.alone }} to {{ c.tuned }} of {{ c.n }}{% if c.from_components %}, starting from every component on{% endif %}){% if not forloop.last %}{% if forloop.revcounter == 2 %} and {% else %}, {% endif %}{% endif %}{% endfor %}.{% endif %}
         <a class="link" href="{% url 'pages:research' %}#reading">How to read these results</a></p>
         <details class="ev__more">
@@ -218,6 +219,48 @@ Copy is a draft for the owner's review in the live preview.
     </div>
 </section>
 
+<section class="band" id="tried-it" aria-labelledby="tried-it-h">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="tried-it-h">What happened when we tried it</h2>
+            </div>
+            <div class="band__body">
+                <p class="lede quiet">We gave Claude Code with Claude Sonnet 5.5 ten recent, real bugs in black,
+                pydantic, starlette, click, attrs and fastapi, with G6 over MCP. G6 reproduced no defect. Six of the
+                ten patches failed the maintainers' tests: G6 asked for more evidence, accepted the patch within the
+                checks the agent stated, or raised an alarm that turned out to be false. We fixed what it taught
+                us.</p>
+                <p>That is G6 today: a careful, isolated check of what your agent states, not yet a defect finder. A
+                second round turned on G6's own model, also Claude Sonnet 5.5, in every review of the same ten bugs:
+                it proposed 51 checks, and none found a defect. Five of the ten new patches failed the maintainers'
+                tests. Making G6 a defect finder is the self-improvement loop's first job.
+                <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md">All ten runs</a></p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="band" id="in-public" aria-labelledby="in-public-h">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="in-public-h">G6 maintaining G6, in public</h2>
+            </div>
+            <div class="band__body">
+                <p class="lede quiet">We're building a loop in which G6 maintains its own GitHub repository. It finds
+                where G6 falls short, has Claude Code and Codex work on the biggest gap in isolated containers, checks
+                every change with G6's own review, and opens a pull request. A maintainer reviews and merges every
+                change.</p>
+                <p>Everything is public: the code, the decisions, the evidence and the agents' transcripts. It's an
+                open experiment in self-improvement infrastructure for AI agents, and we'll report what it shows,
+                including if it doesn't help.
+                <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/docs/superpowers/specs/2026-10-29-self-improvement-loop-design.md">Read the design</a></p>
+            </div>
+        </div>
+    </div>
+</section>
+
 <section class="band band--start" aria-labelledby="start">
     <div class="wrap">
         <div class="cols">
@@ -226,12 +269,16 @@ Copy is a draft for the owner's review in the live preview.
                 <p class="lede quiet">No account and no hosted service: G6 runs on your computer.</p>
             </div>
             <div class="band__body">
+                <p class="small">First make G6's own environment with <code>python -m venv --copies .venv</code> and
+                activate it. <a class="link" href="{% url 'pages:get_started' %}">Get started</a> shows the commands
+                for each system.</p>
                 <div class="cmd"><code id="cmd-start">git clone https://github.com/basicisabc1994/g6solver &amp;&amp; cd g6solver
-pip install ".[mcp]" &amp;&amp; claude mcp add g6 -- g6-mcp</code><button type="button" class="btn btn--small copy" data-copy="#cmd-start">Copy</button></div>
+pip install ".[all]" &amp;&amp; g6 setup --client claude --allow patch_review.review</code><button type="button" class="btn btn--small copy" data-copy="#cmd-start">Copy</button></div>
+                <p class="small quiet">For Codex, use <code>--client codex</code>. <a class="link" href="{% url 'pages:get_started' %}">The Get started page</a> shows the first review.</p>
                 <ul class="ways-line">
                     <li><a href="{% url 'pages:get_started' %}"><b>From your agent</b> over MCP, in Claude Code, Codex or any client</a></li>
                     <li><a href="{% url 'pages:metaharness' %}"><b>In your code</b> as a Python library</a></li>
-                    <li><a href="{% url 'pages:bundles' %}"><b>As an app</b>, a bundle for one job</a></li>
+                    <li><a href="{% url 'pages:bundles' %}"><b>As an app</b>, a worked example for one problem</a></li>
                 </ul>
             </div>
         </div>

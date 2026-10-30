@@ -89,7 +89,7 @@ Composed:
 
 ## What it needs
 
-- `pip install "g6[procedural]"` for NumPy and Pillow (both permissively licensed). Without it, `generate` and `mesh`
+- `pip install "g6[procedural] @ git+https://github.com/basicisabc1994/g6solver"` for NumPy and Pillow (both permissively licensed). Without it, `generate` and `mesh`
   refuse with `G6_E_MEDIA_EXTRA_MISSING` and the install line; `techniques` still answers.
 - Nothing else: no model, no network, no outside program.
 

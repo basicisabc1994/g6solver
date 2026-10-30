@@ -218,6 +218,22 @@ def test_run_plan_survival_an_injected_executor_runs_every_step_in_order() -> No
     assert check_envelope(result.to_dict()) == []
 
 
+def test_a_steps_own_verified_does_not_reach_the_plans_reader() -> None:
+    """Plan A1 review: a plan's steps hand a component's answer to whoever reads the plan, so they are a door; each
+    step's result is the door's copy, which claims no more than the door decided."""
+    from returns.result import Success
+
+    def executor(component: str, op: str, args: dict):
+        return Success({"passed": True, "completion_state": "verified", "checks": [{"state": "verified_ready"}]})
+
+    result = run_plan([RUN_TESTS], executor=executor)
+    step = result.runs[0].result
+    assert step["completion_state"] == "qualified-draft" and step["claimed_completion_state"] == "verified"
+    assert step["checks"] == [{"state": "qualified-draft"}] and step["passed"] is True
+    plain = run_plan([RUN_TESTS], executor=lambda c, o, a: {"completion_state": "verified"}).runs[0].result
+    assert plain["completion_state"] == "qualified-draft"
+
+
 def test_run_plan_through_the_registry_door() -> None:
     result = run_plan([CLAIM], executor=get_registry().invoke, authority=_cleared("A2"))
     assert result.executed == 1 and result.completion_state == "qualified-draft"

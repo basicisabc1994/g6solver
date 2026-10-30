@@ -41,7 +41,7 @@ def test_survival_a_named_unsafe_state_that_is_never_reached_still_gives_zero() 
     assert report.vub == 0.0 and report.completion_state == "qualified-draft"
 
 
-@pytest.mark.skipif(importlib.util.find_spec("z3") is None, reason="z3-solver is not installed (pip install 'g6[formal]')")
+@pytest.mark.skipif(importlib.util.find_spec("z3") is None, reason="z3-solver is not installed (pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver')")
 def test_check_z3_still_takes_a_model_with_no_unsafe_state() -> None:
     from g6.csf.smt import check_z3
 

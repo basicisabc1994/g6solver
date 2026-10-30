@@ -45,7 +45,7 @@ def test_the_home_page_sets_its_headings_and_statements_but_not_its_scene_titles
     assert '"h1,h2,.statement"' in js and 'class="statement"' in page
     # the two display titles in the scene keep their own setting: kinetic.js moves plain headings only, and these break
     # four short lines, so no line runs into the lattice beside it at desktop width
-    assert "Now you can<br>make AI agents<br>check their<br>own work." in page and "G6<br>engineers<br>itself." in page
+    assert "Now you can<br>make AI agents<br>check their<br>own work." in page and "AI builds.<br>Evidence<br>decides." in page
 
 
 @pytest.mark.parametrize("path", STILL)

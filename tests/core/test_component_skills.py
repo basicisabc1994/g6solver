@@ -126,7 +126,9 @@ def test_its_examples_run_through_g6_invoke(name: str) -> None:
         if op in sensitive:
             continue  # it runs a program on this machine; it runs over MCP only when the server's owner allows it
         reply = invoke_reply(name, op, json.dumps(params))
-        assert reply["ok"], (op, reply.get("warning_card"))
+        # the example runs through the door and gives a result; an example may show a block, whose ok is false
+        assert "result" in reply, (op, reply.get("error"))
+        assert reply["ok"] is (reply["completion_state"] != "blocked-escalated"), (op, reply.get("warning_card"))
 
 
 @pytest.mark.parametrize("name", NAMES)

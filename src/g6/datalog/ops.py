@@ -129,7 +129,7 @@ def _model(state: dict[str, Any], program: Program, engine: str, deadline: float
     with_z3 = engine == "z3" or (engine == "auto" and z3_engine.available())
     if engine == "z3" and not z3_engine.available():
         raise Refusal(SOLVER_UNAVAILABLE, "engine='z3' was asked for, but z3-solver is not importable here; install "
-                                          "it with pip install 'g6[formal]'")
+                                          "it with pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'")
     model = seminaive.solve(program, deadline=deadline)
     state["engines"] = [{"name": "pure_python", "version": __version__, "rounds": model.rounds}]
     state["model"] = {"tuples": sum(len(rows) for rows in model.relations.values()),

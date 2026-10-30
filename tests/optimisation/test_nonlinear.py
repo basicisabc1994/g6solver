@@ -22,7 +22,7 @@ from g6.optimisation.envelope import (BEST_FOUND, CERTIFICATE_REFUTED, INPUT_INV
                                       NO_SOLUTION, NOT_CONVERGED, SCIPY_UNAVAILABLE)
 
 needs_scipy = pytest.mark.skipif(importlib.util.find_spec("scipy") is None,
-                                 reason="SciPy is not installed (pip install 'g6[optim-nonlinear]')")
+                                 reason="SciPy is not installed (pip install 'g6[optim-nonlinear] @ git+https://github.com/basicisabc1994/g6solver')")
 
 TWO_WELLS = ["+", ["^", ["-", ["^", "x", 2], 1], 2], ["*", 0.3, "x"]]   # minima near x = -1.04 and x = 0.96
 X = {"x": {"lb": -2, "ub": 2}}
@@ -241,7 +241,7 @@ def test_without_scipy_both_ops_are_blocked_and_say_what_to_install(monkeypatch)
     for op in ("minimise", "global_search"):
         reply = invoke_reply("optimisation", op, json.dumps({"variables": X, "expression": TWO_WELLS}))
         assert reply["completion_state"] == "blocked-escalated" and reply["warning_card"]["code"] == SCIPY_UNAVAILABLE
-        assert "pip install 'g6[optim-nonlinear]'" in reply["warning_card"]["suggested_action"]
+        assert "pip install 'g6[optim-nonlinear] @ git+https://github.com/basicisabc1994/g6solver'" in reply["warning_card"]["suggested_action"]
         assert check_envelope(reply) == []
 
 

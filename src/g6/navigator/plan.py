@@ -316,6 +316,13 @@ def _run_step(check: StepCheck, executor: Executor) -> StepRun:
         return StepRun(check.index, check.component, check.op, "failed", error=str(reply.failure())[:_ERROR_CHARS])
     if kind == "Success":
         reply = reply.unwrap()
+    # A step hands a component's answer to whoever reads the plan, so it goes through the door (plan A1): what is kept
+    # is the door's copy, which claims no more than the door decided.
+    from returns.result import Success
+
+    from g6.core.door import door_reply
+
+    reply = door_reply(check.component, check.op, Success(reply), caller=dict(check.args))["result"]
     declared = outcome_of(reply)
     if declared in (BLOCKED, "error"):
         return StepRun(check.index, check.component, check.op, "failed", reply, f"its answer declares {declared}")

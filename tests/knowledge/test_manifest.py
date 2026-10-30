@@ -229,7 +229,7 @@ def test_d6_it_is_found_by_its_failure_mode_described_and_round_trips_over_mcp()
     assert recorded["ok"] and recorded["completion_state"] == "qualified-draft"
     again = invoke_reply("knowledge_manifest", "verify_passage", json.dumps({"passage_id": passages[0]["id"],
                                                                              "document": doc.model_dump()}))
-    assert again["ok"] and again["result"]["outcome"] == "unverifiable"  # the same snapshot: nothing was re-read
+    assert not again["ok"] and again["result"]["outcome"] == "unverifiable"  # the same snapshot: nothing was re-read
     fresh = invoke_reply("knowledge_manifest", "verify_passage", json.dumps({"passage_id": passages[0]["id"],
                                                                              "document": _doc().model_dump()}))
     assert fresh["ok"] and fresh["result"]["outcome"] == "matches"

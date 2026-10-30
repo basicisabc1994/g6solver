@@ -42,7 +42,7 @@ the harness engineering itself.{% endcomment %}
         {% endfor %}
     </div>
     <ul class="rs-points">
-        <li>With its winning option for each task set, G6 solved <strong>{{ facts.best_total }} of {{ facts.n }}</strong>
+        <li>Exploratory upper bound: selecting the winning option after observing each task set, G6 solved <strong>{{ facts.best_total }} of {{ facts.n }}</strong>
         tasks the model alone solved {{ facts.total.A }} of, and every winning option beat the model alone task by task
         (the table below).</li>
         <li>The gain is the harness, not more compute: spending the same tokens on voting took GSM8K from
@@ -53,6 +53,7 @@ the harness engineering itself.{% endcomment %}
     </ul>
     <div class="rs-finding" id="winning-approach">
         <p><strong>The winning approach follows the task's structure.</strong></p>
+        <p>These options were selected after evaluation. Their unadjusted paired p-values do not validate a deployable selection policy. The fixed self-tuning arm D solved {{ facts.primary_total }} of {{ facts.n }}; report it separately.</p>
         <table class="rs-winners">
             <thead><tr><th scope="col">Task set</th><th scope="col">The task</th><th scope="col">Winning approach</th>
                 <th scope="col">Model alone &rarr; G6</th><th scope="col">Tasks gained, lost</th></tr></thead>

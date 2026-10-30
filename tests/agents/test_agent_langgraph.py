@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("langgraph", reason="LangGraph is not installed (pip install 'g6[agents-langgraph]')")
+pytest.importorskip("langgraph", reason="LangGraph is not installed (pip install 'g6[agents-langgraph] @ git+https://github.com/basicisabc1994/g6solver')")
 
 import g6.agents.agent_langgraph as agent_langgraph_pkg  # noqa: E402
 from g6.action_gating.audit import ActionGateAuditLogger  # noqa: E402

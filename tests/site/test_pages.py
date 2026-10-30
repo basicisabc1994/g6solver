@@ -109,8 +109,10 @@ def test_the_ported_site_is_all_there():
             "get_started", "metaharness", "research", "bundles", "developers", "contribute", "components", "graph"}
     assert {("pages", n) for n in kept} <= names
     # The docs-hub pages that described the hosted service (getting started, architecture, MCP, enhance your agent,
-    # build a workflow) redirect to the open-source pages; the deep docs rewrite them.
-    assert {("docs_hub", n) for n in ("landing", "full")} <= names
+    # build a workflow) redirect to the open-source pages. The full documentation is the repository graph at
+    # docs/full/ (owner, 2026-10-30), so the docs hub keeps only its landing page.
+    assert ("docs_hub", "landing") in names and ("docs_hub", "full") not in names
+    assert next(p for p in PAGES if p.name == "graph").path == "docs/full/"
     assert len([n for ns, n in names if ns == "blog"]) == 22                 # the index and 21 essays
 
 
@@ -120,10 +122,9 @@ def test_the_page_table_has_unique_paths_and_names():
     assert len({(p.namespace, p.name) for p in PAGES}) == len(PAGES)
 
 
-def test_the_home_page_and_a_placeholder_render(client):
+def test_the_home_page_and_the_full_documentation_render(client):
     assert client.get("/").status_code == 200
-    reply = client.get("/docs/full/")
-    assert reply.status_code == 200 and b"being rebuilt" in reply.content
+    assert client.get("/docs/full/").status_code == 200
 
 
 def test_settings_have_no_database_auth_or_analytics():

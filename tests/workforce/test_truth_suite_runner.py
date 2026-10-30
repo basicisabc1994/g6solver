@@ -181,7 +181,9 @@ def test_a_src_package_still_beats_an_installed_one(tmp_path):
 def test_node_ids_do_not_carry_the_repository_path(tmp_path):
     """Review I-3: a parametrize over files found beside the test puts the absolute path in the id; two copies of one
     repository must give the same ids, and the ids must not leak where the server keeps its copies."""
-    files = {"tests/data/one.txt": "1",
+    # Force a >100-character parameter even under Linux's short /tmp paths:
+    # pytest 9.2 otherwise hides this regression behind its short-ID threshold.
+    files = {"tests/data/a_long_filename_that_crosses_pytests_automatic_parameter_id_length_limit.txt": "1",
              "tests/test_paths.py": ("import glob\nimport os\n\nimport pytest\n\n"
                                      "HERE = os.path.dirname(os.path.abspath(__file__))\n"
                                      "FILES = sorted(glob.glob(os.path.join(HERE, 'data', '*.txt')))\n\n\n"

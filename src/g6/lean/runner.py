@@ -15,7 +15,12 @@ directory. It runs under :mod:`g6.core.component_process`: a time limit (default
 is the bound) and the whole process tree killed when a limit is passed; the directory is removed afterwards. Lean's own
 ``--memory`` flag is not used: in Lean 4.22.0 it is rejected as an unknown option.
 
-This is a resource bound, not a sandbox: Lean runs as you. That is why the ops that run it are sensitive: callable from
+A run on the caller's file goes through :mod:`g6.core.confine`, like every run of untrusted code: where a backend can
+confine it (bubblewrap on Linux, an AppContainer on Windows), Lean reads only its toolchain (``confine.program_paths``,
+with ``ELAN_HOME``) and writes only the run directory, with no network; the run's ``isolation`` says how it ran, and
+where isolation is required and no backend can give it the run is refused before Lean starts
+(``G6_E_ISOLATION_UNAVAILABLE``). ``lean --version`` runs nothing of the caller's and is not planned. Elsewhere this is
+a resource bound, not a sandbox: Lean runs as you. That is why the ops that run it are sensitive: callable from
 Python, and over MCP only when the person who runs the server lists them in ``G6_MCP_SENSITIVE`` (owner, 2026-10-20).
 """
 from __future__ import annotations
@@ -26,7 +31,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from g6.core import component_process
+from g6.core import component_process, confine
+from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.outside import find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.lean.envelope import LEAN_ENV, LEAN_MISSING, OUTPUT_TOO_LARGE, RUN_FAILED, TIME_LIMIT, Refusal
@@ -66,7 +72,7 @@ def _environment(root: Path, lean: str) -> dict[str, str]:
 
 
 def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, cap: int, memory_mb: int,
-             record: dict[str, Any]) -> tuple[int, str]:
+             record: dict[str, Any], confined: confine.Plan | None = None) -> tuple[int, str]:
     """Run ``argv`` under a time limit, an output cap and a memory cap, the process tree killed when one is passed."""
     with tempfile.TemporaryFile() as out:
         def too_much() -> bool:
@@ -76,7 +82,8 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
         try:
             with component_process.window(seconds, too_much) as window:
                 code = component_process.run_process(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
-                                                     stderr=subprocess.STDOUT, memory_bytes=memory_mb * 1024 * 1024)
+                                                     stderr=subprocess.STDOUT, memory_bytes=memory_mb * 1024 * 1024,
+                                                     confined=confined)
         except component_process.ExecutionInterrupted as exc:
             if exc.stopped and too_much():
                 raise Refusal(OUTPUT_TOO_LARGE, f"Lean's output passed its cap of {cap} bytes, so the run was stopped "
@@ -84,6 +91,8 @@ def _execute(argv: list[str], cwd: Path, env: dict[str, str], seconds: float, ca
             raise Refusal(TIME_LIMIT, f"Lean did not finish within {seconds:g} s, so it was stopped and its process "
                                       "tree killed") from None
         except (OSError, ProcessTreeError) as exc:
+            if isinstance(exc, confine.NotStarted) and "isolation" in record:
+                record["isolation"] = confine.not_started(record["isolation"], exc)
             raise Refusal(RUN_FAILED, f"Lean could not be run to the end: {exc}"[:500]) from None
         finally:
             if window is not None:
@@ -103,7 +112,7 @@ def run(lean: str, arguments: list[str], *, file_text: str | None, seconds: floa
     """Run ``lean`` (from :func:`find_lean`) with ``arguments`` (``["--json", "Proof.lean"]`` or ``["--version"]``)
     in a fresh directory, with ``file_text`` written there as ``Proof.lean``, and remove the directory. Returns the
     exit code and the output."""
-    with tempfile.TemporaryDirectory(prefix="g6_lean_", ignore_cleanup_errors=True) as tmp:
+    with confine.run_folder(prefix="g6_lean_", ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         for sub in ("work", "tmp", "home"):
             (root / sub).mkdir()
@@ -112,7 +121,21 @@ def run(lean: str, arguments: list[str], *, file_text: str | None, seconds: floa
             (root / "work" / FILE_NAME).write_bytes(file_text.encode("utf-8"))
         argv = [lean, *arguments]
         record["argv"] = list(argv)
-        return _execute(argv, root / "work", _environment(root, lean), seconds, cap, memory_mb, record)
+        env = _environment(root, lean)
+        confined = None
+        if file_text is not None:   # the caller's file: untrusted, so planned (a version run is not)
+            reads = confine.program_paths(lean, env.get("ELAN_HOME", ""))
+            confined = confine.plan(confine.Confinement(read_write=(tmp,), read_only=reads))
+            record["isolation"] = confined.record()
+            said = confine.refused(confined)
+            if said:
+                raise Refusal(ISOLATION_UNAVAILABLE, said)
+        try:
+            return _execute(argv, root / "work", env, seconds, cap, memory_mb, record, confined)
+        finally:
+            left = confined.release() if confined is not None else ""
+            if left:
+                record["isolation"] = {**record["isolation"], "cleanup": left}
 
 
 __all__ = ["DEFAULT_MEMORY_MB", "DEFAULT_TIME_LIMIT_S", "MAX_MEMORY_MB", "MAX_OUTPUT_BYTES", "MAX_TIME_LIMIT_S",

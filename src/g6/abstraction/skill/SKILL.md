@@ -82,7 +82,7 @@ candidate in range and within 0.25 of the data.
 
 It has no block, so over MCP `g6_invoke("abstraction", ...)` answers `G6_E_NO_BLOCK`; `g6_describe("abstraction")`
 serves this skill. From Python: `from g6.abstraction import ConcreteDomain, Library, Quotient, replay, run_gate`. A
-separate stdio server, `python -m g6.abstraction.server`, offers these steps as tools of its own. Its file tools,
+separate stdio server, `python -P -m g6.abstraction.server`, offers these steps as tools of its own. Its file tools,
 `load_dataset`, `save_state` and `load_state`, are refused (`G6_E_SENSITIVE_COMPONENT_DENIED`) unless the person who
 runs the server lists them (`abstraction.save_state`, ...) or `abstraction` in `G6_MCP_SENSITIVE`, and every path
 must lie inside the directory that person names in `ABSTRACTION_MCP_DIR` (`G6_E_ABSTRACTION_PATH_REFUSED`
@@ -110,9 +110,9 @@ equal evaluation budgets.
 
 ## What it needs
 
-`pip install "g6[abstraction]"` for Hypothesis and NumPy; without them `import g6.abstraction` still works, and each
+`pip install "g6[abstraction] @ git+https://github.com/basicisabc1994/g6solver"` for Hypothesis and NumPy; without them `import g6.abstraction` still works, and each
 public name raises an `ImportError` that says what to install. The separate stdio server also needs the MCP extra
-(`pip install "g6[abstraction,mcp]"`); with `ABSTRACTION_MCP_STATE` set to a file inside `ABSTRACTION_MCP_DIR` it
+(`pip install "g6[abstraction,mcp] @ git+https://github.com/basicisabc1994/g6solver"`); with `ABSTRACTION_MCP_STATE` set to a file inside `ABSTRACTION_MCP_DIR` it
 loads its state from that file at start and saves to it as its tools change the state, and it will not start when
 that file is outside the directory. Nothing else: no outside program, no model.
 

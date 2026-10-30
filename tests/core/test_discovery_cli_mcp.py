@@ -17,6 +17,11 @@ def test_find_ranks_by_self_description_and_returns_scores() -> None:
     assert all(h["score"] > 0 and h["matched"] for h in hits)
 
 
+def test_improvement_intents_point_to_the_workflow_loop():
+    assert discovery.find("make my agent better at classification")[0]["component"] == "metaharness"
+    assert "metaharness_start" in discovery.HELP and "g6_compose" in discovery.HELP
+
+
 def test_what_a_component_did_not_port_is_not_ranked() -> None:
     """A ported component's "Not ported from the archive" list names what it does NOT offer. The solver's mention of
     "customer scoping" there once outranked action_gating for "should my agent send this email to a customer"."""
@@ -75,6 +80,8 @@ def test_mcp_server_exposes_only_the_discovery_surface() -> None:
     tools = asyncio.run(server.get_tools())
     # the discovery surface, plus the meta-harness tools added in its Phase 6 (META_HARNESS_PLAN.md; owner ruling Q10)
     # and its recovery tool (DECISIONS #27)
-    assert set(tools) == {"g6_help", "g6_components", "g6_find", "g6_describe", "g6_invoke",
+    assert set(tools) == {"g6_help", "g6_components", "g6_find", "g6_describe", "g6_invoke", "g6_compose", "g6_review_patch",
+                          "metaharness_start", "metaharness_confirm", "metaharness_propose_code",
+                          "metaharness_evaluate_start", "metaharness_job", "metaharness_run",
                           "metaharness_inspect", "metaharness_propose", "metaharness_evaluate", "metaharness_decide",
                           "metaharness_diagnose", "metaharness_approve", "metaharness_rollback"}

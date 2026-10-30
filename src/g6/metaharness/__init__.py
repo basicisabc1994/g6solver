@@ -112,7 +112,7 @@ __g6_maturity__ = "beta"  # no block: Python API only
 # ``coding`` (imported on its own, never by this package) is the only module that reaches workforce and the gate.
 __g6_requires__: tuple[str, ...] = ("action_gating", "bundles", "coding_agent_gate", "context", "distillation",
                                      "guards", "harness", "integrity", "intent_engine", "learning", "llm_router", "navigator",
-                                     "reasoning", "self_training", "workforce")
+                                     "reasoning", "self_training", "workforce", "workspace")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = (
     "repeated_mistake", "unchecked_self_change", "untested_prompt_change", "unseen_early_warning",

@@ -39,15 +39,21 @@ class BundleResult:
             raise ValueError(f"unknown completion state {self.completion_state!r}")
 
     def to_dict(self, *, request_id: str = "", run_id: str = "") -> dict[str, Any]:
-        """The result inside the library envelope; anything short of ``verified`` carries a warning card."""
-        from g6.core.reliability_envelope import envelope_fields, warning_card
+        """The result inside the library envelope; anything short of ``verified`` carries a warning card. The bundle's
+        own ``verified`` goes through the door rule (``g6.core.door``): G6 does not re-run a bundle's checks, so it is
+        held at ``qualified-draft`` with a ``G6_E_PROMOTION_LAW`` card and ``claimed_completion_state``."""
+        from g6.core.door import door_envelope, held_copy
+        from g6.core.reliability_envelope import warning_card
 
-        envelope = envelope_fields(reliability_label=self.completion_state, request_id=request_id, run_id=run_id)
-        if envelope["completion_state"] != VERIFIED:
+        envelope = door_envelope(self.completion_state, who="this bundle", request_id=request_id, run_id=run_id)
+        if envelope["completion_state"] != VERIFIED and "claimed_completion_state" not in envelope:
             code = self.code or ("G6_E_BLOCKED" if envelope["completion_state"] == BLOCKED_ESCALATED
                                  else "G6_E_QUALIFIED_DRAFT")
             envelope["warning_card"] = warning_card(code, self.summary)
-        return {**envelope, "summary": self.summary, "rows": self.rows, "notes": self.notes}
+        # A row's label is the bundle's own word too: G6 re-runs no row, so none reads as verified on the page.
+        rows = held_copy(self.rows, envelope["completion_state"] if envelope["completion_state"] != VERIFIED
+                         else QUALIFIED_DRAFT)
+        return {**envelope, "summary": self.summary, "rows": rows, "notes": self.notes}
 
 
 def weakest(states: list[str]) -> str:
@@ -64,6 +70,9 @@ class Bundle:
     run: Callable[[dict[str, str], Any], BundleResult]
     needs_model: bool = False
     disclaimer: str = ""
+    #: It runs code the person gives it (a repository's tests, a script): its page asks, where no operating-system
+    #: boundary can confine that code and nothing was chosen, whether it may run without one (``g6.bundles.server``).
+    runs_untrusted_code: bool = False
 
 
 def catalog() -> dict[str, Bundle]:

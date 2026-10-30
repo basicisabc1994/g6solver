@@ -100,7 +100,7 @@ def test_d1_requires_dense_refuses_when_only_word_matching_could_answer() -> Non
     out = _run("search", query=PARAPHRASE, passages=[p.model_dump() for p in _passages()], requires_dense=True)
     assert out["completion_state"] == "blocked-escalated" and out["code"] == "G6_E_KNOWLEDGE_DENSE_REQUIRED"
     assert [s["rung"] for s in out["skipped"]] == ["colbert", "embeddings", "bm25"]
-    assert "pip install g6[colbert]" in out["reason"] and "dense retrieval is required" in out["reason"]
+    assert "pip install 'g6[colbert] @ git+https://github.com/basicisabc1994/g6solver'" in out["reason"] and "dense retrieval is required" in out["reason"]
     assert out["hits"] == []
 
 

@@ -30,7 +30,7 @@ import pathlib
 try:
     from pypdf import PdfReader
 except ImportError:
-    pathlib.Path("missing.txt").write_text('pypdf is not installed; pip install "g6[docs]".', encoding="utf-8")
+    pathlib.Path("missing.txt").write_text('pypdf is not installed; pip install "g6[docs] @ git+https://github.com/basicisabc1994/g6solver".', encoding="utf-8")
 else:
     reader = PdfReader("paper.pdf")
     if len(reader.pages) > 500:

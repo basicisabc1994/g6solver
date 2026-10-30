@@ -453,7 +453,7 @@ def test_g4_a_dot_that_fails_or_writes_nothing_usable_is_refused(stand_in: Stand
 def test_g4_a_png_without_pillow_is_refused_before_dot_runs(stand_in: StandIn, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(block, "pillow", lambda: None)
     out = _invoke("render_dot", source="digraph { a }", format="png")
-    assert out["code"] == EXTRA_MISSING and "pip install 'g6[image]'" in out["reason"] and stand_in.calls() == []
+    assert out["code"] == EXTRA_MISSING and "pip install 'g6[image] @ git+https://github.com/basicisabc1994/g6solver'" in out["reason"] and stand_in.calls() == []
 
 
 def test_warnings_dot_prints_are_kept_in_the_evidence(stand_in: StandIn) -> None:

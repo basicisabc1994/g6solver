@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from g6.core import AIBlock, Result
+from g6.core.ai_block import PipelineBlock
 
 
 class _Says(AIBlock):
@@ -62,3 +63,99 @@ def test_a_state_outside_the_three_is_never_relayed_as_verified() -> None:
     # Fails if ai_block._stage_state passes an unknown word through instead of reading it as qualified-draft.
     result = (_Says("L", "verified") >> _Says("R", "done")).infer("x")
     assert result.completion_state == "qualified-draft"
+
+
+def test_two_self_verified_stages_are_held() -> None:
+    """Plan A1: a stage's own verified is a claim; the chain keeps it only when G6's re-check reproduces it."""
+    result = (_Says("L", "verified") >> _Says("R", "verified")).infer("x")
+    assert result.completion_state == "qualified-draft"
+    assert result.claimed_completion_state == "verified"
+    assert result.warning_card["code"] == "G6_E_PROMOTION_LAW"
+
+
+class _Integrity(AIBlock):
+    """A stage named for the integrity package, returning a pinned integrity result over ``root``: its name is not
+    where its code lives, so it is not G6's integrity code."""
+
+    def __init__(self, root) -> None:
+        super().__init__(name="integrity")
+        self._root = root
+
+    def infer(self, data: Any) -> Result[Any]:
+        from dataclasses import asdict
+
+        from g6.integrity import build_manifest, manifest_sha256, verify_tree
+
+        manifest = build_manifest(self._root)
+        found = verify_tree(self._root, manifest, expected_manifest_sha256=manifest_sha256(manifest))
+        return Result.ok({**asdict(found), "completion_state": found.reliability_label})
+
+
+def test_a_stage_named_for_g6s_integrity_package_is_held(tmp_path) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "a.py").write_text("A = 1\n", encoding="utf-8")
+    assert (_Integrity(root) >> _Integrity(root)).infer("x").completion_state == "qualified-draft"
+
+class _OwnPipe(PipelineBlock):
+    """A subclass that overrides ``infer``: it is not the door-checked PipelineBlock, so its word is a stage's word."""
+
+    def infer(self, data: Any) -> Result[Any]:
+        return Result.ok({"completion_state": "verified"})
+
+
+def test_a_pipeline_subclass_that_overrides_infer_is_held() -> None:
+    own = _OwnPipe("own", _Says("L", None), _Says("R", None))
+    assert (own >> _OwnPipe("own2", _Says("L", None), _Says("R", None))).infer("x").completion_state == (
+        "qualified-draft")
+
+
+def test_the_value_dict_says_what_the_attribute_says() -> None:
+    """CORE_LABELS-01: blocks report their state in the value dict, so the door corrects it there too."""
+    result = (_Says("L", "verified") >> _Says("R", "verified")).infer("x")
+    assert result.completion_state == "qualified-draft"
+    assert result.value["completion_state"] == "qualified-draft" and result.value["claimed_completion_state"] == (
+        "verified")
+    labelled = (_Says("L", "verified") >> _Labelled("R")).infer("x")
+    assert labelled.value["reliability_label"] == "qualified-draft"
+
+
+class _Labelled(AIBlock):
+    def infer(self, data: Any) -> Result[Any]:
+        return Result.ok({"answer": data, "reliability_label": "verified"})
+
+
+@pytest.fixture
+def planted_stage(monkeypatch: pytest.MonkeyPatch):
+    """A stand-in for an integrity block G6 does not ship: a stage class planted into ``g6.integrity`` for the test,
+    so its code really lives in G6's integrity package. It returns the integrity record for the root it is given."""
+    import g6.integrity as integrity
+
+    class Stage(AIBlock):
+        def infer(self, data: Any) -> Result[Any]:
+            from dataclasses import asdict
+
+            from g6.integrity import build_manifest, verify_tree
+
+            root = data["root"]
+            found = verify_tree(root, build_manifest(root), expected_manifest_sha256=data["expected_manifest_sha256"])
+            return Result.ok({**asdict(found), "completion_state": found.reliability_label})
+
+    Stage.__module__, Stage.__qualname__ = "g6.integrity", "_PlantedStage"
+    monkeypatch.setattr(integrity, "_PlantedStage", Stage, raising=False)
+    return Stage
+
+
+def test_a_g6_integrity_stage_keeps_verified_only_against_the_pipelines_input(tmp_path, planted_stage) -> None:
+    from g6.integrity import build_manifest, manifest_sha256
+
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "a.py").write_text("A = 1\n", encoding="utf-8")
+    pin = manifest_sha256(build_manifest(root))
+    chain = planted_stage("first") >> planted_stage("second")
+    kept = chain.infer({"root": str(root), "expected_manifest_sha256": pin})
+    assert kept.completion_state == "verified" and kept.value["completion_state"] == "verified"
+    (root / "a.py").write_text("A = 2\n", encoding="utf-8")
+    changed = chain.infer({"root": str(root), "expected_manifest_sha256": pin})
+    assert changed.completion_state == "blocked-escalated"

@@ -911,7 +911,7 @@ class Runtime:
         scope_line = f"Scope: {scope['module']} / {scope['function']}. " if scope else ""
         return [{"unit": "", "kind": "acceptance",
                  "question": scope_line + coding.access_reason(standard)
-                             + f"{ask}: python -m g6.workforce.decide confirm {mission_id} --reason \"...\"",
+                             + f"{ask}: python -P -m g6.workforce.decide confirm {mission_id} --reason \"...\"",
                  "detail": {"what_counts_as_done": acceptance.describe(contract)}}]
 
     def _required(self, mission_id: str, unit_key: str, kind: str) -> bool:

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 The G6 authors
 
-"""K-P0-4 structural seam: the evaluator authority makes a promotion witness
-unforgeable by the generator. With a key configured, only an evaluator-stamped
-witness promotes; a self-minted one (structurally perfect but unsigned) demotes.
-With no key configured, behavior is byte-identical to the structural-only law.
+"""K-P0-4 seam: the evaluator signing key and the independent-replay layer, as a library.
+
+The promotion law no longer reads signatures (plan A1): a ``verified`` stands only on G6's own re-check at the door,
+tested in ``tests/core/test_door_promotion.py``. What stays here is the signing and replay behaviour itself.
 """
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from g6.core import promotion_evaluator
 from g6.core.reliability_envelope import (
     build_promotion_witness,
     envelope_fields,
-    promotion_witness_faults,
 )
 
 _KEY = "test-evaluator-secret-key-abc123"
@@ -125,8 +124,7 @@ def test_non_ascii_signature_fails_closed_not_crashes(monkeypatch, key_file):
     bad = dict(_witness())
     bad["evaluator_signature"] = "hmac-sha256:ÿ☃中"  # non-ASCII
     assert promotion_evaluator.verify(bad) is False
-    # end-to-end under enforce: the law demotes cleanly, does not raise.
-    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "enforce")
+    # end-to-end: the law demotes cleanly, does not raise.
     env = envelope_fields(reliability_label="verified", promotion_witness=bad)
     assert env["completion_state"] == "qualified-draft"
 
@@ -147,62 +145,6 @@ def test_witness_signed_by_another_key_does_not_verify(key_file):
     signed = promotion_evaluator.stamp(_witness())
     key_file(f"G6_PROMOTION_EVALUATOR_KEY={_KEY + '-other'}\n")
     assert promotion_evaluator.verify(signed) is False
-
-
-# ── law integration: promotion_witness_faults ──────────────────────────────
-def test_no_authority_keeps_structural_witness_valid(key_file):
-    """Non-regression: without an authority, a structurally-valid (unsigned)
-    witness has zero faults, exactly as before this module existed."""
-    key_file("")
-    assert promotion_witness_faults(_witness()) == []
-
-
-def test_authority_requires_a_signature(key_file):
-    key_file(f"G6_PROMOTION_EVALUATOR_KEY={_KEY}\n")
-    # self-minted (unsigned) → the new signature fault fires
-    faults = promotion_witness_faults(_witness())
-    assert any("not signed by the evaluator authority" in f for f in faults)
-    # evaluator-stamped → no faults
-    assert promotion_witness_faults(promotion_evaluator.stamp(_witness())) == []
-
-
-# ── law integration: end-to-end through the envelope under enforce ──────────
-def test_enforce_with_authority_demotes_self_minted_promotes_stamped(monkeypatch, key_file):
-    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "enforce")
-    key_file(f"G6_PROMOTION_EVALUATOR_KEY={_KEY}\n")
-
-    # self-minted (unsigned) witness → demotes, even though it is structurally
-    # perfect: the generator cannot promote itself past the evaluator authority.
-    self_minted = envelope_fields(
-        reliability_label="verified", promotion_witness=_witness()
-    )
-    assert self_minted["completion_state"] == "qualified-draft"
-
-    # evaluator-stamped witness → survives enforce (earned).
-    stamped = envelope_fields(
-        reliability_label="verified",
-        promotion_witness=promotion_evaluator.stamp(_witness()),
-    )
-    assert stamped["completion_state"] == "verified"
-
-
-def test_enforce_without_authority_is_unchanged(monkeypatch, key_file):
-    """With no evaluator key, the structural law stands alone: a structurally
-    valid witness still promotes under enforce (no signature required)."""
-    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "enforce")
-    key_file("")
-    env = envelope_fields(reliability_label="verified", promotion_witness=_witness())
-    assert env["completion_state"] == "verified"
-
-
-def test_law_off_is_byte_identical_regardless_of_authority(monkeypatch, key_file):
-    """Flag OFF: the law never runs, so an evaluator key changes nothing and a
-    plain verified envelope dumps without a promotion_witness key."""
-    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "off")
-    key_file(f"G6_PROMOTION_EVALUATOR_KEY={_KEY}\n")
-    env = envelope_fields(reliability_label="verified")
-    assert env["completion_state"] == "verified"
-    assert "promotion_witness" not in env
 
 
 # ── independent-replay layer: holding the key is not enough ─────────────────
@@ -322,16 +264,3 @@ def test_raw_stamp_bypasses_replay_by_design(key_file):
     # stamp signs and verify accepts it.
     signed = promotion_evaluator.stamp(_witness(oracle="fake_oracle"))
     assert promotion_evaluator.verify(signed) is True
-
-
-def test_replayed_witness_survives_enforce_end_to_end(monkeypatch, key_file):
-    """End-to-end: a witness minted via the replay path promotes under the law's
-    enforce mode exactly like any evaluator-signed witness."""
-    monkeypatch.setenv("G6_KERNEL_PROMOTION_LAW", "enforce")
-    key_file(f"G6_PROMOTION_EVALUATOR_KEY={_KEY}\n")
-    promotion_evaluator.register_oracle("fake_oracle", _reproducing("exec-1"))
-    signed = promotion_evaluator.stamp_replayed(
-        _witness(oracle="fake_oracle", execution_id="exec-1")
-    )
-    env = envelope_fields(reliability_label="verified", promotion_witness=signed)
-    assert env["completion_state"] == "verified"

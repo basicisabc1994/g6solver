@@ -12,7 +12,7 @@ from django.conf import settings
 
 from pages.guard import saas_hits
 from pages.management.commands.build_static import _headers
-from pages.routes import PAGES
+from pages.routes import PAGES, REDIRECTS, public_paths
 
 GRAPH = settings.STATICFILES_DIRS[0] / "graph"
 
@@ -41,12 +41,12 @@ def test_the_graph_page_is_a_page_not_a_placeholder():
 
 
 def test_the_footer_and_the_components_page_link_to_the_graph(client):
-    assert 'href="/graph/"' in client.get("/").content.decode()
-    assert 'href="/graph/"' in client.get("/components/").content.decode()
+    assert 'href="/docs/full/"' in client.get("/").content.decode()
+    assert 'href="/docs/full/"' in client.get("/components/").content.decode()
 
 
 def test_the_graph_page_embeds_the_viewer_and_says_its_text_is_machine_written(client, meta):
-    html = client.get("/graph/").content.decode()
+    html = client.get("/docs/full/").content.decode()
     assert '<iframe' in html and 'src="/static/graph/app/index.html"' in html
     assert 'href="/static/graph/app/index.html"' in html                          # open it full screen
     assert "Machine-generated, not reviewed." in html
@@ -54,8 +54,36 @@ def test_the_graph_page_embeds_the_viewer_and_says_its_text_is_machine_written(c
     assert "Understand-Anything" in html and 'href="/static/graph/app/LICENSE.txt"' in html and "MIT" in html
 
 
+GITHUB = 'href="https://github.com/basicisabc1994/g6solver"'
+
+
+def _hero(html: str) -> str:
+    return html.split('<header class="wrap page-hero">', 1)[1].split("</header>", 1)[0]
+
+
+def test_the_full_documentation_is_the_repository_graph_with_the_code_on_github_at_the_top(client):
+    # owner, 2026-10-30: /docs/full/ "should actually take us to the repository graph page which should not be
+    # separate", renamed "full documentation", "with a link to the github page at the top"
+    html = client.get("/docs/full/").content.decode()
+    assert "<title>Full documentation" in html and "Full documentation" in _hero(html)
+    assert GITHUB in _hero(html)
+    assert "Repository graph" not in html and "being rebuilt" not in html
+    assert "/graph/" not in public_paths() and ("/graph/", "/docs/full/") in REDIRECTS
+    assert ">Full documentation</a>" in client.get("/").content.decode()                  # the footer's name for it
+
+
+def test_the_docs_page_links_to_github_in_its_subtitle_and_names_the_developer_quickstart(client):
+    html = client.get("/docs/").content.decode()
+    lede = _hero(html).split('<p class="lede">', 1)[1].split("</p>", 1)[0]
+    assert lede.startswith("Three ways to use G6: through the MCP server from your agent, as a Python library, or from")
+    assert GITHUB in lede
+    assert "Developer quickstart" in html and "For developers and coding agents" not in html
+    h1 = re.search(r"<h1\b[^>]*>(.*?)</h1>", client.get("/developers/").content.decode(), re.S)
+    assert h1 and "Developer quickstart" in h1.group(1)
+
+
 def test_the_graph_page_lists_the_layers_the_graph_holds(client, graph):
-    html = client.get("/graph/").content.decode()
+    html = client.get("/docs/full/").content.decode()
     for layer in graph["layers"]:
         assert layer["name"] in html
     assert f"{len(graph['nodes']):,}" in html and f"{len(graph['layers'])} layers" in html

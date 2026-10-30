@@ -104,7 +104,7 @@ def test_files_handed_in_together_are_one_lineage() -> None:
 def test_coverage_is_an_op_of_the_block_and_round_trips_over_mcp() -> None:
     reply = invoke_reply("grounding", "coverage", json.dumps({"text": DRAFT, "sources": ONE_HOST,
                                                               "weights": {"http://shop.example/faq": 2}}))
-    assert reply["ok"] and check_envelope(reply) == [] and reply["completion_state"] == "blocked-escalated"
+    assert not reply["ok"] and check_envelope(reply) == [] and reply["completion_state"] == "blocked-escalated"
     result = reply["result"]
     assert result["op"] == "coverage" and result["warning_card"]["code"] == "G6_E_GROUNDING_THIN_SOURCES"
     assert result["coverage"]["single_lineage"] == 2 and "coverage" in invoke_reply("grounding", "ops")["result"]["ops"]

@@ -4,8 +4,9 @@
 A framework (LangGraph, AutoGen, smolagents) asks for a tool by name, with arguments. ``call`` asks the gate; on any
 verdict but ``run`` it returns the verdict, its code and the reason, and nothing runs, so the framework (and its model)
 sees the refusal as the tool's result and nothing is raised. On ``run`` the tool is a Python callable passed in for
-that name, or a G6 component's op named ``component.op``, called through the registry's door for untrusted callers;
-the component running the agent may not be called by it. What the call came to is
+that name, or a G6 component's op named ``component.op``, called through the registry's door for untrusted callers and
+answered through ``g6.core.door.door_reply``, so the agent gets a copy that claims no more than the door decided; the
+component running the agent may not be called by it. What the call came to is
 ``{"verdict", "code", "reason" | "result" | "error"}``; ``ran`` holds the ids of the calls that ran, for the run's
 ``tool_result`` events.
 
@@ -77,13 +78,17 @@ class GatedCalls:
             elif op:
                 from g6.core.registry import get_registry
 
-                answered = get_registry().invoke(component, op, arguments, block_sensitive=True)
+                from g6.core.door import door_reply
+
+                registry = get_registry()
+                answered = registry.invoke(component, op, arguments, block_sensitive=True)
                 if answered.__class__.__name__ != "Success":
                     said = str(answered.failure())
                     found = _CODE.search(said)
                     return {"verdict": "refused", "code": found.group(0) if found else codes.TOOL_FAILED,
                             "reason": said[:500]}
-                result = answered.unwrap()
+                # The agent gets the door's copy of the answer (plan A1): a component's own verified does not reach it.
+                result = door_reply(component, op, answered, caller=arguments, registry=registry)["result"]
             else:
                 return {"verdict": "refused", "code": codes.TOOL_FAILED,
                         "reason": f"{name} is declared, but no tool of that name was passed in"}

@@ -29,7 +29,7 @@ from g6.algebra.envelope import (
 from g6.invariants import check_envelope
 
 HAS_SYMPY = ops.sympy_installed()
-needs_sympy = pytest.mark.skipif(not HAS_SYMPY, reason="SymPy is not installed (pip install 'g6[cas]')")
+needs_sympy = pytest.mark.skipif(not HAS_SYMPY, reason="SymPy is not installed (pip install 'g6[cas] @ git+https://github.com/basicisabc1994/g6solver')")
 #: RSA-100: 100 digits, two 50-digit primes; SymPy does not factor it within any time limit G6 allows.
 RSA_100 = int("15226050279225333605356183781326374297180681149613806886579084945801229632589528976540003506920061"
               "39")

@@ -25,7 +25,7 @@ What it does, in process:
   with two arities, and programs over the size and time limits (at most 60 seconds) are each refused with their own
   ``G6_E_DATALOG_*`` code, the line and the column. Nothing a caller sends is evaluated as code;
 * evaluates it on two engines: a pure-Python semi-naive engine, stratum by stratum, which records how each tuple was
-  derived; and Z3's Datalog engine (``z3.Fixedpoint``, ``pip install 'g6[formal]'``, imported only when an op runs),
+  derived; and Z3's Datalog engine (``z3.Fixedpoint``, ``pip install 'g6[formal] @ git+https://github.com/basicisabc1994/g6solver'``, imported only when an op runs),
   with every constant encoded as a bit-vector code in the comparison order. The two must derive the same relations,
   tuple for tuple, or the answer is refused with ``G6_E_DATALOG_ENGINES_DISAGREE``. Without Z3 the pure-Python engine
   runs alone and the card says so, and how to add the second;

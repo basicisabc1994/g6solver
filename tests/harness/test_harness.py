@@ -36,7 +36,9 @@ def test_a_passing_run_is_a_qualified_draft_with_receipts(memory) -> None:
     assert reply["completion_state"] == "qualified-draft" and reply["results"] == {
         "states-the-refund-window": "pass", "mentions-store-credit": "pass"}
     assert reply["certificate"]["state"] == "qualified-draft" and len(reply["evidence"]) == 2
-    assert "independent evidence" in reply["next_action"]
+    # plan A1 review: this door cannot lift a run past a qualified draft, so the next step does not promise that
+    assert "go beyond a qualified draft" not in reply["next_action"]
+    assert "does not re-run your checks" in reply["next_action"]
 
 
 def test_a_failed_check_blocks_names_itself_and_is_remembered(memory) -> None:
@@ -136,6 +138,29 @@ def test_evidence_01_a_callers_check_that_claims_to_be_g6s_never_lifts_a_run_to_
     assert [c["author"] for c in recorded] == ["caller"]
     assert all(k["generated_by"] == "caller" for c in recorded for k in c["controls"])
     assert any("control_not_generated_by_g6" in g for g in reply["gaps"])
+
+
+def test_an_issuers_verified_is_held_at_the_harness_door(memory, monkeypatch) -> None:
+    """Plan A1: the issuer's certificate keeps its persisted state, but its verified is held where it enters the
+    envelope, because the harness door does not re-run the checks itself."""
+    import g6.evidence as evidence
+
+    class _Verified:
+        state, gaps = "verified", ()
+
+        def as_dict(self) -> dict:
+            return {"state": "verified", "gaps": []}
+
+    monkeypatch.setattr(evidence, "issue", lambda *args, **kwargs: _Verified())
+    reply = _run(Standard(GOAL, (WINDOW,)), "Refunds within 14 days.", memory)
+    assert reply["completion_state"] == "qualified-draft" and reply["claimed_completion_state"] == "verified"
+    assert reply["warning_card"]["code"] == "G6_E_PROMOTION_LAW" and reply["certificate"]["state"] == "verified"
+    assert reply["next_action"] != "None."
+    # the certificate keeps its persisted state, and is never presented as the run's label
+    assert reply["reliability_label"] == "qualified-draft" and not reply["warning_card"]["verified"]
+    import g6.harness
+
+    assert "decides the label" not in g6.harness.__doc__
 
 
 def test_a_plan_that_needs_revision_stops_the_run_before_execution(memory) -> None:

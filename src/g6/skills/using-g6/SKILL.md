@@ -1,80 +1,97 @@
 ---
 name: using-g6
-description: Use when the G6 library or its g6 MCP server is available and the work changes code, makes claims that must be right, acts outside the conversation (deploys, sends, pays, promises), needs exact computation, or concerns an AI workflow that keeps making the same mistakes
+description: Use when finishing a Python coding task (review the patch with G6 before saying it is done), constructing AI applications from checkable components, investigating repeated failures, testing redesign hypotheses, or reviewing claims and risky actions against evidence.
 ---
 
 # Using G6
 
-## Overview
+G6 is a library of primitives for AI building AI. An agent can construct an application, propose a redesign,
+and measure it against frozen checks. Treat improved performance as a hypothesis, never a consequence of composition.
+The evaluator, authorization rules and promotion gate remain outside the candidate's writable scope.
 
-G6 is a failure-engineering harness. Each component closes one way AI work fails, and the components stack like slices
-of Swiss cheese. The model proposes; G6 checks; a person decides what is irreversible. G6 is not one "review" call at
-the end. Each point of the work has its own G6 step, and the table below is the map.
+## Deliver a coding task with G6
 
-## The G6 step at each point of the work
+For a Python task, work in this order.
 
-| When | G6 step | How |
-|---|---|---|
-| Before non-trivial work | **Premortem:** name how this fails, and the guard for each failure | Python: `g6.reliability_pipeline.premortem.premortem_failure_mode_questions()` returns the premortem's questions, one per failure mode. Answer each one in your plan. Then `from g6.reliability_pipeline import relevant, run_intake`: `relevant(objective)` returns the curated failure-mode skills that match the task, each with the decision you must ask the person |
-| Before a risky change (payments, auth or security, data migration, deploy, deletion, medical or legal logic, skipping a check) | **Preflight** | `g6_invoke("coding_agent_gate", "preflight", {"task", "proposed_action", "risk_tier", "constraints", "evidence"})` returns block, needs_review, needs_evidence or proceed_with_caution |
-| Before an agent acts outside the conversation (sends, posts, pays, books, promises a refund) | **Action gate** | `g6_invoke("action_gating", "evaluate", ...)` returns go, ask a person, or block. Gate the action itself; a home-made keyword filter is not a gate |
-| The answer must be exact | **Hand it to a checker, never to your head** | Logic → `formal` (`check_entailment`, `find_counterexample`)<br>Algebra and calculus → `algebra`<br>Schedules, routes, assignments → `optimisation` (`solve_*`)<br>Rules → `datalog`<br>Cause and effect → `causal`<br>State machines and protocols → `model_checking`<br>Proofs → `lean` |
-| A claim must rest on a source | **Ground it** | `grounding` (`check_claims` against the passages); `epistemic_integrity` (`adjudicate`) for a high-stakes conclusion |
-| Before saying "done" | **Verify the answer** | `g6_invoke("coding_agent_gate", "verify_answer", {"task", "answer", "task_contract", "evidence", "verifier", "claims"})` returns block, needs_review, revise or pass. For a standard of done a person confirms first: a `g6.workforce` mission (`create_coding_mission`, `confirm`, `submit_patch`, `certificate`) |
-| A task you repeat keeps failing | **Tune it on held-out cases** | Declare the workflow in Python (`g6.metaharness`: `Workflow`, `Suite(dev=..., held_out=...)`, `adapt`; a person confirms it). Then use `metaharness_diagnose`, `metaharness_propose`, `metaharness_evaluate` and `metaharness_decide`.<br>**Hand the person the decision digest and stop.** They approve from their own session, from Python (`activate(decision, accepted_by=...)`) or from the terminal. `metaharness_approve` refuses the session that proposed the change.<br>Learned hints from failures: `g6.learning` |
+1. **Intent.** Read the task, the project's docs and the code. Write the person's most likely intended design and
+   goals in a few lines, as numbered `requirements`, `{"id": "R1", "text": ..., "checks": [...]}`, each check a pytest
+   node id.
+2. **This project's risks**, a premortem, not a generic list: edge cases, behaviour that must stay the same, who may do
+   what, data or money that must never be lost, state that must never go wrong, tests too weak to catch a defect, a
+   misleading environment, and G6 misreading the intent. Map each risk to a check: a repository test, a new
+   acceptance test, or one of G6's templates in `template_instances`: `example.v1` (a stated input gives a stated
+   result), `relation.v1` (round trip, idempotence, invariance or monotonicity), `access_rule.v1` (who may do what;
+   with `steps`, grant, share and revoke), `differential.v1` (nothing changes outside the change's scope),
+   `forbidden_dependency.v1` (layer rules) or `state_invariant.v1` (critical state). Each template's bindings, with one
+   valid instance: `references/templates.md`.
+3. **Hidden constraints.** Ask the person at most 3 questions, each a concrete scenario with the competing outcomes:
+   "for this input the original does A and the change would do B; which do you intend?" Probe the code for the rest.
+   Never assume an answer: an unanswered question stays open in the report.
+4. **Acceptance first, then test first.** Write acceptance tests for what the person's own users must be able to do,
+   through the product's real interface, and for usability and fitness for purpose
+   wherever a test can show it. They become the numbered requirements, each with its stated check. Then unit tests,
+   then the code.
+5. **Critical parts, formally.** Model them with `state_invariant.v1` (its `model` states the variables, actions and
+   invariants; its `actions` bind them to the code's operations; its `observe` reads each variable from the real
+   state). G6 searches the model and replays each trace on the real code. A result about the model is about the model only; only a reproduced trace is a finding
+   about the code. A model never proves the code correct.
+6. **Review.** Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`.
+   Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's description
+   gives; a refused call names the field to fix. It needs host permission
+   `patch_review.review`, which the person grants with `g6 setup`; never change permissions yourself. Show the reply's
+   `assessment["report"]` verbatim. The full assessment is in the file its full_assessment names.
+7. **Repair.** Fix what G6 reproduced. Add each earlier reproduction as a stated check (a proposed check's
+   reproduction is a test file: add it to the repository's tests and list its node id), so the person sees the fix
+   pass the original counterexample. Review again. Stop after 3 rounds, when a round changes nothing, or when the
+   report says only the person can decide.
+8. **Honesty.** Never call a patch verified, and never merge for the person. G6 cannot judge usability by itself;
+   acceptance tests and the person's confirmation do. The report's not-established list is the to-do list. For
+   specialised needs, find more components with `g6_find`.
 
-## Calling G6
+The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope
+(every stated requirement passed its stated checks; never proof the patch is complete).
 
-1. `g6_help()` once.
-2. `g6_describe(component)` gives the ops and their exact fields. Copy the field names from it; never send
-   placeholder parameters. The two shapes you will use most:
-   - `evidence` is a list of `{"kind": "file|test|log|diff|review", "ref": "path or command", "output": "...", "exit_code": 0}`,
-     with `"reviewer"` for kind `review`;
-   - `verifier` is `{"status": "pass|fail|not_run", "exit_code": 0}`.
-3. `g6_invoke(component, op, params_json)` runs one op.
-4. `g6_find(query)` is for needs the table does not cover. An empty result means "not this query", not "skip G6".
+## Find
 
-Some components are reached from Python only, among them `workforce`, `metaharness` (beyond its MCP tools),
-`reliability_pipeline`, `navigator` (`check_plan` before running a plan of G6 calls), `learning`, `guards` (prompt
-injection) and `safety_engine` (run limits).
+Call `g6_help`, then `g6_find` with the task or failure mode. Read `g6_describe` before choosing fields or an operation.
+Use grounding for source support, coding_agent_gate for declared coding evidence, action_gating before consequential
+actions, and the meta-harness for repeated failures. Python-only components require their library APIs.
 
-A sensitive op that is refused needs the person who runs the server to allow it (`G6_MCP_SENSITIVE`). Ask them. Never
-edit the MCP configuration yourself.
+For a direct component call, these examples show the parameter object; serialize it into `params_json`:
 
-## Reading what comes back
+```text
+g6_invoke("grounding", "check_claim", {"claim": "The limit is 42 units.", "sources": sources})
+g6_invoke("grounding", "check_claims", {"text": "The limit is 42 units.", "sources": sources})
+g6_invoke("grounding", "coverage", {"text": "The limit is 42 units.", "sources": sources})
+```
 
-- `completion_state`:
-  - `verified` only when an independent check G6 ran could have failed and passed;
-  - `qualified-draft` means the check ran but your evidence or the method limits it;
-  - `blocked-escalated` means stop. Tell the user the `warning_card` code and what unblocks it.
-- **Report the label as given.** Never upgrade it. "All tests pass" without a run you can show is not a claim you can
-  make.
-- **What you send G6 counts as caller-declared.** Declare only what you ran or read. Your own test run supports a
-  claim; it is not independent proof.
-- **A refused meta-harness decision carries `recovery`:** why it was refused, and what to try next. Pass it on.
+Here `sources` maps source names to supplied text. These are lexical source checks, not proof of factual truth.
 
-## Common mistakes
+## Compose
 
-| Mistake | Instead |
-|---|---|
-| One G6 "second opinion" at the end, with guessed op names | The step at each point, with fields from `g6_describe` |
-| Skipping G6 because `g6_find` returned nothing | Use the table first; it names the component |
-| Writing your own filter for promises, payments or sends | `action_gating.evaluate` before the action, then keep your filter as an extra slice |
-| Tuning a prompt by hand and judging it on cases you looked at | A declared workflow with a held-out suite; the meta-gate judges, a person approves |
-| Guessing whether the sample is big enough | The meta-gate needs at least 30 held-out cases, 5 where base and candidate differ, and an exact sign test; `baseline()` gives a power estimate |
-| Calling `metaharness_approve` from the session that proposed the change, or naming the approver | It is refused (`G6_E_META_APPROVER_IS_PROPOSER`). Give the person the decision digest; they approve elsewhere |
+Use `g6_compose` with data-only stages. Connect downstream fields explicitly with `0.field` or `caller.field`.
+Evidence kinds must match; similar field names do not establish equivalent meaning. Code transformations require
+reviewed Python adapters. A contract-checked report establishes structural checks, not application correctness.
+Plain `>>` does not check contracts. Read the assurance gaps and preserve all upstream limitations.
 
-## For coding agents: the full lifecycle
+## Fit
 
-**REQUIRED:** load `superpowers:using-superpowers` as well, and follow its skills. `references/lifecycle.md` pairs
-each stage with its superpowers skill and its G6 step:
+Use `metaharness_start` to create a data-only application with a task, labelled cases, frozen checks and baseline
+Python code. Confirm the workflow digest through `metaharness_confirm`. Then diagnose, propose_code with a hypothesis,
+evaluate_start, poll `metaharness_job`, decide, present the client's approval prompt, and run the approved version.
+The full tool names begin `metaharness_`. This is Propose -> Test -> Gate -> Approve, with explicit recovery after failure.
 
-- brainstorm and intent;
-- premortem and plan;
-- worktree;
-- test first;
-- debug;
-- verify;
-- review;
-- finish with a certificate;
-- learn.
+Below 30 held-out cases is exploration only. A split of answers the proposer already saw is not independent evidence.
+Generated-code activation also requires a host-configured safety/injection evaluator. Never invent its observations.
+Client-mediated consent may occur in the proposing session; the recorded name is not authenticated. If elicitation
+is unavailable, relay the terminal command. After a decline or cancel, ask the person; offer no other way to confirm.
+A job ID is pending work, not success; restart loses process-local handles.
+
+## Read and ask
+
+Preserve `verified`, `qualified-draft` and `blocked-escalated` exactly as returned. Verification covers only the named
+artifact and check scope. Report the warning card and recovery; never turn a refusal into a successful tuning result.
+
+Ask the user when permissions, task meaning or evidence are missing. Local settings assume a trusted host;
+unrestricted same-user shell access defeats that separation. Do not change permissions to make a test pass.
+Superpowers lifecycle skills are optional companions, not prerequisites for using G6.

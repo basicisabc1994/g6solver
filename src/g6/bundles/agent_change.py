@@ -20,9 +20,10 @@ give), G6:
    evidence): "all tests pass" over failing tests, or a claim nothing backs, is flagged.
 
 The best label is ``qualified-draft``: the tests are yours or the agent's, not independent of the change (DECISIONS
-#22), and a passing run says the tests passed, not that the task is done. It is not an operating-system sandbox: the
-tests run with your permissions, in your folder. Git is read before and after, a run that changed tracked files says
-so, and network connections are refused inside the test process.
+#22), and a passing run says the tests passed, not that the task is done. The tests run in your folder inside an
+operating-system boundary where one is ready (bubblewrap on Linux, an AppContainer on Windows); where none is, G6 runs
+them only if you allowed it (the page asks once, or ``g6 setup``), and then with your permissions. Git is read before
+and after, a run that changed tracked files says so, and network connections are refused inside the test process.
 """
 from __future__ import annotations
 
@@ -120,8 +121,11 @@ def run(inputs: dict[str, str], llm: Any = None) -> BundleResult:
         return BundleResult("blocked-escalated", str(exc), code=exc.code)
 
     rows: list[dict[str, str]] = []
-    notes = ["G6 ran your repository's tests on this computer with your permissions; it is not an operating-system "
-             "sandbox. Network connections were refused inside the tests.",
+    boundary = (found.get("isolation") or {}).get("backend")
+    notes = [(f"G6 ran your repository's tests on this computer inside an operating-system boundary ({boundary})."
+              if boundary else "G6 ran your repository's tests on this computer with your permissions, as you allowed: "
+              "no operating-system boundary could confine them here.")
+             + " Network connections were refused inside the tests.",
              "The best label is qualified-draft: the tests are yours or the agent's, not independent of the change, "
              "and passing tests do not prove the task is done."]
     verdict, ran = found["verdict"], found["verdict"] in rt.RAN
@@ -217,7 +221,9 @@ BUNDLE = Bundle(
               help="A git ref. Blank: HEAD, so the agent's uncommitted change. Give e.g. main to include its commits."),
     ),
     run=run,
-    disclaimer="Runs your repository's own tests on this computer with your permissions (not an operating-system "
-               "sandbox). Network connections are refused inside the tests. G6 reads git and does not write your "
-               "files; a run that changed tracked files is reported.",
+    disclaimer="Runs your repository's own tests on this computer: inside an operating-system boundary where one is "
+               "ready, and otherwise only if you allow it, with your permissions. Network connections are refused "
+               "inside the tests. G6 reads git and does not write your files; a run that changed tracked files is "
+               "reported.",
+    runs_untrusted_code=True,
 )

@@ -16,16 +16,19 @@ Capability label: ``implemented``. This is the one place components are composed
    family that this standard does not check are named, and block until a check is added or a person waives them.
 3. **Execute**: ``executor(task_contract)`` returns the output. G6 never runs it in-process for you; an executor is
    whatever you pass (an agent, a model call, a function).
-4. **Adjudicate**: each check is run on the exact output bytes and ``g6.evidence.issue`` decides the label from those
-   receipts. The harness is stricter than the issuer in one way only: a failed acceptance check blocks, even when the
-   check's own controls are too weak for the issuer to call it a refutation.
+4. **Adjudicate**: each check is run on the exact output bytes and ``g6.evidence.issue`` writes a certificate from
+   those receipts. The certificate keeps its own ``state``; the run's label is the reply's ``completion_state``, which
+   this door decides: the harness does not re-run the checks itself, so an issuer's ``verified`` is held at
+   ``qualified-draft`` (plan A1), and a failed acceptance check blocks, even when the check's own controls are too weak
+   for the issuer to call it a refutation.
 5. **Remember**: each failed check is stored under ``$G6_HOME/harness.db`` against the task family, so a later run, in
    another process, asks for it (and says so when it is handed an output that already failed).
 
 While the process-wide stop (``g6.core.stop``) is engaged, ``run`` does none of this and answers ``G6_E_STOPPED``.
 
 What it does not establish: that the checks capture what the caller needs. Checks written by the caller are not
-independent of the caller, so with the default evidence kind a result is ``qualified-draft`` at best (DECISIONS #22).
+independent of the caller (DECISIONS #22), and the harness door does not re-run them, so a run is ``qualified-draft``
+at best.
 """
 from __future__ import annotations
 
@@ -130,11 +133,18 @@ def _try(check: Check, output: str) -> str:
 
 def _envelope(state: str, code: str, message: str, *, request_id: str, run_id: str, evidence: list[dict] | None = None,
               **extra: Any) -> dict[str, Any]:
-    from g6.core.reliability_envelope import envelope_fields, warning_card
+    from g6.core.door import door_envelope
+    from g6.core.reliability_envelope import warning_card
 
-    envelope = envelope_fields(reliability_label=state, request_id=request_id, run_id=run_id, evidence=evidence or [])
-    if envelope["completion_state"] != "verified":
+    # Plan A1: the issuer's verified is the certificate's (kept in certificate.state); this door does not re-run the
+    # checks, so it holds it at qualified-draft with a G6_E_PROMOTION_LAW card.
+    envelope = door_envelope(state, who="the evidence issuer", request_id=request_id, run_id=run_id,
+                             evidence=evidence or [])
+    held = "claimed_completion_state" in envelope
+    if envelope["completion_state"] != "verified" and not held:
         envelope["warning_card"] = warning_card(code, message)
+    if held and extra.get("next_action") == "None.":
+        extra["next_action"] = envelope["warning_card"]["suggested_action"]
     return {**envelope, **extra}
 
 
@@ -301,8 +311,9 @@ def _run(standard: Standard, executor: Callable[[Any], str] | None, decisions: s
         message += " (this exact output also failed an earlier run of this task)"
     next_action = (f"Revise the output so it meets {failed}." if failed else
                    "Fix the broken checks." if broken else
-                   "Supply independent evidence (a check written by someone other than the producer, frozen first, "
-                   "with a control it fails) to go beyond a qualified draft." if state == "qualified-draft" else "None.")
+                   "Review the output and its receipts yourself before relying on it: the harness does not re-run your "
+                   "checks at this door, so a run is a qualified draft at best." if state == "qualified-draft"
+                   else "None.")
     evidence = [{"kind": "receipt", "check": r.check_id, "result": r.result, "artifact_sha": r.artifact_sha}
                 for r in receipts]
     return _envelope(state, code, message, request_id=request_id, run_id=run_id, evidence=evidence, stage="done",

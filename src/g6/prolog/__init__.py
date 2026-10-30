@@ -46,8 +46,10 @@ consults them, and accepts only a restricted syntax (owner, 2026-10-21):
   answers; answers and errors are written as quoted terms, never through SWI-Prolog's message translation or a portray
   hook.
 
-The restricted syntax is not a security boundary, and neither is SWI-Prolog's sandbox library: SWI-Prolog runs as you.
-Run programs you do not trust inside your own sandbox, such as a container or a virtual machine.
+The restricted syntax is not a security boundary, and neither is SWI-Prolog's sandbox library. G6 runs SWI-Prolog inside
+its operating-system boundary where one is ready (``g6.core.confine``: bubblewrap on Linux, an AppContainer on Windows);
+elsewhere SWI-Prolog runs as you, so run programs you do not trust inside your own sandbox, such as a container or a
+virtual machine.
 
 Ops (:mod:`g6.prolog.ops`): ``query`` (the answers as variable bindings, and ``exhausted``, true only when the search
 finished below the cap), ``prove`` (whether the goal succeeds), ``check_program`` (the predicates the program defines,

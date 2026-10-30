@@ -610,7 +610,7 @@ def test_an_ordinary_project_folder_is_still_a_workspace(places: dict[str, Path]
 @pytest.mark.parametrize("op", ["check_task", "decide"])
 def test_an_op_without_what_it_needs_is_refused_with_its_own_code(op: str) -> None:
     reply = invoke_reply("agent_runtime", op, "{}")
-    assert reply["ok"] and reply["result"]["completion_state"] == "blocked-escalated"
+    assert not reply["ok"] and reply["result"]["completion_state"] == "blocked-escalated"
     assert reply["result"]["warning_card"]["code"].startswith("G6_E_AGENT_")
 
 

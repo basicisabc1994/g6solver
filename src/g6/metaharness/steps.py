@@ -45,7 +45,9 @@ def shown_tests(task: str) -> tuple[list[str], list[str]]:
 
 
 def run_shown(code: str, imports: Sequence[str], asserts: Sequence[str], *, timeout_s: float) -> str:
-    """'' when the code parses, defines a function and passes the shown asserts out of process; else the failure."""
+    """'' when the code parses, defines a function and passes the shown asserts out of process; else the failure. A
+    run no operating-system boundary could confine, where isolation is required, raises ``confine.IsolationRefused``:
+    the code never ran, so there is no failure for the model to fix."""
     if not _DEF.search(code):
         return "the reply has no Python function"
     try:
@@ -54,10 +56,13 @@ def run_shown(code: str, imports: Sequence[str], asserts: Sequence[str], *, time
             ast.parse(code)                      # parsed, never run in process
     except (SyntaxError, ValueError) as exc:
         return f"SyntaxError: {exc}"
-    from g6.core.sandbox import run_script
+    from g6.core.confine import IsolationRefused
+    from g6.core.sandbox import isolation_refused, run_script
 
     source = PRELUDE + "".join(f"{i}\n" for i in imports) + "from solution import *\n" + "".join(f"{a}\n" for a in asserts)
     ran = run_script(source, {"solution.py": code}, timeout_s=timeout_s, mem_mb=512)
+    if isolation_refused(ran):
+        raise IsolationRefused(ran.stderr, ran.isolation)
     return "" if ran.status == "ok" else (ran.stderr or ran.status)[-600:]
 
 

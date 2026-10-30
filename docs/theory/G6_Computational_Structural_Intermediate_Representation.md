@@ -105,7 +105,7 @@ semantics, runtime cost, data egress and suitability for a particular risk level
 
 **Definition D3 (primitive).** A typed primitive $f:A\rightsquigarrow B$ is represented by the record
 
-$$f=(A,B,\operatorname{Pre}_f,\operatorname{Eff}_f,K_f,c_f,\operatorname{Fail}_f,\operatorname{Prov}_f).$$
+$$f=(A,B,\mathrm{Pre}_f,\mathrm{Eff}_f,K_f,c_f,\mathrm{Fail}_f,\mathrm{Prov}_f).$$
 
 $K_f$ is a stochastic transition kernel from an admissible state and input to a distribution on output, observations,
 trace additions and the explicit terminal outcomes `ok`, `fail`, `unknown`, `blocked` or `timeout`. A deterministic
@@ -164,7 +164,7 @@ operations and contracts*, not its name or assigned category.
 
 A minimal initial syntax (typed pseudocode) is
 
-$$p ::= \operatorname{id}\mid f\mid p_2\circ p_1\mid p_1\oplus p_2\mid \operatorname{branch}(q,p_1,p_2)\mid \operatorname{verify}_{v}(p)\mid \operatorname{observe}_{a}(p)\mid \operatorname{stop}(r).$$
+$$p ::= \mathrm{id}\mid f\mid p_2\circ p_1\mid p_1\oplus p_2\mid \mathrm{branch}(q,p_1,p_2)\mid \mathrm{verify}_{v}(p)\mid \mathrm{observe}_{a}(p)\mid \mathrm{stop}(r).$$
 
 The operation $\oplus$ denotes an *explicitly typed* alternative or parallel product, whose trace and cost semantics
 must be declared. It is **not** an implicit licence to duplicate linear resources, reuse patient information across
@@ -292,12 +292,12 @@ policy $\pi$, let $P_0^\pi,P_1^\pi$ be its resulting observable transcript distr
 **Proposition P3 (observability bound).** Every non-abstaining binary verifier observing the transcript of $\pi$ has
 error at least
 
-$$\frac{1-\operatorname{TV}(P_0^\pi,P_1^\pi)}{2},$$
+$$\frac{1-\mathrm{TV}(P_0^\pi,P_1^\pi)}{2},$$
 
-where $\operatorname{TV}$ is the total variation distance between the two transcript distributions.
+where $\mathrm{TV}$ is the total variation distance between the two transcript distributions.
 
 *Proof.* The optimal binary acceptance region for equal priors is the likelihood-ratio test. Its maximum success
-probability is $(1+\operatorname{TV})/2$; error is the complement. QED. For deterministic identical transcript
+probability is $(1+\mathrm{TV})/2$; error is the complement. QED. For deterministic identical transcript
 distributions, error is exactly $1/2$. A bound against **all** permitted policies requires taking the appropriate
 supremum over policies; showing three heuristics fail is not such a proof.
 
@@ -332,8 +332,8 @@ generation may be less useful than cheap independent falsification or cheaper es
 ### 6.1 Concrete/abstract relationship
 
 Let each abstract primitive $\hat f$ denote a set of permitted traces, including errors, timeouts, costs and effects.
-Let $\gamma(\hat f)$ be its concrete interpretation and $\operatorname{Exec}(f)$ its actual implementation traces.
-**Assumption A1 (local refinement)** says $\operatorname{Exec}(f)\subseteq\gamma(\hat f)$ for every admitted primitive
+Let $\gamma(\hat f)$ be its concrete interpretation and $\mathrm{Exec}(f)$ its actual implementation traces.
+**Assumption A1 (local refinement)** says $\mathrm{Exec}(f)\subseteq\gamma(\hat f)$ for every admitted primitive
 and environment under its precondition. This assumption is a proof obligation, not a consequence of a directory being
 registered or an `infer()` method returning an object.
 
@@ -404,7 +404,7 @@ layers of protection.
 Let a controller state $s$ contain posterior beliefs over failure classes and oracle capabilities. A permitted probe
 $a$ may generate observation $o$. Define the value of information (VOI) of the probe as
 
-$$\operatorname{VOI}(a\mid s)=\mathbb{E}_o\left[\max_d\mathbb{E}\lbrace U(d,W)\mid s,o\rbrace\right]-\max_d\mathbb{E}\lbrace U(d,W)\mid s\rbrace-c(a).$$
+$$\mathrm{VOI}(a\mid s)=\mathbb{E}_o\left[\max_d\mathbb{E}\lbrace U(d,W)\mid s,o\rbrace\right]-\max_d\mathbb{E}\lbrace U(d,W)\mid s\rbrace-c(a).$$
 
 This is an *ideal* decision criterion and requires calibrated beliefs; an LLM's arbitrary score is not an expected
 value of information. Mandatory safety and evidence checks remain hard constraints even if a heuristic VOI score is
@@ -424,7 +424,7 @@ controlled resource cost. This is a hypothesis, not a proven current property of
 ### 8.1 Semantic and resource closure
 
 For a primitive collection $\mathcal{P}$ and declared grammar $\mathcal{G}$, define
-$\operatorname{Cl}_{\mathcal{G}}(\mathcal{P})$ to contain the finite programs formed by legal operations of
+$\mathrm{Cl}_{\mathcal{G}}(\mathcal{P})$ to contain the finite programs formed by legal operations of
 $\mathcal{G}$. Their **semantic quotient** identifies programs indistinguishable by admissible contexts; their
 **resource quotient** additionally accounts for simulation costs and preserved effects.
 
@@ -556,7 +556,7 @@ event shows the mechanism can operate; it does not prove that G6 has human-level
 
 The central new proposal is to represent a task's *capability deficit* as two indexed relations:
 
-$$\operatorname{CanSolve}(\mathcal{P},S,B)\quad\text{and}\quad\operatorname{CanJustify}(\mathcal{P},\mathcal{V},S,B).$$
+$$\mathrm{CanSolve}(\mathcal{P},S,B)\quad\text{and}\quad\mathrm{CanJustify}(\mathcal{P},\mathcal{V},S,B).$$
 
 The first concerns existence of an admissible program meeting task predicates; the second concerns available checked
 evidence for those predicates. These can diverge dramatically. A capable image generator may produce an accurate

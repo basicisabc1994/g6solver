@@ -31,6 +31,7 @@ PASSING = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\
 
 def _off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(confine, "_select", lambda: (None, "unavailable: switched off by this test"))
+    monkeypatch.setenv(confine.ALLOW, "1")   # and the person allowed unconfined runs, so this one goes ahead
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -102,6 +103,28 @@ def test_the_run_in_place_says_how_its_tests_ran_and_refuses_when_required(monke
     monkeypatch.setenv("G6_REQUIRE_ISOLATION", "1")
     refused = bench.run(bench.IN_PLACE, PROBE)
     assert refused["ok"] is False and refused["error"].startswith(f"[{ISOLATION_UNAVAILABLE}]")
+
+
+@pytest.mark.parametrize("op", ["run_tests", "suite", bench.IN_PLACE])
+def test_with_no_backend_and_no_allowance_each_runner_refuses_and_runs_nothing(monkeypatch, tmp_path, op) -> None:
+    _off(monkeypatch)
+    monkeypatch.delenv(confine.ALLOW, raising=False)
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6-home"))   # no choice recorded
+    if op == "suite":
+        marker = tmp_path / "ran.txt"
+        (tmp_path / "repo" / "tests").mkdir(parents=True)
+        (tmp_path / "repo" / "tests" / "test_x.py").write_text(
+            f"def test_x():\n    open({str(marker)!r}, 'w').write('ran')\n", encoding="utf-8")
+        found = truth.run_suite(tmp_path / "repo")
+        assert not marker.exists()
+        # fails if truth.run_suite runs the suite unconfined without the person's allowance
+        assert found["ran"] is False and found["why"].startswith(f"[{ISOLATION_UNAVAILABLE}]")
+        assert "g6 setup" in found["why"]
+        return
+    reply = bench.run(op, PROBE)
+    # fails if truth.run_isolated or repo_tests.run runs the tests unconfined without the person's allowance
+    assert reply["ok"] is False and reply["error"].startswith(f"[{ISOLATION_UNAVAILABLE}]")
+    assert "g6 setup" in reply["error"]
 
 
 def test_the_benchs_copy_does_not_follow_links_out_of_the_repository(tmp_path, monkeypatch) -> None:

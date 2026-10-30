@@ -13,7 +13,7 @@ import threading
 
 import pytest
 
-pytest.importorskip("autogen_agentchat", reason="AutoGen is not installed (pip install 'g6[agents-autogen]')")
+pytest.importorskip("autogen_agentchat", reason="AutoGen is not installed (pip install 'g6[agents-autogen] @ git+https://github.com/basicisabc1994/g6solver')")
 
 import g6.agents.agent_autogen as agent_autogen_pkg  # noqa: E402
 from g6.action_gating.audit import ActionGateAuditLogger  # noqa: E402

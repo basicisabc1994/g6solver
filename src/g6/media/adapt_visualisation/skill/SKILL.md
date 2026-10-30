@@ -105,7 +105,7 @@ Composed:
 ## What it needs
 
 - Nothing for SVG and HTML.
-- `pip install "g6[image]"` (Pillow) for PNG. Without it a PNG is refused with `G6_E_MEDIA_EXTRA_MISSING` and the
+- `pip install "g6[image] @ git+https://github.com/basicisabc1994/g6solver"` (Pillow) for PNG. Without it a PNG is refused with `G6_E_MEDIA_EXTRA_MISSING` and the
   install line before anything is drawn; SVG and HTML still answer.
 - No model, no network, no outside program.
 
