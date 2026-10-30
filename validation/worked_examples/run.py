@@ -117,8 +117,8 @@ If a template instance is refused, or cannot express the inputs (they are not JS
 in the patch), check the property with a proposed_checks test file instead. Every check, in whichever form, must assert
 a specific expected value taken from the issue, not from what the patched code returns, so that it can fail."""
 #: Round 3, arm L (PLAN.md, 2026-10-31): the probes one reader wrote before any patch; run in the repository.
-PROBE_RUN = f"python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider --rootdir={WE}/probes"
-MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS = 4, 2.0, 12000
+PROBE_RUN = f"env PYTHONPATH=src:. python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider --rootdir={WE}/probes"
+MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS = 4, 2.0, 12000, 200
 SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
 the code it concerns, in the current directory, and work out what a complete fix must do.
 
@@ -146,6 +146,12 @@ SCOUT_V2 = """   Treat the shapes as dimensions, and combine them: every pair of
    with parametrized tests where that is shorter. A bug that survives a fix usually lives where two dimensions cross.
    Never leave a shape as unclear. Where the issue states a principle, apply it uniformly to the shape unless the
    repository's own code, tests or documentation say otherwise, and write the probe that follows.
+"""
+#: Arm L3 on: L2's scouts skipped pairs they were asked for, so the runner now counts them (``scout_gate``).
+SCOUT_V3 = f"""   In {WE}/tree.json also give "dimensions": an object from each dimension's name to its list of values, as short
+   strings. Write one test named test_cross, parametrized with itertools.product over every dimension, that builds its
+   input from each combination's values. Skip a combination that cannot occur with pytest.skip inside the test; never
+   leave it out. The runner counts these cases and refuses the probes if any are missing.
 """
 LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
@@ -199,8 +205,39 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
 
 
 def scout_prompt(arm: str) -> str:
-    """The scout's prompt for arm ``L<n>`` or ``M<n>``: from generation 2, with ``SCOUT_V2`` before its critique."""
-    return SCOUT_PROMPT if int(arm[1:]) < 2 else SCOUT_PROMPT.replace("5. Critique:", SCOUT_V2 + "5. Critique:", 1)
+    """The scout's prompt for arm ``L<n>`` or ``M<n>``: ``SCOUT_V2`` from generation 2 and ``SCOUT_V3`` from 3, before
+    its critique. Doubled braces, as ``SCOUT_PROMPT``'s, because the prompt is formatted later."""
+    n = int(arm[1:])
+    extra = (SCOUT_V2 if n >= 2 else "") + (SCOUT_V3.replace("{", "{{").replace("}", "}}") if n >= 3 else "")
+    return SCOUT_PROMPT.replace("5. Critique:", extra + "5. Critique:", 1)
+
+
+def scout_gate(raw: str, *, exit_code: int, collected: int) -> list[str]:
+    """What is wrong with the scout's probes, by the runner's own count: G6's ``InputDomain`` says how many combinations
+    the declared dimensions make, up to ``MAX_CROSS``. Empty when the fix may start."""
+    from g6.cegis import InputDomain
+
+    wrong = []
+    if exit_code not in (0, 1):
+        wrong.append(f"the probes could not run (pytest exit {exit_code}): make them importable from the repository")
+    elif exit_code == 0:
+        wrong.append("every probe passes on the unfixed code, so none fails: reproduce the issue's symptom")
+    try:
+        dimensions = json.loads(raw).get("dimensions") or {}
+        domain = InputDomain.of(dimensions, max_inputs=MAX_CROSS)
+    except (ValueError, TypeError, AttributeError):
+        dimensions, domain = {}, None
+    if domain is None or len(dimensions) < 2:
+        wrong.append('tree.json needs "dimensions" with at least two dimensions')
+    elif collected < min(domain.size, MAX_CROSS):
+        wrong.append(f"test_cross has {collected} of {min(domain.size, MAX_CROSS)} combinations of the dimensions")
+    return wrong
+
+
+def scout_again(args: Sequence[str]) -> list[str]:
+    """The same command, continuing the scout's session: the flag that takes a list stays last."""
+    at = args.index("--disallowedTools")
+    return [*args[:at], "--continue", *args[at:]]
 
 
 def gets_thread(arm: str) -> bool:
@@ -577,7 +614,7 @@ args=""
 [ -f {WE}/waived.txt ] && args=$(awk 'NF{{print "--deselect " $1}}' {WE}/waived.txt)
 timeout 240 {PROBE_RUN} $args > {WE}/rounds/stop-$n.txt 2>&1
 code=$?
-if [ "$code" -ne 1 ]; then
+if [ "$code" -ne 1 ] && [ "$code" -ne 2 ]; then
   echo "exit $code" >> {WE}/rounds/stop-$n.txt
   exit 0
 fi
@@ -1067,20 +1104,36 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
     tally = c.Tally(count_reported=True)
     asked = scout_prompt(ctx.arm).format(owner=owner, name=name, number=task.issue, title=title, text=text)
     run.write("scout_prompt.txt", asked)
-    proc = ctx.docker.popen(*args, env=ctx.client_env(key))
-    stream = open(run.fresh_path("scout_stream.jsonl"), "w", encoding="utf-8", newline="\n")
-    try:
-        proc.stdin.write(asked.encode("utf-8"))
-        proc.stdin.close()
-        ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=time.monotonic() + 1200,
-                            write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
-                            stop_usd=SCOUT_CAP_USD * R3_MARGIN)
-    finally:
-        stream.close()
-        if proc.poll() is None:
-            ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
-            proc.kill()
-        proc.wait(timeout=60)
+
+    def session(command: list[str], text_in: str, name: str) -> str:
+        proc = ctx.docker.popen(*command, env=ctx.client_env(key))
+        stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+        try:
+            proc.stdin.write(text_in.encode("utf-8"))
+            proc.stdin.close()
+            return read_stream(iter(proc.stdout.readline, b""), tally, deadline=time.monotonic() + 1200,
+                               write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                               stop_usd=SCOUT_CAP_USD * R3_MARGIN)
+        finally:
+            stream.close()
+            if proc.poll() is None:
+                ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
+                proc.kill()
+            proc.wait(timeout=60)
+
+    def gate() -> list[str]:
+        got = out(ctx.docker.sh(agent, f'{PROBE_RUN} >/dev/null 2>&1; echo $?; {PROBE_RUN} --collect-only -q 2>/dev/null '
+                                       "| grep -c test_cross", workdir=task.repo, timeout=300)).split()
+        return scout_gate(out(ctx.docker.sh(agent, f"cat {WE}/tree.json 2>/dev/null", timeout=60)),
+                          exit_code=int(got[0]) if got else 2, collected=int(got[1]) if len(got) > 1 else 0)
+
+    ended = session(args, asked, "scout_stream.jsonl")
+    wrong = gate() if int(ctx.arm[1:]) >= 3 else []
+    refused = list(wrong)
+    if wrong:     # one more try, in the same session, with what the runner counted
+        ended = session(scout_again(args), "The runner checked your work and refused it:\n- " + "\n- ".join(wrong)
+                        + "\nPut this right and finish.", "scout_stream_2.jsonl")
+        wrong = gate()
     checked(ctx.docker.sh(agent, f"git reset -q --hard {base} && git clean -fdq", workdir=task.repo, timeout=120),
             "restore the repository")
     checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes && chown -R root:root {WE}/probes && chmod -R a+rX,go-w "
@@ -1093,7 +1146,8 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
     tree = scout_tree(tree_file.read_text("utf-8") if copy_out(ctx.docker, agent, f"{WE}/tree.json", tree_file)
                       else "no tree")
     run.write("tree.txt", tree["text"])
-    return {"ended": ended, "usd": round(tally.cost_usd, 6), **{k: tree.get(k) for k in ("shapes", "open", "error")}}
+    return {"ended": ended, "usd": round(tally.cost_usd, 6), "refused": refused, "still_wrong": wrong,
+            **{k: tree.get(k) for k in ("shapes", "open", "error")}}
 
 
 def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:

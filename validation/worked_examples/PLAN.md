@@ -729,3 +729,11 @@ run still failed, on one maintainers' test where arms E and G1 failed two. The s
 left three shapes "unclear", which the agent then reported as questions. L2's scout combines dimensions in pairs and may
 not leave a shape unclear. L2 runs on all 14 training runs. It is a text change to the scout, naming no bug, chosen after
 seeing that run and that bug's tests, so it is development; only the held-out comparison can support a claim.
+
+**L2 on `black-5634`, and L3 (before any L3 run).** Both L2 runs failed one maintainers' test. In repeat 1 the probes could
+not import the package, pytest exited 2, and the hook let the agent go: a broken instrument had switched the loop off. In
+repeat 2 all 22 probes passed, yet the failing cases sit where two dimensions the scout had listed cross, and it had not
+written them although its prompt asked. So L3 makes the count mechanical. The scout declares dimensions as data and writes
+one test over their product; G6's `InputDomain` (`g6.cegis`) gives the number of combinations, up to 200. The runner refuses
+probes that cannot run, reproduce nothing or miss combinations, and sends the scout back once. A collection error on the
+patch now blocks the stop. This was chosen after reading that bug's failing cases, so it is development.

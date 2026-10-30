@@ -55,7 +55,6 @@ def test_the_stop_hook_blocks_only_on_a_failing_probe_and_lets_go():
     hook = we.stop_hook("/repo")
     assert we.PROBE_RUN in hook and '"decision": "block"' in hook
     assert f'-ge {we.MAX_STOPS}' in hook
-    assert 'if [ "$code" -ne 1 ]' in hook
     assert "--deselect" in hook and f"{we.WE}/waived.txt" in hook
 
 
@@ -87,6 +86,43 @@ def test_scouts_from_l2_combine_dimensions_and_leave_no_shape_unclear():
         text = we.scout_prompt(arm)
         assert we.SCOUT_V2 in text and text.index(we.SCOUT_V2) < text.index("5. Critique")
     assert distill.named(we.SCOUT_V2, [], []) == []
+
+
+CROSS = json.dumps({"goal": "g", "branches": [], "dimensions": {"scope": ["top", "def", "if"], "tail": ["", "#c"]}})
+
+
+def test_the_gate_passes_probes_that_fail_at_base_and_cover_the_product():
+    assert we.scout_gate(CROSS, exit_code=1, collected=6) == []
+
+
+def test_the_gate_refuses_probes_that_cannot_run_or_reproduce_nothing():
+    assert "could not run" in we.scout_gate(CROSS, exit_code=2, collected=6)[0]
+    assert "none fails" in we.scout_gate(CROSS, exit_code=0, collected=6)[0]
+
+
+def test_the_gate_counts_the_product_itself_rather_than_trusting_the_scout():
+    assert "4 of 6" in we.scout_gate(CROSS, exit_code=1, collected=4)[0]
+
+
+def test_the_gate_needs_two_dimensions_and_caps_the_product():
+    one = json.dumps({"dimensions": {"scope": ["a", "b"]}})
+    assert "two dimensions" in we.scout_gate(one, exit_code=1, collected=2)[0]
+    assert "two dimensions" in we.scout_gate("no tree", exit_code=1, collected=0)[0]
+    big = json.dumps({"dimensions": {"a": list("abcdefgh"), "b": list("abcdefgh"), "c": list("abcdefgh")}})
+    assert we.scout_gate(big, exit_code=1, collected=we.MAX_CROSS) == []
+
+
+def test_scouts_from_l3_declare_dimensions_and_the_second_try_continues_the_session():
+    assert we.SCOUT_V3 not in we.scout_prompt("L2")
+    assert we.SCOUT_V3 in we.scout_prompt("L3") and we.SCOUT_V2 in we.scout_prompt("M3")
+    assert distill.named(we.SCOUT_V3, [], []) == []
+    assert we.scout_again(["claude", "-p", "--disallowedTools", "WebFetch"]) == [
+        "claude", "-p", "--continue", "--disallowedTools", "WebFetch"]
+
+
+def test_a_probe_that_stops_collecting_on_the_patch_blocks_too():
+    hook = we.stop_hook("/repo")
+    assert '"$code" -ne 1 ] && [ "$code" -ne 2' in hook
 
 
 def test_only_the_loops_arms_get_a_stop_hook():
