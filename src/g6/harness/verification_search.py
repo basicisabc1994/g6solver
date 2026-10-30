@@ -442,7 +442,8 @@ def _run_check(change: repo_tests.Change, placed: str, source: str, node: str, *
     deadline = time.monotonic() + timeout_s
     try:
         report: dict = {}
-        with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay, report=report) as copy:
+        with repo_tests.repository_copy(change.repo, deadline=deadline, before=overlay, report=report,
+                                        base=change.base_commit) as copy:
             return repo_tests._run(copy, [node], roots=roots, timeout_s=timeout_s, network=False, copied=True,
                                    python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
                                    deadline=deadline, require_isolation=True, links=report)
@@ -989,7 +990,8 @@ def _run_mutant(change: repo_tests.Change, rel: str, source: str, ids: list[str]
     deadline = time.monotonic() + timeout_s
     try:
         report: dict = {}
-        with repo_tests.repository_copy(change.repo, deadline=deadline, report=report) as copy:
+        with repo_tests.repository_copy(change.repo, deadline=deadline, report=report,
+                                        base=change.base_commit) as copy:
             return repo_tests._run(copy, ids, roots=roots, timeout_s=timeout_s, network=False, mutant=(rel, source),
                                    copied=True, python=repo_tests.interpreter(change.repo), scratch_dir=copy.parent,
                                    deadline=deadline, require_isolation=True, links=report)

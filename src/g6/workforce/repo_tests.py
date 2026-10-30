@@ -58,6 +58,7 @@ invoked here.
 """
 from __future__ import annotations
 
+import ast
 import configparser
 import fnmatch
 import hashlib
@@ -1921,7 +1922,7 @@ def loadable_changes(change: Change, roots: tuple[str, ...] = ()) -> dict[str, s
     return found
 
 
-def ignored_inputs(repo: Path) -> Ignored:
+def ignored_inputs(repo: Path, *, timeout_s: float = GIT_TIMEOUT_S) -> Ignored:
     """The git-ignored files in ``repo`` a test run could load. Loadable (``Ignored.loadable``): an ignored
     ``conftest.py``, ``pytest.toml``, ``.pytest.toml``, ``pytest.ini``, ``.pytest.ini``, ``setup.cfg``, ``tox.ini``,
     ``pyproject.toml``,
@@ -1937,9 +1938,11 @@ def ignored_inputs(repo: Path) -> Ignored:
     nor is a metadata folder past its ``entry_points.txt``. Not covered: the packages and plugins installed in the
     interpreter's own environment, outside the repository or in a virtual environment inside it; stale bytecode in
     ``__pycache__``; and ignored files of any other kind (data the tests read, say), which are neither judged nor
-    bound."""
-    listed = _paths(_git(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"))
-    modules = {_module(PurePosixPath(rel)) for rel in _paths(_git(repo, "ls-files", "-z")) if rel.endswith(".py")}
+    bound. ``timeout_s`` bounds each of its git calls."""
+    listed = _paths(_git(repo, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z",
+                         timeout_s=timeout_s))
+    modules = {_module(PurePosixPath(rel)) for rel in _paths(_git(repo, "ls-files", "-z", timeout_s=timeout_s))
+               if rel.endswith(".py")}
     loadable: list[str] = []
     named: list[str] = []
     other: dict[str, str] = {}
@@ -1999,13 +2002,14 @@ def ignored_inputs(repo: Path) -> Ignored:
     return found(True)
 
 
-def read_at(repo: Path, commit: str, rel: str) -> str | None:
+def read_at(repo: Path, commit: str, rel: str, *, timeout_s: float = GIT_TIMEOUT_S) -> str | None:
     """``rel``'s text at ``commit`` (None when it was not there), with the line endings ``Path.read_text`` gives,
-    read with the hardened git call (``_git``: the repository's own configuration may be the agent's)."""
+    read with the hardened git call (``_git``: the repository's own configuration may be the agent's), each git call
+    within ``timeout_s``."""
     rel = inside(repo, rel, "path")
-    if not _git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", rel).strip(b"\0"):
+    if not _git(repo, "ls-tree", "-r", "-z", "--name-only", commit, "--", rel, timeout_s=timeout_s).strip(b"\0"):
         return None
-    return _text(_git(repo, "show", f"{commit}:{rel}"))
+    return _text(_git(repo, "show", f"{commit}:{rel}", timeout_s=timeout_s))
 
 
 #: The most paths one ``texts_at`` git call names.
@@ -2153,37 +2157,134 @@ def _copy_links(copy: Path, links: dict[str, tuple[str, bool]], left: dict[str, 
     return materialised
 
 
-#: The build configuration files whose text, as committed at HEAD, can name a generated file a copy takes.
+#: The build configuration files whose text, as committed at the review's base, can name a generated file a copy takes.
 _BUILD_CONFIG = ("pyproject.toml", "setup.cfg", "setup.py")
 _QUOTED_PY = re.compile(r"""["']([^"'\s]+\.py)["']""")
+#: The most bytes of a generated file G6 reads; a version file is a few hundred.
+GENERATED_MAX_BYTES = 64 * 1024
+#: The double-underscore names a generated file may bind: any other (``__path__``, ``__builtins__``) is import machinery.
+_GENERATED_DUNDERS = frozenset({"__all__", "__version__", "__version_tuple__", "__commit_id__"})
+# COPY: why a copy left out a git-ignored file the build configuration names (``report``'s ``generated_left_out``).
+GENERATED_TOO_BIG = "left out of the copy: it holds more than {n} bytes, the most G6 reads of a generated file"
+GENERATED_UNREADABLE = "left out of the copy: G6 could not read it"
+GENERATED_NOT_DATA = ("left out of the copy: it holds more than literal data ({what}, line {line}); the patch's author "
+                      "can write a git-ignored file, which is in no diff, and both copies would run its code")
 
 
-def _generated_files(repo: Path) -> dict[str, str]:
-    """The git-ignored Python files the project's own build writes, which a copy takes, path to SHA-256 (worked
-    examples, round 2: black's ``src/_black_version.py``, which hatch-vcs writes at install time and git ignores, so no
-    check G6 ran in a copy could import black). A file is taken only when (1) a build configuration file at the top
-    (``_BUILD_CONFIG``), as committed at HEAD, names its path in quotes, inside the repository, so the working tree under
-    review cannot add a name; and (2) ``ignored_inputs`` finished its scan and judged the file ``other``: not a runner,
-    start-up, path or test file, not named like a tracked module it could shadow, not a link, bytecode or an extension.
-    Such a file is one a run in place already loads, and its receipt already binds by SHA-256; the base and the patch
-    copies both hold it unchanged (``_base_revision`` restores only what git reports as changed).
-    SECURITY-SENSITIVE (2026-10-30): pending an independent security review."""
+def _literal(node: ast.expr) -> bool:
+    """A literal string, integer or None, or a tuple or list of them (``ast.literal_eval``: nothing runs)."""
+    try:
+        value = ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False
+    return all(item is None or type(item) in (str, int, bool) for item in
+               (value if type(value) in (tuple, list) else (value,)))
+
+
+def _type_expression(node: ast.expr) -> bool:
+    """A type written with names, subscripts, tuples, constants and ``|`` only: no call, no attribute."""
+    return all(isinstance(part, (ast.Name, ast.Subscript, ast.Tuple, ast.Constant, ast.Load, ast.BitOr))
+               or isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr) for part in ast.walk(node))
+
+
+def _not_data(data: bytes) -> str:
+    """Why ``data`` (Python source, parsed, never run) is more than the literal data a build writes into a version
+    file, "" when it is not. Allowed, at the top of the module only: a docstring first; ``from __future__ import``;
+    assignments to plain names (each double-underscore one in ``_GENERATED_DUNDERS``) of a literal (``_literal``),
+    annotated or not, an annotation being a type (``_type_expression``); and setuptools-scm's typing stub,
+    ``TYPE_CHECKING = False`` then ``if TYPE_CHECKING:`` holding only ``from typing import`` and assignments of a type,
+    ``else:`` only assignments of ``object``, with ``TYPE_CHECKING`` bound nowhere else."""
+    try:
+        tree = ast.parse(data)
+    except (SyntaxError, ValueError, MemoryError, RecursionError) as exc:
+        return GENERATED_NOT_DATA.format(what="text Python cannot parse", line=getattr(exc, "lineno", None) or 1)
+
+    def names(targets: list[ast.expr]) -> bool:
+        return all(isinstance(t, ast.Name) and (not (t.id.startswith("__") and t.id.endswith("__"))
+                                                or t.id in _GENERATED_DUNDERS) for t in targets)
+
+    def plain(node: ast.stmt, index: int) -> bool:
+        if isinstance(node, ast.Expr):
+            return index == 0 and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        if isinstance(node, ast.ImportFrom):
+            return node.module == "__future__" and not node.level
+        if isinstance(node, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == "TYPE_CHECKING" for t in node.targets):
+                return (len(node.targets) == 1 and isinstance(node.value, ast.Constant)
+                        and node.value.value is False)
+            return names(node.targets) and _literal(node.value)
+        if isinstance(node, ast.AnnAssign):
+            return (names([node.target]) and node.target.id != "TYPE_CHECKING" and _type_expression(node.annotation)
+                    and (node.value is None or _literal(node.value)))
+        if isinstance(node, ast.If):
+            return (isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING"
+                    and all(isinstance(s, ast.ImportFrom) and s.module == "typing" and not s.level
+                            and all(a.name != "TYPE_CHECKING" and a.asname != "TYPE_CHECKING" for a in s.names)
+                            or isinstance(s, ast.Assign) and names(s.targets) and _type_expression(s.value)
+                            for s in node.body)
+                    and all(isinstance(s, ast.Assign) and names(s.targets) and isinstance(s.value, ast.Name)
+                            and s.value.id == "object" for s in node.orelse)
+                    and not any(isinstance(t, ast.Name) and t.id == "TYPE_CHECKING"
+                                for s in (*node.body, *node.orelse) for t in getattr(s, "targets", ())))
+        return False
+
+    for index, node in enumerate(tree.body):
+        if not plain(node, index):
+            return GENERATED_NOT_DATA.format(what=f"a statement of kind {type(node).__name__}", line=node.lineno)
+    return ""
+
+
+def _generated_files(repo: Path, base: str | None = None,
+                     deadline: float | None = None) -> tuple[dict[str, bytes], dict[str, str]]:
+    """The git-ignored Python files the project's own build writes, which a copy takes, path to the bytes G6 read and
+    checked (once: those bytes are what the copy holds and what its SHA-256 is of), and the named ones it left out, path
+    to why (worked examples, round 2: black's ``src/_black_version.py``, which hatch-vcs writes at install time and git
+    ignores, so no check G6 ran in a copy could import black). A file is taken only when (1) a build configuration file
+    at the top (``_BUILD_CONFIG``), as committed at ``base`` (the review's base commit; HEAD when there is none), names
+    its path in quotes, inside the repository, so neither the working tree nor a commit after the base can add a name
+    (``setup.py`` is no runner file); (2) ``ignored_inputs`` finished its scan and judged the file ``other``: not a
+    runner, start-up, path or test file, not named like a tracked module it could shadow, not a link, bytecode or an
+    extension; and (3) it holds only literal data (``_not_data``, from the source parsed, never run): the patch's
+    author can write the file, it is in no diff, and the base and the patch copies both import it, so code in it could
+    forge both halves of a fail-before, pass-after check. Git's calls keep to ``deadline``; a call git refuses takes
+    nothing. Not covered: the literal values themselves, the same in both copies.
+    SECURITY-SENSITIVE (2026-10-30): reviewed; this is the review's fix."""
+    def timeout() -> float:
+        return GIT_TIMEOUT_S if deadline is None else min(GIT_TIMEOUT_S, _copy_remaining(deadline))
+
     named: set[str] = set()
-    for config in _BUILD_CONFIG:
-        try:
-            text = read_at(repo, "HEAD", config)
-        except RepoRefused:
-            return {}
-        for match in _QUOTED_PY.finditer(text or ""):
-            rel = match.group(1).removeprefix("./")
-            if not _absolute(rel) and ".." not in PurePosixPath(rel).parts and not shape_problem(rel, "path"):
-                named.add(rel)
-    if not any((repo / rel).is_file() and not _linked(repo / rel) for rel in named):
-        return {}
-    scan = ignored_inputs(repo)
+    try:
+        for config in _BUILD_CONFIG:
+            text = read_at(repo, base or "HEAD", config, timeout_s=timeout())
+            for match in _QUOTED_PY.finditer(text or ""):
+                rel = match.group(1).removeprefix("./")
+                if not _absolute(rel) and ".." not in PurePosixPath(rel).parts and not shape_problem(rel, "path"):
+                    named.add(rel)
+        if not any((repo / rel).is_file() and not _linked(repo / rel) for rel in named):
+            return {}, {}
+        scan = ignored_inputs(repo, timeout_s=timeout())
+    except RepoRefused:
+        return {}, {}
     if not scan.complete:
-        return {}
-    return {rel: digest for rel, digest in scan.other.items() if rel in named}
+        return {}, {}
+    taken: dict[str, bytes] = {}
+    left: dict[str, str] = {}
+    for rel in sorted(set(scan.other) & named):
+        try:
+            if _linked(repo / rel):
+                continue
+            with (repo / rel).open("rb") as file:
+                data = file.read(GENERATED_MAX_BYTES + 1)
+        except OSError:
+            left[rel] = GENERATED_UNREADABLE
+            continue
+        if len(data) > GENERATED_MAX_BYTES:
+            left[rel] = GENERATED_TOO_BIG.format(n=GENERATED_MAX_BYTES)
+        elif why := _not_data(data):
+            left[rel] = why
+        else:
+            taken[rel] = data
+    return taken, left
 
 
 class CopyNotRun(ValueError):
@@ -2221,9 +2322,11 @@ def _copy_caps(files: int, size: int, deadline: float | None) -> None:
 
 @contextmanager
 def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | None = None,
-                    report: dict | None = None):
+                    report: dict | None = None, base: str | None = None):
     """Copy git's tracked and non-ignored untracked files, and the ignored files the project's build writes that
-    ``_generated_files`` allows (``report``'s ``generated_copied``), with bounded reads and old-test overlays; every file of each
+    ``_generated_files`` allows, named at ``base`` (the review's base commit; HEAD when None) (``report``'s
+    ``generated_copied``, path to SHA-256, and ``generated_left_out``, path to why), with bounded reads and old-test
+    overlays; every file of each
     submodule folder git does not look into (``_gitlinks``); and each tracked link (git's mode 120000) and each link in
     such a folder as ``_copy_links`` allows. ``report``, when given, receives ``links_left_out`` (path to why) and
     ``links_materialised`` (path to the target copied in its place), each only when it names one. A repository
@@ -2234,7 +2337,8 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
     tracked_links = {entry.partition("\t")[2] for entry in _paths(stage) if entry.startswith("120000 ")}
     known = _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z",
                         timeout_s=min(GIT_TIMEOUT_S, _copy_remaining(deadline))))
-    generated = _generated_files(repo)   # git-ignored files the project's build writes (SECURITY-SENSITIVE, see there)
+    # git-ignored files the project's build writes, as read and checked once (SECURITY-SENSITIVE, see there)
+    generated, generated_left = _generated_files(repo, base=base, deadline=deadline)
     known = [*known, *(rel for rel in generated if rel not in known)]
     with confine.run_folder(prefix="g6_repo_copy_", dir=outside_temp(repo), ignore_cleanup_errors=True) as scratch:
         copy = Path(scratch) / "repo"
@@ -2280,7 +2384,7 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
             source = repo / inside(repo, rel, "file")
             if rel not in before and not source.is_file():
                 continue
-            put(source, copy / rel, before[rel].encode("utf-8") if rel in before else None)
+            put(source, copy / rel, before[rel].encode("utf-8") if rel in before else generated.get(rel))
         for rel in gitlinks:
             parts = PurePosixPath(rel).parts
             if any(_linked(repo.joinpath(*parts[:end])) for end in range(1, len(parts) + 1)):
@@ -2304,7 +2408,9 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
         if report is not None:
             report.update({key: value for key, value in (("links_left_out", dict(sorted(left.items()))),
                                                          ("links_materialised", materialised),
-                                                         ("generated_copied", generated)) if value})
+                                                         ("generated_copied", {rel: hashlib.sha256(data).hexdigest()
+                                                                               for rel, data in generated.items()}),
+                                                         ("generated_left_out", generated_left)) if value})
         _copy_caps(*tally, deadline)
         yield copy
 
@@ -2426,7 +2532,8 @@ def run_before(change: Change, *, roots: tuple[str, ...] = (), timeout_s: int = 
             continue
         try:
             report: dict = {}
-            with repository_copy(change.repo, deadline=started + bound, before=change.before, report=report) as copy:
+            with repository_copy(change.repo, deadline=started + bound, before=change.before, report=report,
+                                 base=change.base_commit) as copy:
                 with _base_revision(change, copy, started + bound, materialised=report.get("links_materialised")):
                     baseline = _run(copy, [old_path.get(rel, rel)], roots=roots, timeout_s=bound, network=network,
                                     copied=True, python=interpreter(change.repo), scratch_dir=copy.parent,
@@ -2477,7 +2584,8 @@ def run_at_base(change: Change, tests: list[str], *, roots: tuple[str, ...] = ()
     try:
         keep = frozenset(inside(change.repo, test, "test").partition("::")[0].rstrip("/") for test in tests)
         report: dict = {}
-        with repository_copy(change.repo, deadline=deadline, before=overlay, report=report) as copy:
+        with repository_copy(change.repo, deadline=deadline, before=overlay, report=report,
+                             base=change.base_commit) as copy:
             with _base_revision(change, copy, deadline, keep=keep, materialised=report.get("links_materialised")):
                 return _run(copy, tests, roots=roots, timeout_s=bound, network=network, copied=True,
                             python=interpreter(change.repo), scratch_dir=copy.parent, deadline=deadline,

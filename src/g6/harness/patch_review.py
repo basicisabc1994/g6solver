@@ -614,8 +614,9 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
 
 #: What a run says of what it could not see, kept in the reply's record of it when it says anything (review M1): the
 #: links its copy left out or copied in place, the modules it loaded from outside the tree, the submodule folders G6
-#: could not hash.
-_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed")
+#: could not hash, and the git-ignored files the build writes it took (path to SHA-256) or left out (path to why).
+_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed", "generated_copied",
+              "generated_left_out")
 
 
 def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:

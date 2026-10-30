@@ -298,6 +298,19 @@ def test_the_runs_records_keep_what_the_run_left_out_or_could_not_see(installed,
         assert first[key] == extra[key], key
 
 
+def test_the_runs_records_say_which_generated_files_the_copy_took_or_left_out(installed, monkeypatch):
+    """The review of 286c173: a git-ignored file a copy takes is trusted code in both copies, so the reply names it,
+    with its SHA-256, and names each one it left out, with why."""
+    repo, _ = installed
+    extra = {"generated_copied": {"src/_pkg_version.py": "0" * 64},
+             "generated_left_out": {"src/_other_version.py": "it holds more than literal data"}}
+    _recorded(monkeypatch, _result([CHECK]) | extra)
+    got = review_patch(repo, task="Repair addition.", requirements=REQUIREMENTS)
+    [first, *_] = got["assessment"]["scope"]["checks_run"]
+    for key in extra:
+        assert first[key] == extra[key], key
+
+
 def _venv_in(folder: Path) -> tuple[Path, Path]:
     # --copies: an environment linked to G6's own Python is refused (L1)
     subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", "--copies", str(folder)],
