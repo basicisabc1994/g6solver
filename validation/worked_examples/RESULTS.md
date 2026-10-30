@@ -315,8 +315,8 @@ bugs already seen, so they are signals, not rates. Arms A, B and C ran on G6 894
 
 - **Haiku never called G6,** so its three runs say nothing about G6: see PLAN.md, "Haiku's first three runs, and a smoke
   test before the rest".
-- **False acceptance is the main finding.** G6 said "supported" on 6 of Sonnet's 9 runs, and the maintainers' tests reject
-  5 of those 6 patches. That verdict rests on checks the agent wrote itself, which share its reading of the bug.
+- **False acceptance is the main finding.** G6 said "supported" on 7 of Sonnet's 9 runs, and the maintainers' tests reject
+  6 of those 7 patches. That verdict rests on checks the agent wrote itself, which share its reading of the bug.
 - **No extra check found a defect.** Every template and proposed check that ran passed, on arm D too, where each had to
   assert a value taken from the issue. No `formal` or `model_checking` op was called in any run.
 - **Arm D's two changes are only partly tested.** No template was refused in arm D, so no agent ever saw the new refusal
