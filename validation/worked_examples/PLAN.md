@@ -512,3 +512,12 @@ G6 does not itself find from the source that a check needs another form: that is
   make every check assert a specific expected value taken from the issue, so that it can fail. It names no bug.
 - **Runs:** Sonnet's arm D on black-5634, attrs-1593, click-3678 and pydantic-14052. Arm D is outside the 100 scheduled
   runs and is reported as its own arm. Runs already made stay as they are. Same $100 stop; the proposer stays off.
+
+### 2026-10-30: arm D's commit, after its review (before any run of arm D)
+
+A fresh review of `f50953c` passed with minors: only refusal text changes in G6, nothing that is digested or decided
+reads that text, and the prompts of arms A, B and C are byte-identical to before. Arm D runs on G6 `f50953c`, on images
+built from it, and the runner refuses any other commit, because a run made on the wrong one could not be made again.
+
+**Minors kept for later:** five earlier refusals of a whole instance (`literal_problem` among them) do not carry the
+fallback text, and the fallback also follows `OUT_OF_TIME`, where a proposed check could not run either.

@@ -371,6 +371,7 @@ R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "
             (R3_MODELS[1], "attrs-1593", "C", 1), (R3_MODELS[1], "click-3678", "C", 1),
             (R3_MODELS[1], "pydantic-14052", "C", 1)}
 R3_PROBE = {(R3_MODELS[1], task, "D", 1) for task in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
+R3_D_G6 = "f50953c"          # arm D's G6, reviewed (PLAN.md, 2026-10-30): its refusals name proposed_checks
 R3_ARMS = ("A", "B", "C")
 R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
 R3_CAP_USD = 100.00          # round 3's own hard stop, agent and G6 together
@@ -424,6 +425,8 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
         return f"round 3 has no model {ctx.model!r}", 0.0, 0.0
     if key not in sched and key not in R3_PROBE:
         return f"round 3 schedules no run {key}", 0.0, 0.0
+    if ctx.arm == "D" and not str(ctx.g6.get("commit")).startswith(R3_D_G6):
+        return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
     done = r3_done(rows)
     if key in done and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0

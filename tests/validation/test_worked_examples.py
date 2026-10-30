@@ -841,6 +841,8 @@ def test_round3_arm_d_is_c_with_the_fallback_on_the_four_probe_bugs_only(tmp_pat
     assert we.R3_PROBE == {(SONNET, t, "D", 1) for t in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
     assert all(arm != "D" for _, _, arm, _ in we.r3_schedule(we.load_tasks()))    # the schedule's 100 runs are unchanged
     ctx = _r3(tmp_path, "D", model=SONNET)
+    assert "reviewed G6" in we.run_task(ctx, TASK)["why"]         # the shipped commit lacks the refusal's new text
+    ctx.g6 = {**ctx.g6, "commit": we.R3_D_G6 + "0" * 33}
     assert we.run_task(ctx, TASK)["status"] == "finished"
     assert "already" in we.run_task(ctx, TASK)["why"]
     ctx.model = HAIKU
