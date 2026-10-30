@@ -85,6 +85,35 @@ Issue #{number}: {title}
 {text}
 """
 
+#: Round 3, arm A (PLAN.md section 9, "Round 3 (2026-10-30)"): round 1's prompt without the G6 instruction.
+PROMPT_A = """You are working in a clone of {owner}/{name}, at the commit just before the maintainers fixed the issue below.
+The project's development environment is the virtual environment in .venv (its Python is .venv/bin/python).
+There is no network apart from the model.
+
+Fix the issue. Nobody is available to answer questions during this run: put any questions in your final
+report and carry on with the most likely reading. Leave your changes uncommitted in the working tree. End with
+your final report.
+
+Issue #{number}: {title}
+
+{text}
+"""
+
+#: Round 3, arm C: added after round 1's instruction, before the issue. It names no bug, project or diagnosis.
+ADDENDUM_C = """Before you say the fix is done, also check it with G6's formal tools:
+1. State each requirement of the issue as a property: what must hold, and for which inputs.
+2. Check each property with G6. Compare the patch with the base code on the inputs the issue names and on variants
+   of them: a differential.v1 template instance in g6_review_patch (intent preserve where behaviour must stay, change
+   where it must change). Where a property is over whole numbers and booleans, or a small state machine, also check
+   it through g6_invoke: component formal (find_counterexample, check_validity, check_equivalence) or model_checking
+   (check_invariant, prove_invariant); g6_describe gives each op's parameters. For behaviour over several steps, use a
+   state_invariant.v1 template instance.
+3. Repair what a check refutes, then review again with g6_review_patch. Stop when a review reproduces no new
+   counterexample and every property you stated has been checked, or when the budget ends.
+In your final report, list each property, the tool that checked it, and what it gave."""
+PROMPT_C = PROMPT.replace("\nIssue #{number}", "\n" + ADDENDUM_C.replace("{", "{{").replace("}", "}}")
+                          + "\n\nIssue #{number}", 1)
+
 
 # --- tasks ----------------------------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -124,9 +153,14 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
     raise SystemExit(f"no task {task_id!r} in {path.name}")
 
 
-def prompt(task: Task, title: str, text: str) -> str:
+def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
+    """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
+    addendum."""
+    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C}
+    if arm not in texts:
+        raise ValueError(f"no arm {arm!r}")
     owner, name = task.project.split("/", 1)
-    return PROMPT.format(owner=owner, name=name, number=task.issue, title=title, text=text)
+    return texts[arm].format(owner=owner, name=name, number=task.issue, title=title, text=text)
 
 
 # --- docker ---------------------------------------------------------------------------------------------------------------
@@ -319,6 +353,89 @@ def g6_model_cost(assessments: Iterable[Any]) -> dict[str, Any]:
             usd += c.usage_cost(usage, answered if answered in c.PRICES else G6_MODEL)
     return {"calls": calls, "calls_counted_at_upper_bound": bounded, "input_tokens": tokens_in,
             "output_tokens": tokens_out, "usd": round(usd, 6)}
+
+
+# --- round 3: formal methods (PLAN.md section 9, "Round 3 (2026-10-30)") ----------------------------------------------
+ROUND3 = "r3"
+R3_MODELS = ("claude-haiku-4-5", "claude-sonnet-5-5", "claude-fable-5-1")   # in the order they run
+R3_ARMS = ("A", "B", "C")
+R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
+R3_CAP_USD = 100.00          # round 3's own hard stop, agent and G6 together
+R3_RUN_CAP_USD = 10.00       # each run's cap (Claude Code's --max-budget-usd); Fable's from the budget left
+R3_MARGIN = 1.05             # the runner's own stop is the cap and 5% (round 1: $10 and $10.50)
+G6_BIN = "/usr/local/bin/g6"
+#: What the agent's container holds of G6 for Claude Code: the user-level MCP servers and skills (arm check).
+ARM_STATE = ("echo we-arm-state >/dev/null; python3 -I -c 'import json, os\n"
+             "p = os.path.expanduser(\"~/.claude.json\")\n"
+             "d = json.load(open(p)) if os.path.isfile(p) else {}\n"
+             "s = os.path.expanduser(\"~/.claude/skills\")\n"
+             "print(json.dumps({\"mcp_servers\": sorted(d.get(\"mcpServers\") or {}), "
+             "\"skills\": sorted(os.listdir(s)) if os.path.isdir(s) else []}))'")
+
+
+def r3_schedule(tasks: Sequence[Task]) -> list[tuple[str, str, str, int]]:
+    """Every round 3 run, in order, as (model, task, arm, repeat): Haiku's, then Sonnet's, then Fable's; within a model,
+    the tasks in the plan's order, each with arms A, B and C."""
+    return [(model, task.id, arm, repeat) for model in R3_MODELS for task in tasks for arm in R3_ARMS
+            for repeat in range(1, R3_REPEATS.get((model, arm), 1) + 1)]
+
+
+def r3_caps(model: str, *, spent: float, fable_left: int) -> tuple[float, float]:
+    """A run's cap and the runner's stop: $10 and $10.50; for Fable, the budget left over the Fable runs left (this
+    one included), at most those, the cap rounded down to the cent."""
+    stop = R3_RUN_CAP_USD * R3_MARGIN
+    if model == R3_MODELS[2]:
+        stop = min(stop, max(0.0, R3_CAP_USD - spent) / max(1, fable_left))
+    cap = int(stop / R3_MARGIN * 100 + 1e-9) / 100
+    return cap, round(cap * R3_MARGIN, 6)
+
+
+def r3_done(rows: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str, str, int], str]:
+    """The round 3 runs whose agent started, by (model, task, arm, repeat), with how each ended."""
+    ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
+    done = {}
+    for r in rows:
+        end = ended.get(r.get("run"))
+        if r.get("event") == "started" and r.get("kind") == "run" and r.get("arm") and end and end.get("agent_started"):
+            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = end["status"]
+    return done
+
+
+def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
+    """Round 3's own rules: the arm, model and repeat are scheduled, not run already, and in order (no Sonnet run while
+    a Haiku run is left, no Fable run while a Sonnet one is); the cap; and the $100 stop. Returns (why, cap, stop)."""
+    rows = ctx.archive.rows()
+    sched = r3_schedule(ctx.tasks if ctx.tasks is not None else load_tasks())
+    key = (ctx.model, task.id, ctx.arm, ctx.repeat)
+    if ctx.model not in R3_MODELS:
+        return f"round 3 has no model {ctx.model!r}", 0.0, 0.0
+    if key not in sched:
+        return f"round 3 schedules no run {key}", 0.0, 0.0
+    done = r3_done(rows)
+    if key in done and not (ctx.rerun_why and done[key] == "error"):
+        return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
+    earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
+    if earlier:
+        return f"out of order: {len(earlier)} run(s) of an earlier model are left, first {earlier[0]}", 0.0, 0.0
+    spent = c.spent(rows)
+    fable_left = sum(1 for k in sched if k[0] == R3_MODELS[2] and k not in done)
+    cap, stop = r3_caps(ctx.model, spent=spent, fable_left=fable_left)
+    ok, why = c.may_start(spent, cap=R3_CAP_USD, need=stop)
+    if not ok or cap <= 0:
+        return f"the round's $100 stop: {why or 'no budget left'}", cap, stop
+    return "", cap, stop
+
+
+def r3_ledger(archive: c.Archive, record: Mapping[str, Any]) -> dict[str, Any]:
+    """One line of round 3's ledger after each run: what it cost and what the round has spent since it began."""
+    row = {"at": c.now(), "run": record.get("run"), "task": record.get("task"), "model": record.get("model"),
+           "arm": record.get("arm"), "repeat": record.get("repeat"), "status": record.get("status"),
+           "cost_usd": float(record.get("cost_usd") or 0.0), "reported_usd": record.get("reported_usd"),
+           "cap_usd": record.get("cap_usd"), "spent_after": c.spent(archive.rows()), "stop_usd": R3_CAP_USD}
+    archive.root.mkdir(parents=True, exist_ok=True)
+    with open(archive.root / "ledger.jsonl", "a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return row
 
 
 # --- the hook that saves each round's patch, and the patch capture -------------------------------------------------------
@@ -567,15 +684,16 @@ def extract_rounds(objects: Iterable[Mapping[str, Any]],
 
 
 # --- the stream ----------------------------------------------------------------------------------------------------------
-def claude_args() -> list[str]:
-    """PLAN.md section 4. The flag that takes a list goes last; the prompt comes on standard input."""
-    return [CLAUDE, "-p", "--model", c.MODEL, "--output-format", "stream-json", "--verbose", "--max-turns",
-            str(c.MAX_TURNS), "--max-budget-usd", f"{c.RUN_CAP_USD:.2f}", "--dangerously-skip-permissions",
+def claude_args(model: str = c.MODEL, cap_usd: float = c.RUN_CAP_USD) -> list[str]:
+    """PLAN.md section 4 (round 3: the run's model and cap). The flag that takes a list goes last; the prompt comes on
+    standard input."""
+    return [CLAUDE, "-p", "--model", model, "--output-format", "stream-json", "--verbose", "--max-turns",
+            str(c.MAX_TURNS), "--max-budget-usd", f"{cap_usd:.2f}", "--dangerously-skip-permissions",
             "--disallowedTools", "WebFetch", "WebSearch"]
 
 
 def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, write: Callable[[str], None],
-                clock: Callable[[], float] = time.monotonic) -> str:
+                clock: Callable[[], float] = time.monotonic, stop_usd: float = c.RUN_STOP_USD) -> str:
     """Feed the stream to ``tally`` until it ends ("") or a cap is reached ("timeout", "cap_turns", "cap_cost")."""
     q: queue.Queue = queue.Queue()
 
@@ -607,7 +725,7 @@ def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, writ
             tally.feed(obj)
         if tally.model_calls > c.MAX_TURNS * TURN_BACKSTOP:
             return "cap_turns"
-        if tally.cost_usd > c.RUN_STOP_USD:
+        if tally.cost_usd > stop_usd:
             return "cap_cost"
 
 
@@ -639,8 +757,13 @@ class Context:
     proxy_source: Path = PROXY
     environ: Mapping[str, str] | None = None
     tree_reader: Callable[[Task], str] | None = None    # upstream's tree for the base commit (default: GitHub's API)
-    variant: str = ""            # "r2": round 2, G6 with its own model (PLAN.md section 9)
+    variant: str = ""            # "r2": round 2, G6 with its own model; "r3": round 3, formal methods (PLAN.md section 9)
     prior_spent: float = 0.0     # what earlier rounds spent, under the same $100 stop
+    arm: str = ""                # round 3: "A" (no G6), "B" (G6 as shipped) or "C" (G6 and the formal addendum)
+    model: str = c.MODEL         # round 3: the agent's model
+    repeat: int = 1              # round 3: which repeat of the same model, task and arm (Sonnet's arm A: 1 or 2)
+    tasks: Sequence[Task] | None = None   # round 3's schedule's tasks (default: tasks.json)
+    rerun_why: str = ""          # round 3: a run whose agent started and ended in "error" may be made again, saying why
 
     def client_env(self, key: str | None = None) -> dict[str, str]:
         base = dict(self.environ) if self.environ is not None else {
@@ -742,6 +865,8 @@ def refusal(ctx: Context, task: Task) -> str:
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     if v["record"].get("oracle_image_id") != out(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}")):
         return "the task's validation was not made on the images this run would use"
+    if ctx.variant == ROUND3:
+        return ""     # round 3's own stop, order and caps: r3_refusal
     need = c.RUN_STOP_USD + (G6_ALLOWANCE_USD if ctx.variant == ROUND2 else 0.0)
     ok, why = c.may_start(c.spent(ctx.archive.rows()) + ctx.prior_spent, need=need)
     return "" if ok else f"the $100 stop: {why}"
@@ -770,17 +895,39 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     """One run (PLAN.md section 4). Refused before anything starts when G6's commit, the validation or the stop says
     so; a failed key check starts no agent. ``dry``: the same path with no key and no way out (a placeholder in the
     key's place, Claude Code's proxy a dead port), plus a self-test of the round hook; nothing can be spent."""
+    round3 = ctx.variant == ROUND3
     why = "" if dry else refusal(ctx, task)
+    cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
+    if round3:
+        if ctx.arm not in R3_ARMS or ctx.model not in R3_MODELS:
+            why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
+        elif dry:
+            cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
+        elif not why:
+            why, cap, stop = r3_refusal(ctx, task)
     if why:
         return {"status": "refused", "why": why, "task": task.id}
+    body = _run_task(ctx, task, dry=dry, cap=cap, stop=stop)
+    if round3 and not dry:
+        body["ledger"] = r3_ledger(ctx.archive, body)
+    return body
+
+
+def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:
+    round3 = ctx.variant == ROUND3
+    model = ctx.model if round3 else c.MODEL
+    no_g6 = round3 and ctx.arm == "A"       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     tag = uuid.uuid4().hex[:10]
     common = {"g6_commit": ctx.g6.get("commit"), "g6_image": ctx.g6.get("image"), "task_image": task_image,
-              "model": c.MODEL}
+              "model": model}
+    if round3:
+        common.update(arm=ctx.arm, repeat=ctx.repeat, cap_usd=cap, stop_usd=stop, label="development",
+                      **({"rerun_why": ctx.rerun_why} if ctx.rerun_why else {}))
     run = ctx.archive.start("dryrun" if dry else "run", task.id, **common)
-    record: dict[str, Any] = {**common, "task": task.id, "agent_started": False, "cost_usd": 0.0}
+    record: dict[str, Any] = {**common, "task": task.id, "run": run.rel, "agent_started": False, "cost_usd": 0.0}
     agent, net, px, status = "", "", "", "error"
     try:
         title, text = ctx.issue_reader(task)
@@ -817,33 +964,46 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         base = str(state["head"])
         record["base_commit"] = base
         record["claude_version"] = out(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120))
-        doctor = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", agent, "g6", "doctor", timeout=600)
-        run.write("g6_doctor.txt", out(doctor) + "\n" + err(doctor))
-        setup = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", "-w", HOME, agent,
-                           "g6", "setup", "--client", "claude", "--allow", "patch_review.review", timeout=600)
-        run.write("g6_setup.txt", out(setup) + "\n" + err(setup))
-        record["g6_setup_exit"] = setup.returncode
-        if setup.returncode != 0:
-            raise RuntimeError(f"g6 setup exited {setup.returncode}")
+        if no_g6:    # round 3, arm A: no g6 setup, and no g6 command on the agent's path
+            checked(ctx.docker("exec", "-u", "root", agent, "rm", "-f", G6_BIN, timeout=60), "remove the g6 command")
+            record["g6_setup_exit"] = None
+        else:
+            doctor = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", agent, "g6", "doctor", timeout=600)
+            run.write("g6_doctor.txt", out(doctor) + "\n" + err(doctor))
+            setup = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", "-w", HOME, agent,
+                               "g6", "setup", "--client", "claude", "--allow", "patch_review.review", timeout=600)
+            run.write("g6_setup.txt", out(setup) + "\n" + err(setup))
+            record["g6_setup_exit"] = setup.returncode
+            if setup.returncode != 0:
+                raise RuntimeError(f"g6 setup exited {setup.returncode}")
+        if round3:   # what Claude Code will find of G6: nothing in arm A; G6's server and skill in B and C
+            try:
+                record["arm_state"] = json.loads(out(ctx.docker.sh(agent, ARM_STATE)).splitlines()[-1])
+            except (ValueError, IndexError):
+                record["arm_state"] = {"mcp_servers": [], "skills": [], "error": "nothing readable"}
+            servers = record["arm_state"].get("mcp_servers") or []
+            if (servers != []) if no_g6 else ("g6" not in servers):
+                status = "arm_mismatch"
+                return run.finish(record, status)
         if round2:
             write_key_file(ctx.docker, agent, key)     # G6's model and its key, where g6.core.keys reads them
         write_in(ctx.docker, agent, f"{WE}/round_hook.sh", hook_script(task.repo, base), mode="755")
         write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings())
         if dry:
             record["hook_selftest"] = hook_selftest(ctx, agent, task)
-        text_in = prompt(task, title, text)
+        text_in = prompt(task, title, text, ctx.arm if round3 else "")
         run.write("prompt.txt", text_in)
-        args = claude_args()
+        args = claude_args(model, cap)
         way_out = DEAD_PROXY if dry else f"http://{px}:{PROXY_PORT}"
         env_names = ["ANTHROPIC_API_KEY", f"HTTPS_PROXY={way_out}", f"HTTP_PROXY={way_out}",
                      "NO_PROXY=localhost,127.0.0.1", f"HOME={HOME}", "DISABLE_AUTOUPDATER=1",
                      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1"]
         docker_args = ["exec", "-i", "-u", USER, "-w", task.repo, *[a for e in env_names for a in ("-e", e)], agent,
                        *args]
-        run.write_json("command.json", {"docker": docker_args, "caps": {"usd": c.RUN_CAP_USD, "stop_usd": c.RUN_STOP_USD,
+        run.write_json("command.json", {"docker": docker_args, "caps": {"usd": cap, "stop_usd": stop,
                                         "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
                                         "key": "passed by name; its value only in the docker client's environment"})
-        tally = c.Tally()
+        tally = c.Tally(count_reported=round3)
         started = time.monotonic()
         proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
         record["agent_started"] = True
@@ -855,8 +1015,9 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         try:
             proc.stdin.write(text_in.encode("utf-8"))
             proc.stdin.close()
-            stop = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
-                               write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()))
+            ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
+                                write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                                stop_usd=stop)
         finally:
             stream.close()
             if proc.poll() is None:
@@ -866,7 +1027,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         drain.join(timeout=30)
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         result = tally.result or {}
-        record.update(status_detail=status_of(stop, tally), agent_usd=tally.cost_usd,
+        record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0), 6),
                       stream_usd=round(tally.stream_usd, 6),
                       result_usd=tally.result_usd, reported_usd=result.get("total_cost_usd"),
@@ -1278,7 +1439,7 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "modelcheck", "dryrun",
-                                        "run", "check", "replay", "g6replay", "show", "progress", "rounds"))
+                                        "run", "check", "replay", "g6replay", "show", "progress", "rounds", "schedule"))
     ap.add_argument("--args", type=Path, help="g6replay: a JSON file of the review's arguments")
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
@@ -1289,13 +1450,26 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--code")
     ap.add_argument("--test", type=Path)
     ap.add_argument("--kind", default="validate", help="show: validate, run, check, freecheck, replay or build")
-    ap.add_argument("--round", type=int, choices=(1, 2), default=1,
-                    help="2: round 2, G6 with its own model (its archive is round2/ inside the worked examples' one)")
+    ap.add_argument("--round", type=int, choices=(1, 2, 3), default=1,
+                    help="2: round 2, G6 with its own model (its archive is round2/ inside the worked examples' one); "
+                         "3: round 3, formal methods (round3/, with its own $100 stop and ledger)")
+    ap.add_argument("--arm", choices=R3_ARMS, help="round 3: A (no G6), B (G6 as shipped), C (G6 and the addendum)")
+    ap.add_argument("--model", choices=R3_MODELS, help="round 3: the agent's model")
+    ap.add_argument("--repeat", type=int, default=1, help="round 3: 2 for Sonnet's second arm A run of a bug")
+    ap.add_argument("--rerun-why", default="", help="round 3: make again a run that ended in error, saying why")
     args = ap.parse_args(argv)
     first = c.Archive(c.archive_root(args.archive))
-    variant = ROUND2 if args.round == 2 else ""
-    archive = c.Archive(first.root / "round2") if variant else first
-    prior = c.spent(first.rows()) if variant else 0.0     # one $100 stop for both rounds
+    variant = {2: ROUND2, 3: ROUND3}.get(args.round, "")
+    archive = c.Archive(first.root / {ROUND2: "round2", ROUND3: "round3"}[variant]) if variant else first
+    prior = c.spent(first.rows()) if variant == ROUND2 else 0.0     # one $100 stop for rounds 1 and 2
+    if args.command == "schedule":      # round 3's runs in order, each with how it ended, and the money
+        rows = archive.rows()
+        done = r3_done(rows)
+        sched = r3_schedule(load_tasks())
+        print(json.dumps({"spent_usd": c.spent(rows), "stop_usd": R3_CAP_USD,
+                          "runs": [{"model": m, "task": t, "arm": a, "repeat": r, "ended": done.get((m, t, a, r))}
+                                   for m, t, a, r in sched]}, indent=1))
+        return 0
     if args.command == "base":
         print(json.dumps(build_base(archive, args.ref, args.claude or default_claude(), variant=variant), indent=1))
         return 0
@@ -1322,8 +1496,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "images":
         result = build_images(archive, task, g6["commit"], variant=variant)
     else:
+        if variant == ROUND3 and args.command in ("dryrun", "run") and not (args.arm and args.model):
+            raise SystemExit("round 3's dryrun and run need --arm and --model")
+        if variant == ROUND3 and args.command == "modelcheck":
+            raise SystemExit("round 3 gives G6 no model")
         ctx = Context(archive=archive, docker=Docker(), key_reader=read_key, issue_reader=read_issue, g6=g6,
-                      variant=variant, prior_spent=prior)
+                      variant=variant, prior_spent=prior, arm=args.arm or "", model=args.model or c.MODEL,
+                      repeat=args.repeat, rerun_why=args.rerun_why)
         result = {"validate": lambda: validate(ctx, task), "selfcheck": lambda: selfcheck(ctx, task),
                   "freecheck": lambda: freecheck(ctx, task), "modelcheck": lambda: modelcheck(ctx, task),
                   "dryrun": lambda: run_task(ctx, task, dry=True),

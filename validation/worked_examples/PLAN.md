@@ -341,3 +341,91 @@ whatever `search_config` returns.
 search configuration: the caller's, or the defaults when it gives none. With the first edit, that means the proposer
 runs on every review. Each anchor must be found exactly once in both files, or the image is not built. Nothing else in
 G6 changes.
+
+### Round 3 (2026-10-30): formal methods (before any of its runs)
+
+**Why.** The owner approved it on 2026-10-30. In rounds 1 and 2, G6 reproduced no defect in any patch, and in five
+runs of each round the final patch failed the maintainers' tests on cases no stated check reached. Round 3 asks what
+happens when the agent is told to state each requirement as a property and check it with G6's formal tools, beside
+Claude Code alone and G6 as shipped, on three models.
+
+**Label: development.** These ten bugs, their fixes and the round 1 and 2 diagnoses have been seen, by the people who
+wrote this section among others. Round 3 is development, not evaluation: it shows what happened in these runs, never a
+rate, and no claim about G6 rests on it alone.
+
+**What round 3 is.** The same ten tasks as rounds 1 and 2 (tasks.json, in its order), each run new. Three arms, which
+differ only as stated here:
+
+- **A, no G6:** Claude Code alone. `g6 setup` is not run, so no MCP server and no skill is registered, and the `g6`
+  command is removed from the agent container's path before the agent starts. Its prompt is round 1's (section 4)
+  with the G6 instruction taken out; its second paragraph reads: "Fix the issue. Nobody is available to answer
+  questions during this run: put any questions in your final report and carry on with the most likely reading. Leave
+  your changes uncommitted in the working tree. End with your final report."
+- **B, G6 as shipped:** exactly round 1's setup: `g6 setup --client claude --allow patch_review.review`, the `using-g6`
+  skill as shipped, `g6_review_patch` with no G6 model. Its prompt is round 1's, unchanged.
+- **C, G6 and formal methods:** B's setup, and B's prompt with this addendum after its second paragraph, before the
+  issue (a change to the prompt only, not to the shipped skill; it names no bug, project, test or diagnosis):
+
+      Before you say the fix is done, also check it with G6's formal tools:
+      1. State each requirement of the issue as a property: what must hold, and for which inputs.
+      2. Check each property with G6. Compare the patch with the base code on the inputs the issue names and on variants
+         of them: a differential.v1 template instance in g6_review_patch (intent preserve where behaviour must stay, change
+         where it must change). Where a property is over whole numbers and booleans, or a small state machine, also check
+         it through g6_invoke: component formal (find_counterexample, check_validity, check_equivalence) or model_checking
+         (check_invariant, prove_invariant); g6_describe gives each op's parameters. For behaviour over several steps, use a
+         state_invariant.v1 template instance.
+      3. Repair what a check refutes, then review again with g6_review_patch. Stop when a review reproduces no new
+         counterexample and every property you stated has been checked, or when the budget ends.
+      In your final report, list each property, the tool that checked it, and what it gave.
+
+  The `formal` ops and `model_checking`'s symbolic ops run Z3 in process and need no permission beyond B's; TLC and
+  SANY are not offered (they are sensitive, and the image has no Java).
+
+**Models and order.** Claude Code headless, as in section 4, with `--model` `claude-haiku-4-5`, then
+`claude-sonnet-5-5`, then `claude-fable-5-1`. All of Haiku's runs come first, then Sonnet's, then Fable's; the runner
+refuses a run of a later model while a run of an earlier one is left. Within a model, the tasks go in tasks.json's
+order, each with arms A, B and C.
+
+**Noise control.** Sonnet's arm A runs twice per bug (repeats 1 and 2), so the difference two runs of the same arm make
+on their own is seen beside the differences between arms. That makes 30 Haiku runs, 40 Sonnet runs and 30 Fable runs:
+100 in all.
+
+**Caps and the stop.**
+- **Round 3's own hard stop: $100,** agent and G6 together (G6 calls no model in round 3), kept in round 3's own
+  archive and ledger, apart from rounds 1 and 2 (which spent $13.48 under their own stop). A run starts only if the
+  money round 3 has spent, plus that run's own stop, stays within $100; a run started and not ended counts its whole
+  stop. After each run, its cost and the round's total are written to the ledger (`ledger.jsonl` in round 3's
+  archive).
+- **Per run, Haiku and Sonnet:** round 1's caps: $10 (Claude Code's `--max-budget-usd`), the runner's stop past $10.50,
+  200 turns, 120 minutes.
+- **Per run, Fable:** the cap is the budget left divided by the Fable runs left (this one included), at most $10, so
+  that its stop (the cap and 5%) fits; rounded down to the cent.
+- **Cost:** counted as in section 6, and in round 3 also never below Claude Code's own reported `total_cost_usd`: a
+  run's cost is the largest of the transcript's count, Claude Code's per-model usage at the published prices, and its
+  reported total. No price for Fable 5.1 is stated in this repository, so its tokens are counted at the highest price
+  on the pricing page (`UNKNOWN_PRICE`), which can only overstate.
+
+**What stays as in round 2's runs (from run 6 of round 1):** the task's repository fetched from upstream and its four
+checks, the container, its user and its security settings, the internal network whose one way out is the proxy to
+`api.anthropic.com:443`, the key's path into Claude Code's environment only, the key check before every run (in every
+arm, A included), the round hook, the archive, the oracle images and the independent check (section 5).
+
+**G6.** Installed as the README says (section 9, "G6's own environment"), with no round-2 change: the proposer is off
+and G6 has no model or key file. The commit is that of `claude/formal-round` built into round 3's images. It may hold
+one change to G6, the generated-file copy (a copy for a check takes a git-ignored Python file only when the project's
+committed build configuration names it and G6's ignored-file judge finds it cannot shadow or load anything: black's
+`src/_black_version.py`), and only after an independent security review of it has passed; otherwise the commit before
+that change. The commit used is named in a dated note here before the first paid run, and each run records it.
+
+**What counts as a pass:** the independent check of section 5, unchanged: every FAIL_TO_PASS and PASS_TO_PASS test
+passes on the final patch.
+
+**What is reported** (RESULTS.md, under "Round 3: formal methods"): every run in the schedule, in order, including
+failed and refused ones and runs not reached before the stop; per model and arm, the independent check on the final
+patch and each round's patch, G6's outcome by round (B and C), in C the properties stated and the tools called (the
+`g6_invoke` components and ops, the template instances), the findings judged as in section 5, cost and minutes; and
+Sonnet's two arm A runs of each bug side by side. Differences are described in plain words, never as a rate.
+
+**Runs made again.** A run whose agent started is never made again for a better result. A run that ended in `error`
+(this plumbing) may be made again, with the reason recorded (`--rerun-why`); the failed attempt stays in the
+archive, the ledger and the table, marked as such.

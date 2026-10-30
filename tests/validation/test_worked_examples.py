@@ -629,3 +629,189 @@ def test_the_key_check_still_looks_in_the_containers_home_folder():
     driver = we.keyprobe_driver()
     assert f'pathlib.Path("{we.HOME}/keyprobe/repo")' in driver and "@HOME@" not in driver
     assert KEY == "sk-ant-api03-" + "FAKE" * 6 and len(KEY) == 37
+
+
+# --- round 3: formal methods (PLAN.md section 9, "Round 3 (2026-10-30)") ---------------------------------------------------
+HAIKU, SONNET, FABLE = we.R3_MODELS
+
+
+def test_round3_tally_counts_claude_codes_reported_total_and_the_stop_uses_each_runs_own_stop():
+    t = c.Tally(count_reported=True)
+    t.feed({"type": "assistant", "message": {"id": "m1", "model": c.MODEL, "usage": {"output_tokens": 100_000}}})
+    t.feed({"type": "result", "total_cost_usd": 3.25})
+    assert t.cost_usd == pytest.approx(3.25)                 # the larger of the counts and Claude Code's own total
+    assert c.Tally(result={"total_cost_usd": 3.25}).cost_usd == 0.0   # rounds 1 and 2 are counted as they were
+    rows = [{"event": "started", "run": "run/a/1", "kind": "run", "stop_usd": 4.2}]
+    assert c.spent(rows) == pytest.approx(4.2)
+    assert "claude-fable-5-1" not in c.PRICES and c.price_of(FABLE) is c.UNKNOWN_PRICE   # no price in this repository
+
+
+def test_round3_prompts_differ_only_as_the_plan_states():
+    b = we.prompt(TASK, "T", "body", arm="B")
+    assert b == we.prompt(TASK, "T", "body")                 # arm B is round 1's prompt, unchanged
+    c_ = we.prompt(TASK, "T", "body", arm="C")
+    assert we.ADDENDUM_C in c_ and we.ADDENDUM_C not in b
+    assert c_.replace(we.ADDENDUM_C + "\n\n", "") == b      # C is B plus the addendum, nothing else
+    a = we.prompt(TASK, "T", "body", arm="A")
+    for word in ("g6", "G6", "skill", "review"):
+        assert word not in a.split("Issue #")[0]             # arm A: Claude Code alone, told nothing of G6
+    assert a.split("Issue #")[1] == b.split("Issue #")[1]    # the same issue text
+    with pytest.raises(ValueError):
+        we.prompt(TASK, "T", "body", arm="D")
+
+
+def test_round3_addendum_names_no_bug_and_no_diagnosis():
+    text = we.ADDENDUM_C.lower()
+    words = set()
+    for t in we.load_tasks():
+        words |= {t.id.lower(), t.full_name.lower(), t.name.lower(), str(t.issue), str(t.pr)}
+    # the diagnoses RESULTS.md gives, which must never reach an agent
+    words |= {"fmt: off", "root_path", "trailing slash", "bar.update", "nested", "_click_default_help", "help option",
+              "_black_version", "docstring", "progress", "warning", "pydantic", "black", "click", "starlette"}
+    assert not [w for w in words if w in text]
+    assert len(we.ADDENDUM_C.split()) <= 200                 # short and factual
+
+
+def test_round3_claude_args_take_the_model_and_the_cap():
+    args = we.claude_args(HAIKU, 4.5)
+    assert args[args.index("--model") + 1] == HAIKU and args[args.index("--max-budget-usd") + 1] == "4.50"
+    assert args[-3:] == ["--disallowedTools", "WebFetch", "WebSearch"]
+    assert we.claude_args() == we.claude_args(c.MODEL, c.RUN_CAP_USD)   # round 1's, unchanged
+
+
+def test_round3_schedule_order_and_noise_control():
+    sched = we.r3_schedule(we.load_tasks())
+    models = [m for m, *_ in sched]
+    assert models == sorted(models, key=we.R3_MODELS.index)  # Haiku, then Sonnet, then Fable last
+    assert len(sched) == 10 * 3 + 10 * 4 + 10 * 3
+    assert sum(1 for m, t, a, r in sched if m == SONNET and a == "A") == 20   # Sonnet arm A twice per bug
+    assert {r for m, t, a, r in sched if m != SONNET or a != "A"} == {1}
+
+
+def test_round3_caps():
+    assert we.r3_caps(HAIKU, spent=50.0, fable_left=30) == (10.0, 10.5)
+    assert we.r3_caps(SONNET, spent=0.0, fable_left=30) == (10.0, 10.5)
+    assert we.r3_caps(FABLE, spent=0.0, fable_left=30) == (3.17, pytest.approx(3.3285))   # $100 over 30, its stop
+    assert we.r3_caps(FABLE, spent=99.0, fable_left=1)[1] <= 1.0                          # never past the $100
+    assert we.r3_caps(FABLE, spent=0.0, fable_left=1) == (10.0, 10.5)                     # at most $10
+
+
+class ArmDocker(FakeDocker):
+    """The fake, with round 3's arm check: G6's server and skill are there only after ``g6 setup`` ran."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.set_up = False
+
+    def __call__(self, *args, input=None, timeout=None, env=None):
+        if "setup" in args:
+            self.set_up = True
+        if args[0] == "exec" and "we-arm-state" in " ".join(args):
+            self.calls.append(list(args))
+            self.envs.append(env)
+            got = {"mcp_servers": ["g6"], "skills": ["using-g6"]} if self.set_up else {"mcp_servers": [], "skills": []}
+            return Done(json.dumps(got).encode())
+        return super().__call__(*args, input=input, timeout=timeout, env=env)
+
+    def popen(self, *args, env=None):
+        self.calls.append(list(args))
+        self.envs.append(env)
+        return FakeProc([{"type": "assistant", "message": {"id": "m1", "model": HAIKU, "usage": {"output_tokens": 10}}},
+                         {"type": "result", "subtype": "success", "result": "done", "num_turns": 1,
+                          "total_cost_usd": 0.25}])
+
+
+def _r3(tmp_path, arm, *, model=HAIKU, repeat=1, docker=None):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "proxy.py").write_text("# proxy", encoding="utf-8")
+    ctx = _ctx(tmp_path, docker or ArmDocker())
+    ctx.variant, ctx.arm, ctx.model, ctx.repeat = we.ROUND3, arm, model, repeat
+    ctx.tasks = [TASK]
+    return ctx
+
+
+def test_round3_arm_a_registers_no_mcp_server_and_b_and_c_do(tmp_path):
+    for arm in ("A", "B", "C"):
+        ctx = _r3(tmp_path / arm, arm)
+        rec = we.run_task(ctx, TASK)
+        assert rec["status"] == "finished", rec
+        calls = ctx.docker.calls
+        claude = next(call for call in calls if we.CLAUDE in call and "-p" in call)
+        assert claude[claude.index("--model") + 1] == HAIKU
+        assert claude[claude.index("--max-budget-usd") + 1] == "10.00"
+        if arm == "A":
+            assert not any("setup" in call for call in calls) and rec["arm_state"]["mcp_servers"] == []
+            removed = [call for call in calls if call[-3:] == ["rm", "-f", "/usr/local/bin/g6"]]
+            assert removed and calls.index(removed[0]) < calls.index(claude)   # no g6 on the agent's path
+        else:
+            assert any("setup" in call for call in calls) and rec["arm_state"]["mcp_servers"] == ["g6"]
+        prompt = (next((tmp_path / arm / "archive" / "run" / TASK.id).glob("*")) / "prompt.txt").read_text(
+            encoding="utf-8")
+        assert (we.ADDENDUM_C in prompt) == (arm == "C") and ("g6_review_patch" in prompt) == (arm != "A")
+        assert rec["arm"] == arm and rec["model"] == HAIKU and rec["cost_usd"] == pytest.approx(0.25)
+
+
+def test_round3_an_arm_whose_setup_does_not_match_starts_no_agent(tmp_path):
+    class NoServer(ArmDocker):
+        def __call__(self, *args, **kw):
+            out = super().__call__(*args, **kw)
+            self.set_up = False                    # setup ran, but no server is registered
+            return out
+
+    ctx = _r3(tmp_path, "B", docker=NoServer())
+    rec = we.run_task(ctx, TASK)
+    assert rec["status"] == "arm_mismatch"
+    assert not any(we.CLAUDE in call and "-p" in call for call in ctx.docker.calls)
+
+
+def test_round3_ledger_accumulates_and_the_budget_stop_refuses(tmp_path):
+    ctx = _r3(tmp_path, "A")
+    first = we.run_task(ctx, TASK)
+    ctx.arm = "B"
+    second = we.run_task(ctx, TASK)
+    assert first["status"] == second["status"] == "finished"
+    ledger = [json.loads(x) for x in (ctx.archive.root / "ledger.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(r["arm"], r["cost_usd"]) for r in ledger] == [("A", 0.25), ("B", 0.25)]
+    assert [r["spent_after"] for r in ledger] == [pytest.approx(0.25), pytest.approx(0.5)]
+    # a run is refused when the round's remaining budget is below its stop
+    for _ in range(9):
+        r = ctx.archive.start("run", "other")
+        r.finish({"cost_usd": 10.0}, "finished")
+    ctx.arm = "C"
+    rec = we.run_task(ctx, TASK)
+    assert rec["status"] == "refused" and "$100" in rec["why"]
+    assert len((ctx.archive.root / "ledger.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_round3_refuses_a_run_twice_and_out_of_order(tmp_path):
+    ctx = _r3(tmp_path, "A")
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    again = we.run_task(ctx, TASK)
+    assert again["status"] == "refused" and "already" in again["why"]
+    ctx.arm, ctx.model = "B", SONNET                          # Haiku's B and C for this bug are not run yet
+    later = we.run_task(ctx, TASK)
+    assert later["status"] == "refused" and "order" in later["why"]
+    ctx.model = "claude-opus-5-5"
+    assert "model" in we.run_task(ctx, TASK)["why"]
+
+
+def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):
+    ctx = _r3(tmp_path, "A", model=FABLE)
+    ctx.tasks = [TASK]
+    for arm in ("A", "B", "C"):                               # Haiku's and Sonnet's runs of this bug, all ended
+        for model, reps in ((HAIKU, 1), (SONNET, 2 if arm == "A" else 1)):
+            for rep in range(1, reps + 1):
+                r = ctx.archive.start("run", TASK.id, arm=arm, model=model, repeat=rep, agent=True)
+                r.finish({"cost_usd": 10.0, "agent_started": True}, "finished")
+    rec = we.run_task(ctx, TASK)                              # $30 left for Fable's 3 runs: $10 stop, so cap 9.52
+    assert rec["status"] == "finished", rec
+    claude = next(call for call in ctx.docker.calls if we.CLAUDE in call and "-p" in call)
+    assert claude[claude.index("--max-budget-usd") + 1] == "9.52" and rec["cap_usd"] == pytest.approx(9.52)
+
+
+def test_round3_plan_states_the_addendum_and_arm_as_text_as_the_runner_has_them():
+    plan = PLAN.read_text(encoding="utf-8").split("### Round 3 (2026-10-30): formal methods", 1)[1]
+    assert "\n".join("      " + line for line in we.ADDENDUM_C.splitlines()) in plan
+    second = we.PROMPT_A.split("\n\n")[1]
+    assert " ".join(second.split()) in " ".join(plan.split())
+    assert "development" in plan.lower() and "$100" in plan
