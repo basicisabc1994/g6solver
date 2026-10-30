@@ -788,3 +788,7 @@ distinguishing inputs sooner than a solver does.
 
 **This is the last change chosen from `black-5634`.** Three reviews of this work agree the loop has been tuned on one bug.
 After L6 the text is frozen and judged on bugs it has not seen.
+
+**G1's held-out result (the first look).** G1 passed 3 of 15 on held-out bugs and arm A 5 of 15, against 10 of 14 and 9 of 14
+on training. So a stop rule in the prompt did not generalise, and advice alone is not the way forward. The loop arms are
+compared on held-out bugs later, as a second look, reported as one.

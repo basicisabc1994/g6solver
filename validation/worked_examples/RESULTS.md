@@ -380,3 +380,33 @@ Two runs on each of the ten bugs on G6 c53d310, judged by the maintainers' tests
 - **The nine determined bugs:** arm E 9 of 18 (50%), arm A 11 of 18 (61%).
 - **Reading:** G6 as it stood did not beat Claude Code alone here, and cost about three and a half times as much. Two runs
   per bug are too few to say it did worse.
+
+## Round 3: G1, a hand-written stop rule, and its held-out comparison
+
+G1 is the stop rule that G6's model checker accepted, written by hand into the prompt. It was not distilled. Each arm's
+runs were scored by the maintainers' tests, which no agent sees.
+
+| Bug | Set | Arm A | Arm E | G1 |
+|---|---|---|---|---|
+| attrs-1593 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| fastapi-15077 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| pydantic-14065 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| starlette-3720 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| pydantic-14052 | training | 1 of 2 | 0 of 2 | 2 of 2 |
+| black-5634 | training | 0 of 2 | 0 of 2 | 0 of 2 |
+| click-3678 | training | 0 of 2 | 0 of 2 | 0 of 2 |
+| starlette-3718 | held out | 5 of 5 | 1 of 2 | 3 of 5 |
+| black-5521 | held out | 0 of 5 | 0 of 2 | 0 of 5 |
+| click-3769 | held out | 0 of 5 | 0 of 2 | 0 of 5 |
+
+| | Training | Held out |
+|---|---|---|
+| Arm A, Claude Code alone | 9 of 14 (64%) | 5 of 15 (33%) |
+| G1 | 10 of 14 (71%) | 3 of 15 (20%) |
+
+- **The gain on training did not carry over.** G1 beat arm A on training by one run and lost to it on held-out bugs by two.
+  Fifteen runs on three bugs cannot show harm, but they show no benefit, and G1 earns no claim.
+- **Distillation did not run.** G2, G3 and G4 were refused by a false alarm in the audit, so `cegis.json`'s `inconclusive`
+  says nothing about distilled text. See PLAN.md, 2026-10-31.
+- **The runner's spend reads high** ($46.11 at the end of this loop): a run killed for low memory counts at its full $10.50
+  limit until it is closed, and that total also holds earlier rounds' spend.
