@@ -356,3 +356,27 @@ Two runs on each of the ten bugs, judged by the maintainers' tests, which no age
 - **The nine determined bugs:** 11 of 18 (61%).
 - **Determined by its task** comes from the audit in PLAN.md. `click-3678` is not: its tests need a storage name and
   warning texts stated in neither the issue nor the repository. It stays in every score on all ten bugs.
+
+## Round 3: arm E (G6 with the earlier addendum, Sonnet 5.5)
+
+Two runs on each of the ten bugs on G6 c53d310, judged by the maintainers' tests. Total $4.14.
+
+| Bug | Set | Arm A | Arm E |
+|---|---|---|---|
+| attrs-1593 | training | 2 of 2 | 2 of 2 |
+| fastapi-15077 | training | 2 of 2 | 2 of 2 |
+| pydantic-14065 | training | 2 of 2 | 2 of 2 |
+| starlette-3720 | training | 2 of 2 | 2 of 2 |
+| pydantic-14052 | training | 1 of 2 | 0 of 2 |
+| black-5634 | training | 0 of 2 | 0 of 2 |
+| click-3678 | training | 0 of 2 | 0 of 2 |
+| starlette-3718 | held out | 2 of 2 | 1 of 2 |
+| black-5521 | held out | 0 of 2 | 0 of 2 |
+| click-3769 | held out | 0 of 2 | 0 of 2 |
+
+- **All ten bugs:** arm E 9 of 20 (45%), arm A 11 of 20 (55%).
+- **Training:** arm E 8 of 14 (57%), arm A 9 of 14 (64%).
+- **Held out:** arm E 1 of 6 (17%), arm A 2 of 6 (33%).
+- **The nine determined bugs:** arm E 9 of 18 (50%), arm A 11 of 18 (61%).
+- **Reading:** G6 as it stood did not beat Claude Code alone here, and cost about three and a half times as much. Two runs
+  per bug are too few to say it did worse.
