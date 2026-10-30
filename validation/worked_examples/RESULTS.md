@@ -334,3 +334,25 @@ request left the container):
 
 A replay on the maintainers' fix with a proposed check that imports black ran it in G6's copy: not refuted. In round 2
 every such check failed with `No module named '_black_version'`.
+
+## Round 3: the baseline, arm A (Claude Code alone, Sonnet 5.5, no G6)
+
+Two runs on each of the ten bugs, judged by the maintainers' tests, which no agent sees. Total $1.18.
+
+| Bug | Set | Passed | Determined by its task |
+|---|---|---|---|
+| attrs-1593 | training | 2 of 2 | yes |
+| fastapi-15077 | training | 2 of 2 | yes |
+| pydantic-14065 | training | 2 of 2 | yes |
+| starlette-3720 | training | 2 of 2 | yes |
+| pydantic-14052 | training | 1 of 2 | yes |
+| black-5634 | training | 0 of 2 | yes |
+| click-3678 | training | 0 of 2 | no |
+| starlette-3718 | held out | 2 of 2 | yes |
+| black-5521 | held out | 0 of 2 | yes |
+| click-3769 | held out | 0 of 2 | yes |
+
+- **All ten bugs:** 11 of 20 (55%). Training 9 of 14 (64%). Held out 2 of 6 (33%).
+- **The nine determined bugs:** 11 of 18 (61%).
+- **Determined by its task** comes from the audit in PLAN.md. `click-3678` is not: its tests need a storage name and
+  warning texts stated in neither the issue nor the repository. It stays in every score on all ten bugs.
