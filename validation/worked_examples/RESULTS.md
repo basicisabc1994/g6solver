@@ -290,3 +290,18 @@ what happened in each run.
   and in one of run 1's two finished reviews, and summarised it elsewhere.
 - **Spent in round 2:** $11.64, which is $1.89 for the agent and $9.71 for G6's model at its upper bound, with the
   one-call model check. Both rounds together: $13.48 of the $100 stop.
+
+## Round 3: formal methods
+
+**Development, not evaluation** (PLAN.md section 9, "Round 3 (2026-10-30): formal methods").
+
+**State (2026-10-30): no paid run.** Round 3's base image is built from G6 286c173 (the generated-file copy, pending
+its security review). For black #5634, with no model and no key: the task and oracle images were built, validation
+gave the same 2 FAIL_TO_PASS tests as before with 216 PASS_TO_PASS, the check's own control passed, the free check ran
+confined under bubblewrap, and a dry run of each arm reached the agent's start with its way out a dead port (no
+request left the container):
+- arm A: no MCP server and no skill registered, the `g6` command removed;
+- arms B and C: G6's server connected with its 20 tools, and the `using-g6` skill in place.
+
+A replay on the maintainers' fix with a proposed check that imports black ran it in G6's copy: not refuted. In round 2
+every such check failed with `No module named '_black_version'`.
