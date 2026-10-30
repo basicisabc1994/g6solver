@@ -16,7 +16,7 @@ At most ``MAX_LINES`` lines, in this order:
 4. what the person decides: at most 3 questions, the unknowns G6 counts neither for nor against the patch, and
    merging;
 5. how this was decided, one line per step: proposed, tested (with the proposed checks and template instances, each
-   with its result, which decide nothing), gate, approve;
+   with its result; none of them passes a requirement), gate, approve;
 6. the standing note: the specification may be incomplete.
 
 A list cut at its room ends with "and N more" and names the field that holds the rest. Text the repository or the
@@ -59,10 +59,13 @@ RUNS = {"stated checks and extra tests": "the stated checks",
 EXACT = ("G6 ran it with its own isolating options; the exact command is in "
          "`assessment.completion.defects_reproduced` (`reproduction.command`)")
 #: A proposed check's or template instance's result, in the Tested step (the owner's pilot, 2026-10-30).
-PROPOSED = {"not_refuted": "not refuted", "counterexample": "found a counterexample (above)",
-            "unconfirmed_failure": "fails on the patch (above)", "fails_on_base_too": "fails at the base commit too",
+#: A structural instance's results (forbidden_dependency.v1) are words too; one against a stated contract can decide
+#: the outcome, so the step says only that none of these passes a requirement (the fresh review of these fixes).
+PROPOSED = {"not_refuted": "not refuted", "counterexample": "found a counterexample",
+            "unconfirmed_failure": "fails on the patch", "fails_on_base_too": "fails at the base commit too",
             "behaviour_changed": "behaves differently from the base commit (a question, not a finding)",
-            "check_error": "could not be judged", "refused": "refused"}
+            "check_error": "could not be judged", "refused": "refused", "failed": "failed", "passed": "passed",
+            "vacuous": "vacuous", "not_established": "not established"}
 #: Reviewer B's B6: the caution a proposed or compiled check's reproduction carries, said on its line too.
 CAUTION = "Read it before you run it, or run it in a container."
 #: What the person does about git-ignored files the tests could load (worked examples, W3b), under that finding.
@@ -242,7 +245,8 @@ def _base_words(outcomes: dict) -> str:
 
 
 def _proposed(assessment: dict) -> str:
-    """The proposed checks and template instances that ran, each with its result, which decide nothing."""
+    """The proposed checks and template instances that ran, each with its result; none of them passes a
+    requirement."""
     own = [a for a in (assessment.get("completion") or {}).get("activities", [])
            if a.get("activity") in ("proposed check", "template instance") and a.get("check")]
     if not own:
@@ -250,7 +254,7 @@ def _proposed(assessment: dict) -> str:
     shown = [f"{code(a['check'], 40)}" + (f" for {code(a['requirement'], 40)}" if a.get("requirement") else "")
              + f": {PROPOSED.get(str(a.get('result')), code(a.get('result', ''), 30))}" for a in own[:3]]
     more = f", and {len(own) - 3} more ({code('assessment.completion.activities')})" if len(own) > 3 else ""
-    return "the proposed checks and template instances, which decide nothing: " + ", ".join(shown) + more
+    return "the proposed checks and template instances, which never pass a requirement: " + ", ".join(shown) + more
 
 
 def _steps(assessment: dict) -> list[str]:

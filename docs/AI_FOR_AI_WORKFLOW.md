@@ -60,8 +60,8 @@ Call `metaharness_start` with this structure in `specification_json`:
 }
 ```
 
-A workflow's files live in the project's `.g6/` folder: add `.g6/` to the repository's `.gitignore`, or a later patch
-review there counts them as part of the change.
+A workflow's files live in the `.g6/` folder of the project G6 was started in, so start the meta-harness from a folder
+outside any repository you review with patch review: a review there counts those files as part of the change.
 
 This example deliberately has too few cases for activation. Supported checks are `exact`, `contains`
 and `number` with a finite nonnegative `tolerance`. Files must have flat portable Python names.

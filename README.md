@@ -140,8 +140,8 @@ print(ev.gate_decision.decision)    # block: irreversible and public, with no ve
 
 Start with [the AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). The loop is:
 `metaharness_start` -> confirm -> diagnose -> propose code with a hypothesis -> evaluate -> decide -> client consent -> run.
-A workflow's files live in the project's `.g6/` folder: add `.g6/` to the repository's `.gitignore`, or a later patch
-review there counts them as part of the change.
+A workflow's files live in the `.g6/` folder of the project G6 was started in, so start the meta-harness from a folder
+outside any repository you review with patch review: a review there counts those files as part of the change.
 Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: give
 it the patched repository, the task, and the requirements the patch must meet, each with the tests that check it.
 You can also give it the task's intent: its success criteria become requirements and its non-goals and failure

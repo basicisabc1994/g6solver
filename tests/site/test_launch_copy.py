@@ -133,13 +133,17 @@ def test_patch_review_says_the_patch_runs_in_pytests_own_process():
 
 
 #: The owner's pilot (2026-10-30): a workflow's files live in the project's .g6 folder, untracked unless ignored.
-IGNORE_G6 = ("A workflow's files live in the project's .g6/ folder: add .g6/ to the repository's .gitignore, or a later "
-             "patch review there counts them as part of the change.")
+IGNORE_G6 = ("A workflow's files live in the .g6/ folder of the project G6 was started in, so start the meta-harness "
+             "from a folder outside any repository you review with patch review: a review there counts those files as "
+             "part of the change.")
 
 
-def test_the_workflow_docs_say_to_ignore_g6s_project_folder():
+def test_the_workflow_docs_say_to_keep_workflows_out_of_a_reviewed_repository():
+    """The fresh review of the pilot's fixes: git-ignoring .g6/ can make G6 judge its own main.py as a file that could
+    replace a tracked module, so the docs never tell a person to ignore it."""
     for name in ("README.md", "docs/AI_FOR_AI_WORKFLOW.md"):
-        assert IGNORE_G6 in _plain((OSS / name).read_text(encoding="utf-8")), name
+        text = _plain((OSS / name).read_text(encoding="utf-8"))
+        assert IGNORE_G6 in text and "add .g6/ to" not in text, name
 
 
 #: L1 (the owner's decision): G6's own environment, made with --copies, and why.

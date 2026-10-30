@@ -1,99 +1,58 @@
-# Owner pilot: Codex and Claude Code
+# Owner pilot: Claude Code and Codex (the 0.2.0 launch)
 
-Run this separately in both clients. This records owner usability and client-mediated
-consent, not unfamiliar-user success, authenticated identity or application utility.
-Use the refreshed candidate wheel identified by `wheel.json`, not an earlier build.
-Record errors before fixing them; a manual repair is part of the result.
+The owner ran the minimal launch's first journey in both clients on 30 October 2026, on Windows 11 with Python 3.12,
+from the launch branch at `f08bc96` (the code of `0c44e6d`, whose continuous-integration run passed all nine jobs).
+This records the owner's own use and the client-mediated consent. It does not show that unfamiliar people succeed,
+that a typed name is the person's, or that G6 improves anyone's results.
 
-## Install on Windows
+## What the owner did
 
-In PowerShell, create a new project and environment (Python 3.12 or 3.13):
+1. Cloned the launch branch, made G6's own environment with `python -m venv --copies .venv`, installed `".[all]"` and
+   ran `g6 doctor`.
+2. Removed Codex's `g6` entry from the earlier pilot (Claude Code had none), then ran
+   `g6 setup --client claude --client codex --allow patch_review.review`.
+3. Ran the Windows access grants G6 printed: for G6's own `.venv` before the first run, then, at the first review, for
+   the repository and its `.venv`.
+4. In a small practice repository (one function, two pytest tests, its own `.venv` with pytest), asked each client for
+   a change and for a review with G6 before it said the task was done.
+5. Asked each client to call `metaharness_start` with the `labels` example of
+   [the workflow guide](../AI_FOR_AI_WORKFLOW.md) and then `metaharness_confirm`, and answered the client's form: no,
+   then a cancel (Esc), then yes.
 
-```powershell
-$pilot = Join-Path $env:USERPROFILE ('g6-owner-pilot-' + (Get-Date -Format yyyyMMdd-HHmmss))
-New-Item -ItemType Directory -Path $pilot | Out-Null
-Set-Location $pilot
-py -3.12 -m venv .venv
-$python = Join-Path $pilot '.venv\Scripts\python.exe'
-$g6 = Join-Path $pilot '.venv\Scripts\g6.exe'
-$wheel = Join-Path $env:USERPROFILE 'Desktop\g6-continuation-artifacts\dist\g6-0.1.1-py3-none-any.whl'
-Get-FileHash -Algorithm SHA256 $wheel
-& $python -m pip install "${wheel}[all]"
-& $g6 doctor
-```
+## What happened
 
-The explicit executable paths above work without activation. To use the shorter
-`g6` command in this terminal, run `.\.venv\Scripts\Activate.ps1` first; the prompt
-then starts with `(.venv)`. In a new terminal, return to this pilot directory and
-activate again, or keep using the full executable path. If activation is blocked
-by PowerShell policy, the full path still works; no policy change is needed.
-
-Compare the hash with the recorded wheel manifest. Keep this environment in place:
-the client entries point to its interpreter. Setup registers the `g6` MCP entry and
-installs the skill in each client's user configuration. If an existing entry causes
-registration to fail, record that result and inspect it; do not silently remove it.
-
-```powershell
-codex --version
-claude --version
-& $g6 setup --client codex --refuse-unconfined
-codex mcp get g6
-& $g6 setup --client claude --refuse-unconfined
-claude mcp get g6
-```
-
-Restart both clients after registration. Do not delete this environment while its
-client entries remain registered. The pilot does not require model-provider settings
-inside G6; your client conversation uses its normal account/subscription.
-
-## Discovery and composition
-
-In a fresh conversation in each client, ask:
-
-> Use G6's tools to discover grounding and describe its operations. Compose one
-> grounding check for “The limit is 42 units.” using the supplied source text
-> “The limit is 42 units.” Show the check and its scope. Explain what the result
-> does and does not establish. Do not run generated code or call a model through G6.
-
-Record whether the agent finds the installed tools, invokes them successfully and
-distinguishes source support from real-world truth. An unsupported “verified correct”
-claim is a failure even when the tool invocation succeeds.
-
-## Consent, decline and fallback
-
-Ask the client to use `metaharness_start` with the two-case `labels` example in
-`docs/AI_FOR_AI_WORKFLOW.md`, choosing a distinct workflow name per client. Then:
-
-1. Ask it to show the returned frozen digest and request confirmation through
-   `metaharness_confirm`. It must not use a shell command to consent on your behalf.
-2. Decline the client prompt if one appears. Record the visible digest, consequences
-   and tool result. Inspect the workflow; decline must leave it unconfirmed.
-3. Request confirmation again. Accept only if the prompt identifies that same frozen
-   workflow and its consequences. Record whether confirmation is actually stored.
-4. If no prompt is offered, record “elicitation unavailable”; the tool must refuse.
-   Do not count this as a successful client-consent trial. You can separately exercise
-   the displayed terminal fallback yourself, first inspecting the workflow and digest.
-
-Terminal inspection uses `g6 workflow inspect NAME` from the installed environment.
-Follow the exact fallback command the tool supplies. A typed identity is a recorded
-claim, not authentication. Do not evaluate, activate, or run this two-case workflow:
-it is deliberately below the evidence floor for successful tuning.
-
-## Record each client separately
-
-| Observation | Codex | Claude Code |
+| Observation | Claude Code | Codex |
 |---|---|---|
-| Client version / operating system / wheel hash | Pending | Pending |
-| Install and registration errors / manual repairs | Pending | Pending |
-| Discovery and composition result | Pending | Pending |
-| Can you explain the checked claim and unresolved scope? | Pending | Pending |
-| Prompt shows correct digest and consequences | Form seen; what it displayed was not recorded | Pending |
-| Decline leaves workflow unconfirmed | No Decline control was visible; Esc cancelled and left the workflow unconfirmed | Pending |
-| Accept confirms only the displayed workflow | Acceptance recorded the expected workflow digest at version 0, with no evaluation or decision; the name is not authenticated | Pending |
-| Missing prompt refuses / terminal fallback works | Pending | Pending |
-| Minutes spent / confusing wording | Pending | Pending |
+| Setup | Registered; skill installed | Registered; setup kept the earlier pilot's skill until the owner replaced it with `g6 skills install --user --client codex --force` (finding 4) |
+| Access grants | G6's `.venv` before the first run; the repository and its `.venv` at the first review. The agent offered the grants as `!` commands, which Claude Code runs in Git Bash, where `/grant` becomes a path and fails (finding 7) | None more: the same machine and repository |
+| The review | Ran confined (`appcontainer`), 12.2 seconds: supported within scope | Ran confined (`appcontainer`), 6.6 seconds: supported within scope |
+| The agent's first call | Refused: a template instance's bindings in the wrong shape; the agent fixed its call | Refused twice: an `intent` in the wrong shape; the agent fixed its call after `g6_help` (finding 6) |
+| The report | Shown as G6 wrote it. The agent's two template instances ran and were not refuted, but the report did not name them (finding 2) | Shown as G6 wrote it. It said three tests of kept behaviour "fail at the base commit", but their test file could not load there, so they never ran there (finding 1) |
+| The form | The client returned `declined` for no, `cancelled` for Esc | No Decline control; Esc cancels. The owner accepts this as how Codex says no |
+| No or cancel | Nothing recorded; the workflow stayed unconfirmed | Nothing recorded |
+| Yes | Confirmed the workflow digest the form showed; the typed name is recorded as given, not authenticated | The same |
+| After a no | The reply offered the terminal confirm command as the next step (finding 3) | The same reply after a cancel |
+| Minutes, confusing wording | Not timed. The grants and the refused first calls were the friction | Not timed. The refused first calls were the friction |
 
-The Codex entries are the owner's report in [UAT round 1](UAT_ROUND_1.md). Claude Code is untested.
+The saved assessments agree with the reports above: in Codex's review, the run against the base commit's code
+stopped at `ImportError: cannot import name 'line_count'`, reproduced afterwards with plain pytest.
 
-Share the observations without credentials or personal information. This pilot does
-not satisfy the broader 8/10 unfamiliar-user gate or establish improved task outcomes.
+## Findings, and what happened to each
+
+| # | Finding | What happened |
+|---|---|---|
+| 1 | A check whose test file could not load at the base commit was reported as failing there, "so they exercise the change" | Fixed in `24917ea`: it is now "could not run at the base commit", with an unknown for its file |
+| 2 | The report did not name the agent's own proposed checks and template instances, and only counted the unknowns | Fixed in `24917ea`: the Tested step names each with its result, "which decide nothing", and the unknowns are listed |
+| 3 | After a no or a cancel in the form, the reply offered the terminal confirm command | Fixed in `24917ea`: the reply tells the agent to ask the person and never offer another way; the command stays only for a client with no form |
+| 4 | Setup kept an earlier install's copy of its own skill, so Codex followed old instructions | Fixed in `24917ea`: setup replaces it and says so |
+| 5 | The meta-harness keeps a workflow's files in the project's `.g6/` folder, and a later patch review counted them as part of the change | The README and the workflow guide now say to start the meta-harness from a folder outside any repository you review. Git-ignoring `.g6/` is not advised: G6 would then judge its own `main.py` as an ignored file that could replace a tracked module of that name (the fresh review of these fixes). Leaving `.g6/` out of a review is for after launch, with its own security review |
+| 6 | Both agents' first review calls were refused for optional inputs in the wrong shape | The skill now starts a review from the folder, the task and the requirements (`24917ea`). Not re-tested with agents |
+| 7 | G6 prints each access grant as two commands on one line, and does not say to run them in PowerShell or cmd | After launch: the text is in a file the certificates bind, so it waits for the reissue |
+| 8 | `g6 doctor` does not say whether patch review is allowed | After launch |
+| 9 | Codex's form has no Decline | The client's; the owner accepts it |
+| 10 | An agent can run `g6 workflow inspect` itself, and nothing technical stops it running the terminal confirm under a typed name | A stated limit: local settings assume a trusted host, and a recorded name is not authenticated |
+
+The fixes are verified by tests written first; the pilot was not run a second time on them.
+
+Share observations without credentials or personal information. This pilot is the owner's own; it does not meet the
+broader trial with unfamiliar people, which the minimal launch set aside.

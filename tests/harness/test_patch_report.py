@@ -361,5 +361,17 @@ def test_the_agents_own_checks_are_reported_with_their_results_and_decide_nothin
                   {"activity": "check run", "tier": 1, "what": "stated checks and extra tests", "result": "passed"}]
     report = patch_report.render({**MINIMAL, "completion": {"activities": activities}})
     tested = _tested(report)
-    assert "which decide nothing" in tested, tested
+    assert "which never pass a requirement" in tested and "decide nothing" not in tested, tested
     assert "`T1` for `R1`: not refuted" in tested and "`keep` for `R2`: fails at the base commit too" in tested, tested
+
+
+def test_a_structural_instances_result_is_said_in_plain_words_and_not_said_to_decide_nothing():
+    """The fresh review of the pilot's fixes: a failed forbidden_dependency.v1 instance against a stated contract is a
+    defect, so the Tested step may not call it a check that decides nothing, and says its result in words."""
+    activities = [{"activity": "template instance", "check": "FD1", "requirement": "R1", "result": "failed",
+                   "provenance": "structural"},
+                  {"activity": "template instance", "check": "FD2", "requirement": "R2", "result": "vacuous"}]
+    tested = _tested(patch_report.render({**MINIMAL, "outcome": "defect_detected",
+                                          "completion": {"activities": activities}}))
+    assert "`FD1` for `R1`: failed" in tested and "``failed``" not in tested and "`failed`" not in tested, tested
+    assert "`FD2` for `R2`: vacuous" in tested and "decide nothing" not in tested and "(above)" not in tested, tested
