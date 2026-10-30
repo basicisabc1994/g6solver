@@ -626,3 +626,23 @@ held-out bugs at two runs each is a small sample. The maintainers' tests can als
 so 95% may not be reachable by any honest means; if not, that is reported. The formula "G6 fixes its own repair loop
 through harness distillation" is used only if the held-out score also beats arm A, and always with these numbers. G6's
 own gate needs 30 cases, so it cannot promote this text on 14 runs, and it is not reported as having done so.
+
+### 2026-10-30: the review's fixes, the baseline, and the next change (before arm E or any generation)
+
+**The fresh review of `b52da4d` said fix first.** Its main finding: one unrelated old test that passes lifted the cap, and
+the next action told the agent to cite one. Fixed in `c53d310`, which replaces `b52da4d` as the loop's G6:
+- A check is independent only if it exists at the base commit in an unchanged file. For new behaviour it must also not pass
+  at the base commit. This changes the earlier ruling on review I8 ("an unknown, never another outcome") for such
+  requirements. A requirement can keep behaviour only through an intent, because callers cannot set `kind`, so a review
+  of a refactor with plain requirements ends at `insufficient_evidence`.
+- A self-written check in a git-ignored file no longer escapes, and a folder check on a source-only change is no longer
+  capped. The loop's crash, budget and audit findings are fixed too. These fixes were tested first and rerun under
+  bubblewrap (329 pass); there was no second fresh review of them.
+
+**Arm A, the baseline (Sonnet, no G6, twice on each bug): 11 of 20, $1.18.** On the training bugs 9 of 14 (64%); on the
+held-out bugs 2 of 6. It passes attrs-1593, fastapi-15077, pydantic-14065, starlette-3718 and starlette-3720 both times,
+pydantic-14052 once, and black-5521, black-5634, click-3678 and click-3769 never. So 95% on training needs both
+black-5634 and click-3678, which arm A has not passed.
+
+**The owner's next request:** use G6's formal methods to construct a better self-correction loop. This is not designed
+yet. It needs its own dated section before any run it covers.
