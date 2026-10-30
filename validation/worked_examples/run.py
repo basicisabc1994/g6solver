@@ -358,6 +358,8 @@ def g6_model_cost(assessments: Iterable[Any]) -> dict[str, Any]:
 # --- round 3: formal methods (PLAN.md section 9, "Round 3 (2026-10-30)") ----------------------------------------------
 ROUND3 = "r3"
 R3_MODELS = ("claude-haiku-4-5", "claude-sonnet-5-5", "claude-fable-5-1")   # in the order they run
+# PLAN.md, 2026-10-30, the smoke test: Haiku's pilot never called G6, so these go before Haiku's runs are done
+R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "C", 1)}
 R3_ARMS = ("A", "B", "C")
 R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
 R3_CAP_USD = 100.00          # round 3's own hard stop, agent and G6 together
@@ -415,7 +417,7 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     if key in done and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
-    if earlier:
+    if earlier and key not in R3_SMOKE:
         return f"out of order: {len(earlier)} run(s) of an earlier model are left, first {earlier[0]}", 0.0, 0.0
     spent = c.spent(rows)
     fable_left = sum(1 for k in sched if k[0] == R3_MODELS[2] and k not in done)
@@ -428,8 +430,10 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
 
 def r3_ledger(archive: c.Archive, record: Mapping[str, Any]) -> dict[str, Any]:
     """One line of round 3's ledger after each run: what it cost and what the round has spent since it began."""
+    used = (record.get("observed") or {}).get("tool_use") or {}
     row = {"at": c.now(), "run": record.get("run"), "task": record.get("task"), "model": record.get("model"),
            "arm": record.get("arm"), "repeat": record.get("repeat"), "status": record.get("status"),
+           "g6_calls": used.get("g6_calls"), "tool_search": used.get("tool_search"),
            "cost_usd": float(record.get("cost_usd") or 0.0), "reported_usd": record.get("reported_usd"),
            "cap_usd": record.get("cap_usd"), "spent_after": c.spent(archive.rows()), "stop_usd": R3_CAP_USD}
     archive.root.mkdir(parents=True, exist_ok=True)

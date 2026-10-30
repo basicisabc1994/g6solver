@@ -295,8 +295,12 @@ what happened in each run.
 
 **Development, not evaluation** (PLAN.md section 9, "Round 3 (2026-10-30): formal methods").
 
-**State (2026-10-30): no paid run.** Round 3's base image is built from G6 286c173 (the generated-file copy, pending
-its security review). For black #5634, with no model and no key: the task and oracle images were built, validation
+**State (2026-10-30, three paid runs): a pilot, and a smoke test next.** Haiku's black-5634 runs (A, B, C) cost $2.81
+and all failed the independent check. **Neither G6 arm called G6**, so they say nothing about G6: see PLAN.md, "Haiku's
+first three runs, and a smoke test before the rest". Round 3 runs on G6 894597f.
+
+**Before any paid run (the same day).** On the earlier commit 286c173, for black #5634, with no model and no key:
+the task and oracle images were built, validation
 gave the same 2 FAIL_TO_PASS tests as before with 216 PASS_TO_PASS, the check's own control passed, the free check ran
 confined under bubblewrap, and a dry run of each arm reached the agent's start with its way out a dead port (no
 request left the container):

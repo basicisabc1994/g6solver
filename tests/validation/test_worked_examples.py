@@ -635,6 +635,22 @@ def test_the_key_check_still_looks_in_the_containers_home_folder():
 HAIKU, SONNET, FABLE = we.R3_MODELS
 
 
+def test_observe_counts_what_the_agent_called_not_what_was_on_offer():
+    from worked_examples import observe
+
+    def use(name):
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": name, "name": name, "input": {}}]}}
+
+    init = {"type": "system", "subtype": "init", "mcp_servers": [{"name": "g6", "status": "connected"}],
+            "tools": ["mcp__g6__g6_review_patch", "mcp__g6__g6_invoke", "ToolSearch"]}
+    offered = observe.observe([init, use("Bash"), use("ToolSearch")])
+    assert offered["server"]["g6_tools"] == 2
+    assert offered["tool_use"] == {"tool_search": 1, "g6_calls": 0, "g6_by_tool": {}}
+    used = observe.observe([init, use("mcp__g6__g6_review_patch"), use("mcp__g6__g6_invoke"), use("mcp__g6__g6_invoke")])
+    assert used["tool_use"] == {"tool_search": 0, "g6_calls": 3,
+                                "g6_by_tool": {"g6_invoke": 2, "g6_review_patch": 1}}
+
+
 def test_round3_tally_counts_claude_codes_reported_total_and_the_stop_uses_each_runs_own_stop():
     t = c.Tally(count_reported=True)
     t.feed({"type": "assistant", "message": {"id": "m1", "model": c.MODEL, "usage": {"output_tokens": 100_000}}})
@@ -788,11 +804,31 @@ def test_round3_refuses_a_run_twice_and_out_of_order(tmp_path):
     assert we.run_task(ctx, TASK)["status"] == "finished"
     again = we.run_task(ctx, TASK)
     assert again["status"] == "refused" and "already" in again["why"]
-    ctx.arm, ctx.model = "B", SONNET                          # Haiku's B and C for this bug are not run yet
+    ctx.arm, ctx.model = "A", SONNET                          # Haiku's B and C for this bug are not run yet
     later = we.run_task(ctx, TASK)
     assert later["status"] == "refused" and "order" in later["why"]
     ctx.model = "claude-opus-5-5"
     assert "model" in we.run_task(ctx, TASK)["why"]
+
+
+def test_round3_only_the_two_smoke_runs_go_before_haikus_runs_are_done(tmp_path):
+    # owner, 2026-10-30: Haiku's three pilot runs never called G6, so Sonnet's B and C on one bug go first
+    assert we.R3_SMOKE == {(SONNET, "black-5634", "B", 1), (SONNET, "black-5634", "C", 1)}
+    ctx = _r3(tmp_path, "B", model=SONNET)
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    ctx.arm = "C"
+    assert we.run_task(ctx, TASK)["status"] == "finished"
+    ctx.arm = "A"
+    assert "order" in we.run_task(ctx, TASK)["why"]
+    ctx.arm, ctx.model = "B", FABLE
+    assert "order" in we.run_task(ctx, TASK)["why"]
+
+
+def test_round3_ledger_says_whether_g6_was_used(tmp_path):
+    ctx = _r3(tmp_path, "B")
+    record = {"run": "r", "observed": {"tool_use": {"tool_search": 2, "g6_calls": 3}}}
+    assert (we.r3_ledger(ctx.archive, record)["g6_calls"], we.r3_ledger(ctx.archive, record)["tool_search"]) == (3, 2)
+    assert we.r3_ledger(ctx.archive, {"run": "r"})["g6_calls"] is None     # a run that never got that far says so
 
 
 def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):

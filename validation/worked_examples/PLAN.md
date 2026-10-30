@@ -448,3 +448,25 @@ copy and its review's fixes:
   left for after round 3, and named here so that any import failure in a G6 check is read against them.
 
 Nothing else in G6 changes for round 3. Arms B and C both run this commit; arm A does not have G6.
+
+### 2026-10-30: Haiku's first three runs, and a smoke test before the rest (before any further run of round 3)
+
+**What the three runs showed.** The owner stopped the batch after black-5634's three Haiku runs to check that the
+round was testing what it says. The plumbing held: isolation, proxy, ledger, server connected with 20 tools, skill
+present, independent check, traces. But **neither G6 arm called G6.** Claude Code defers MCP tools: the model sees their
+names and must load one with `ToolSearch` before calling it. Arm B never searched. Arm C loaded `g6_review_patch` near
+the end of its run and finished without calling it. Every round 1 Sonnet run looked at did load and call it. So these
+three runs say nothing about G6 or its formal tools. They are kept, reported, and labelled a pilot; they cost $2.81.
+
+**What changes.**
+- **G6 use is counted.** Each run's record and ledger line give its G6 calls by tool and its `ToolSearch` calls. A
+  run in arm B or C with no G6 calls is reported as such, and never described as a result about G6.
+- **A smoke test first.** Sonnet's arms B and C on black-5634 run now, ahead of Haiku's remaining runs (the only
+  exception to the order rule). They are the scheduled runs, with the same prompts and setup, and they count as such.
+- **The gate.** The rest of round 3 starts only if both show real G6 calls, and C shows at least one formal tool or
+  template. Otherwise nothing further runs until the owner decides.
+- **Haiku.** Its remaining runs wait. They resume only with a change that gets it calling G6 (for instance the tool's
+  exact name in the prompt, or the tools loaded up front), stated in its own dated note first, because arm B would then
+  no longer be G6 exactly as shipped. If no such change works, the owner decides whether Haiku's rows stay unrun.
+
+The $100 stop, the prompts and G6's commit (`894597f`) are unchanged. No run is made again for a better result.
