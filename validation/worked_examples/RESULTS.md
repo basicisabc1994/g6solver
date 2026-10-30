@@ -295,9 +295,34 @@ what happened in each run.
 
 **Development, not evaluation** (PLAN.md section 9, "Round 3 (2026-10-30): formal methods").
 
-**State (2026-10-30, three paid runs): a pilot, and a smoke test next.** Haiku's black-5634 runs (A, B, C) cost $2.81
-and all failed the independent check. **Neither G6 arm called G6**, so they say nothing about G6: see PLAN.md, "Haiku's
-first three runs, and a smoke test before the rest". Round 3 runs on G6 894597f.
+**State (2026-10-30, twelve paid runs, $4.80 of the $100 stop): held for the owner's decision.** These are single runs on
+bugs already seen, so they are signals, not rates. Arms A, B and C ran on G6 894597f, and arm D on f50953c.
+
+| Run | G6 calls | G6's verdict (last) | Its own extra checks | Maintainers' tests | Cost |
+|---|---|---|---|---|---|
+| Haiku black A | 0 | none | none | failed 1 | $0.89 |
+| Haiku black B | 0 | none | none | failed | $1.03 |
+| Haiku black C | 0 | none | none | failed 1 | $0.89 |
+| Sonnet black B | 3 | supported | none asked | failed 2 | $0.23 |
+| Sonnet black C | 5 | supported | 2 templates refused | failed 2 | $0.30 |
+| Sonnet attrs C | 5 | insufficient evidence | 2 templates passed | passed | $0.18 |
+| Sonnet click C | 6 | supported | 2 proposed passed | failed 10 | $0.23 |
+| Sonnet pydantic C | 3 | insufficient evidence | 2 proposed passed | failed 1 | $0.14 |
+| Sonnet black D | 3 | supported | 2 proposed, neither judged | failed 2 | $0.29 |
+| Sonnet attrs D | 7 | supported | 2 templates passed | passed | $0.25 |
+| Sonnet click D | 4 | supported | none | failed 10 | $0.18 |
+| Sonnet pydantic D | 5 | supported | 2 proposed passed | failed 1 | $0.19 |
+
+- **Haiku never called G6,** so its three runs say nothing about G6: see PLAN.md, "Haiku's first three runs, and a smoke
+  test before the rest".
+- **False acceptance is the main finding.** G6 said "supported" on 6 of Sonnet's 9 runs, and the maintainers' tests reject
+  5 of those 6 patches. That verdict rests on checks the agent wrote itself, which share its reading of the bug.
+- **No extra check found a defect.** Every template and proposed check that ran passed, on arm D too, where each had to
+  assert a value taken from the issue. No `formal` or `model_checking` op was called in any run.
+- **Arm D's two changes are only partly tested.** No template was refused in arm D, so no agent ever saw the new refusal
+  text. Arm D's click run asked for no extra check at all, though its addendum told it what to do.
+- **A wording gap.** In the black D run G6 said "nothing else was found" when both proposed checks could not be judged.
+  The cause of those two errors has not been traced.
 
 **Before any paid run (the same day).** On the earlier commit 286c173, for black #5634, with no model and no key:
 the task and oracle images were built, validation
