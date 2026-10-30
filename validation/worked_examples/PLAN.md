@@ -676,3 +676,8 @@ ten issues and the maintainers' test changes. A bug is *not determined by its ta
 name, message or format that neither the issue nor the repository at the parent commit states. For held-out bugs the
 reviewer returns the label only. No bug, test or run is dropped: the score on all ten is the score, and the score on
 determined bugs is reported beside it, labelled, with arm A's on the same bugs. The owner's 95% stays the target on all ten.
+
+**The audit's result, recorded before any paid run in this section.** Nine bugs are determined by their task, including
+all three held-out bugs. `click-3678` is not: its tests require the storage name `_click_default_help` and warning texts
+stated in neither the issue nor the repository. On all ten, 18 of 20 runs in a two-repeat round is the most an honest
+agent can reach if `click-3678` fails both times, which is 90%, so the 95% target may be out of reach on these bugs.
