@@ -47,8 +47,11 @@
    module, where it came from, and the import root (``import_roots``) or editable install that would load the patch.
    Or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure of the
    change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
-4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
-   support on the checks named, never a claim that the patch does everything the task needs.
+   Or a requirement that passed only on checks in files the patch adds or changes (``checks_written_with_patch``): the
+   author's own tests share its reading of the task, so they show neither that it is wrong nor that it is right;
+4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks, at least one of them in a file the
+   patch does not touch, and integrity is intact. That is support on the checks named, never a claim that the patch does
+   everything the task needs.
 
 Each requirement reads ``passed_on_stated_checks``, ``failed`` or ``not_established`` (with a reason and a suggested
 test in words); G6 never invents a passing test. Checks adapt to cost: tier 1 (always) is the digest, integrity, and
@@ -1156,9 +1159,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                             "file, so the contract was not checked (why is in assessment.completion.activities)")
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
+    self_checked = ", ".join(_self_checked(evaluated, change, Path(root)))
+    if self_checked:
+        reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
-                  first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else "",
+                  first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
+                                SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else ""),
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
@@ -1319,6 +1326,31 @@ _NEXT = {
                "change is intended, then review it again.",
     INSUFFICIENT: "State each requirement with the tests that check it, make those tests run here, and review again.",
 }
+
+
+#: Worked examples, round 3: the author's own tests share its reading of the task, so they cannot support the patch.
+SELF_CHECKED = "checks_written_with_patch"
+SELF_CHECKED_DETAIL = ("{ids}: every check that passed is in a file this patch adds or changes, so it may share the "
+                       "patch's reading of the task. Nothing shows the patch is wrong, and nothing independent of it "
+                       "shows it right")
+SELF_CHECKED_ASK = ("{ids}: state a check that exists at the base commit, in a file this patch does not touch, or tell "
+                    "the person this rests on the author's own tests. Do not rewrite tests to change this outcome.")
+
+
+def _self_checked(evaluated: list[dict], change, root: Path) -> list[str]:
+    """The requirements that passed only on checks this patch wrote: a check whose file, or folder, holds a file the
+    patch adds or changes. At least one check it does not touch keeps a requirement out of this list."""
+    def written(check: str) -> bool:
+        head = (root / check.partition("::")[0]).resolve()
+        try:
+            rel = head.relative_to(Path(change.repo).resolve()).as_posix()
+        except ValueError:
+            return False
+        rel = "" if rel == "." else rel
+        return any(path == rel or not rel or path.startswith(rel + "/") for path in change.files)
+
+    return [req["id"] for req in evaluated if req["status"] == PASSED_ON_CHECKS and all(
+        written(check["id"]) for check in req["checks"] if check["provenance"] == STATED)]
 
 
 #: What a requirement no one stated is (rule 11): listed, and nothing more.

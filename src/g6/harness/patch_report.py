@@ -37,7 +37,8 @@ RULES = {"test_integrity_compromised": "a sign that the tests, their configurati
          "defect_detected": "a stated check, or a test of the changed code that passes at the base commit, failed; or "
                             "the patch adds an import a stated contract forbids",
          "insufficient_evidence": "something needed to support the patch is missing",
-         "supported_within_scope": "every requirement passed its stated checks, and nothing else was found"}
+         "supported_within_scope": "every requirement passed a stated check the patch did not write, and no "
+                                   "other problem was found"}
 INTEGRITY = {"test_weakened": "a test or a test helper was weakened",
              "runner_configuration_changed": "the test runner's configuration changed",
              "ignored_file_can_change_tests": "a file git ignores could change the tests",
@@ -299,8 +300,14 @@ def _steps(assessment: dict) -> list[str]:
             f"- **Tested:** {ran}; isolation {code(backend or 'none')}; {float(scope.get('seconds') or 0):.1f} "
             f"seconds" + (f"; {passed_over}" + (f" and {len(skipped) - 2} more not run" if len(skipped) > 2 else "")
                           if skipped else "") + ".",
-            f"- **Gate:** {OUTCOMES.get(outcome, outcome.replace('_', ' '))} ({outcome}): {rule}.",
+            f"- **Gate:** {OUTCOMES.get(outcome, outcome.replace('_', ' '))} ({outcome}): {rule}{_gate_note(assessment)}.",
             "- **Approve:** waiting for you: merging needs your separate approval."]
+
+
+def _gate_note(assessment: dict) -> str:
+    """What the gate's sentence must not hide: the proposed checks that never gave a result (worked examples, round 3)."""
+    count = sum(a.get("result") == "check_error" for a in (assessment.get("completion") or {}).get("activities") or [])
+    return f"; {count} proposed check{'s' if count != 1 else ''} could not be judged" if count else ""
 
 
 def render(assessment: dict) -> str:
