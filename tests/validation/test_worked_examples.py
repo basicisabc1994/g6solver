@@ -877,7 +877,8 @@ def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monk
     import loop
     assert loop.last_json('noise\n{\n "run": "r"\n}\n{\n "status": "finished"\n}\n') == {"run": "r", "status": "finished"}
     checked = json.dumps({"checks": [{"patch": "round-1", "passes": True, "failing": []},
-                                     {"patch": "final", "passes": False, "failing": ["t::a", "t::b"]}]}, indent=1)
+                                     {"patch": "final", "passes": False, "failing": 2,
+                                      "fail_to_pass_failing": ["t::a", "t::b"]}]}, indent=1)
     said = {"run": '{"run": "run/x/1", "status": "finished", "cost_usd": 0.2}', "check": checked}
     monkeypatch.setattr(loop, "tool", lambda command, *a, **k: said[command])
     row = loop.one(tmp_path, "g", "A", "x", 1)
@@ -887,6 +888,12 @@ def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monk
     with pytest.raises(SystemExit):
         loop.one(tmp_path, "g", "A", "y", 1)
     assert not (tmp_path / "loop" / "A-y-1.json").exists()
+    # a run made before a crash is checked, never made again
+    said["run"] = '{"status": "refused", "why": "run (x) was already made (finished); no run is made again"}'
+    (tmp_path / "ledger.jsonl").write_text(json.dumps(
+        {"task": "z", "arm": "A", "repeat": 1, "run": "run/z/1", "status": "finished", "cost_usd": 0.3}) + "\n", "utf-8")
+    again = loop.one(tmp_path, "g", "A", "z", 1)
+    assert again["run"] == "run/z/1" and again["failing"] == 2 and again["cost_usd"] == 0.3
 
 
 def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):

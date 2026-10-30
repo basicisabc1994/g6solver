@@ -50,6 +50,9 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
         return json.loads(saved.read_text("utf-8"))
     said = tool("run", "--task", task, "--g6", g6, "--arm", arm, "--model", SONNET, "--repeat", str(repeat))
     rec = last_json(said)
+    if rec.get("status") == "refused" and "already made" in str(rec.get("why")):   # made before a crash: check it
+        rec = [r for r in distill.main_row(root / "ledger.jsonl")
+               if (r.get("task"), r.get("arm"), r.get("repeat")) == (task, arm, repeat)][-1]
     if rec.get("status") == "refused":   # never counted as a failed run
         raise SystemExit(f"refused: {arm} {task} {repeat}: {rec.get('why')}")
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
@@ -58,8 +61,9 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
         final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, timeout=1200)).get("checks", [])
                  if x.get("patch") == "final"]
         if final:
-            failing = list(final[-1].get("failing") or [])
-            row.update(passes=bool(final[-1].get("passes")), failing=len(failing), tests=failing[:20])
+            failing, tests = final[-1].get("failing"), list(final[-1].get("fail_to_pass_failing") or [])
+            row.update(passes=bool(final[-1].get("passes")), tests=tests[:20],
+                       failing=failing if isinstance(failing, int) else len(failing or []))
     saved.parent.mkdir(exist_ok=True)
     saved.write_text(json.dumps(row, indent=1), "utf-8")
     print(json.dumps({k: row[k] for k in ("arm", "task", "repeat", "status", "passes", "failing", "cost_usd")}), flush=True)
