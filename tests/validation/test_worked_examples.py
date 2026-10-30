@@ -861,6 +861,10 @@ def test_round3_loop_runs_tune_on_train_and_look_once_at_the_held_out_bugs(tmp_p
     assert we.r3_loop_key((SONNET, held, "H1", 1)) and not we.r3_loop_key((SONNET, train, "H1", 1))
     assert we.r3_loop_key((SONNET, held, "E", 1)) and we.r3_loop_key((SONNET, held, "A", 2))
     assert not we.r3_loop_key((SONNET, train, "G1", 3)) and not we.r3_loop_key((HAIKU, train, "G1", 1))
+    # the final comparison on the held-out bugs: both sides five times, nothing else past two
+    assert we.r3_loop_key((SONNET, held, "A", 5)) and we.r3_loop_key((SONNET, held, "H1", 5))
+    assert not we.r3_loop_key((SONNET, held, "A", 6)) and not we.r3_loop_key((SONNET, held, "E", 3))
+    assert not we.r3_loop_key((SONNET, train, "A", 3))
 
 
 def test_distillation_refuses_text_naming_a_project_a_test_or_a_file():

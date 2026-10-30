@@ -15,6 +15,7 @@ from typing import Any
 import distill
 import run as we
 import wecommon as c
+from g6.cegis import InputDomain, SearchResult, cegis
 
 HERE = Path(__file__).resolve().parent
 TARGET, MAX_GENERATIONS, MAX_MISSES, STOP_USD = 0.95, 8, 3, 170.0
@@ -96,6 +97,82 @@ def commit(path: Path, message: str) -> None:
     subprocess.run([*git, "push", "-q", "origin", "HEAD"], check=True)
 
 
+class Harness:
+    """Stands where ``cegis`` has a sketch: the candidate is a generation's text, not a filled-in function."""
+
+    @staticmethod
+    def instantiate(control: dict[int, str]) -> str:
+        return control[0]
+
+
+class Generations:
+    """G6's CEGIS loop over the harness: ``search`` distils the next text from what failed, ``evaluate`` runs it on every
+    training bug. The oracle's answer is the maintainers' tests, seen only as each run's independent check."""
+
+    def __init__(self, root: Path, g6: str, train: list[str], arm: str, text: str, rows: list[dict[str, Any]],
+                 caller: Any) -> None:
+        self.root, self.g6, self.train, self.caller = root, g6, train, caller
+        self.best_arm, self.best_text, self.best = arm, text, rows
+        self.n, self.misses, self.notes = 0, 0, []
+
+    def search(self, sketch: Any, examples: Any, *, max_exhaustive: int = 0) -> SearchResult:
+        while self.n < MAX_GENERATIONS and self.misses < MAX_MISSES and score(self.best) < TARGET:
+            self.n += 1
+            path = we.HARNESS / f"G{self.n}.txt"
+            if path.is_file() or self.distilled(path):
+                return SearchResult({0: f"G{self.n}"}, "distilled", False, self.n)
+        return SearchResult(None, "stopped", False, self.n)
+
+    def distilled(self, path: Path) -> bool:
+        if spent(self.root) >= STOP_USD:
+            self.misses = MAX_MISSES
+            return False
+        failed = [r for r in self.best if not r["passes"] and r["run"]]
+        try:
+            text, bad = distill.distill(self.best_text, failed, self.root, self.caller, self.notes)
+        except distill.llm.LLMError as exc:
+            text, bad = "", [f"the model call failed: {exc}"]
+        folder = c.Archive(self.root).start("distill", path.stem, parent=self.best_arm)
+        folder.write("text.txt", text)
+        cost = getattr(self.caller, "cost_usd", 0.0)
+        folder.finish({"cost_usd": cost, "named": bad, "parent": self.best_arm}, "finished" if text else "error")
+        if self.caller is not None:
+            self.caller.cost_usd = 0.0
+        if bad or not text:
+            print(f"== {path.stem}: refused, it names {bad}", flush=True)
+            self.notes.append(f"An earlier attempt was refused for naming {bad}; name nothing of the kind.")
+            self.misses += 1
+            return False
+        we.HARNESS.mkdir(exist_ok=True)
+        path.write_text(text + "\n", "utf-8", newline="\n")
+        commit(path, f"worked examples round 3: harness generation {self.n}")
+        return True
+
+    def evaluate(self, sketch: Any, controls: Any, inputs: Any) -> list[list[dict[str, bool]]]:
+        arm, path = controls[0][0], we.HARNESS / f"{controls[0][0]}.txt"
+        rows = round_of(self.root, self.g6, arm, self.train)
+        print(f"== {arm}: train {score(rows):.2f} against {self.best_arm}'s {score(self.best):.2f}", flush=True)
+        if score(rows) > score(self.best):
+            self.best_arm, self.best_text, self.best, self.misses = arm, path.read_text("utf-8").strip(), rows, 0
+            self.notes = []
+        else:
+            self.misses += 1
+            self.notes.append(f"An attempt that scored {score(rows):.2f} did no better than {score(self.best):.2f}: "
+                              f"{path.read_text('utf-8')[:1500]}")
+        passes = {(r["task"], r["repeat"]): r["passes"] for r in rows}
+        return [[{"ok": passes[(i["task"], i["repeat"])]} for i in inputs]]
+
+
+def generations(root: Path, g6: str, train: list[str], arm: str, text: str, rows: list[dict[str, Any]],
+                caller: Any) -> tuple[Any, str, list[dict[str, Any]]]:
+    """``cegis`` over harness text, with the training bugs and repeats as its domain: its result, and the best arm."""
+    runner = Generations(root, g6, train, arm, text, rows, caller)
+    domain = InputDomain.of({"task": train, "repeat": [1, 2]})
+    result = cegis(Harness(), lambda **_: True, domain=domain, runner=runner, max_iterations=MAX_GENERATIONS,
+                   timeout_s=7 * 86400.0)
+    return result, runner.best_arm, runner.best
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--g6", default=we.R3_LOOP_G6)
@@ -107,47 +184,17 @@ def main() -> None:
         rows = round_of(root, args.g6, arm, tasks)
         print(f"== {arm}: all {score(rows):.2f}, train {score([r for r in rows if r['task'] in train]):.2f}", flush=True)
 
-    best_arm, best_text = "E", we.ADDENDUM_D
     best = [one(root, args.g6, "E", t, r) for t in train for r in (1, 2)]
-    misses, notes = 0, []
     caller = distill.Metered(distill.llm.AnthropicCaller(distill.MODEL, api_key=we.read_key()))
-    for n in range(1, MAX_GENERATIONS + 1):
-        if score(best) >= TARGET or misses >= MAX_MISSES:
-            break
-        path = we.HARNESS / f"G{n}.txt"
-        if not path.is_file():
-            if spent(root) >= STOP_USD:
-                break
-            failed = [r for r in best if not r["passes"] and r["run"]]
-            try:
-                text, bad = distill.distill(best_text, failed, root, caller, notes)
-            except distill.llm.LLMError as exc:
-                text, bad = "", [f"the model call failed: {exc}"]
-            folder = c.Archive(root).start("distill", f"G{n}", parent=best_arm)
-            folder.write("text.txt", text)
-            folder.finish({"cost_usd": caller.cost_usd, "named": bad, "parent": best_arm}, "finished" if text else "error")
-            caller.cost_usd = 0.0
-            if bad or not text:
-                print(f"== G{n}: refused, it names {bad}", flush=True)
-                notes.append(f"An earlier attempt was refused for naming {bad}; name nothing of the kind.")
-                misses += 1
-                continue
-            we.HARNESS.mkdir(exist_ok=True)
-            path.write_text(text + "\n", "utf-8", newline="\n")
-            commit(path, f"worked examples round 3: harness generation {n}")
-        rows = round_of(root, args.g6, f"G{n}", train)
-        print(f"== G{n}: train {score(rows):.2f} against {best_arm}'s {score(best):.2f}", flush=True)
-        if score(rows) > score(best):
-            best_arm, best_text, best, misses = f"G{n}", path.read_text("utf-8").strip(), rows, 0
-            notes = []
-        else:
-            misses += 1
-            notes.append(f"An attempt that scored {score(rows):.2f} did no better than {score(best):.2f}: "
-                         f"{path.read_text('utf-8')[:1500]}")
+    result, best_arm, best = generations(root, args.g6, train, "E", we.ADDENDUM_D, best, caller)
+    (root / "loop" / "cegis.json").write_text(json.dumps(
+        {"status": result.status, "iterations": result.iterations, "counterexamples": result.counterexamples,
+         "boundary": result.boundary, "reason": result.reason, "best": best_arm}, indent=1, default=str), "utf-8")
     print(f"== best {best_arm}: train {score(best):.2f}", flush=True)
     if best_arm != "E":
-        held = round_of(root, args.g6, "H" + best_arm[1:], we.R3_HELD)
-        print(f"== held-out: {score(held):.2f}", flush=True)
+        repeats = range(1, we.R3_HELD_REPEATS + 1)
+        base, held = (round_of(root, args.g6, arm, we.R3_HELD, repeats) for arm in ("A", "H" + best_arm[1:]))
+        print(f"== held-out: {score(held):.2f} against arm A's {score(base):.2f}", flush=True)
     print(f"== spent ${spent(root):.2f}", flush=True)
 
 

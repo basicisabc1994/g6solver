@@ -646,3 +646,33 @@ black-5634 and click-3678, which arm A has not passed.
 
 **The owner's next request:** use G6's formal methods to construct a better self-correction loop. This is not designed
 yet. It needs its own dated section before any run it covers.
+
+### 2026-10-30: a self-correction loop built with G6's formal methods (before arm E or any generation)
+
+**What the failed baseline runs on training bugs showed.** On `black-5634` and `pydantic-14052` the agent fixed the one
+shape of input in the issue; the maintainers' tests try others (nesting, line endings, trailing comments, other scopes).
+On `click-3678` the tests require a literal internal name and exact warning text that neither the issue nor the
+repository states. So `click-3678` looks out of reach for an honest agent, which would cap training at 12 of 14 (86%).
+
+**G6's model checker on the stop rule** (`loop_model.py`, about the model only, never about an agent or a patch). The
+rule "stop once nothing tried is failing" can stop with every shape untried. "Every listed shape tried, nothing open,
+every result taken after the last repair" gives `k_inductive` (k=1) and can still finish. Dropping the rerun gives a
+violation again, so the rerun stays.
+
+**G1 is that rule written by hand from the model, not distilled.** Later generations are distilled from it. A headline
+about distillation is allowed only if a distilled generation, G2 or later, beats G1 and arm A on training and arm A on
+the held-out bugs. Otherwise the report says the gain came from the hand-written rule.
+
+**The owner asked why G6's CEGIS component was not used.** It now runs the outer loop: `loop.py` calls `g6.cegis.cegis`
+unchanged, with harness text as the candidate, training bugs and repeats as the domain, the distiller as its search and
+each run's independent check as the oracle's answer. Its Z3 verifier is not used: it covers small integer functions.
+The `cegis` status is reported as it falls; a clean `no_counterexample_in_domain` means only these bugs and repeats.
+
+**The final comparison changes before any generation:** arm A and the best generation both run five times on each
+held-out bug, not twice, because six runs say little. The held-out single look stands.
+
+**An audit of what each task states, before any further run.** A reviewer who has not seen G6's checks reads each of the
+ten issues and the maintainers' test changes. A bug is *not determined by its task* if a test it must pass requires a
+name, message or format that neither the issue nor the repository at the parent commit states. For held-out bugs the
+reviewer returns the label only. No bug, test or run is dropped: the score on all ten is the score, and the score on
+determined bugs is reported beside it, labelled, with arm A's on the same bugs. The owner's 95% stays the target on all ten.

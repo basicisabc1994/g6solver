@@ -379,6 +379,7 @@ R3_D_G6 = "f50953c"          # arm D's G6, reviewed (PLAN.md, 2026-10-30): its r
 HARNESS = Path(__file__).resolve().parent / "harness"   # the distilled text of each generation
 R3_LOOP_G6 = "c53d310"       # the distillation loop's G6 (PLAN.md, 2026-10-30)
 R3_HELD = ("black-5521", "click-3769", "starlette-3718")   # by hash, before any tuning; never read by the distiller
+R3_HELD_REPEATS = 5          # the final comparison, set before any generation ran (PLAN.md, 2026-10-30)
 R3_ARMS = ("A", "B", "C")
 R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
 R3_CAP_USD = 180.00          # round 3's own hard stop, agent and G6 together (the owner, 2026-10-30)
@@ -396,9 +397,10 @@ ARM_STATE = ("echo we-arm-state >/dev/null; python3 -I -c 'import json, os\n"
 
 def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
-    text) on the held-out ones."""
+    text) on the held-out ones. The final comparison runs A and ``H<n>`` five times on each held-out bug."""
     model, task, arm, repeat = key
-    if model != R3_MODELS[1] or repeat not in (1, 2):
+    held_out = task in R3_HELD and (arm == "A" or arm[0] == "H")
+    if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
     if arm in ("A", "E"):
         return True
