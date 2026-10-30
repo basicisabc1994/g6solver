@@ -81,6 +81,14 @@ def test_arm_t_is_plain_claude_code_on_any_bug_and_the_thread_goes_to_t_and_the_
     assert [a for a in ("A", "E", "G1", "H1", "T", "L1", "M1") if we.gets_thread(a)] == ["T", "L1", "M1"]
 
 
+def test_scouts_from_l2_combine_dimensions_and_leave_no_shape_unclear():
+    assert we.scout_prompt("L1") == we.SCOUT_PROMPT
+    for arm in ("L2", "M2", "L3"):
+        text = we.scout_prompt(arm)
+        assert we.SCOUT_V2 in text and text.index(we.SCOUT_V2) < text.index("5. Critique")
+    assert distill.named(we.SCOUT_V2, [], []) == []
+
+
 def test_only_the_loops_arms_get_a_stop_hook():
     assert "Stop" not in json.loads(we.hook_settings())["hooks"]
     got = json.loads(we.hook_settings(stop=True))["hooks"]

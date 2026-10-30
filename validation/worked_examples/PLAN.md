@@ -722,3 +722,10 @@ the linked items and the repository at the parent. The storage name and the warn
 none of them; the pull request that introduces them opened with the fix. No loop can derive an arbitrary name, and any
 channel that delivered it would give an agent the maintainers' tests. So nothing here does. The score on all ten stays
 the score; the most it can show with `click-3678` failing is 90% on a two-repeat round.
+
+**L1's one smoke run, and L2 (before any L2 run).** On `black-5634` repeat 1 the scout cost $0.16 and wrote 15 shapes and
+12 probes, 6 of them failing on the base. The Stop hook fired, the probes passed first time, and so it never blocked. The
+run still failed, on one maintainers' test where arms E and G1 failed two. The scout probed each dimension alone, and
+left three shapes "unclear", which the agent then reported as questions. L2's scout combines dimensions in pairs and may
+not leave a shape unclear. L2 runs on all 14 training runs. It is a text change to the scout, naming no bug, chosen after
+seeing that run and that bug's tests, so it is development; only the held-out comparison can support a claim.

@@ -141,6 +141,12 @@ Issue #{{number}}: {{title}}
 
 {{text}}
 """
+#: Arm L2 on (PLAN.md, 2026-10-31): L1's smoke run probed each dimension alone and left "unclear" shapes unprobed.
+SCOUT_V2 = """   Treat the shapes as dimensions, and combine them: every pair of dimensions that can occur together gets a probe,
+   with parametrized tests where that is shorter. A bug that survives a fix usually lives where two dimensions cross.
+   Never leave a shape as unclear. Where the issue states a principle, apply it uniformly to the shape unless the
+   repository's own code, tests or documentation say otherwise, and write the probe that follows.
+"""
 LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
 `{PROBE_RUN}`). Read them before you edit. When you try to finish, the runner runs the probes on your code, and a failing
@@ -190,6 +196,11 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
         if task.id == task_id:
             return task
     raise SystemExit(f"no task {task_id!r} in {path.name}")
+
+
+def scout_prompt(arm: str) -> str:
+    """The scout's prompt for arm ``L<n>`` or ``M<n>``: from generation 2, with ``SCOUT_V2`` before its critique."""
+    return SCOUT_PROMPT if int(arm[1:]) < 2 else SCOUT_PROMPT.replace("5. Critique:", SCOUT_V2 + "5. Critique:", 1)
 
 
 def gets_thread(arm: str) -> bool:
@@ -1054,11 +1065,12 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
     cap_at = docker_args.index("--max-budget-usd") + 1
     args = [*docker_args[:cap_at], f"{SCOUT_CAP_USD:.2f}", *docker_args[cap_at + 1:]]
     tally = c.Tally(count_reported=True)
+    asked = scout_prompt(ctx.arm).format(owner=owner, name=name, number=task.issue, title=title, text=text)
+    run.write("scout_prompt.txt", asked)
     proc = ctx.docker.popen(*args, env=ctx.client_env(key))
     stream = open(run.fresh_path("scout_stream.jsonl"), "w", encoding="utf-8", newline="\n")
     try:
-        proc.stdin.write(SCOUT_PROMPT.format(owner=owner, name=name, number=task.issue, title=title, text=text)
-                         .encode("utf-8"))
+        proc.stdin.write(asked.encode("utf-8"))
         proc.stdin.close()
         ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=time.monotonic() + 1200,
                             write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
