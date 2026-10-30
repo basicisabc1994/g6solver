@@ -592,3 +592,37 @@ and would need their own note.
 3. Is step 3's roughly $1 approved, once steps 1 and 2 pass?
 
 The full run and Haiku's remaining runs stay held either way.
+
+### 2026-10-30: approved, and the distillation loop (before any run it covers)
+
+**The owner approved the draft above in full:** the rule overrides rule 1 and A5, it is on by default, and arm E is
+approved. It is commit `b52da4d`. The owner then set a new goal and budget: G6 should solve these tasks more often than
+Claude Code alone, at 95% or better, through G6 distilling its own repair instructions, with the round's stop raised from
+$100 to **$180**, counting what was spent. This supersedes the hold on further runs for the runs named here.
+
+**The replay step is replaced.** The worked-out result above (all nine fall to `insufficient_evidence`) stands, and arm E
+tests the rule live on all ten bugs, so the separate replay is not run. black D's two checks failed at collection on both
+trees; G6's records keep no pytest output, so why is still unknown.
+
+**The runs, all Sonnet, each twice, on G6 `b52da4d`:**
+1. **Arm A**, no G6, on all ten bugs: the comparison this round has not had. These are the scheduled runs.
+2. **Arm E**, arm D's prompt under the new rule, on all ten bugs.
+3. **Generations.** `G<n>` is one text from G6's `FailureTraceStrategy`, reading the failed runs of the best text so far,
+   on the seven training bugs only. A generation replaces its parent only if it passes more of the maintainers' tests.
+4. **The held-out look.** The best text, as `H<n>`, runs once on the held-out bugs: `black-5521`, `click-3769` and
+   `starlette-3718`. They were chosen by hash before any tuning. Nothing about them reaches the distiller, and they do
+   not change the text.
+
+**What the distiller may read:** a failed training run's final report, its patch, and the names of the maintainers' tests
+it failed. **What the agent may read:** the text only, never those tests. A text naming a project, an issue number, a test
+or a file from the runs is refused. Each accepted text is committed before it runs.
+
+**The stops.** The training score reaches 95%; or 3 generations in a row do not improve; or 8 generations; or $170 spent.
+Round 3's hard stop stays below that at $180. The rest of the schedule stays held, Haiku included.
+
+**What a result will and will not show.** These are development bugs, and most of them were seen before this loop. A
+training score can overfit, even with bugs unnamed, so it is always reported beside the held-out score and arm A. Three
+held-out bugs at two runs each is a small sample. The maintainers' tests can also ask for details an issue does not state,
+so 95% may not be reachable by any honest means; if not, that is reported. The formula "G6 fixes its own repair loop
+through harness distillation" is used only if the held-out score also beats arm A, and always with these numbers. G6's
+own gate needs 30 cases, so it cannot promote this text on 14 runs, and it is not reported as having done so.

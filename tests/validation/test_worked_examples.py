@@ -673,7 +673,7 @@ def test_round3_prompts_differ_only_as_the_plan_states():
         assert word not in a.split("Issue #")[0]             # arm A: Claude Code alone, told nothing of G6
     assert a.split("Issue #")[1] == b.split("Issue #")[1]    # the same issue text
     with pytest.raises(ValueError):
-        we.prompt(TASK, "T", "body", arm="E")
+        we.prompt(TASK, "T", "body", arm="Z")
 
 
 @pytest.mark.parametrize("addendum", ["ADDENDUM_C", "ADDENDUM_D"])
@@ -708,8 +708,8 @@ def test_round3_schedule_order_and_noise_control():
 def test_round3_caps():
     assert we.r3_caps(HAIKU, spent=50.0, fable_left=30) == (10.0, 10.5)
     assert we.r3_caps(SONNET, spent=0.0, fable_left=30) == (10.0, 10.5)
-    assert we.r3_caps(FABLE, spent=0.0, fable_left=30) == (3.17, pytest.approx(3.3285))   # $100 over 30, its stop
-    assert we.r3_caps(FABLE, spent=99.0, fable_left=1)[1] <= 1.0                          # never past the $100
+    assert we.r3_caps(FABLE, spent=0.0, fable_left=30) == (5.71, pytest.approx(5.9955))   # $180 over 30, its stop
+    assert we.r3_caps(FABLE, spent=179.0, fable_left=1)[1] <= 1.0                         # never past the $180
     assert we.r3_caps(FABLE, spent=0.0, fable_left=1) == (10.0, 10.5)                     # at most $10
 
 
@@ -796,7 +796,7 @@ def test_round3_ledger_accumulates_and_the_budget_stop_refuses(tmp_path):
         r.finish({"cost_usd": 10.0}, "finished")
     ctx.arm = "C"
     rec = we.run_task(ctx, TASK)
-    assert rec["status"] == "refused" and "$100" in rec["why"]
+    assert rec["status"] == "refused" and "$180" in rec["why"]
     assert len((ctx.archive.root / "ledger.jsonl").read_text(encoding="utf-8").splitlines()) == 2
 
 
@@ -847,6 +847,29 @@ def test_round3_arm_d_is_c_with_the_fallback_on_the_four_probe_bugs_only(tmp_pat
     assert "already" in we.run_task(ctx, TASK)["why"]
     ctx.model = HAIKU
     assert "schedules no run" in we.run_task(ctx, TASK)["why"]
+
+
+def test_round3_loop_runs_tune_on_train_and_look_once_at_the_held_out_bugs(tmp_path, monkeypatch):
+    monkeypatch.setattr(we, "HARNESS", tmp_path)
+    (tmp_path / "G1.txt").write_text("Read the issue twice.\n", encoding="utf-8")
+    assert "Read the issue twice." in we.prompt(TASK, "t", "x", "G1")
+    assert we.prompt(TASK, "t", "x", "H1") == we.prompt(TASK, "t", "x", "G1")
+    assert we.prompt(TASK, "t", "x", "E") == we.prompt(TASK, "t", "x", "D")
+    held, train = we.R3_HELD[0], "black-5634"
+    assert train not in we.R3_HELD
+    assert we.r3_loop_key((SONNET, train, "G1", 2)) and not we.r3_loop_key((SONNET, held, "G1", 1))
+    assert we.r3_loop_key((SONNET, held, "H1", 1)) and not we.r3_loop_key((SONNET, train, "H1", 1))
+    assert we.r3_loop_key((SONNET, held, "E", 1)) and we.r3_loop_key((SONNET, held, "A", 2))
+    assert not we.r3_loop_key((SONNET, train, "G1", 3)) and not we.r3_loop_key((HAIKU, train, "G1", 1))
+
+
+def test_distillation_refuses_text_naming_a_project_a_test_or_a_file():
+    pytest.importorskip("distill")
+    import distill
+    tests, files = ["tests/x.py::test_blank_lines[1]"], ["src/module_y.py"]
+    assert distill.named("Read the issue. Check the edge cases.", tests, files) == []
+    assert distill.named("In Pydantic fix #14052", tests, files) == ["pydantic", "#14052"]
+    assert distill.named("run test_blank_lines on module_y.py", tests, files) == ["module_y.py", "test_blank_lines"]
 
 
 def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):

@@ -164,7 +164,11 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
 def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
     addendum."""
-    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D}
+    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D}
+    if re.fullmatch(r"[GH]\d+", arm):
+        harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
+        texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + harness.replace("{", "{{").replace("}", "}}")
+                                    + "\n\nIssue #{number}", 1)
     if arm not in texts:
         raise ValueError(f"no arm {arm!r}")
     owner, name = task.project.split("/", 1)
@@ -372,9 +376,12 @@ R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "
             (R3_MODELS[1], "pydantic-14052", "C", 1)}
 R3_PROBE = {(R3_MODELS[1], task, "D", 1) for task in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
 R3_D_G6 = "f50953c"          # arm D's G6, reviewed (PLAN.md, 2026-10-30): its refusals name proposed_checks
+HARNESS = Path(__file__).resolve().parent / "harness"   # the distilled text of each generation
+R3_LOOP_G6 = "b52da4d"       # the distillation loop's G6 (PLAN.md, 2026-10-30)
+R3_HELD = ("black-5521", "click-3769", "starlette-3718")   # by hash, before any tuning; never read by the distiller
 R3_ARMS = ("A", "B", "C")
 R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
-R3_CAP_USD = 100.00          # round 3's own hard stop, agent and G6 together
+R3_CAP_USD = 180.00          # round 3's own hard stop, agent and G6 together (the owner, 2026-10-30)
 R3_RUN_CAP_USD = 10.00       # each run's cap (Claude Code's --max-budget-usd); Fable's from the budget left
 R3_MARGIN = 1.05             # the runner's own stop is the cap and 5% (round 1: $10 and $10.50)
 G6_BIN = "/usr/local/bin/g6"
@@ -385,6 +392,17 @@ ARM_STATE = ("echo we-arm-state >/dev/null; python3 -I -c 'import json, os\n"
              "s = os.path.expanduser(\"~/.claude/skills\")\n"
              "print(json.dumps({\"mcp_servers\": sorted(d.get(\"mcpServers\") or {}), "
              "\"skills\": sorted(os.listdir(s)) if os.path.isdir(s) else []}))'")
+
+
+def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
+    """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
+    text) on the held-out ones."""
+    model, task, arm, repeat = key
+    if model != R3_MODELS[1] or repeat not in (1, 2):
+        return False
+    if arm in ("A", "E"):
+        return True
+    return re.fullmatch(r"[GH]\d+", arm) is not None and (arm[0] == "H") == (task in R3_HELD)
 
 
 def r3_schedule(tasks: Sequence[Task]) -> list[tuple[str, str, str, int]]:
@@ -423,22 +441,24 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     key = (ctx.model, task.id, ctx.arm, ctx.repeat)
     if ctx.model not in R3_MODELS:
         return f"round 3 has no model {ctx.model!r}", 0.0, 0.0
-    if key not in sched and key not in R3_PROBE:
+    if key not in sched and key not in R3_PROBE and not r3_loop_key(key):
         return f"round 3 schedules no run {key}", 0.0, 0.0
+    if ctx.arm not in R3_ARMS[:3] and ctx.arm != "D" and not str(ctx.g6.get("commit")).startswith(R3_LOOP_G6):
+        return f"the loop's arms run only on the reviewed G6, {R3_LOOP_G6}", 0.0, 0.0
     if ctx.arm == "D" and not str(ctx.g6.get("commit")).startswith(R3_D_G6):
         return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
     done = r3_done(rows)
     if key in done and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
-    if earlier and key not in R3_SMOKE and key not in R3_PROBE:
+    if earlier and key not in R3_SMOKE and key not in R3_PROBE and not r3_loop_key(key):
         return f"out of order: {len(earlier)} run(s) of an earlier model are left, first {earlier[0]}", 0.0, 0.0
     spent = c.spent(rows)
     fable_left = sum(1 for k in sched if k[0] == R3_MODELS[2] and k not in done)
     cap, stop = r3_caps(ctx.model, spent=spent, fable_left=fable_left)
     ok, why = c.may_start(spent, cap=R3_CAP_USD, need=stop)
     if not ok or cap <= 0:
-        return f"the round's $100 stop: {why or 'no budget left'}", cap, stop
+        return f"the round's ${R3_CAP_USD:.0f} stop: {why or 'no budget left'}", cap, stop
     return "", cap, stop
 
 
@@ -917,7 +937,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     why = "" if dry else refusal(ctx, task)
     cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
     if round3:
-        if ctx.arm not in (*R3_ARMS, "D") or ctx.model not in R3_MODELS:
+        if not re.fullmatch(r"[A-E]|[GH]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
             why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
         elif dry:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
@@ -1471,7 +1491,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--round", type=int, choices=(1, 2, 3), default=1,
                     help="2: round 2, G6 with its own model (its archive is round2/ inside the worked examples' one); "
                          "3: round 3, formal methods (round3/, with its own $100 stop and ledger)")
-    ap.add_argument("--arm", choices=(*R3_ARMS, "D"),
+    ap.add_argument("--arm", type=str,
                     help="round 3: A (no G6), B (G6 as shipped), C (G6 and the addendum), D (C and its fallback)")
     ap.add_argument("--model", choices=R3_MODELS, help="round 3: the agent's model")
     ap.add_argument("--repeat", type=int, default=1, help="round 3: 2 for Sonnet's second arm A run of a bug")
