@@ -1,4 +1,4 @@
-# For developers and coding agents
+# Developer quickstart
 
 **Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been established.**
 

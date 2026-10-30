@@ -370,7 +370,7 @@ g6 setup --client claude --allow patch_review.review    # or --client codex
 }
 ```
 
-**Not a programmer?** Download a ready-made [bundle](../bundles/index.md) instead — no installation of Python needed.
+**Not a programmer?** Download a ready-made [worked example](../bundles/index.md) instead — no installation of Python needed.
 
 ## Your First Workflow
 

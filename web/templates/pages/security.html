@@ -25,10 +25,10 @@ response time.{% endcomment %}
         lists it in <code>G6_MCP_SENSITIVE</code>.</li>
         <li><strong>The meta-harness changes nothing on its own.</strong> It proposes a change, tests it on held-out
         tasks, and waits for a person to approve it.</li>
-        <li><strong>A bundle's page is served only to your computer</strong> (127.0.0.1). It refuses requests from
-        other websites, and its controls need a random token made fresh each time the bundle starts.</li>
+        <li><strong>A worked example's page is served only to your computer</strong> (127.0.0.1). It refuses requests from
+        other websites, and its controls need a random token made fresh each time it starts.</li>
         <li><strong>A model provider's key stays on your computer.</strong> G6 reads a key only from your key file,
-        <code>~/.g6/.env</code>: a plain text file, not encrypted, that you write yourself. A bundle's page never takes
+        <code>~/.g6/.env</code>: a plain text file, not encrypted, that you write yourself. A worked example's page never takes
         a key, and G6 sends a key only to its provider. Delete its line to remove it.</li>
     </ul>
 

@@ -12,7 +12,7 @@ from pages.routes import public_paths
 
 DOCS = {"/docs/", "/docs/full/", "/guide/", "/guide/view/", "/developers/", "/contribute/"}
 WHY_FIRST = ["/", "/about/", "/principles/", "/security/", "/license/", "/privacy/", "/research/", "/components/",
-             "/get-started/", "/faq/", "/metaharness/", "/bundles/", "/graph/", "/failure-modes/"]
+             "/get-started/", "/faq/", "/metaharness/", "/bundles/", "/failure-modes/"]
 _WHY = re.compile(r'<p class="[^"]*\bwhy\b')
 
 
@@ -48,7 +48,10 @@ def test_the_home_page_starts_from_the_problem_then_says_what_g6_is(client):
     sub = _text(ledes[0][1])
     # owner, 2026-10-29 (minimal launch): the subheading names the two clients and what ships, and keeps a limit
     assert sub.startswith("For developers using Claude Code and Codex")
-    assert "does not prove a change correct" in sub and len(sub.split()) <= 65
+    # owner, 2026-10-30: it names the formal path, as what ships does it: a check against a model, with any
+    # counterexample replayed on the code, never a proof that the code is correct
+    assert "against a formal mathematical model" in sub and "replaying counterexamples on your code" in sub
+    assert "prove" not in sub and "verif" not in sub and len(sub.split()) <= 65
     order = [page.index(mark) for mark in ('class="hero"', "AI builds.<br>Evidence<br>decides.", 'id="loop"', 'id="limits"',
                                             'id="two-parts"', 'id="learning"', 'id="gives"', 'id="tests"')]
     assert order == sorted(order)

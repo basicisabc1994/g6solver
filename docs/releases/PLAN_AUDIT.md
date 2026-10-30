@@ -265,7 +265,7 @@ forward in the same form are listed once, in table 3.
 | E85 | Jobs persist in G6's home folder | deferred | Jobs live in the server's process (`src/g6/metaharness/jobs.py`) | Step 3, and only if an evaluation outlasts a client's time limit |
 | E86 | Composition and gate demonstrations in both clients | deferred | Carried into Step 3's two demonstrations (row S3-5) | Step 3 |
 | E87 | The status line wherever G6's status is stated | missing | The required line appears only in `docs/validation/patch_review_utility/PROTOCOL.md`. The README, AGENT_GUIDE and the site state no status | Step 5 |
-| E88 | The theory documents render on GitHub and read for people who are not specialists | missing | `\operatorname` appears 10 times in `docs/theory/G6_Computational_Structural_Intermediate_Representation.md` and once in `G6_Kernel_Spec_and_Theorems.md`. There is no `tests/tools/test_theory_math.py`, and no "in plain words" or "in the code" parts | a separate pull request, not blocking |
+| E88 | The theory documents render on GitHub and read for people who are not specialists | missing | The maths now renders: `\operatorname` (10 uses in `docs/theory/G6_Computational_Structural_Intermediate_Representation.md`, 1 in `G6_Kernel_Spec_and_Theorems.md`) is `\mathrm`, and `tests/test_theory_math.py` fails on any TeX command GitHub refuses (owner, 2026-10-30). Still missing: the "in plain words" and "in the code" parts | a separate pull request, not blocking |
 | E89 | The extension programme | deferred | Paused by the owner | Step 6 |
 
 ### Withdrawn by later rulings (not counted)

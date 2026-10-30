@@ -55,7 +55,7 @@ def test_the_using_g6_skill_is_one_command_away(page):
 
 
 def test_the_bundle_guide_is_on_the_page(page):
-    assert "Choose a bundle" in page and "blocked-escalated" in page
+    assert "Choose a worked example" in page and "blocked-escalated" in page
 
 
 def test_jev_on_openrouter_has_its_own_model_tab(page):

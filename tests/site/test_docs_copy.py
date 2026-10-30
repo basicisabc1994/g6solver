@@ -13,7 +13,7 @@ from pages import catalogue
 OSS = Path(__file__).resolve().parents[2]
 DOCS = OSS / "site" / "docs"
 # The site's FAQ is written for the site; the docs build links to the docs' own pages instead.
-LINKS = {"(/#limits)": "(index.md)", "(research.md#theory)": "(research.md)"}
+LINKS = {"(/#limits)": "(index.md)", "(research.md#theory)": "(research.md)", "(get-started.md)": "(install.md)"}
 CODENAMES = re.compile(r"\bV\d+b?\b|\bV2-F1\b|\bECHA\b|\bCSIR\b|\bAHI\b")
 EARLIER = re.compile(r"earlier,? (private )?G6|the earlier G6|old system")
 
@@ -64,15 +64,15 @@ def test_the_bundle_counts_are_the_registrys(client):
     total, working, offline, awaiting = _bundles()
     assert awaiting and working + len(awaiting) == total
     faq = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", client.get("/faq/").content.decode())).split())
-    assert f"{offline} of the {working} bundles that work today, need no model at all" in faq
+    assert f"{offline} of the {working} worked examples that work today, need no model at all" in faq
     assert f"There are {total}: {working} work today" in faq
     assert all(title.lower() in faq.lower() for title in awaiting)
     for path in (OSS / "web" / "content" / "install.md", DOCS / "install.md"):
         text = " ".join(path.read_text(encoding="utf-8").split())
-        assert f"Of the {working} bundles that work today, {offline} need no AI model at all" in text, path
+        assert f"Of the {working} worked examples that work today, {offline} need no AI model at all" in text, path
     for path in (OSS / "web" / "content" / "bundles.md", DOCS / "bundles" / "index.md"):
         text = path.read_text(encoding="utf-8")
-        assert f"{WORDS[working].capitalize()} bundles work today; {WORDS[offline]} of them fully offline." in text, path
+        assert f"{WORDS[working].capitalize()} worked examples work today; {WORDS[offline]} of them fully offline." in text, path
     for path in (OSS / "README.md", DOCS / "llms.txt"):
         assert re.findall(r"\b(\d+) bundles\b", path.read_text(encoding="utf-8")) == [str(total)], path.name
 

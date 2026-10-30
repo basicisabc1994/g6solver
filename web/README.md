@@ -39,7 +39,7 @@ Publishing the folder (Cloudflare Pages) is the owner's step.
 
 ## Refresh the repository graph
 
-The `/graph/` page embeds [Understand-Anything](https://github.com/Lum1104/Understand-Anything)'s viewer (MIT) over a
+The full documentation page (`/docs/full/`) embeds [Understand-Anything](https://github.com/Lum1104/Understand-Anything)'s viewer (MIT) over a
 graph of the code. Both are committed under `static/graph/`, so the site builds without Node. Before a release:
 
 1. Export the public tree (`python tools/export_public.py --out <dir>` from `oss/`'s parent) and run the plugin's
