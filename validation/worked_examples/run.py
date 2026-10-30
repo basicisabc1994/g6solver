@@ -118,7 +118,7 @@ in the patch), check the property with a proposed_checks test file instead. Ever
 a specific expected value taken from the issue, not from what the patched code returns, so that it can fail."""
 #: Round 3, arm L (PLAN.md, 2026-10-31): the probes one reader wrote before any patch; run in the repository.
 PROBE_RUN = f"python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider --rootdir={WE}/probes"
-MAX_STOPS, SCOUT_CAP_USD = 4, 2.0
+MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS = 4, 2.0, 12000
 SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
 the code it concerns, in the current directory, and work out what a complete fix must do.
 
@@ -192,10 +192,23 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
     raise SystemExit(f"no task {task_id!r} in {path.name}")
 
 
+def gets_thread(arm: str) -> bool:
+    """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31)."""
+    return re.fullmatch(r"T|[LM]\d+", arm) is not None
+
+
+def thread_text(comments: Iterable[Mapping[str, Any]], until: str) -> str:
+    """The discussion a person would read, cut where the fix's pull request opens: ISO times compare as text."""
+    kept = [f"{str(n.get('author_association') or 'NONE').lower()} on {str(n['created_at'])[:10]}: {n.get('body') or ''}"
+            for n in comments if n["created_at"] < until and (n.get("user") or {}).get("type") != "Bot"]
+    body = "\n\n".join(kept)[:MAX_THREAD_CHARS]
+    return f"\n\nThe issue's discussion so far:\n\n{body}" if body else ""
+
+
 def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
     addendum."""
-    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D}
+    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A}
     if re.fullmatch(r"[GH]\d+", arm):
         harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
         texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + harness.replace("{", "{{").replace("}", "}}")
@@ -433,10 +446,10 @@ def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
     text) on the held-out ones. The final comparison runs A and ``H<n>`` five times on each held-out bug."""
     model, task, arm, repeat = key
-    held_out = task in R3_HELD and (arm == "A" or arm[0] in "HM")
+    held_out = task in R3_HELD and (arm in ("A", "T") or arm[0] in "HM")
     if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
-    if arm in ("A", "E"):
+    if arm in ("A", "E", "T"):
         return True
     return re.fullmatch(r"[GHLM]\d+", arm) is not None and (arm[0] in "HM") == (task in R3_HELD)
 
@@ -1019,7 +1032,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     why = "" if dry else refusal(ctx, task)
     cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
     if round3:
-        if not re.fullmatch(r"[A-E]|[GH]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
+        if not re.fullmatch(r"[A-ET]|[GHLM]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
             why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
         elif dry:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
@@ -1075,7 +1088,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     round3 = ctx.variant == ROUND3
     looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
     model = ctx.model if round3 else c.MODEL
-    no_g6 = round3 and ctx.arm == "A"       # Claude Code alone: no G6 server, skill or command
+    no_g6 = round3 and ctx.arm in ("A", "T")       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
@@ -1090,6 +1103,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     agent, net, px, status = "", "", "", "error"
     try:
         title, text = ctx.issue_reader(task)
+        if round3 and gets_thread(ctx.arm):
+            text += read_thread(task)
         record["image_id"] = out(ctx.docker("image", "inspect", task_image, "--format", "{{.Id}}"))
         round2 = ctx.variant == ROUND2
         if round2:
@@ -1554,6 +1569,18 @@ def read_tree(task: Task) -> str:
     got = subprocess.run(["gh", "api", f"repos/{task.full_name}/git/commits/{task.parent}", "--jq", ".tree.sha"],
                          capture_output=True, timeout=120)
     return got.stdout.decode("utf-8", errors="replace").strip() if got.returncode == 0 else ""
+
+
+def read_thread(task: Task) -> str:
+    """The issue's comments from before the fix's pull request was opened, as ``thread_text`` keeps them."""
+    def api(path: str, *flags: str) -> Any:
+        got = subprocess.run(["gh", "api", *flags, path], capture_output=True, timeout=120)
+        if got.returncode != 0:
+            raise RuntimeError(f"{path} could not be read: {got.stderr.decode(errors='replace')[-200:]}")
+        return json.loads(got.stdout.decode("utf-8"))
+
+    return thread_text(api(f"repos/{task.full_name}/issues/{task.issue}/comments?per_page=100"),
+                       str(api(f"repos/{task.full_name}/pulls/{task.pr}")["created_at"]))
 
 
 def read_issue(task: Task) -> tuple[str, str]:

@@ -59,6 +59,28 @@ def test_the_stop_hook_blocks_only_on_a_failing_probe_and_lets_go():
     assert "--deselect" in hook and f"{we.WE}/waived.txt" in hook
 
 
+def test_the_thread_stops_where_the_fix_begins_and_skips_bots():
+    def note(at, body, kind="User"):
+        return {"created_at": at, "body": body, "user": {"type": kind}, "author_association": "MEMBER"}
+
+    got = we.thread_text([note("2026-01-01T00:00:00Z", "a plan"), note("2026-01-02T00:00:00Z", "ci noise", "Bot"),
+                          note("2026-03-01T00:00:00Z", "the fix is here")], "2026-02-01T00:00:00Z")
+    assert "a plan" in got and "ci noise" not in got and "the fix is here" not in got
+    assert we.thread_text([], "2026-02-01T00:00:00Z") == ""
+    long = we.thread_text([note("2026-01-01T00:00:00Z", "x" * 99999)], "2026-02-01T00:00:00Z")
+    assert len(long) <= we.MAX_THREAD_CHARS + 200
+
+
+def test_arm_t_is_plain_claude_code_on_any_bug_and_the_thread_goes_to_t_and_the_loop():
+    sonnet = we.R3_MODELS[1]
+    assert we.r3_loop_key((sonnet, "black-5634", "T", 2))
+    assert we.r3_loop_key((sonnet, we.R3_HELD[0], "T", 5))
+    assert not we.r3_loop_key((sonnet, "black-5634", "T", 3))
+    task = we.load_tasks()[0]
+    assert we.prompt(task, "t", "b", "T") == we.prompt(task, "t", "b", "A")
+    assert [a for a in ("A", "E", "G1", "H1", "T", "L1", "M1") if we.gets_thread(a)] == ["T", "L1", "M1"]
+
+
 def test_only_the_loops_arms_get_a_stop_hook():
     assert "Stop" not in json.loads(we.hook_settings())["hooks"]
     got = json.loads(we.hook_settings(stop=True))["hooks"]

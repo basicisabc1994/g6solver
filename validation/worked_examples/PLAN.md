@@ -711,3 +711,14 @@ place, it moves into G6 behind a fresh review. Claiming it for G6 before then wo
 "the runner's loop". Held-out rules, the $180 stop and the rule against rerunning for a better result all stand. If it
 beats arm E on training, `M1` and arm A get the five-repeat comparison. Fable on the same setup would then test whether
 the limit is the model or the structure, on the owner's approval of that run's cost.
+
+**Added the same day, before any run that uses it: the issue's discussion, and arm T.** Every run so far saw the issue's
+body only; a person also sees its comments. Arms L and M now get the comments made before the fix's pull request opened,
+without bots' comments. Arm T is plain Claude Code with that same text, so a gain from reading the thread is not credited
+to the loop. Arm T may run five times on held-out bugs, as arm A does.
+
+**`click-3678` stays out of honest reach, and is kept.** Asked to make it reachable, I read its issue, all six comments,
+the linked items and the repository at the parent. The storage name and the warning phrases its tests need appear in
+none of them; the pull request that introduces them opened with the fix. No loop can derive an arbitrary name, and any
+channel that delivered it would give an agent the maintainers' tests. So nothing here does. The score on all ten stays
+the score; the most it can show with `click-3678` failing is 90% on a two-repeat round.
