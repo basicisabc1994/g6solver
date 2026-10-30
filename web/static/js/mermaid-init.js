@@ -16,7 +16,7 @@ if (nodes.length) {
     mermaid.initialize({
       startOnLoad: false, securityLevel: 'strict', theme: 'base', fontFamily: font,
       themeVariables: {
-        darkMode: scheme.matches, background: paper, fontFamily: font, fontSize: '15px',
+        darkMode: scheme.matches && document.documentElement.dataset.theme !== 'light', background: paper, fontFamily: font, fontSize: '15px',
         primaryColor: paper, primaryTextColor: ink, primaryBorderColor: ink, mainBkg: paper, nodeBorder: ink,
         secondaryColor: paper2, secondaryTextColor: ink, secondaryBorderColor: rule,
         tertiaryColor: paper2, tertiaryTextColor: ink, tertiaryBorderColor: rule,
