@@ -815,3 +815,8 @@ each fresh bug, and T and M7 five times on each held-out bug, a second look at t
   beside every tuned score.
 - The owner's 95% stays the target on the ten, with `click-3678` in the score.
 - What ran is the runner's loop built on G6's `cegis` and `InputDomain` and the model-checked stop rule; it is not yet in G6.
+
+**The fresh bugs' audit, recorded before any of their runs.** A blind reviewer gave labels only. Determined by the task:
+`pydantic-13243`, `black-5148`, `click-3434`, `click-3404`, `starlette-3189`, `fastapi-14616`, `fastapi-13920`. Not determined:
+`black-5144`, `attrs-1509`, `starlette-3166`, `pydantic-13133`. No bug is dropped: the score on all eleven is the score, and the
+score on the seven goes beside it, with the same rule applied to each comparison.
