@@ -2153,6 +2153,39 @@ def _copy_links(copy: Path, links: dict[str, tuple[str, bool]], left: dict[str, 
     return materialised
 
 
+#: The build configuration files whose text, as committed at HEAD, can name a generated file a copy takes.
+_BUILD_CONFIG = ("pyproject.toml", "setup.cfg", "setup.py")
+_QUOTED_PY = re.compile(r"""["']([^"'\s]+\.py)["']""")
+
+
+def _generated_files(repo: Path) -> dict[str, str]:
+    """The git-ignored Python files the project's own build writes, which a copy takes, path to SHA-256 (worked
+    examples, round 2: black's ``src/_black_version.py``, which hatch-vcs writes at install time and git ignores, so no
+    check G6 ran in a copy could import black). A file is taken only when (1) a build configuration file at the top
+    (``_BUILD_CONFIG``), as committed at HEAD, names its path in quotes, inside the repository, so the working tree under
+    review cannot add a name; and (2) ``ignored_inputs`` finished its scan and judged the file ``other``: not a runner,
+    start-up, path or test file, not named like a tracked module it could shadow, not a link, bytecode or an extension.
+    Such a file is one a run in place already loads, and its receipt already binds by SHA-256; the base and the patch
+    copies both hold it unchanged (``_base_revision`` restores only what git reports as changed).
+    SECURITY-SENSITIVE (2026-10-30): pending an independent security review."""
+    named: set[str] = set()
+    for config in _BUILD_CONFIG:
+        try:
+            text = read_at(repo, "HEAD", config)
+        except RepoRefused:
+            return {}
+        for match in _QUOTED_PY.finditer(text or ""):
+            rel = match.group(1).removeprefix("./")
+            if not _absolute(rel) and ".." not in PurePosixPath(rel).parts and not shape_problem(rel, "path"):
+                named.add(rel)
+    if not any((repo / rel).is_file() and not _linked(repo / rel) for rel in named):
+        return {}
+    scan = ignored_inputs(repo)
+    if not scan.complete:
+        return {}
+    return {rel: digest for rel, digest in scan.other.items() if rel in named}
+
+
 class CopyNotRun(ValueError):
     """A repository copy exceeded its file, byte or time cap before execution."""
 
@@ -2189,7 +2222,8 @@ def _copy_caps(files: int, size: int, deadline: float | None) -> None:
 @contextmanager
 def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | None = None,
                     report: dict | None = None):
-    """Copy git's tracked and non-ignored untracked files, with bounded reads and old-test overlays; every file of each
+    """Copy git's tracked and non-ignored untracked files, and the ignored files the project's build writes that
+    ``_generated_files`` allows (``report``'s ``generated_copied``), with bounded reads and old-test overlays; every file of each
     submodule folder git does not look into (``_gitlinks``); and each tracked link (git's mode 120000) and each link in
     such a folder as ``_copy_links`` allows. ``report``, when given, receives ``links_left_out`` (path to why) and
     ``links_materialised`` (path to the target copied in its place), each only when it names one. A repository
@@ -2200,6 +2234,8 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
     tracked_links = {entry.partition("\t")[2] for entry in _paths(stage) if entry.startswith("120000 ")}
     known = _paths(_git(repo, "ls-files", "-co", "--exclude-standard", "-z",
                         timeout_s=min(GIT_TIMEOUT_S, _copy_remaining(deadline))))
+    generated = _generated_files(repo)   # git-ignored files the project's build writes (SECURITY-SENSITIVE, see there)
+    known = [*known, *(rel for rel in generated if rel not in known)]
     with confine.run_folder(prefix="g6_repo_copy_", dir=outside_temp(repo), ignore_cleanup_errors=True) as scratch:
         copy = Path(scratch) / "repo"
         copy.mkdir()
@@ -2267,7 +2303,8 @@ def repository_copy(repo: Path, *, deadline: float, before: dict[str, str] | Non
         materialised = _copy_links(copy, links, left, put)
         if report is not None:
             report.update({key: value for key, value in (("links_left_out", dict(sorted(left.items()))),
-                                                         ("links_materialised", materialised)) if value})
+                                                         ("links_materialised", materialised),
+                                                         ("generated_copied", generated)) if value})
         _copy_caps(*tally, deadline)
         yield copy
 
