@@ -116,6 +116,37 @@ ADDENDUM_D = ADDENDUM_C + """
 If a template instance is refused, or cannot express the inputs (they are not JSON values, or the function exists only
 in the patch), check the property with a proposed_checks test file instead. Every check, in whichever form, must assert
 a specific expected value taken from the issue, not from what the patched code returns, so that it can fail."""
+#: Round 3, arm L (PLAN.md, 2026-10-31): the probes one reader wrote before any patch; run in the repository.
+PROBE_RUN = f"python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider --rootdir={WE}/probes"
+MAX_STOPS, SCOUT_CAP_USD = 4, 2.0
+SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
+the code it concerns, in the current directory, and work out what a complete fix must do.
+
+1. Constraints: list what the issue requires, and separately what you only infer.
+2. Heuristics: for the code path involved, list the ways a fix that handles only the issue's example would still be
+   wrong: sibling constructs handled by the same code, other scopes, nesting, line endings and whitespace, empty and
+   boundary inputs, what the same feature does elsewhere in this repository.
+3. Decompose: write a goal tree of required behaviours, each with the concrete input shapes that test it.
+4. Probes: for each shape, write a pytest test under {WE}/probes/ that asserts what the issue and the repository's own
+   conventions require. Keep them short and call the project's public interface. Write nothing inside the repository.
+5. Critique: run them from the repository with `{PROBE_RUN}`. Reproduce the symptom with at least one probe. A probe for
+   behaviour that must stay should pass now. Delete any probe whose expectation you cannot justify from the issue or the
+   repository: a wrong probe costs the fix's author more than a missing one.
+
+Then write {WE}/tree.json:
+{{{{"goal": "...", "branches": [{{{{"goal": "a required behaviour", "shapes": [{{{{"shape": "...", "probe": "test_x.py::test_y"}}}}]}}}}]}}}}
+Use an empty probe for a shape you could not test.
+
+Issue #{{number}}: {{title}}
+
+{{text}}
+"""
+LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
+complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
+`{PROBE_RUN}`). Read them before you edit. When you try to finish, the runner runs the probes on your code, and a failing
+probe sends you back here. Repair the cause of what fails. A probe is one reader's view and can be wrong: if you are sure
+of that, add a line to {WE}/waived.txt with the test's id, then a space, then the reason and what you observed. Never
+remove a feature to settle a conflict. One g6_review_patch at the end is enough."""
 PROMPT_C = PROMPT.replace("\nIssue #{number}", "\n" + ADDENDUM_C.replace("{", "{{").replace("}", "}}")
                           + "\n\nIssue #{number}", 1)
 
@@ -168,6 +199,9 @@ def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     if re.fullmatch(r"[GH]\d+", arm):
         harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
         texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + harness.replace("{", "{{").replace("}", "}}")
+                                    + "\n\nIssue #{number}", 1)
+    if re.fullmatch(r"[LM]\d+", arm):
+        texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + LOOP_ADDENDUM.replace("{", "{{").replace("}", "}}")
                                     + "\n\nIssue #{number}", 1)
     if arm not in texts:
         raise ValueError(f"no arm {arm!r}")
@@ -399,12 +433,12 @@ def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
     text) on the held-out ones. The final comparison runs A and ``H<n>`` five times on each held-out bug."""
     model, task, arm, repeat = key
-    held_out = task in R3_HELD and (arm == "A" or arm[0] == "H")
+    held_out = task in R3_HELD and (arm == "A" or arm[0] in "HM")
     if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
     if arm in ("A", "E"):
         return True
-    return re.fullmatch(r"[GH]\d+", arm) is not None and (arm[0] == "H") == (task in R3_HELD)
+    return re.fullmatch(r"[GHLM]\d+", arm) is not None and (arm[0] in "HM") == (task in R3_HELD)
 
 
 def r3_schedule(tasks: Sequence[Task]) -> list[tuple[str, str, str, int]]:
@@ -499,9 +533,55 @@ exit 0
 """
 
 
-def hook_settings() -> str:
-    return json.dumps({"hooks": {"PreToolUse": [{"matcher": "mcp__g6__g6_review_patch", "hooks": [
-        {"type": "command", "command": f"{WE}/round_hook.sh", "timeout": 120}]}]}}, indent=1)
+def hook_settings(*, stop: bool = False) -> str:
+    hooks: dict[str, Any] = {"PreToolUse": [{"matcher": "mcp__g6__g6_review_patch", "hooks": [
+        {"type": "command", "command": f"{WE}/round_hook.sh", "timeout": 120}]}]}
+    if stop:
+        hooks["Stop"] = [{"hooks": [{"type": "command", "command": f"{WE}/stop_hook.sh", "timeout": 300}]}]
+    return json.dumps({"hooks": hooks}, indent=1)
+
+
+def stop_hook(repo: str) -> str:
+    """Arm L's hook: only a failing probe (pytest's exit 1) blocks the stop; it lets go after ``MAX_STOPS`` blocks."""
+    return f"""#!/bin/sh
+cat >/dev/null
+cd {repo} || exit 0
+mkdir -p {WE}/rounds
+n=$(cat {WE}/rounds/stops 2>/dev/null || echo 0)
+[ "$n" -ge {MAX_STOPS} ] && exit 0
+args=""
+[ -f {WE}/waived.txt ] && args=$(awk 'NF{{print "--deselect " $1}}' {WE}/waived.txt)
+timeout 240 {PROBE_RUN} $args > {WE}/rounds/stop-$n.txt 2>&1
+code=$?
+if [ "$code" -ne 1 ]; then
+  echo "exit $code" >> {WE}/rounds/stop-$n.txt
+  exit 0
+fi
+echo $((n + 1)) > {WE}/rounds/stops
+tail -c 6000 {WE}/rounds/stop-$n.txt | python3 -I -c 'import json, sys
+print(json.dumps({{"decision": "block", "reason": "The scout probes fail on your code. Repair the cause, or waive a wrong "
+                  "probe as your instructions say, then finish again.\\n\\n" + sys.stdin.read()}}))'
+"""
+
+
+def scout_tree(raw: str) -> dict[str, Any]:
+    """The scout's ``tree.json`` as PR #5's ``GoalTree``: its text, how many shapes, and which have no probe."""
+    from g6.goal_engine.goal_tree import GoalTree
+
+    try:
+        data = json.loads(raw)
+        tree = GoalTree(str(data["goal"]), branching_factor=12, max_depth=2, max_nodes=200)
+        branches = data["branches"]
+        if not branches:
+            raise ValueError("the tree has no branches")
+        ids = tree.add_subgoals("root", [str(b["goal"]) for b in branches])
+        shapes = [s for b in branches for s in b["shapes"]]
+        for ident, branch in zip(ids, branches):
+            tree.add_subgoals(ident, [str(s["shape"]) for s in branch["shapes"]])
+    except (ValueError, TypeError, KeyError) as exc:
+        return {"error": f"{type(exc).__name__}: {exc}", "text": "", "shapes": 0, "open": []}
+    return {"text": tree.visualize(), "shapes": len(shapes),
+            "open": [str(s["shape"]) for s in shapes if not s.get("probe")]}
 
 
 # --- tests: maintainers' test files, junit, FAIL_TO_PASS -----------------------------------------------------------------
@@ -953,8 +1033,47 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     return body
 
 
+def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, title: str,
+              text: str) -> dict[str, Any]:
+    """Arm L's first step (PLAN.md, 2026-10-31): the scout's session, then the repository back at the base and its probes
+    out of the agent's reach. The session's cost is returned, to count in the run."""
+    owner, name = task.project.split("/", 1)
+    cap_at = docker_args.index("--max-budget-usd") + 1
+    args = [*docker_args[:cap_at], f"{SCOUT_CAP_USD:.2f}", *docker_args[cap_at + 1:]]
+    tally = c.Tally(count_reported=True)
+    proc = ctx.docker.popen(*args, env=ctx.client_env(key))
+    stream = open(run.fresh_path("scout_stream.jsonl"), "w", encoding="utf-8", newline="\n")
+    try:
+        proc.stdin.write(SCOUT_PROMPT.format(owner=owner, name=name, number=task.issue, title=title, text=text)
+                         .encode("utf-8"))
+        proc.stdin.close()
+        ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=time.monotonic() + 1200,
+                            write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                            stop_usd=SCOUT_CAP_USD * R3_MARGIN)
+    finally:
+        stream.close()
+        if proc.poll() is None:
+            ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
+            proc.kill()
+        proc.wait(timeout=60)
+    checked(ctx.docker.sh(agent, f"git reset -q --hard {base} && git clean -fdq", workdir=task.repo, timeout=120),
+            "restore the repository")
+    checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes && chown -R root:root {WE}/probes && chmod -R a+rX,go-w "
+                                 f"{WE}/probes; [ -f {WE}/tree.json ] && chown root:root {WE}/tree.json; true",
+                          user="root", timeout=60), "lock the probes")
+    at_base = ctx.docker.sh(agent, f"{PROBE_RUN} 2>&1 | tail -c 8000", workdir=task.repo, timeout=300)
+    run.write("scout_at_base.txt", out(at_base))
+    copy_out(ctx.docker, agent, f"{WE}/probes", run.path / "scout_probes")
+    tree_file = run.fresh_path("tree.json")
+    tree = scout_tree(tree_file.read_text("utf-8") if copy_out(ctx.docker, agent, f"{WE}/tree.json", tree_file)
+                      else "no tree")
+    run.write("tree.txt", tree["text"])
+    return {"ended": ended, "usd": round(tally.cost_usd, 6), **{k: tree.get(k) for k in ("shapes", "open", "error")}}
+
+
 def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:
     round3 = ctx.variant == ROUND3
+    looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
     model = ctx.model if round3 else c.MODEL
     no_g6 = round3 and ctx.arm == "A"       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
@@ -1029,6 +1148,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             write_key_file(ctx.docker, agent, key)     # G6's model and its key, where g6.core.keys reads them
         write_in(ctx.docker, agent, f"{WE}/round_hook.sh", hook_script(task.repo, base), mode="755")
         write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings())
+        if looped:
+            write_in(ctx.docker, agent, f"{WE}/stop_hook.sh", stop_hook(task.repo), user="root", mode="755")
         if dry:
             record["hook_selftest"] = hook_selftest(ctx, agent, task)
         text_in = prompt(task, title, text, ctx.arm if round3 else "")
@@ -1043,6 +1164,11 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         run.write_json("command.json", {"docker": docker_args, "caps": {"usd": cap, "stop_usd": stop,
                                         "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
                                         "key": "passed by name; its value only in the docker client's environment"})
+        if looped and not dry:   # the hook arrives after the scout, so it cannot stop the scout
+            record["agent_started"] = True
+            record["scout"] = run_scout(ctx, task, run, agent, base, docker_args, key, title, text)
+        if looped:
+            write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings(stop=True))
         tally = c.Tally(count_reported=round3)
         started = time.monotonic()
         proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
@@ -1068,7 +1194,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
-                      cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0), 6),
+                      cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
+                                     + float((record.get("scout") or {}).get("usd") or 0.0), 6),
                       stream_usd=round(tally.stream_usd, 6),
                       result_usd=tally.result_usd, reported_usd=result.get("total_cost_usd"),
                       model_calls=tally.model_calls, num_turns=result.get("num_turns"), usage=tally.usage,

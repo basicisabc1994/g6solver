@@ -681,3 +681,33 @@ determined bugs is reported beside it, labelled, with arm A's on the same bugs. 
 all three held-out bugs. `click-3678` is not: its tests require the storage name `_click_default_help` and warning texts
 stated in neither the issue nor the repository. On all ten, 18 of 20 runs in a two-repeat round is the most an honest
 agent can reach if `click-3678` fails both times, which is 90%, so the 95% target may be out of reach on these bugs.
+
+### 2026-10-31: why G6 changed no fix, and arm L, where the loop runs the agent (before any L run)
+
+**What arm E's training runs showed.** In all 14, no source file was edited after the first G6 review, so G6 changed no
+fix and cost about 3.6 times arm A's runs. Every check came from the patch's author; G6's own proposer has no model in
+this setup. Of 21 reviews, 18 said `insufficient_evidence`, so that word carried no signal. In the failed black and
+pydantic runs the agents usually named the risky shape in their report, left it untested and stopped. `click-3678` is
+not determined by its task, as the audit found. Two runs per bug are few; these counts describe these runs only.
+
+**The owner's reading:** the primitives exist but are not assembled around how raw Claude Code fails, and the agent does
+not use them well. Text asks an agent to behave; it cannot make it. So arm L moves control out of the agent:
+
+1. **A scout, before any patch.** A separate Claude Code session in the same container reads the issue and the repository
+   and writes a goal tree of required behaviours and input shapes, with a runnable probe for each. Its prompt follows the
+   stages of open PR #4 (constraints, heuristics, decomposition, adversarial critique); the tree is PR #5's `GoalTree`,
+   taken unchanged. It never sees a patch, so its reading is not the patch author's. It never sees the maintainers' tests,
+   which are not in the container. Its changes to the repository are discarded; its probes become read-only.
+2. **The agent fixes the bug,** with G6's server and skill present, as in arm E.
+3. **A Stop hook, not a request.** When the agent tries to finish, the runner's hook runs the probes on the current tree.
+   A failing probe blocks the stop and comes back as a counterexample. The agent repairs it, or waives that probe with a
+   reason recorded in the run. The hook lets go after four blocks, so a wrong probe cannot hold a run for ever.
+
+Probes are a model's reading, so they are obligations for the agent and evidence of nothing: only the maintainers' tests
+score a run. `L<n>` runs on training bugs and `M<n>` is the same setup on held-out bugs. The scout's cost counts in the run.
+
+**This is a prototype in the runner; it changes no G6 source a run uses.** G6's commit stays c53d310. If it earns its
+place, it moves into G6 behind a fresh review. Claiming it for G6 before then would be wrong: until then the report says
+"the runner's loop". Held-out rules, the $180 stop and the rule against rerunning for a better result all stand. If it
+beats arm E on training, `M1` and arm A get the five-repeat comparison. Fable on the same setup would then test whether
+the limit is the model or the structure, on the owner's approval of that run's cost.
