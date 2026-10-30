@@ -521,3 +521,74 @@ built from it, and the runner refuses any other commit, because a run made on th
 
 **Minors kept for later:** five earlier refusals of a whole instance (`literal_problem` among them) do not carry the
 fallback text, and the fallback also follows `OUT_OF_TIME`, where a proposed check could not run either.
+
+### 2026-10-30: DRAFT, what "supported" should mean (not approved; nothing here is built or run)
+
+**Status.** A proposal for the owner. It changes no code until the owner approves it, and it needs the three decisions at
+the end, because it overrides a binding rule.
+
+**The problem.** G6 gave `supported_within_scope` on 7 of Sonnet's 9 runs, and the maintainers' tests reject 6 of those 7
+patches. The verdict says every requirement passed its stated checks. In these runs the agent wrote those checks along
+with the patch, so a misreading of the bug goes into both, and the checks pass. G6 does not record who wrote a check:
+"stated" means only that the caller named it. A reader takes the verdict as an outside opinion, and here it is not one.
+
+**The proposed rule.**
+- A stated check is **self-checked** when its file is added or changed by the patch under review.
+- A requirement's status does not change: it still reads `passed_on_stated_checks`, naming its checks.
+- If any assessed requirement passes on self-checked checks alone, a new evidence reason applies,
+  `checks_written_with_patch`. The outcome is then at most `insufficient_evidence`, under the existing precedence. It
+  is not a defect, and the reason says so: nothing shows the patch is wrong, and nothing independent of it shows it right.
+- The next action names the requirement, and says what would settle it: a check that already exists at the base commit
+  outside the patch. A person confirming the behaviour would be the second way, but `g6_confirm_behaviour` (VS-D5) is
+  not built, so this draft does not depend on it.
+- **Also fixed:** the gate's "nothing else was found" is not said when a proposed check could not be judged. The cause of
+  black D's two errors is traced first.
+
+**What it does to the runs so far (worked out offline from the archive, no model, no spend).** In all nine of Sonnet's
+runs, the main requirement's checks sit only in files the patch touched. So all 7 "supported" verdicts become
+`insufficient_evidence`: the 6 false acceptances go, and so does the 1 correct one (attrs D).
+
+**What this does not do.** The rule makes the verdict honest. It does not make G6 better at finding bad patches: on
+these runs it gives the same answer for every patch, right or wrong, so it separates nothing. Any report of it must say
+that fewer false acceptances here came from fewer acceptances. Telling good from bad needs a source of checks independent
+of the author. The candidates (VS-5's proposer in a separate session, or a person's confirmation) are out of scope here
+and would need their own note.
+
+**Limits.**
+- File-level is coarse. A new test added to an existing test file makes that whole file self-checked. Comparing single
+  tests is left for later, if this proves too blunt.
+- It can be gone around. An agent could commit its tests first and name that commit as the base. G6 records who says
+  what and does not authenticate it; this is the same-user limit G6 already states.
+- It catches the common case only. An untouched test can be weak, and a self-written one can be right.
+
+**Alternatives rejected.**
+- *A fifth outcome.* It breaks the four outcomes that replies, docs and the V9 and V10 protocols are written against.
+- *Wording only, keeping the verdict.* `supported_within_scope` would still count as accepted in every measure.
+
+**What it costs.**
+- Agents working on new behaviour will mostly get `insufficient_evidence`. The skill must tell them to report that
+  plainly to the person, and not to keep rewriting tests to chase a verdict.
+- Rule 1 of the verification-search plan ("off changes nothing") and A5's meaning of the outcome both change, so the
+  off-path fixture (`tests/harness/data/patch_review_off_path.json`) has to be re-based deliberately. That is a change of
+  meaning, and is recorded as one, never as a test fix.
+- The term appears in 23 files outside the worked examples, 32 times in `tests/harness/test_patch_review.py` alone. The
+  `correct` case in `validation/patch_review/run.py` ships its test in the patch, and would change.
+- V9's arm 3 and V10's arms accept only on `supported_within_scope`. Before either freezes, it must be checked that their
+  review-contract tests sit outside the patch, or those arms could never accept. Neither study has run, so this can
+  still be amended first.
+- `patch_review` shipped in 0.2.0, so this reaches users only in a later release, which is the owner's step.
+
+**How it would be tested, in order.**
+1. Test first, with no model: a check in a patch-added file, one in a patch-changed file, one outside the patch, and a
+   requirement with both kinds. A fresh review of the commit follows.
+2. No spend: replay G6 on the nine stored patches. Expected: all nine `insufficient_evidence`. Any other result stops
+   the work.
+3. Only after that, about $1: Sonnet on the same four bugs as a new arm E, outside the 100 scheduled runs, under the same
+   $100 stop. The question is behaviour, not score: does the agent tell the person plainly, or chase the verdict?
+
+**Decisions for the owner.**
+1. May this override rule 1 and A5, so a decided field changes for everyone, search on or off?
+2. Is the rule on by default, as drafted, or an option a caller turns on?
+3. Is step 3's roughly $1 approved, once steps 1 and 2 pass?
+
+The full run and Haiku's remaining runs stay held either way.
