@@ -470,3 +470,24 @@ three runs say nothing about G6 or its formal tools. They are kept, reported, an
   no longer be G6 exactly as shipped. If no such change works, the owner decides whether Haiku's rows stay unrun.
 
 The $100 stop, the prompts and G6's commit (`894597f`) are unchanged. No run is made again for a better result.
+
+### 2026-10-30: the smoke test's result, a stricter gate, and a three-bug probe (before any further run of round 3)
+
+**The result.** Sonnet's arms B and C on black-5634 both called G6 (3 and 5 calls), both got `supported_within_scope`,
+and both failed the same 2 maintainers' tests. Together they cost $0.53. In arm C neither `differential.v1` instance ran:
+the first had the wrong bindings, and the second was refused because its function was a helper in a new test file, which
+does not exist at the base commit. The base's own entry point needs a `Mode` object, which a JSON binding cannot pass.
+No `formal` or `model_checking` op was called.
+
+**The gate is stricter.** The earlier note asked for "at least one formal tool or template", which an attempt satisfied.
+It now means one that **ran**: a template instance with a result other than `refused`, or a `formal` or `model_checking`
+op that returned a result. An attempt does not count.
+
+**The probe.** Sonnet's arm C runs next on attrs-1593, click-3678 and pydantic-14052, ahead of the order rule, with the
+same prompt and setup. They are the scheduled runs and count as such. These bugs were chosen for simpler signatures
+than black's. If checks ran on them, the rest of round 3 may go ahead, with black's limit reported as a limit. If they
+were refused again, nothing further runs until the owner decides, and the next step is a change to G6 with its own
+review.
+
+**A finding kept for the report.** In both smoke runs G6 gave `supported_within_scope` on a patch the maintainers' tests
+reject. It says what it did not check, but this is the false acceptance the round exists to look at.

@@ -359,7 +359,9 @@ def g6_model_cost(assessments: Iterable[Any]) -> dict[str, Any]:
 ROUND3 = "r3"
 R3_MODELS = ("claude-haiku-4-5", "claude-sonnet-5-5", "claude-fable-5-1")   # in the order they run
 # PLAN.md, 2026-10-30, the smoke test: Haiku's pilot never called G6, so these go before Haiku's runs are done
-R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "C", 1)}
+R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "C", 1),
+            (R3_MODELS[1], "attrs-1593", "C", 1), (R3_MODELS[1], "click-3678", "C", 1),
+            (R3_MODELS[1], "pydantic-14052", "C", 1)}
 R3_ARMS = ("A", "B", "C")
 R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
 R3_CAP_USD = 100.00          # round 3's own hard stop, agent and G6 together

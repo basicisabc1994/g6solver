@@ -813,7 +813,9 @@ def test_round3_refuses_a_run_twice_and_out_of_order(tmp_path):
 
 def test_round3_only_the_two_smoke_runs_go_before_haikus_runs_are_done(tmp_path):
     # owner, 2026-10-30: Haiku's three pilot runs never called G6, so Sonnet's B and C on one bug go first
-    assert we.R3_SMOKE == {(SONNET, "black-5634", "B", 1), (SONNET, "black-5634", "C", 1)}
+    assert we.R3_SMOKE == {(SONNET, "black-5634", "B", 1), (SONNET, "black-5634", "C", 1),
+                           (SONNET, "attrs-1593", "C", 1), (SONNET, "click-3678", "C", 1),
+                           (SONNET, "pydantic-14052", "C", 1)}
     ctx = _r3(tmp_path, "B", model=SONNET)
     assert we.run_task(ctx, TASK)["status"] == "finished"
     ctx.arm = "C"
