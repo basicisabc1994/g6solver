@@ -872,6 +872,23 @@ def test_distillation_refuses_text_naming_a_project_a_test_or_a_file():
     assert distill.named("run test_blank_lines on module_y.py", tests, files) == ["module_y.py", "test_blank_lines"]
 
 
+def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    assert loop.last_json('noise\n{\n "run": "r"\n}\n{\n "status": "finished"\n}\n') == {"run": "r", "status": "finished"}
+    checked = json.dumps({"checks": [{"patch": "round-1", "passes": True, "failing": []},
+                                     {"patch": "final", "passes": False, "failing": ["t::a", "t::b"]}]}, indent=1)
+    said = {"run": '{"run": "run/x/1", "status": "finished", "cost_usd": 0.2}', "check": checked}
+    monkeypatch.setattr(loop, "tool", lambda command, *a, **k: said[command])
+    row = loop.one(tmp_path, "g", "A", "x", 1)
+    assert (row["passes"], row["failing"], row["tests"]) == (False, 2, ["t::a", "t::b"])   # the final patch, not round 1
+    assert loop.one(tmp_path, "g", "A", "x", 1) == row                                     # saved once
+    said["run"] = '{"status": "refused", "why": "the stop"}'
+    with pytest.raises(SystemExit):
+        loop.one(tmp_path, "g", "A", "y", 1)
+    assert not (tmp_path / "loop" / "A-y-1.json").exists()
+
+
 def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):
     ctx = _r3(tmp_path, "A", model=FABLE)
     ctx.tasks = [TASK]

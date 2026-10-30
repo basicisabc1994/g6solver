@@ -29,8 +29,18 @@ def tool(command: str, *args: str, timeout: int = 2400) -> str:
 
 
 def last_json(text: str) -> dict[str, Any]:
-    start = text.find("\n{") + 1 if not text.startswith("{") else 0
-    return json.loads(text[start:])
+    """Every JSON object ``text`` prints, merged: the runner prints its record and then the ledger's line."""
+    found: dict[str, Any] = {}
+    decoder, at = json.JSONDecoder(), text.find("{")
+    while at >= 0:
+        try:
+            value, end = decoder.raw_decode(text, at)
+        except ValueError:
+            at = text.find("{", at + 1)
+            continue
+        found.update(value)
+        at = text.find("{", end)
+    return found
 
 
 def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]:
@@ -40,13 +50,16 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
         return json.loads(saved.read_text("utf-8"))
     said = tool("run", "--task", task, "--g6", g6, "--arm", arm, "--model", SONNET, "--repeat", str(repeat))
     rec = last_json(said)
+    if rec.get("status") == "refused":   # never counted as a failed run
+        raise SystemExit(f"refused: {arm} {task} {repeat}: {rec.get('why')}")
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
     if rec.get("status") == "finished":
-        found = last_json(tool("check", "--task", task, "--g6", g6, timeout=1200))
-        final = [x for x in found.get("patches", found.get("checks", [])) if x.get("patch") == "final"] or [found]
-        row.update(passes=bool(final[-1].get("passes")), failing=final[-1].get("failing"),
-                   tests=list(final[-1].get("fail_to_pass_failing") or [])[:20])
+        final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, timeout=1200)).get("checks", [])
+                 if x.get("patch") == "final"]
+        if final:
+            failing = list(final[-1].get("failing") or [])
+            row.update(passes=bool(final[-1].get("passes")), failing=len(failing), tests=failing[:20])
     saved.parent.mkdir(exist_ok=True)
     saved.write_text(json.dumps(row, indent=1), "utf-8")
     print(json.dumps({k: row[k] for k in ("arm", "task", "repeat", "status", "passes", "failing", "cost_usd")}), flush=True)
