@@ -118,6 +118,7 @@ in the patch), check the property with a proposed_checks test file instead. Ever
 a specific expected value taken from the issue, not from what the patched code returns, so that it can fail."""
 #: Round 3, arm L (PLAN.md, 2026-10-31): the probes one reader wrote before any patch; run in the repository.
 PROBE_RUN = f"env PYTHONPATH=src:. python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider --rootdir={WE}/probes"
+PROBE_COLLECT = PROBE_RUN.replace(" -q --tb=short", " --collect-only -q")
 MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS = 4, 2.0, 12000, 200
 SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
 the code it concerns, in the current directory, and work out what a complete fix must do.
@@ -152,6 +153,24 @@ SCOUT_V3 = f"""   In {WE}/tree.json also give "dimensions": an object from each 
    strings. Write one test named test_cross, parametrized with itertools.product over every dimension, that builds its
    input from each combination's values. Skip a combination that cannot occur with pytest.skip inside the test; never
    leave it out. The runner counts these cases and refuses the probes if any are missing.
+"""
+#: Arm L4 on: which dimensions a scout thinks of varies by run, so a second reader attacks the tree (PR #4's critique).
+CRITIC_PROMPT = f"""You are a critic. A scout read the issue below and wrote what a complete fix must handle: the goal tree
+and dimensions in {WE}/tree.json and the probes in {WE}/probes. Read them and the code involved. Do not fix anything.
+
+Find what they miss. Imagine a fix that passes every probe yet is still wrong for a user of this feature. Ask which
+construct, scope, kind of neighbouring content, or form of input reaches this code path and appears in no dimension, and
+which value of one dimension was never tried with the others. Look at how the code's own branches differ, not at the
+issue's example.
+
+Add each thing you find as a new value or a new dimension in {WE}/tree.json, and extend test_cross to match, so that it
+stays the full product. Add a separate probe where a product cannot say it. Keep every expectation justified by the issue
+or the repository, and delete none of the scout's probes unless the repository contradicts it. Then run them from the
+repository with `{PROBE_RUN}`.
+
+Issue #{{number}}: {{title}}
+
+{{text}}
 """
 LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
@@ -210,6 +229,14 @@ def scout_prompt(arm: str) -> str:
     n = int(arm[1:])
     extra = (SCOUT_V2 if n >= 2 else "") + (SCOUT_V3.replace("{", "{{").replace("}", "}}") if n >= 3 else "")
     return SCOUT_PROMPT.replace("5. Critique:", extra + "5. Critique:", 1)
+
+
+def has_critic(arm: str) -> bool:
+    return int(arm[1:]) >= 4
+
+
+def critic_prompt(number: int, title: str, text: str) -> str:
+    return CRITIC_PROMPT.format(number=number, title=title, text=text)
 
 
 def scout_gate(raw: str, *, exit_code: int, collected: int) -> list[str]:
@@ -1122,7 +1149,7 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
             proc.wait(timeout=60)
 
     def gate() -> list[str]:
-        got = out(ctx.docker.sh(agent, f'{PROBE_RUN} >/dev/null 2>&1; echo $?; {PROBE_RUN} --collect-only -q 2>/dev/null '
+        got = out(ctx.docker.sh(agent, f'{PROBE_RUN} >/dev/null 2>&1; echo $?; {PROBE_COLLECT} 2>/dev/null '
                                        "| grep -c test_cross", workdir=task.repo, timeout=300)).split()
         return scout_gate(out(ctx.docker.sh(agent, f"cat {WE}/tree.json 2>/dev/null", timeout=60)),
                           exit_code=int(got[0]) if got else 2, collected=int(got[1]) if len(got) > 1 else 0)
@@ -1134,6 +1161,16 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
         ended = session(scout_again(args), "The runner checked your work and refused it:\n- " + "\n- ".join(wrong)
                         + "\nPut this right and finish.", "scout_stream_2.jsonl")
         wrong = gate()
+    if has_critic(ctx.arm):   # a fresh session: it has read neither the scout's reasoning nor any patch
+        checked(ctx.docker.sh(agent, f"git reset -q --hard {base} && git clean -fdq", workdir=task.repo, timeout=120),
+                "restore the repository")
+        ended = session(args, critic_prompt(task.issue, title, text), "critic_stream.jsonl")
+        wrong = gate()
+        if wrong:
+            refused += wrong
+            ended = session(scout_again(args), "The runner checked your work and refused it:\n- " + "\n- ".join(wrong)
+                            + "\nPut this right and finish.", "critic_stream_2.jsonl")
+            wrong = gate()
     checked(ctx.docker.sh(agent, f"git reset -q --hard {base} && git clean -fdq", workdir=task.repo, timeout=120),
             "restore the repository")
     checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes && chown -R root:root {WE}/probes && chmod -R a+rX,go-w "

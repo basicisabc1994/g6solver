@@ -737,3 +737,15 @@ written them although its prompt asked. So L3 makes the count mechanical. The sc
 one test over their product; G6's `InputDomain` (`g6.cegis`) gives the number of combinations, up to 200. The runner refuses
 probes that cannot run, reproduce nothing or miss combinations, and sends the scout back once. A collection error on the
 patch now blocks the stop. This was chosen after reading that bug's failing cases, so it is development.
+
+**L3 on `black-5634`, and L4 (before any L4 run).** L3 passed repeat 1, the first pass of that bug by any arm, and failed
+repeat 2. The difference is which dimensions each scout chose: repeat 2's never crossed scope with trailing comments. L3's
+count was also broken (two `-q` flags hide the test names), so both scouts were refused once falsely and the runner's
+count of combinations did not hold; that run stands as run. L4 fixes the count and adds PR #4's adversarial critique as a
+separate session: a fresh reader attacks the tree before any patch and extends it.
+
+**Two instrument faults stopped distillation.** G2, G3 and G4 were never run. The audit's drive-letter pattern matched
+ordinary words before an escaped newline, and the distiller kept the model's escaped line breaks. So `cegis.json`'s
+`inconclusive` says nothing about distilled text. Both are fixed. G1 is what went to the held-out comparison, as the plan
+says, and its H1 runs stand. The loop's arms may be compared on held-out bugs after it: that is a second look, it will be
+reported as one, and no held-out run or test is read to tune anything.

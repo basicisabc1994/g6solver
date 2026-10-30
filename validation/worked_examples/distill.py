@@ -33,7 +33,7 @@ def named(text: str, tests: Iterable[str], files: Iterable[str]) -> list[str]:
     """What ``text`` names that it must not: a project, an issue number, a test's own name, or a file from the runs."""
     found = [word for word in PROJECTS if re.search(rf"\b{word}\b", text, re.I)]
     found += re.findall(r"#?\b\d{4,5}\b", text)
-    found += re.findall(r"[A-Za-z]:\\|/(?:home|Users)/", text)      # the text is pushed to a public branch
+    found += re.findall(r"(?<![A-Za-z])[A-Za-z]:\\|/(?:home|Users)/", text)      # the text is pushed to a public branch
     names = {test.rpartition("::")[2].partition("[")[0] for test in tests} | {Path(f).name for f in files}
     found += [name for name in sorted(names) if len(name) > 3 and name.lower() in text.lower()]
     return found
@@ -74,6 +74,8 @@ def distill(base: str, rows: Sequence[Mapping[str, Any]], archive: Path, caller:
                         dev_success=len(rows) - len(found), notes=tuple(notes))
     proposals = FailureTraceStrategy(caller).propose(view, None)
     text = str((proposals[0] if proposals else {}).get("prompt") or "").strip()
+    if "\n" not in text:      # the model sent the text with its line breaks escaped
+        text = text.replace("\\n", "\n")
     tests = [t for row in rows for t in row.get("tests") or ()]
     files = re.findall(r"^diff --git a/(\S+)", "\n".join(f.output for f in found), re.M)
     return text, named(text, tests, files)

@@ -125,6 +125,24 @@ def test_a_probe_that_stops_collecting_on_the_patch_blocks_too():
     assert '"$code" -ne 1 ] && [ "$code" -ne 2' in hook
 
 
+def test_counting_the_cross_keeps_each_test_on_its_own_line():
+    assert we.PROBE_RUN.count(" -q") == 1 and we.PROBE_COLLECT.count(" -q") == 1   # two make pytest print file totals
+    assert "--collect-only" in we.PROBE_COLLECT
+
+
+def test_a_critic_reads_the_tree_from_l4_and_names_no_bug():
+    assert we.has_critic("L4") and we.has_critic("M5")
+    assert not we.has_critic("L3") and not we.has_critic("M1")
+    text = we.critic_prompt(1, "a title", "a body")
+    assert f"{we.WE}/tree.json" in text and "a body" in text and we.PROBE_RUN in text
+    assert distill.named(we.CRITIC_PROMPT, [], []) == []
+
+
+def test_the_audit_finds_a_drive_but_not_a_word_before_an_escaped_newline():
+    assert distill.named(r"read file:\n then stop: e.g. line:\r\n", [], []) == []
+    assert distill.named(r"see C:\Users and also (D:\temp)", [], []) == [r"C:\ ".strip(), r"D:\ ".strip()]
+
+
 def test_only_the_loops_arms_get_a_stop_hook():
     assert "Stop" not in json.loads(we.hook_settings())["hooks"]
     got = json.loads(we.hook_settings(stop=True))["hooks"]
