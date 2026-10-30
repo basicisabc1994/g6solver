@@ -749,3 +749,29 @@ ordinary words before an escaped newline, and the distiller kept the model's esc
 `inconclusive` says nothing about distilled text. Both are fixed. G1 is what went to the held-out comparison, as the plan
 says, and its H1 runs stand. The loop's arms may be compared on held-out bugs after it: that is a second look, it will be
 reported as one, and no held-out run or test is read to tune anything.
+
+**What replaying every archived probe set showed, and L5 (before any L5 run).** `probe_replay.py` ran each scout's probes
+on every archived patch of the training bugs and on the maintainers' fix. No model was called and nothing reached an agent.
+
+- `L2` scored 10 of 14, level with G1 and with no pass on `black-5634` or `click-3678`. The Stop hook gave no genuine
+  counterexample in any L run: probes used the system Python, not the project's `.venv`, so they failed to collect on both
+  pydantic bugs, on one black run, and falsely blocked attrs. So the L runs so far do not measure what they were built to.
+- On `black-5634`, `L3-1`'s 249 cases pass on the fix, pass on the one accepted patch and fail all 12 rejected patches. The
+  other sets catch 6 of 12. A probe the agent can see is one it fits to, so it says little at the end.
+- Three sets fail on the maintainers' fix: 37, 31 and 255 cases. Almost all are one shape, which L1's scout had called
+  unclear. L2's rule "never leave a shape unclear" forced an invented expectation. That rule is withdrawn. The 255 are one
+  test that crashed; the agent said so and waived it, correctly.
+
+**L5, a CEGIS loop the runner holds.** `g6.cegis.cegis` runs it: `search` is the agent, `evaluate` the probes.
+1. Two scouts, each a fresh session, neither seeing the other's work. One's probes are visible; the other's stay in a
+   root-only folder, and its session transcript is removed from the container, so no agent can read them.
+2. Each must pass the runner's gate: the probes run, the product is complete, failures are assertions rather than crashes.
+   The scouts assert exact values and write no probe where the issue and repository are silent.
+3. The agent works with G1's text and the visible tree, without Stop hook or waivers. When it finishes, the runner runs
+   both sets and sends failures back in the same session. It stops when all pass, when nothing new fails, or after three
+   repairs. A check is one reader's view, so the agent still decides; only the maintainers' tests score the run.
+
+**How the claim will be judged.** All of L1 to L5 was chosen on training bugs, so training scores flatter it. In particular
+the scout's list of kinds of shape and G1's came after reading what training bugs' tests try; they name no bug, but they
+are not independent of those bugs. Arm T gives the comparison with the discussion alone. Only held-out bugs and fresh bugs
+can support a claim, and any fresh set is drawn by `selection.py`'s rule with this text frozen.

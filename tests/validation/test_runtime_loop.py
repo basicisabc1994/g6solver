@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -131,8 +133,8 @@ def test_counting_the_cross_keeps_each_test_on_its_own_line():
 
 
 def test_a_critic_reads_the_tree_from_l4_and_names_no_bug():
-    assert we.has_critic("L4") and we.has_critic("M5")
-    assert not we.has_critic("L3") and not we.has_critic("M1")
+    assert we.has_critic("L4") and we.has_critic("M4")
+    assert not we.has_critic("L3") and not we.has_critic("M1") and not we.has_critic("L5")
     text = we.critic_prompt(1, "a title", "a body")
     assert f"{we.WE}/tree.json" in text and "a body" in text and we.PROBE_RUN in text
     assert distill.named(we.CRITIC_PROMPT, [], []) == []
@@ -141,6 +143,107 @@ def test_a_critic_reads_the_tree_from_l4_and_names_no_bug():
 def test_the_audit_finds_a_drive_but_not_a_word_before_an_escaped_newline():
     assert distill.named(r"read file:\n then stop: e.g. line:\r\n", [], []) == []
     assert distill.named(r"see C:\Users and also (D:\temp)", [], []) == [r"C:\ ".strip(), r"D:\ ".strip()]
+
+
+def _repairs(results, asked):
+    """G6's ``cegis`` over a tree whose checks fail as ``results`` says, one entry a round."""
+    from g6.cegis import InputDomain, cegis
+
+    answers = iter(results)
+    loop = we.Repairs(lambda: next(answers), lambda text, n: asked.append((n, text)))
+    got = cegis(we.WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
+                max_iterations=we.MAX_REPAIRS + 1, timeout_s=60.0)
+    return got, loop
+
+
+def test_clean_probes_end_the_loop_without_asking_the_agent_anything():
+    asked = []
+    got, loop = _repairs([(set(), "")], asked)
+    assert got.status == "no_counterexample_in_domain" and asked == [] and loop.round == 1
+
+
+def test_a_failure_goes_back_to_the_agent_and_a_repair_ends_the_loop():
+    asked = []
+    got, loop = _repairs([({"h:a"}, "a fails"), (set(), "")], asked)
+    assert got.status == "no_counterexample_in_domain" and [n for n, _ in asked] == [1]
+    assert "a fails" in asked[0][1]
+
+
+def test_a_failure_the_agent_has_already_seen_is_not_sent_again():
+    asked = []
+    got, _ = _repairs([({"h:a", "h:b"}, "both"), ({"h:b"}, "b still")], asked)
+    assert len(asked) == 1 and got.status == "inconclusive"
+
+
+def test_a_new_failure_after_a_repair_goes_back():
+    asked = []
+    got, _ = _repairs([({"h:a"}, "a"), ({"h:b"}, "b"), (set(), "")], asked)
+    assert len(asked) == 2 and got.status == "no_counterexample_in_domain"
+
+
+def test_the_repairs_are_capped():
+    asked = []
+    got, _ = _repairs([({f"h:{i}"}, str(i)) for i in range(9)], asked)
+    assert len(asked) == we.MAX_REPAIRS and got.status == "counterexample_budget_exhausted"
+
+
+def test_the_gate_refuses_a_failure_that_is_a_crash_not_an_assertion():
+    assert "not an assertion" in we.scout_gate(CROSS, exit_code=1, collected=6, broken=3)[0]
+
+
+def test_the_gate_reads_pytests_own_words_for_a_crash(tmp_path):
+    """Real pytest output: an assertion and a ``pytest.fail`` are probes doing their job, a TypeError is a broken probe."""
+    (tmp_path / "test_g.py").write_text(
+        "import pytest\n\n\ndef test_a():\n    assert 1 == 2\n\n\ndef test_b():\n    raise TypeError('x')\n\n\n"
+        "def test_c():\n    pytest.fail('no')\n\n\ndef test_d():\n    raise AssertionError('y')\n", "utf-8")
+    command = we.gate_flags().split()
+    done = subprocess.run([sys.executable, "-m", "pytest", str(tmp_path), "-q", "--tb=short", "-p", "no:cacheprovider",
+                           "--rootdir", str(tmp_path), *command], capture_output=True, text=True,
+                          env={**os.environ, "COLUMNS": "300"}, cwd=tmp_path)
+    assert we.crashes(done.stdout) == 1
+
+
+def test_the_gate_reads_the_containers_three_numbers():
+    assert we.gate_numbers("FAILED a.py::t - assert 1\nexit=1\ncross=6\n") == (1, 6, 0)
+    assert we.gate_numbers("FAILED a.py::t - TypeError: x\nexit=1\ncross=0\n") == (1, 0, 1)
+    assert we.gate_numbers("nothing useful") == (2, 0, 0)
+
+
+def test_probes_run_in_the_projects_environment():
+    assert we.PROBE_RUN.startswith(".venv/bin/python -m pytest")
+    assert we.PROBE_COLLECT.startswith(".venv/bin/python -m pytest")
+
+
+def test_a_hidden_scout_works_elsewhere_and_is_told_nothing_of_the_first():
+    text = we.scout_prompt("L5", hidden=True)
+    assert we.HIDDEN in text and f"{we.WE}/tree.json" not in text and f"{we.WE}/probes" not in text
+    assert we.scout_prompt("L5").count(we.HIDDEN) == 0
+
+
+def test_from_l5_the_scout_may_leave_a_silent_shape_out_and_must_assert_exact_values():
+    text = we.scout_prompt("L5")
+    assert we.SCOUT_V2 not in text and "Never leave a shape as unclear" not in text
+    assert "silent" in text and "exact" in text
+    assert distill.named(we.SCOUT_V5, [], []) == []
+
+
+def test_from_l5_the_prompt_carries_g1_and_no_way_to_waive():
+    task = we.load_tasks()[0]
+    text = we.prompt(task, "a title", "a body", "L5")
+    assert "waived" not in text and "further checks you cannot see" in text
+    assert (we.HARNESS / "G1.txt").read_text("utf-8").strip()[:60] in text
+    assert we.prompt(task, "a title", "a body", "M5") == text
+    assert distill.named(we.LOOP_ADDENDUM_5, [], []) == []
+
+
+def test_arms_before_l5_keep_the_stop_hook_and_l5_has_the_outer_loop():
+    assert we.has_hook("L1") and we.has_hook("M4") and not we.has_hook("L5")
+    assert we.holds_loop("L5") and we.holds_loop("M7") and not we.holds_loop("L4")
+
+
+def test_failures_are_read_from_pytests_summary():
+    text = "FAILED ../../opt/we/hidden/test_eof.py::test_cross[a-b] - assert 1\nERROR ../x/test_y.py\n1 failed, 1 error\n"
+    assert we.failed_ids(text) == {"test_eof.py::test_cross[a-b]", "test_y.py"}
 
 
 def test_only_the_loops_arms_get_a_stop_hook():
