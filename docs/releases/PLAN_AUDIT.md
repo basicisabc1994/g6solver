@@ -73,7 +73,7 @@ section 5.
 
 | Gate | State at `0ce616e` |
 |---|---|
-| Software | **Open.** No continuous-integration run exists for the tip (row L-G3). Run 40810994710 (`28a2c3b`) failed in the scan job and on one install-message test; both are fixed (rows L-CI1, L-CI2). |
+| Software | **Met at `0c44e6d`.** Run 40944507516 passed all nine jobs (row L-G3). The earlier failures are fixed (rows L-CI1, L-CI2, L-G3). |
 | Isolation | **Open.** Linux: bubblewrap, as before. Windows: the AppContainer grant is the person's one-time step. macOS: patch review refuses to run (row L-I1). The boundary half of the launch review had no new escape probes (row L-A). |
 | Client consent | **Open.** The owner's pilot in Claude Code and in Codex is pending (row L-G4). |
 | Usability | **Superseded for the first launch** by the owner's decision. Not run. |
@@ -83,7 +83,7 @@ section 5.
 | V10 feasibility report | **Deferred** (row L-D1). |
 | Step 5 trial | **Superseded for the first launch;** the owner's pilot remains (row L-G4). |
 | Security reviews | **Open.** Half A and half B of the launch review found problems that are fixed (rows L-A to L-B8). The review of W1 to W5 found F1 to F8, fixed (rows L-W6, L-F1 to L-F8); the review of that fix pass found two High problems, fixed (rows L-R1 to L-R5). The fresh review of the second fix pass found two Important problems, fixed with their tests (rows L-R6 to L-R8); that last fix pass has no fresh review of its own. The integrity fix of the VS-4 review has no separate fresh review on record (row L-G1). |
-| CI on the release commit (launch) | **Open, pending** (row L-G3). A red macOS job is acceptable. |
+| CI on the release commit (launch) | **Met at `0c44e6d`**, macOS included (row L-G3). A commit made after it needs its own run before the tag. |
 | Honest copy (launch) | **Open.** The commit messages record the site and honesty tests green; see the caveats in row L-G5. |
 
 ### Launch blockers that look most important
@@ -121,7 +121,7 @@ L-G5). Client consent remains a launch gate (row L-G4).
 | 2. Phase 0 findings | 6 | 2 | 20 | 1 | 29 |
 | 3. Revision 3 steps and amendments | 35 | 7 | 16 | 8 | 66 |
 | 4. Verification search (at `0ce616e`; it was 3, 2, 5, 0 at `051b062`) | 3 | 4 | 0 | 3 | 10 |
-| 5. The minimal launch | 50 | 11 | 3 | 13 | 77 |
+| 5. The minimal launch | 51 | 11 | 2 | 13 | 77 |
 
 ## 1. Earlier plan items
 
@@ -438,7 +438,8 @@ kept in the history of this file.
 The owner's decision of 29 October 2026 (night): a minimal launch for Claude Code and Codex. For this first launch it
 supersedes holding go-live for V10, the 8-of-10 fresh-user trial before posts, and venture in Step 5. Audited at
 `0ce616e`, the tip of `claude/launch`; the rows added on 30 October 2026 (L-W7, sections 5.3b and 5.3c, L-P5, L-P6,
-L-G2d) and the rows they changed were audited at `432e623`. The release notes are `docs/releases/launch.md`.
+L-G2d) and the rows they changed were audited at `432e623`; row L-G3 and the two gate lines that cite it record the
+run on `0c44e6d`. The release notes are `docs/releases/launch.md`.
 
 - **Ships:** G6's local MCP server, installed from the repository and connected by `g6 setup --client claude` or
   `--client codex`; `g6_review_patch`, with no model calls by G6; the repair loop the agent runs, through the skill;
@@ -575,7 +576,7 @@ arrived whole, and the rest were read from its probes and mutation runs. It was 
 | L-G2b | The deep security review, half B | implemented, not verified | Rows L-B to L-B8 | go-live security gate |
 | L-G2c | The deep security review, W1 to W5 | implemented, not verified | Rows L-W6 and L-F1 to L-F8 | go-live security gate |
 | L-G2d | The fresh reviews of the fix passes: of F1 to F8 (rows L-R1 to L-R5), and of `83de848` and `0c55c8b` (row L-R6, its findings fixed in rows L-R7 and L-R8) | implemented, not verified | Rows L-R1 to L-R8. Neither report is in the repository. The last fix pass (L-R7, L-R8) is verified by its tests and has no fresh review of its own | go-live security gate |
-| L-G3 | Continuous integration green on the release commit (a red macOS job is acceptable) | missing | Pending. The last runs found: 40780356106 (red, fixed) and 40810994710 at `28a2c3b` (red on the scan and one install-message test, fixed). Most launch commits carry `[skip ci]`, so a run must be started on the release commit itself. The macOS job is untested (section 5.9) | owner |
+| L-G3 | Continuous integration green on the release commit (a red macOS job is acceptable) | implemented and verified | Run 40944507516 on `0c44e6d` passed all nine jobs: the scan, conformance, the site, and the tests on Linux, Windows and macOS under Python 3.12 and 3.13. On its first attempt the Windows 3.12 job failed on two timing guards only (`tests/jobs/test_care_crisis.py::test_the_scans_work_is_bounded`, at 1.246 s, and `tests/knowledge/test_converter.py::test_review_stray_end_tags_under_many_open_elements_convert_in_linear_time`). `0c44e6d` touches neither, both passed in run 40915484031, and the re-run of that job passed. Run 40915484031 on `133d099` passed every test job and failed the scan on six findings in the worked examples' files: a fake key, and the home folder of the container's user five times. `0c44e6d` fixed them without a waiver. Earlier: 40780356106 and 40810994710 at `28a2c3b` (rows L-CI1, L-CI2). Not covered: a commit after `0c44e6d` (this row's own update, the owner's pilot record) needs its own run before the tag | — |
 | L-G4 | The owner's pilot in Claude Code and in Codex: setup, one real review, allow and decline in the dialog | missing | Pending. Earlier: in Codex Esc cancelled the form and no Decline control was visible (`docs/releases/UAT_ROUND_1.md:61-65`); Claude Code is untested (row S5-1) | owner |
 | L-G5 | Honest copy: the status line, never "verified" as a claim, no claim that G6 catches more defects or saves time | implemented, not verified | Pinned by `tests/site/test_launch_copy.py::test_each_page_that_ships_carries_the_status_line_word_for_word`, `::test_the_launch_copy_claims_no_more_defects_found_and_no_time_saved` and `tests/site/test_loop_in_public.py`, which also checks the section never says "experimental" or "verified". Not verified: `tests/site/test_honesty.py` still does not exist (row E34); the word "experimental" still appears in three blog essays (`web/templates/blog/context_window_is_not_memory.html`, `epistemology_of_ai.html`, `two_types_of_thinking.html`; row E33), which no test reads; rows E25 to E32 were not re-read for this update | owner |
 | L-G6 | The owner's steps: squash-merge PR #1, tag the release, deploy the site; set the version number | missing | The version is set: 0.2.0 (the owner, 2026-10-29), in `src/g6/__init__.py` and the title of `docs/releases/launch.md`; the tag is then `v0.2.0` (`tools/check_release.py`). The version is an input every certificate binds, so the five were renewed after it: an independent version-only attestation (`6f542d4`), then normal confined issuance with `--check` (`55ad65d`; only hashes changed, every position still cites `229873b`). The merge, the tag and the site remain pending | owner |
@@ -621,7 +622,8 @@ These are limits, not rows. None changes a status above.
 - **The worked examples' limits for G6**: a package that writes a git-ignored file when it is installed (black's
   `_black_version.py`) defeats every proposed check in G6's copy; G6's own Anthropic caller records no token counts;
   `state_invariant.v1` instances from the model were always refused (row L-P5).
-- **macOS** is untested, and patch review refuses to run there.
+- **macOS**: the test suite passes in continuous integration (row L-G3), but no person has used G6 there, and patch
+  review refuses to run there.
 - **The patch's own code runs in pytest's own process** in the repository's environment, which the agent can change
   (I5). A patch written to defeat the checks can make them report a pass, and G6 does not catch that.
 - **Local settings** assume a trusted host: an agent with the account's unrestricted shell can change them
