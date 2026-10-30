@@ -792,3 +792,26 @@ After L6 the text is frozen and judged on bugs it has not seen.
 **G1's held-out result (the first look).** G1 passed 3 of 15 on held-out bugs and arm A 5 of 15, against 10 of 14 and 9 of 14
 on training. So a stop rule in the prompt did not generalise, and advice alone is not the way forward. The loop arms are
 compared on held-out bugs later, as a second look, reported as one.
+
+### 2026-10-31: the loop frozen at L7, and how it is judged (before any L7, M7 or fresh run)
+
+**L6 and the fault behind L7.** L6 passed `black-5634` twice and `pydantic-14052` twice. But pydantic's test plugin replaces
+pytest's summary, so the outer loop read 10 failing hidden cases as none, and the earlier replay misread pydantic's probes
+as passing on the base. So a run's failure is now decided by pytest's exit code, and an unreadable run is not a pass. That
+is L7, with the plugin switched off. L7's text is L6's. This commit freezes it: no change to the scouts, the gate, the outer
+loop or the prompt before these comparisons end.
+
+**Fresh bugs.** `tasks_fresh.json` applies section 2's rule to the window 2025-12-01 to 2026-05-31, before the ten's: the
+two newest bugs of each kept project, judged on the issue's text only, before any run. `pydantic-13146` failed validation
+(no test goes from failing to passing), so the next qualifying bug took its place. Eleven bugs, all validated. Nobody has
+read their fixes or tests to tune anything, and no run on them will be read for that purpose. A blind audit labels each as
+determined by its task or not, labels only, by the rule used for the ten.
+
+**The comparison, fixed now.** Arms A (Claude Code alone), T (the same, with the issue's discussion) and M7 run twice on
+each fresh bug, and T and M7 five times on each held-out bug, a second look at those bugs. Every run is reported.
+- The loop may be said to beat Claude Code alone on fresh bugs only if M7 passes more runs than both A and T, and an exact
+  one-sided sign test on the pairs of runs that differ (M7 against each, same bug and repeat) gives p < 0.05.
+- Otherwise the report says it was not shown. The training score is never the headline, and the held-out score stands
+  beside every tuned score.
+- The owner's 95% stays the target on the ten, with `click-3678` in the score.
+- What ran is the runner's loop built on G6's `cegis` and `InputDomain` and the model-checked stop rule; it is not yet in G6.

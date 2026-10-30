@@ -209,6 +209,32 @@ def test_the_gate_reads_the_containers_three_numbers():
     assert we.gate_numbers("nothing useful") == (2, 0, 0)
 
 
+def test_a_plugin_cannot_reformat_the_summary_the_runner_reads():
+    assert "-p no:pretty" in we.PROBE_RUN and "-p no:pretty" in we.PROBE_COLLECT
+
+
+def test_pytests_exit_decides_whether_probes_failed_when_the_names_cannot_be_read():
+    assert we.probe_failures("FAILED a/test_x.py::t - assert 1\nexit=1\n", "held0") == {"held0:test_x.py::t"}
+    assert we.probe_failures("Results (0.17s):\n  10 failed\n  24 passed\nexit=1\n", "held0") == {"held0:exit 1"}
+    assert we.probe_failures("garbage, no exit line", "held0") == {"held0:no exit"}
+
+
+def test_clean_or_empty_probes_are_not_failures():
+    assert we.probe_failures("5 passed\nexit=0\n", "scout") == set()
+    assert we.probe_failures("no tests ran\nexit=5\n", "scout") == set()
+
+
+def test_fresh_bugs_run_on_a_and_t_and_the_held_out_form_of_the_loop_only():
+    sonnet, fresh = we.R3_MODELS[1], we.load_tasks(we.TASKS_FRESH)[0].id
+    assert fresh not in {t.id for t in we.load_tasks()}
+    for arm in ("A", "T", "M7"):
+        assert we.r3_loop_key((sonnet, fresh, arm, 2)), arm
+    for arm in ("E", "L7", "G1", "H1"):
+        assert not we.r3_loop_key((sonnet, fresh, arm, 1)), arm
+    assert not we.r3_loop_key((sonnet, fresh, "M7", 3))
+    assert we.task_by_id(fresh).id == fresh
+
+
 def test_probes_run_in_the_projects_environment():
     assert we.PROBE_RUN.startswith(".venv/bin/python -m pytest")
     assert we.PROBE_COLLECT.startswith(".venv/bin/python -m pytest")

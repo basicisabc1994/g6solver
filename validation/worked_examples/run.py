@@ -50,6 +50,7 @@ import wecommon as c  # noqa: E402
 
 REPO_ROOT = HERE.parents[1]
 TASKS = HERE / "tasks.json"
+TASKS_FRESH = HERE / "tasks_fresh.json"   # bugs the loop has not seen (PLAN.md, 2026-10-31)
 PROXY = REPO_ROOT / "validation" / "v7_swebench" / "egress_proxy.py"
 FROM_IMAGE = "g6-a2-linux"
 SECURITY = ("--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined")
@@ -117,7 +118,7 @@ If a template instance is refused, or cannot express the inputs (they are not JS
 in the patch), check the property with a proposed_checks test file instead. Every check, in whichever form, must assert
 a specific expected value taken from the issue, not from what the patched code returns, so that it can fail."""
 #: Round 3, arm L (PLAN.md, 2026-10-31): the probes one reader wrote before any patch; run in the repository.
-PROBE_RUN = f".venv/bin/python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider --rootdir={WE}/probes"
+PROBE_RUN = f".venv/bin/python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider -p no:pretty --rootdir={WE}/probes"
 PROBE_COLLECT = PROBE_RUN.replace(" -q --tb=short", " --collect-only -q")
 HIDDEN, HIDDEN_TREE, HELD_COPY = f"{WE}/hidden", f"{WE}/hidden_tree.json", "/tmp/we-held"
 MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS, MAX_REPAIRS, MIN_RANDOM = 4, 2.0, 12000, 200, 3, 300
@@ -254,10 +255,14 @@ def load_tasks(path: Path = TASKS) -> list[Task]:
 
 
 def task_by_id(task_id: str, path: Path = TASKS) -> Task:
-    for task in load_tasks(path):
+    for task in (*load_tasks(path), *load_tasks(TASKS_FRESH)):
         if task.id == task_id:
             return task
     raise SystemExit(f"no task {task_id!r} in {path.name}")
+
+
+def is_fresh(task_id: str) -> bool:
+    return any(task.id == task_id for task in load_tasks(TASKS_FRESH))
 
 
 def hidden_at(i: int) -> tuple[str, str]:
@@ -290,6 +295,16 @@ def probes_at(where: str) -> str:
 def failed_ids(output: str) -> set[str]:
     """The tests pytest's short summary names as failed or in error."""
     return set(FAILED.findall(output))
+
+
+def probe_failures(said: str, label: str) -> set[str]:
+    """What failed in a run reported with its ``exit=`` line. pytest's exit decides: names that cannot be read never make
+    a failing run look clean, and a run that reported no exit is not a pass. 0 is clean, 5 is no tests collected."""
+    named = {f"{label}:{i}" for i in failed_ids(said)}
+    code = re.search(r"^exit=(\d+)$", said, re.M)
+    if named or (code and code[1] in ("0", "5")):
+        return named
+    return {f"{label}:exit {code[1]}" if code else f"{label}:no exit"}
 
 
 def gate_flags() -> str:
@@ -655,6 +670,8 @@ def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     held_out = task in R3_HELD and (arm in ("A", "T") or arm[0] in "HM")
     if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
+    if is_fresh(task):
+        return arm in ("A", "T") or re.fullmatch(r"M\d+", arm) is not None
     if arm in ("A", "E", "T"):
         return True
     return re.fullmatch(r"[GHLM]\d+", arm) is not None and (arm[0] in "HM") == (task in R3_HELD)
@@ -1390,14 +1407,15 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
             if held:
                 ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && "
                                      f"chown -R {USER} {HELD_COPY}; true", user="root", timeout=60)
-            got = out(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(HELD_COPY if held else where)} --maxfail=10 -rfE 2>&1 "
-                                           "| tail -c 12000", workdir=task.repo, timeout=300))
+            got = out(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(HELD_COPY if held else where)} --maxfail=10 -rfE "
+                                           "> /tmp/we-check.txt 2>&1; code=$?; tail -c 12000 /tmp/we-check.txt; "
+                                           'echo "exit=$code"; rm -f /tmp/we-check.txt', workdir=task.repo, timeout=300))
             if held:
                 ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
             run.write(f"repair_check_{rounds[0]}_{label}.txt", got)
-            ids = failed_ids(got)
-            failing |= {f"{label}:{i}" for i in ids}
-            if ids:
+            found = probe_failures(got, label)
+            failing |= found
+            if found:
                 said.append(got)
         return failing, "\n\n".join(said)
 

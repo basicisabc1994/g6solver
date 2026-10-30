@@ -17,7 +17,7 @@ from typing import Any
 import run as we
 import wecommon as c
 
-RUN = (".venv/bin/python -m pytest {probes} -q --tb=no -rfE -p no:cacheprovider --rootdir={probes} "
+RUN = (".venv/bin/python -m pytest {probes} -q --tb=no -rfE -p no:cacheprovider -p no:pretty --rootdir={probes} "
        "2>&1 | tail -c 400000; true")
 CLEAN = "git checkout -q . && git clean -fdq"
 COUNT = re.compile(r"(\d+) (passed|failed|error|errors|skipped|deselected)\b")
@@ -26,6 +26,8 @@ COUNT = re.compile(r"(\d+) (passed|failed|error|errors|skipped|deselected)\b")
 def summary(output: str) -> dict[str, Any]:
     """What one pytest run says: its counts and the ids that failed. ``ran`` is false when no test ran at all."""
     tail = next((line for line in reversed(output.strip().splitlines()) if COUNT.search(line)), "")
+    if "Results (" in output:     # a plugin's table, not pytest's summary: nothing here can be read as a pass
+        tail = ""
     counts = {word: int(n) for n, word in COUNT.findall(tail)}
     failed = sorted(we.failed_ids(output))
     errors = counts.get("error", 0) + counts.get("errors", 0)
@@ -53,7 +55,9 @@ def runs_of(root: Path, task: str) -> list[dict[str, Any]]:
 def replay_task(docker: Any, root: Path, task: we.Task, g6: str) -> dict[str, Any]:
     _, oracle = we.image_names(task, g6, we.ROUND3)
     rows = runs_of(root, task.id)
-    sets = [r for r in rows if (r["folder"] / "scout_probes").is_dir()]
+    sets = [{"label": r["label"] + tag, "probes": r["folder"] / folder} for r in rows
+            for tag, folder in (("", "scout_probes"), ("h", "hidden_probes"), ("i", "hidden2_probes"))
+            if (r["folder"] / folder).is_dir()]
     name = f"g6we-replay-{uuid.uuid4().hex[:10]}"
     matrix: dict[str, dict[str, Any]] = {}
     try:
@@ -62,7 +66,7 @@ def replay_task(docker: Any, root: Path, task: we.Task, g6: str) -> dict[str, An
                           "tail", "-f", "/dev/null", timeout=600), "replay container")
         for row in sets:
             probes = f"/tmp/p-{row['label']}"
-            we.checked(docker("cp", str(row["folder"] / "scout_probes"), f"{name}:{probes}", timeout=300), "probes")
+            we.checked(docker("cp", str(row["probes"]), f"{name}:{probes}", timeout=300), "probes")
             docker.sh(name, f"find {probes} -name __pycache__ -prune -exec rm -rf {{}} +; chmod -R a+rX {probes}",
                       user="root", timeout=60)
         for code in ("base", "fix", *[r["label"] for r in rows]):

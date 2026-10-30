@@ -28,6 +28,11 @@ def test_a_collection_error_is_not_a_pass():
     assert pr.verdict(cell) == "?"
 
 
+def test_a_summary_the_replay_cannot_read_is_not_a_pass():
+    assert pr.verdict(pr.summary("Results (2.29s):\n       426 failed\n       200 passed\n        36 skipped\n")) == "?"
+    assert "-p no:pretty" in pr.RUN
+
+
 def test_no_output_is_not_a_pass():
     assert pr.verdict(pr.summary("")) == "?"
 
