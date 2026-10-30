@@ -791,7 +791,7 @@ def test_round3_ledger_accumulates_and_the_budget_stop_refuses(tmp_path):
     assert [(r["arm"], r["cost_usd"]) for r in ledger] == [("A", 0.25), ("B", 0.25)]
     assert [r["spent_after"] for r in ledger] == [pytest.approx(0.25), pytest.approx(0.5)]
     # a run is refused when the round's remaining budget is below its stop
-    for _ in range(9):
+    for _ in range(17):
         r = ctx.archive.start("run", "other")
         r.finish({"cost_usd": 10.0}, "finished")
     ctx.arm = "C"
@@ -805,7 +805,7 @@ def test_round3_refuses_a_run_twice_and_out_of_order(tmp_path):
     assert we.run_task(ctx, TASK)["status"] == "finished"
     again = we.run_task(ctx, TASK)
     assert again["status"] == "refused" and "already" in again["why"]
-    ctx.arm, ctx.model = "A", SONNET                          # Haiku's B and C for this bug are not run yet
+    ctx.arm, ctx.model = "B", FABLE                           # Haiku's B and C for this bug are not run yet
     later = we.run_task(ctx, TASK)
     assert later["status"] == "refused" and "order" in later["why"]
     ctx.model = "claude-opus-5-5"
@@ -821,8 +821,8 @@ def test_round3_only_the_two_smoke_runs_go_before_haikus_runs_are_done(tmp_path)
     assert we.run_task(ctx, TASK)["status"] == "finished"
     ctx.arm = "C"
     assert we.run_task(ctx, TASK)["status"] == "finished"
-    ctx.arm = "A"
-    assert "order" in we.run_task(ctx, TASK)["why"]
+    ctx.arm = "A"                                             # the loop's comparison (PLAN.md, 2026-10-30)
+    assert "order" not in str(we.run_task(ctx, TASK).get("why"))
     ctx.arm, ctx.model = "B", FABLE
     assert "order" in we.run_task(ctx, TASK)["why"]
 
@@ -879,7 +879,7 @@ def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):
         for model, reps in ((HAIKU, 1), (SONNET, 2 if arm == "A" else 1)):
             for rep in range(1, reps + 1):
                 r = ctx.archive.start("run", TASK.id, arm=arm, model=model, repeat=rep, agent=True)
-                r.finish({"cost_usd": 10.0, "agent_started": True}, "finished")
+                r.finish({"cost_usd": 150.0 / 7, "agent_started": True}, "finished")
     rec = we.run_task(ctx, TASK)                              # $30 left for Fable's 3 runs: $10 stop, so cap 9.52
     assert rec["status"] == "finished", rec
     claude = next(call for call in ctx.docker.calls if we.CLAUDE in call and "-p" in call)
