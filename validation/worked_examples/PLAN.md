@@ -1035,3 +1035,13 @@ override design and training evidence only, with a proof of reading.
   each candidate changes one part anyway, and the model chose the scouts on every real call so far.
 - **G6's gate is not applied.** `gate.py` needs 30 confirmation cases, and stage 2's bugs give 20 outcomes on ten bugs. A candidate that
   wins is therefore reported as recommended and tested, never as promoted by G6.
+
+**Stage 2 grows, by a rule on cost alone (before any stage 2 issue is read).** Ten bugs give 20 outcomes, too few for a real gain to clear
+the rule, and stage 3's comparison with its parent runs on the same bugs. The money is there: the four killed runs measured $1.26 in all,
+against $42 the runner holds for them, so real spend is about $34, not its $85. But L9's cost per run is not settled, and one run on an
+easy bug has passed $1.18. So stage 2's size is set when L9 ends, from `loop` rows alone: with `u` L9's mean cost per run on the training
+bugs, and `left` the $170 stop less the spend then recorded, the bugs are the largest `n` from 10 to 20 for which
+`u * (37 + 10 + 28 + 4n) + 8 + 0.24n <= left`. That counts M9 on stage 1 and the held-out bugs (37 runs), L9 on the development pool (10),
+at most eight screens and two paired checks (28), M9 and the trained arm on stage 2 (4n), and $8 for arms A and T on stage 1 and for proposals, with
+A and T on stage 2. No outcome enters it, and it is fixed before any issue is judged. If the $170 stop arrives first, the runs that remain
+are not made, and the report says so.
