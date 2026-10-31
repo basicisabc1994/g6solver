@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
+import socket
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,8 +15,10 @@ import pytest
 
 import g6
 from g6.core import stop
+from g6.core.llm import FakeLLM
 from g6.harness import Check
-from g6.metaharness import SuiteCase
+from g6.metaharness import Profile, SuiteCase
+from g6.metaharness import monitor as drift
 from g6.metaharness.domain import Judge
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
@@ -371,3 +376,150 @@ def test_the_loops_folder_may_not_lie_in_g6s_own_source_and_nothing_is_created_t
     with pytest.raises(ValueError, match="G6_E_LOOP_EVALUATOR_IN_REACH"):
         ShadowLoop(domains.WordProblems(tmp_path), root, SETTINGS, proposer=domains.proposes({"prompt": "x"}))
     assert not root.exists()
+
+# The sealed split inside a tick --------------------------------------------------------------------------------------
+
+def _reaches_for_the_sealed_file(domain, attempts):
+    def reply(system: str, user: str) -> str:
+        try:
+            attempts.append(domain.sealed_file.read_text(encoding="utf-8"))
+        except PermissionError:
+            attempts.append("refused")
+        return json.dumps({"prompt": domains.WORKING})
+
+    return FakeLLM(reply)
+
+
+def test_a_proposer_that_reaches_for_the_sealed_split_gets_nothing_and_the_loop_pauses(tmp_path):
+    domain, attempts = domains.WordProblems(tmp_path), []
+    loop, _ = _enrolled(tmp_path, domain=domain, proposer=_reaches_for_the_sealed_file(domain, attempts))
+    start = loop.mh._head()
+    got = loop.tick()
+    assert attempts and set(attempts) == {"refused"}
+    assert got["outcome"] == "sealed_breach" and got["completion_state"] == "blocked-escalated"
+    assert loop.mh._head() == start                                # it swallowed the refusal; the record did not
+    assert "sealed" in loop.log.paused()
+    assert _code(loop.tick()) == "G6_E_LOOP_PAUSED"
+
+
+def test_the_sealed_split_is_readable_again_once_the_tick_is_over(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.tick()
+    assert domain.sealed_file.read_text(encoding="utf-8")
+
+
+def test_no_proposer_is_ever_shown_a_sealed_held_out_or_monitor_case(tmp_path):
+    proposer = domains.proposes({"prompt": domains.WORKING})
+    loop, domain = _enrolled(tmp_path, proposer=proposer)
+    loop.tick()
+    shown = "\n".join(user for _, user in proposer.calls)
+    assert shown
+    for case in (*domain.sealed_cases, *loop.cut.held_out, *loop.cut.monitor, *loop.cut.selection):
+        assert case.input not in shown
+
+
+def test_the_task_model_never_runs_a_sealed_case(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.tick()
+    ran = "\n".join(user for _, user in domain.llm.calls)
+    assert ran and not any(case.input in ran for case in domain.sealed_cases)
+
+
+def test_no_sealed_case_is_in_anything_the_loop_holds(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    suite = loop.workflow.suite
+    held = {c.case_id for split in (suite.dev, suite.selection, suite.held_out, loop.cut.monitor) for c in split}
+    assert not held & {c.case_id for c in domain.sealed_cases}
+
+
+# The monitor inside a tick -------------------------------------------------------------------------------------------
+
+def test_an_adoption_that_got_worse_is_rolled_back_with_no_one_asked(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=0.6)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    start = loop.mh._head()[1]
+    assert loop.tick()["outcome"] == "adopted"
+    left = loop.mh.held_out_left()
+    domain.tutor.collapsed = True
+    got = loop.tick()
+    assert got["outcome"] == "rolled_back" and got["undoes"] == 1 and got["completion_state"] == "blocked-escalated"
+    assert loop.mh._head()[1] == start and loop.mh.held_out_left() == left
+    assert loop.log.cycles()[-1]["audit"]["pairs"] >= drift.MIN_PAIRS
+
+
+def test_a_healthy_adoption_is_audited_and_kept(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=0.6)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    loop.tick()
+    head = loop.mh._head()
+    got = loop.tick()
+    assert got["outcome"] != "rolled_back" and loop.mh._head() == head
+    assert loop.log.cycles()[-1]["audit"]["audited"] == len(loop.cut.monitor)
+
+
+def test_adopting_and_rolling_back_in_turn_still_pauses(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=0.6)
+    tries = iter(range(99))
+
+    def always_something_new(system: str, user: str) -> str:
+        return json.dumps({"prompt": f"{domains.WORKING} Variant {next(tries)}."})
+
+    loop, _ = _enrolled(tmp_path, domain=domain, proposer=FakeLLM(always_something_new))
+    for _ in range(3):
+        domain.tutor.collapsed = False
+        assert loop.tick()["outcome"] == "adopted"
+        domain.tutor.collapsed = True
+        assert loop.tick()["outcome"] == "rolled_back"
+    assert "three failed cycles" in loop.log.paused()
+
+
+# The owner's ruling ---------------------------------------------------------------------------------------------------
+
+def test_by_default_adoption_never_stands_in_for_a_person_outside_shadow(tmp_path):
+    assert SETTINGS.person_free_adoption_outside_shadow is False
+    loop, _ = _enrolled(tmp_path)
+    loop.tick()
+    got = loop.leave_shadow()
+    assert got["completion_state"] == "blocked-escalated" and _code(got) == "G6_E_LOOP_PERSON_REQUIRED"
+    assert domains.WORKING in got["candidate"]["prompt"]           # the profile, for a person to take to the gate
+    assert [v["kind"] for v in loop.mh.store.versions()] == ["initial"]
+
+
+def test_with_the_owners_setting_on_this_phase_still_moves_nothing(tmp_path):
+    settings = dataclasses.replace(SETTINGS, person_free_adoption_outside_shadow=True)
+    loop, _ = _enrolled(tmp_path, settings=settings)
+    loop.tick()
+    got = loop.leave_shadow()
+    assert got["completion_state"] == "blocked-escalated" and _code(got) == "G6_E_LOOP_NO_PATH_OUT"
+    assert [v["kind"] for v in loop.mh.store.versions()] == ["initial"]
+
+
+def test_a_profile_cannot_turn_the_setting_on(tmp_path):
+    assert "person_free_adoption_outside_shadow" not in Profile.model_fields
+
+
+# Nothing outward -----------------------------------------------------------------------------------------------------
+
+def test_a_tick_starts_no_process_and_opens_no_connection(tmp_path, monkeypatch):
+    def refused(*args, **kwargs):
+        raise AssertionError("a tick reached outside this process")
+
+    monkeypatch.setattr(subprocess, "Popen", refused)
+    monkeypatch.setattr(socket.socket, "connect", refused)
+    loop, _ = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_everything_a_tick_writes_is_inside_the_loops_folder(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("x", encoding="utf-8")
+    domain = domains.WordProblems(tmp_path)
+    before = sorted(p.name for p in tmp_path.iterdir())
+    sealed_bytes = domain.sealed_file.read_bytes()
+    loop = ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}),
+                      now=lambda: NOW, clock=domains.Clock())
+    loop.enrol("Ada")
+    loop.tick()
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([*before, "loop"])
+    assert domain.sealed_file.read_bytes() == sealed_bytes

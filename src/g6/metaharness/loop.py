@@ -34,7 +34,16 @@ from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import digest
 from g6.core.llm import DEFAULT_MAX_TOKENS
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
-from g6.metaharness.domain import Cut, Domain, FailureRecord, Judge, cut_pool, domain_problems, judge_source
+from g6.metaharness.domain import (
+    Cut,
+    Domain,
+    FailureRecord,
+    Judge,
+    cut_pool,
+    domain_problems,
+    judge_source,
+    sealed_closed,
+)
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
@@ -54,6 +63,9 @@ PAUSED = "G6_E_LOOP_PAUSED"
 RESUMED = "G6_E_LOOP_RESUMED"
 FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
 HELD_OUT_SPENT = "G6_E_LOOP_HELD_OUT_SPENT"
+SEALED_BREACH = "G6_E_LOOP_SEALED_BREACH"
+PERSON_REQUIRED = "G6_E_LOOP_PERSON_REQUIRED"
+NO_PATH_OUT = "G6_E_LOOP_NO_PATH_OUT"
 ENROLLED = "G6_E_LOOP_ENROLLED"
 STATUS = "G6_E_LOOP_STATUS"
 IDLE = "G6_E_LOOP_IDLE"
@@ -76,6 +88,9 @@ class LoopSettings:
     seed: int = 20261031             # cuts the development pool
     audit_per_tick: int = 10         # monitor cases per tick
     eval_calls: int = 2000           # the most one held-out evaluation may call; the gate's thresholds are not settings
+    # THE OWNER'S RULING, NOT THE LOOP'S: may a passed gate stand in for a person outside the loop's own workspace?
+    # Off until they say otherwise. No profile can reach it, and in this phase turning it on still moves nothing.
+    person_free_adoption_outside_shadow: bool = False
 
 
 @dataclass(frozen=True)
@@ -298,24 +313,40 @@ class ShadowLoop:
         if waiting is not None:
             return waiting
         self._beat("running", CYCLE)
-        before = self.counts[0]
-        try:
-            row = self._cycle()
-        except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
-            row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
-                   "reason": f"{type(exc).__name__}: {exc}"[:500]}
-        finally:
-            charged = self.meter.settle(spend, self.counts[0] - before)
+        before, recommended = self.counts[0], []
+        with sealed_closed(self.domain.sealed().vault) as breaches:
+            try:
+                row = self._cycle(recommended)
+            except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
+                row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
+                       "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
+            finally:
+                charged = self.meter.settle(spend, self.counts[0] - before)
+        if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
+            row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
+                    "reason": f"{len(breaches)} attempt(s) to open the sealed split while developing: nothing was read "
+                              "and nothing is adopted, and a person decides whether it still counts as sealed"}
+        elif recommended:
+            row |= self._adopt(recommended[-1]["decision"])
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
         reply = self._reply(self.log.cycle(row))
-        self._pause_if_failing()
+        self._pause_if_failing(row)
         return reply
 
-    def _pause_if_failing(self) -> None:
+    def _adopt(self, decision: Any) -> dict[str, Any]:
+        adopted = self.mh.adopt(decision)
+        said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
+        if adopted["completion_state"] == "blocked-escalated":
+            return {**said, "outcome": "blocked"}
+        return {**said, "outcome": "adopted", "head_version": adopted["head_version"]}
+
+    def _pause_if_failing(self, row: dict[str, Any]) -> None:
         streak = self.log.failed_streak()
-        if streak >= MAX_FAILED_CYCLES:
+        if row["outcome"] == "sealed_breach":
+            self.log.pause(row["reason"])
+        elif streak >= MAX_FAILED_CYCLES:
             last = self.log.cycles()[-streak:]
             self.log.pause("three failed cycles in a row: " + "; ".join(
                 f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in last))
@@ -329,10 +360,15 @@ class ShadowLoop:
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
-    def _cycle(self) -> dict[str, Any]:
+    def _cycle(self, recommended: list[dict[str, Any]]) -> dict[str, Any]:
         version, head = self.mh._head()
         row: dict[str, Any] = {"at": self._now().isoformat(), "domain": self.domain.name, "head_version": version,
                                "head_profile": head.digest()}
+        audited = self.mh.audit(self.cut.monitor, count=self.settings.audit_per_tick)
+        row["audit"] = {k: audited[k] for k in ("audited", "pairs", "mean_difference", "threshold")}
+        if audited["rolled_back"]:
+            return {**row, "outcome": "rolled_back", "code": audited["warning_card"]["code"],
+                    "reason": audited["message"], "undoes": audited["undoes"], "head_version": audited["head_version"]}
         measured = self.mh.measure(budget=self.settings.method.propose_budget)
         if "view" not in measured:
             return {**row, "outcome": "blocked", "code": measured["warning_card"]["code"], "reason": measured["message"]}
@@ -345,10 +381,10 @@ class ShadowLoop:
                 "observations": [list(o) for o in constraint.observations]}
         if constraint.name == UNKNOWN:
             return {**row, "outcome": "no_constraint", "code": NO_CONSTRAINT, "reason": constraint.reason}
-        return {**row, **self._exploit(constraint)}
+        return {**row, **self._exploit(constraint, recommended)}
 
-    def _exploit(self, constraint: Constraint) -> dict[str, Any]:
-        recommended: list[dict[str, Any]] = []
+    def _exploit(self, constraint: Constraint, recommended: list[dict[str, Any]]) -> dict[str, Any]:
+        """Propose and gate. A recommendation is only held here: it is adopted once the sealed split is known untouched."""
 
         def nobody(decided: dict[str, Any]) -> None:
             recommended.append(decided)              # no name is given: none stands in for a person's
@@ -356,16 +392,26 @@ class ShadowLoop:
         proposer = _OnConstraint(FailureTraceStrategy(self._proposer), constraint.case_ids)
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
                    space=self.domain.execution().space, extra=(proposer,))
-        said = {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion}
-        if not recommended:
-            reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
-            return {**said, "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE),
-                    "reason": "; ".join(reasons), "recovery": run.recovery}
-        adopted = self.mh.adopt(recommended[-1]["decision"])
-        if adopted["completion_state"] == "blocked-escalated":
-            return {**said, "outcome": "blocked", "code": adopted["warning_card"]["code"], "reason": adopted["message"]}
-        return {**said, "outcome": "adopted", "code": adopted["warning_card"]["code"], "reason": adopted["message"],
-                "head_version": adopted["head_version"]}
+        reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
+        return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
+                "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
+                "recovery": run.recovery}
+
+    def leave_shadow(self) -> dict[str, Any]:
+        """Take the head out of the loop's own workspace. Nothing in this phase can. Outside shadow a person accepts a
+        change, and whether a passed gate may ever stand in for them is the owner's ruling, held in one setting."""
+        refused = self._invalid()
+        if refused is not None:
+            return refused
+        version, head = self.mh._head()
+        if not self.settings.person_free_adoption_outside_shadow:
+            return _blocked(PERSON_REQUIRED, f"version {version} holds only in the loop's own workspace: outside it a "
+                            "person accepts a change", "Take this profile to an ordinary meta-harness as a candidate: "
+                            "mh.candidate(profile, proposer=...), for its gate and a person.",
+                            candidate=head.model_dump(mode="json"))
+        return _blocked(NO_PATH_OUT, "the owner's setting allows it, but this phase has no way out of shadow: no "
+                        "adoption reaches anything outside this workspace", "A later phase builds the path.",
+                        candidate=head.model_dump(mode="json"))
 
     def _reply(self, row: dict[str, Any]) -> dict[str, Any]:
         state = "qualified-draft" if row["outcome"] in ENDS_A_STREAK else "blocked-escalated"
