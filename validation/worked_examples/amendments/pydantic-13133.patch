@@ -1,0 +1,19 @@
+diff --git a/tests/test_forward_ref.py b/tests/test_forward_ref.py
+index 1736baa..2f0008c 100644
+--- a/tests/test_forward_ref.py
++++ b/tests/test_forward_ref.py
+@@ -1036,12 +1036,9 @@ def test_invalid_forward_ref() -> None:
+         class Model(BaseModel):
+             foo: 'CustomType[int]'
+ 
+-    if sys.version_info < (3, 11):
+-        msg = "Unable to evaluate type annotation 'CustomType[int]'."
+-    else:
+-        msg = "Unable to evaluate type annotation list['CustomType[int]']."
++    msg = r'(?s)Unable to evaluate type annotation.*CustomType\[int\]'
+ 
+-    with pytest.raises(TypeError, match=re.escape(msg)):
++    with pytest.raises(TypeError, match=msg):
+ 
+         class Model(BaseModel):
+             foo: list['CustomType[int]']

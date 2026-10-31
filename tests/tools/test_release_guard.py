@@ -20,6 +20,14 @@ def test_stable_matching_tag_can_be_prepared():
     assert runpy.run_path(str(ROOT / "tools/check_release.py"))["check"]("v0.1.1", "0.1.1") is None
 
 
+def test_the_launch_notes_name_the_stable_version_g6_reports():
+    # the owner set it, 2026-10-29: 0.2.0; the release tag must then be v0.2.0 (tools/check_release.py)
+    import g6
+    title = (ROOT / "docs/releases/launch.md").read_text(encoding="utf-8").splitlines()[0]
+    assert g6.__version__ == "0.2.0" and title.startswith(f"# G6 {g6.__version__}: "), title
+    assert runpy.run_path(str(ROOT / "tools/check_release.py"))["check"](f"v{g6.__version__}", g6.__version__) is None
+
+
 def test_bundle_workflow_guards_tags_and_does_not_overwrite_or_auto_publish():
     workflow = (ROOT / ".github/workflows/bundles.yml").read_text()
     assert 'python tools/check_release.py "$GITHUB_REF_NAME"' in workflow

@@ -1444,6 +1444,12 @@ def _forms(template: str, bindings: Any) -> list[tuple[str, type[BaseModel]]]:
     return [steps, single] if isinstance(bindings, dict) and "steps" in bindings else [single, steps]
 
 
+#: A template binds JSON values to names at the base commit, so some checks cannot be written as one (worked examples,
+#: round 3): every refusal says where such a check can go.
+FALLBACK = ("If a template cannot express this check (its inputs are not JSON values, or what it names exists only in "
+            "the patch), write it as a proposed_checks test file instead.")
+
+
 def bindings_help(template: str, bindings: Any = None) -> str:
     """What ``template``'s bindings are, the required first, and one valid instance of it."""
     said = []
@@ -1453,7 +1459,19 @@ def bindings_help(template: str, bindings: Any = None) -> str:
         said.append(f"{how}{template} needs bindings {', '.join(required)}"
                     + (f", and also takes {', '.join(optional)}" if optional else ""))
     return (f"{'; '.join(said)}. One valid instance: {json.dumps(EXAMPLES[template])}. Correct the instance and "
-            "review again.")
+            f"review again. {FALLBACK}")
+
+
+_PLAIN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
+
+
+def _shown(part: Any) -> str:
+    """A part of a field's location as a refusal says it: a list index or a plain name as it is, anything else the
+    request wrote as a JSON string, so a name holding a line break or Markdown stays one inert, printable line (the
+    security review of W1-W5, F5)."""
+    if isinstance(part, int) or (isinstance(part, str) and _PLAIN_NAME.fullmatch(part)):
+        return str(part)
+    return json.dumps(str(part))
 
 
 def _refused_bindings(where: str, template: str, bindings: Any, exc: ValidationError) -> BindingsRefused:
@@ -1461,16 +1479,16 @@ def _refused_bindings(where: str, template: str, bindings: Any, exc: ValidationE
     missing and each name that is not one of the template's bindings, with the one it most likely meant."""
     errors = exc.errors()
     first = errors[0]
-    loc = ".".join(str(p) for p in first["loc"])
+    loc = ".".join(_shown(p) for p in first["loc"])
     message = f"{where}: bindings{'.' + loc if loc else ''}: {first['msg']}"
     names = {name for _, form in _forms(template, bindings) for name in form.model_fields}
     missing = [str(e["loc"][0]) for e in errors if e["type"] == "missing" and len(e["loc"]) == 1]
     named = []
     if missing:
-        named.append("missing: " + ", ".join(f"bindings.{name}" for name in missing))
+        named.append("missing: " + ", ".join(f"bindings.{_shown(name)}" for name in missing))
     for wrong in (str(e["loc"][0]) for e in errors if e["type"] == "extra_forbidden" and len(e["loc"]) == 1):
         meant = difflib.get_close_matches(wrong, sorted(names), n=1)
-        named.append(f"bindings.{wrong} is not one of {template}'s bindings"
+        named.append(f"bindings.{_shown(wrong)} is not one of {template}'s bindings"
                      + (f" (did you mean {meant[0]}?)" if meant else ""))
     return BindingsRefused(message + ("; " + "; ".join(named) if named else ""), bindings_help(template, bindings))
 
@@ -1500,7 +1518,7 @@ def template_instances(value, requirement_ids) -> list[TemplateInstance]:
             one = TemplateInstance.model_validate(data)
         except ValidationError as exc:
             first = exc.errors()[0]
-            raise ValueError(f"{where}: {'.'.join(str(p) for p in first['loc']) or 'instance'}: {first['msg']}") from exc
+            raise ValueError(f"{where}: {'.'.join(_shown(p) for p in first['loc']) or 'instance'}: {first['msg']}") from exc
         definition = REGISTRY.get(one.template)
         if definition is None:
             raise ValueError(f"{where}: template must be one of {', '.join(sorted(REGISTRY))}")
@@ -1643,7 +1661,8 @@ def prepare(root: Path, change: repo_tests.Change, instances: list[TemplateInsta
         except (Inapplicable, ValueError, OSError, SyntaxError, repo_tests.RepoRefused) as exc:
             why = str(exc) if isinstance(exc, Inapplicable) else (
                 f"G6 could not read what it names ({type(exc).__name__})")
-            _not_applied(found, one, definition, {**_listing(one), "result": "refused", "reason": why})
+            _not_applied(found, one, definition, {**_listing(one), "result": "refused",
+                                                  "reason": f"{why} {FALLBACK}"})
         except Exception as exc:   # RecursionError, MemoryError, any other: an activity's error (the VS-3 review, I2)
             _not_applied(found, one, definition, {**_listing(one), "result": "error", "reason": vs.stopped(exc),
                                                   "stopped": f"template instance {one.id}"})

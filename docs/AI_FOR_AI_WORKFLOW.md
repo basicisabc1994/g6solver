@@ -13,7 +13,8 @@ and activate it (`source .venv/bin/activate`; in PowerShell `.venv\Scripts\Activ
 on Linux, G6 cannot yet tell its own Python from a project environment linked to the same one, and refuses to
 review then (`G6_E_REPO_PYTHON_INVALID`, before anything runs).
 Setup uses an absolute interpreter path, installs the using-g6 skill, and ends by showing the first review
-call. Existing skills are preserved. An existing MCP entry that the client refuses to replace must be
+call. It replaces an earlier copy of its own using-g6 skill; other skills are left as they are. An existing MCP entry
+that the client refuses to replace must be
 inspected with that client's `mcp get g6` command; to replace it, remove it (`claude mcp remove --scope user
 g6` or `codex mcp remove g6`) and run setup again.
 
@@ -59,6 +60,9 @@ Call `metaharness_start` with this structure in `specification_json`:
 }
 ```
 
+A workflow's files live in the `.g6/` folder of the project G6 was started in, so start the meta-harness from a folder
+outside any repository you review with patch review: a review there counts those files as part of the change.
+
 This example deliberately has too few cases for activation. Supported checks are `exact`, `contains`
 and `number` with a finite nonnegative `tolerance`. Files must have flat portable Python names.
 The split uses a recorded seed; expected answers are read by the evaluator, not copied into the
@@ -69,7 +73,11 @@ cases and an independent host evaluator before making a performance claim.
 1. Confirm the returned workflow digest through `metaharness_confirm` and the client's prompt.
 2. Inspect or diagnose the baseline. Propose a change with `metaharness_propose_code`, a JSON mapping
    of filenames to source in `files_json`, and a falsifiable `hypothesis`.
-3. Call `metaharness_evaluate_start`; poll `metaharness_job` until a result or failure is reported.
+3. Call `metaharness_evaluate_start`; poll `metaharness_job` until a result or failure is reported. The tools that
+   run the workflow's code (`metaharness_run`, `metaharness_evaluate_start`, `metaharness_evaluate`) need host
+   permission `metaharness` (or each one, `metaharness.run` and so on) in `G6_MCP_SENSITIVE`, and a workflow runs only
+   once a person confirmed it, as G6 records under its state folder: a confirmation a project's files carry does not
+   count.
 4. Give the returned report and proposal digests to `metaharness_decide`. Preserve the recovery reasons.
 5. Only a recommend decision can proceed to `metaharness_approve`. Same-session client-mediated consent
    is permitted. Missing elicitation, refusal or changed evidence never activates a version.

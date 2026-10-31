@@ -130,6 +130,21 @@ def test_it_names_only_templates_review_parameters_and_bindings_that_exist() -> 
     assert words - tools <= parameters | fields, (words - tools) - (parameters | fields)
 
 
+def test_a_review_starts_from_its_three_inputs_and_the_optional_ones_wait_for_their_shapes() -> None:
+    """The owner's pilot (2026-10-30): both agents' first review calls were refused, Codex's for an intent in the wrong
+    shape, Claude Code's for a template instance's bindings; each fixed its call only after the refusal."""
+    section = " ".join(TEXT.split("## Deliver a coding task with G6", 1)[1].split("\n## ", 1)[0].split())
+    assert ("Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`."
+            in section), section
+    assert ("Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's "
+            "description gives; a refused call names the field to fix.") in section
+    assert "Pass them as `intent`" not in section
+
+
+def test_after_a_no_in_the_form_the_agent_asks_and_offers_no_other_way() -> None:
+    assert "After a decline or cancel, ask the person; offer no other way to confirm." in " ".join(TEXT.split())
+
+
 def test_it_stays_short() -> None:
     body = TEXT.split("---", 2)[2]
     assert len(body.split()) <= MAX_WORDS

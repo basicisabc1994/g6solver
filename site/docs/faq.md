@@ -46,7 +46,7 @@ for your work. It has two parts.
 
 G6 brings the tools, loops, prompts and code, the higher-order functions that compose them, and integrations with
 other systems. You use it through its MCP server (`g6-mcp`, the main surface), as a Python library, from the `g6`
-command line, or as a ready-made [bundle](bundles/index.md).
+command line, or as a ready-made [worked example](bundles/index.md).
 
 ### Where do the components come from?
 From studying how AI agents fail. Some 250 million tokens of agents' reasoning and failure traces were reviewed by
@@ -97,12 +97,23 @@ It is free, and all of it is open source under the Apache License 2.0, including
 plan, no hosted service and no account.
 
 ### Do I need to be a programmer?
-No. Use a [bundle](bundles/index.md): it opens a private page in your browser. Downloads come with the first release.
-Developers and coding agents use the library directly.
+No. There are two ways in that need no programming.
+
+- **Through your coding agent.** With Claude Code or Codex you can build software by describing what you want in
+  plain words, and G6 checks the agent's work before it tells you a task is done. Set it up once with the few commands
+  on [Get started](install.md); after that you only talk to your agent, for example: "Add a page where customers can
+  reset their password. Review the change with G6 before you tell me it's done." The agent writes the code; G6 runs
+  your project's tests in a sandbox, checks that no test was weakened, and gives the agent a short report to show you:
+  what it found, what it could not check, and what still needs your decision. G6 does not make the agent's work
+  correct, and it merges nothing: that stays your call. It reviews Python projects for now.
+- **With a worked example.** Download one and it opens a private page in your browser for one problem, such as
+  checking a draft against your sources. See [Worked examples](bundles/index.md).
+
+Developers use the library directly.
 
 ### Which AI model does it use?
 Yours. A free local model through Ollama, or your own Anthropic, OpenAI or OpenRouter key. G6 calls no model unless
-you choose one, and never picks a paid provider for you. Many components, and 6 of the 10 bundles that work today,
+you choose one, and never picks a paid provider for you. Many components, and 6 of the 10 worked examples that work today,
 need no model at all.
 
 ### Does my data leave my computer?
@@ -125,7 +136,7 @@ was handed cannot see the world. So components give their own work `qualified-dr
 It is built not to. No step raises a label. When results are combined, the overall label is the weakest one. Over
 MCP, a reply with no state is a `qualified-draft`, and nothing is `verified` without evidence.
 
-## Components and bundles
+## Components and worked examples
 
 ### What is a component?
 A small package that does one job, such as `grounding` (check claims against sources) or `action_gating` (allow, ask
@@ -279,10 +290,11 @@ An op a component marks sensitive, because it runs a program on your computer, r
 deletes what it kept or changes your machine, is refused over MCP unless the person who runs the server lists it in
 `G6_MCP_SENSITIVE`. The tables name each one under "Ops refused over MCP". From Python, they run like any other op.
 
-### What is a bundle?
-A ready-made harness for one problem, such as checking a coding agent's "fixed it", reviewing a contract or checking
-GST. There are 11: 10 work today, and the compliance gap check is built and awaits its certificate. A bundle is listed
-only with a test that runs it end to end offline.
+### What is a worked example?
+G6 applied to one problem, such as checking a coding agent's "fixed it", reviewing a contract or checking GST. It does
+not package the whole system: it is a restricted subset of G6's components, set up for that problem and nothing else.
+The code and the releases page call it a bundle. There are 11: 10 work today, and the compliance gap check is built and
+awaits its certificate. A worked example is listed only with a test that runs it end to end offline.
 
 ## Safety
 

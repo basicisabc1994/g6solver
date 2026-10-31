@@ -700,7 +700,7 @@ EXECUTION_TERMS = (
 # COPY: Refused before anything runs: no person allowed G6 to run this repository's code at this revision (WF-007).
 NOT_ALLOWED = ("G6 ran nothing: no person has allowed G6 to run the code of repository {repository!r} at revision "
                "{revision} with its present content. Allow it with g6.workforce.allow_execution, or run "
-               "`python -m g6.workforce.decide allow {repository} --reason \"...\"` yourself, then create the mission "
+               "`python -P -m g6.workforce.decide allow {repository} --reason \"...\"` yourself, then create the mission "
                "again (code G6_E_HUMAN_APPROVAL_REQUIRED).")
 #: The venture's record of each such permission (one evidence row, never a mission's).
 EXECUTION_ALLOWED = "execution.allowed"

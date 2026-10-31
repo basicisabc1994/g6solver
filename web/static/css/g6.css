@@ -442,5 +442,59 @@ body.g6 .cta:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px;
 .hover\:shadow-g6-indigo\/25:hover { box-shadow: none !important; }
 .glass, .section-typo-inner { background: var(--paper-2) !important; border-color: var(--rule) !important;
                               box-shadow: none !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+/* The essays' figures are inline SVGs drawn for the dark site, their colours in their own attributes; a style beats an
+ * attribute, so each colour is mapped onto the tokens here and the figures follow the theme (owner, 2026-10-30). */
+article.py-24 svg [fill="#ef4444"],
+article.py-24 svg [fill="#f87171"],
+article.py-24 svg [fill="#fca5a5"] { fill: var(--bad); }
+article.py-24 svg [fill="#4b5563"],
+article.py-24 svg [fill="#6b7280"],
+article.py-24 svg [fill="#9ca3af"],
+article.py-24 svg [fill="#a5b4fc"] { fill: var(--graphite); }
+article.py-24 svg [fill="#6366f1"],
+article.py-24 svg [fill="#818cf8"],
+article.py-24 svg [fill="#c7d2fe"],
+article.py-24 svg [fill="#d1d5db"],
+article.py-24 svg [fill="#e0e7ff"],
+article.py-24 svg [fill="#fbcfe8"] { fill: var(--ink); }
+article.py-24 svg [fill="rgba(255,255,255,0.02)"],
+article.py-24 svg [fill="rgba(255,255,255,0.03)"],
+article.py-24 svg [fill="rgba(255,255,255,0.04)"],
+article.py-24 svg [fill="rgba(99,102,241,0.03)"],
+article.py-24 svg [fill="rgba(99,102,241,0.04)"],
+article.py-24 svg [fill="rgba(99,102,241,0.05)"],
+article.py-24 svg [fill="rgba(99,102,241,0.06)"],
+article.py-24 svg [fill="rgba(99,102,241,0.08)"],
+article.py-24 svg [fill="rgba(99,102,241,0.10)"],
+article.py-24 svg [fill="rgba(99,102,241,0.15)"],
+article.py-24 svg [fill="rgba(99,102,241,0.2)"] { fill: var(--paper-2); }
+article.py-24 svg [fill="#22c55e"],
+article.py-24 svg [fill="#4ade80"],
+article.py-24 svg [fill="#6ee7b7"],
+article.py-24 svg [fill="#86efac"] { fill: var(--teal-ink); }
+article.py-24 svg [fill="#d97706"],
+article.py-24 svg [fill="#f59e0b"],
+article.py-24 svg [fill="#fbbf24"] { fill: var(--warn); }
+article.py-24 svg [stop-color="#6366f1"] { stop-color: var(--ink); }
+article.py-24 svg [stop-color="#22c55e"] { stop-color: var(--teal-ink); }
+article.py-24 svg [stroke="#ef4444"],
+article.py-24 svg [stroke="#f87171"] { stroke: var(--bad); }
+article.py-24 svg [stroke="#6b7280"],
+article.py-24 svg [stroke="#9ca3af"] { stroke: var(--graphite); }
+article.py-24 svg [stroke="#6366f1"],
+article.py-24 svg [stroke="#8b5cf6"] { stroke: var(--ink); }
+article.py-24 svg [stroke="rgba(255,255,255,0.05)"],
+article.py-24 svg [stroke="rgba(255,255,255,0.06)"],
+article.py-24 svg [stroke="rgba(255,255,255,0.08)"],
+article.py-24 svg [stroke="rgba(255,255,255,0.10)"],
+article.py-24 svg [stroke="rgba(255,255,255,0.12)"],
+article.py-24 svg [stroke="rgba(255,255,255,0.15)"],
+article.py-24 svg [stroke="rgba(255,255,255,0.2)"],
+article.py-24 svg [stroke="rgba(99,102,241,0.2)"],
+article.py-24 svg [stroke="rgba(99,102,241,0.3)"] { stroke: var(--rule); }
+article.py-24 svg [stroke="#10b981"],
+article.py-24 svg [stroke="#22c55e"] { stroke: var(--teal-ink); }
+article.py-24 svg [stroke="#f59e0b"],
+article.py-24 svg [stroke="#fbbf24"] { stroke: var(--warn); }
 [class*="blur-["] { display: none !important; }
 body.g6 .font-mono { font-family: var(--mono); }

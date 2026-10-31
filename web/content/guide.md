@@ -485,7 +485,7 @@ sequenceDiagram
     Note over A,S: verified only with evidence, otherwise qualified-draft or blocked-escalated
 ```
 
-**Not a programmer?** Download a ready-made [bundle](../bundles/index.md) instead — no installation of Python needed.
+**Not a programmer?** Download a ready-made [worked example](../bundles/index.md) instead — no installation of Python needed.
 
 ## Your First Workflow
 

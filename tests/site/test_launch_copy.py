@@ -132,6 +132,20 @@ def test_patch_review_says_the_patch_runs_in_pytests_own_process():
     assert OWN_PROCESS in section and PATCH_REVIEW_BOUNDARY in section
 
 
+#: The owner's pilot (2026-10-30): a workflow's files live in the project's .g6 folder, untracked unless ignored.
+IGNORE_G6 = ("A workflow's files live in the .g6/ folder of the project G6 was started in, so start the meta-harness "
+             "from a folder outside any repository you review with patch review: a review there counts those files as "
+             "part of the change.")
+
+
+def test_the_workflow_docs_say_to_keep_workflows_out_of_a_reviewed_repository():
+    """The fresh review of the pilot's fixes: git-ignoring .g6/ can make G6 judge its own main.py as a file that could
+    replace a tracked module, so the docs never tell a person to ignore it."""
+    for name in ("README.md", "docs/AI_FOR_AI_WORKFLOW.md"):
+        text = _plain((OSS / name).read_text(encoding="utf-8"))
+        assert IGNORE_G6 in text and "add .g6/ to" not in text, name
+
+
 #: L1 (the owner's decision): G6's own environment, made with --copies, and why.
 OWN_ENVIRONMENT = "python -m venv --copies"
 WHY_COPIES = ("on Linux, G6 cannot yet tell its own Python from a project environment linked to the same one, and "
@@ -165,9 +179,11 @@ def test_the_home_pages_quick_start_first_makes_g6s_own_environment_and_links_ge
     assert 'href="/get-started/"' in before   # the line links to Get started
 
 
-def test_the_release_notes_say_what_ships_what_does_not_and_leave_the_version_to_the_owner():
+def test_the_release_notes_say_what_ships_what_does_not_and_name_the_version_the_owner_set():
+    import g6
     notes = shipped()["docs/releases/launch.md"]
-    assert notes.startswith("# G6 VERSION-TO-BE-SET-BY-THE-OWNER")
+    assert notes.startswith(f"# G6 {g6.__version__}: ")   # the owner set it, 2026-10-29
+    assert "VERSION-TO-BE-SET" not in notes
     for part in ("## What ships", "## What does not ship", "## Limits", "G6's own model calls", "V9 and V10",
                  "plugins and hooks", "Venture", "continuous integration check", "macOS", "Python first"):
         assert part in notes, part

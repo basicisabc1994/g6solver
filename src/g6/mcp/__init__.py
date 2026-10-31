@@ -20,7 +20,10 @@ Ops a component marks sensitive (they run a program on your machine, reach the n
 this surface unless the person who runs the server lists them in ``G6_MCP_SENSITIVE``, a comma-separated list of
 component names (``lean``) or single ops (``lean.check_proof``), set where the server is registered, for example
 ``claude mcp add g6 -e G6_MCP_SENSITIVE=lean -- g6-mcp``. There is no wildcard, and the agent cannot set it: the
-server reads it from its own environment. ``g6_describe`` says which sensitive ops this server allows. Before you list
+server reads it from its own environment. The meta-harness tools that run a workflow's code are sensitive too:
+``metaharness.run``, ``metaharness.evaluate_start`` and ``metaharness.evaluate`` (``metaharness`` for all three); and
+a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
+project's files carry does not count. ``g6_describe`` says which sensitive ops this server allows. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -238,9 +241,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         insufficient_evidence (no requirement, a requirement with no check, a check that did not run or ran out of
         time, a run whose tests all passed by pytest's own count but whose process then exited with an error
         (run_inconsistent; exit 0 with a failure, an error or fewer tests finished is a run that cannot be believed),
-        a shortcut only the claim reports, or a proposed or compiled check's unconfirmed_counterexample or
+        a shortcut only the claim reports, a requirement with no check independent of the patch
+        (checks_written_with_patch), or a proposed or compiled check's unconfirmed_counterexample or
         unconfirmed_failure);
-        supported_within_scope (every requirement passed its stated checks: support on those checks only, never proof
+        supported_within_scope (every requirement passed its stated checks, at least one of them not written by the
+        patch and, for new behaviour, failing at the base commit: support on those checks only, never proof
         the patch is complete; a check that also passes on the base commit's code is listed in unknowns). Each is
         qualified-draft. A refusal is blocked-escalated with no outcome. Test receipts are kept in a file owned by the
         same user as G6: they stop a caller from claiming that G6 ran a test, not a program running as that user. merge
@@ -302,7 +307,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                     "The baseline and generated candidates execute Python inside the configured boundary. "
                     "Future activation requires separate consent. Type your name; identity is recorded as given.")
         consent = await request_consent(ctx, question)
-        if consent.status != "accepted":
+        if consent.status in ("declined", "cancelled"):   # the person said no, or closed the form (the owner's pilot)
+            return consent_refusal(consent, next_action=(
+                "No change was made. The person declined or closed the form: ask the person whether they want to "
+                "confirm before calling metaharness_confirm again, and never offer another way to confirm."))
+        if consent.status != "accepted":   # no form, or no name with acceptance: the person can confirm in a terminal
             return consent_refusal(consent, next_action=(
                 f'From the project directory, the user can inspect with g6 workflow inspect {workflow}, then '
                 f'personally confirm with g6 workflow confirm {workflow} {workflow_digest} --as "Your name".'))
@@ -320,9 +329,19 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         except (ValueError, TypeError) as exc:
             return blocked_reply(f"[G6_E_INPUT_VALIDATION] {exc}")
 
+    def runs_code(op: str) -> dict | None:
+        """The refusal of a tool that runs a workflow's code, unless the host lists ``metaharness.<op>`` (or
+        ``metaharness``) in G6_MCP_SENSITIVE (the security review of W1-W5, F2)."""
+        if _allowed("metaharness", op, allowed_sensitive()):
+            return None
+        from g6.core.door import blocked_reply
+        return blocked_reply(f"{_DENIED} metaharness.{op} runs the workflow's code; the host must allow it, by adding "
+                             f"metaharness.{op} (or metaharness) to {SENSITIVE_ENV} where the server is registered")
+
     def metaharness_evaluate_start(workflow: str, proposal_digest: str) -> dict:
-        """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied."""
-        return jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
+        """Start a bounded evaluation job. Poll metaharness_job for its result; no approval is implied. It runs the
+        workflow's code: requires host permission metaharness.evaluate_start in G6_MCP_SENSITIVE."""
+        return runs_code("evaluate_start") or jobs.start(lambda: mh.evaluate(workflow, proposal_digest))
 
     def metaharness_job(job_id: str, detail: str = "compact") -> dict:
         """Read a process-local job's pending/running/completed/failed status and retained result. A finished
@@ -332,8 +351,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return jobs.status(job_id, detail)
 
     def metaharness_run(workflow: str, task_input: str) -> dict:
-        """Run the currently approved application version on new input as a job."""
-        return jobs.start(lambda: mh.run(workflow, task_input))
+        """Run the currently approved application version on new input as a job. It runs the workflow's code:
+        requires host permission metaharness.run in G6_MCP_SENSITIVE."""
+        return runs_code("run") or jobs.start(lambda: mh.run(workflow, task_input))
 
     def metaharness_inspect(workflow: str) -> dict:
         """A declared workflow's versions, confirmations, evaluations and decisions."""
@@ -351,8 +371,9 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return mh.propose(workflow, session=session(ctx), profile=profile, proposer=proposer)
 
     def metaharness_evaluate(workflow: str, proposal_digest: str) -> dict:
-        """Measure a candidate against the active version on the held-out split (paired, compute-matched)."""
-        return mh.evaluate(workflow, proposal_digest)
+        """Measure a candidate against the active version on the held-out split (paired, compute-matched). It runs the
+        workflow's code: requires host permission metaharness.evaluate in G6_MCP_SENSITIVE."""
+        return runs_code("evaluate") or mh.evaluate(workflow, proposal_digest)
 
     def metaharness_decide(workflow: str, report_digest: str, proposal_digest: str) -> dict:
         """The meta-gate's decision: recommend (qualified-draft at best), refuse or block, with a G6_E_META_* code.

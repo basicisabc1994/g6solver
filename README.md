@@ -61,9 +61,9 @@ G6 gets an environment of its own, made with `--copies`: on Linux, G6 cannot yet
 environment linked to the same one, and refuses to review then.
 
 `g6 setup` registers this installation with the client (`claude mcp add` or `codex mcp add`, with this installation's
-Python, started with `-P` so that the packages in the project's folder never replace G6's own), installs the `using-g6`
-skill for it, and allows patch review, the one sensitive operation the first review needs. Restart the client
-afterwards. Its last lines show the first review call.
+Python, started with `-P` so that the packages in the project's folder never replace G6's own), installs this
+version's `using-g6` skill for it (replacing an earlier copy), and allows patch review, the one sensitive operation the
+first review needs. Restart the client afterwards. Its last lines show the first review call.
 
 If the client already has an entry called `g6`, setup leaves it as it is and stops. See it with `claude mcp get g6` (or
 `codex mcp get g6`). To replace it, remove it with `claude mcp remove --scope user g6` (or `codex mcp remove g6`), then
@@ -140,6 +140,8 @@ print(ev.gate_decision.decision)    # block: irreversible and public, with no ve
 
 Start with [the AI-for-AI workflow](docs/AI_FOR_AI_WORKFLOW.md). The loop is:
 `metaharness_start` -> confirm -> diagnose -> propose code with a hypothesis -> evaluate -> decide -> client consent -> run.
+A workflow's files live in the `.g6/` folder of the project G6 was started in, so start the meta-harness from a folder
+outside any repository you review with patch review: a review there counts those files as part of the change.
 Use `g6_compose` for explicit component connections. `g6_review_patch` is the first reference application: give
 it the patched repository, the task, and the requirements the patch must meet, each with the tests that check it.
 You can also give it the task's intent: its success criteria become requirements and its non-goals and failure
@@ -216,6 +218,17 @@ recommending a new release.
 Until a pre-registered study says otherwise, treat G6 as careful engineering, not as a proven uplift. The studies run
 so far, including how G6 with its default settings compares with one direct model call, are on the
 [Research](site/docs/research.md) page, as a worked example.
+
+## What happened when we tried it
+
+We gave Claude Code with Claude Sonnet 5.5 ten recent, real bugs in black, pydantic, starlette, click, attrs and
+fastapi, with G6 over MCP. G6 reproduced no defect. Six of the ten patches failed the maintainers' tests: G6 asked for
+more evidence, accepted the patch within the checks the agent stated, or raised an alarm that turned out to be false.
+We fixed what it taught us. That is G6 today: a careful, isolated check of what your agent states, not yet a defect
+finder. A second round turned on G6's own model, also Claude Sonnet 5.5, in every review of the same ten bugs: it
+proposed 51 checks, and none found a defect. Five of the ten new patches failed the maintainers' tests. Every run,
+with its plan fixed before the first one, is in
+[validation/worked_examples](https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md).
 
 ## G6 maintaining G6, in public
 

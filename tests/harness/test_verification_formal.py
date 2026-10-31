@@ -256,6 +256,7 @@ def test_a_state_invariant_that_does_not_apply_or_is_over_the_limits_is_refused_
     assert got["ok"] is True and got["assessment"]["outcome"] == "supported_within_scope", got
     found = _instance(got)
     assert found["result"] == "refused" and said in found["reason"], found
+    assert "proposed_checks" in found["reason"], found             # a refusal says where the check can go instead
     assert replays.calls == [] and not _activities(got, "model check")
 
 

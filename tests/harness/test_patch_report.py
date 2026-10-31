@@ -306,3 +306,85 @@ def test_a_proposed_checks_reproduction_carries_g6s_caution():
     report = patch_report.render(assessment)
     line = next(line for line in report.splitlines() if line.lstrip().startswith("- Reproduce: write its text"))
     assert "Read it before you run it, or run it in a container." in line, line
+
+
+# --- the owner's pilot (2026-10-30) -------------------------------------------------------------------------------
+
+def _with_base(outcomes: dict[str, str], **fields) -> dict:
+    """MINIMAL with one requirement demonstrated on ``outcomes``'s checks, and the base run's verdict for each."""
+    return {**MINIMAL, **fields,
+            "completion": {"demonstrated": [{"requirement": "R1", "kind": "requirement", "checks": list(outcomes)}],
+                           **fields.get("completion", {})},
+            "scope": {**MINIMAL["scope"], "checks_run": [
+                {"check": "stated checks at the base commit", "verdict": "failed", "outcomes": outcomes}]}}
+
+
+def _tested(report: str) -> str:
+    return next(line for line in report.splitlines() if line.startswith("- **Tested"))
+
+
+def test_checks_that_could_not_run_at_the_base_commit_are_never_said_to_fail_there():
+    """A test file that imports a name the patch adds cannot load at the base commit: its checks did not run there."""
+    report = patch_report.render(_with_base({"t.py::a": "not_run", "t.py::b": "not_run"}))
+    assert "fails at the base commit" not in report and "so they exercise the change" not in report
+    assert ("the stated checks could not run at the base commit, so G6 cannot say whether they exercise the change"
+            in _tested(report)), _tested(report)
+
+
+def test_a_mixed_base_run_counts_each_kind_in_plain_words():
+    report = patch_report.render(_with_base({"t.py::a": "failed", "t.py::b": "passed", "t.py::c": "not_run"}))
+    tested = _tested(report)
+    assert "1 of the 3 stated checks fails at the base commit" in tested, tested
+    assert "1 passes there too" in tested and "1 could not run there" in tested, tested
+
+
+def test_the_unknowns_are_listed_not_only_counted():
+    report = patch_report.render({**MINIMAL, "unknowns": ["first unknown", "second unknown"]})
+    decide = report.split("## For you to decide", 1)[1].split("##", 1)[0]
+    assert "`first unknown`" in decide and "`second unknown`" in decide, decide
+    assert "assessment.unknowns" not in decide
+    assert decide.strip().splitlines()[-1] == "- Merging: it needs your separate approval; G6 never merges."
+
+
+def test_many_unknowns_are_cut_at_the_reports_limit_and_say_where_the_rest_are():
+    report = patch_report.render({**MINIMAL, "unknowns": [f"unknown {i}" for i in range(9)]})
+    decide = report.split("## For you to decide", 1)[1].split("##", 1)[0].strip().splitlines()
+    assert len(decide) <= patch_report.BUDGET["decide"], decide
+    assert any("more (`assessment.unknowns`)" in line for line in decide), decide
+    assert decide[-1] == "- Merging: it needs your separate approval; G6 never merges."
+
+
+def test_the_agents_own_checks_are_reported_with_their_results_and_decide_nothing():
+    """The pilot's T1 and T2 ran and were not refuted, yet the report never named them."""
+    activities = [{"activity": "template instance", "check": "T1", "requirement": "R1", "result": "not_refuted"},
+                  {"activity": "proposed check", "check": "keep", "requirement": "R2", "result": "fails_on_base_too"},
+                  {"activity": "check run", "tier": 1, "what": "stated checks and extra tests", "result": "passed"}]
+    report = patch_report.render({**MINIMAL, "completion": {"activities": activities}})
+    tested = _tested(report)
+    assert "which never pass a requirement" in tested and "decide nothing" not in tested, tested
+    assert "`T1` for `R1`: not refuted" in tested and "`keep` for `R2`: fails at the base commit too" in tested, tested
+
+
+def test_a_structural_instances_result_is_said_in_plain_words_and_not_said_to_decide_nothing():
+    """The fresh review of the pilot's fixes: a failed forbidden_dependency.v1 instance against a stated contract is a
+    defect, so the Tested step may not call it a check that decides nothing, and says its result in words."""
+    activities = [{"activity": "template instance", "check": "FD1", "requirement": "R1", "result": "failed",
+                   "provenance": "structural"},
+                  {"activity": "template instance", "check": "FD2", "requirement": "R2", "result": "vacuous"}]
+    tested = _tested(patch_report.render({**MINIMAL, "outcome": "defect_detected",
+                                          "completion": {"activities": activities}}))
+    assert "`FD1` for `R1`: failed" in tested and "``failed``" not in tested and "`failed`" not in tested, tested
+    assert "`FD2` for `R2`: vacuous" in tested and "decide nothing" not in tested and "(above)" not in tested, tested
+
+
+def test_the_gate_says_when_a_proposed_check_could_not_be_judged():
+    # worked examples, round 3: "nothing else was found" stood beside two checks that never ran
+    assessment = {"outcome": "supported_within_scope", "completion": {"activities": [
+        {"activity": "proposed check", "check": "D1", "result": "check_error"}]}}
+    assert "1 proposed check could not be judged" in patch_report._gate_note(assessment)
+    assert patch_report._gate_note({"outcome": "supported_within_scope", "completion": {"activities": []}}) == ""
+
+
+def test_the_gates_note_counts_only_proposed_and_template_checks():
+    assessment = {"completion": {"activities": [{"activity": "check run", "result": "check_error"}]}}
+    assert patch_report._gate_note(assessment) == ""

@@ -56,13 +56,14 @@ from g6.metaharness.schema import (
     SCHEMA,
     SELECTED,
     STANDARD_CHANGED,
+    WORKFLOW_INVALID,
     Profile,
     Proposal,
     Workflow,
     parse_profile,
     profile_diff,
 )
-from g6.metaharness.store import ProfileStore, RunLedger
+from g6.metaharness.store import APPROVED_KINDS, ProfileStore, RunLedger, _resolve
 
 #: The code that judges a change: pinned at confirmation, compared before every decision (MH-4).
 JUDGING_PATTERNS = ("metaharness/evaluate.py", "metaharness/gate.py", "metaharness/store.py", "metaharness/schema.py",
@@ -133,6 +134,49 @@ def _rebuilt(kind: str, body: dict[str, Any]) -> Proposal | EvaluationReport | G
     return GateDecision(**{**fields, "reasons": tuple(fields["reasons"]), "checks": tuple(fields.get("checks", ()))})
 
 
+#: Why a confirmation a workflow's own files carry is not the person's (the security review of W1-W5, F2): workflows are
+#: found in the folder G6 starts in, the project's, and a store there is a hash chain with no secret, so a project could
+#: ship one "confirmed" under any name. A confirmation counts only when G6 recorded it under its own state folder when a
+#: person confirmed (``confirmations_path``).
+NOT_RECORDED = ("the confirmation this workflow's own files carry was not recorded by G6 when a person confirmed it, "
+                "so it is not counted (a project's files can carry one)")
+
+
+def confirmations_path(workspace: Path) -> Path:
+    """Where G6 records a person's confirmation of the workflow in ``workspace``: under G6's state folder, by the
+    workspace's own path, never inside the workspace."""
+    import os
+
+    key = hashlib.sha256(os.path.normcase(str(workspace.resolve())).encode("utf-8")).hexdigest()
+    return g6_home() / "metaharness" / "confirmations" / f"{key}.json"
+
+
+def versions_path(workspace: Path) -> Path:
+    """Where G6 records each version it made the head of ``workspace``'s store here (the initial version a person's
+    confirmation starts, an activation and a rollback a person asked for, the monitor's demotion), beside the
+    confirmation (the fresh review of the F1-F8 fix pass, finding 2): a version row the project's files carry, or one
+    written into the store since, is never the version that runs."""
+    confirmation = confirmations_path(workspace)
+    return confirmation.parent.parent / "versions" / confirmation.name
+
+
+def _write_state(target: Path, data: Any) -> None:
+    """``data`` as JSON at ``target``, replaced whole (a reader sees the old file or the new one); ``OSError`` when it
+    cannot be written."""
+    import json
+    import os
+    import tempfile
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.parent.name}-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+            json.dump(data, out, sort_keys=True)
+        os.replace(name, target)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
 class MetaHarness:
     def __init__(self, workflow: Workflow, factory: ExecutorFactory | None, workspace: Path, *,
                  theories: TheoryStore | None, clock: Callable[[], float],
@@ -153,9 +197,15 @@ class MetaHarness:
         self._online: Strategy | None = None
         if not problems:
             workspace.mkdir(parents=True, exist_ok=True)
-            self.store = ProfileStore(workspace / "store.jsonl")
-            self.ledger = RunLedger(workspace / "ledger.jsonl")
-            problems += self._live_leaks()
+            try:
+                self.store = ProfileStore(workspace / "store.jsonl")
+                self.ledger = RunLedger(workspace / "ledger.jsonl")
+            except LedgerError as exc:   # a row breaks the store's rules, as a forged profile row does (I1): nothing runs
+                self.store = self.ledger = None
+                problems.append((WORKFLOW_INVALID, f"the workflow's store or run ledger does not verify ({exc}); "
+                                 f"remove its workspace ({workspace}) if you did not make it"))
+            else:
+                problems += self._live_leaks()
             self._problems = problems
         code, why = problems[0] if problems else ("G6_E_META_READY", "")
         self.envelope = (_blocked(code, "; ".join(p for _, p in problems), "Fix the workflow; then adapt again.",
@@ -214,15 +264,65 @@ class MetaHarness:
             if confirmed is None:
                 return _blocked(NOT_CONFIRMED, "a person has not confirmed the workflow",
                                 "mh.confirm(accepted_by='<your name>')")
+            if not self._recorded_confirmation(confirmed):
+                return _blocked(NOT_CONFIRMED, NOT_RECORDED,
+                                "A person inspects the workflow and confirms it: mh.confirm(accepted_by='<your name>').")
             if confirmed["workflow_digest"] != self.workflow.digest():
                 return _blocked(STANDARD_CHANGED, "the workflow changed since it was confirmed; every earlier "
                                 "comparison is void", "Confirm the new workflow (a person), then baseline again.")
+            if not self._ours():
+                return _blocked(NOT_CONFIRMED, "no version of this workflow that a person approved here is recorded "
+                                "by G6, so none runs", "A person confirms the workflow again: "
+                                "mh.confirm(accepted_by='<your name>'); it starts from its initial version.")
         return None
 
+    def _recorded_confirmation(self, confirmed: Mapping[str, Any]) -> bool:
+        """Whether ``confirmed``, the store's latest confirmation, is the one G6 recorded under its state folder."""
+        import json
+
+        try:
+            return json.loads(confirmations_path(self.workspace).read_text(encoding="utf-8")) == dict(confirmed)
+        except (OSError, ValueError):
+            return False
+
+    def _record_confirmation(self) -> None:
+        """Record the store's latest confirmation under G6's state folder (``confirmations_path``); ``OSError`` when it
+        cannot be written."""
+        _write_state(confirmations_path(self.workspace), self.store.confirmed())
+
+    def _ours(self) -> list[dict]:
+        """The store's version rows G6 recorded here as it appended them (``versions_path``), oldest first."""
+        import json
+
+        try:
+            recorded = {(int(number), str(profile)) for number, profile in
+                        json.loads(versions_path(self.workspace).read_text(encoding="utf-8"))}
+        except (OSError, ValueError, TypeError):
+            recorded = set()
+        return [row for row in self.store.versions() if (row["version"], row["profile_digest"]) in recorded]
+
+    def _append(self, kind: str, profile: Profile, **fields: Any) -> int:
+        """``store.append_version``, then recorded under G6's state folder; ``OSError`` when the record cannot be
+        written, and then the new row does not count."""
+        number = self.store.append_version(kind, profile, **fields)
+        self._record(number)
+        return number
+
+    def _record(self, number: int) -> None:
+        """Record the store's version ``number`` under G6's state folder (``versions_path``); ``OSError`` when the
+        record cannot be written."""
+        _write_state(versions_path(self.workspace), sorted(
+            {(row["version"], row["profile_digest"]) for row in self._ours()}
+            | {(number, self.store.versions()[number]["profile_digest"])}))
+
+    def _approved_here(self, version: int) -> bool:
+        """Whether ``version`` is a version a person approved here: an initial or activated version G6 recorded."""
+        return any(row["version"] == version and row["kind"] in APPROVED_KINDS for row in self._ours())
+
     def _head(self) -> tuple[int, Profile]:
-        head = self.store.head()
-        assert head is not None  # confirm writes version 0
-        return head
+        ours = self._ours()
+        assert ours  # a recorded confirmation starts a recorded version
+        return ours[-1]["version"], self.store.profile(ours[-1]["profile_digest"])
 
     def _vault_changed(self) -> dict[str, Any] | None:
         """The sealed held-out file, when there is one, must be exactly what was sealed (ECHA-10; audit 037)."""
@@ -315,12 +415,27 @@ class MetaHarness:
             if not self.ledger.has("vault", vault.vault_id):
                 self.ledger.add_vault(vault.vault_id, vault.digest, files=len(vault.manifest), roots=len(vault.roots))
         existing = self.store.confirmed()
-        # a new workflow, or G6's judging code changed since (an upgrade): the person's confirmation pins it again
-        if existing is None or existing["workflow_digest"] != digest_now or existing.get("judging_sha256") != judging:
-            self.store.confirm(workflow_digest=digest_now, judging_sha256=judging,
-                               held_out_digest=self.workflow.suite.digest("held_out"), accepted_by=accepted_by,
-                               at=_now())
-        if self.store.head() is None:
+        # a new workflow, or G6's judging code changed since (an upgrade), or a confirmation G6 never recorded (one the
+        # workflow's own files carry, F2): the person's confirmation pins it again
+        if (existing is None or existing["workflow_digest"] != digest_now or existing.get("judging_sha256") != judging
+                or not self._recorded_confirmation(existing)):
+            try:
+                self.store.confirm(workflow_digest=digest_now, judging_sha256=judging,
+                                   held_out_digest=self.workflow.suite.digest("held_out"), accepted_by=accepted_by,
+                                   at=_now())
+            except LedgerError as exc:
+                return _blocked(APPROVAL_REQUIRED, f"the store refused the confirmation: {exc}",
+                                "Remove the workflow's folder if you did not make it, then create the workflow again.")
+        try:
+            self._record_confirmation()
+        except OSError as exc:
+            return _blocked(APPROVAL_REQUIRED, f"G6 could not record the confirmation in its state folder "
+                            f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
+                            "confirm again.")
+        # No version G6 recorded here (a new workflow, or one whose files carry versions: the fresh review of the F1-F8
+        # fix pass, finding 2): the workflow starts from the initial version this confirmation makes. A store holding
+        # versions already counts its version 0 only when it is exactly that version; no later row ever counts.
+        if not self._ours():
             first = initial if initial is not None else Profile(
                 routing={s: next(iter(self.workflow.models)) for s in self.workflow.steps},
                 pipeline=tuple(n for n, s in self.workflow.pipeline_steps.items() if s.mandatory))
@@ -328,14 +443,31 @@ class MetaHarness:
             problems = profile.problems_for(self.workflow) if profile else [(SCHEMA, why)]
             if problems:
                 return _blocked(SCHEMA, "; ".join(p for _, p in problems), "Fix the initial profile.")
-            self.store.append_version("initial", profile, at=_now(), accepted_by=accepted_by,
-                                      ledger_head=self.ledger.head())
+            versions = self.store.versions()
+            if versions and versions[0]["profile_digest"] != profile.digest():
+                return _blocked(APPROVAL_REQUIRED, "this workflow's store starts from an initial version other than "
+                                "the one this confirmation makes, so no version in it is one a person approved here",
+                                f"Remove the workflow's workspace ({self.workspace}) if you did not make it, then "
+                                "confirm again.")
+            try:
+                if versions:
+                    self._record(0)
+                else:
+                    self._append("initial", profile, at=_now(), accepted_by=accepted_by,
+                                 ledger_head=self.ledger.head())
+            except OSError as exc:
+                return _blocked(APPROVAL_REQUIRED, f"G6 could not record the initial version in its state folder "
+                                f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, "
+                                "then confirm again.")
         version, profile = self._head()
+        ours = {row["version"] for row in self._ours()}
+        not_counted = [row["version"] for row in self.store.versions() if row["version"] not in ours]
+        extra = {"versions_not_counted": not_counted} if not_counted else {}
         return _envelope("qualified-draft", "G6_E_META_CONFIRMED", "workflow confirmed and frozen",
                          next_action="Inspect the confirmed workflow, then propose a candidate and request a bounded evaluation.", workflow_digest=digest_now, judging_sha256=judging,
                          held_out_digest=self.workflow.suite.digest("held_out"), head_version=version,
                          head_profile=profile.digest(), accept_risky=self.workflow.accept_risky,
-                         identity="accepted_by is recorded as given")
+                         identity="accepted_by is recorded as given", **extra)
 
     @_serialized
     def candidate(self, profile: Profile | Mapping[str, Any], *, proposer: str, strategy: str = "hand-written",
@@ -631,11 +763,15 @@ class MetaHarness:
                             "candidate_digest='<the candidate_digest on the card>').", card=card, decision=decision)
         snap = self._snapshot(version + 1)
         try:
-            number = self.store.append_version("activate", proposal.candidate, at=_now(), accepted_by=who,
-                                               decision_digest=decision.digest(), proposer=decision.proposer,
-                                               ledger_head=self.ledger.head(), snapshot=snap)
+            number = self._append("activate", proposal.candidate, at=_now(), accepted_by=who,
+                                  decision_digest=decision.digest(), proposer=decision.proposer,
+                                  ledger_head=self.ledger.head(), snapshot=snap)
         except LedgerError as exc:
             return _blocked(APPROVAL_REQUIRED, f"the store refused the activation: {exc}")
+        except OSError as exc:
+            return _blocked(APPROVAL_REQUIRED, f"G6 could not record the activation in its state folder "
+                            f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
+                            "activate again.")
         return _envelope("qualified-draft", "G6_E_META_ACTIVATED", f"version {number} is active",
                          next_action="Live runs now use it; the monitor compares it with the previous version.",
                          head_version=number, head_profile=proposal.candidate_digest, snapshot=snap,
@@ -816,8 +952,13 @@ class MetaHarness:
 
     # --- Phase 3: the monitor and opt-in online tuning --------------------------------------------------------------
     def _previous_approved(self) -> int | None:
-        current = self.store.current_approved()
-        earlier = [n for n in self.store.approved() if current is not None and n < current]
+        """The approved version before the one the head stands for, among the versions G6 recorded here (``_ours``):
+        an audit runs its code, and the monitor's demotion moves the head to it."""
+        ours = self._ours()
+        if not ours:
+            return None
+        current = _resolve(self.store.versions(), ours[-1]["version"])["version"]
+        earlier = [row["version"] for row in ours if row["kind"] in APPROVED_KINDS and row["version"] < current]
         return earlier[-1] if earlier else None
 
     def _audit(self, task_input: str, run_id: str, version: int, released: bool) -> dict[str, Any] | None:
@@ -877,11 +1018,10 @@ class MetaHarness:
             return _envelope("qualified-draft", "G6_E_META_MONITOR", "no live drift detected", audit=summary, observations=observations, promotion=promotion,
                              next_action="Keep running; the monitor compares a share of runs with the previous version.")
         target = self.store.versions()[previous]
-        number = self.store.append_version("demote", self.store.profile(target["profile_digest"]), at=_now(),
-                                           accepted_by="monitor", target_version=previous,
-                                           ledger_head=self.ledger.head(),
-                                           reason=f"drift: mean difference {verdict.mean_difference} over "
-                                                  f"{verdict.pairs} audited runs > {verdict.threshold}")
+        number = self._append("demote", self.store.profile(target["profile_digest"]), at=_now(),
+                              accepted_by="monitor", target_version=previous, ledger_head=self.ledger.head(),
+                              reason=f"drift: mean difference {verdict.mean_difference} over "
+                                     f"{verdict.pairs} audited runs > {verdict.threshold}")
         self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
                                                          "now_version": number, "audit": summary})
         return _blocked(DRIFT_DEMOTED, f"version {version} fell behind the previous approved version on its audited "
@@ -979,11 +1119,16 @@ class MetaHarness:
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person must ask for a rollback (no empty or auto: name)")
         versions = self.store.versions()
-        if not 0 <= version < len(versions) or versions[version]["kind"] not in ("initial", "activate"):
-            return _blocked(APPROVAL_REQUIRED, f"version {version} is not a version a person approved")
+        if not self._approved_here(version):
+            return _blocked(APPROVAL_REQUIRED, f"version {version} is not a version a person approved here")
         profile = self.store.profile(versions[version]["profile_digest"])
-        number = self.store.append_version("rollback", profile, at=_now(), accepted_by=who, target_version=version,
-                                           ledger_head=self.ledger.head(), snapshot=self._snapshot(len(versions)))
+        try:
+            number = self._append("rollback", profile, at=_now(), accepted_by=who, target_version=version,
+                                  ledger_head=self.ledger.head(), snapshot=self._snapshot(len(versions)))
+        except OSError as exc:
+            return _blocked(APPROVAL_REQUIRED, f"G6 could not record the rollback in its state folder "
+                            f"({type(exc).__name__}), so it does not count", "Make G6's state folder writable, then "
+                            "roll back again.")
         return _envelope("qualified-draft", "G6_E_META_ROLLED_BACK", f"version {number} points at version {version}",
                          head_version=number, head_profile=profile.digest())
 

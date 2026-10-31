@@ -11,11 +11,11 @@ The evaluator, authorization rules and promotion gate remain outside the candida
 
 ## Deliver a coding task with G6
 
-For a Python task, work in this order, lean in words.
+For a Python task, work in this order.
 
 1. **Intent.** Read the task, the project's docs and the code. Write the person's most likely intended design and
-   goals in a few lines. Pass them as `intent`, or as numbered `requirements`, `{"id": "R1", "text": ..., "checks":
-   [...]}`, each check a pytest node id.
+   goals in a few lines, as numbered `requirements`, `{"id": "R1", "text": ..., "checks": [...]}`, each check a pytest
+   node id.
 2. **This project's risks**, a premortem, not a generic list: edge cases, behaviour that must stay the same, who may do
    what, data or money that must never be lost, state that must never go wrong, tests too weak to catch a defect, a
    misleading environment, and G6 misreading the intent. Map each risk to a check: a repository test, a new
@@ -28,27 +28,30 @@ For a Python task, work in this order, lean in words.
    "for this input the original does A and the change would do B; which do you intend?" Probe the code for the rest.
    Never assume an answer: an unanswered question stays open in the report.
 4. **Acceptance first, then test first.** Write acceptance tests for what the person's own users must be able to do,
-   through the product's real interface (its API, command line or handlers), and for usability and fitness for purpose
+   through the product's real interface, and for usability and fitness for purpose
    wherever a test can show it. They become the numbered requirements, each with its stated check. Then unit tests,
    then the code.
 5. **Critical parts, formally.** Model them with `state_invariant.v1` (its `model` states the variables, actions and
    invariants; its `actions` bind them to the code's operations; its `observe` reads each variable from the real
-   state). G6 searches the model and replays each trace it finds on the real code. A result about the model is about the model only; only a reproduced trace is a finding
+   state). G6 searches the model and replays each trace on the real code. A result about the model is about the model only; only a reproduced trace is a finding
    about the code. A model never proves the code correct.
-6. **Review.** Call `g6_review_patch` with the requirements and their stated checks, the template instances and any
-   `proposed_checks` of your own, then poll `metaharness_job`. It needs host permission `patch_review.review`, which
-   the person grants with `g6 setup`; never change permissions yourself. Show the reply's `assessment["report"]`
-   verbatim. The full assessment, each reproduction's text included, is in the file its full_assessment names.
+6. **Review.** Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`.
+   Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's description
+   gives; a refused call names the field to fix. It needs host permission
+   `patch_review.review`, which the person grants with `g6 setup`; never change permissions yourself. Show the reply's
+   `assessment["report"]` verbatim. The full assessment is in the file its full_assessment names.
 7. **Repair.** Fix what G6 reproduced. Add each earlier reproduction as a stated check (a proposed check's
    reproduction is a test file: add it to the repository's tests and list its node id), so the person sees the fix
    pass the original counterexample. Review again. Stop after 3 rounds, when a round changes nothing, or when the
    report says only the person can decide.
 8. **Honesty.** Never call a patch verified, and never merge for the person. G6 cannot judge usability by itself;
    acceptance tests and the person's confirmation do. The report's not-established list is the to-do list. For
-   specialised needs, find more components with `g6_find` (formal tools, grounding of claims).
+   specialised needs, find more components with `g6_find`.
 
 The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope
-(every stated requirement passed its stated checks; never proof the patch is complete).
+(every stated requirement passed a stated check the patch did not write; never proof the patch is complete).
+If no check the patch did not write fails at the base commit, the outcome is insufficient evidence
+(`checks_written_with_patch`). Tell the person the result rests on your own tests. Do not rewrite tests to change it.
 
 ## Find
 
@@ -83,7 +86,8 @@ The full tool names begin `metaharness_`. This is Propose -> Test -> Gate -> App
 Below 30 held-out cases is exploration only. A split of answers the proposer already saw is not independent evidence.
 Generated-code activation also requires a host-configured safety/injection evaluator. Never invent its observations.
 Client-mediated consent may occur in the proposing session; the recorded name is not authenticated. If elicitation
-is unavailable, relay the terminal command. A job ID is pending work, not success; restart loses process-local handles.
+is unavailable, relay the terminal command. After a decline or cancel, ask the person; offer no other way to confirm.
+A job ID is pending work, not success; restart loses process-local handles.
 
 ## Read and ask
 

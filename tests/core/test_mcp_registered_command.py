@@ -148,11 +148,17 @@ def test_the_registered_server_starts_in_a_project_that_shadows_its_dependencies
 #: Folders that are not G6's own text: environments, caches, and the tests, which hold examples of the defect.
 SKIP = {".git", ".venv", "venv", "node_modules", "__pycache__", ".ruff_cache", ".pytest_cache", ".hypothesis",
         ".benchmarks", "tests"}
+#: Not instructions to anyone: built site assets (generated descriptions of the modules), and the worked examples'
+#: record, which quotes the defect as the runs found it.
+NOT_INSTRUCTIONS = (Path("web") / "static", Path("validation") / "worked_examples" / "RESULTS.md")
 TEXT = {".md", ".py", ".html", ".txt", ".toml", ".json", ".yml", ".yaml", ".ps1", ".sh", ".cfg", ".ini"}
 #: Python's flags before -c or -m; -X and -W take a value.
 FLAGS = r"((?:\s-[XW]\s+\S+|\s-[A-Za-z]\w*)*)"
-#: A Python start of G6's server, in shell lines, Python lists, JSON and TOML alike.
-SERVER_START = re.compile(FLAGS + r"\s-(?:c\s+from\s+g6\.mcp\s+import|m\s+g6\.mcp\b)")
+#: A Python start of one of G6's servers (g6.mcp, and g6.abstraction.server: the security review's F3) or of any other
+#: G6 module a person is told to run, such as ``python -m g6.workforce.decide``, which records the person's own
+#: decisions: run in a project's folder, the project's own ``g6`` package would answer instead. In shell lines, Python
+#: lists, JSON and TOML alike.
+SERVER_START = re.compile(FLAGS + r"\s-(?:c\s+from\s+g6\.mcp\s+import|m\s+g6\.[\w.]+)")
 #: A Python start in a registration line (``claude mcp add ... -- python -c ...``).
 REGISTERED_PYTHON = re.compile(r"\bpython[\w.]*" + FLAGS + r"\s-[cm]\b")
 #: -P (or -I, which implies it), alone or among other short flags.
@@ -175,8 +181,10 @@ def _bare(flags: str) -> bool:
 def _documented() -> list[Path]:
     found = []
     for folder, folders, files in os.walk(OSS):
-        folders[:] = [name for name in folders if name not in SKIP]
-        found += [Path(folder) / name for name in files if Path(name).suffix in TEXT]
+        folders[:] = [name for name in folders
+                      if name not in SKIP and (Path(folder) / name).relative_to(OSS) not in NOT_INSTRUCTIONS]
+        found += [Path(folder) / name for name in files
+                  if Path(name).suffix in TEXT and (Path(folder) / name).relative_to(OSS) not in NOT_INSTRUCTIONS]
     return found
 
 
@@ -186,7 +194,7 @@ def test_no_documented_registration_starts_python_with_the_folder_on_its_import_
     bare = []
     for path in files:
         text = path.read_text(encoding="utf-8", errors="replace")
-        if "g6.mcp" not in text and "mcp add" not in text:
+        if "g6.mcp" not in text and "mcp add" not in text and "-m g6." not in text:
             continue
         for number, line in enumerate(text.splitlines(), 1):
             bare += [f"{path.relative_to(OSS)}:{number}" for flags in _starts(line) if _bare(flags)]
@@ -200,6 +208,11 @@ def test_no_documented_registration_starts_python_with_the_folder_on_its_import_
     'claude mcp add g6 -- /venv/bin/python -c "from g6.mcp import main; main()"',
     "codex mcp add g6 -- python3 -m g6.mcp",
     "claude mcp add g6 -- python.exe -X utf8 -m some_server",
+    "Run: python -m g6.abstraction.server  (stdio transport)",
+    "separate stdio server, `python -m g6.abstraction.server`, offers these steps",
+    'f"{ask}: python -m g6.workforce.decide confirm {mission_id} --reason \\"...\\""',
+    'parser = argparse.ArgumentParser(prog="python -m g6.workforce.decide",',
+    "    G6_ECHA_RESEARCH=1 python -m g6.research.echa.example OUT.jsonl",
 ])
 def test_the_scan_finds_each_form_of_a_bare_start(line):
     # survival control for the scan above
@@ -211,6 +224,10 @@ def test_the_scan_finds_each_form_of_a_bare_start(line):
     "claude mcp add g6 -- python -I -m g6.mcp",
     "claude mcp add g6 -- python -X utf8 -P -c 'from g6.mcp import main; main()'",
     "claude mcp add g6 -- g6-mcp",
+    "Run: python -P -m g6.abstraction.server  (stdio transport)",
+    "confirm it at your terminal: python -P -m g6.workforce.decide confirm m1",
+    "its own worker process (``python -I -m g6.algebra.worker``) under",
+    "found['test_command'] == 'python -m pytest'",
 ])
 def test_the_scan_passes_a_start_with_the_flag(line):
     assert not any(_bare(flags) for flags in _starts(line)), line

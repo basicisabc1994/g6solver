@@ -1,18 +1,20 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}Repository graph{% endblock %}
+{% block title %}Full documentation{% endblock %}
 {% block meta_description %}A map of G6's code: every file, class and function and how they connect, in {{ layers|length }} layers, with a guided tour.{% endblock %}
 {% block extra_css %}<link rel="stylesheet" href="{% static 'css/graph.css' %}">{% endblock %}
 {% block content %}
 {% comment %}The graph and its facts are read from static/graph/ (views._graph); the viewer is built by
 tools/build_graph_viewer.py. Both are regenerated from the public code before each release.{% endcomment %}
 <header class="wrap page-hero">
-    <h1 class="display">The code, as a map.</h1>
+    <h1 class="display">Full documentation</h1>
     <p class="lede why">A system you trust with your work should be one you can inspect, down to the last line.</p>
-    <p class="lede">Every file, class and function in G6 and how they connect: {{ nodes }} parts in {{ layers|length }} layers,
-    with a {{ tour }}-step tour. Pan, search, and click any part to read what it does.</p>
+    <p class="lede">The code and its README are on <a href="https://github.com/basicisabc1994/g6solver">GitHub</a>.
+    Below is a map of it: every file, class and function in G6 and how they connect, {{ nodes }} parts in
+    {{ layers|length }} layers, with a {{ tour }}-step tour. Pan, search, and click any part to read what it does.</p>
     <div class="actions">
-        <a class="btn btn--solid" href="{% static 'graph/app/index.html' %}">Open full screen</a>
+        <a class="btn btn--solid" href="https://github.com/basicisabc1994/g6solver">The code on GitHub</a>
+        <a class="btn" href="{% static 'graph/app/index.html' %}">Open the map full screen</a>
         <a class="btn" href="{% url 'pages:components' %}">The components</a>
     </div>
 </header>

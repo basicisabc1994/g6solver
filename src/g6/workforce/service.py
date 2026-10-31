@@ -359,7 +359,7 @@ def status(wf: Workforce, mission_id: str, *, stages: bool = False) -> dict:
                      for v in wf.ledger.verdicts(mission_id)],
         "awaiting_chat": [_brief(wf, mission_id, spec) for spec in wf.runtime.awaiting(mission_id)],
         "messages": wf.missions.messages(mission_id),
-        # What only a person decides (V4c): g6.workforce.confirm / decide, or python -m g6.workforce.decide
+        # What only a person decides (V4c): g6.workforce.confirm / decide, or python -P -m g6.workforce.decide
         "awaiting_human": wf.runtime.decisions.pending(mission_id) + wf.runtime.confirmation_pending(mission_id),
         "decisions": [{"unit": d["unit_key"], "kind": d["kind"], "decision": d["decision"], "reason": d["reason"],
                        "actor": d["actor"]} for d in wf.runtime.decisions.all(mission_id)],

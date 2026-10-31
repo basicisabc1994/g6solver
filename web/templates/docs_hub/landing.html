@@ -1,24 +1,25 @@
 {% extends "base.html" %}
 
 {% block title %}Documentation{% endblock %}
-{% block meta_description %}G6 documentation: get started, use it from your coding agent over MCP or from Python, the components, the meta-harness and the bundles.{% endblock %}
+{% block meta_description %}G6 documentation: get started, use it from your coding agent over MCP or from Python, the components, the meta-harness and the worked examples.{% endblock %}
 
 {% block content %}
 <header class="wrap page-hero">
     <h1 class="display">Documentation</h1>
-    <p class="lede">Three ways to use G6: through the MCP server from your agent, as a Python library, or from a bundle.</p>
+    <p class="lede">Three ways to use G6: through the MCP server from your agent, as a Python library, or from a worked example.
+    The code is on <a href="https://github.com/basicisabc1994/g6solver">GitHub</a>.</p>
 </header>
 <section class="wrap">
     <ul class="index">
         <li><a href="{% url 'pages:get_started' %}"><span class="h3">Get started</span><span>Install G6 on your own computer and connect it to your coding agent.</span></a></li>
-        <li><a href="{% url 'pages:developers' %}"><span class="h3">For developers and coding agents</span><span>The MCP server, the Python library and the command line.</span></a></li>
+        <li><a href="{% url 'pages:developers' %}"><span class="h3">Developer quickstart</span><span>The MCP server, the Python library and the command line.</span></a></li>
         <li><a href="{% url 'pages:metaharness' %}"><span class="h3">Tune G6 to your work</span><span>The meta-harness: proposes changes, tests them on held-out tasks, and changes nothing until you approve.</span></a></li>
         <li><a href="{% url 'pages:components' %}"><span class="h3">Components</span><span>What each part of G6 does, and how mature it is.</span></a></li>
-        <li><a href="{% url 'pages:bundles' %}"><span class="h3">Bundles</span><span>Worked examples of composing components into a harness for one job.</span></a></li>
+        <li><a href="{% url 'pages:bundles' %}"><span class="h3">Worked examples</span><span>A restricted subset of G6's components applied to one problem, ready to download.</span></a></li>
         <li><a href="{% url 'pages:developers' %}#run-a-task-through-the-harness"><span class="h3">Build a workflow</span><span>Turn a task you repeat into a G6 workflow.</span></a></li>
         <li><a href="{% url 'pages:research' %}"><span class="h3">Research</span><span>Every pre-registered study, including the ones that found nothing.</span></a></li>
         <li><a href="{% url 'pages:guide' %}"><span class="h3">The free guide</span><span>Failure and harness engineering for AI agents: why agent work fails, and the patterns that catch it.</span></a></li>
-        <li><a href="{% url 'docs_hub:full' %}"><span class="h3">Full documentation</span><span>Every component in depth. Being rebuilt for the open-source release.</span></a></li>
+        <li><a href="{% url 'pages:graph' %}"><span class="h3">Full documentation</span><span>The code on GitHub, and a map of every file, class and function in it.</span></a></li>
     </ul>
 </section>
 {% endblock %}

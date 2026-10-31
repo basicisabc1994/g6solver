@@ -11,7 +11,7 @@ title: G6 — build agents from parts you can check
 every result for exactly what was shown. It runs on your computer, with a local model or your own key, and needs no
 account.
 
-[Get started](install.md){ .md-button .md-button--primary } [See the bundles](bundles/index.md){ .md-button } [View the code](https://github.com/basicisabc1994/g6solver){ .md-button }
+[Get started](install.md){ .md-button .md-button--primary } [See the worked examples](bundles/index.md){ .md-button } [View the code](https://github.com/basicisabc1994/g6solver){ .md-button }
 
 </div>
 
@@ -19,7 +19,7 @@ Our north star is AI for AI: agents construct applications, propose redesigns an
 looks like. G6 freezes those checks before the work starts, runs them on the exact output, and labels the result with
 what the evidence supports, and nothing more. Every gap is named, with the next step. Before an agent acts, G6's
 action gate answers allow, ask a person, or block. Each piece is a small component you can use on its own or
-combine, and bundles package them for one problem each.
+combine, and each worked example applies a restricted subset of them to one problem.
 
 ## Why you can trust the answer
 
@@ -72,11 +72,11 @@ combine, and bundles package them for one problem each.
 
 </div>
 
-## Ready-made bundles
+## Worked examples
 
-One real problem each. Use your own free local model or your own AI key; seven need no model at all.
-Downloads come with the first release. Until then, developers run them with `g6 bundle <id>`.
-[See all bundles →](bundles/index.md)
+One real problem each. Use your own free local model or your own AI key; six need no model at all.
+Each one downloads for Windows, macOS and Linux; developers can also run one with `g6 bundle <id>`.
+[See all worked examples →](bundles/index.md)
 
 <div class="grid cards" markdown>
 

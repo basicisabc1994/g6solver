@@ -332,8 +332,8 @@ class Surface:
         if refused:
             return refused, "", {}
         versions = mh.store.versions()
-        if not 0 <= version < len(versions) or versions[version]["kind"] not in ("initial", "activate"):
-            return _blocked(APPROVAL_REQUIRED, "target is not an approved version"), "", {}
+        if not mh._approved_here(version):
+            return _blocked(APPROVAL_REQUIRED, "target is not a version a person approved here"), "", {}
         binding = {"workflow_digest": mh.workflow.digest(), "store_head": mh.store.head_hash(),
                    "profile_digest": versions[version]["profile_digest"], "version": version}
         question = (f"Roll back workflow {workflow} ({binding['workflow_digest']}) to approved version {version}, "

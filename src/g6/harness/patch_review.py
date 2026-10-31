@@ -47,8 +47,11 @@
    module, where it came from, and the import root (``import_roots``) or editable install that would load the patch.
    Or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure of the
    change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
-4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
-   support on the checks named, never a claim that the patch does everything the task needs.
+   Or a requirement with no independent check (``checks_written_with_patch``): each check is new with the patch, or
+   passes at the base commit too, so the author's own tests are all that speak for the change;
+4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks, at least one of them independent
+   of the patch (it exists at the base commit in an unchanged file and, for new behaviour, fails there), and integrity
+   is intact. That is support on the checks named, never a claim that the patch does everything the task needs.
 
 Each requirement reads ``passed_on_stated_checks``, ``failed`` or ``not_established`` (with a reason and a suggested
 test in words); G6 never invents a passing test. Checks adapt to cost: tier 1 (always) is the digest, integrity, and
@@ -163,6 +166,9 @@ NOT_COMPARED = "derived_test_not_compared"
 RUN_INCONSISTENT_DETAIL = ("{run}: the tests passed by pytest's own count, but the process exited with an error "
                            "afterwards, so nothing is counted as passed on it; run them with the repository's own "
                            "command to see what fails at exit")
+RUN_CRASHED = "run_crashed"
+RUN_CRASHED_DETAIL = ("{run}: {said}. Nothing is counted on it, for or against the patch; run that test on the base commit to "
+                      "see whether the crash comes from the patch")
 #: A check's verdicts that are a defect when it is stated or extra; every other verdict but "passed" did not run.
 #: ``failed`` includes a collection error G6 places in the repository's own code; ``collection_error`` is the
 #: environment's (a dependency it lacks), which leaves the check not run. A run out of time is no defect (review I5):
@@ -226,14 +232,15 @@ TEST_DATA_REASON = ("the patch changes test data or snapshots, which G6 does not
 TEST_DATA_ASK = ("Read the diff of {path} (git diff {base} -- {path}): it is test data or a snapshot the patch "
                  "changed, which G6 does not compare; confirm the new values are intended, then review again.")
 #: What the person does about git-ignored files the tests could load (worked examples, W3b): the next actions name each
-#: file once, the files named like a tracked module apart from the others; the outcome stays what it was.
+#: file once, the files named like a tracked module apart from the others; the outcome stays what it was. Never "git
+#: add -f": that only stages the file into the patch under review (the security review of W1-W5, F4).
+IGNORED_SETTLE = ("If they belong to the project, commit them before the change under review; otherwise remove them or "
+                  "move them out of the repository; then review again.")
 IGNORED_NAMED_ASK = ("{files}: untracked and git-ignored, but named like modules in the repository, so G6 cannot rule "
-                     "out that one replaces a module during the tests. If they are data or not needed, track them (git "
-                     "add -f <path>) or remove them, then review again.")
+                     "out that one replaces a module during the tests. " + IGNORED_SETTLE)
 IGNORED_OTHER_ASK = ("{files}: untracked and git-ignored, but pytest or Python could load them during the tests (a "
                      "conftest, start-up or test file, bytecode, a compiled module, a link or a plugin declaration), "
-                     "and G6 does not compare them. Read them; if they are not needed, remove them, or track them (git "
-                     "add -f <path>) so that G6 compares them, then review again.")
+                     "and G6 does not compare them. Read them. " + IGNORED_SETTLE)
 IGNORED_SHOWN = 10
 
 
@@ -244,13 +251,17 @@ def _each_once(paths) -> list[str]:
 
 
 def _ignored_asks(scan: repo_tests.Ignored) -> list[str]:
-    """The next actions for the git-ignored files ``scan`` found the tests could load."""
+    """The next actions for the git-ignored files ``scan`` found the tests could load, each file as the report shows
+    repository text (``patch_report.code``: one printable line in a code span, never a line or Markdown of its own:
+    the security review of W1-W5, F5)."""
+    from g6.harness.patch_report import code
+
     named = _each_once(scan.named_like_modules)
     rest = [rel for rel in _each_once(scan.loadable) if rel not in set(named)]
     asks = []
     for files, ask in ((named, IGNORED_NAMED_ASK), (rest, IGNORED_OTHER_ASK)):
         if files:
-            shown = ", ".join(files[:IGNORED_SHOWN]) + (
+            shown = ", ".join(code(rel, 200) for rel in files[:IGNORED_SHOWN]) + (
                 f" and {len(files) - IGNORED_SHOWN} more (git status --ignored lists them all)"
                 if len(files) > IGNORED_SHOWN else "")
             asks.append(ask.format(files=shown))
@@ -578,6 +589,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
             verdict, detail = run, said or repo_tests.SAID[run]
         elif "failed" in states:
             verdict, detail = FAILED, "failed: " + ", ".join(sorted(n for n, s in nodes.items() if s == "failed")[:5])
+        elif run == repo_tests.CRASHED:   # after the line above: a crash withholds a pass, and never erases a failure on the record
+            verdict, detail = run, said or repo_tests.SAID[run].format(where="")
         elif "skipped" in states:
             verdict, detail = "skipped", f"{sum(s == 'skipped' for s in nodes.values())} of {len(nodes)} skipped"
         elif dropped:
@@ -609,8 +622,9 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
 
 #: What a run says of what it could not see, kept in the reply's record of it when it says anything (review M1): the
 #: links its copy left out or copied in place, the modules it loaded from outside the tree, the submodule folders G6
-#: could not hash.
-_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed")
+#: could not hash, and the git-ignored files the build writes it took (path to SHA-256) or left out (path to why).
+_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed", "generated_copied",
+              "generated_left_out")
 
 
 def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:
@@ -947,6 +961,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             reason("integrity", "run_not_trusted", _untrusted(1, first))
         elif first["verdict"] == repo_tests.RUN_INCONSISTENT:   # the owner's ruling (2026-10-29): evidence, not integrity
             reason("evidence", RUN_INCONSISTENT, RUN_INCONSISTENT_DETAIL.format(run="the stated checks' run"))
+        elif first["verdict"] == repo_tests.CRASHED:   # the ruling's reasoning: it cannot get a patch accepted
+            reason("evidence", RUN_CRASHED, RUN_CRASHED_DETAIL.format(run="the stated checks' run", said=first.get("said") or ""))
         elif first["verdict"] == "timed_out":
             reason("evidence", "run_timed_out", f"the tier 1 run did not finish: {first.get('said') or 'timed out'}")
         elif unusable(1, first):   # a pass or a failure of code the patch did not change says nothing of the patch
@@ -1030,6 +1046,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             elif second["verdict"] == repo_tests.RUN_INCONSISTENT:
                 reason("evidence", RUN_INCONSISTENT,
                        RUN_INCONSISTENT_DETAIL.format(run="the run of the tests that touch the changed modules"))
+            elif second["verdict"] == repo_tests.CRASHED:
+                reason("evidence", RUN_CRASHED, RUN_CRASHED_DETAIL.format(
+                    run="the run of the tests that touch the changed modules", said=second.get("said") or ""))
             elif unusable(2, second):
                 pass   # its failures, and its passes, are of code the patch did not change
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):
@@ -1121,6 +1140,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if finding.get("code") == "shortcut_in_answer" and not in_diff:
             # review I9(c), the owner's ruling: the claim's words alone say nothing about the tests
             reason("evidence", "claim_reports_shortcut", finding.get("message", ""))
+        elif finding.get("code") == "marker_on_new_test":   # never accepted, and no accusation: the person reads it
+            reason("evidence", "marker_on_new_test", finding.get("message", ""))
         elif finding.get("code") in INTEGRITY_FINDINGS:
             reason("integrity", "gate_shortcut", finding.get("message", ""))
         else:
@@ -1150,9 +1171,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                             "file, so the contract was not checked (why is in assessment.completion.activities)")
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
+    self_checked = ", ".join(_self_checked(evaluated, change, Path(root), runs))
+    if self_checked:
+        reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
-                  first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else "",
+                  first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
+                                SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else ""),
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
@@ -1183,11 +1208,29 @@ def _loaded_elsewhere(change, ran) -> str:
                      for rel, where in found.items())
 
 
+def _not_loaded(found: dict[str, dict], ran: dict) -> list[str]:
+    """The test files pytest could not load in ``ran``, the run against the base commit's code (one that imports a
+    name the patch adds, say), each holding a check of ``found``: none of those checks ran there, so each becomes
+    ``not_run``, never a failure at the base (the owner's pilot, 2026-10-30). Returns those files."""
+    full = _in_repository(ran)
+    broken = sorted({full(rel) for rel in _collection_errors(ran.get("output") or "")})
+    files = []
+    for check, verdict in found.items():
+        head = check.partition("::")[0].rstrip("/")
+        mine = [path for path in broken if path == head or path.startswith(head + "/")]
+        if verdict["verdict"] != "passed" and mine:
+            found[check] = {"verdict": "not_run", "detail": "its test file could not be loaded against the base "
+                                                            "commit's code"}
+            files += mine
+    return list(dict.fromkeys(files))
+
+
 def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, unknowns, roots=()) -> list[str]:
     """Review I8, the owner's ruling: the stated checks that passed, as their test files are now, run against the
     base commit's code, only when nothing so far found a problem. One that passes there too may not exercise the
     change: an unknown, and a next action for each requirement it checks; never an outcome, since a requirement to
-    keep behaviour passes at the base by design. Returns those next actions."""
+    keep behaviour passes at the base by design. One whose test file could not be loaded there did not run there
+    (``_not_loaded``): whether it exercises the change is an unknown. Returns the next actions."""
     passing = [check for check in dict.fromkeys(norm[raw] for req in stated for raw in req.checks)
                if verdicts[check]["verdict"] == "passed"]
     if not passing or not change.files:
@@ -1214,6 +1257,9 @@ def _at_base(change, stated, norm, verdicts, deadline, reasons, runs, skipped, u
         return []
     actions = []
     at_base = _verdicts(passing, ran)
+    for rel in _not_loaded(at_base, ran):
+        unknowns.append(f"whether the stated checks in {rel} exercise the change was not established: pytest could not "
+                        "load the file against the base commit's code")
     if "isolation" in ran:   # each check's own verdict at the base commit, which the readable report says in words
         runs[-1]["outcomes"] = {check: found["verdict"] for check, found in at_base.items()}
     for check, found in at_base.items():
@@ -1294,6 +1340,40 @@ _NEXT = {
 }
 
 
+#: Worked examples, round 3: the author's own tests share its reading of the task, so they cannot support the patch.
+SELF_CHECKED = "checks_written_with_patch"
+SELF_CHECKED_DETAIL = ("{ids}: every check that passed is new with this patch or passes at the base commit too, so "
+                       "nothing independent of the patch shows its change works. This is not a finding against it")
+SELF_CHECKED_ASK = ("{ids}: this rests on the author's own tests, so tell the person that. Only a check the patch did "
+                    "not write and that fails at the base commit can change it. Do not rewrite tests to change it.")
+
+
+def _self_checked(evaluated: list[dict], change, root: Path, runs: list[dict]) -> list[str]:
+    """The requirements with no independent check. A check is independent when it exists at the base commit, its file
+    is unchanged, a folder holds no test the patch adds or changes, and, unless the requirement only keeps behaviour,
+    it does not pass at the base commit too: an old test that passes there says nothing of the change."""
+    at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
+
+    def written(check: str) -> bool:
+        head = (root / check.partition("::")[0]).resolve()
+        try:
+            rel = head.relative_to(Path(change.repo).resolve()).as_posix()
+        except ValueError:
+            return False
+        rel = "" if rel == "." else rel
+        inside = [path for path in change.files if not rel or path.startswith(rel + "/")]
+        if rel in change.files or any(repo_tests.is_test_related(path) for path in inside):
+            return True
+        return bool(rel) and not repo_tests._git(change.repo, "ls-tree", "--name-only", change.base_commit, "--", rel)
+
+    def independent(req: dict, check: dict) -> bool:
+        return (check["provenance"] == STATED and not written(check["id"])
+                and (req["kind"] == "preserve" or at_base.get(check["id"]) != "passed"))
+
+    return [req["id"] for req in evaluated if req["status"] == PASSED_ON_CHECKS
+            and not any(independent(req, check) for check in req["checks"])]
+
+
 #: What a requirement no one stated is (rule 11): listed, and nothing more.
 LISTED_ONLY = ("no one stated this: it is listed only, has no status, its checks did not run, and it does not change "
                "the outcome")
@@ -1310,12 +1390,24 @@ def _listed(listed, assumed) -> tuple[list[dict], list[dict]]:
     return proposals, assumptions
 
 
+def _one_line(text: object) -> str:
+    """``text`` with each control character (a line break among them) shown as a space: a name a repository chose can
+    never start a line of its own in the reply's guidance. It decides nothing."""
+    return "".join(" " if ord(ch) < 32 or ord(ch) == 127 else ch for ch in str(text))
+
+
 def _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, ran, gate, merge_reasons, artifact, claim,
            sources, started, follow_ups=(), listed=(), assumed=(), search=None, defects=(), prepared=None,
            adequacy=None, config=None, counts=None, roots=(), stopped=(), proposer=None, first_action="") -> dict:
     """The reply. ``first_action``: the next action that stands first for an insufficient-evidence outcome in place of
     the general one (the launch review's I6: a module the patch imports that is not installed here)."""
     from g6.harness import verification_search   # the completion report, in every reply
+    # a repository's names reach these texts as they are; each is one line (the fresh review of the F1-F8 fix pass)
+    reasons = [{**r, "detail": _one_line(r["detail"])} for r in reasons]
+    unknowns = [_one_line(text) for text in unknowns]
+    follow_ups, first_action = [_one_line(text) for text in follow_ups], _one_line(first_action)
+    evaluated = [{**req, **{key: _one_line(req[key]) for key in ("reason", "suggested_test")
+                            if isinstance(req.get(key), str)}} for req in evaluated]
     stages = {r["stage"] for r in reasons}
     codes = {r["code"] for r in reasons}
     if "integrity" in stages:

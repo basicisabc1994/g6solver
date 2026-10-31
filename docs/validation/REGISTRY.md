@@ -574,3 +574,19 @@ This entry re-registers V10. The entry "V10" above stays as it is; version 2 rep
   1's second verdict. This version addresses each, with one exception: the reviewer judged the optional task screen to
   go beyond the owner's decision, and it is kept as an option that runs only if the owner switches it on. No person
   has reviewed this version yet.
+
+## Worked examples on well-known Python projects (plan fixed 2026-10-29, before any run)
+
+Not a study: worked examples, mechanism demonstrations on real code; they show what happened in these runs and say
+nothing about how often G6 helps. They are separate from V9 and V10 and touch none of their material, code or budget.
+
+- **Plan:** `validation/worked_examples/PLAN.md`, `c2d9f6be6c0c90de932014b0c0f92197614c25a01180723f98feb7fa122b0c3f`.
+  It was fixed before any run, before any paid call and before any candidate task was looked at. It states the
+  selection rule for projects and tasks, the run procedure in the product's real flow (`g6 setup`, then headless
+  Claude Code with `claude-sonnet-5-5` and the `using-g6` skill), the independent check of every outcome against the
+  maintainers' later fix and tests, that every run the rule chose is reported, and a hard stop of $100 for all runs
+  together, separate from the rehearsal's $15 and V9's $60.
+- **Owner's decision:** 2026-10-29, to use the API credits before they expire on 4 November.
+- **State:** no project or task selected, no image built, no run, nothing spent.
+- **Changes:** none. A change is a new dated section at the end of the plan, written before the runs it affects.
+- **Round 3 (appended 2026-10-30, before its runs):** a development round, not a validation: the same ten bugs, which have been seen, with three arms (A: Claude Code alone; B: G6 as shipped; C: G6 and a prompt addendum to check each requirement with G6's formal tools), on `claude-haiku-4-5`, then `claude-sonnet-5-5`, then `claude-fable-5-1`, Sonnet's arm A twice per bug, under round 3's own hard stop of $100 and its ledger. The design is the plan's dated section "Round 3 (2026-10-30): formal methods".

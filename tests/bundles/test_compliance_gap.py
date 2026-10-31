@@ -238,5 +238,7 @@ def test_the_bundles_page_holds_it_as_built_awaiting_its_certificate_never_works
 
     page = (Path(__file__).resolve().parents[2] / "web" / "content" / "bundles.md").read_text(encoding="utf-8")
     row = next(line for line in page.splitlines() if line.startswith("| **Compliance gap check**"))
-    assert row.rstrip().endswith("| built, awaiting its certificate |") and "| works" not in row
-    assert "Ten bundles work today" in page and "Eleven bundles work" not in page
+    # owner, 2026-10-30: the page calls a bundle a worked example, and a Download column follows the status
+    status = [cell.strip() for cell in row.split("|")][3]
+    assert status == "built, awaiting its certificate" and "| works" not in row
+    assert "Ten worked examples work today" in page and "Eleven worked examples work" not in page

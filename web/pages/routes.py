@@ -40,12 +40,12 @@ PAGES: tuple[Page, ...] = (
     _template("get_started", "get-started/"),            # its bundle section is content/install.md
     *(Page(n, "pages", f"{n}/", "markdown", f"{n}.md")
       for n in ("faq", "metaharness", "bundles", "developers", "contribute")),
-    _template("graph", "graph/"),                        # the viewer itself is a static file: static/graph/app/
+    _template("graph", "docs/full/"),                    # the full documentation: the repository graph (owner,
+                                                         # 2026-10-30); the viewer itself is static/graph/app/
     _template("failure_modes", "failure-modes/"),        # the map; then one page per mode, from the generated map
     *(Page(f"failure_mode_{m['code']}", "pages", f"failure-modes/{m['code']}/", "failure_mode", m["code"])
       for m in failure_map.modes()),
     _template("landing", "docs/", "docs_hub"),
-    Page("full", "docs_hub", "docs/full/", "placeholder", "The full documentation"),
     Page("index", "blog", "essays/", "template", "blog/index.html"),
     *(_template(n, f"essays/{n.replace('_', '-')}/", "blog") for n in _ESSAYS),
 )
@@ -77,6 +77,7 @@ REDIRECTS: tuple[tuple[str, str], ...] = (
     ("/context/", "/docs/"),
     ("/docs/api/", "/docs/"),
     ("/docs/tutorials/", "/docs/"),
+    ("/graph/", "/docs/full/"),
     ("/guide/download/*", "/guide/"),
     ("/blog/*", "/essays/:splat"),                       # the blog is called Essays (owner, 2026-10-19)
 )

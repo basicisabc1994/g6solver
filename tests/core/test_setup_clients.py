@@ -63,6 +63,20 @@ def test_a_refused_registration_says_how_to_replace_the_existing_entry(tmp_path,
             "remove it with 'claude mcp remove --scope user g6' and run g6 setup again.") in out
 
 
+def test_setup_replaces_an_earlier_copy_of_its_own_skill_and_says_so(tmp_path, monkeypatch, capsys):
+    """The owner's pilot (2026-10-30): setup left Codex's copy of using-g6 from an earlier install in place, so Codex
+    followed the old instructions; setup is the person's install step, so it brings this version's skill."""
+    _registering(tmp_path, monkeypatch)
+    old = tmp_path / ".codex" / "skills" / "using-g6" / "SKILL.md"
+    old.parent.mkdir(parents=True)
+    old.write_text("an earlier G6's skill")
+    assert main(["setup", "--client", "codex", "--refuse-unconfined", "--allow", "patch_review.review"]) == 0
+    assert "# Using G6" in old.read_text(encoding="utf-8")
+    out = capsys.readouterr().out
+    assert "left as is" not in out
+    assert "Replaced the earlier copy of the using-g6 skill for codex with this version's." in out
+
+
 def test_skills_can_target_codex_without_overwriting(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert main(["skills", "install", "--client", "codex"]) == 0

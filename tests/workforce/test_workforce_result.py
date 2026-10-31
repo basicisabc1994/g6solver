@@ -214,7 +214,7 @@ def test_checks_that_disagree_are_shown_as_two_interpretations_until_a_person_de
     assert "- The result holds: the check(s) check-sum passed Total the ledger" in md
     assert "- The result is wrong: the check check-seven failed it" in md
     assert (f"Why G6 could not resolve this: the checks disagree and none can be tried again, so a person decides: "
-            f"python -m g6.workforce.decide uphold|set-aside {mid} check-seven") in md
+            f"python -P -m g6.workforce.decide uphold|set-aside {mid} check-seven") in md
     wf.runtime.decide(mid, "check-seven", "uphold", reason="the export says 7", actor="human")
     ws.run(wf, mid)
     assert "**⛔ Could not verify**" in _md(wf, mid)

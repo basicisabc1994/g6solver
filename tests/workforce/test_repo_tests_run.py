@@ -344,6 +344,19 @@ OK = {"passed": 2, "failures": 0, "errors": 0, "skipped": 0}
     (1, {**OK, "expected": 3, "finished": 2}, "", [], "inconsistent_report"),
     (1, {"passed": 0, "failures": 0, "errors": 0, "skipped": 2}, "", [], "inconsistent_report"),
     (0, NO_TALLY, "", [], "inconsistent_report"),
+    # a fatal signal before the tallies were whole: a crash, which is no pass and no sign of tampering. A crash after
+    # every test finished stays run_inconsistent (above), and exit 0 is never a crash, whatever the output says
+    (139, NO_TALLY, "Fatal Python error: Segmentation fault", [], "crashed"),
+    (-11, NO_TALLY, "", [], "crashed"),
+    (137, {**OK, "expected": 3, "finished": 2}, "", [], "crashed"),
+    (3221225477, NO_TALLY, "", [], "crashed"),
+    (1, NO_TALLY, "", [], "inconsistent_report"),
+    (0, NO_TALLY, "Fatal Python error: Segmentation fault", [], "inconsistent_report"),
+    # an exit a test can choose is no signal (the outside review's input), and a failure on the record survives the crash after it
+    (200, NO_TALLY, "", [], "inconsistent_report"),
+    (-15, {"passed": 0, "failures": 1, "errors": 0, "skipped": 0, "expected": 2, "finished": 1, "failed_ids": ["t"]}, "", [], "failed"),
+    (139, {"passed": 1, "failures": 0, "errors": 0, "skipped": 0, "expected": 3, "finished": 2, "failed_ids": ["t"]}, "", [], "failed"),
+    (139, {"passed": 1, "failures": 0, "errors": 0, "skipped": 0, "expected": 3, "finished": 2, "setup_errors": {"t": "x"}}, "", [], "failed"),
     (1, NO_TALLY, "ModuleNotFoundError: No module named 'pytest'", [], "pytest_not_found"),
     (5, NO_TALLY, "", [], "no_tests_collected"),
     (2, {"passed": 0, "failures": 0, "errors": 1, "skipped": 0}, "", [], "collection_error"),
@@ -367,6 +380,34 @@ def test_a_run_that_exits_with_an_error_after_every_test_passed_is_not_counted_a
     assert found["said"] == rt.SAID["run_inconsistent"]
     assert found["passed"] == 2 and found["failed"] == 0
     assert "passed by pytest's own count" in found["said"] and "exited with an error" in found["said"]
+
+
+DUMP = """Fatal Python error: Segmentation fault
+
+Current thread 0x000076e924fec340 (most recent call first):
+  File "/work/pydantic/pydantic/main.py", line 885 in model_validate_strings
+  File "/work/pydantic/tests/test_main.py", line 3102 in test_recursion_loop
+  File "/work/pydantic/.venv/lib/python3.12/site-packages/_pytest/python.py", line 167 in pytest_pyfunc_call
+"""
+
+
+def test_a_crash_names_the_signal_and_the_test_that_was_running():
+    said = rt._said("crashed", seconds=1, python="python", output=f"....{DUMP}")
+    assert "Segmentation fault" in said and "test_recursion_loop" in said and "test_main.py" in said
+    assert "tamper" not in said
+
+
+def test_a_crash_with_no_dump_still_says_what_happened():
+    assert rt._said("crashed", seconds=1, python="python", output="") == rt.SAID["crashed"].format(where="")
+
+
+def test_a_test_that_kills_the_interpreter_is_a_crash_and_never_a_pass(repo):
+    """pydantic-14065: one recursion test segfaulted under G6's run, and the review called a correct patch tampering."""
+    _write(repo, "calc.py", FIXED)
+    _write(repo, "tests/test_crash.py", "import faulthandler\n\n\ndef test_dies():\n    faulthandler._sigsegv()\n")
+    found = rt.run(repo, ["tests/test_crash.py"])
+    assert found["verdict"] == "crashed", (found["verdict"], found["output"][-500:])
+    assert found["passed"] == 0 and "test_dies" in found["said"]
 
 
 def test_the_repositorys_own_virtual_environment_runs_its_tests(tmp_path):

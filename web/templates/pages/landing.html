@@ -26,9 +26,9 @@ Copy is a draft for the owner's review in the live preview.
         <header class="hero">
             <h1 class="display display--why" id="hero-title">Now you can<br>make AI agents<br>check their<br>own work.</h1>
             <p class="lede strong why">For developers using Claude Code and Codex: a free, open-source tool your agent
-            calls before it says a change is done. G6 runs the tests the change touches, confined where your computer
-            allows, looks for weakened tests, and shows each defect it reproduces with a command to check it yourself.
-            It says what it could not check, and does not prove a change correct.</p>
+            calls before it says a change is done. G6 runs the tests the change touches, looks for weakened tests, and
+            shows each defect it reproduces. It says what it could not check, and can check a change against a formal
+            mathematical model of what it must do, replaying counterexamples on your code.</p>
             <div class="actions">
                 <a href="{% url 'pages:get_started' %}" class="btn cta">Get started</a>
                 <a href="#loop" class="btn">See how it works</a>
@@ -41,7 +41,7 @@ Copy is a draft for the owner's review in the live preview.
         <div class="answer">
             <h2 class="display">AI builds.<br>Evidence<br>decides.</h2>
             <p class="lede">A harness is everything around a model: what it sees, how its answers are checked, what it
-            may do. Agents can propose application redesigns through four steps of controlled experimentation; improvement is not guaranteed.</p>
+            may do. Agents can propose application redesigns through four steps of controlled experimentation; iterative self-improvement is made possible through metacognition over MCP.</p>
         </div>
 
         <ol class="steps" id="loop">
@@ -219,6 +219,28 @@ Copy is a draft for the owner's review in the live preview.
     </div>
 </section>
 
+<section class="band" id="tried-it" aria-labelledby="tried-it-h">
+    <div class="wrap">
+        <div class="cols">
+            <div class="band__head">
+                <h2 class="h2" id="tried-it-h">What happened when we tried it</h2>
+            </div>
+            <div class="band__body">
+                <p class="lede quiet">We gave Claude Code with Claude Sonnet 5.5 ten recent, real bugs in black,
+                pydantic, starlette, click, attrs and fastapi, with G6 over MCP. G6 reproduced no defect. Six of the
+                ten patches failed the maintainers' tests: G6 asked for more evidence, accepted the patch within the
+                checks the agent stated, or raised an alarm that turned out to be false. We fixed what it taught
+                us.</p>
+                <p>That is G6 today: a careful, isolated check of what your agent states, not yet a defect finder. A
+                second round turned on G6's own model, also Claude Sonnet 5.5, in every review of the same ten bugs:
+                it proposed 51 checks, and none found a defect. Five of the ten new patches failed the maintainers'
+                tests. Making G6 a defect finder is the self-improvement loop's first job.
+                <a class="link" href="https://github.com/basicisabc1994/g6solver/blob/main/validation/worked_examples/RESULTS.md">All ten runs</a></p>
+            </div>
+        </div>
+    </div>
+</section>
+
 <section class="band" id="in-public" aria-labelledby="in-public-h">
     <div class="wrap">
         <div class="cols">
@@ -256,7 +278,7 @@ pip install ".[all]" &amp;&amp; g6 setup --client claude --allow patch_review.re
                 <ul class="ways-line">
                     <li><a href="{% url 'pages:get_started' %}"><b>From your agent</b> over MCP, in Claude Code, Codex or any client</a></li>
                     <li><a href="{% url 'pages:metaharness' %}"><b>In your code</b> as a Python library</a></li>
-                    <li><a href="{% url 'pages:bundles' %}"><b>As an app</b>, a bundle for one job</a></li>
+                    <li><a href="{% url 'pages:bundles' %}"><b>As an app</b>, a worked example for one problem</a></li>
                 </ul>
             </div>
         </div>

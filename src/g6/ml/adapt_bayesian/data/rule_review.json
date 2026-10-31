@@ -158,7 +158,7 @@
     }
   ],
   "reviewed": {
-    "artifact_sha256": "b82e07d5d8fb8221cf543b3f3d468b7d3fff2bf265bccdc27eba6d9b86f9006c",
+    "artifact_sha256": "6c3eaa96e9ad95e027a63c73e0c27b61064d5167a1d72453949ccfbbae0b8028",
     "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
     "sources_sha256": {
       "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
@@ -638,6 +638,67 @@
         "result": "12 passed in 0.31s; 244 passed, 1 skipped, 1 dependency warning in 4.38s; then 192 passed, 16 skipped, 3 failed in 13.59s: test_sklearn's g5 test refused with G6_E_ISOLATION_UNAVAILABLE (the Windows AppContainer cannot read this worktree), and test_automl's d6 test and test_bayesian's vetting-state test read built, awaiting review because the certificates are not yet reissued. At 4151fed the focused set without test_compose.py gave 232 passed, 1 skipped, and the component set gave the same 192, 16 and 3.",
         "limits": "Static delta review and focused local tests on Windows only. The scikit-learn and FLAML extras are not installed (16 skips) and no operating-system sandbox was available, so no confined fit ran; this reader did not rerun the certificates' cases, second routes or falsifiers, and ran nothing on Linux or macOS. The composition probes used in-memory blocks, not the certified components. The reader is a fresh Claude session, not a different model from the commits' author. Full held-source and quote issuance gates remain required."
       }
+    },
+    {
+      "kind": "independent-version-only-delta-review",
+      "reviewer": "Claude, a fresh read-only certificate-renewal reader (not the author of the code, the register or the cases)",
+      "date": "2026-10-29",
+      "base_commit": "6654b1958e5d451519c1bfc204bd551131a93573",
+      "reviewed_commit": "0a905ae29fed51274a75f51da4f001e0d32878f4",
+      "prior_review_sha256": "375234b7194999e5ac7d648250e915a9ebc95693f37215e6d26e6e821cb670b5",
+      "prior_reviewed": {
+        "artifact_sha256": "b82e07d5d8fb8221cf543b3f3d468b7d3fff2bf265bccdc27eba6d9b86f9006c",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "reviewed": {
+        "artifact_sha256": "6c3eaa96e9ad95e027a63c73e0c27b61064d5167a1d72453949ccfbbae0b8028",
+        "rules_sha256": "cba1807a7d0b1e2fa8b18159e65f787c9593ae09d23c7f2258a5692b609b086f",
+        "sources_sha256": {
+          "bolstad-14": "e5b03f551edb1a0785722b1186f51b70b1cd852ee71e7b8812d05aa923647646",
+          "bolstad-17": "38655827a5cfd7a61bec17b8684064e024c766c248e1bf5723691a4ef73f8b60",
+          "bolstad-20": "4dfb40d631413d14ca3483039353dc6cb0bb9f40f17c0b3c917dc93ab7de11ef",
+          "barber-beta": "4c2c27d37c4e6494f38a4eda1b82a59a6c56f6221e8f6613caccba9fcb049210",
+          "barber-mh": "a13856ce66ec75339aecf11e27065312efc2fb7ff6f29b2067cdcc940e854825",
+          "barber-evidence": "87d59985c7964614baf4a9c5cd86dfb942d934b194b554fc5bf9ccd70d92e071",
+          "barber-prediction": "5a2c665eb7259ccf0d674637024846c9747234a0e390c9c5d0460307d13969c8",
+          "vehtari-2021": "02e8a6d978c15c0aebe2be951eafee5acd157fd072a96502544d14963cdc4597",
+          "dlmf-beta": "febf39d3f772301df2ccc71ad851085056f371167623587e150b09a7c05252e4",
+          "dlmf-gamma": "24d45cd17c2381d23d77167daf7f25c63043861121e0e5df3ec9a83bdda071f7"
+        },
+        "cases_sha256": "017fefff404e3d04e203c7078f650d26051929b4090e82b505ada2280ab1ebd4",
+        "adapter_sha256": "d0b0e09d425aa25c84a42b26a2db8b7ee6ea97fc04e1b978146f91298c997dcf",
+        "refusals": [
+          "MLError",
+          "NotConverged"
+        ]
+      },
+      "scope": "Supplement to the existing independent implementation delta review. Only the package version assignment changed among bound artifact inputs, from 0.1.1 to 0.2.0. Existing source reader attribution, source findings and earlier delta attestations are retained. No source clauses or private quotes were reread; no new medical, legal or domain endorsement or cryptographic signature.",
+      "method": "Listed every file git diff --name-only names between 6654b19 and 0a905ae and intersected that list with every input this certificate binds: its input manifest at 0a905ae (with and without this review file), certificate.json's imported_code list, the four harness_sha256 files, and every file in the component's input folders (its own folder, its register's folder and the family's underscore-prefixed shared folders). src/g6/__init__.py is the only bound file that changed, and no bound file was added or removed. Read git diff 6654b19 0a905ae for that file and checked its bytes: replacing the literal __version__ = \"0.1.1\" in the 6654b19 bytes with __version__ = \"0.2.0\" gives the 0a905ae bytes exactly. Checked that every bound input in the working tree equals its bytes at 0a905ae. Recomputed reviewed() for all five components at 0a905ae and compared each with the prior top-level reviewed record. Then rebuilt each artifact manifest from the 0a905ae input mapping with only g6/__init__.py replaced by its 6654b19 bytes, hashed it as reviewed() does (artifact_bytes of code_files), and compared it with the prior artifact_sha256. Commits between 6654b19 and 0a905ae that change files outside these inputs were not reviewed.",
+      "finding": "Only artifact_sha256 changes for every component. Rules, canonical source entries, cases, adapter and refusals are unchanged. Substituting the 0.1.1 version file reproduces each prior artifact_sha256 exactly. This version-only change leaves all prior scoped findings intact. Review raises no label.",
+      "version_file": {
+        "path": "g6/__init__.py",
+        "previous_sha256": "911d7b90db99b90c2f26563d38686738396e9ae876b263f65fc142254cacfacb",
+        "current_sha256": "fc9da36b4210db4eeb58a2a8e912e190174292e070094fffcbe22b6240c29cee"
+      },
+      "validation": "Bound-input intersection, byte-exact version delta, unchanged reviewed fields and prior artifact reconstruction passed for all five components. Static check on Windows only: no test, case, second route or falsifier was run. Final issuance remains responsible for its normal held-source/quote checks and gates."
     }
   ]
 }

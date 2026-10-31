@@ -49,6 +49,46 @@ def test_consent_uses_portable_schema_and_reports_client_outcome(tmp_path, monke
         assert surface.inspect("consent")["confirmed"] is None
 
 
+def _confirm_with(tmp_path, monkeypatch, handler=None) -> dict:
+    """metaharness_confirm on a fresh workflow, through a client whose form ``handler`` answers (none: no form)."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "home"))
+    surface = Surface(workflow_root=tmp_path / "workflows")
+    started = surface.start({"name": "consent", "task": "Label {input}",
+                             "cases": [{"input": "red", "expected": "warm"}, {"input": "blue", "expected": "cool"}],
+                             "baseline_code": {"main.py": "def solve(task):\n    return 'unknown'\n"}})
+
+    async def run():
+        options = {"elicitation_handler": handler} if handler else {}
+        async with Client(build_server(surface), **options) as client:
+            reply = await client.call_tool("metaharness_confirm", {
+                "workflow": "consent", "workflow_digest": started["workflow_digest"]})
+            return json.loads(reply.content[0].text)
+
+    result = asyncio.run(run())
+    assert surface.inspect("consent")["confirmed"] is None
+    return result
+
+
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+def test_a_no_in_the_form_is_never_followed_by_another_way_to_confirm(tmp_path, monkeypatch, action):
+    """The owner's pilot (2026-10-30): after a decline, the reply offered the terminal confirm as the next step. In
+    Codex the form has no Decline, so a cancel is how the person says no there."""
+    async def handler(message, response_type, params, context):
+        return ElicitResult(action=action)
+
+    result = _confirm_with(tmp_path, monkeypatch, handler)
+    assert result["consent_status"] == {"decline": "declined", "cancel": "cancelled"}[action]
+    text = json.dumps(result)
+    assert "workflow confirm" not in text and "--as" not in text, text
+    assert "ask the person" in text.lower(), text
+
+
+def test_a_client_without_a_form_is_told_the_person_can_confirm_in_a_terminal(tmp_path, monkeypatch):
+    result = _confirm_with(tmp_path, monkeypatch)
+    assert result["consent_status"] == "unavailable", result
+    assert "g6 workflow confirm consent" in json.dumps(result)
+
+
 def test_unverified_envelope_always_explains_degradation_without_promoting():
     for state in ("qualified-draft", "blocked-escalated"):
         result = envelope_fields(reliability_label=state)

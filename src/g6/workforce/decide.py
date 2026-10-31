@@ -3,7 +3,7 @@
 
 """The owner's decisions, at their own terminal (workforce OS plan, V4c: the deferrals package's D3 default).
 
-``python -m g6.workforce.decide list`` shows what waits for a person (a gate, or verifiers that disagree);
+``python -P -m g6.workforce.decide list`` shows what waits for a person (a gate, or verifiers that disagree);
 ``approve | reject | uphold | set-aside <mission> <unit> --reason "..."`` answers one; ``confirm <mission>`` confirms
 what counts as done; ``allow <repository>`` allows G6 to run a repository's code at its present revision before a
 coding mission is created on it (audit 010 WF-007). An answer is taken only when the unit's key (the mission id, the
@@ -72,7 +72,7 @@ def _pending(wf: service.Workforce) -> list[dict]:
 
 def command_line() -> argparse.ArgumentParser:
     """The command line ``main`` reads; the desktop exe reads its command with it too (lead ruling F8)."""
-    parser = argparse.ArgumentParser(prog="python -m g6.workforce.decide",
+    parser = argparse.ArgumentParser(prog="python -P -m g6.workforce.decide",
                                      description="Decide, as the owner, what a mission waits for a person to decide.")
     parser.add_argument("command", choices=["list", *VERBS, "correct", "confirm", "allow"])
     parser.add_argument("mission", nargs="?", help="the mission id (allow: the repository's name)")
