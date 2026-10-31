@@ -1,0 +1,16 @@
+{
+  "name": "g6solver",
+  "owner": {
+    "name": "The G6 authors"
+  },
+  "metadata": {
+    "description": "G6, a reliability harness for AI coding agents."
+  },
+  "plugins": [
+    {
+      "name": "g6",
+      "source": "./plugins/g6",
+      "description": "When Claude Code says a Python task is finished, G6 tests the work with checks the agent never saw, sends failures back, and says what was tested and what remains unknown."
+    }
+  ]
+}
