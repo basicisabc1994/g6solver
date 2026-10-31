@@ -364,3 +364,98 @@ def test_4_every_module_the_loops_own_files_import_is_pinned():
 def test_4_the_pin_is_a_digest_of_bytes_that_exist():
     found = build_manifest(SRC, patterns=ENVELOPE_PATTERNS)
     assert all(glob.has_magic(p) or p in found for p in ENVELOPE_PATTERNS)
+
+# Findings 5 and 6: a pause holds across handles and survives a failed write ----------------------------------------------
+NOTHING_HELPS = {"prompt": "Please be polite."}
+
+
+def _second_handle(tmp_path, domain):
+    other, _ = _loop(tmp_path, domain=domain, proposer=domains.proposes(NOTHING_HELPS))
+    return other
+
+
+def test_5_a_second_handle_does_not_run_after_another_paused_the_loop(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    other = _second_handle(tmp_path, domain)                   # opened now, so it has seen no failed cycle
+    for _ in range(3):
+        loop.tick()
+    assert loop.log.paused()
+    calls = len(domain.llm.calls)
+    got = other.tick()
+    assert _code(got) == "G6_E_LOOP_PAUSED" and len(domain.llm.calls) == calls
+
+
+def test_5_a_second_handle_runs_on_the_head_another_adopted(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    other = _second_handle(tmp_path, domain)
+    assert loop.tick()["outcome"] == "adopted"
+    head = loop.mh._head()
+    got = other.tick()
+    assert got["head_version"] == head[0] and got["head_profile"] == head[1].digest()
+
+
+def test_5_a_second_handle_counts_the_cycles_another_ran(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    other = _second_handle(tmp_path, domain)
+    loop.tick()
+    other.tick()
+    assert [c["tick"] for c in other.log.cycles()] == [1, 2]
+
+
+def test_5_a_person_resumes_from_their_own_handle(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    person = _second_handle(tmp_path, domain)
+    for _ in range(3):
+        loop.tick()
+    assert person.resume("Ada")["completion_state"] == "qualified-draft"
+    assert _code(loop.tick()) != "G6_E_LOOP_PAUSED"
+
+
+def test_5_a_second_handle_reports_where_the_loop_stands(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    other = _second_handle(tmp_path, domain)
+    assert loop.tick()["outcome"] == "adopted"
+    assert other.status()["head_version"] == 1 and other.status()["cycles"] == 1
+
+
+def test_6_a_pause_that_could_not_be_written_still_stops_the_fourth_cycle(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+
+    def full_disk(reason: str) -> None:
+        raise OSError("no space left on the device")
+
+    monkeypatch.setattr(loop.log, "pause", full_disk)
+    for _ in range(3):
+        assert loop.tick()["completion_state"] == "blocked-escalated"   # the third still replies, never raises
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert loop.log.paused() == "" and _code(got) == "G6_E_LOOP_PAUSED"
+    assert "three failed cycles" in got["message"] and len(domain.llm.calls) == calls
+    assert len(loop.log.cycles()) == 3
+
+
+def test_6_a_person_can_clear_a_streak_whose_pause_was_never_written(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    monkeypatch.setattr(loop.log, "pause", lambda reason: (_ for _ in ()).throw(OSError("full")))
+    for _ in range(3):
+        loop.tick()
+    assert loop.resume("Ada")["completion_state"] == "qualified-draft"
+    assert loop.log.failed_streak() == 0 and _code(loop.tick()) != "G6_E_LOOP_PAUSED"
+
+
+def test_6_a_log_that_cannot_be_read_is_a_refusal_not_a_raised_error(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.tick()
+    text = loop.log.path.read_text(encoding="utf-8")
+    loop.log.path.write_text(text.replace('"outcome"', '"outcome "'), encoding="utf-8")
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and len(domain.llm.calls) == calls
+
+def test_6_a_sealed_breach_whose_pause_could_not_be_written_still_stops_the_next_tick(tmp_path, monkeypatch):
+    domain = domains.WordProblems(tmp_path)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    monkeypatch.setattr(loop.log, "pause", lambda reason: (_ for _ in ()).throw(OSError("full")))
+    with open(domain.sealed_file, "rb"):
+        assert loop.tick()["outcome"] == "sealed_breach"
+    assert loop.log.paused() == "" and _code(loop.tick()) == "G6_E_LOOP_PAUSED"

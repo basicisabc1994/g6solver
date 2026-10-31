@@ -46,6 +46,10 @@ class CycleLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._chain = ChainLedger(self.path, validate=_rules)
 
+    def reload(self) -> None:
+        """Read the file again: another handle may have written it. Its earlier entries must be unchanged."""
+        self._chain.reload()
+
     def _rows(self) -> list[tuple[str, dict]]:
         return [(e["kind"], e["body"]) for e in self._chain.entries()]
 
@@ -82,10 +86,14 @@ class CycleLog:
             reason = body["reason"] if kind == "paused" else "" if kind == "resumed" else reason
         return reason
 
-    def failed_streak(self) -> int:
+    def since_resumed(self) -> list[dict]:
+        """The cycles since a person last lifted a pause."""
         rows = self._rows()
         start = max((i for i, (kind, _) in enumerate(rows) if kind == "resumed"), default=-1) + 1
-        cycles = [body for kind, body in rows[start:] if kind == "cycle"]
+        return [body for kind, body in rows[start:] if kind == "cycle"]
+
+    def failed_streak(self) -> int:
+        cycles = self.since_resumed()
         undone = {c.get("undoes") for c in cycles if c["outcome"] == "rolled_back"}
         streak = 0
         for cycle in reversed(cycles):

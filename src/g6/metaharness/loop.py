@@ -26,13 +26,14 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import digest
+from g6.core.ledger import LedgerError, digest
 from g6.core.llm import DEFAULT_MAX_TOKENS, LLMError, waits
 from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
@@ -80,6 +81,7 @@ NO_CONSTRAINT = "G6_E_LOOP_NO_CONSTRAINT"
 BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
 NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
 BUSY = "G6_E_LOOP_BUSY"
+RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
@@ -235,6 +237,30 @@ def _judge_digest(judge: Judge | None) -> str:
     return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
 
 
+def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
+    overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
+    so it dies with its process, and a refusal is a reply, never a raised error."""
+
+    @wraps(method)
+    def invoke(self: ShadowLoop, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            with Coordination(self.root / ".tick").mutex():
+                self.log.reload()
+                if self.mh is not None:
+                    self.mh.refresh()
+                return method(self, *args, **kwargs)
+        except WorkspaceRefused:
+            return _blocked(BUSY, "another operation is running on this folder; this one did nothing")
+        except LedgerError as exc:
+            reply = _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
+                             "A person inspects the folder. Nothing runs on records that do not check out.")
+            self._beat(reply["completion_state"], RECORDS_UNREADABLE)
+            return reply
+
+    return invoke
+
+
 class ShadowLoop:
     def __init__(self, domain: Domain, root: str | Path, settings: LoopSettings, *, proposer: Any,
                  now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -314,7 +340,7 @@ class ShadowLoop:
         invalid = self._invalid()
         if invalid is not None:
             return invalid
-        paused = self.log.paused()
+        paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
         changed = self._changed()
@@ -326,6 +352,20 @@ class ShadowLoop:
                             "fresh split, and only a person can confirm one", "A person freezes a fresh split and enrols.")
         return None
 
+    def _must_stop(self) -> str:
+        """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the
+        fact, and the pause is only its note."""
+        cycles = self.log.since_resumed()
+        for cycle in reversed(cycles):
+            if cycle["outcome"] == "sealed_breach" or cycle.get("code") == UNMETERED_CALLER:
+                return cycle["reason"]
+        streak = self.log.failed_streak()
+        if streak < MAX_FAILED_CYCLES:
+            return ""
+        return "three failed cycles in a row: " + "; ".join(
+            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in cycles[-streak:])
+
+    @_exclusive
     def enrol(self, confirmed_by: str) -> dict[str, Any]:
         """A person confirms what judges this domain. It happens once, and it is the one step the loop cannot do."""
         if self.problems:
@@ -366,17 +406,13 @@ class ShadowLoop:
                 seen |= {*row["held_out"], *row["held_out_inputs"]}
         return sorted(c.case_id for c in self.cut.held_out if {c.case_id, c.ref()["input_sha256"]} & seen)
 
+    @_exclusive
     def tick(self) -> dict[str, Any]:
-        """One cycle. A refusal is a reply, never a raised error, and a heartbeat follows every tick, so someone
-        watching can tell a loop that is waiting from one that has died. One tick at a time per folder: a restart
-        can overlap a tick that is still running, and the lock is the operating system's, so it dies with its process."""
-        try:
-            with Coordination(self.root / ".tick").mutex():
-                reply = self._refused() or self._run()
-                self._beat(reply["completion_state"], reply["warning_card"]["code"])
-                return reply
-        except WorkspaceRefused:
-            return _blocked(BUSY, "another tick is running on this folder; this one did nothing")
+        """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
+        has died."""
+        reply = self._refused() or self._run()
+        self._beat(reply["completion_state"], reply["warning_card"]["code"])
+        return reply
 
     def _beat(self, state: str, code: str) -> None:
         beat(self.root, domain=self.domain.name, at=self._now().isoformat(), tick=len(self.log.cycles()), state=state,
@@ -430,7 +466,7 @@ class ShadowLoop:
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
         reply = self._reply(self.log.cycle(row))
-        self._pause_if_failing(row)
+        self._pause_if_failing()
         return reply
 
     def _adopt(self, decision: Any) -> dict[str, Any]:
@@ -440,21 +476,21 @@ class ShadowLoop:
             return {**said, "outcome": "blocked"}
         return {**said, "outcome": "adopted", "head_version": adopted["head_version"]}
 
-    def _pause_if_failing(self, row: dict[str, Any]) -> None:
-        streak = self.log.failed_streak()
-        if row["outcome"] == "sealed_breach" or row["code"] == UNMETERED_CALLER:
-            self.log.pause(row["reason"])
-        elif streak >= MAX_FAILED_CYCLES:
-            last = self.log.cycles()[-streak:]
-            self.log.pause("three failed cycles in a row: " + "; ".join(
-                f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in last))
+    def _pause_if_failing(self) -> None:
+        reason = self._must_stop()
+        if reason:
+            try:
+                self.log.pause(reason)
+            except (OSError, LedgerError):
+                pass                  # the cycles are already written, so the next tick is refused all the same
 
+    @_exclusive
     def resume(self, accepted_by: str) -> dict[str, Any]:
         """A person lifts a pause, having read why. The loop cannot lift its own."""
         who = accepted_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person lifts a pause (no empty or auto: name)")
-        if self.log.paused():
+        if self.log.paused() or self._must_stop():
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
@@ -498,6 +534,7 @@ class ShadowLoop:
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
                 "recovery": run.recovery}
 
+    @_exclusive
     def leave_shadow(self) -> dict[str, Any]:
         """Take the head out of the loop's own workspace. Nothing in this phase can. Outside shadow a person accepts a
         change, and whether a passed gate may ever stand in for them is the owner's ruling, held in one setting."""
@@ -519,6 +556,7 @@ class ShadowLoop:
         fields = {k: v for k, v in row.items() if k not in ("code", "reason")}
         return _envelope(state, row["code"], row["reason"], **fields)
 
+    @_exclusive
     def status(self) -> dict[str, Any]:
         """Where the loop stands; it runs nothing."""
         refused = self._invalid()
