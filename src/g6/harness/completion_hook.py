@@ -4,9 +4,9 @@
 project's folder off the import path, so nothing in it runs in G6's process.
 
 ``prompt``: what the person asks before the loop starts testing is the task, and HEAD at their first prompt the base commit,
-so a commit the agent makes later cannot move it. The first prompt also runs the scouts (``completion_loop.prepare``) and
-gives the agent what they found as ``additionalContext``; a later one costs a file or two. Nothing heavy is imported until a
-hook has work to do.
+so a commit the agent makes later cannot move it. With ``G6_LOOP_SCOUTS=before_fix`` in the person's key file, the first
+prompt also runs the scouts (``completion_loop.prepare``) and gives the agent what they found as ``additionalContext``.
+Nothing heavy is imported until a hook has work to do.
 
 ``stop``: ``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
 from the transcript and HEAD is the base. ``{"decision": "block", "reason": ...}`` hands the repair text back to the agent;

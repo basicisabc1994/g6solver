@@ -299,6 +299,18 @@ def test_installing_the_plugin_allows_no_sensitive_operation_and_the_docs_say_ho
     assert "G6_MCP_SENSITIVE=patch_review.review" in text and "g6 setup --client claude --allow patch_review.review" in text
 
 
+@pytest.mark.parametrize("name", ["README.md", "skills/completion-loop/SKILL.md"])
+def test_the_docs_say_which_loop_has_measurements_behind_it(name):
+    text = " ".join((PLUGIN / name).read_text(encoding="utf-8").split())
+    assert "G6_LOOP_SCOUTS=before_fix" in text
+    assert "the configuration with measurements behind it" in text and "a different, cheaper loop" in text
+
+
+def test_a_prompt_hook_says_nothing_of_scouts_where_none_may_run():
+    [[one]] = [entry["hooks"] for entry in hooks()["UserPromptSubmit"]]
+    assert "scout" not in one["statusMessage"].lower()      # it shows at every prompt, and by default none runs there
+
+
 def test_the_skill_can_be_found_and_says_what_a_repair_message_is():
     text = (PLUGIN / "skills" / "completion-loop" / "SKILL.md").read_text(encoding="utf-8")
     head = text.split("---", 2)[1]

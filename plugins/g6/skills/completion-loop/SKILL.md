@@ -5,10 +5,20 @@ description: Use when G6's completion loop sends failing probes back at the end 
 
 # G6's completion loop
 
-At the start of a Python task you may be given G6's method and a scout's work: the behaviours and input shapes a complete fix
-must handle, with probes. Read them before you edit. When you finish, G6 may stop the end of your turn and send back probes
-that fail on your code. Scouts wrote them from the task and the base commit, without seeing your change. You can read one
-scout's work, at the folder the message names. The others are hidden from you on purpose.
+When you finish a Python task, G6 may stop the end of your turn and send back probes that fail on your code. Scouts wrote them
+from the task and the base commit, without seeing your change. You can read one scout's work, at the folder the message names.
+The others are hidden from you on purpose.
+
+## Which loop this is
+
+By default the scouts run when you stop, and only if the session changed Python. This is a different, cheaper loop from the
+one the worked examples measured, because your first attempt comes before the scouts' work.
+
+With `G6_LOOP_SCOUTS=before_fix` in the person's key file, the scouts run before you start: the configuration with
+measurements behind it. You then begin with G6's method and a scout's work, the behaviours and input shapes a complete fix
+must handle, with probes. Read them before you edit.
+
+The report says which ran. Only the person sets this line. Do not set it, or tell them one loop is better, unless they ask.
 
 ## When a message comes back
 

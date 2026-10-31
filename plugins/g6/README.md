@@ -43,34 +43,44 @@ An optional line adds a reviewer from another model family, on your Codex sign-i
 G6_LOOP_CRITIC=codex
 ```
 
-Scouts run at each session's first prompt, whatever it asks, in any repository that holds Python. To keep them until the
-agent stops, which spends only on work that changed Python but is not the loop the worked examples measured:
-
-```
-G6_LOOP_SCOUTS=at_stop
-```
-
 Lines set only in an agent's environment do not count: an agent's environment is not your approval.
+
+## Two loops
+
+By default the scouts wait until the agent stops, and run only if the session changed Python. Nothing holds your prompt, and
+a session that changes no Python spends nothing. This is a different, cheaper loop from the one the worked examples measured:
+the agent makes its first attempt without the scouts' work, so no measurement of ours applies to it.
+
+`G6_LOOP_SCOUTS=before_fix` in your key file runs the scouts before the agent starts. This is the configuration with
+measurements behind it, and its cost is plain: it holds the agent's first turn for as long as the scouts take, at most 40
+minutes, and it spends at each session's first prompt, whatever the prompt asks, in any repository that holds Python.
+
+```
+G6_LOOP_SCOUTS=before_fix
+```
+
+The report says which ran: when the scouts did not run first, it says so under "Not the loop the worked examples measured".
 
 ## What happens
 
-1. At your first prompt, before the agent starts, three scouts read your request and a scratch copy of the repository at the
-   commit you are on. None has a shell. Each writes tests of the behaviour the request requires. This holds the agent's
-   first turn for as long as they take, at most 40 minutes.
-2. G6 runs those tests on that copy, inside an operating-system boundary, with no network. A set of tests that exercised
+1. What you ask before G6 first tests the work is the task, and the commit you are on at your first prompt is the base.
+   Uncommitted work you had then counts as part of the change.
+2. When the agent finishes and Python files have changed, three scouts read the task and a scratch copy of the base. None can
+   see the change, and none has a shell. Each writes tests of the behaviour the task requires.
+3. G6 runs those tests on that copy, inside an operating-system boundary, with no network. A set of tests that exercised
    nothing is left out.
-3. The agent starts with G6's method and one scout's work. The other two sets stay hidden from it.
-4. When it finishes and Python files have changed, G6 runs the sets on its code. Failures go back to it in the same session,
-   at most three times. The loop ends sooner if nothing fails, or if the agent leaves the code as it was.
+4. G6 runs the sets on the agent's code. Failures go back to it in the same session, at most three times, the first time with
+   G6's method and one scout's work. The other two sets stay hidden from it. The loop ends sooner if nothing fails, or if the
+   agent leaves the code as it was.
 5. The turn ends and you see the report, which is also saved beside the session's state.
 
-If the scouts cannot run first (no boundary, no approval, their time ran out), the agent starts anyway. The scouts still to
-run work on a copy of the same commit when the agent stops, and the report says what did not happen. If no hook saw your
-prompt, the task is read from the session's transcript and the base is the commit you are on then.
+With `G6_LOOP_SCOUTS=before_fix`, steps 2 and 3 happen at your first prompt, and the agent starts with G6's method and one
+scout's work. Only that prompt reaches the scouts. If they cannot run first (no boundary, no approval, their time ran out),
+the agent starts anyway, the scouts still to run work on a copy of the base when it stops, and the report says what did not
+happen.
 
-Anything you ask before G6 first tests the work adds to the task, but only your first prompt reaches the scouts. Uncommitted
-work you had at your first prompt counts as part of the change. The loop runs once per session: start a new session for a
-new task.
+If no hook saw your prompt, the task is read from the session's transcript and the base is the commit you are on then. The
+loop runs once per session: start a new session for a new task.
 
 ## What the report says, and what it does not
 
@@ -91,5 +101,6 @@ the agent reading them by accident or habit, not against code running as the sam
 Without an operating-system boundary, G6 refuses to run model-written tests, asks no model, and says so. `g6 doctor` says
 what your computer needs.
 
-The loop tests Python changes only. It differs from the worked examples' arm L9 in two ways: G6 runs the scouts' tests for
-them, as they have no shell, and the reviewer reads the patch and the changed files as text, with no tools.
+The loop tests Python changes only. Even with `G6_LOOP_SCOUTS=before_fix` it differs from the worked examples' arm L9 in two
+ways: G6 runs the scouts' tests for them, as they have no shell, and the reviewer reads the patch and the changed files as
+text, with no tools.

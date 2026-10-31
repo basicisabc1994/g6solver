@@ -107,6 +107,7 @@ def world(tmp_path, monkeypatch):
             return loop.advance(root, task, self.base, self.session, scout=scouts or Scouts(), critic=critic)
 
         def prepare(self, scouts=None):
+            monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "before_fix"})
             return loop.prepare(root, TASK, self.base, self.session, scout=scouts or Scouts())
 
         def state(self) -> dict:
@@ -527,20 +528,44 @@ def test_a_first_task_with_no_scout_set_is_told_nothing(world, monkeypatch):
     assert world.prepare(broken) == ""
 
 
-@pytest.mark.parametrize("stopped", ["boundary", "approval", "the persons_choice", "no python"])
+@pytest.mark.parametrize("line", [{}, {loop.WHEN_LINE: "at_stop"}, {loop.WHEN_LINE: "anything else"}])
+def test_by_default_nothing_is_spent_at_the_first_prompt(world, monkeypatch, line):
+    runs, scouts = Runs(monkeypatch), Scouts()
+    monkeypatch.setattr(keys, "read", lambda: dict(line))
+    monkeypatch.setenv(loop.WHEN_LINE, "before_fix")      # an agent's environment is not the person's choice
+    assert loop.prepare(world.repo, TASK, world.base, world.session, scout=scouts) == ""
+    assert not scouts.calls and not runs.calls
+    assert not (world.session / "state.json").exists()
+
+
+def test_by_default_the_scouts_run_only_when_the_session_changed_python(world, monkeypatch):
+    runs, scouts = Runs(monkeypatch), Scouts()
+    (world.repo / "notes.md").write_text("a note", encoding="utf-8")
+    assert world.advance(scouts).text == "" and not scouts.calls and not runs.calls
+    world.edit()
+    world.advance(scouts)
+    assert len(scouts.calls) == 3
+
+
+def test_the_default_loop_says_it_is_not_the_one_measured_and_how_to_run_that_one(world, monkeypatch):
+    Runs(monkeypatch)
+    world.edit()
+    text = world.advance().text
+    assert "Not the loop the worked examples measured" in text and f"{loop.WHEN_LINE}=before_fix" in text
+
+
+@pytest.mark.parametrize("stopped", ["boundary", "approval", "no python"])
 def test_when_the_scouts_cannot_run_before_the_fix_the_turn_goes_ahead(world, monkeypatch, stopped):
     runs, scouts = Runs(monkeypatch), Scouts()
     if stopped == "boundary":
         monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
-    if stopped == "the persons_choice":
-        monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "at_stop"})
     if stopped == "no python":
         (world.repo / "mod.py").unlink()
         (world.repo / "notes.txt").write_text("n", encoding="utf-8")
         git(world.repo, "add", "-A")
         git(world.repo, "commit", "-qm", "no python")
     if stopped == "approval":
-        monkeypatch.setattr(keys, "read", lambda: {})
+        monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "before_fix"})
         assert loop.prepare(world.repo, TASK, world.base, world.session) == ""
     else:
         assert world.prepare(scouts) == ""
@@ -655,6 +680,7 @@ def test_end_to_end_with_real_confined_runs_and_the_real_review(bwrap_backend, t
     scouts = Scouts({"test_probe.py": CROSS}, tree)
     task = "clamp must keep x between lo and hi"
 
+    monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "before_fix"})
     context = loop.prepare(root, task, base, session, scout=scouts)
     assert "Work as a counterexample loop" in context and '"dimensions"' in context and "def test_cross" in context
     assert len(scouts.calls) == 3

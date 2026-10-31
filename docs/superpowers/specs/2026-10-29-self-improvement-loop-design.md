@@ -606,7 +606,7 @@ weakness was planted and the models are stubs.
 |---|---|
 | **For the owner: one person step stays.** A person enrols a domain, and again for each fresh held-out split. Someone must say what "better" means, and it cannot be the thing judged | The loop stops after five gated candidates per split until a person acts. This is the distance left from "no intervention" |
 | **For the owner: `person_free_adoption_outside_shadow`, off.** With it on, this phase still moves nothing: no path out exists | None today. Wiring it in P3 is a separate decision, and the store's rules would need changing, since they refuse any `auto:` name |
-| The tick lives in `g6.metaharness`, not `g6.self_maintenance`, because the layer contract forbids that import | Section 3's `python -m g6.self_maintenance` cannot hold; the entry will be `python -m g6.metaharness.loop`. Cheap |
+| The tick lives in `g6.metaharness`, not `g6.self_maintenance`, because the layer contract forbids that import | Section 3's `python -P -m g6.self_maintenance` cannot hold; the entry will be `python -P -m g6.metaharness.loop`. Cheap |
 | Adoption is a subclass with its own ledger, not `activate` with a made-up name and not a change to the store | `ShadowHarness` overrides a private method, so a refactor of `MetaHarness._head` can break it. Tests would catch that |
 | One workspace for all adoptions, so held-out uses carry over | None found. A fresh workspace per adoption would have let a split be spent for ever |
 | "Sealed" means section 6.3's pool. The gate scores a seeded cut of the development pool, as 6.5 says | If the owner meant the gate to score the sealed split, one line changes, and the study's pool would be spent |

@@ -6,11 +6,13 @@ It is the worked examples' arm L9 (``validation/worked_examples/run.py``), moved
 (``HARNESS``, read by ``harness``; a test holds it to ``run.py``'s), and a later trained harness needs no code: a file
 with the fields ``trained`` holds, the parts ``TRAINED`` names, adds to those parts as ``run.py``'s ``trained`` does.
 
-``prepare`` runs the scouts at a session's first task, before any edit, as L9 does, and gives what the agent starts with: the
-fixer text and its scout's work. ``advance`` takes a repository, the task's text, the base commit and a session's state
-folder, and says what comes next: continue, with the text that goes back to the agent, or stop, with the report. It makes
-any set ``prepare`` could not, on a copy of the base commit, and the report says those came late. Each call is one hook of
-one session, so what must last between them is in the folder's ``state.json``. Python only: with none, nothing is spent.
+``advance`` takes a repository, the task's text, the base commit and a session's state folder, and says what comes next:
+continue, with the text that goes back to the agent, or stop, with the report. By default it makes the scouts' sets itself,
+on a copy of the base commit, once the session has changed Python: a cheaper loop than the one L9 measured, and the report
+says so. ``prepare``, with ``G6_LOOP_SCOUTS=before_fix`` in the person's key file, runs them at a session's first task,
+before any edit, as L9 does, and gives what the agent starts with: the fixer text and its scout's work. ``advance`` then
+makes only what ``prepare`` could not. Each call is one hook of one session, so what must last between them is in the
+folder's ``state.json``. Python only: with none, nothing is spent.
 
 The scouts. L9's scouts read the code with tools, and that reading matters, so ``verification_proposer`` cannot host them:
 it asks for text about a diff, and a scout works before any fix, across the code. Each is a session on the person's own
@@ -71,9 +73,10 @@ SCOUT_SECONDS, SCOUT_TURNS, RUN_S, REVIEW_S, MAX_PACK_CHARS = 1200, 200, 300, 60
 SCOUTS_S, STOP_S, LOOP_S, MIN_SCOUT_S, MAX_CONTEXT_CHARS = 2400, 5100, 120 * 60, 60, 9_500
 BEFORE, AT_STOP = "before the fix", "at the stop"
 NO_TIME = "the time for scouts ran out before this one could start"
-#: The line in the person's key file that keeps the scouts until the agent stops: ``at_stop``. Scouts before the fix are
-#: what L9 measured, but they spend at each session's first prompt, whatever it asks.
+#: The line in the person's key file that runs the scouts before the fix: ``before_fix``, what L9 measured. It holds the first
+#: prompt and spends there, whatever the prompt asks, so by default they wait until the session has changed Python.
 WHEN_LINE = "G6_LOOP_SCOUTS"
+NOT_ASKED = f"by default they run when the agent stops; {WHEN_LINE}=before_fix in your key file runs them first"
 #: G6's clock for the scouts' and the runs' deadlines (a test replaces it).
 _clock = time.monotonic
 #: A scout may read and write files, and nothing else: no shell, so no model-written test runs outside G6's boundary.
@@ -500,6 +503,10 @@ def _finish(session: Path, state: dict, report: str) -> Step:
     return Step(STOP, report)
 
 
+def _before_fix() -> bool:
+    return (keys.get(WHEN_LINE) or "").strip().lower() == "before_fix"
+
+
 def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
     """What the probes did, above the patch review of what stopped the loop. They are not given to the review."""
     reply = review_patch(root, task=task, requirements=[{"id": REQUIREMENT, "text": task[:20_000], "checks": []}], base=base,
@@ -510,7 +517,8 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
     return patch_report.completion_report({
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
-        "late_because": state.get("late") or "no hook ran them before the agent started", "boundary": state.get("boundary"),
+        "late_because": state.get("late") or ("no hook ran them before the agent started" if _before_fix() else NOT_ASKED),
+        "boundary": state.get("boundary"),
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
                   "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
         review)
@@ -550,13 +558,16 @@ def _told(state: dict, shipped: Harness) -> str:
 
 
 def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None) -> str:
-    """The scouts before the fix, at a session's first task, as L9 runs them; what the agent is told before it starts ("" for
-    nothing). Whatever keeps them from running, the agent's turn goes ahead, and ``advance`` does what is left, or says
-    what did not happen. Nothing here is spent on a repository with no Python, or where ``WHEN_LINE`` says ``at_stop``."""
+    """The scouts before the fix, at a session's first task, as L9 runs them, when ``WHEN_LINE`` in the person's key file says
+    ``before_fix``; what the agent is told before it starts ("" for nothing). With no such line nothing here runs or is
+    spent. Whatever keeps them from running, the agent's turn goes ahead, and ``advance`` does what is left, or says what
+    did not happen. Nothing is spent on a repository with no Python."""
+    if not _before_fix():
+        return ""
     session = Path(session)
     root = repo_tests.checked_repo(repo)
     python = any(rel.endswith(".py") for rel in repo_tests._paths(repo_tests._git(root, "ls-files", "-z")))
-    if not python or (keys.get(WHEN_LINE) or "").strip().lower() == "at_stop" or proposer.boundary(root):
+    if not python or proposer.boundary(root):
         return ""
     scout = scout or scout_host()
     if scout is None:
