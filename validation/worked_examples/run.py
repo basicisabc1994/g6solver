@@ -251,6 +251,7 @@ reason carefully about what each test will do.
 <structured_output_contract>
 In this exact form:
 
+READ: <the first line of issue.txt, exactly>
 RULE: <one or two sentences>
 VERDICT: defect or none
 WHY: <the concrete input, what the candidate does, what it should do, and the evidence in issue.txt or parent/ with file and line>
@@ -494,10 +495,13 @@ def failures_of(sets: Iterable[tuple[str, ProbeRun, ProbeRun | None]]) -> tuple[
     return failing, "\n\n".join(parts)
 
 
-def critic_report(said: str) -> dict[str, str]:
+def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
     """The critic's reply: its rule, verdict, reasons and test. Progress lines say nothing, so only what follows them counts,
-    and a test comes with a verdict of defect or not at all."""
+    and a test comes with a verdict of defect or not at all. ``proof``: the line it must quote from inside the pack, because
+    a critic that could not read the pack still answers, and "none" from it looks like a clean review (L8's smoke run)."""
     body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
+    if proof and not re.search(rf"^READ:\s*{re.escape(proof)}\s*$", body, re.M):
+        return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {proof}"}
     verdict = re.search(r"^VERDICT:\s*(\w+)", body, re.M)
     rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
     why = re.search(r"^WHY:\s*(.*?)(?=^```|\Z)", body, re.M | re.S)
@@ -1545,30 +1549,34 @@ def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title:
     that fails is recorded and the run goes on. Its test, if it has one, waits where ``run_set`` can run it."""
     started = time.monotonic()
     found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
+    proof = f"review {uuid.uuid4().hex}"
+    # an ordinary folder: mkdtemp's 0o700 is an ACL on Windows that shuts out the critic's sandbox account
+    pack = ctx.archive.root / "critic_packs" / proof.split()[1]
     try:
-        with tempfile.TemporaryDirectory(prefix="g6we-critic-", ignore_cleanup_errors=True) as tmp:
-            pack = Path(tmp)
-            checked(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/critic.patch"), workdir=task.repo, timeout=300),
-                    "the critic's patch")
-            if not copy_out(ctx.docker, agent, f"{WE}/critic.patch", pack / "candidate.patch"):
-                raise RuntimeError("the patch could not be copied")
-            tree = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "git", "archive", "--format=tar", base, timeout=300)
-            checked(tree, "the parent's tree")
-            with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
-                for member in tar.getmembers():
-                    if member.isfile():
-                        dest = pack / "parent" / member.name
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_bytes(tar.extractfile(member).read())
-            (pack / "issue.txt").write_text(f"{title}\n\n{text}", encoding="utf-8")
-            (pack / "critic_prompt.md").write_text(PATCH_CRITIC, encoding="utf-8")
-            said = (ctx.critic or run_codex)(pack)
+        pack.mkdir(parents=True)
+        checked(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/critic.patch"), workdir=task.repo, timeout=300),
+                "the critic's patch")
+        if not copy_out(ctx.docker, agent, f"{WE}/critic.patch", pack / "candidate.patch"):
+            raise RuntimeError("the patch could not be copied")
+        tree = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "git", "archive", "--format=tar", base, timeout=300)
+        checked(tree, "the parent's tree")
+        with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
+            for member in tar.getmembers():
+                if member.isfile():
+                    dest = pack / "parent" / member.name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(tar.extractfile(member).read())
+        (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
+        (pack / "critic_prompt.md").write_text(PATCH_CRITIC, encoding="utf-8")
+        said = (ctx.critic or run_codex)(pack)
         run.write("critic_reply.txt", ctx.archive.redact(said))
-        found = critic_report(said)
+        found = critic_report(said, proof=proof)
         if found["test"]:
             write_in(ctx.docker, agent, f"{CRITIC_AT}/test_critic.py", found["test"] + "\n", user="root")
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    finally:
+        shutil.rmtree(pack, ignore_errors=True)
     return {**found, "seconds": round(time.monotonic() - started, 1)}
 
 

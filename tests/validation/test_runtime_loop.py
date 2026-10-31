@@ -497,6 +497,20 @@ def test_a_reply_that_cannot_be_read_is_no_verdict():
     assert we.critic_report("")["test"] == ""
 
 
+def test_a_critic_that_never_read_the_pack_has_given_no_verdict():
+    """L8's smoke run: Codex's sandbox was refused the folder, and it answered VERDICT: none, which looks like a clean review."""
+    blocked = "RULE: Cannot derive the rule.\nVERDICT: none\nWHY: reads of issue.txt returned Access is denied.\n```python\n```\n"
+    got = we.critic_report(blocked, proof="review-123")
+    assert got["verdict"] == "unread" and "review-123" in got["error"] and got["test"] == ""
+    wrong = "READ: review-999\nRULE: r\nVERDICT: defect\nWHY: w\n```python\ndef test_a():\n    assert 0\n```\n"
+    assert we.critic_report(wrong, proof="review-123")["verdict"] == "unread"
+    assert we.critic_report(wrong.replace("999", "123"), proof="review-123")["verdict"] == "defect"
+
+
+def test_the_critic_is_told_to_prove_it_read_the_pack():
+    assert "READ:" in we.PATCH_CRITIC and "first line of issue.txt" in we.PATCH_CRITIC
+
+
 def test_the_critics_prompt_names_no_bug_and_keeps_the_fix_out():
     assert we.PATCH_CRITIC.count("candidate.patch") and "VERDICT" in we.PATCH_CRITIC
     assert "maintainers" not in we.PATCH_CRITIC and "/oracle" not in we.PATCH_CRITIC
@@ -509,6 +523,9 @@ def test_the_critic_needs_the_companions_place_set_and_says_so(monkeypatch, tmp_
 
 
 class _Archive:
+    def __init__(self, root):
+        self.root = root
+
     @staticmethod
     def redact(text):
         return text
@@ -549,18 +566,19 @@ class _CriticDocker:
         return _Reply("")
 
 
-def _critic_ctx(docker, reply):
+def _critic_ctx(docker, reply, root):
     class Ctx:
-        archive = _Archive()
+        pass
 
     ctx = Ctx()
-    ctx.docker, ctx.seen = docker, {}
+    ctx.archive, ctx.docker, ctx.seen, ctx.pack = _Archive(root), docker, {}, None
 
     def critic(folder):
+        ctx.pack = folder
         ctx.seen = {p.relative_to(folder).as_posix(): p.read_text("utf-8") for p in folder.rglob("*") if p.is_file()}
         if isinstance(reply, Exception):
             raise reply
-        return reply
+        return f"{reply}\nREAD: {ctx.seen['issue.txt'].splitlines()[0]}\n"
 
     ctx.critic = critic
     return ctx
@@ -572,30 +590,40 @@ def _critic(ctx):
     return we.run_critic(ctx, task, run, "agent", "b" * 40, "a title", "the issue"), run
 
 
-def test_the_critic_sees_the_task_the_parent_and_the_patch_and_nothing_else(monkeypatch):
+def test_the_critic_sees_the_task_the_parent_and_the_patch_and_nothing_else(monkeypatch, tmp_path):
     monkeypatch.setattr(we, "copy_out", lambda docker, ctr, src, dest: Path(dest).write_bytes(b"a patch") or True)
-    ctx = _critic_ctx(_CriticDocker(), REPLY)
+    ctx = _critic_ctx(_CriticDocker(), REPLY, tmp_path)
     got, run = _critic(ctx)
     assert set(ctx.seen) == {"issue.txt", "candidate.patch", "critic_prompt.md", "parent/src/app.py"}
     assert "the issue" in ctx.seen["issue.txt"] and ctx.seen["candidate.patch"] == "a patch"
-    assert got["verdict"] == "defect" and run.written["critic_reply.txt"] == REPLY
+    assert got["verdict"] == "defect" and REPLY in run.written["critic_reply.txt"]
     assert not any("/oracle" in " ".join(map(str, args)) for args, _ in ctx.docker.calls)
 
 
-def test_the_critics_test_goes_where_the_runner_runs_it_and_only_when_there_is_one(monkeypatch):
+def test_the_pack_sits_in_an_ordinary_folder_the_critics_sandbox_can_enter_and_goes_after(monkeypatch, tmp_path):
+    """mkdtemp's 0o700 becomes an ACL on Windows that shuts out Codex's sandbox account: that is what L8's smoke run hit."""
     monkeypatch.setattr(we, "copy_out", lambda docker, ctr, src, dest: Path(dest).write_bytes(b"a patch") or True)
-    ctx = _critic_ctx(_CriticDocker(), REPLY)
+    monkeypatch.setattr(we.tempfile, "mkdtemp", lambda **_: pytest.fail("mkdtemp"))
+    monkeypatch.setattr(we.tempfile, "TemporaryDirectory", lambda **_: pytest.fail("TemporaryDirectory"))
+    ctx = _critic_ctx(_CriticDocker(), REPLY, tmp_path)
+    _critic(ctx)
+    assert ctx.pack.parent == tmp_path / "critic_packs" and not ctx.pack.exists()
+
+
+def test_the_critics_test_goes_where_the_runner_runs_it_and_only_when_there_is_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(we, "copy_out", lambda docker, ctr, src, dest: Path(dest).write_bytes(b"a patch") or True)
+    ctx = _critic_ctx(_CriticDocker(), REPLY, tmp_path)
     _critic(ctx)
     wrote = [(args, body) for args, body in ctx.docker.calls if body]
     assert len(wrote) == 1 and f"{we.CRITIC_AT}/test_critic.py" in " ".join(wrote[0][0]) and b"assert 1 == 2" in wrote[0][1]
-    quiet = _critic_ctx(_CriticDocker(), "RULE: r\nVERDICT: none\nWHY: fine\n")
+    quiet = _critic_ctx(_CriticDocker(), "RULE: r\nVERDICT: none\nWHY: fine\n", tmp_path)
     _critic(quiet)
     assert not [body for _, body in quiet.docker.calls if body]
 
 
-def test_a_critic_that_fails_is_recorded_and_the_run_goes_on(monkeypatch):
+def test_a_critic_that_fails_is_recorded_and_the_run_goes_on(monkeypatch, tmp_path):
     monkeypatch.setattr(we, "copy_out", lambda docker, ctr, src, dest: Path(dest).write_bytes(b"a patch") or True)
-    got, _ = _critic(_critic_ctx(_CriticDocker(), RuntimeError("quota")))
+    got, _ = _critic(_critic_ctx(_CriticDocker(), RuntimeError("quota"), tmp_path))
     assert got["verdict"] == "failed" and "quota" in got["error"] and got["test"] == ""
 
 

@@ -918,3 +918,11 @@ now agreed with the audit, so I withdrew the ruling and took the audit's replace
 fix with the unstated item changed passes, and a fix with the stated behaviour wrong fails. No audit has read the last form of that one
 hunk, which differs from the audited replacement only in line wrapping. On `click-3678`'s saved runs the amendment moved arm A from 0 of 2
 to 2 of 2, G1 from 0 of 2 to 2 of 2, and E and L2 from 0 of 2 to 1 of 2 each: it lifts plain Claude Code as much as any harness.
+
+**L8's one smoke run, and L9 (before any L9 or M run).** `L8` on `click-3678` repeat 1 passed the amended tests and failed the maintainers',
+for $0.80, and the instrument did its work: three real repair rounds where L7 would have allowed one. But the critic reviewed nothing. Python
+makes `mkdtemp` folders private on Windows, Codex's sandbox was refused the pack, and it answered `VERDICT: none`, which reads as a clean
+review. So the pack now sits in an ordinary folder, and the critic must quote a random line from inside the pack; a reply that does not is
+marked `unread`, never `none`. That run stays in the record as L8 and is not counted as a critic's result. The generation that runs is L9,
+identical but for that fix, and `compare.py` reads L9 and M9. A real Codex call through the fixed path then read the pack, passed the proof and
+found on an archived `click-3678` patch what the blind experiment had found, in 52 seconds. Everything said above of L8 and M8 from here means L9 and M9.
