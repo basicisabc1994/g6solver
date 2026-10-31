@@ -17,7 +17,7 @@ import g6
 from g6.core import llm
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
-from g6.metaharness import Model
+from g6.metaharness import Model, SuiteCase
 from g6.metaharness import domain as sealed_module
 from g6.metaharness.domain import sealed_closed
 from g6.metaharness.loop import LoopSettings, ShadowLoop
@@ -242,3 +242,57 @@ def test_2_an_unrelated_open_descriptor_is_no_breach(tmp_path):
         with sealed_closed(domain.sealed().vault) as breaches:
             pass
     assert breaches == []
+
+# Finding 3: a renamed case is the same case ---------------------------------------------------------------------------
+
+def _renamed(cases) -> list:
+    return [dataclasses.replace(c, case_id=f"renamed-{c.case_id}") for c in cases]
+
+
+def _fresh(start: int, count: int) -> list[SuiteCase]:
+    return [SuiteCase(f"fresh-{i:04d}", *domains._case(domains.word_problem(i))) for i in range(start, start + count)]
+
+
+def test_3_renaming_what_proposers_saw_does_not_make_it_held_out_evidence(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    exposed = {c.input for c in (*loop.cut.tune, *loop.cut.selection)}
+    domain.pool[:] = _renamed(domain.pool)                     # new ids, so the hash cuts the same inputs anew
+    again, _ = _loop(tmp_path, domain=domain)
+    assert exposed & {c.input for c in again.cut.held_out}     # survival: the rename really does move them there
+    got = again.enrol("Ada")
+    assert _code(got) == "G6_E_LOOP_SPLIT_REUSED" and got["completion_state"] == "blocked-escalated"
+
+
+def test_3_renaming_a_spent_split_does_not_make_it_fresh(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    spent = list(loop.cut.held_out)
+    domain.pool[:] = [*_renamed(spent), *_fresh(6000, 240)]    # only the spent cases come back, under new names
+    again, _ = _loop(tmp_path, domain=domain)
+    assert {c.input for c in spent} & {c.input for c in again.cut.held_out}
+    assert _code(again.enrol("Ada")) == "G6_E_LOOP_SPLIT_REUSED"
+
+
+def test_3_a_changed_text_under_an_exposed_name_is_refused_as_well(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    domain.pool[:] = [dataclasses.replace(c, input=f"{c.input} Rewritten.") for c in domain.pool]
+    moved = dataclasses.replace(SETTINGS, seed=SETTINGS.seed + 1)
+    again, _ = _loop(tmp_path, domain=domain, settings=moved)
+    assert _code(again.enrol("Ada")) == "G6_E_LOOP_SPLIT_REUSED"
+
+
+def test_3_an_enrolment_keeps_both_identities_and_no_case_text(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    row = loop.log.enrolled()
+    assert set(row["seen_inputs"]) == {c.ref()["input_sha256"] for c in (*loop.cut.tune, *loop.cut.selection)}
+    assert set(row["held_out_inputs"]) == {c.ref()["input_sha256"] for c in loop.cut.held_out}
+    assert not any(c.input in json.dumps(row) for c in loop.cut.tune)
+
+
+def test_3_cases_that_are_truly_new_still_enrol(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    held = {c.case_id for c in loop.cut.held_out}
+    domain.pool[:] = [c for c in domain.pool if c.case_id not in held] + _fresh(6000, 240)
+    again, _ = _loop(tmp_path, domain=domain)
+    assert again.enrol("Ada")["completion_state"] == "qualified-draft"

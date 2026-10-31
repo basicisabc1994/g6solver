@@ -334,9 +334,12 @@ class ShadowLoop:
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
         frozen = self._frozen()
+        exposed = (*self.cut.tune, *self.cut.selection)
         self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
-                       seen=sorted(c.case_id for c in (*self.cut.tune, *self.cut.selection)),
+                       seen=sorted(c.case_id for c in exposed),
+                       seen_inputs=sorted(c.ref()["input_sha256"] for c in exposed),
                        held_out=sorted(c.case_id for c in self.cut.held_out),
+                       held_out_inputs=sorted(c.ref()["input_sha256"] for c in self.cut.held_out),
                        held_out_digest=self.workflow.suite.digest("held_out"))
         return _envelope("qualified-draft", ENROLLED, f"{self.domain.name} is enrolled: the loop may run on it", **frozen,
                          next_action="loop.tick()")
@@ -344,14 +347,16 @@ class ShadowLoop:
     def _reused(self) -> list[str]:
         """Held-out cases that cannot be fresh evidence. The evaluation limit counts per split digest, so a split
         changed by one case would start again from nothing, and a re-cut could hand the gate what proposers tuned on.
-        Against each earlier enrolment: nothing it let proposers see, and nothing from a split it spent."""
+        Against each earlier enrolment: nothing it let proposers see, and nothing from a split it spent. A case is known
+        by its id and by a hash of its input, so a rename does not make it new. An input reworded is a new hash: only a
+        person sourcing cases can tell that apart."""
         current, seen = self.workflow.suite.digest("held_out"), set()
         evaluated = {r.get("split_digest") for r in self.mh.ledger.rows("evaluation")}
         for row in self.log.enrolments():
-            seen |= set(row["seen"])
+            seen |= {*row["seen"], *row["seen_inputs"]}
             if row["held_out_digest"] != current and row["held_out_digest"] in evaluated:
-                seen |= set(row["held_out"])
-        return sorted(c.case_id for c in self.cut.held_out if c.case_id in seen)
+                seen |= {*row["held_out"], *row["held_out_inputs"]}
+        return sorted(c.case_id for c in self.cut.held_out if {c.case_id, c.ref()["input_sha256"]} & seen)
 
     def tick(self) -> dict[str, Any]:
         """One cycle. A refusal is a reply, never a raised error, and a heartbeat follows every tick, so someone
