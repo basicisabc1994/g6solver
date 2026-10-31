@@ -33,6 +33,7 @@ from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import digest
 from g6.core.llm import DEFAULT_MAX_TOKENS
+from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
     Cut,
@@ -78,6 +79,8 @@ BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
 NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
 BUSY = "G6_E_LOOP_BUSY"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
+ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/shadow.py",
+                     "self_maintenance/envelope.py", "self_maintenance/pacing.py")
 UNKNOWN = "unknown"
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
@@ -177,6 +180,12 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
     return [name for name, path in guarded.items() if _overlap(where, os.path.normcase(path))]
 
 
+def envelope_sha256() -> str:
+    """The loop's own code: no candidate changes the envelope (design 6.5), and a change a person made is theirs to
+    accept by enrolling again."""
+    return manifest_sha256(build_manifest(Path(g6.__file__).resolve().parent, patterns=ENVELOPE_PATTERNS))
+
+
 def _judge_digest(judge: Judge | None) -> str:
     source = judge_source(judge.verdict) if judge is not None else None
     return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
@@ -224,7 +233,8 @@ class ShadowLoop:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
         split. The judge's whole file is digested, since a helper it calls judges too. No profile is in it."""
         run, sealed = self.domain.execution(), self.domain.sealed()
-        return {"evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(self.domain.judge()),
+        return {"envelope": envelope_sha256(),
+                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(self.domain.judge()),
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
                                                                                          *run.optional_checks.values())]}),
                 "cases": cut_pool(self.domain.development(), self.settings.seed).digest(),

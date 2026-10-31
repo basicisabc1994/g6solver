@@ -17,10 +17,11 @@ import g6
 from g6.core import stop
 from g6.core.llm import FakeLLM
 from g6.harness import Check
+from g6.integrity import build_manifest
 from g6.metaharness import Profile, SuiteCase
 from g6.metaharness import monitor as drift
 from g6.metaharness.domain import Judge
-from g6.metaharness.loop import LoopSettings, ShadowLoop
+from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.self_maintenance.envelope import heartbeat
 from g6.self_maintenance.pacing import ProviderWindow
@@ -606,3 +607,16 @@ def test_the_worst_case_counts_every_proposer_the_method_asks_for(tmp_path):
     loop, _ = _enrolled(tmp_path, settings=dataclasses.replace(SETTINGS, method=more))
     fewer, _ = _enrolled(tmp_path / "b", settings=SETTINGS)
     assert loop.worst_case() > fewer.worst_case()
+
+# The envelope is frozen too ------------------------------------------------------------------------------------------
+
+def test_a_change_to_the_loops_own_envelope_code_stops_the_loop(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path)
+    monkeypatch.setattr("g6.metaharness.loop.envelope_sha256", lambda: "changed")
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "envelope" in got["message"]
+
+
+def test_the_envelope_digest_covers_each_file_of_the_loop():
+    found = build_manifest(Path(g6.__file__).resolve().parent, patterns=ENVELOPE_PATTERNS)
+    assert len(found) == len(ENVELOPE_PATTERNS) == 5
