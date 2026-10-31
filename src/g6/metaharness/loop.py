@@ -17,6 +17,7 @@ established.
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -28,6 +29,7 @@ from typing import Any
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import digest
+from g6.core.llm import DEFAULT_MAX_TOKENS
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import Cut, Domain, FailureRecord, cut_pool, domain_problems, judge_source
 from g6.metaharness.failure_strategy import FailureTraceStrategy
@@ -36,9 +38,10 @@ from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, Workflow
 from g6.metaharness.shadow import SCOPE, adapt_shadow
+from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import ENDS_A_STREAK, CycleLog, beat, stop_reason
-from g6.self_maintenance.pacing import ProviderWindow
+from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 
 NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
 POOL_TOO_SMALL = "G6_E_LOOP_POOL_TOO_SMALL"
@@ -49,6 +52,10 @@ IDLE = "G6_E_LOOP_IDLE"
 CYCLE = "G6_E_LOOP_CYCLE"
 CYCLE_FAILED = "G6_E_LOOP_CYCLE_FAILED"
 NO_CONSTRAINT = "G6_E_LOOP_NO_CONSTRAINT"
+BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
+NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
+#: The proposers one cycle of ``tune`` runs: recovery, reflection and failure traces.
+PROPOSERS = 3
 UNKNOWN = "unknown"
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
@@ -100,12 +107,26 @@ class _OnConstraint:
         return self.inner.propose(replace(view, failures=shown), runner)
 
 
-def _workflow(domain: Domain, cut: Cut, settings: LoopSettings) -> Workflow:
+class _Counted:
+    """A model caller the host counts. Every call of a tick passes through one, so what a tick is charged is what the
+    host saw, and nothing a run reports about itself."""
+
+    def __init__(self, inner: Any, counts: list[int]) -> None:
+        self.inner, self.counts = inner, counts
+
+    def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
+        self.counts[0] += 1
+        return self.inner.complete(system, user, max_tokens=max_tokens)
+
+
+def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, counts: list[int]) -> Workflow:
     run, judge = domain.execution(), domain.judge()
+    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, counts))
+              for name, model in run.models.items()}
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
     return Workflow(name=domain.name, task=run.task, checks=run.checks, oracle=judge.verdict, suite=suite,
-                    models=run.models, policy=EvidencePolicy(max_eval_model_calls=settings.eval_calls),
+                    models=models, policy=EvidencePolicy(max_eval_model_calls=settings.eval_calls),
                     optional_checks=run.optional_checks, pipeline_steps=run.pipeline_steps, feedback=run.feedback)
 
 
@@ -119,19 +140,35 @@ def _pool_problems(cut: Cut, policy: EvidencePolicy) -> list[tuple[str, str]]:
 class ShadowLoop:
     def __init__(self, domain: Domain, root: str | Path, settings: LoopSettings, *, proposer: Any,
                  now: Callable[[], datetime] = lambda: datetime.now(UTC),
-                 clock: Callable[[], float] = time.monotonic) -> None:
-        self.domain, self.settings, self._proposer, self._now = domain, settings, proposer, now
+                 clock: Callable[[], float] = time.monotonic,
+                 read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
+        self.domain, self.settings, self._now = domain, settings, now
+        self.counts = [0]
+        self._proposer = _Counted(proposer, self.counts)
         self.root = Path(root).resolve()
         self.log = CycleLog(self.root / "records" / "constraint_log.jsonl")
+        self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
+                                 read_account=read_account)
         self.problems = domain_problems(domain)
+        if not settings.windows:
+            self.problems.append((NO_BUDGET, "no provider window: an unknown budget stops the loop"))
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
             self.cut = cut_pool(domain.development(), settings.seed)
-            self.workflow = _workflow(domain, self.cut, settings)
+            self.workflow = _workflow(domain, self.cut, settings, self.counts)
             self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
         if not self.problems:
             self.mh = adapt_shadow(self.workflow, domain.execution().factory, workspace=self.root / "workspace",
                                    clock=clock)
+
+    def worst_case(self) -> int:
+        """The most one tick can call, from the limits it runs under: a measurement, the audits, each proposer and race
+        of each cycle, and one evaluation. Each limit is checked before a run, so each can be passed by one run."""
+        method, per_run = self.settings.method, max(m.max_calls_per_run for m in self.workflow.models.values())
+        proposing = PROPOSERS * (method.propose_budget + per_run) + method.reflect_calls + 1
+        racing = method.select_budget + per_run
+        return (method.propose_budget + per_run + 2 * self.settings.audit_per_tick * per_run
+                + method.cycles * (proposing + racing) + self.settings.eval_calls + per_run * (per_run + 2))
 
     def _frozen(self) -> dict[str, str]:
         """What must not change: what judges, and every frozen case."""
@@ -184,13 +221,35 @@ class ShadowLoop:
         beat(self.root, domain=self.domain.name, at=self._now().isoformat(), tick=len(self.log.cycles()), state=state,
              code=code)
 
+    def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
+        """A provider with room for this tick's worst case, or the wait: the loop never spends anywhere else."""
+        now, worst, waits = self._now(), self.worst_case(), []
+        for provider in self.meter.windows:
+            spend = self.meter.reserve(provider, now, worst)
+            if spend.admitted:
+                return spend, None
+            waits.append(spend)
+        until = [w.wait_until for w in waits if w.wait_until is not None]
+        return None, _blocked(BUDGET_WAIT, "; ".join(f"{w.provider}: {w.reason}" for w in waits),
+                              "The loop waits; it runs again when a ceiling or a reset allows.",
+                              wait_until=min(until).isoformat() if until else "")
+
     def _run(self) -> dict[str, Any]:
+        spend, waiting = self._reserve()
+        if waiting is not None:
+            return waiting
         self._beat("running", CYCLE)
+        before = self.counts[0]
         try:
             row = self._cycle()
         except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
             row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
                    "reason": f"{type(exc).__name__}: {exc}"[:500]}
+        finally:
+            charged = self.meter.settle(spend, self.counts[0] - before)
+        seen = self.meter.reading(spend.provider, self._now())
+        row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
+                         "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
         return self._reply(self.log.cycle(row))
 
     def _cycle(self) -> dict[str, Any]:

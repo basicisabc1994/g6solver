@@ -7,6 +7,8 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from g6.core import stop
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
@@ -104,3 +106,88 @@ def test_a_cycle_that_breaks_is_recorded_and_the_loop_lives_to_its_next_tick(tmp
     assert got["completion_state"] == "blocked-escalated" and loop.log.cycles()[-1]["outcome"] == "error"
     domain.failures = real
     assert loop.tick()["outcome"] == "adopted"
+
+
+# The budget ----------------------------------------------------------------------------------------------------------
+
+def _windows(*allowances):
+    return LoopSettings(windows=tuple(ProviderWindow(p, a, START) for p, a in allowances), method=FAST, audit_per_tick=60)
+
+
+def test_a_tick_starts_only_if_its_worst_case_stays_under_the_ceiling(tmp_path):
+    loop, domain = _enrolled(tmp_path, settings=_windows(("claude", 100)))
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and "ceiling" in got["message"]
+    assert len(domain.llm.calls) == calls
+
+
+def test_a_wait_for_the_budget_is_not_a_failed_cycle(tmp_path):
+    loop, _ = _enrolled(tmp_path, settings=_windows(("claude", 100)))
+    for _ in range(4):
+        loop.tick()
+    assert loop.log.cycles() == [] and loop.log.failed_streak() == 0 and loop.log.paused() == ""
+
+
+def test_it_runs_again_when_the_week_allows(tmp_path):
+    days = [START]
+    worst = _loop(tmp_path / "probe")[0].worst_case()
+    settings = _windows(("claude", worst * 3))                     # day one's ceiling is a fifth of this: too little
+    loop, _ = _enrolled(tmp_path, settings=settings, now=lambda: days[0])
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT"
+    days[0] = START + timedelta(days=1, hours=1)
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_a_tick_is_charged_what_the_host_counted_and_never_more_than_its_stated_worst_case(tmp_path):
+    proposer = domains.proposes({"prompt": domains.WORKING})
+    loop, domain = _enrolled(tmp_path, proposer=proposer)
+    loop.tick()
+    counted = len(domain.llm.calls) + len(proposer.calls)
+    used = loop.meter.reading("claude", NOW).used
+    assert used == counted > 0 and counted <= loop.worst_case()
+
+
+def test_the_whole_accounts_use_makes_the_loop_give_way(tmp_path):
+    from g6.self_maintenance.pacing import AccountReading
+
+    reading = AccountReading(used=399_000, estimated=True)         # day three's ceiling is 600,000
+    loop, _ = _enrolled(tmp_path, read_account=lambda provider, start: AccountReading(used=599_999))
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT"
+    other, _ = _enrolled(tmp_path / "b", read_account=lambda provider, start: reading)
+    assert other.tick()["outcome"] == "adopted"
+
+
+def test_at_a_reported_limit_the_loop_waits_for_the_reset_and_says_when(tmp_path):
+    from g6.self_maintenance.pacing import AccountReading
+
+    reset = NOW + timedelta(hours=3)
+    loop, _ = _enrolled(tmp_path, read_account=lambda provider, start: AccountReading(limited_until=reset))
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == reset.isoformat()
+
+
+def test_a_second_provider_takes_over_when_the_first_is_at_its_ceiling(tmp_path):
+    loop, _ = _enrolled(tmp_path, settings=_windows(("claude", 100), ("codex", 1_000_000)))
+    got = loop.tick()
+    assert got["outcome"] == "adopted" and got["budget"]["provider"] == "codex"
+
+
+def test_every_cycle_records_its_use_against_the_pacing_rule(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    loop.tick()
+    budget = loop.log.cycles()[-1]["budget"]
+    assert budget["provider"] == "claude" and budget["day"] == 3
+    assert budget["target"] == pytest.approx(1_000_000 * 3 / 7) and budget["ceiling"] == pytest.approx(600_000)
+    assert 0 < budget["charged"] == budget["used"] and budget["estimated"] is False
+
+
+def test_a_cycle_that_breaks_is_charged_what_it_used(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def broken(view):
+        raise RuntimeError("no")
+
+    domain.failures = broken
+    assert loop.tick()["outcome"] == "error"
+    assert 0 < loop.meter.reading("claude", NOW).used == len(domain.llm.calls)
