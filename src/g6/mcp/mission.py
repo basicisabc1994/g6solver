@@ -8,10 +8,12 @@ client without a dialog leaves things as they were. ``g6.workforce.api`` calls i
 and a dialog cannot wait there, so the dialog comes first and ``_bound`` answers only for the lines the person read.
 
 The check step (``submit``) is ``review_patch`` on the agent's working tree, with the frozen tests as its stated checks:
-it sees the whole change, and a ``files`` map would not. The mission's own bench then judges the same text through
-``api.submit_patch``: the repair ladder, the ledger's verdicts, the receipts and the certificate all read that bench, and
-the frozen copy it runs is the one thing the agent's tree cannot reach. So nothing here is a second bench or a second
-ladder, and each attempt runs the frozen tests twice.
+it sees the whole change, and a ``files`` map would not. The text then goes to ``api.submit_patch`` with what the review
+found. A reproduced defect or a sign the tests cannot be believed holds it back: it uses an attempt on the mission's own
+repair ladder, the mission's checks never judge it, and so the mission cannot close on it. Any other outcome goes on to
+the mission's bench, whose verdicts the ladder, the receipts and the certificate read, and whose frozen copy is the one
+thing the agent's tree cannot reach. So nothing here is a second bench or a second ladder, and a patch that gets that
+far runs the frozen tests twice. ``insufficient_evidence`` blocks nothing, and the mission says it plainly.
 
 Every reply carries the library envelope. A mission's own ``verified`` is held at this door as at any other.
 """
@@ -37,6 +39,7 @@ from g6.core.door import (
 )
 from g6.core.ledger import digest
 from g6.harness import verification_search
+from g6.harness.patch_review import DEFECT, INTEGRITY
 from g6.intent_engine import IntentElicitor
 from g6.mcp import review_reply
 from g6.reliability_pipeline import premortem as checklist
@@ -46,6 +49,8 @@ from g6.workforce import acceptance, api, bench, coding, repo_tests
 SENSITIVE = ("workforce", "mission")
 WHO = "workforce.mission"
 REFUSED = "G6_E_MISSION_REFUSED"
+#: The review's outcomes that hold a patch back: the mission must not close on either.
+HELD = (DEFECT, INTEGRITY)
 #: Said in every dialog: the name is a claim, and what declining does.
 NAME = ("Type your name to agree; it is recorded as you give it and is not authenticated. To refuse, decline: nothing "
         "changes.")
@@ -69,9 +74,7 @@ OUT_OF_SCOPE = ("[G6_E_MISSION_OUT_OF_SCOPE] The working tree changes files the 
                 "Only {allowed} may change. A frozen test stays as it is: nothing ran and no attempt was used.")
 NO_CHANGE = ("[G6_E_MISSION_NO_CHANGE] The working tree changes nothing against the frozen commit, so nothing ran and "
              "no attempt was used.")
-INTEGRITY_HELD = ("The mission did not take this patch: the review found a sign the tests cannot be believed, so no "
-                  "attempt was used. Show the person the report.")
-DRAFT = f"{WHO}: usable with caution; g6_mission_certificate says what the evidence supports"
+DRAFT =f"{WHO}: usable with caution; g6_mission_certificate says what the evidence supports"
 # COPY: A brief's instructions on this surface, in place of ``coding.OBJECTIVE_INSTRUCTIONS``: the patch is the tree.
 SUBMIT_HERE = ("Change only the source files in scope in the working tree, do not change the tests, and call "
                "g6_mission_submit with the repository's folder. G6 runs the frozen tests after each submission and tells "
@@ -116,7 +119,8 @@ def reply(found: dict) -> dict:
     if said == "blocked-escalated":
         shown = card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])
     else:
-        shown = None if said == "verified" else card(None, "G6_E_QUALIFIED_DRAFT", DRAFT)
+        shown = None if said == "verified" else card(None, "G6_E_QUALIFIED_DRAFT",
+                                                     (found.get("review") or {}).get("said") or DRAFT)
     envelope = door_envelope(said, who=WHO, value=found, warning_card=shown, run_id=str(found.get("mission_id") or ""))
     state = envelope["completion_state"]
     return {"ok": state != "blocked-escalated", **corrected_result(_here(found), state), **envelope}
@@ -255,19 +259,16 @@ def _stated(wf: Any, mission_id: str, standard: dict) -> tuple[list[dict], list[
     return [{"id": "standard", "text": objective, "checks": checks}], [node for node in frozen if node not in checks]
 
 
-def _kept(wf: Any, mission_id: str, reviewed: dict) -> None:
-    """The review's outcome on the mission's own record, bound to what it reviewed."""
-    outcome, artifact = reviewed["assessment"]["outcome"], reviewed.get("artifact_digest")
-    wf.missions.record_event(mission_id, "message", actor="code", detail={
-        "from": "review", "to": "person", "text": f"The patch review's outcome: {outcome}.",
-        "refs": {"review": {"outcome": outcome, "artifact_digest": artifact}}},
-        idem_key=f"review:{outcome}:{artifact}")
+def _reviewed(wf: Any, mission_id: str, found: dict) -> dict:
+    """``found`` with the patch review of the mission's latest proposal, when it had one."""
+    review = coding.last_review(wf.missions, wf.ledger, mission_id)
+    return {**found, "review": review} if review else found
 
 
 def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300) -> dict:
-    """The check step: ``review_patch`` on the agent's working tree, then the same bytes to the mission. An unconfirmed
-    mission, a change outside the standard's permission and a review that refused leave the mission as it was; a sign
-    the tests cannot be believed does too, so the mission cannot close on them."""
+    """The check step: ``review_patch`` on the agent's working tree, then the same text to the mission with what the
+    review found (``HELD`` holds it back, as the module says). An unconfirmed mission, a change outside the standard's
+    permission and a review that refused leave the mission as it was, and use no attempt."""
     def work() -> dict:
         wf = api.bind()
         if wf.runtime.confirmation_pending(mission_id):
@@ -292,10 +293,10 @@ def submit(mission_id: str, repo: str, *, claim: str = "", timeout_s: int = 300)
         assessment = reviewed.get("assessment")
         if not isinstance(assessment, dict):
             return reviewed
-        _kept(wf, mission_id, reviewed)
-        if assessment.get("outcome") == "test_integrity_compromised":
-            return {**reviewed, "mission": {**reply(api.status(wf, mission_id)), "note": INTEGRITY_HELD}}
-        mission = _guarded(lambda: reply(api.submit_patch(wf, mission_id, files)))
+        outcome = assessment.get("outcome")
+        kept = {"outcome": outcome, "artifact_digest": reviewed.get("artifact_digest"), "held": outcome in HELD,
+                "reasons": [r.get("code") for r in assessment.get("reasons") or [] if isinstance(r, dict)]}
+        mission = _guarded(lambda: reply(_reviewed(wf, mission_id, api.submit_patch(wf, mission_id, files, review=kept))))
         if mission["completion_state"] == "blocked-escalated":
             reviewed = {**reviewed, "ok": False, "completion_state": "blocked-escalated",
                         "reliability_label": "blocked-escalated"}
@@ -311,11 +312,21 @@ def finish(found: Any, job_id: str) -> Any:
 
 
 def status(mission_id: str, detail: str = "summary") -> dict:
-    return _guarded(lambda: reply(api.status(api.bind(), mission_id, detail)))
+    def work() -> dict:
+        wf = api.bind()
+        return reply(_reviewed(wf, mission_id, api.status(wf, mission_id, detail)))
+
+    return _guarded(work)
 
 
 def certificate(mission_id: str) -> dict:
-    return _guarded(lambda: reply({"mission_id": mission_id, "certificate": api.certificate(api.bind(), mission_id)}))
+    """The certificate, with the patch review beside it: its digest binds its fields, as ``certificate_gaps`` says."""
+    def work() -> dict:
+        wf = api.bind()
+        return reply(_reviewed(wf, mission_id, {"mission_id": mission_id,
+                                                "certificate": api.certificate(wf, mission_id)}))
+
+    return _guarded(work)
 
 
 def premortem(repo: str, task: str, intent: dict | None = None) -> dict:

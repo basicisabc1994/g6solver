@@ -287,7 +287,14 @@ def decided(missions, ledger, mission_id: str, outcome: Outcome, *, unchecked: t
     recorded = recorder_gap(cert)
     if recorded:  # beside the issuer's certificate, whose fields its digest and verify() bind
         found["certificate_gaps"] = [["receipts", recorded]]
-    return ruled(cert.state, outcome, unchecked=unchecked, all_passed=all_passed, gaps=gaps, named=recorded), found
+    final = ruled(cert.state, outcome, unchecked=unchecked, all_passed=all_passed, gaps=gaps, named=recorded)
+    from g6.workforce import coding
+
+    said = coding.last_review(missions, ledger, mission_id).get("said", "")
+    if said:  # what its patch review could not establish, beside the certificate too, and no mission is lifted over it
+        found.setdefault("certificate_gaps", []).append(["review", said])
+        final = final.demote(QUALIFIED, said)
+    return final, found
 
 
 def recorder_gap(cert: Certificate) -> str:

@@ -98,6 +98,7 @@ class Rig:
         self.asked: list[str] = []
         self.reviewed: list[dict] = []
         self.submitted: list[dict] = []
+        self.kept: list[dict | None] = []
         monkeypatch.setattr(truth, "run_suite", lambda *a, **k: {
             "ran": True, "started": True, "why": "", "collect_errors": [], "collect_skipped": [], "seconds": 0.0,
             "outcomes": {NODES[0]: "failed", NODES[1]: "passed"}})
@@ -162,8 +163,9 @@ class Rig:
                     "reliability_label": "qualified-draft", "warning_card": {"code": patch_review.CODE, "message": "m"},
                     "evidence": [], "request_id": "r", "run_id": "u", "artifact_digest": "d"}
 
-        def submit(wf, mission_id, files):
+        def submit(wf, mission_id, files, *, review=None):
             self.submitted.append(files)
+            self.kept.append(review)
             return {"mission_id": mission_id, "status": "active", "completion_state": "", "awaiting_chat": [],
                     "awaiting_human": []}
 
@@ -402,13 +404,11 @@ def test_the_check_step_is_review_patch_with_the_frozen_tests_as_stated_checks(r
     assert got["merge"]["status"] == "requires_separate_approval" and check_envelope(got) == []
 
 
-def test_each_review_is_kept_on_the_mission(rig):
+def test_each_review_goes_to_the_mission_with_what_it_found(rig):
     mid = _confirmed(rig)
     (rig.repo / "calc.py").write_text(FIXED, encoding="utf-8", newline="\n")
     rig.submit(mid)
-    wf = rig.wf
-    [kept] = [m for m in wf.missions.messages(mission_id=mid) if "review" in m["refs"]]
-    assert kept["refs"]["review"] == {"outcome": patch_review.SUPPORTED, "artifact_digest": "d"}
+    assert rig.kept == [{"outcome": patch_review.SUPPORTED, "artifact_digest": "d", "reasons": [], "held": False}]
 
 
 def test_a_check_the_premortem_constructed_is_left_to_the_bench(rig, monkeypatch):
@@ -505,20 +505,28 @@ def test_a_review_that_refuses_leaves_the_mission_as_it_was(rig, monkeypatch):
     assert got["warning_card"]["code"] == "G6_E_ISOLATION_UNAVAILABLE" and rig.submitted == []
 
 
-def test_a_sign_of_compromised_tests_stops_the_patch_before_the_mission_takes_it(rig):
+@pytest.mark.parametrize("outcome, held", [(patch_review.INTEGRITY, True), (patch_review.DEFECT, True),
+                                           (patch_review.INSUFFICIENT, False), (patch_review.SUPPORTED, False)])
+def test_a_reproduced_defect_or_a_sign_against_the_tests_holds_the_patch_back_and_nothing_else_does(rig, outcome, held):
+    """Every outcome reaches the mission, so a held patch uses an attempt on the mission's own ladder."""
     mid = _confirmed(rig)
-    rig.outcome = patch_review.INTEGRITY
+    rig.outcome = outcome
     (rig.repo / "calc.py").write_text(FIXED, encoding="utf-8", newline="\n")
     got = rig.submit(mid)
-    assert rig.submitted == [] and got["assessment"]["outcome"] == patch_review.INTEGRITY
+    assert rig.submitted == [{"calc.py": FIXED}] and rig.kept[0]["held"] is held and rig.kept[0]["outcome"] == outcome
     assert got["assessment"]["report"] == "# the report" and got["mission"]["mission_id"] == mid
-    assert [m for m in rig.wf.missions.messages(mission_id=mid) if m["refs"].get("review", {}).get("outcome")
-            == patch_review.INTEGRITY]
+
+
+def test_what_the_review_could_not_establish_is_the_warning_on_the_mission(rig):
+    said = "Insufficient evidence: the review could not establish this change."
+    got = mission.reply({"mission_id": "m", "status": "done", "completion_state": "qualified-draft",
+                         "review": {"outcome": patch_review.INSUFFICIENT, "said": said}})
+    assert said in _says(got["warning_card"]) and check_envelope(got) == []
 
 
 def test_a_mission_that_stopped_makes_the_reply_blocked(rig, monkeypatch):
     mid = _confirmed(rig)
-    monkeypatch.setattr(api, "submit_patch", lambda wf, m, files: {
+    monkeypatch.setattr(api, "submit_patch", lambda wf, m, files, *, review=None: {
         "mission_id": m, "status": "cancelled", "completion_state": "blocked-escalated", "awaiting_chat": []})
     (rig.repo / "calc.py").write_text(FIXED, encoding="utf-8", newline="\n")
     got = rig.submit(mid)
@@ -652,6 +660,101 @@ def _write(repo: Path, text: str) -> None:
     (repo / "calc.py").write_text(text, encoding="utf-8", newline="\n")
 
 
+def _tool(client):
+    async def job(tool, **arguments):
+        return await finished(client, data(await client.call_tool(tool, arguments)))
+
+    return job
+
+
+async def _confirmed_on(job, repo: Path, **arguments) -> str:
+    made = await job("g6_mission_create", repo=str(repo), objective=OBJECTIVE, module="calc.py", function="double",
+                     **arguments)
+    await job("g6_mission_confirm", mission_id=made["mission_id"])
+    return made["mission_id"]
+
+
+#: Passes the frozen tests by naming their two inputs, and is wrong everywhere else.
+ONLY_THE_EXAMPLES = "def double(x):\n    return {2: 4, 3: 6}.get(x, 0)\n"
+#: A test of the module outside tests/: the review's second tier runs it, and the mission's bench, which runs tests/, does not.
+OUTSIDE_THE_BENCH = "from calc import double\n\n\ndef test_large():\n    assert double(10) >= 20\n"
+
+
+def test_a_defect_only_the_review_reproduced_holds_the_patch_back_where_the_bench_would_have_passed_it(live):
+    """A mission must not close saying done over a defect G6 reproduced."""
+    _commit(live.repo, {"test_outside.py": OUTSIDE_THE_BENCH})
+
+    async def flow():
+        async with Client(live.server, elicitation_handler=named) as client:
+            job = _tool(client)
+            mid = await _confirmed_on(job, live.repo)
+            _write(live.repo, ONLY_THE_EXAMPLES)
+            held = await job("g6_mission_submit", mission_id=mid, repo=str(live.repo))
+            judged = list(api.bind().ledger.verdicts(mid, "patch"))
+            _write(live.repo, FIXED)
+            return held, judged, await job("g6_mission_submit", mission_id=mid, repo=str(live.repo))
+
+    held, judged, right = asyncio.run(flow())
+    assert held["assessment"]["outcome"] == patch_review.DEFECT, held
+    now = held["mission"]
+    assert now["status"] != "done" and now["completion_state"] == "qualified-draft", now
+    assert now["awaiting_chat"][0]["attempts_left"] == 2 and judged == [], now      # an attempt used, nothing judged
+    assert "held this patch back" in _says(now["awaiting_chat"]), now
+    assert right["assessment"]["outcome"] == patch_review.SUPPORTED and right["mission"]["status"] == "done", right
+    assert right["completion_state"] == "qualified-draft" and right["mission"].get("review", {}).get("held") is False
+
+
+def test_a_sign_the_tests_cannot_be_believed_counts_towards_the_ladders_limit(live):
+    _commit(live.repo, {".gitignore": "conftest.py\n"})
+
+    async def flow():
+        async with Client(live.server, elicitation_handler=named) as client:
+            job = _tool(client)
+            mid = await _confirmed_on(job, live.repo)
+            # git does not list it and pytest would load it: not a change the scope can refuse, a run G6 cannot believe
+            (live.repo / "conftest.py").write_text("import calc\n", encoding="utf-8")
+            replies = []
+            for attempt in range(1, 5):
+                _write(live.repo, f"def double(x):\n    return x * {attempt + 1}\n")
+                replies.append(await job("g6_mission_submit", mission_id=mid, repo=str(live.repo)))
+                if not replies[-1].get("mission", {}).get("awaiting_chat"):
+                    break
+            return replies
+
+    replies = asyncio.run(flow())
+    assert len(replies) == 3, [r.get("mission", r).get("status") for r in replies]
+    assert {r["assessment"]["outcome"] for r in replies} == {patch_review.INTEGRITY}, replies
+    assert [r["mission"]["awaiting_chat"][0]["attempts_left"] for r in replies[:2]] == [2, 1], replies
+    last = replies[-1]
+    assert last["completion_state"] == "blocked-escalated" and last["ok"] is False, last
+    assert "Human action required" in _says(last["mission"]), last
+
+
+def test_insufficient_evidence_does_not_block_and_the_mission_says_it_plainly(live):
+    async def flow():
+        async with Client(live.server, elicitation_handler=named) as client:
+            job = _tool(client)
+            mid = await _confirmed_on(job, live.repo)
+            _write(live.repo, FIXED)
+            got = await job("g6_mission_submit", mission_id=mid, repo=str(live.repo),
+                            claim="I hardcoded the expected value.")
+            status = data(await client.call_tool("g6_mission_status", {"mission_id": mid}))
+            certificate = data(await client.call_tool("g6_mission_certificate", {"mission_id": mid}))
+            return mid, got, status, certificate
+
+    mid, got, status, certificate = asyncio.run(flow())
+    assert got["assessment"]["outcome"] == patch_review.INSUFFICIENT, got
+    assert got["mission"]["status"] == "done" and got["mission"]["completion_state"] == "qualified-draft", got
+    said = status["review"]["said"]
+    assert said.startswith("Insufficient evidence:"), said
+    for reply_ in (got["mission"], status, certificate):
+        assert reply_["review"]["outcome"] == patch_review.INSUFFICIENT and reply_["review"]["held"] is False, reply_
+        assert said in _says(reply_["warning_card"]), reply_
+    assert said in _says(status["result"]), status["result"]         # the mission's own result, not only a field beside it
+    [closed] = api.bind().missions.events(mid, kind="mission.closed")
+    assert ["review", said] in closed["detail"]["certificate_gaps"]  # kept beside the certificate its digest binds
+
+
 def test_a_whole_mission_inside_the_boundary(live):
     async def flow():
         async with Client(live.server, elicitation_handler=named) as client:
@@ -707,7 +810,7 @@ def test_a_repeated_patch_counts_as_repeated_work_on_the_missions_own_ladder(liv
     assert first["mission"]["awaiting_chat"][0]["attempts_left"] == 2, first
     assert coding.REPEAT_RULE not in _says(first["mission"]), first
     assert again["mission"]["awaiting_chat"][0]["attempts_left"] == 1, again   # it used an attempt
-    assert coding.REPEAT_RULE in _says(again["mission"]), again                # and the brief changed
+    assert coding.REPEAT_RULE in _says(again["mission"]), again                # and the ladder moved to a focused brief
 
 
 def test_a_high_consequence_mission_waits_for_a_person_after_its_checks(live):
@@ -740,17 +843,19 @@ def test_the_repair_ladder_is_the_missions_own_and_stops_for_a_person(live):
                              function="double"))["mission_id"]
             await job("g6_mission_confirm", mission_id=mid)
             replies = []
-            for attempt in range(1, 4):
+            for attempt in range(1, 5):
                 _write(live.repo, f"def double(x):\n    return x + x + {attempt + 1}\n")
                 replies.append(await job("g6_mission_submit", mission_id=mid, repo=str(live.repo)))
-                if replies[-1]["mission"].get("status") in ("cancelled", "failed", "blocked"):
+                if not replies[-1]["mission"].get("awaiting_chat"):
                     break
-            return replies
+            return mid, replies
 
-    replies = asyncio.run(flow())
+    mid, replies = asyncio.run(flow())
     last = replies[-1]
+    assert len(replies) == 3 and {r["assessment"]["outcome"] for r in replies} == {patch_review.DEFECT}, replies
     assert last["completion_state"] == "blocked-escalated" and last["ok"] is False, last
     assert "Human action required" in _says(last["mission"]), last
+    assert list(api.bind().ledger.verdicts(mid, "patch")) == []       # held each time: no check was run or passed
 
 
 def test_a_mission_from_a_linked_worktree_and_a_replay_question_inside_the_boundary(live, tmp_path):

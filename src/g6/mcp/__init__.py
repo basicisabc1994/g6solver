@@ -471,15 +471,17 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     def g6_mission_submit(mission_id: str, repo: str, claim: str = "", timeout_s: int = 300) -> dict:
         """Check your change in repo, the repository's folder, against the frozen standard. G6 never writes code: you
         change the one permitted file in the working tree, and G6 runs g6_review_patch's assessment there with the
-        frozen tests as the stated checks, then the mission judges the same text on its frozen copy (so each attempt
-        runs the tests twice). A change to any other file, a test above all, is refused and uses no attempt. A
-        confirmed mission only. The mission's repair ladder decides what comes next: three attempts; a repeated patch
-        or one that does not improve moves to a focused brief, then to the person. Fix what the reply shows and
-        submit again; never rewrite a test. Returns a job: poll metaharness_job. Its reply is the review's compact
-        reply, with assessment.report to show the person as it is, and mission, the mission's state. A sign the tests
-        cannot be believed (test_integrity_compromised) stops the patch before the mission takes it. Every outcome is
-        qualified-draft at best, or blocked-escalated. merge is always requires_separate_approval: merging is the
-        person's own decision. Requires host permission workforce.mission in G6_MCP_SENSITIVE."""
+        frozen tests as the stated checks, then the mission judges the same text on its frozen copy (so a patch that
+        gets that far runs the tests twice). A change to any other file, a test above all, is refused and uses no
+        attempt. A confirmed mission only. A reproduced defect (defect_detected) or a sign the tests cannot be believed
+        (test_integrity_compromised) holds the patch back: it uses an attempt, the mission's checks never judge it, and
+        the mission cannot close on it. insufficient_evidence blocks nothing: the mission goes on, and its reply, status
+        and certificate say so in review. The mission's repair ladder decides what comes next: three attempts; a
+        repeated patch or one that does not improve moves to a focused brief, then to the person. Fix what the reply
+        shows and submit again; never rewrite a test. Returns a job: poll metaharness_job. Its reply is the review's
+        compact reply, with assessment.report to show the person as it is, and mission, the mission's state. Every
+        outcome is qualified-draft at best, or blocked-escalated. merge is always requires_separate_approval: merging is
+        the person's own decision. Requires host permission workforce.mission in G6_MCP_SENSITIVE."""
         from g6.mcp import mission
 
         return mission.refused() or jobs.start(

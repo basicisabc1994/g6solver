@@ -120,8 +120,10 @@ ways the task can fail and at most three questions. `g6_mission_create` freezes 
 repository stands at; `g6_mission_clarify` answers the one question an objective about retries or duplicates asks;
 `g6_mission_confirm` has the person confirm the standard; the agent changes the one permitted file, and
 `g6_mission_submit` checks it: `g6_review_patch`'s assessment in the working tree with the frozen tests as its stated
-checks, then the mission's own bench on its frozen copy, so each attempt runs the tests twice. The mission's repair
-ladder decides what comes next: three attempts, then a focused brief, then the person. The agent repairs and G6 never
+checks, then the mission's own bench on its frozen copy, so a patch that gets that far runs the tests twice. A reproduced
+defect, or a sign the tests cannot be believed, holds the patch back: it uses an attempt, and the mission cannot close
+on it. Insufficient evidence blocks nothing, and the mission's reply, status and certificate say so. The mission's
+repair ladder decides what comes next: three attempts, then a focused brief, then the person. The agent repairs and G6 never
 writes code. `g6_mission_status` and `g6_mission_certificate` read the mission. Allow the tools that run code with
 `workforce.mission`, as in `g6 setup --client claude --allow patch_review.review,workforce.mission`.
 

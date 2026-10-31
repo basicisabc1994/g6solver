@@ -200,14 +200,16 @@ def reroute(wf, mission_id: str, stage: str, *, failed: str, standard: dict, obs
 
 def on_settle(runtime, mission_id: str, spec, row: dict, lease=None) -> tuple[str, str] | None:
     """The one runtime hook: the move a change of course makes instead of the usual one ("fail" or "escalate", and
-    why), or None. A proposal that repeats an earlier one is never judged again; a check whose tool answered blocked
-    and then fails its re-probe stops for a person, with every other open check on that tool. A re-settle reuses the
+    why), or None. A proposal that repeats an earlier one is never judged again, nor is one a patch review held back;
+    a check whose tool answered blocked and then fails its re-probe stops for a person, with every other open check on
+    that tool. A re-settle reuses the
     decision already recorded for the unit (review M-12); after the probe the lease is checked again, so a runner that
     lost it moves nothing (review I-5)."""
     from g6.workforce import coding
 
     if spec.kind == "do":
-        return coding.repeated(runtime._missions, runtime._ledger, mission_id, spec, row)
+        return (coding.repeated(runtime._missions, runtime._ledger, mission_id, spec, row)
+                or coding.held(runtime._missions, runtime._ledger, mission_id, spec, row))
     if spec.kind != "verify" or runtime._passed(mission_id, spec, row) or classes.retried_by_runtime(
             row["failure_code"]):
         return None

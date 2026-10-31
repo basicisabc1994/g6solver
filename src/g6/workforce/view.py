@@ -186,6 +186,9 @@ def build(wf: Any, mission_id: str) -> ResultView:
     coverage = _coverage(evaluation) if evaluation is not None else ""
     if limits and coverage == "Strong":
         coverage = "Partial"  # the saved evaluation predates the effective evidence limit
+    from g6.workforce import coding
+
+    review = coding.last_review(wf.missions, wf.ledger, mission_id).get("said", "")
 
     return ResultView(
         title=mission["objective"], answer=_answer(wf, mission, plan, outcome), state=outcome.state if outcome else "",
@@ -193,6 +196,7 @@ def build(wf: Any, mission_id: str) -> ResultView:
         agreement=_agreement(records, recorded=evaluation is not None) if finished else "",
         caveats=(*((RECORDER_GAP,) if outcome is not None and outcome.state == VERIFIED  # WORKFORCE-01, never silent
                    and RECORDER_GAP in outcome.reasons else ()),
+                 *((review,) if review else ()),  # what a patch review could not establish, or held back
                  *((COMPILED,) if compiled else ()), *((CALLER_TESTS,) if caller_tests else ()),
                  *((DERIVED_TESTS,) if derived_tests else ()), *warned,
                  *limits, *wf.runtime.unchecked(mission_id),  # the part of the change no check could compare

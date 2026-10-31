@@ -28,9 +28,11 @@ After a decline, a cancel or a client with no dialog, the mission stays unconfir
 and offer no other way. The recorded name is not authenticated.
 
 Then change only the permitted file and call `g6_mission_submit` with the folder. It reviews your working tree with the
-frozen tests as its stated checks, then the mission judges the same text on its frozen copy, so each attempt runs the
-tests twice. A change to a test is refused. Show `assessment["report"]` as it is, and follow the reply's mission: three
-attempts, a repeated or non-improving patch moves to a focused brief, then to the person. You repair; G6 never writes
+frozen tests as its stated checks. A reproduced defect or a sign the tests cannot be believed holds the patch back: it
+uses an attempt and the mission cannot close on it. Otherwise the mission judges the same text on its frozen copy.
+Insufficient evidence blocks nothing, and the mission says so: tell the person. A change to a test is refused. Show
+`assessment["report"]` as it is, and follow the reply's mission: three attempts, a repeated or non-improving patch
+moves to a focused brief, then to the person. You repair; G6 never writes
 code. Merging stays the person's separate decision. `g6_mission_status` and `g6_mission_certificate` read the mission;
 the tools that change it return a job, so poll `metaharness_job`. An `R3` mission's patch approval is not over MCP yet:
 its status names the terminal command for the person. The tools that run code need host permission workforce.mission,

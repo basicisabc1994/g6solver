@@ -5,9 +5,8 @@ description: Use when finishing a Python coding task (review the patch with G6 b
 
 # Using G6
 
-G6 is a library of primitives for AI building AI. An agent can construct an application, propose a redesign,
-and measure it against frozen checks. Treat improved performance as a hypothesis, never a consequence of composition.
-The evaluator, authorization rules and promotion gate remain outside the candidate's writable scope.
+G6 is a library of primitives for AI building AI. Treat improved performance as a hypothesis, never a consequence of
+composition. The evaluator, authorization rules and promotion gate remain outside the candidate's writable scope.
 
 ## Deliver a coding task with G6
 
@@ -33,25 +32,24 @@ For a Python task, work in this order.
    then the code.
 5. **Critical parts, formally.** Model them with `state_invariant.v1` (its `model` states the variables, actions and
    invariants; its `actions` bind them to the code's operations; its `observe` reads each variable from the real
-   state). G6 searches the model and replays each trace on the real code. A result about the model is about the model only; only a reproduced trace is a finding
-   about the code. A model never proves the code correct.
+   state). G6 searches the model and replays each trace on the real code. Only a reproduced trace is a finding about
+   the code; a model never proves the code correct.
 6. **Review.** Call `g6_review_patch` with the folder, the task and the requirements, then poll `metaharness_job`.
    Add optional inputs (`intent`, `template_instances`, `proposed_checks`) only in the shapes the tool's description
    gives; a refused call names the field to fix. It needs host permission
    `patch_review.review`, which the person grants with `g6 setup`; never change permissions yourself. Show the reply's
-   `assessment["report"]` verbatim. The full assessment is in the file its full_assessment names.
+   `assessment["report"]` verbatim.
 7. **Repair.** Fix what G6 reproduced. Add each earlier reproduction as a stated check (a proposed check's
    reproduction is a test file: add it to the repository's tests and list its node id), so the person sees the fix
    pass the original counterexample. Review again. Stop after 3 rounds, when a round changes nothing, or when the
    report says only the person can decide.
 8. **Honesty.** Never call a patch verified, and never merge for the person. G6 cannot judge usability by itself;
-   acceptance tests and the person's confirmation do. The report's not-established list is the to-do list. For
-   specialised needs, find more components with `g6_find`.
+   acceptance tests and the person's confirmation do. The report's not-established list is the to-do list.
 
 The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope
 (every stated requirement passed a stated check the patch did not write; never proof the patch is complete).
-If no check the patch did not write fails at the base commit, the outcome is insufficient evidence
-(`checks_written_with_patch`). Tell the person the result rests on your own tests. Do not rewrite tests to change it.
+If no check the patch did not write fails at the base commit, the outcome is insufficient evidence.
+Tell the person the result rests on your own tests. Do not rewrite tests to change it.
 
 When what counts as done must be fixed before the work, run a mission instead: `g6_premortem`, `g6_mission_create`,
 `g6_mission_confirm` (the person answers in the client's dialog, never you), `g6_mission_submit`
@@ -76,16 +74,16 @@ Here `sources` maps source names to supplied text. These are lexical source chec
 ## Compose
 
 Use `g6_compose` with data-only stages. Connect downstream fields explicitly with `0.field` or `caller.field`.
-Evidence kinds must match; similar field names do not establish equivalent meaning. Code transformations require
+Evidence kinds must match; similar field names prove nothing. Code transformations require
 reviewed Python adapters. A contract-checked report establishes structural checks, not application correctness.
-Plain `>>` does not check contracts. Read the assurance gaps and preserve all upstream limitations.
+Read the assurance gaps and preserve all upstream limitations.
 
 ## Fit
 
 Use `metaharness_start` to create a data-only application with a task, labelled cases, frozen checks and baseline
 Python code. Confirm the workflow digest through `metaharness_confirm`. Then diagnose, propose_code with a hypothesis,
 evaluate_start, poll `metaharness_job`, decide, present the client's approval prompt, and run the approved version.
-The full tool names begin `metaharness_`. This is Propose -> Test -> Gate -> Approve, with explicit recovery after failure.
+This is Propose -> Test -> Gate -> Approve.
 
 Below 30 held-out cases is exploration only. A split of answers the proposer already saw is not independent evidence.
 Generated-code activation also requires a host-configured safety/injection evaluator. Never invent its observations.
@@ -99,5 +97,5 @@ Preserve `verified`, `qualified-draft` and `blocked-escalated` exactly as return
 artifact and check scope. Report the warning card and recovery; never turn a refusal into a successful tuning result.
 
 Ask the user when permissions, task meaning or evidence are missing. Local settings assume a trusted host;
-unrestricted same-user shell access defeats that separation. Do not change permissions to make a test pass.
+unrestricted same-user shell access defeats that separation.
 Superpowers lifecycle skills are optional companions, not prerequisites for using G6.

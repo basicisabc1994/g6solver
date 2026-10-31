@@ -263,6 +263,11 @@ def _seconds(start: str, end: str) -> int | None:
         return None
 
 
+def artifact_sha(content: object) -> str:
+    """The digest an artifact's ``content`` is kept under."""
+    return hashlib.sha256(json.dumps(content, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
 def outcome_of(row: dict) -> Outcome:
     """A stored run's outcome (an open or empty one is blocked: nothing finished)."""
     return Outcome.from_record(json.loads(row.get("outcome_json") or "{}"),
@@ -420,7 +425,7 @@ class RunLedger:
             if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
                 raise ValueError(f"the artifact is too large to store inline ({len(content)} chars)")
             body = {"run_id": run_id, "unit": row["unit_key"], "schema": str(artifact.get("schema", "")),
-                    "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(), "content": artifact.get("content"),
+                    "sha256": artifact_sha(artifact.get("content")), "content": artifact.get("content"),
                     "producer": row["instance_id"], "rung": row["rung"], "model_calls": model_calls}
             if artifact.get("provenance"):  # E2b: how it was made, so a later mission can judge whether to reuse it
                 body["provenance"] = artifact["provenance"]
@@ -818,4 +823,4 @@ class RunLedger:
 
 
 __all__ = ["ABANDON_CODES", "FAILURE_CODES", "INSTANCE_ENDS", "MAX_ARTIFACT_BYTES", "Run", "RunLedger",
-           "VerdictRecord", "outcome_of"]
+           "VerdictRecord", "artifact_sha", "outcome_of"]

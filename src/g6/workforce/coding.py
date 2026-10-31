@@ -87,6 +87,12 @@ CAUSE = {"repeated": "The new proposal repeats an earlier one.",
 ASKED_AGAIN = "The new proposal repeats an earlier one, so G6 did not check it again and asks with a focused brief."
 # COPY: The rule a focused brief states.
 REPEAT_RULE = "A proposal G6 has already judged is not judged again: sending it again uses an attempt and is not checked."
+# COPY: The agent's brief when a patch review held its proposal back; the mission's checks never judge such a proposal.
+HELD_BACK = ("The patch review held this patch back ({outcome}), so the mission's checks did not run on it and it used an "
+             "attempt. Repair what the review's report shows, and submit again.")
+# COPY: What a mission says when its patch review could not establish the change: a reported result, which blocks nothing.
+NOT_ESTABLISHED = ("Insufficient evidence: the patch review could not establish this change ({reasons}), so the mission's "
+                   "own tests are all that speak for it. Read the review's report.")
 # COPY: The focused brief's message.
 FOCUSED = ("G6 has changed how it asks for this repair. Below are only what the failing check showed, and the rejected "
            "proposal's digest and its difference from the baseline. " + REPEAT_RULE)
@@ -1265,12 +1271,8 @@ def repeated(missions, ledger, mission_id: str, spec, row: dict) -> tuple[str, s
     earlier = next((a for a, sha in shas[:-1] if sha == shas[-1][1]), "")
     if not earlier:
         return None
-    stop = repair_stop(missions, ledger, mission_id, spec)
+    stop = _stopped(missions, ledger, mission_id, spec, row)
     if stop:
-        missions.record_event(mission_id, "message", actor="code", detail={
-            "from": "code", "to": spec.key, "text": stop,
-            "refs": {"repair_stop": True, "run_id": row["run_id"], "artifact_id": row["artifact_id"]}},
-            idem_key=f"repair-stop:{row['artifact_id']}")
         return "escalate", stop
     brief = focused(missions, ledger, mission_id, spec.key, earlier) or {"text": ASKED_AGAIN, "refs": {}}
     missions.record_event(mission_id, "message", actor="code", detail={
@@ -1278,6 +1280,56 @@ def repeated(missions, ledger, mission_id: str, spec, row: dict) -> tuple[str, s
         "refs": {**brief["refs"], "run_id": row["run_id"], "artifact_id": row["artifact_id"]}},
         idem_key=f"focused:{row['artifact_id']}")
     return "fail", ASKED_AGAIN
+
+
+def _stopped(missions, ledger, mission_id: str, spec, row: dict) -> str:
+    """The ladder's stop for a proposal no check judges, recorded for the person; "" to go on."""
+    stop = repair_stop(missions, ledger, mission_id, spec)
+    if stop:
+        missions.record_event(mission_id, "message", actor="code", detail={
+            "from": "code", "to": spec.key, "text": stop,
+            "refs": {"repair_stop": True, "run_id": row["run_id"], "artifact_id": row["artifact_id"]}},
+            idem_key=f"repair-stop:{row['artifact_id']}")
+    return stop
+
+
+def held(missions, ledger, mission_id: str, spec, row: dict) -> tuple[str, str] | None:
+    """A proposal a patch review held back (``record_review``) is recorded and uses an attempt, but the mission's checks
+    never judge it, so it cannot close the mission: the ladder moves, or stops for a person, as for a repeat. Its reason
+    is already in the unit's brief. None for any other settle."""
+    if row["state"] != "closed" or not row["artifact_id"]:
+        return None
+    review = last_review(missions, ledger, mission_id)
+    if not review.get("held"):
+        return None
+    stop = _stopped(missions, ledger, mission_id, spec, row)
+    return ("escalate", stop) if stop else ("fail", review["said"])
+
+
+def record_review(missions, mission_id: str, artifact: dict, review: dict) -> None:
+    """What a patch review found on ``artifact``, recorded before the mission takes it and bound to the digest the ledger
+    will keep it under, so that it speaks for those bytes alone. ``review``: its ``outcome``, ``artifact_digest`` (of the
+    tree it read), ``reasons`` (their codes) and ``held``, whether the proposal is held back (``held``)."""
+    from g6.workforce.runs import artifact_sha
+
+    sha, outcome = artifact_sha(artifact), review["outcome"]
+    said = (HELD_BACK.format(outcome=outcome) if review["held"] else
+            NOT_ESTABLISHED.format(reasons=", ".join(review["reasons"]) or "its report says why")
+            if outcome == "insufficient_evidence" else "")
+    missions.record_event(mission_id, "message", actor="code", detail={
+        "from": "review", "to": "patch" if review["held"] else "person",
+        "text": said or f"The patch review's outcome: {outcome}.",
+        "refs": {"review": {**review, "patch_sha": sha, "said": said}}},
+        idem_key=f"review:{sha}:{review['artifact_digest']}")
+
+
+def last_review(missions, ledger, mission_id: str) -> dict:
+    """The patch review of the latest proposal, as ``record_review`` kept it; {} when it had none."""
+    latest = ledger.last_artifact(mission_id, "patch")
+    if latest is None:
+        return {}
+    return next((m["refs"]["review"] for m in reversed(missions.messages(mission_id))
+                 if m["refs"].get("review", {}).get("patch_sha") == latest["sha256"]), {})
 
 
 def focused(missions, ledger, mission_id: str, unit: str, artifact_id: str, *, strategy: str | None = None) -> dict | None:
