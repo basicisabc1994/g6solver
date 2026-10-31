@@ -148,6 +148,7 @@ class ProbeRun:
     results: dict[str, str]
     texts: dict[str, str]
     tail: str = ""
+    boundary: str = ""     # what confined it, as the run says
 
     @property
     def ran(self) -> int:
@@ -322,8 +323,9 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     A case that failed on an operating-system error is unknown, as a refused access looks like one. A run that did not
     finish, or tested code from outside its copy, leaves the set unusable."""
     code: int | None = 0
-    results, texts, tail = {}, {}, []
+    results, texts, tail, boundary = {}, {}, [], ""
     for ran in runs:
+        boundary = (ran.get("isolation") or {}).get("backend") or boundary
         elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
         if elsewhere or verdict not in repo_tests.RAN:
             code = None
@@ -334,7 +336,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         for named, phases in (ran.get("test_outcomes") or {}).items():
             results[_PLACE.sub("", full(named))] = "unknown" if named in refused else _outcome(phases)
         texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
-    return ProbeRun(code, results, texts, "\n".join(tail))
+    return ProbeRun(code, results, texts, "\n".join(tail), boundary)
 
 
 def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float) -> ProbeRun:
@@ -508,7 +510,7 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
     return patch_report.completion_report({
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
-        "late_because": state.get("late") or "no hook ran them before the agent started",
+        "late_because": state.get("late") or "no hook ran them before the agent started", "boundary": state.get("boundary"),
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
                   "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
         review)
@@ -607,7 +609,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
         for label, one in state["sets"].items():
             if not one["left_out"]:
                 got = run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends)
-                state["ran"][label] = got.ran
+                state["ran"][label], state["boundary"] = got.ran, got.boundary or state.get("boundary", "")
                 seen.append((label, got, ProbeRun(**one["at_base"])))
         if (state.get("critic") or {}).get("test"):
             got = run_set(change, session / "sets" / "critic", at_base=False, deadline=ends)

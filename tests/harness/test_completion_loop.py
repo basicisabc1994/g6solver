@@ -597,6 +597,15 @@ def test_a_task_nobody_can_read_is_reported_and_nothing_is_spent(world, monkeypa
     assert not scouts.calls and not runs.calls
 
 
+def test_the_report_names_the_boundary_the_probes_ran_in(world, monkeypatch):
+    def now(placed: str) -> dict:
+        return {**ran(placed, PASSING), "isolation": {"backend": "a-boundary"}}
+
+    Runs(monkeypatch, now=now)
+    world.edit()
+    assert "ran inside `a-boundary`" in world.advance().text
+
+
 def test_a_file_with_no_time_left_is_not_started_and_says_nothing_of_the_code(world, monkeypatch):
     runs = Runs(monkeypatch)
     probes = world.session / "p"
@@ -662,7 +671,7 @@ def test_end_to_end_with_real_confined_runs_and_the_real_review(bwrap_backend, t
     assert f"no counterexample found in {3 * 305} probes" in second.text     # five crossings and 300 inputs in each set
     assert "insufficient_evidence" in second.text and "Not established" in second.text
     assert "after the agent stopped" not in second.text
-    print(second.text)
+    assert "ran inside `bubblewrap`" in second.text     # the review ran no test of its own, so its line says none
 
 
 def test_an_unfinished_hook_is_picked_up_where_it_stopped(world, monkeypatch):

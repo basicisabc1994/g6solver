@@ -16,9 +16,17 @@ environment active. If `python` cannot import G6, the hooks fail with a notice a
 /plugin install g6@g6solver
 ```
 
-The plugin registers G6's MCP server. If you already ran `g6 setup --client claude`, keep one of the two: `claude mcp
-remove --scope user g6` removes the other. The plugin's server allows `patch_review.review`, so installing it is your
-approval for patch reviews.
+The plugin registers G6's MCP server, which refuses sensitive operations until you allow them: installing the plugin allows
+nothing. The completion loop needs no such allowance. To let the agent call `g6_review_patch` itself, start Claude Code with
+this in its environment:
+
+```
+G6_MCP_SENSITIVE=patch_review.review
+```
+
+Or run `g6 setup --client claude --allow patch_review.review`, which registers G6 with that allowance. You then have two G6
+servers, and only that one allows the review. To keep one, use `/plugin` to disable this plugin's server, or `claude mcp
+remove --scope user g6` to remove the other.
 
 ## Turn it on
 

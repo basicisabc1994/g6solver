@@ -289,7 +289,14 @@ def test_the_prompt_hooks_timeout_outlasts_the_scouts_window():
 def test_the_server_starts_as_g6_setup_registers_it():
     server = plugin_json(".mcp.json")["mcpServers"]["g6"]
     assert server["command"] == "python" and tuple(server["args"]) == SERVER_ARGS
-    assert server["env"] == {"G6_MCP_SENSITIVE": "patch_review.review"}
+
+
+def test_installing_the_plugin_allows_no_sensitive_operation_and_the_docs_say_how_to():
+    assert "G6_MCP_SENSITIVE" not in PLUGIN.joinpath(".mcp.json").read_text(encoding="utf-8")
+    assert "env" not in plugin_json(".mcp.json")["mcpServers"]["g6"]
+    text = " ".join((PLUGIN / "README.md").read_text(encoding="utf-8").split())
+    assert "installing the plugin allows nothing" in text
+    assert "G6_MCP_SENSITIVE=patch_review.review" in text and "g6 setup --client claude --allow patch_review.review" in text
 
 
 def test_the_skill_can_be_found_and_says_what_a_repair_message_is():

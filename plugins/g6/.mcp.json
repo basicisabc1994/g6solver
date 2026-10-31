@@ -2,10 +2,7 @@
   "mcpServers": {
     "g6": {
       "command": "python",
-      "args": ["-P", "-c", "from g6.mcp import main; main()"],
-      "env": {
-        "G6_MCP_SENSITIVE": "patch_review.review"
-      }
+      "args": ["-P", "-c", "from g6.mcp import main; main()"]
     }
   }
 }
