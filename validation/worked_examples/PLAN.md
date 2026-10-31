@@ -1092,3 +1092,13 @@ bugs only after all of that stage's runs have ended, and nothing read from those
 **The limit, stated before any result.** 14 of the 19 wrong training patches come from one bug, black-5634, and the other five from two more. The
 effective sample is about three bugs, not 79 patches. A result on it is a lead for the loop to test on unseen bugs, not a measure, and it is
 reported bug by bug. Reviews use the owner's Codex sign-in, outside the budget, and are reported apart.
+
+### 2026-11-01: L9 frozen, the replay's result, and stage 2's size (before any M9 run and before stage 2's bugs are judged)
+
+**L9 is frozen.** On the seven training bugs, tuned: 12 of 14 on the maintainers' tests and 14 of 14 on the amended tests, against arm A's 9 and 11. Mean cost $0.59 a run, highest $1.11, against about $0.06 for arm A. These are scores on bugs it was tuned on, and they are reported beside the held-out scores, never in place of them. M9 runs L9's text unchanged on G6 c53d310.
+
+**The final review on the training patches.** 79 distinct patches, no failed review. It found nothing on 34, and all 34 were right. It reproduced a defect on 45, of which 19 were wrong and 26 right. So it flagged all 19 wrong patches, and a flag meant wrong 42% of the time. This is development data, the wrong patches sit on three bugs, and attrs-1593 alone gave 9 false alarms. It says nothing yet about unseen bugs, where it runs report-only after each stage's runs have ended.
+
+**Closures.** Four runs killed before they ended are closed at their streams' measured cost with the runner's 5% margin, $1.32 in all, in place of a $10.50 hold each: black-5634 arm G1, arm L7 and arm L9, and black-5144 arm A. None gave a result and none is counted.
+
+**Stage 2's size.** The rule with arm R added, taking $0.20 a run for R as an upper estimate until R has run: 0.59 × (75 + 4n) + 8 + 0.24n + 0.20 × (37 + 2n) ≤ what is left of $170, about $132. That holds at n = 24, so stage 2 takes the plan's upper limit, 20 bugs.
