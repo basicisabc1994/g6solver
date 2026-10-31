@@ -41,7 +41,8 @@ class Scouts:
         self.files, self.tree, self.calls = files or {"test_p.py": PROBE}, tree, []
 
     def __call__(self, prompt: str, cwd: Path, where: Path, seconds: float) -> str:
-        self.calls.append({"prompt": prompt, "cwd": cwd, "where": where, "mod": (cwd / "mod.py").read_text(),
+        code = cwd / "mod.py"
+        self.calls.append({"prompt": prompt, "cwd": cwd, "where": where, "mod": code.read_text() if code.is_file() else "",
                            "history": (cwd / ".git").exists(), "seconds": seconds})
         for name, text in self.files.items():
             (where / "probes" / name).write_text(text, encoding="utf-8")
