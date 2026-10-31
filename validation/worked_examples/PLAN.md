@@ -1136,3 +1136,25 @@ The cases are fixed by rule in `convert_cases.json`, before any run: every disti
 **Arm K.** Plain Claude Code on Sonnet with the issue's discussion, as in arm T, with no G6, no scout and no probes. When it finishes, Codex reviews the patch as in arm R. If its test fails on the patch, the agent gets the rule, reasons and test in the same session. Then a fresh Codex review reads the new patch, and so on, up to `MAX_REPAIRS` repairs, three, so four reviews at most. It ends when a review reproduces nothing, when the agent leaves the code as it was (it may reject a finding), or when the repairs run out. Earlier reviewers' tests stay in place. Each review's patch is kept for `check`. A failed review ends the loop and is recorded as no clean review. Nothing a review says scores a run.
 
 **How it is judged.** `K1` first runs twice on the seven training bugs, as development, and a fault it shows may be fixed before it freezes. Its design comes only from training bugs, and it was fixed before any stage 1 result was read. Once frozen it runs twice on the eleven fresh bugs, five times on the held-out bugs and twice on stage 2's, by the comparison rule against A and T, on both scores. M9 stays stage 1's frozen primary, so K on stage 1's bugs is a second look, and it is reported as one. Stage 2 is the first test of K on repositories nobody has tuned on. K was written in session, so it can never count for stage 3. A cost of about $0.20 a run keeps the three stages inside the $170 stop; Codex's reviews are outside the budget and are reported apart.
+
+### 2026-11-01 (morning): X's whole result, K's first eight runs, and a second stop (before any K run on a bug kept for measurement)
+
+**X as it ended.** Of 20 wrong starts, 8 converted on the amended tests: all 6 on `pydantic-14052`, both on `click-3678` (the maintainers' tests still fail there, as they must), and none of the 12 on `black-5634`. X1 and X2 did the same. None of the 8 control runs lost a right patch.
+
+**R on the training bugs.** `R-pydantic-14052-2` is the first run in the archive whose first patch failed and whose final patch passed, for $0.06. Both R runs on black stayed wrong after their one repair, as X had.
+
+**K1's first eight runs, on four training bugs.** All of these are development.
+
+| On these four bugs, two runs each | Maintainers' tests | Amended tests | Mean cost |
+|---|---|---|---|
+| A | 3 of 8 | 5 of 8 | about $0.06 |
+| L9 | 6 of 8 | 8 of 8 | $0.58 |
+| K1 | 6 of 8 | 8 of 8 | $0.15 |
+
+Four runs went from a failing first patch to a passing final one: both `pydantic-14052` runs at the second patch, and on `black-5634` at the third patch in one run and the fourth in the other. In the 70 earlier runs that happened never. So the second look reached what the first did not, as the three scout-arm rules suggested. This says the mechanism works, on these bugs, and does not say it generalises: the idea for K came from reading black's failure, and it is scored here on black. Four conversions on two bugs are few. `click-3678` stays failing on the maintainers' tests, as it must.
+
+**What K does not do yet.** The reviewer does not know when to stop. Four of the eight runs ended at the cap with a defect open and a patch that passes the amended tests, and a fifth (`click-3678`) ended with the agent declining a finding, so "defect open" does not mean wrong. `attrs-1593` repeat 2 was right from the first patch and was repaired three times, with no harm the tests can see and $0.08 spent. That is K's false-alarm cost. K's text does not change for this: a change now would be tuned on these eight runs.
+
+**The second stop.** Claude Code's memory reaper stopped stage 1 and K at about 08:30, at the start of stage 1's M9 runs on fresh bugs, after 8 of K's 14 training runs. No host process survived, so their containers were orphans and were removed. Two runs that gave no result are closed at their measured cost and will be remade, and that is disclosed: M9 on `pydantic-13243` repeat 1, $0.89, and K1 on `fastapi-15077` repeat 1, $0.05. Spend stands at $49.63. The cause was mine: I ran two streams together, with a lower memory floor for the second, after recording that doing so caused the first stop.
+
+**From here, one stream at a time, never two.** K1's six remaining training runs; then stage 1 as frozen; then K1, unchanged unless a remaining run shows a fault, on the fresh bugs and the held-out bugs. No result of stage 1 is read before K1 runs on those bugs, so K's freeze stays independent of them. Codex's quota is a risk here: stage 1 and K together ask for about 160 more reviews, and a review that fails leaves a run as plain Claude Code, recorded as such.
