@@ -166,6 +166,9 @@ NOT_COMPARED = "derived_test_not_compared"
 RUN_INCONSISTENT_DETAIL = ("{run}: the tests passed by pytest's own count, but the process exited with an error "
                            "afterwards, so nothing is counted as passed on it; run them with the repository's own "
                            "command to see what fails at exit")
+RUN_CRASHED = "run_crashed"
+RUN_CRASHED_DETAIL = ("{run}: {said}. Nothing is counted on it, for or against the patch; run that test on the base commit to "
+                      "see whether the crash comes from the patch")
 #: A check's verdicts that are a defect when it is stated or extra; every other verdict but "passed" did not run.
 #: ``failed`` includes a collection error G6 places in the repository's own code; ``collection_error`` is the
 #: environment's (a dependency it lacks), which leaves the check not run. A run out of time is no defect (review I5):
@@ -582,8 +585,8 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         states = set(nodes.values())
         if run in UNTRUSTED:
             verdict, detail = run, said or "the run's results are not believed"
-        elif run == repo_tests.RUN_INCONSISTENT:   # the owner's ruling (2026-10-29): no check passes on such a run
-            verdict, detail = run, said or repo_tests.SAID[run]
+        elif run in (repo_tests.RUN_INCONSISTENT, repo_tests.CRASHED):   # the owner's ruling (2026-10-29): no check passes on such a run
+            verdict, detail = run, said or repo_tests.SAID[run].format(where="")
         elif "failed" in states:
             verdict, detail = FAILED, "failed: " + ", ".join(sorted(n for n, s in nodes.items() if s == "failed")[:5])
         elif "skipped" in states:
@@ -956,6 +959,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             reason("integrity", "run_not_trusted", _untrusted(1, first))
         elif first["verdict"] == repo_tests.RUN_INCONSISTENT:   # the owner's ruling (2026-10-29): evidence, not integrity
             reason("evidence", RUN_INCONSISTENT, RUN_INCONSISTENT_DETAIL.format(run="the stated checks' run"))
+        elif first["verdict"] == repo_tests.CRASHED:   # the ruling's reasoning: it cannot get a patch accepted
+            reason("evidence", RUN_CRASHED, RUN_CRASHED_DETAIL.format(run="the stated checks' run", said=first.get("said") or ""))
         elif first["verdict"] == "timed_out":
             reason("evidence", "run_timed_out", f"the tier 1 run did not finish: {first.get('said') or 'timed out'}")
         elif unusable(1, first):   # a pass or a failure of code the patch did not change says nothing of the patch
@@ -1039,6 +1044,9 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
             elif second["verdict"] == repo_tests.RUN_INCONSISTENT:
                 reason("evidence", RUN_INCONSISTENT,
                        RUN_INCONSISTENT_DETAIL.format(run="the run of the tests that touch the changed modules"))
+            elif second["verdict"] == repo_tests.CRASHED:
+                reason("evidence", RUN_CRASHED, RUN_CRASHED_DETAIL.format(
+                    run="the run of the tests that touch the changed modules", said=second.get("said") or ""))
             elif unusable(2, second):
                 pass   # its failures, and its passes, are of code the patch did not change
             elif second["verdict"] in (repo_tests.FAILED, "collection_error"):

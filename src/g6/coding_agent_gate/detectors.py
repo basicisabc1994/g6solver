@@ -118,21 +118,52 @@ _ADDED_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 _ASSERT = re.compile(r"^\s*(?:assert\b|self\.assert\w*\(|assert_\w+\(|expect\()")
 _TEST_DEF = re.compile(r"^\s*(?:async\s+)?def\s+test_|^\s*(?:it|test)\(\s*['\"]")
+_TEST_NAME = re.compile(r"^\s*(?:async\s+)?def\s+(test_\w*)")
+
+
+def _width(text: str) -> int:
+    return len(text) - len(text.lstrip())
+
+
+def _new_test_lines(lines: list[str]) -> set[int]:
+    """The indexes of the added lines that belong to a test this diff adds: its decorators and its body. A test whose name the diff
+    also removes is an old test put back, so none of it counts. A line above the test belongs to it only if it is part of a decorator,
+    so a helper written just above a new test stays outside."""
+    removed = {found[1] for line in lines if line.startswith("-") and (found := _TEST_NAME.match(line[1:]))}
+    own: set[int] = set()
+    for at, line in enumerate(lines):
+        found = _TEST_NAME.match(line[1:]) if line.startswith("+") else None
+        if not found or found[1] in removed:
+            continue
+        indent, up, held = _width(line[1:]), at - 1, []
+        own.add(at)
+        while up >= 0 and lines[up].startswith("+") and lines[up][1:].strip():
+            text = lines[up][1:]
+            held.append(up)
+            if _width(text) == indent and text.lstrip().startswith("@"):
+                own.update(held)
+                held = []
+            elif _width(text) < indent or (_width(text) == indent and not text.lstrip().startswith(")")):
+                break
+            up -= 1
+        down = at + 1
+        while down < len(lines) and lines[down].startswith("+") and (not lines[down][1:].strip() or _width(lines[down][1:]) > indent):
+            own.add(down)
+            down += 1
+    return own
 
 
 def scan_diff(diff: str) -> list[str]:
     """Structural shortcut scan of a unified diff: markers on added lines, and assertions or tests removed (a line
-    commented out counts as removed)."""
-    added: list[str] = []
-    removed: list[str] = []
-    for line in diff.splitlines():
-        if line.startswith(("+++", "---")):
-            continue
-        if line.startswith("+"):
-            added.append(line[1:])
-        elif line.startswith("-"):
-            removed.append(line[1:])
-    hits = {label for label, p in _ADDED_MARKERS if any(p.search(line) for line in added)}
+    commented out counts as removed). A skip or xfail marker on a test the diff adds neutralises nothing, so it is not a hit
+    (attrs-1593: a correct patch's test for a newer Python); the report still says such a test did not run."""
+    lines = [line for line in diff.splitlines() if not line.startswith(("+++", "---"))]
+    added = [line[1:] for line in lines if line.startswith("+")]
+    removed = [line[1:] for line in lines if line.startswith("-")]
+    own = _new_test_lines(lines)
+    outside = [line[1:] for at, line in enumerate(lines) if line.startswith("+") and at not in own]
+    hits = {label for label, p in _ADDED_MARKERS
+            if any(p.search(line) for line in (outside if label == "skip or xfail marker added" else added))}
 
     def count(pattern: re.Pattern[str], lines: list[str]) -> int:
         code = [ln for ln in lines if ln.strip() and not ln.lstrip().startswith(("#", "//"))]

@@ -1570,6 +1570,28 @@ def test_confined_a_process_that_exits_with_an_error_after_a_passing_session_is_
     assert assessment["scope"]["environment"]["isolation"]["backend"] == confine.BUBBLEWRAP
 
 
+@pytest.mark.parametrize("tier", [1, 2])
+def test_a_run_a_crash_ended_is_insufficient_evidence_and_never_integrity(repo, monkeypatch, tier):
+    """pydantic-14065: a test unrelated to the patch segfaulted the run, and G6 told the person the tests could not be
+    trusted, on a correct patch. A crash cannot get a patch accepted, so it is evidence, by the owner's ruling's reasoning."""
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    said = repo_tests.SAID["crashed"].format(where=" (Segmentation fault, in test_x in test_main.py)")
+    crashed = result([ADD, NEGATIVE], verdict="crashed", said=said)
+    passing = result([ADD, NEGATIVE])
+    derived = ["test_more.py::test_zero", ADD, NEGATIVE]
+    Recorded(monkeypatch, {(ADD, NEGATIVE): crashed if tier == 1 else passing},
+             default=result(derived, verdict="crashed", said=said) if tier == 2 else result(derived))
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert ("evidence", "run_crashed") in [(r["stage"], r["code"]) for r in assessment["reasons"]]
+    assert not any(r["stage"] == "integrity" for r in assessment["reasons"])
+    assert any("test_x" in r["detail"] for r in assessment["reasons"] if r["code"] == "run_crashed")
+
+
 HOOK = ("import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n"
         "    outcome = yield\n    rep = outcome.get_result()\n    if rep.failed:\n"
         "        rep.outcome = 'passed'\n        rep.longrepr = None\n")
