@@ -326,6 +326,45 @@ def render(assessment: dict) -> str:
     return "\n".join(lines)
 
 
+def _loop_lines(loop: dict) -> list[str]:
+    """What the completion loop did. Its probes are a model's, so they speak only to what they tried: nothing here says
+    the patch is right, and what they never touched stays in the review's list of what is not established."""
+    sets, failing = loop.get("sets") or [], loop.get("failing") or []
+    ran = sum(one["ran"] for one in sets)
+    result = (f"{len(failing)} still fail, of {ran} probes that ran" if failing else
+              f"no counterexample found in {ran} probes; that does not show the patch is right" if ran else
+              "no probe ran, so the loop says nothing for or against the patch")
+    lines = ["## What the completion loop tested",
+             f"- **Stopped:** {loop.get('reason')}, after {loop.get('repairs')} of at most {loop.get('max_repairs')} "
+             "repairs.", f"- **Result:** {result}."]
+    if ran and loop.get("boundary"):   # the review below ran no test of its own, so its isolation says nothing of these
+        lines.append(f"- **Boundary:** the probes ran inside {code(loop['boundary'])}, in scratch copies with no network.")
+    late = [code(one["label"]) for one in sets if one.get("late")]
+    if late:
+        lines.append(f"- **Not the loop the worked examples measured:** {', '.join(late)} ran after the agent stopped, "
+                     f"not before it started: {code(loop.get('late_because'), 200)}.")
+    for one in sets:
+        kind = "hidden from the agent" if one.get("hidden") else "the agent could read it"
+        lines.append(f"- Left out {code(one['label'])} ({kind}): {code(one['left_out'], 200)}" if one.get("left_out") else
+                     f"- Ran {code(one['label'])} ({kind}): {one['ran']} probes.")
+        lines += [f"  - Refused: {code(why, 200)}" for why in (one.get("refused") or [])[:2]]
+    critic = loop.get("critic")
+    lines.append("- No reviewer from another model family read the patch." if critic is None else
+                 f"- The reviewer from another model family did not finish: {code(critic['error'], 200)}"
+                 if critic.get("error") else
+                 f"- A reviewer from another model family read the patch once: {code(critic.get('verdict'))}.")
+    if failing:
+        lines += ["", "## Probes that still fail"]
+        lines += _cut([[f"- {code(case, 200)}"] for case in failing], BUDGET["findings"], "report.md's folder, state.json")
+    return [*lines, "", "A model wrote these probes, so none of them passes a requirement."]
+
+
+def completion_report(loop: dict, review: str) -> str:
+    """The completion loop's report: what it tested and what still fails, above the ``review`` of the patch it stopped
+    on, which says what is not established."""
+    return "\n".join([*_loop_lines(loop), "", review])
+
+
 def safe_render(assessment: dict) -> str:
     """``render``, or one line that says where the review's fields are when it could not be rendered."""
     try:
@@ -335,4 +374,4 @@ def safe_render(assessment: dict) -> str:
                 "assessment's fields. Qualified draft: merging needs your separate approval.")
 
 
-__all__ = ["MAX_LINES", "STANDING_NOTE", "code", "render", "safe_render"]
+__all__ = ["MAX_LINES", "STANDING_NOTE", "code", "completion_report", "render", "safe_render"]

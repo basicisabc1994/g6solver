@@ -1394,8 +1394,14 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
       (not a pass, and no sign of tampering, since it cannot get a patch accepted: a GUI suite's X connection that
       fails at exit). Exit 0 with a failure, an error or fewer tests finished stays untrusted, as a tampered runner
       would show it;
-    * a fatal signal before the tallies were whole is ``crashed``, by the same reasoning: it cannot get a patch accepted."""
-    killed = exit_code is not None and (exit_code < 0 or exit_code > 128)   # by a signal: the process's, or a shell's 128 + n
+    * a fatal signal before the tallies were whole is ``crashed``, by the same reasoning: it cannot get a patch accepted. That stays
+      the run's verdict even with a failure on the record, since the run did not finish and a verdict of ``failed`` could be discounted
+      as a failure the base has too (the failure itself survives, per check, in ``patch_review._verdicts``). A test can choose exit
+      139, so ``crashed`` is no proof of a crash, and it
+      needs no more: all that test gains is insufficient evidence in place of an integrity alarm, and an exit outside the signals'
+      range gains it nothing."""
+    # by a signal: the process's own negative code, a shell's 128 + n, or a Windows exception's status
+    killed = exit_code is not None and (exit_code < 0 or 128 < exit_code <= 192 or exit_code >= 0xC0000000)
     if moved:
         return CHANGED
     if exit_code is None:

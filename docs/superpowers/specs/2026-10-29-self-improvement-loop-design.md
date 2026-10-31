@@ -560,6 +560,66 @@ the certificates stay as they are.
 - **"Exceeds the state of the art"**: only after the registered north-star study shows it, and exactly as measured.
 - **Until then:** what was measured, with its limits, and the status line.
 
+## 11. P2-shadow, as built (2026-10-31)
+
+Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
+established.
+
+The owner added on 2026-10-31: the loop should work towards improvements with no intervention from them, on any
+cognitive work, with programming as the first toy model. So P2 was built first as a local shadow, on any domain.
+
+**What it delivers:**
+- **A domain seam** (`g6/metaharness/domain.py`): a name, development cases, a sealed split, how a profile runs on a
+  case, an independent judge, and failure records. Nothing in the loop imports or assumes coding, and a test holds it
+  to that. A domain with no independent judge is refused, because self-grading is not improvement.
+- **The tick** (`g6/metaharness/loop.py`), in the shape of section 6.1: measure, name the constraint, propose within
+  the editable schema, gate under the unchanged `EvidencePolicy`, record. It runs on `tune`, the recovery, reflection
+  and `FailureTraceStrategy` proposers, `identify_constraint` and the gate as they were. The constraint log is a local
+  hash-chained file.
+- **The envelope**, in code: a paced week per provider on the operator's ledger, the owner's reserve and the whole
+  account counted (`pacing.py`); a `STOP` file, a heartbeat and a pause after three failed cycles (`envelope.py`); one
+  tick at a time; refusal when the evaluator, the envelope's own code, a frozen case or a sealed byte changed; the
+  sealed split shut in-process while the loop develops; a loop folder that may not overlap what judges it.
+- **Adoption with no person, in shadow only** (`g6/metaharness/shadow.py`). What the gate recommends becomes the loop's
+  head in a separate ledger, so the loop compounds, and the monitor rolls it back if it gets worse. A person's profile
+  store never moves, `activate` and live runs are refused, and each row carries the loop's `auto:` name. Nothing goes
+  outward: no push, pull request, merge or tag.
+
+**What the two test domains showed.** Each ran with `FakeLLM` only and a planted weakness, one a coding-shaped domain,
+the other V6b's GSM8K task, check and exact-answer oracle over generated word problems (the dataset is not in the
+repository). The same code adopted a real gain on both, built on it across ticks, and scored better on sealed cases the
+test ran itself. This shows the machinery works end to end. It does not show that G6 improves anything real: the
+weakness was planted and the models are stubs.
+
+**What remains:**
+- **The rest of P2:** the scheduler, the cleaner (a precondition of pushing anything), the records branch and digest
+  (these need O3, the App), model routing (6.7), a `STOP` on `main` and the `loop:stop` label, the yield measurement of
+  6.3, subordinating work beyond failure traces, and merging `BudgetBook` into the operator's ledger.
+- **O1:** real token usage needs the relay of section 3. Until then the meter's unit is model calls.
+- **P3 onward:** the mission, code changes, draft pull requests and evidence packages, the evaluator in a read-only
+  checkout outside the loop's process, fresh held-out splits drafted by the loop, issues (P4), the north-star study
+  (P5), and method changes through `method_rca`, which need `compare_methods` and a person.
+
+**Rulings made while building, each with its cost if wrong:**
+
+| Ruling | Cost if wrong |
+|---|---|
+| **For the owner: one person step stays.** A person enrols a domain, and again for each fresh held-out split. Someone must say what "better" means, and it cannot be the thing judged | The loop stops after five gated candidates per split until a person acts. This is the distance left from "no intervention" |
+| **For the owner: `person_free_adoption_outside_shadow`, off.** With it on, this phase still moves nothing: no path out exists | None today. Wiring it in P3 is a separate decision, and the store's rules would need changing, since they refuse any `auto:` name |
+| The tick lives in `g6.metaharness`, not `g6.self_maintenance`, because the layer contract forbids that import | Section 3's `python -P -m g6.self_maintenance` cannot hold; the entry will be `python -P -m g6.metaharness.loop`. Cheap |
+| Adoption is a subclass with its own ledger, not `activate` with a made-up name and not a change to the store | `ShadowHarness` overrides a private method, so a refactor of `MetaHarness._head` can break it. Tests would catch that |
+| One workspace for all adoptions, so held-out uses carry over | None found. A fresh workspace per adoption would have let a split be spent for ever |
+| "Sealed" means section 6.3's pool. The gate scores a seeded cut of the development pool, as 6.5 says | If the owner meant the gate to score the sealed split, one line changes, and the study's pool would be spent |
+| "Independent" means four checkable facts: answers not by the caller or a model, not a model's opinion, a source file a digest can pin, and a non-answer rejected | `answers_by` is a declaration. A dishonest adapter can claim it. The adapter is host code, not something a candidate can change |
+| Shares of the pool: 25% tuning, 15% selection, 35% held-out, 25% monitor, by a seeded hash per case | A pool under about 90 cases is refused. Other shares may suit real work better; changing them is a re-cut a person must accept |
+| The monitor uses its own split, the judge's verdict on both versions, the pairs that disagree, and each case once per adoption | It needs at least 18 disagreeing pairs. It catches a collapse, not a modest regression: a change 10% worse stays. The gate remains the main defence |
+| A failed cycle is refused, no winner, blocked, no constraint, rolled back, error or sealed breach. Waits are not cycles | A loop with nothing left it can improve pauses after three ticks and needs a person. The alternative was burning budget unseen |
+| A sealed breach pauses at once, though nothing was read | One resume. The guard is in-process: a child process or native code is not stopped, so P3's container cannot rest on it |
+| Re-enrolment refuses held-out cases that proposers saw or a spent split held. This is stricter than the meta-harness, whose limit counts per digest | A small domain can run out of cases, and a person must find new ones |
+| `OperatorStore.settle` gained `metered`: the host's count sets the charge, up or down. A run's report still cannot lower one | If a domain's executor bypasses the declared model callers, its calls go uncounted and the ledger undercharges |
+| A tick charges one provider: the first with room | Real work may split across providers. Harmless until O1 |
+| `BudgetBook` stays for now, on the person-approved `run_one_cycle` only. The loop does not use it | Two ledgers exist until it merges, against section 6.6 |
+
 ## Appendix A. The outside review's points, as acceptance criteria
 
 An outside review the owner shared on 2026-10-29, in plain words. Every point is an acceptance criterion of P1 or

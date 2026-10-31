@@ -1010,7 +1010,7 @@ def test_the_same_answers_come_over_a_real_stdio_server(tmp_path):
   `"$env:TEMP\g6-smoke"`.
 - [ ] **Step 5: Run the final local checks**, one process each. Run `T tests/conformance/test_conformance.py` (every
   component and every waiver test), G(algorithm_design, complexity, goal_engine, self_maintenance,
-  align_prompt_library, metaharness), `& $PY -m g6.cli doctor`, and D on
+  align_prompt_library, metaharness), `& $PY -P -m g6.cli doctor`, and D on
   `tests/algorithm_design/test_mission_confined.py`, `tests/harness/test_proposed_checks.py`,
   `tests/harness/test_verification_templates.py` and `tests/core/test_confine_bwrap_linux.py`. Expected: all PASS,
   with no Docker skip.

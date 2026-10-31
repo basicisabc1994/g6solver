@@ -1,0 +1,11 @@
+{
+  "name": "g6",
+  "version": "0.2.0",
+  "description": "When Claude Code says a Python task is finished, G6 tests the work with checks the agent never saw, sends failures back, and says what was tested and what remains unknown.",
+  "author": {
+    "name": "The G6 authors"
+  },
+  "homepage": "https://github.com/basicisabc1994/g6solver",
+  "repository": "https://github.com/basicisabc1994/g6solver",
+  "license": "Apache-2.0"
+}

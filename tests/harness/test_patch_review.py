@@ -910,6 +910,56 @@ def test_a_shortcut_in_a_test_or_ci_file_is_still_found_by_the_diff_scan(repo, m
         got["assessment"]["reasons"]
 
 
+MARKED = ("import pytest\n" + TEST + "\n\n@pytest.mark.skipif(sys.version_info < (3, 14), reason=\"needs 3.14\")\n"
+          "def test_newer_python():\n    assert add(1, 1) == 2\n")
+OVERRIDE = ("import pytest\n\n\nclass BaseTests:\n    def test_old(self):\n        assert 2 == 3\n\n\nclass TestFeature(BaseTests):\n"
+            "    pass\n" + TEST)
+
+
+@pytest.mark.parametrize("before, after", [
+    (TEST, MARKED),                                                     # attrs-1593: a correct patch's test
+    (OVERRIDE, OVERRIDE.replace("(BaseTests):\n    pass\n",             # the outside review's: an inherited failure hidden as new
+                                "(BaseTests):\n    @pytest.mark.xfail\n    def test_old(self):\n        assert 2 == 3\n")),
+])
+def test_a_marker_on_a_test_that_looks_new_stops_support_and_accuses_nobody(repo, monkeypatch, before, after):
+    """A diff cannot show a test is new, so this is never accepted, and it is no accusation either: it is evidence the person reads."""
+    (repo / "test_calc.py").write_text(before)
+    _commit(repo, "the tests before the patch")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_calc.py").write_text(after)
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert "marker_on_new_test" in _reasons(got) and "gate_shortcut" not in _reasons(got)
+    assert not any(r["stage"] == "integrity" for r in got["assessment"]["reasons"])
+
+
+def test_a_crashed_run_with_a_failure_the_base_has_too_never_reaches_support(repo, monkeypatch):
+    """The outside review's second pass: a derived run crashed after one failure, and the failure was the base's own. Discounting it
+    must not forget that the rest of that run never ran."""
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    known = "test_more.py::test_zero"
+    crashed = result([ADD, NEGATIVE], failed=[known], verdict="crashed", said="the test process crashed, so this run gave no result")
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE])}, default=crashed)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert "run_crashed" in _reasons(got)
+
+
+def test_a_failure_on_the_record_survives_a_crash_after_it():
+    """The outside review's input: a crash later in the run must not erase a check that already failed."""
+    node = "test_x.py::test_fails"
+    ran = {"verdict": "crashed", "failed_ids": [node], "test_outcomes": {node: {"setup": "passed", "call": "failed", "teardown": "passed"}}}
+    assert patch_review._verdicts([node], ran)[node]["verdict"] == "failed"
+
+
+def test_a_check_with_no_result_on_a_crashed_run_never_passes():
+    node = "test_x.py::test_passes"
+    ran = {"verdict": "crashed", "said": "it crashed", "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}}}
+    assert patch_review._verdicts([node], ran)[node]["verdict"] == "crashed"
+
+
 def test_a_renamed_test_file_with_an_assert_removed_is_still_found_by_the_diff_scan(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
     _git(repo, "mv", "test_calc.py", "test_addition.py")
