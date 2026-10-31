@@ -253,16 +253,26 @@ def overused_label(wrong: Sequence[Any], workflow: Workflow) -> tuple[str, int] 
     return (label, times) if times >= 3 and times >= 0.4 * len(wrong) else None
 
 
-def diagnose(view: Any, workflow: Workflow, decisions: Sequence[Mapping[str, Any]] = ()) -> Recovery:
-    """Root causes of the active version's dev failures (``view`` is the proposer view: dev cases only), and the
-    remedies for each, in the order to try them: what only a person can unblock first."""
-    failures = list(view.failures)
-    n = len(view.dev)
+def partition(failures: Sequence[Any]) -> dict[str, list[Any]]:
+    """Each dev failure under the cause its reason code and checks name: the one reading ``diagnose`` and the
+    self-improvement loop share."""
     blocked = [f for f in failures if f.code.startswith("G6_E_PIPELINE_")]
     rejected = [f for f in failures if f not in blocked and f.failed_checks]
     held = [f for f in failures if f.code and f not in blocked and f not in rejected]
     wrong = [f for f in failures if not f.code and f.oracle == "fail"]
     silent = [f for f in failures if not f.code and f.oracle == "unknown"]
+    return {INTAKE_BLOCKED: blocked, CHECK_REJECTED: rejected, HARNESS_HELD: held, WRONG_ANSWER: wrong,
+            ORACLE_SILENT: silent}
+
+
+def diagnose(view: Any, workflow: Workflow, decisions: Sequence[Mapping[str, Any]] = ()) -> Recovery:
+    """Root causes of the active version's dev failures (``view`` is the proposer view: dev cases only), and the
+    remedies for each, in the order to try them: what only a person can unblock first."""
+    failures = list(view.failures)
+    n = len(view.dev)
+    found = partition(failures)
+    blocked, rejected, held = found[INTAKE_BLOCKED], found[CHECK_REJECTED], found[HARNESS_HELD]
+    wrong, silent = found[WRONG_ANSWER], found[ORACLE_SILENT]
     causes: list[Cause] = []
     remedies: list[Remedy] = []
     if blocked:
@@ -335,4 +345,4 @@ def diagnose(view: Any, workflow: Workflow, decisions: Sequence[Mapping[str, Any
 
 
 __all__ = ["Cause", "Recovery", "Remedy", "WRONG_ANSWER_REMEDIES", "answer_kind", "cases_needed", "diagnose",
-           "for_decision", "for_proposal", "overused_label"]
+           "for_decision", "for_proposal", "overused_label", "partition"]
