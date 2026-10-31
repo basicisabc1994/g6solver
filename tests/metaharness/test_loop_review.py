@@ -22,7 +22,7 @@ from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
 from g6.metaharness import JUDGING_PATTERNS, Model, SuiteCase
 from g6.metaharness import domain as sealed_module
-from g6.metaharness.domain import sealed_closed
+from g6.metaharness.domain import Judge, sealed_closed
 from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.self_maintenance.pacing import ProviderWindow
@@ -459,3 +459,39 @@ def test_6_a_sealed_breach_whose_pause_could_not_be_written_still_stops_the_next
     with open(domain.sealed_file, "rb"):
         assert loop.tick()["outcome"] == "sealed_breach"
     assert loop.log.paused() == "" and _code(loop.tick()) == "G6_E_LOOP_PAUSED"
+
+# Finding 9: what makes a judge independent is frozen, and the domain is checked again before each tick --------------------
+
+@pytest.mark.parametrize("change", [{"answers_by": "model-drafted"}, {"answers_by": "caller"},
+                                    {"answers_by": "independent", "is_model": True}])
+def test_9_a_judge_whose_independence_changed_stops_the_loop(tmp_path, change):
+    loop, domain = _enrolled(tmp_path)
+    domain.judge = lambda: Judge(domains.GSM.oracle, **change)
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "evaluator" in got["message"]
+    assert len(domain.llm.calls) == calls
+
+
+def test_9_the_frozen_digest_moves_with_each_mark_of_independence(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    before = loop._frozen()["evaluator"]
+    domain.judge = lambda: Judge(domains.GSM.oracle, answers_by="independent", is_model=True)
+    assert loop._frozen()["evaluator"] != before
+
+
+def test_9_a_model_that_turned_paid_after_enrolment_is_refused_before_it_is_called(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    free = domain.execution()
+    domain.execution = lambda: dataclasses.replace(free, models={"local": Model(domain.llm, paid=True)})
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_PAID_MODEL" and len(domain.llm.calls) == calls
+
+
+def test_9_a_stale_handle_cannot_accept_a_judge_that_lost_its_independence_by_enrolling(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    domain.judge = lambda: Judge(domains.GSM.oracle, answers_by="model-drafted")
+    got = loop.enrol("Ada")
+    assert _code(got) == "G6_E_LOOP_NO_INDEPENDENT_JUDGE"
+    assert _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED"

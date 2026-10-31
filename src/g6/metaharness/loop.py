@@ -302,9 +302,10 @@ class ShadowLoop:
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
         split. The judge's whole file is digested, since a helper it calls judges too. No profile is in it."""
-        run, sealed = self.domain.execution(), self.domain.sealed()
+        run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
         return {"envelope": envelope_sha256(),
-                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(self.domain.judge()),
+                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
+                                     "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
                                                                                          *run.optional_checks.values())]}),
                 "cases": cut_pool(self.domain.development(), self.settings.seed).digest(),
@@ -347,10 +348,21 @@ class ShadowLoop:
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
                             "measured against it would mean what it did", "A person checks the change and enrols again.")
+        lacking = self._lacking()
+        if lacking is not None:
+            return lacking
         if self.mh.held_out_left() <= 0:
             return _blocked(HELD_OUT_SPENT, "this held-out split has given all the evaluations it may: the gate needs a "
                             "fresh split, and only a person can confirm one", "A person freezes a fresh split and enrols.")
         return None
+
+    def _lacking(self) -> dict[str, Any] | None:
+        """The domain checked as it is now: a handle's first check says nothing of what has changed since."""
+        problems = domain_problems(self.domain)
+        if not problems:
+            return None
+        return _blocked(problems[0][0], "; ".join(why for _, why in problems),
+                        "Give this domain what it lacks; the loop will not run without it.")
 
     def _must_stop(self) -> str:
         """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the
@@ -373,6 +385,9 @@ class ShadowLoop:
         who = confirmed_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person enrols a domain (no empty or auto: name)")
+        lacking = self._lacking()
+        if lacking is not None:
+            return lacking
         reused = self._reused()
         if reused:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
