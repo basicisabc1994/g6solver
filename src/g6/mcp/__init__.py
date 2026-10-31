@@ -2,7 +2,10 @@
 """g6-mcp — a stdio MCP server exposing G6's progressive discovery surface.
 
 Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
-``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job; and
+``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
+``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
+``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
+client's own dialog and nowhere else, and the check step is the patch review; and
 thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
 ``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
 declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and rollback ask the person through the
@@ -23,7 +26,8 @@ component names (``lean``) or single ops (``lean.check_proof``), set where the s
 server reads it from its own environment. The meta-harness tools that run a workflow's code are sensitive too:
 ``metaharness.run``, ``metaharness.evaluate_start`` and ``metaharness.evaluate`` (``metaharness`` for all three); and
 a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
-project's files carry does not count. ``g6_describe`` says which sensitive ops this server allows. Before you list
+project's files carry does not count. The mission tools that run a repository's code ask for ``workforce.mission``
+(``workforce`` for all). ``g6_describe`` says which sensitive ops this server allows. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -254,29 +258,14 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from g6.core.door import blocked_reply
         if not _allowed("patch_review", "review", allowed_sensitive()):
             return blocked_reply(f"{_DENIED} patch_review.review runs repository code; the host must allow it")
-        from g6.core import component_process
-        from g6.core.stop import STOPPED
-        from g6.harness.patch_review import review_patch
+        from g6.mcp.review_reply import finish, review
 
-        def review() -> dict:
-            # review_patch lets these reach an enclosing door; this job has none, so it names them here
-            try:
-                return review_patch(repo, task=task, requirements=requirements or [], tests=tests or [], claim=claim,
-                                    sources=sources, base=base, expected_artifact_digest=expected_artifact_digest,
-                                    timeout_s=timeout_s, intent=intent, proposed_checks=proposed_checks,
-                                    template_instances=template_instances, search=search,
-                                    import_roots=import_roots or [])
-            except component_process.ExecutionInterrupted as exc:
-                if exc.stopped:
-                    return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")
-                return blocked_reply(f"[G6_E_PATCH_REVIEW_INTERRUPTED] the patch review's time allowance ended before "
-                                     f"it finished, so it has no outcome: {exc}")
-            except component_process.ContainmentFailure as exc:
-                return blocked_reply("[G6_E_PATCH_REVIEW_INTERRUPTED] G6 could not confirm that the review's test "
-                                     f"processes ended, so nothing from it is used: {exc}")
-
-        from g6.mcp.review_reply import finish
-        return jobs.start(review, compact=finish)
+        return jobs.start(lambda: review(repo, task=task, requirements=requirements or [], tests=tests or [],
+                                         claim=claim, sources=sources, base=base,
+                                         expected_artifact_digest=expected_artifact_digest, timeout_s=timeout_s,
+                                         intent=intent, proposed_checks=proposed_checks,
+                                         template_instances=template_instances, search=search,
+                                         import_roots=import_roots or []), compact=finish)
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))
@@ -345,7 +334,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
 
     def metaharness_job(job_id: str, detail: str = "compact") -> dict:
         """Read a process-local job's pending/running/completed/failed status and retained result. A finished
-        g6_review_patch job replies compactly by default: assessment.report first, then the outcome, the reasons, the
+        g6_review_patch or g6_mission_submit job replies compactly by default: assessment.report first, then the outcome, the reasons, the
         next actions, the unknowns, the merge authorisation, and in full_assessment where the full assessment is (a
         file under G6's state folder); detail="full" returns the full assessment instead. Other jobs reply in full."""
         return jobs.status(job_id, detail)
@@ -407,10 +396,112 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
             return consent_refusal(consent)
         return mh.rollback(workflow, version, answer=consent.answer, binding=binding)
 
+    def g6_premortem(repo: str, task: str, intent: dict | None = None) -> dict:
+        """Before the work: what done would mean and how the task can fail, with no model call and nothing run, from
+        the task, an optional intent contract ({goal, success_criteria, non_goals, failure_criteria, assumptions}) and
+        the repository's file names. It returns the intent contract; a proposed standard, each requirement with the
+        test file it names as its stated check, or marked not_established; the competing failure hypotheses, each with
+        what would test it, ranked by nothing; and at most 3 questions for the person. It is a proposal: nothing is
+        frozen or confirmed here."""
+        from g6.mcp import mission
+        return mission.premortem(repo, task, intent)
+
+    async def g6_mission_create(repo: str, objective: str, ctx: Any, module: str = "", function: str = "",
+                                helpers: list[str] | None = None, risk: str = "R2", budget_cents: int = 0) -> dict:
+        """Start a coding mission on a clean git repository (repo: its full path): G6 freezes what counts as done
+        before any change exists, from the commit it stands at: the tests that must pass, the one file a patch may
+        change (module, with function; without them G6 derives them from the failing tests), the risk tier (at least
+        R2) and three attempts. The person is first asked, in the client's own dialog, to allow G6 to run this
+        revision's code; a new commit asks again. Decline, cancel or a client without a dialog creates nothing, and
+        offer no other way to agree. The name the person gives is recorded as given and is not authenticated. It runs
+        the repository's tests in a copy: requires host permission workforce.mission in G6_MCP_SENSITIVE. Returns a job:
+        poll metaharness_job. Then call g6_mission_confirm; an objective about retries or duplicates first asks a
+        question (clarification): answer it with g6_mission_clarify."""
+        from g6.mcp import mission
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = mission.refused()
+        if denied is not None:
+            return denied
+        found = mission.execution(repo)
+        if "name" not in found:
+            return found
+        lines, who = found.get("lines"), ""
+        if lines is not None:
+            consent = await request_consent(ctx, found["question"])
+            if consent.status != "accepted":
+                return refusal(consent, next_action=mission.NOT_ASKED)
+            who = consent.answer
+        return jobs.start(lambda: mission.create(found["name"], objective, lines=lines, who=who, module=module,
+                                                 function=function, helpers=helpers, risk=risk,
+                                                 budget_cents=budget_cents))
+
+    def g6_mission_clarify(mission_id: str, replay_semantics: str) -> dict:
+        """Answer the one question a mission on retries or duplicates asks before its standard is frozen, from
+        clarification.permitted_answer. This is your answer, not the person's confirmation: they still confirm the
+        resulting standard with g6_mission_confirm. It runs the repository's tests in a copy: requires host permission
+        workforce.mission in G6_MCP_SENSITIVE. Returns a job: poll metaharness_job."""
+        from g6.mcp import mission
+
+        return mission.refused() or jobs.start(lambda: mission.clarify(mission_id, replay_semantics))
+
+    async def g6_mission_confirm(mission_id: str, ctx: Any) -> dict:
+        """Ask the person, in the client's own dialog, to confirm the frozen standard of what counts as done. Only the
+        person can: no argument confirms, you never answer for them, and there is no terminal fallback. A decline, a
+        cancel or a client without a dialog leaves the mission unconfirmed, and an unconfirmed mission takes no patch;
+        ask the person, and offer no other way to confirm. The name the person gives is recorded as given and is not
+        authenticated. Once confirmed, G6 reproduces the failure on the frozen commit and starts the mission. It runs
+        the repository's tests in a copy: requires host permission workforce.mission in G6_MCP_SENSITIVE. Returns a job:
+        poll metaharness_job."""
+        from g6.mcp import mission
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = mission.refused()
+        if denied is not None:
+            return denied
+        found = mission.asked(mission_id)
+        if isinstance(found, dict):
+            return found
+        lines, sha, question = found
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return refusal(consent, next_action=mission.NOT_ASKED)
+        return jobs.start(lambda: mission.confirm(mission_id, lines, sha, consent.answer))
+
+    def g6_mission_submit(mission_id: str, repo: str, claim: str = "", timeout_s: int = 300) -> dict:
+        """Check your change in repo, the repository's folder, against the frozen standard. G6 never writes code: you
+        change the one permitted file in the working tree, and G6 runs g6_review_patch's assessment there with the
+        frozen tests as the stated checks, then the mission judges the same text on its frozen copy (so each attempt
+        runs the tests twice). A change to any other file, a test above all, is refused and uses no attempt. A
+        confirmed mission only. The mission's repair ladder decides what comes next: three attempts; a repeated patch
+        or one that does not improve moves to a focused brief, then to the person. Fix what the reply shows and
+        submit again; never rewrite a test. Returns a job: poll metaharness_job. Its reply is the review's compact
+        reply, with assessment.report to show the person as it is, and mission, the mission's state. A sign the tests
+        cannot be believed (test_integrity_compromised) stops the patch before the mission takes it. Every outcome is
+        qualified-draft at best, or blocked-escalated. merge is always requires_separate_approval: merging is the
+        person's own decision. Requires host permission workforce.mission in G6_MCP_SENSITIVE."""
+        from g6.mcp import mission
+
+        return mission.refused() or jobs.start(
+            lambda: mission.submit(mission_id, repo, claim=claim, timeout_s=timeout_s), compact=mission.finish)
+
+    def g6_mission_status(mission_id: str, detail: str = "summary") -> dict:
+        """A mission's state, what it waits for and its result; detail="full" adds every step, check and receipt.
+        completion_state is the closed mission's, and qualified-draft while it is open. Reads only."""
+        from g6.mcp import mission
+        return mission.status(mission_id, detail)
+
+    def g6_mission_certificate(mission_id: str) -> dict:
+        """The certificate the mission's close kept, or one issued now on the latest patch: what the evidence supports,
+        test by test, with every gap named. Refused before there is a patch. Reads only."""
+        from g6.mcp import mission
+        return mission.certificate(mission_id)
+
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
                  metaharness_diagnose, metaharness_approve, metaharness_rollback, metaharness_start,
                  metaharness_confirm, metaharness_propose_code, metaharness_evaluate_start, metaharness_job,
-                 metaharness_run):
+                 metaharness_run, g6_premortem, g6_mission_create, g6_mission_clarify, g6_mission_confirm,
+                 g6_mission_submit, g6_mission_status, g6_mission_certificate):
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)

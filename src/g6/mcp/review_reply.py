@@ -31,6 +31,25 @@ HOLDS = ("every field of the review: each requirement's status, assessment.compl
          "with every check run, the gate, the grounding and all the evidence")
 
 
+def review(repo: str | os.PathLike, **kwargs: Any) -> dict:
+    """``review_patch`` for a job over MCP: what it lets reach an enclosing door is named here, for a job has none."""
+    from g6.core import component_process
+    from g6.core.door import blocked_reply
+    from g6.core.stop import STOPPED
+    from g6.harness.patch_review import review_patch
+
+    try:
+        return review_patch(repo, **kwargs)
+    except component_process.ExecutionInterrupted as exc:
+        if exc.stopped:
+            return blocked_reply(f"[{STOPPED}] the patch review was stopped before it finished: {exc}")
+        return blocked_reply(f"[G6_E_PATCH_REVIEW_INTERRUPTED] the patch review's time allowance ended before "
+                             f"it finished, so it has no outcome: {exc}")
+    except component_process.ContainmentFailure as exc:
+        return blocked_reply("[G6_E_PATCH_REVIEW_INTERRUPTED] G6 could not confirm that the review's test "
+                             f"processes ended, so nothing from it is used: {exc}")
+
+
 def save(reply: dict, job_id: str) -> str | None:
     """The whole reply as JSON, in a new file ``reviews/<job_id>.json`` under G6's state folder, readable by its owner
     only; its path, or ``None`` when it could not be written."""
@@ -117,4 +136,4 @@ def finish(reply: Any, job_id: str) -> Any:
     return compact(reply, job_id, save(reply, job_id))
 
 
-__all__ = ["BUDGET", "compact", "finish", "save"]
+__all__ = ["BUDGET", "compact", "finish", "review", "save"]

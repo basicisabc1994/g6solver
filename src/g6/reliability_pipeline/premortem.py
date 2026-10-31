@@ -235,11 +235,33 @@ def premortem_failure_mode_questions() -> dict[str, str]:
     return {code: question for code, question, _g in _CHECKLIST}
 
 
+#: How a change to a repository can fail, beside the checklist: each with what would test it (``g6_review_patch``'s
+#: stated checks, its templates and its search settings, or the person).
+CODING_HYPOTHESES = (
+    ("meets_the_task", "Does the change do what the task asks?", "A stated check that fails on the base commit."),
+    ("missed_a_boundary", "Which input at an edge does the change get wrong?", "Template example.v1 or relation.v1."),
+    ("broke_kept_behaviour", "What worked before and must still work?", "Template differential.v1, and the repository's "
+                                                                        "tests."),
+    ("tests_too_weak", "Would the tests notice if the change were wrong?", 'search {"test_adequacy": true}.'),
+    ("misleading_environment", "Could the tests or the environment mislead?", "The review's integrity checks, and "
+                                                                              "reading what it loaded."),
+    ("misread_intent", "Could G6 or the agent have misread what the person wants?", "A question to the person."),
+)
+
+
+def hypotheses() -> list[dict[str, str]]:
+    """The competing ways a task can fail: each ``{"id", "question", "check"}``, ranking none of them."""
+    return [{"id": code, "question": question, "check": check}
+            for code, question, check in (*CODING_HYPOTHESES, *_CHECKLIST)]
+
+
 __all__ = [
+    "CODING_HYPOTHESES",
     "CONSTRUCTOR",
     "PREMORTEM_FAILURE_MODES",
     "TEMPLATE_LIMIT",
     "construct_replay_check",
     "constructor",
+    "hypotheses",
     "premortem_failure_mode_questions",
 ]

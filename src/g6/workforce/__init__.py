@@ -16,6 +16,8 @@ Public API (``g6.workforce.api``, re-exported here)::
     status(wf, mission_id)                         # completion_state: verified / qualified-draft / blocked-escalated
     certificate(wf, mission_id)                    # B4 statement per frozen test, every gap named
 
+Over MCP: the ``g6_mission_*`` tools (``g6.mcp.mission``), where a person's answer comes from the client's own dialog.
+
 What it is: the archive's workforce runtime (missions, work graph, run ledger, rungs, the single call door, acceptance
 contracts, the repair ladder, the scheduler's route choice) with the coding objective compiler, the test bench, the
 differential regression probe, the premortem's replay-check construction and the certificate (``g6.evidence``).
@@ -59,7 +61,11 @@ from g6.workforce.api import (
 # ``api.decide`` (a person decides a gate) is not re-exported: it would shadow the ``g6.workforce.decide`` module.
 
 __g6_component__ = True
-__g6_maturity__ = "beta"  # no block: Python API only (the docstring's capability label)
+__g6_maturity__ = "beta"  # no block, so no g6_invoke op: this API and ``__g6_mcp_tools__``
+#: Its tools on the MCP server (``g6.mcp.mission``). Those that run a repository's code ask for ``workforce.mission``.
+__g6_mcp_tools__: tuple[str, ...] = ("g6_mission_create", "g6_mission_clarify", "g6_mission_confirm",
+                                     "g6_mission_submit", "g6_mission_status", "g6_mission_certificate")
+__g6_sensitive_ops__: tuple[str, ...] = ("mission",)
 __g6_requires__: tuple[str, ...] = ("evidence", "formal", "intent_engine", "learning", "reliability_pipeline",
                                     "safety_engine")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.

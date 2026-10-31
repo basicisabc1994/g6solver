@@ -1923,7 +1923,7 @@
     "summary": "g6.workforce \u2014 a local coding mission under a frozen standard: G6 freezes what counts as done, a person confirms it, and G6 checks the agent's patch.",
     "maturity": "beta",
     "maturity_reason": "",
-    "surface": "python",
+    "surface": "python + mcp tools",
     "ops": [],
     "requires": [
       "evidence",
@@ -1933,7 +1933,9 @@
       "reliability_pipeline",
       "safety_engine"
     ],
-    "sensitive_ops": [],
+    "sensitive_ops": [
+      "mission"
+    ],
     "vetting": null
   },
   {
