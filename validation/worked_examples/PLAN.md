@@ -932,3 +932,40 @@ on this bug. They do show the mechanism for the first time: each time Codex foun
 repaired, and the test passed. Claude Code's memory reaper then stopped the stream. Part of the cause was the runner's: each Codex call left a broker and
 a codex process behind, about 0.4 GB a time, and removing nine of them took free memory from 4.1 to 8.1 GB. `run_codex` now ends them after every call. No
 agent sees any change, so this stays L9. A run in flight when the stream stopped has no row and is made again, and its remains were removed.
+
+### 2026-10-31 (evening): the owner's new goal, in three stages (before any M9 run, and before stage 2's bugs are drawn)
+
+**The goal, as the owner set it, replacing the 95% goal:** "Measure whether a harness improved on training bugs beats Claude Code
+alone on bugs it never saw, reporting three stages separately: (1) unseen bugs in the training repositories; (2) unseen bugs in
+repositories never used in training; (3) a harness change G6 proposes itself from its own failure records, with no change written
+in session. Primary measure: uplift over Claude Code alone under the frozen comparison rule. 95% is a stretch target, reported
+beside it. Budget $180 in total. Agents never see the maintainers' tests. Report tuned and held-out scores together, and
+maintainers' and amended scores together."
+
+**Why it changed, and what did not.** Nothing about L9 on an unseen bug is known, so no result chose this. The only look at unseen
+bugs so far, H1 on the held-out bugs, went the wrong way (3 of 15 against arm A's 5 of 15), and it stands. The comparison rule, the
+amended tests, the $180 stop, and every rule keeping maintainers' tests from agents are unchanged. The goal is to measure, so "not
+shown" is a valid ending for any stage.
+
+**Stage 1** is the comparison already fixed: A, T and M9 on the eleven fresh bugs, and T and M9 on the held-out bugs as a second
+look. All of them come from the six repositories used in training, so a win says "unseen bugs in familiar repositories" and no more.
+
+**Stage 2, repositories never used in training.** The bugs are drawn by rule, so nobody picks them:
+1. **Repositories:** PyPI's top 100 in rank order, each resolved to its GitHub repository from PyPI's own record, leaving out the six
+   training repositories. Rules P2 and P4 and tasks' rules T1 to T4 are applied as in section 2, with one change: the window is
+   2025-12-01 to 2026-10-29, the two earlier windows together.
+2. **Bugs:** the two newest of each repository judged to report a bug, on the issue's text alone, taken in rank order until ten bugs
+   pass validation. That judgement is made only after L9 is frozen, so no stage 2 issue can influence the loop. A bug that fails the
+   free validation steps gives way to the next one, and the record says so.
+3. **Arms:** A, T and M9, twice each, the same frozen L9 as stage 1. The comparison rule is applied on its own to these bugs. The
+   audit and the amendments follow the 2026-10-31 rule: labels from a blind reviewer, a diff only for a bug not determined by its
+   task. I read neither their fixes nor their tests, and their runs are not read to tune anything.
+
+**How each comparison is read.** To clear the rule M9 needs at least 5 wins and no losses, or 7 and 1, on the runs that differ, against
+both A and T. That is hard to clear even if a gain is real, and the rule is not loosened. Two repeats of one bug are not independent,
+so a p-value overstates the evidence; beside it, each report counts the bugs on which M9 passed more often than A and T, and fewer.
+
+**95%** is reported beside the uplift on the amended tests, with the maintainers' score next to it. It is no longer what a stage is
+judged by.
+
+**Stage 3** gets its own dated section before its first run.
