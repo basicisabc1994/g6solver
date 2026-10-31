@@ -130,6 +130,12 @@ PASSED, FAILED, CHANGED = "passed", "failed", "changed_tracked_files"
 RAN = frozenset({PASSED, FAILED})
 #: The owner's ruling (2026-10-29): every test passed by pytest's own count, then the process exited with an error.
 RUN_INCONSISTENT = "run_inconsistent"
+#: The same ruling's reasoning: a fatal signal ended the run before its tallies were whole. It cannot get a patch accepted, so it is
+#: no sign of tampering (pydantic-14065: a recursion test the patch never touched segfaulted, and a correct patch was called that).
+CRASHED = "crashed"
+#: What the interpreter's dump says of a crash. Test output is untrusted, so only plain words and a file's own name are kept.
+_CRASH_SIGNAL = re.compile(r"(?:Fatal Python error|Windows fatal exception): ([\w ]{1,60})")
+_CRASH_FRAME = re.compile(r'File "[^"\n]*?([\w.-]+\.py)", line \d+ in (test\w{0,120})')
 #: Files that configure, or could stand in for, the runner (the bench's lists, ``bench.py:60-63``, and every
 #: configuration file pytest looks for by name): a change to one is said, not judged.
 RUNNER_FILES = frozenset({"conftest.py", "pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "pyproject.toml",
@@ -160,6 +166,7 @@ SAID = {
     # PENDING copy (the owner's ruling of 2026-10-29): a non-zero exit after a session pytest counts as all passed.
     "run_inconsistent": ("the tests passed by pytest's own count, but the process exited with an error afterwards, so "
                          "G6 does not count them as passed"),
+    "crashed": "the test process crashed{where}, so this run gave no result",
     "could_not_start": "the test run could not start ({error})",
     "changed": "files in your repository changed while your tests ran",
     "network_off": "G6: network connections are refused for this test run",
@@ -1386,7 +1393,13 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
       ``run_inconsistent``
       (not a pass, and no sign of tampering, since it cannot get a patch accepted: a GUI suite's X connection that
       fails at exit). Exit 0 with a failure, an error or fewer tests finished stays untrusted, as a tampered runner
-      would show it."""
+      would show it;
+    * a fatal signal before the tallies were whole is ``crashed``, by the same reasoning: it cannot get a patch accepted. A failure
+      already on the record survives it, as ``failed``. A test can choose exit 139, so ``crashed`` is no proof of a crash, and it
+      needs no more: all that test gains is insufficient evidence in place of an integrity alarm, and an exit outside the signals'
+      range gains it nothing."""
+    # by a signal: the process's own negative code, a shell's 128 + n, or a Windows exception's status
+    killed = exit_code is not None and (exit_code < 0 or 128 < exit_code <= 192 or exit_code >= 0xC0000000)
     if moved:
         return CHANGED
     if exit_code is None:
@@ -1396,7 +1409,7 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
     if exit_code == 5:
         return "no_tests_collected"
     if counts is None:
-        return "collection_error" if exit_code in (2, 3, 4) else "inconsistent_report"
+        return CRASHED if killed else "collection_error" if exit_code in (2, 3, 4) else "inconsistent_report"
     bad, outside = counts["failures"] + counts["errors"], counts.get("outside", 0)
     if bad and outside == bad:
         return "collection_error"
@@ -1406,7 +1419,7 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
         if "expected" in counts and (counts["expected"] is None or counts["expected"] != counts.get("finished")):
             return "incomplete"
         return PASSED
-    if exit_code == 1 and bad:
+    if (exit_code == 1 and bad) or (killed and (bad or counts.get("failed_ids") or counts.get("setup_errors"))):
         return FAILED
     if exit_code in (2, 3, 4):
         # Errors whose culprit is not in the tally are taken as collection errors G6 cannot place (exit 2-4's usual).
@@ -1418,7 +1431,7 @@ def _judge(exit_code: int | None, counts: dict[str, int] | None, output: str, mo
     if (not bad and counts["passed"] > 0 and complete and not counts.get("failed_ids")
             and not counts.get("setup_errors")):
         return RUN_INCONSISTENT
-    return "inconsistent_report"
+    return CRASHED if killed else "inconsistent_report"
 
 
 def _bounded(cmd: list[str], *, cwd: Path, env: dict[str, str], timeout_s: int, log: Path,
@@ -1569,9 +1582,19 @@ def _root(repo: Path, rootdir: str) -> str:
     return "" if rel == "." else rel
 
 
-def _said(verdict: str, *, seconds: int, python: str) -> str:
+def _crash_site(output: str) -> str:
+    """Where a crash happened, from the interpreter's dump: the signal, and the test that was running."""
+    signal = _CRASH_SIGNAL.search(output)
+    frame = _CRASH_FRAME.search(output, signal.end() if signal else 0)
+    parts = [*([signal[1].strip()] if signal else []), *([f"in {frame[2]} in {frame[1]}"] if frame else [])]
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+def _said(verdict: str, *, seconds: int, python: str, output: str = "") -> str:
     if verdict in RAN:
         return ""
+    if verdict == CRASHED:
+        return SAID["crashed"].format(where=_crash_site(output))
     if verdict == CHANGED:
         return SAID["changed"]
     if verdict == "timed_out":
@@ -1664,7 +1687,7 @@ def _run(repo: Path, tests: list[str], *, roots: tuple[str, ...], timeout_s: int
         tally = counts or {}
         passed = int(tally.get("passed", 0))
         failed = int(tally.get("failures", 0)) + int(tally.get("errors", 0))
-        return {"verdict": verdict, "said": _said(verdict, seconds=bound, python=python), "passed": passed,
+        return {"verdict": verdict, "said": _said(verdict, seconds=bound, python=python, output=output), "passed": passed,
                 "failed": failed, "not_passed": int(tally.get("skipped", 0)), "total": passed + failed,
                 "deselected": int(tally.get("deselected", 0)),
                 "test_outcomes": tally.get("test_outcomes"), "collected_ids": tally.get("collected_ids", []),

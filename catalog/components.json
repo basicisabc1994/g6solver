@@ -1711,7 +1711,9 @@
       "learning",
       "llm_router",
       "navigator",
+      "operator",
       "reasoning",
+      "self_maintenance",
       "self_training",
       "workforce",
       "workspace"

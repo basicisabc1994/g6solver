@@ -277,6 +277,8 @@ def _steps(assessment: dict) -> list[str]:
         elif run.get("verdict") == "run_inconsistent":   # the owner's ruling (2026-10-29): said plainly, no accusation
             shown.append(f"{name}: passed by pytest's own count, but the process exited with an error afterwards "
                          f"({code('run_inconsistent')}), so they are not counted as passed")
+        elif run.get("verdict") == "crashed":   # the same: a crash is no accusation
+            shown.append(f"{name}: the test process crashed ({code('crashed')}), so this run counts neither way")
         else:
             shown.append(f"{name}: {code(run.get('verdict', ''), 30)}")
     if _proposed(assessment):

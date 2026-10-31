@@ -54,9 +54,11 @@ How it is guarded:
 
 Composed:
 
-- `operator`: its action queue holds the person's run approvals; its budget ledger is where this one's token book
-  will go.
+- `operator`: its action queue holds the person's run approvals; its budget ledger holds the loop's paced provider
+  weeks (`pacing`), and is where this one's token book will go.
 - `self_training` and `metaharness`: a planned fix still passes their gates and a person's approval before it lands.
+- `metaharness`: `g6.metaharness.loop` runs the shadow loop on `constraints`, `pacing` and `envelope`. Its adoptions
+  hold only in its own workspace.
 
 ## Failure modes it catches
 
@@ -103,8 +105,9 @@ The next ticket for that stage, as a simulation:
 
 ## The four open problems
 
-- **Learning signals**: the budget book records every reservation and settlement in a hash chain. Not yet: no cycle's
-  outcome feeds the next constraint, and there is no scheduler.
+- **Learning signals**: the budget book records every reservation and settlement in a hash chain, and in the shadow
+  loop each cycle's outcome is in the constraint log and its adoption is what the next tick runs on. Not yet: no
+  scheduler, and nothing the loop adopts reaches anyone.
 - **Evaluators the model cannot influence**: the constraint is arithmetic over your counts, and a cycle's checker is
   injected by the host, never chosen by the agent. Not yet: the counts themselves are the caller's.
 - **Transfer by failure mode**: the guard is bound to `low_value_first` and `unchecked_self_change`, not to G6: any

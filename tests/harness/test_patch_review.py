@@ -910,6 +910,43 @@ def test_a_shortcut_in_a_test_or_ci_file_is_still_found_by_the_diff_scan(repo, m
         got["assessment"]["reasons"]
 
 
+MARKED = ("import pytest\n" + TEST + "\n\n@pytest.mark.skipif(sys.version_info < (3, 14), reason=\"needs 3.14\")\n"
+          "def test_newer_python():\n    assert add(1, 1) == 2\n")
+OVERRIDE = ("import pytest\n\n\nclass BaseTests:\n    def test_old(self):\n        assert 2 == 3\n\n\nclass TestFeature(BaseTests):\n"
+            "    pass\n" + TEST)
+
+
+@pytest.mark.parametrize("before, after", [
+    (TEST, MARKED),                                                     # attrs-1593: a correct patch's test
+    (OVERRIDE, OVERRIDE.replace("(BaseTests):\n    pass\n",             # the outside review's: an inherited failure hidden as new
+                                "(BaseTests):\n    @pytest.mark.xfail\n    def test_old(self):\n        assert 2 == 3\n")),
+])
+def test_a_marker_on_a_test_that_looks_new_stops_support_and_accuses_nobody(repo, monkeypatch, before, after):
+    """A diff cannot show a test is new, so this is never accepted, and it is no accusation either: it is evidence the person reads."""
+    (repo / "test_calc.py").write_text(before)
+    _commit(repo, "the tests before the patch")
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_calc.py").write_text(after)
+    Recorded(monkeypatch, default=result([ADD, NEGATIVE]))
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert "marker_on_new_test" in _reasons(got) and "gate_shortcut" not in _reasons(got)
+    assert not any(r["stage"] == "integrity" for r in got["assessment"]["reasons"])
+
+
+def test_a_failure_on_the_record_survives_a_crash_after_it():
+    """The outside review's input: a crash later in the run must not erase a check that already failed."""
+    node = "test_x.py::test_fails"
+    ran = {"verdict": "crashed", "failed_ids": [node], "test_outcomes": {node: {"setup": "passed", "call": "failed", "teardown": "passed"}}}
+    assert patch_review._verdicts([node], ran)[node]["verdict"] == "failed"
+
+
+def test_a_check_with_no_result_on_a_crashed_run_never_passes():
+    node = "test_x.py::test_passes"
+    ran = {"verdict": "crashed", "said": "it crashed", "test_outcomes": {node: {"setup": "passed", "call": "passed", "teardown": "passed"}}}
+    assert patch_review._verdicts([node], ran)[node]["verdict"] == "crashed"
+
+
 def test_a_renamed_test_file_with_an_assert_removed_is_still_found_by_the_diff_scan(repo, monkeypatch):
     (repo / "calc.py").write_text(GOOD)
     _git(repo, "mv", "test_calc.py", "test_addition.py")
@@ -1568,6 +1605,28 @@ def test_confined_a_process_that_exits_with_an_error_after_a_passing_session_is_
     assert {_requirement(got, ident)["status"] for ident in ("R1", "R2")} == {"not_established"}
     assert assessment["scope"]["checks_run"][0]["verdict"] == "run_inconsistent"
     assert assessment["scope"]["environment"]["isolation"]["backend"] == confine.BUBBLEWRAP
+
+
+@pytest.mark.parametrize("tier", [1, 2])
+def test_a_run_a_crash_ended_is_insufficient_evidence_and_never_integrity(repo, monkeypatch, tier):
+    """pydantic-14065: a test unrelated to the patch segfaulted the run, and G6 told the person the tests could not be
+    trusted, on a correct patch. A crash cannot get a patch accepted, so it is evidence, by the owner's ruling's reasoning."""
+    from g6.workforce import repo_tests
+
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    said = repo_tests.SAID["crashed"].format(where=" (Segmentation fault, in test_x in test_main.py)")
+    crashed = result([ADD, NEGATIVE], verdict="crashed", said=said)
+    passing = result([ADD, NEGATIVE])
+    derived = ["test_more.py::test_zero", ADD, NEGATIVE]
+    Recorded(monkeypatch, {(ADD, NEGATIVE): crashed if tier == 1 else passing},
+             default=result(derived, verdict="crashed", said=said) if tier == 2 else result(derived))
+    got = review(repo)
+    assessment = got["assessment"]
+    assert assessment["outcome"] == "insufficient_evidence", assessment["reasons"]
+    assert ("evidence", "run_crashed") in [(r["stage"], r["code"]) for r in assessment["reasons"]]
+    assert not any(r["stage"] == "integrity" for r in assessment["reasons"])
+    assert any("test_x" in r["detail"] for r in assessment["reasons"] if r["code"] == "run_crashed")
 
 
 HOOK = ("import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n"
