@@ -619,4 +619,5 @@ def test_a_change_to_the_loops_own_envelope_code_stops_the_loop(tmp_path, monkey
 
 def test_the_envelope_digest_covers_each_file_of_the_loop():
     found = build_manifest(Path(g6.__file__).resolve().parent, patterns=ENVELOPE_PATTERNS)
-    assert len(found) == len(ENVELOPE_PATTERNS) == 5
+    assert {"metaharness/domain.py", "metaharness/loop.py", "metaharness/shadow.py", "self_maintenance/envelope.py",
+            "self_maintenance/pacing.py"} <= set(found)

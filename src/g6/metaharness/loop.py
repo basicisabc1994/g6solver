@@ -83,9 +83,16 @@ BUSY = "G6_E_LOOP_BUSY"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
-ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/shadow.py",
-                     "self_maintenance/envelope.py", "self_maintenance/pacing.py")
+#: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
+#: with. A test holds every module those files import to this set or that one.
+ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/loop.py",
+                     "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
+                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/select.py",
+                     "metaharness/shadow.py", "self_maintenance/constraints.py", "self_maintenance/envelope.py",
+                     "self_maintenance/pacing.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
+                     "core/llm.py", "core/vault.py", "integrity/*.py")
 UNKNOWN = "unknown"
+_SOURCE = Path(g6.__file__).resolve().parent
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
 
@@ -209,7 +216,7 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
     """What judges that lies in or around the loop's folder, which is the only place it writes."""
     judge, sealed = domain.judge(), domain.sealed()
     source = judge_source(judge.verdict) if judge is not None else None
-    guarded = {"G6's own source": str(Path(g6.__file__).resolve().parent),
+    guarded = {"G6's own source": str(_SOURCE),
                **({"the judge's folder": str(source.resolve().parent)} if source is not None else {}),
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
     where = os.path.normcase(str(root))
@@ -217,9 +224,10 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
 
 
 def envelope_sha256() -> str:
-    """The loop's own code: no candidate changes the envelope (design 6.5), and a change a person made is theirs to
-    accept by enrolling again."""
-    return manifest_sha256(build_manifest(Path(g6.__file__).resolve().parent, patterns=ENVELOPE_PATTERNS))
+    """The enforcing code: no candidate changes the envelope (design 6.5), and a change a person made is theirs to
+    accept by enrolling again. It is a tripwire, not custody: the code that compares this digest is among what it
+    covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design 6.5."""
+    return manifest_sha256(build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS))
 
 
 def _judge_digest(judge: Judge | None) -> str:

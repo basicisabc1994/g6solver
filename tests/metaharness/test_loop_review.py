@@ -2,7 +2,9 @@
 """Each finding of the cross-family review of the loop, as the input that showed it. Each was seen failing first."""
 from __future__ import annotations
 
+import ast
 import dataclasses
+import glob
 import importlib.util
 import json
 import mmap
@@ -17,10 +19,11 @@ import g6
 from g6.core import llm
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
-from g6.metaharness import Model, SuiteCase
+from g6.integrity import build_manifest
+from g6.metaharness import JUDGING_PATTERNS, Model, SuiteCase
 from g6.metaharness import domain as sealed_module
 from g6.metaharness.domain import sealed_closed
-from g6.metaharness.loop import LoopSettings, ShadowLoop
+from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.self_maintenance.pacing import ProviderWindow
 
@@ -296,3 +299,68 @@ def test_3_cases_that_are_truly_new_still_enrol(tmp_path):
     domain.pool[:] = [c for c in domain.pool if c.case_id not in held] + _fresh(6000, 240)
     again, _ = _loop(tmp_path, domain=domain)
     assert again.enrol("Ada")["completion_state"] == "qualified-draft"
+
+# Finding 4: the whole enforcement set is pinned, not just the loop's own files --------------------------------------------
+SRC = Path(g6.__file__).resolve().parent
+LOOP_FILES = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/shadow.py", "self_maintenance/envelope.py",
+              "self_maintenance/pacing.py")
+BEHIND_THEM = ("operator/gates.py", "metaharness/select.py", "metaharness/reflect.py")   # imported by what they import
+
+
+def _source_copy(folder: Path) -> Path:
+    """Every file the digest could read, as a tree of its own that a test may tamper with."""
+    names = build_manifest(SRC, patterns=(*ENVELOPE_PATTERNS, "operator/*.py", "core/vault.py", "integrity/*.py"))
+    for name in names:
+        target = folder / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((SRC / name).read_bytes())
+    return folder
+
+
+@pytest.mark.parametrize("name,old,new", [
+    ("operator/store.py", "charged = float(metered)", "charged = 0.0"),            # the reviewer's edit
+    ("operator/gates.py", "if used + amount > cap + _SLACK:", "if False:"),
+    ("core/vault.py", "return any(_inside(real, root) for root in self.roots)", "return False"),
+    ("integrity/__init__.py", "return _sha(manifest_text(manifest).encode(\"utf-8\"))", "return \"\""),
+    ("self_maintenance/constraints.py", "ranked = sorted(", "ranked = list("),
+])
+def test_4_a_one_line_edit_anywhere_in_the_enforcement_set_stops_the_loop(tmp_path, monkeypatch, name, old, new):
+    loop, domain = _enrolled(tmp_path)
+    copy = _source_copy(tmp_path / "source")
+    monkeypatch.setattr("g6.metaharness.loop._SOURCE", copy)
+    assert _code(loop.tick()) != "G6_E_LOOP_FROZEN_CHANGED"        # survival: the untouched copy reads the same
+    text = (copy / name).read_text(encoding="utf-8")
+    assert old in text
+    (copy / name).write_text(text.replace(old, new, 1), encoding="utf-8")
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "envelope" in got["message"]
+    assert len(domain.llm.calls) == calls
+
+
+def _g6_imports(path: Path) -> set[str]:
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("g6"):
+            for alias in node.names:
+                module = f"{node.module}.{alias.name}"
+                found.add(module if (SRC / (module[3:].replace(".", "/") + ".py")).is_file() else node.module)
+        elif isinstance(node, ast.Import):
+            found |= {a.name for a in node.names if a.name.startswith("g6.")}
+    return found
+
+
+def _source_of(module: str) -> str:
+    name = module[3:].replace(".", "/")
+    return f"{name}.py" if (SRC / f"{name}.py").is_file() else f"{name}/__init__.py"
+
+
+def test_4_every_module_the_loops_own_files_import_is_pinned():
+    pinned = build_manifest(SRC, patterns=(*ENVELOPE_PATTERNS, *JUDGING_PATTERNS))
+    needed = {_source_of(m) for name in LOOP_FILES for m in _g6_imports(SRC / name)} | {*LOOP_FILES, *BEHIND_THEM}
+    assert sorted(needed - set(pinned)) == []
+
+
+def test_4_the_pin_is_a_digest_of_bytes_that_exist():
+    found = build_manifest(SRC, patterns=ENVELOPE_PATTERNS)
+    assert all(glob.has_magic(p) or p in found for p in ENVELOPE_PATTERNS)
