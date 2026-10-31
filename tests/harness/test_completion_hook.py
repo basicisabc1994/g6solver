@@ -77,12 +77,64 @@ def test_prompts_before_the_loop_starts_add_to_the_task_and_never_move_the_base(
     assert recorded() == {**before, "task": "look at the parser\n\nnow fix its bug"}
 
 
-def test_once_the_loop_has_started_a_prompt_changes_nothing(repo, monkeypatch, capsys):
+def test_once_the_loop_has_begun_testing_a_prompt_changes_nothing(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
     before = recorded()
-    (hook.folder("s1") / "state.json").write_text("{}", encoding="utf-8")
+    (hook.folder("s1") / "state.json").write_text('{"started": 1}', encoding="utf-8")
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "thanks"))
     assert recorded() == before
+
+
+def test_the_first_prompt_runs_the_scouts_and_the_agent_starts_with_what_they_found(repo, monkeypatch, capsys):
+    calls = []
+
+    def prepare(repo_path, task, base, session):
+        calls.append((repo_path, task, base, session))
+        return "WHAT THE AGENT READS FIRST"
+
+    monkeypatch.setattr(loop, "prepare", prepare)
+    code, out, _ = hooked(monkeypatch, capsys, "prompt", prompt(repo, "fix it"))
+    assert code == 0
+    assert json.loads(out) == {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                      "additionalContext": "WHAT THE AGENT READS FIRST"}}
+    assert calls == [(str(repo.resolve()), "fix it", git(repo, "rev-parse", "HEAD"), hook.folder("s1"))]
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "and more"))
+    assert len(calls) == 1      # the first task's scouts only
+
+
+def test_scouts_with_nothing_to_say_leave_the_prompt_alone(repo, monkeypatch, capsys):
+    monkeypatch.setattr(loop, "prepare", lambda *args: "")
+    assert hooked(monkeypatch, capsys, "prompt", prompt(repo))[:2] == (0, "")
+
+
+def test_a_failure_before_the_fix_never_holds_the_agents_turn_and_the_task_is_kept(repo, monkeypatch, capsys):
+    def prepare(*args):
+        raise RuntimeError("the scouts broke")
+
+    monkeypatch.setattr(loop, "prepare", prepare)
+    code, out, err = hooked(monkeypatch, capsys, "prompt", prompt(repo, "fix it"))
+    assert (code, out) == (1, "") and "the scouts broke" in err      # exit 2 would block the prompt, and this never does
+    assert recorded()["task"] == "fix it"
+
+
+def test_a_task_whose_prompt_was_missed_is_read_from_the_transcript_at_the_stop(repo, monkeypatch, capsys, tmp_path):
+    lines = [{"type": "user", "message": {"role": "user", "content": "fix the parser"}},
+             {"type": "assistant", "message": {"content": [{"type": "text", "text": "not the person"}]}},
+             {"type": "user", "isMeta": True, "message": {"content": "not the person either"}},
+             {"type": "user", "message": {"content": [{"type": "tool_result", "content": "a tool's output"}]}},
+             {"type": "user", "message": {"content": [{"type": "text", "text": "and the lexer"}]}}]
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("\n".join(json.dumps(line) for line in lines) + "\nnot json\n", encoding="utf-8")
+    calls = advance_says(monkeypatch, loop.Step(loop.STOP, "THE REPORT"))
+    code, out, _ = hooked(monkeypatch, capsys, "stop", {**stop(repo), "transcript_path": str(transcript)})
+    assert code == 0 and json.loads(out) == {"systemMessage": "THE REPORT"}
+    assert calls[0][1] == "fix the parser\n\nand the lexer" and calls[0][2] == git(repo, "rev-parse", "HEAD")
+
+
+def test_a_transcript_that_cannot_be_read_leaves_no_task_for_the_loop_to_report(repo, monkeypatch, capsys):
+    calls = advance_says(monkeypatch, loop.Step(loop.STOP))
+    hooked(monkeypatch, capsys, "stop", {**stop(repo), "transcript_path": str(repo / "absent.jsonl")})
+    assert calls[0][1] == ""
 
 
 def test_a_session_started_in_a_subfolder_is_the_repositorys(repo, monkeypatch, capsys):
@@ -124,9 +176,11 @@ def advance_says(monkeypatch, step) -> list:
     return calls
 
 
-def test_stop_with_no_task_recorded_does_nothing(repo, monkeypatch, capsys):
+def test_stop_outside_a_repository_does_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    (tmp_path / "plain").mkdir()
     calls = advance_says(monkeypatch, loop.Step(loop.STOP))
-    assert hooked(monkeypatch, capsys, "stop", stop(repo))[:2] == (0, "")
+    assert hooked(monkeypatch, capsys, "stop", stop(tmp_path / "plain"))[:2] == (0, "")
     assert not calls
 
 
@@ -183,7 +237,8 @@ def test_the_hook_runs_as_claude_code_starts_it(repo, tmp_path):
     env = {**subprocess.os.environ, "G6_HOME": str(tmp_path / "g6"), "PYTHONPATH": str(ROOT / "src")}
     got = subprocess.run([sys.executable, *command["args"]], input=event, capture_output=True, text=True, cwd=repo, env=env,
                          timeout=60)
-    assert (got.returncode, got.stdout) == (0, ""), got.stderr
+    assert got.returncode == 0, got.stderr
+    assert "did not run" in json.loads(got.stdout)["systemMessage"]      # json.py is a change, and no task was seen
 
 
 def plugin_json(*parts: str) -> dict:
@@ -222,7 +277,13 @@ def test_the_stop_hooks_timeout_leaves_room_for_what_follows_the_scouts():
     """A hook that times out loses its report, so the last scout's end, the critic and the review must fit, with 15
     minutes for the probes' runs."""
     [[one]] = [entry["hooks"] for entry in hooks()["Stop"]]
-    assert one["timeout"] >= loop.HOOK_S - loop.RESERVE_S + loop.CRITIC_SECONDS + loop.REVIEW_S + 900
+    assert one["timeout"] >= loop.STOP_S + 60
+    assert loop.STOP_S >= loop.SCOUTS_S + loop.CRITIC_SECONDS + loop.REVIEW_S + 300
+
+
+def test_the_prompt_hooks_timeout_outlasts_the_scouts_window():
+    [[one]] = [entry["hooks"] for entry in hooks()["UserPromptSubmit"]]
+    assert one["timeout"] >= loop.SCOUTS_S + 60
 
 
 def test_the_server_starts_as_g6_setup_registers_it():

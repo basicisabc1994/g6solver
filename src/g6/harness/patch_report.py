@@ -337,6 +337,10 @@ def _loop_lines(loop: dict) -> list[str]:
     lines = ["## What the completion loop tested",
              f"- **Stopped:** {loop.get('reason')}, after {loop.get('repairs')} of at most {loop.get('max_repairs')} "
              "repairs.", f"- **Result:** {result}."]
+    late = [code(one["label"]) for one in sets if one.get("late")]
+    if late:
+        lines.append(f"- **Not the loop the worked examples measured:** {', '.join(late)} ran after the agent stopped, "
+                     f"not before it started: {code(loop.get('late_because'), 200)}.")
     for one in sets:
         kind = "hidden from the agent" if one.get("hidden") else "the agent could read it"
         lines.append(f"- Left out {code(one['label'])} ({kind}): {code(one['left_out'], 200)}" if one.get("left_out") else

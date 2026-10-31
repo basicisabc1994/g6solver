@@ -5,9 +5,10 @@ description: Use when G6's completion loop sends failing probes back at the end 
 
 # G6's completion loop
 
-When you finish a Python task, G6 may stop the end of your turn and send back probes that fail on your code. Scouts wrote
-them from the task and the base commit, without seeing your change. You can read one scout's work, at the folder the
-message names. The others are hidden from you on purpose.
+At the start of a Python task you may be given G6's method and a scout's work: the behaviours and input shapes a complete fix
+must handle, with probes. Read them before you edit. When you finish, G6 may stop the end of your turn and send back probes
+that fail on your code. Scouts wrote them from the task and the base commit, without seeing your change. You can read one
+scout's work, at the folder the message names. The others are hidden from you on purpose.
 
 ## When a message comes back
 

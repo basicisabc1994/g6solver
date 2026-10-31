@@ -106,6 +106,9 @@ def world(tmp_path, monkeypatch):
         def advance(self, scouts=None, critic=None, task=TASK):
             return loop.advance(root, task, self.base, self.session, scout=scouts or Scouts(), critic=critic)
 
+        def prepare(self, scouts=None):
+            return loop.prepare(root, TASK, self.base, self.session, scout=scouts or Scouts())
+
         def state(self) -> dict:
             return json.loads((self.session / "state.json").read_text(encoding="utf-8"))
 
@@ -152,8 +155,10 @@ def test_hidden_work_is_outside_the_repository_and_named_nowhere_the_agent_reads
     assert step.action == loop.CONTINUE
     assert all(not where.is_relative_to(world.repo) for where in held)
     assert not any(where.as_posix() in step.text or str(where) in step.text for where in held)
-    assert scouts.calls[0]["where"].as_posix() in step.text    # the agent's own scout is the one it may read
-    assert not scouts.calls[0]["where"].is_relative_to(world.session)    # so nothing beside it leads to the rest
+    assert world.session.as_posix() not in step.text and str(world.session) not in step.text
+    told = Path(world.state()["visible"])
+    assert told.as_posix() in step.text and (told / "probes" / "test_p.py").is_file()   # its scout's work, as a copy
+    assert not told.is_relative_to(world.session)      # so nothing beside it leads to the rest
 
 
 def test_failures_go_back_with_the_repair_text_and_the_fixer_only_once(world, monkeypatch):
@@ -439,7 +444,7 @@ def test_a_scout_that_fails_is_recorded_and_the_others_go_on(world, monkeypatch)
 
 def test_a_later_scout_is_skipped_when_the_hooks_time_is_spent(world, monkeypatch):
     Runs(monkeypatch)
-    monkeypatch.setattr(loop, "HOOK_S", 0)
+    monkeypatch.setattr(loop, "SCOUTS_S", 0)
     scouts = Scouts()
     world.edit()
     step = world.advance(scouts)
@@ -478,6 +483,131 @@ def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monk
     assert "G6_ALLOW_UNCONFINED" not in seen["env"]
 
 
+def test_the_scouts_run_before_the_fix_and_the_agent_starts_with_the_fixer_and_the_tree(world, monkeypatch):
+    runs, scouts = Runs(monkeypatch), Scouts()
+    context = world.prepare(scouts)
+    assert len(scouts.calls) == 3 and {call["mod"] for call in scouts.calls} == {BASE}
+    assert {call[0] for call in runs.calls} == {"base"}
+    assert loop.harness().fixer[:40] in context and '"dimensions"' in context
+    assert "/opt/we" not in context and "run them from the repository" not in context
+    assert world.session.as_posix() not in context and str(world.session) not in context
+
+
+def test_the_stop_hook_uses_the_sets_already_made_and_tells_the_fixer_nothing_twice(world, monkeypatch):
+    runs, scouts = Runs(monkeypatch, now=dict(CASES)), Scouts()
+    context = world.prepare(scouts)
+    world.edit()
+    step = world.advance(scouts)
+    assert len(scouts.calls) == 3 and sum(call[0] == "base" for call in runs.calls) == 3
+    assert step.action == loop.CONTINUE and context[:40] not in step.text
+    assert "assert test_cross[0]" in step.text
+
+
+def test_what_is_told_to_the_agent_stays_within_what_a_hook_may_add(world, monkeypatch):
+    Runs(monkeypatch)
+    big = json.dumps({"goal": "g" * 50_000, "dimensions": {"a": ["1", "2"], "b": ["1", "2"]}})
+    assert len(world.prepare(Scouts(tree=big))) <= loop.MAX_CONTEXT_CHARS
+
+
+def test_an_edit_to_the_agents_copy_changes_nothing_that_runs(world, monkeypatch):
+    runs = Runs(monkeypatch, now=dict(CASES))
+    world.prepare()
+    told = Path(world.state()["visible"]) / "probes" / "test_p.py"
+    told.write_text("def test_nothing():\n    pass\n", encoding="utf-8")
+    world.edit()
+    world.advance()
+    assert {call[2] for call in runs.calls} == {PROBE}
+
+
+def test_a_first_task_with_no_scout_set_is_told_nothing(world, monkeypatch):
+    def broken(prompt: str, cwd: Path, where: Path, seconds: float) -> str:
+        raise LLMError("no session")
+
+    Runs(monkeypatch)
+    assert world.prepare(broken) == ""
+
+
+@pytest.mark.parametrize("stopped", ["boundary", "approval", "the persons_choice", "no python"])
+def test_when_the_scouts_cannot_run_before_the_fix_the_turn_goes_ahead(world, monkeypatch, stopped):
+    runs, scouts = Runs(monkeypatch), Scouts()
+    if stopped == "boundary":
+        monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    if stopped == "the persons_choice":
+        monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "at_stop"})
+    if stopped == "no python":
+        (world.repo / "mod.py").unlink()
+        (world.repo / "notes.txt").write_text("n", encoding="utf-8")
+        git(world.repo, "add", "-A")
+        git(world.repo, "commit", "-qm", "no python")
+    if stopped == "approval":
+        monkeypatch.setattr(keys, "read", lambda: {})
+        assert loop.prepare(world.repo, TASK, world.base, world.session) == ""
+    else:
+        assert world.prepare(scouts) == ""
+    assert not scouts.calls and not runs.calls
+
+
+def test_with_no_boundary_before_the_fix_the_stop_hook_says_what_did_not_happen(world, monkeypatch):
+    Runs(monkeypatch)
+    monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    world.prepare()
+    world.edit()
+    step = world.advance()
+    assert step.action == loop.STOP and "did not run" in step.text and "no backend here" in step.text
+
+
+def test_a_limit_reached_before_the_fix_leaves_the_rest_for_the_stop_hook_and_the_report_says_so(world, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(loop, "_clock", lambda: clock[0])
+    Runs(monkeypatch)
+    scouts = Scouts()
+
+    def slow(prompt: str, cwd: Path, where: Path, seconds: float) -> str:
+        clock[0] += loop.SCOUTS_S - loop.RUN_S      # all a session is given: its run at the base commit still fits
+        return scouts(prompt, cwd, where, seconds)
+
+    assert loop.harness().fixer[:40] in world.prepare(slow)     # the agent's own scout comes first, so it had its set
+    assert list(world.state()["sets"]) == ["scout"]
+    world.edit()
+    step = world.advance(scouts)
+    assert len(scouts.calls) == 3
+    assert "held0" in step.text and "after the agent stopped" in step.text and "worked examples measured" in step.text
+    assert "time" in step.text
+
+
+def test_a_loop_whose_scouts_all_ran_before_the_fix_says_nothing_of_the_kind(world, monkeypatch):
+    Runs(monkeypatch)
+    world.prepare()
+    world.edit()
+    assert "after the agent stopped" not in world.advance().text
+
+
+def test_scouts_made_at_the_stop_say_so_when_no_prompt_was_seen(world, monkeypatch):
+    Runs(monkeypatch)
+    world.edit()
+    text = world.advance().text
+    assert "after the agent stopped" in text and "worked examples measured" in text
+
+
+def test_a_task_nobody_can_read_is_reported_and_nothing_is_spent(world, monkeypatch):
+    runs, scouts = Runs(monkeypatch), Scouts()
+    world.edit()
+    step = world.advance(scouts, task="")
+    assert step.action == loop.STOP and "did not run" in step.text
+    assert not scouts.calls and not runs.calls
+
+
+def test_a_file_with_no_time_left_is_not_started_and_says_nothing_of_the_code(world, monkeypatch):
+    runs = Runs(monkeypatch)
+    probes = world.session / "p"
+    probes.mkdir(parents=True)
+    (probes / "test_p.py").write_text(PROBE, encoding="utf-8")
+    world.edit()
+    change = repo_tests.change(world.repo, world.base)
+    got = loop.run_set(change, probes, at_base=False, deadline=loop._clock() + 1)
+    assert not runs.calls and not got.usable and "time" in got.tail
+
+
 CROSS = """import itertools
 import random
 
@@ -502,8 +632,8 @@ def test_random(seed):
 
 
 def test_end_to_end_with_real_confined_runs_and_the_real_review(bwrap_backend, tmp_path, monkeypatch):
-    """Everything real but the scouts' sessions: a file of passes and in-test skips is a run, a failure goes back, and a
-    repair that holds ends in the review, with no claim for the patch."""
+    """Everything real but the scouts' sessions, by the default path: the sets are made before the fix, a file of passes and
+    in-test skips is a run, a failure goes back, and a repair that holds ends in the review, with no claim for the patch."""
     monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
     root = tmp_path / "repo"
     root.mkdir()
@@ -516,9 +646,14 @@ def test_end_to_end_with_real_confined_runs_and_the_real_review(bwrap_backend, t
     scouts = Scouts({"test_probe.py": CROSS}, tree)
     task = "clamp must keep x between lo and hi"
 
+    context = loop.prepare(root, task, base, session, scout=scouts)
+    assert "Work as a counterexample loop" in context and '"dimensions"' in context and "def test_cross" in context
+    assert len(scouts.calls) == 3
     (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return min(max(x, lo), hi) if x < 40 else x\n", encoding="utf-8")
     first = loop.advance(root, task, base, session, scout=scouts)
+    assert len(scouts.calls) == 3      # the sets made before the fix
     assert first.action == loop.CONTINUE and "test_cross[high-int]" in first.text
+    assert "Work as a counterexample loop" not in first.text
     assert not list(root.rglob("g6_check_*"))      # the runs were in scratch copies
 
     (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return min(max(x, lo), hi)\n", encoding="utf-8")
@@ -526,6 +661,8 @@ def test_end_to_end_with_real_confined_runs_and_the_real_review(bwrap_backend, t
     assert second.action == loop.STOP
     assert f"no counterexample found in {3 * 305} probes" in second.text     # five crossings and 300 inputs in each set
     assert "insufficient_evidence" in second.text and "Not established" in second.text
+    assert "after the agent stopped" not in second.text
+    print(second.text)
 
 
 def test_an_unfinished_hook_is_picked_up_where_it_stopped(world, monkeypatch):

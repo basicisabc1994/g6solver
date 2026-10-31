@@ -1,5 +1,5 @@
 {
-  "description": "G6's completion loop: records the task, then tests the work when the agent finishes.",
+  "description": "G6's completion loop: scouts the task before the agent starts, then tests the work when it finishes.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -8,7 +8,8 @@
             "type": "command",
             "command": "python",
             "args": ["-P", "-m", "g6.harness.completion_hook", "prompt"],
-            "timeout": 30
+            "timeout": 2520,
+            "statusMessage": "G6's scouts are reading the task before the agent starts"
           }
         ]
       }
@@ -20,7 +21,8 @@
             "type": "command",
             "command": "python",
             "args": ["-P", "-m", "g6.harness.completion_hook", "stop"],
-            "timeout": 5400
+            "timeout": 5400,
+            "statusMessage": "G6 is testing the work"
           }
         ]
       }

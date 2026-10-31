@@ -6,17 +6,19 @@ It is the worked examples' arm L9 (``validation/worked_examples/run.py``), moved
 (``HARNESS``, read by ``harness``; a test holds it to ``run.py``'s), and a later trained harness needs no code: a file
 with the fields ``trained`` holds, the parts ``TRAINED`` names, adds to those parts as ``run.py``'s ``trained`` does.
 
-``advance`` takes a repository, the task's text, the base commit and a session's state folder, and says what comes next:
-continue, with the text that goes back to the agent, or stop, with the report. Each call is one hook of one session, so
-what must last between them is in the folder's ``state.json``. Python changes only: with none, nothing runs or is spent.
+``prepare`` runs the scouts at a session's first task, before any edit, as L9 does, and gives what the agent starts with: the
+fixer text and its scout's work. ``advance`` takes a repository, the task's text, the base commit and a session's state
+folder, and says what comes next: continue, with the text that goes back to the agent, or stop, with the report. It makes
+any set ``prepare`` could not, on a copy of the base commit, and the report says those came late. Each call is one hook of
+one session, so what must last between them is in the folder's ``state.json``. Python only: with none, nothing is spent.
 
 The scouts. L9's scouts read the code with tools, and that reading matters, so ``verification_proposer`` cannot host them:
 it asks for text about a diff, and a scout works before any fix, across the code. Each is a session on the person's own
 Claude Code (``ToolSession``), in a scratch copy of the base commit with no history, so it sees no fix. It has no shell:
 a shell would run model-written tests outside G6's boundary. So the probes it writes are run by G6, and what is wrong with
-them goes back to it once, where L9's scout ran them itself. Hidden scouts work under the session's folder, which the agent
-is never told of; the agent's own scout works in a temporary folder, which it is. That keeps hidden probes from being read
-by accident or habit. It is no protection against code running as the same user.
+them goes back to it once, where L9's scout ran them itself. All work under the session's folder, which the agent is never
+told of: it reads a temporary copy of its own scout's work. That keeps hidden probes from being read by accident or habit.
+It is no protection against code running as the same user.
 
 The evidence. A model wrote the probes, so they never pass a requirement: they run only through
 ``verification_search._run_check``, confined, in scratch copies with no network, and they never reach the review. With no
@@ -63,10 +65,17 @@ MAX_REPAIRS, MAX_CROSS, MIN_RANDOM, MAX_SHOWN, MAX_CASE_CHARS = 3, 200, 300, 12,
 SCOUT_CAP_USD, CRITIC_SECONDS = 2.0, 1500
 #: One scout's session, its turns, one probe file's run, the final review and the critic's pack.
 SCOUT_SECONDS, SCOUT_TURNS, RUN_S, REVIEW_S, MAX_PACK_CHARS = 1200, 200, 300, 600, 120_000
-#: The first hook's window: its scouts must end ``RESERVE_S`` before it closes, which leaves the critic, the probes' runs
-#: and the review inside the plugin's 5400-second timeout, as a hook that times out loses its report. The whole loop, from
-#: the first hook on (L9's wall clock), and the least time a scout is started with.
-HOOK_S, RESERVE_S, LOOP_S, MIN_SCOUT_S = 3300, 900, 120 * 60, 60
+#: One hook's time for the scouts, before the fix or at the stop. The Stop hook's whole time, inside the plugin's 5400-second
+#: timeout, as a hook that times out loses its report. The whole loop, from the first stop on (L9's wall clock). The least
+#: time a scout is started with. What a hook adds to the agent's context: past 10,000 characters Claude only gets a preview.
+SCOUTS_S, STOP_S, LOOP_S, MIN_SCOUT_S, MAX_CONTEXT_CHARS = 2400, 5100, 120 * 60, 60, 9_500
+BEFORE, AT_STOP = "before the fix", "at the stop"
+NO_TIME = "the time for scouts ran out before this one could start"
+#: The line in the person's key file that keeps the scouts until the agent stops: ``at_stop``. Scouts before the fix are
+#: what L9 measured, but they spend at each session's first prompt, whatever it asks.
+WHEN_LINE = "G6_LOOP_SCOUTS"
+#: G6's clock for the scouts' and the runs' deadlines (a test replaces it).
+_clock = time.monotonic
 #: A scout may read and write files, and nothing else: no shell, so no model-written test runs outside G6's boundary.
 SCOUT_TOOLS = "Read,Glob,Grep,Write"
 SCOUT_SETTINGS = {"disableAllHooks": True, "permissions": {"deny": [f"Read(~/{folder}/**)" for folder in (
@@ -82,6 +91,8 @@ NO_BOUNDARY = ("G6's completion loop did not run: no operating-system boundary c
                "needs for a boundary.")
 NOT_APPROVED = ("G6's completion loop did not run: its scouts use your Claude Code sign-in, and nothing in your key file "
                 "approves that. Add the line G6_LLM_PROVIDER=claude_code to {path} to turn it on. Nothing was tested.")
+NO_TASK = ("G6's completion loop did not run: it could not tell what you asked for, so there was nothing to test the work "
+           "against. Nothing was tested.")
 STOPPED = {"no_counterexample_in_domain": "no probe failed", "timeout": "the loop's time ran out",
            "counterexample_budget_exhausted": "the stop rule: every repair the loop allows has been sent"}
 #: Where L9's text names its container: its folders, and the sentence that runs the probes there.
@@ -326,13 +337,20 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     return ProbeRun(code, results, texts, "\n".join(tail))
 
 
-def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool) -> ProbeRun:
-    """The probes in ``probes`` on the tree or at the base commit: each file in its own confined copy, with no network."""
+def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float) -> ProbeRun:
+    """The probes in ``probes`` on the tree or at the base commit: each file in its own confined copy, with no network. A
+    file with no time left before ``deadline`` is not started, so the set is unusable and says nothing of the code."""
     checks, placed, _ = _checks(probes, change.repo)
     if not checks:
         return ProbeRun(None, {}, {}, "no test file G6 could run")
-    return _read(change, [vs._run_check(change, placed[one.id], one.source, placed[one.id], at_base=at_base, timeout_s=RUN_S)
-                          for one in checks])
+    runs = []
+    for one in checks:
+        left = int(min(RUN_S, deadline - _clock()))
+        if left < vs.MIN_RUN_S:
+            runs.append({"verdict": "timed_out", "said": "G6's time for this hook ran out before this file ran"})
+            break
+        runs.append(vs._run_check(change, placed[one.id], one.source, placed[one.id], at_base=at_base, timeout_s=left))
+    return _read(change, runs)
 
 
 def _gate(tree: Path, got: ProbeRun) -> list[str]:
@@ -365,16 +383,16 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
     failed, again = "", ""
     got = None
     for _ in range(2):
-        left = min(SCOUT_SECONDS, deadline - time.monotonic() - RESERVE_S)
+        left = min(SCOUT_SECONDS, deadline - _clock() - RUN_S)      # its run at the base commit still has to fit
         if left < MIN_SCOUT_S:
-            failed = failed or "the hook's time ran out before this scout could start"
+            failed = failed or NO_TIME
             break
         try:
             with _base_copy(change, left) as copy:
                 host(asked + again, copy, where, left)
         except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
             failed = f"{type(exc).__name__}: {exc}"[:400]
-        got = run_set(change, where / "probes", at_base=True)
+        got = run_set(change, where / "probes", at_base=True, deadline=deadline)
         wrong = _gate(where / "tree.json", got)
         if failed or not wrong:
             break
@@ -490,21 +508,68 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
     return patch_report.completion_report({
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
         "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
+        "late_because": state.get("late") or "no hook ran them before the agent started",
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
-                  "refused": one["refused"]} for label, one in state["sets"].items()]}, review)
+                  "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
+        review)
 
 
 def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, shipped: Harness, host: Host,
-            deadline: float) -> None:
-    """The scouts' sets, each kept as it ends, so a hook cut short loses only the one it was in."""
+            when: str) -> None:
+    """The scouts' sets still to make, each kept as it ends, so a hook cut short loses only the one it was in. The agent's
+    own scout comes first, as what it is told is that scout's work. Before the fix, one with no time left waits for the
+    Stop hook, which works on a copy of the base commit too."""
+    deadline = _clock() + SCOUTS_S
     for label, text in [("scout", shipped.scout), *((f"held{i}", one) for i, one in enumerate(shipped.hidden_scouts))]:
         if label in state["sets"]:
             continue
-        if label == "scout":
-            state["visible"] = tempfile.mkdtemp(prefix="g6_scout_")
-        state["sets"][label] = _scout(change, task, text, Path(state["visible"]) if label == "scout"
-                                      else session / "sets" / label, host, deadline)
+        made = _scout(change, task, text, session / "sets" / label, host, deadline)
+        if when == BEFORE and made["left_out"] == NO_TIME:
+            state["late"] = "the time for scouts before the fix ran out"
+            break
+        state["sets"][label] = {**made, "when": when}
         _save(session, state)
+
+
+def _told(state: dict, shipped: Harness) -> str:
+    """What the agent reads first, once: the fixer text and its scout's work, or "" with no such work. It gets a copy, so
+    that the probes that run stay out of its reach, as L9 locks them. The text itself holds the work, up to what a hook may
+    add, as a session started with ``-p`` cannot read a folder outside its own, and no plugin can open one for it."""
+    one = state["sets"].get("scout")
+    if state.get("visible") or not one or one["left_out"]:
+        return ""
+    visible = Path(tempfile.mkdtemp(prefix="g6_scout_"))
+    state["visible"] = str(visible)
+    shutil.copytree(one["where"], visible, dirs_exist_ok=True)
+    parts = [located(shipped.fixer, visible), *(f"{path.name}:\n{path.read_text(encoding='utf-8', errors='replace')}"
+                                                for path in [visible / "tree.json", *sorted((visible / "probes").glob("*.py"))]
+                                                if path.is_file())]
+    return "\n\n".join(parts)[:MAX_CONTEXT_CHARS]
+
+
+def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None) -> str:
+    """The scouts before the fix, at a session's first task, as L9 runs them; what the agent is told before it starts ("" for
+    nothing). Whatever keeps them from running, the agent's turn goes ahead, and ``advance`` does what is left, or says
+    what did not happen. Nothing here is spent on a repository with no Python, or where ``WHEN_LINE`` says ``at_stop``."""
+    session = Path(session)
+    root = repo_tests.checked_repo(repo)
+    python = any(rel.endswith(".py") for rel in repo_tests._paths(repo_tests._git(root, "ls-files", "-z")))
+    if not python or (keys.get(WHEN_LINE) or "").strip().lower() == "at_stop" or proposer.boundary(root):
+        return ""
+    scout = scout or scout_host()
+    if scout is None:
+        return ""
+    shipped, state = harness(), _load(session)
+    state.setdefault("sets", {})
+    try:
+        _scouts(repo_tests.change(root, base), task, session, state, shipped, scout, BEFORE)
+    except repo_tests.RepoRefused as exc:
+        if exc.code != ISOLATION_UNAVAILABLE:
+            raise
+        state["late"] = str(exc)[:300]
+    told = _told(state, shipped)
+    _save(session, state)
+    return told
 
 
 def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None,
@@ -519,6 +584,8 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     change = repo_tests.change(root, base)
     if not change.sources:
         return Step(STOP)
+    if not task.strip():
+        return _finish(session, state, NO_TASK)
     why = proposer.boundary(root)
     if why:
         return _finish(session, state, NO_BOUNDARY.format(why=why))
@@ -530,6 +597,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     state.setdefault("started", time.time())
     state.setdefault("sets", {})
     rounds = state.setdefault("rounds", [])
+    ends = _clock() + STOP_S - REVIEW_S
 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
@@ -538,11 +606,11 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
         state["ran"] = {}
         for label, one in state["sets"].items():
             if not one["left_out"]:
-                got = run_set(change, Path(one["where"]) / "probes", at_base=False)
+                got = run_set(change, Path(one["where"]) / "probes", at_base=False, deadline=ends)
                 state["ran"][label] = got.ran
                 seen.append((label, got, ProbeRun(**one["at_base"])))
         if (state.get("critic") or {}).get("test"):
-            got = run_set(change, session / "sets" / "critic", at_base=False)
+            got = run_set(change, session / "sets" / "critic", at_base=False, deadline=ends)
             if got.usable:     # a critic's test that will not run says nothing of the patch
                 state["ran"]["critic"] = got.ran
                 seen.append(("critic", got, None))
@@ -552,7 +620,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
         return digest(repo_tests.snapshot(root))
 
     try:
-        _scouts(change, task, session, state, shipped, scout, time.monotonic() + HOOK_S)
+        _scouts(change, task, session, state, shipped, scout, AT_STOP)
         if all(one["left_out"] for one in state["sets"].values()):
             return _finish(session, state, _report(root, task, base, state, "no probe set could run"))
         loop = Repairs(rounds, check, tree)
@@ -563,7 +631,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
             raise
         return _finish(session, state, NO_BOUNDARY.format(why=exc))
     if loop.pending:
+        told, first = shipped.repair.format(text=loop.pending), _told(state, shipped)   # first: no hook could say it before
         _save(session, state)
-        told = shipped.repair.format(text=loop.pending)
-        return Step(CONTINUE, f"{located(shipped.fixer, Path(state['visible']))}\n\n{told}" if len(rounds) == 1 else told)
+        return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
     return _finish(session, state, _report(root, task, base, state, loop.why or STOPPED.get(got.status, got.reason)))
