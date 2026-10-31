@@ -13,10 +13,18 @@ judge is right: the loop assumes that, and ``ShadowLoop`` reports it as assumed.
 **Three separations.** The development cases are cut by a seeded hash of each case's id (``cut_pool``, design 6.5): the
 cases proposers tune on, the cases candidates race on, the held-out cases the gate scores, and the cases the monitor
 audits. A case keeps its side however the pool grows. The sealed split is a different pool (design 6.3), and the loop
-holds only its vault and its cases' hashes. ``sealed_closed`` then keeps it shut while the loop develops: a Python-level
-file open of anything the vault covers, from any thread of this process, is refused and counted as a breach. That is
-a check inside one process, as ``g6.core.vault`` says of itself: a child process or native code is not stopped by it,
-and the owner's ruling O2 means every study states that limit.
+holds only its vault and its cases' hashes.
+
+**What the sealed guard is, and is not.** ``sealed_closed`` is a check inside one process, as ``g6.core.vault`` says of
+itself. While the loop develops it refuses a Python-level open or memory map of anything the vault covers, by path or by
+descriptor, from any thread, and counts each attempt as a breach. It also looks through this process's open descriptors
+on the way in and on the way out, and counts a sealed file it finds held open. That is all it does.
+
+A read through a handle opened before the tick cannot be stopped. A read emits no audit event, so the guard can only
+notice that the handle exists, and only if it is still open at one of those two moments. It knows nothing of what was
+read before the tick, of a mapping or a buffer that outlives its file, or of a child process or native code. So a breach
+means the split may have been read, and no breach does not mean it was not. The owner's ruling O2 means every study
+states that limit.
 """
 from __future__ import annotations
 
@@ -203,34 +211,65 @@ def domain_problems(domain: Domain) -> list[tuple[str, str]]:
 _GUARDED: list[tuple[Vault, list[str]]] = []
 _LOCK = threading.Lock()
 _HOOKED = False
+_SEALED_EVENTS = ("open", "mmap.__new__")
+_MOST_DESCRIPTORS = 8192          # the C runtime's own limit on Windows, where the system lists no descriptors
+
+
+def _sealed_descriptor(vault: Vault, descriptor: int) -> bool:
+    """Whether this descriptor is open on a file the vault sealed, by the file's identity."""
+    try:
+        info = os.fstat(descriptor)
+    except OSError:
+        return False
+    return bool(info.st_ino) and (info.st_dev, info.st_ino) in vault.identities
 
 
 def _on_audit(event: str, args: tuple[Any, ...]) -> None:
-    if event != "open" or not _GUARDED or not args or not isinstance(args[0], str | bytes | os.PathLike):
+    if event not in _SEALED_EVENTS or not _GUARDED or not args:
         return
+    target = args[0]
     for vault, breaches in tuple(_GUARDED):
-        if vault.covers(args[0]):
-            breaches.append(hashlib.sha256(os.fsencode(args[0])).hexdigest())
+        if isinstance(target, int):
+            found = _sealed_descriptor(vault, target)
+        else:
+            found = isinstance(target, str | bytes | os.PathLike) and vault.covers(target)
+        if found:
+            breaches.append(f"{event} {hashlib.sha256(repr(target).encode()).hexdigest()}")
             raise AccessDenied("the sealed split stays shut while the loop develops")
+
+
+def _descriptors() -> Sequence[int]:
+    """This process's open descriptors where the system lists them, or every number one could have."""
+    try:
+        return [int(name) for name in os.listdir("/proc/self/fd")]
+    except OSError:
+        return range(_MOST_DESCRIPTORS)
+
+
+def _held_open(vault: Vault) -> list[str]:
+    return [f"descriptor {d} held open" for d in _descriptors() if _sealed_descriptor(vault, d)]
 
 
 @contextmanager
 def sealed_closed(vault: Vault) -> Iterator[list[str]]:
-    """Inside, a Python-level open of anything ``vault`` covers is refused and counted. It yields the list of breaches,
-    each a hash of the path: a strategy that swallows the refusal is still on the record. An audit hook lasts the
-    process's lifetime, so it does nothing outside this block."""
+    """Inside, a Python-level open or map of anything ``vault`` covers is refused and counted. A sealed file already
+    held open is counted on the way in, so the caller can stop before it starts, and again on the way out. It yields
+    the breaches, so a strategy that swallows a refusal is still on the record. This cannot stop a read through a handle
+    that is already open: the module docstring says what that leaves. An audit hook lasts the process's lifetime, so it
+    does nothing outside this block."""
     global _HOOKED
     with _LOCK:
         if not _HOOKED:
             sys.addaudithook(_on_audit)
             _HOOKED = True
-    breaches: list[str] = []
+    breaches = _held_open(vault)
     entry = (vault, breaches)
     _GUARDED.append(entry)
     try:
         yield breaches
     finally:
         _GUARDED.remove(entry)
+        breaches.extend(_held_open(vault))
 
 
 __all__ = ["Cut", "Domain", "Execution", "FailureRecord", "Judge", "NO_JUDGE", "NO_SEALED", "PAID_MODEL",

@@ -5,13 +5,21 @@ from __future__ import annotations
 import dataclasses
 import importlib.util
 import json
+import mmap
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+import g6
 from g6.core import llm
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
+from g6.core.vault import AccessDenied
 from g6.metaharness import Model
+from g6.metaharness import domain as sealed_module
+from g6.metaharness.domain import sealed_closed
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.self_maintenance.pacing import ProviderWindow
@@ -144,3 +152,93 @@ def test_1_the_study_of_a_profile_outside_a_tick_is_not_stopped(tmp_path):
     case = loop.cut.tune[0]
     assert loop.workflow.models["local"].caller.complete("s", f"Problem: {case.input}")
     assert json.dumps(loop.status()["failed_streak"]) == "0"
+
+
+# Finding 2: what the sealed guard does, and what no guard in this process can do -----------------------------------------
+
+def test_2_a_handle_opened_before_the_tick_is_seen_and_nothing_is_adopted(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    start = loop.mh._head()
+    with open(domain.sealed_file, "rb") as held:
+        got = loop.tick()
+        assert held.readable()
+    assert got["outcome"] == "sealed_breach" and got["completion_state"] == "blocked-escalated"
+    assert loop.mh._head() == start and "sealed" in loop.log.paused()
+    assert len(domain.llm.calls) == 0                          # seen on the way in: the cycle never ran
+
+
+def test_2_a_descriptor_opened_before_the_tick_is_seen_too(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    descriptor = os.open(domain.sealed_file, os.O_RDONLY)
+    try:
+        assert loop.tick()["outcome"] == "sealed_breach"
+    finally:
+        os.close(descriptor)
+
+
+def test_2_a_descriptor_cannot_be_wrapped_or_mapped_while_developing(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    descriptor = os.open(domain.sealed_file, os.O_RDONLY)
+    try:
+        with sealed_closed(domain.sealed().vault) as breaches:
+            with pytest.raises(AccessDenied):
+                open(descriptor, "rb", closefd=False)
+            with pytest.raises(AccessDenied):
+                mmap.mmap(descriptor, 0, access=mmap.ACCESS_READ)
+        assert len(breaches) >= 3                              # the sweep on the way in, and each attempt
+    finally:
+        os.close(descriptor)
+
+
+def test_2_a_handle_taken_during_a_tick_by_a_route_the_guard_cannot_see_is_seen_on_the_way_out(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    held = []
+    real = domain.failures
+
+    def smuggled(view):
+        guarded = list(sealed_module._GUARDED)
+        sealed_module._GUARDED.clear()                         # as native code would: past the audit hook
+        held.append(open(domain.sealed_file, "rb"))
+        sealed_module._GUARDED.extend(guarded)
+        return real(view)
+
+    domain.failures = smuggled
+    try:
+        got = loop.tick()
+    finally:
+        held[0].close()
+    assert got["outcome"] == "sealed_breach"
+
+
+def test_2_what_the_guard_cannot_do_a_read_through_a_handle_raises_nothing(tmp_path):
+    """Pinned so no one takes the sweep for more than it is. Nothing in this process stops this read: a read on an open
+    handle emits no audit event. The sweep only notices that the handle is there, and the docstring says so."""
+    domain = domains.WordProblems(tmp_path)
+    held = open(domain.sealed_file, "rb")
+    try:
+        with sealed_closed(domain.sealed().vault) as breaches:
+            assert held.read(10)                               # the read succeeds
+            assert breaches                                    # and the handle is on the record
+    finally:
+        held.close()
+
+
+def test_2_the_docstring_and_the_design_say_what_the_guard_does_not_do():
+    said = (Path(g6.__file__).parent / "metaharness" / "domain.py").read_text(encoding="utf-8")
+    design = (Path(__file__).parents[2] / "docs" / "superpowers" / "specs" /
+              "2026-10-29-self-improvement-loop-design.md").read_text(encoding="utf-8")
+    for text in (said, design):
+        assert "cannot be stopped" in text.replace("\n", " ")
+
+
+def test_2_an_unrelated_open_descriptor_is_no_breach(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    other = tmp_path / "ordinary.txt"
+    other.write_text("x", encoding="utf-8")
+    with open(other, "rb"):
+        with sealed_closed(domain.sealed().vault) as breaches:
+            pass
+    assert breaches == []

@@ -390,8 +390,8 @@ class ShadowLoop:
         recommended: list[dict[str, Any]] = []
         self.requests.open(spend.amount)
         with sealed_closed(self.domain.sealed().vault) as breaches:
-            try:
-                row = self._cycle(recommended)
+            try:                      # a sealed file already held open: no cycle starts over it
+                row = self._row() if breaches else self._cycle(recommended)
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
@@ -401,8 +401,9 @@ class ShadowLoop:
         self.requests.close()
         if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
             row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
-                    "reason": f"{len(breaches)} attempt(s) to open the sealed split while developing: nothing was read "
-                              "and nothing is adopted, and a person decides whether it still counts as sealed"}
+                    "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. Nothing "
+                              "is adopted. A read through a handle already open leaves no trace, so a person decides "
+                              "whether it still counts as sealed"}
         elif unseen:
             row |= {"outcome": "error", "code": UNMETERED_CALLER,
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
@@ -444,10 +445,13 @@ class ShadowLoop:
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
-    def _cycle(self, recommended: list[dict[str, Any]]) -> dict[str, Any]:
+    def _row(self) -> dict[str, Any]:
         version, head = self.mh._head()
-        row: dict[str, Any] = {"at": self._now().isoformat(), "domain": self.domain.name, "head_version": version,
-                               "head_profile": head.digest()}
+        return {"at": self._now().isoformat(), "domain": self.domain.name, "head_version": version,
+                "head_profile": head.digest(), "code": CYCLE, "reason": ""}
+
+    def _cycle(self, recommended: list[dict[str, Any]]) -> dict[str, Any]:
+        row = self._row()
         audited = self.mh.audit(self.cut.monitor, count=self.settings.audit_per_tick)
         row["audit"] = {k: audited[k] for k in ("audited", "pairs", "mean_difference", "threshold")}
         if audited["rolled_back"]:
