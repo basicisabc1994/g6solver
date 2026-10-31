@@ -158,6 +158,16 @@ class OwnerScope:
                                  " FROM ledger WHERE venture_id=? AND month=? GROUP BY account", (vid, month))
         return {r["account"]: float(r["used"] or 0.0) for r in rows.fetchall()}
 
+    def outstanding(self, venture_id: str, month: str) -> dict[str, float]:
+        """What is reserved and not yet settled, per account: the part of ``committed`` nothing has charged."""
+        return self._outstanding(self.resolve(venture_id), month)
+
+    def _outstanding(self, vid: str, month: str) -> dict[str, float]:
+        rows = self.conn.execute("SELECT account, SUM(CASE kind WHEN 'reserve' THEN amount WHEN 'release' THEN -amount"
+                                 " ELSE 0 END) AS pending FROM ledger WHERE venture_id=? AND month=? GROUP BY account",
+                                 (vid, month))
+        return {r["account"]: float(r["pending"] or 0.0) for r in rows.fetchall()}
+
     def _append_ledger(self, vid: str, month: str, account: str, kind: str, amount: float, ref: str) -> None:
         self.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
                           " VALUES (?, ?, ?, ?, ?, ?, ?)", (vid, month, account, kind, float(amount), ref, _now()))

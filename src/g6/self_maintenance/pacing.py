@@ -82,6 +82,14 @@ class Admission:
     amount: float = 0.0
 
 
+def _used(committed: float, pending: float, account: AccountReading | None) -> tuple[float, bool]:
+    """What this week has used, and whether the account's figure is what set it. A charge may already be in that figure,
+    so the larger of the two stands. A pending reservation cannot be, so it goes on top of whichever that is."""
+    charged = committed - pending
+    above = account is not None and account.used > charged
+    return (account.used if above else charged) + pending, above
+
+
 class BudgetMeter:
     def __init__(self, windows: Sequence[ProviderWindow], *, store: OperatorStore,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
@@ -104,14 +112,14 @@ class BudgetMeter:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}")
         start, day = window.place(now)
         venture = self._venture(window, start)
-        own = self.scope.committed(venture, start.isoformat()).get(_ACCOUNT, 0.0)
         account = self._read_account(provider, start) if self._read_account is not None else None
-        used = max(own, account.used) if account is not None else own
+        used, above = _used(self.scope.committed(venture, start.isoformat()).get(_ACCOUNT, 0.0),
+                            self.scope.outstanding(venture, start.isoformat()).get(_ACCOUNT, 0.0), account)
         wait = account.limited_until if account is not None and account.limited_until is not None else None
         limited = wait is not None and now < wait
         return Admission(provider, day, used, target(window.allowance, day),
                          ceiling(window.allowance, day, window.reserve_share),
-                         window.estimated or (account is not None and account.estimated and account.used > own),
+                         window.estimated or (above and account is not None and account.estimated),
                          reason=f"at a reported limit; waiting for the reset at {wait.isoformat()}" if limited else "",
                          wait_until=wait if limited else None, venture=venture)
 

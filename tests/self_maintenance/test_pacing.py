@@ -92,7 +92,7 @@ def test_the_whole_accounts_use_counts_and_the_loop_gives_way():
 
 def test_the_ledger_is_never_read_below_what_the_loop_itself_committed():
     meter = _meter(read_account=lambda provider, start: AccountReading(used=10))
-    meter.reserve("claude", _day(3), 300)
+    meter.settle(meter.reserve("claude", _day(3), 300), 300)
     assert meter.reading("claude", _day(3)).used == 300
 
 
@@ -131,3 +131,45 @@ def test_a_window_that_makes_no_sense_is_refused(bad):
     fields = {"provider": "claude", "allowance": 100, "week_start": START} | bad
     with pytest.raises(ValueError):
         ProviderWindow(**fields)
+
+
+# Finding 7: a pending reservation is not hidden by what the account has used ----------------------------------------------
+
+def test_7_a_pending_reservation_adds_to_what_the_account_reports():
+    meter = _meter(read_account=lambda provider, start: AccountReading(used=350))
+    meter.reserve("claude", _day(3), 200)                      # nothing of it can be in the account's figure yet
+    assert meter.reading("claude", _day(3)).used == 550
+    assert not meter.reserve("claude", _day(3), 51).admitted   # 550 + 51 is over day three's 600
+    assert meter.reserve("claude", _day(3), 50).admitted
+
+
+def test_7_a_charge_can_already_be_in_the_accounts_figure_so_it_does_not_add():
+    meter = _meter(read_account=lambda provider, start: AccountReading(used=350))
+    meter.settle(meter.reserve("claude", _day(3), 200), 100)   # settled: the account's 350 may include it
+    assert meter.reading("claude", _day(3)).used == 350
+
+
+def test_7_with_no_account_reading_the_reservation_still_counts_once():
+    meter = _meter()
+    meter.settle(meter.reserve("claude", _day(3), 100), 40)
+    meter.reserve("claude", _day(3), 200)
+    assert meter.reading("claude", _day(3)).used == 240
+
+
+def test_7_outstanding_is_reserved_less_released_and_a_settled_week_has_none():
+    scope = OperatorStore(":memory:").for_owner("o")
+    venture = scope.create_venture("v", caps={"model": 100, "cash": 0})["venture_id"]
+    open_one = scope.reserve(venture, month="m", account="model", amount=30)
+    assert scope.outstanding(venture, "m") == {"model": 30.0}
+    scope.settle(venture, open_one, metered=5)
+    assert scope.outstanding(venture, "m") == {"model": 0.0}
+    assert scope.committed(venture, "m") == {"model": 5.0}
+
+
+def test_7_the_estimate_flag_follows_whichever_figure_was_used():
+    meter = _meter(read_account=lambda provider, start: AccountReading(used=350, estimated=True))
+    meter.reserve("claude", _day(3), 200)
+    assert meter.reading("claude", _day(3)).estimated
+    quiet = _meter(read_account=lambda provider, start: AccountReading(used=10, estimated=True))
+    quiet.settle(quiet.reserve("claude", _day(3), 100), 100)
+    assert not quiet.reading("claude", _day(3)).estimated
