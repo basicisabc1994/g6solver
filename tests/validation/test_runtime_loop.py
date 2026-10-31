@@ -522,6 +522,35 @@ def test_the_critic_needs_the_companions_place_set_and_says_so(monkeypatch, tmp_
         we.run_codex(tmp_path)
 
 
+def _codex_calls(monkeypatch, *, raises=None):
+    calls = []
+
+    def fake(args, **kw):
+        calls.append(list(args))
+        if args[0] == "node" and raises:
+            raise raises
+        return type("Done", (), {"stdout": b"the reply", "returncode": 0})()
+
+    monkeypatch.setenv("G6_CODEX_COMPANION", "companion.mjs")
+    monkeypatch.setattr(we.subprocess, "run", fake)
+    return calls
+
+
+def test_a_critic_leaves_no_process_behind(monkeypatch, tmp_path):
+    """Each Codex call left a broker and a codex process, 0.4 GB a time: nine of them caused the reap that stopped L9's stream."""
+    calls = _codex_calls(monkeypatch)
+    pack = tmp_path / "abc123"
+    assert we.run_codex(pack) == "the reply"
+    assert calls[0][0] == "node" and "abc123" in " ".join(calls[1]) and "taskkill /T /F" in " ".join(calls[1])
+
+
+def test_a_critic_that_overruns_leaves_no_process_behind_either(monkeypatch, tmp_path):
+    calls = _codex_calls(monkeypatch, raises=we.subprocess.TimeoutExpired("node", 1))
+    with pytest.raises(we.subprocess.TimeoutExpired):
+        we.run_codex(tmp_path / "abc123")
+    assert "taskkill /T /F" in " ".join(calls[1])
+
+
 class _Archive:
     def __init__(self, root):
         self.root = root

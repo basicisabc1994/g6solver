@@ -926,3 +926,9 @@ review. So the pack now sits in an ordinary folder, and the critic must quote a 
 marked `unread`, never `none`. That run stays in the record as L8 and is not counted as a critic's result. The generation that runs is L9,
 identical but for that fix, and `compare.py` reads L9 and M9. A real Codex call through the fixed path then read the pack, passed the proof and
 found on an archived `click-3678` patch what the blind experiment had found, in 52 seconds. Everything said above of L8 and M8 from here means L9 and M9.
+
+**L9's first two runs, and a leak.** On `click-3678` both failed the maintainers' tests and passed the amended ones, as arm A's did, so they show no uplift
+on this bug. They do show the mechanism for the first time: each time Codex found a defect in about a minute, its test failed on the patch, the agent
+repaired, and the test passed. Claude Code's memory reaper then stopped the stream. Part of the cause was the runner's: each Codex call left a broker and
+a codex process behind, about 0.4 GB a time, and removing nine of them took free memory from 4.1 to 8.1 GB. `run_codex` now ends them after every call. No
+agent sees any change, so this stays L9. A run in flight when the stream stopped has no row and is made again, and its remains were removed.

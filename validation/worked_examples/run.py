@@ -516,8 +516,13 @@ def run_codex(pack: Path) -> str:
     companion = os.environ.get("G6_CODEX_COMPANION")
     if not companion:
         raise RuntimeError("G6_CODEX_COMPANION is not set")
-    got = subprocess.run(["node", companion, "task", "--fresh", "--effort", "high", "--cwd", str(pack), "--prompt-file",
-                          str(pack / "critic_prompt.md")], capture_output=True, timeout=CRITIC_SECONDS, cwd=pack)
+    try:
+        got = subprocess.run(["node", companion, "task", "--fresh", "--effort", "high", "--cwd", str(pack), "--prompt-file",
+                              str(pack / "critic_prompt.md")], capture_output=True, timeout=CRITIC_SECONDS, cwd=pack)
+    finally:   # the companion leaves a broker and a codex process for each workspace: 0.4 GB a time, and they hold the pack open
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
+                        f"Where-Object {{ $_.CommandLine -like '*{pack.name}*' }} | "
+                        "ForEach-Object { taskkill /T /F /PID $_.ProcessId | Out-Null }"], capture_output=True, timeout=60)
     return got.stdout.decode("utf-8", errors="replace")
 
 
