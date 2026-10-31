@@ -17,6 +17,7 @@ import math
 import os
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -105,6 +106,19 @@ class OwnerScope:
             self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
         return self.venture(venture_id)
 
+    def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
+        """The id of this owner's venture of this name, made once however many ask at the same moment."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? AND name=?",
+                                    (self.owner, name)).fetchone()
+            found = row["venture_id"] if row is not None else self.create_venture(name, caps=caps)["venture_id"]
+            self.conn.commit()
+            return found
+        except BaseException:
+            self.conn.rollback()
+            raise
+
     def venture(self, venture_id: str) -> dict[str, Any]:
         row = self.conn.execute("SELECT * FROM ventures WHERE venture_id=? AND owner=?",
                                 (str(venture_id), self.owner)).fetchone()
@@ -158,19 +172,34 @@ class OwnerScope:
                                  " FROM ledger WHERE venture_id=? AND month=? GROUP BY account", (vid, month))
         return {r["account"]: float(r["used"] or 0.0) for r in rows.fetchall()}
 
+    def outstanding(self, venture_id: str, month: str) -> dict[str, float]:
+        """What is reserved and not yet settled, per account: the part of ``committed`` nothing has charged."""
+        return self._outstanding(self.resolve(venture_id), month)
+
+    def _outstanding(self, vid: str, month: str) -> dict[str, float]:
+        rows = self.conn.execute("SELECT account, SUM(CASE kind WHEN 'reserve' THEN amount WHEN 'release' THEN -amount"
+                                 " ELSE 0 END) AS pending FROM ledger WHERE venture_id=? AND month=? GROUP BY account",
+                                 (vid, month))
+        return {r["account"]: float(r["pending"] or 0.0) for r in rows.fetchall()}
+
     def _append_ledger(self, vid: str, month: str, account: str, kind: str, amount: float, ref: str) -> None:
         self.conn.execute("INSERT INTO ledger (venture_id, month, account, kind, amount, ref, at)"
                           " VALUES (?, ?, ?, ?, ?, ?, ?)", (vid, month, account, kind, float(amount), ref, _now()))
 
-    def reserve(self, venture_id: str, *, month: str, account: str, amount: float) -> str:
-        """Reserve ``amount`` before a spend starts; the stop check and the write are one transaction."""
+    def reserve(self, venture_id: str, *, month: str, account: str, amount: float,
+                admit: Callable[[float, float], str] | None = None) -> str:
+        """Reserve ``amount`` before a spend starts; the stop check and the write are one transaction. ``admit`` is a
+        further check inside it, given this account's committed and outstanding amounts as they stand under the lock,
+        and returns why not, or nothing."""
         vid = self.resolve(venture_id)
         value = gates.amount_of(amount)
         if value is None:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, got {amount!r}")
         self.conn.execute("BEGIN IMMEDIATE")
         try:
-            why = gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value)
+            why = "" if admit is None else admit(self._committed(vid, month).get(account, 0.0),
+                                                 self._outstanding(vid, month).get(account, 0.0))
+            why = why or gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value)
             if why:
                 raise BudgetRefused(why)
             reservation = uuid.uuid4().hex

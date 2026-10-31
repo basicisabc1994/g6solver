@@ -19,20 +19,23 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import math
 import os
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import digest
-from g6.core.llm import DEFAULT_MAX_TOKENS
+from g6.core.ledger import LedgerError, digest
+from g6.core.llm import DEFAULT_MAX_TOKENS, LLMError, waits
+from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
@@ -78,10 +81,20 @@ NO_CONSTRAINT = "G6_E_LOOP_NO_CONSTRAINT"
 BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
 NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
 BUSY = "G6_E_LOOP_BUSY"
+RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
-ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/shadow.py",
-                     "self_maintenance/envelope.py", "self_maintenance/pacing.py")
+TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
+UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
+#: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
+#: with. A test holds every module those files import to this set or that one.
+ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/loop.py",
+                     "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
+                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/select.py",
+                     "metaharness/shadow.py", "self_maintenance/constraints.py", "self_maintenance/envelope.py",
+                     "self_maintenance/pacing.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
+                     "core/llm.py", "core/vault.py", "integrity/*.py")
 UNKNOWN = "unknown"
+_SOURCE = Path(g6.__file__).resolve().parent
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
 
@@ -135,21 +148,53 @@ class _OnConstraint:
         return self.inner.propose(replace(view, failures=shown), runner)
 
 
-class _Counted:
-    """A model caller the host counts. Every call of a tick passes through one, so what a tick is charged is what the
-    host saw, and nothing a run reports about itself."""
+class _Requests:
+    """What a tick has sent to its backends, and the limit it reserved. Past that limit nothing more goes out."""
 
-    def __init__(self, inner: Any, counts: list[int]) -> None:
-        self.inner, self.counts = inner, counts
+    def __init__(self) -> None:
+        self.close()
+
+    def open(self, limit: float) -> None:
+        self.sent, self.limit, self.stopped, self.unseen = 0, limit, False, False
+
+    def close(self) -> None:
+        self.open(math.inf)
+
+    def admit(self) -> None:
+        if self.unseen or self.sent >= self.limit:
+            self.stopped = True
+            raise LLMError(f"{TICK_BUDGET_SPENT}: this tick has sent {self.sent} of the {self.limit:g} it reserved")
+
+
+class _Counted:
+    """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
+    backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so an ``EmptyRetry``
+    or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
+    is added from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
+
+    A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
+    this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
+    retries. Only a usage record from the provider can show those, which is the relay of design section 3."""
+
+    def __init__(self, inner: Any, requests: _Requests) -> None:
+        self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        self.counts[0] += 1
-        return self.inner.complete(system, user, max_tokens=max_tokens)
+        self.requests.admit()
+        with counting() as noted, waits() as resent:
+            try:
+                text = self.inner.complete(system, user, max_tokens=max_tokens)
+            finally:
+                self.requests.sent += noted() + len(resent)
+            if not noted():
+                self.requests.unseen = True
+                raise LLMError(f"{UNMETERED_CALLER}: a model caller answered with no request noted")
+        return text
 
 
-def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, counts: list[int]) -> Workflow:
+def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, requests: _Requests) -> Workflow:
     run, judge = domain.execution(), domain.judge()
-    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, counts))
+    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, requests))
               for name, model in run.models.items()}
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
@@ -173,7 +218,7 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
     """What judges that lies in or around the loop's folder, which is the only place it writes."""
     judge, sealed = domain.judge(), domain.sealed()
     source = judge_source(judge.verdict) if judge is not None else None
-    guarded = {"G6's own source": str(Path(g6.__file__).resolve().parent),
+    guarded = {"G6's own source": str(_SOURCE),
                **({"the judge's folder": str(source.resolve().parent)} if source is not None else {}),
                **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
     where = os.path.normcase(str(root))
@@ -181,14 +226,39 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
 
 
 def envelope_sha256() -> str:
-    """The loop's own code: no candidate changes the envelope (design 6.5), and a change a person made is theirs to
-    accept by enrolling again."""
-    return manifest_sha256(build_manifest(Path(g6.__file__).resolve().parent, patterns=ENVELOPE_PATTERNS))
+    """The enforcing code: no candidate changes the envelope (design 6.5), and a change a person made is theirs to
+    accept by enrolling again. It is a tripwire, not custody: the code that compares this digest is among what it
+    covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design 6.5."""
+    return manifest_sha256(build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS))
 
 
 def _judge_digest(judge: Judge | None) -> str:
     source = judge_source(judge.verdict) if judge is not None else None
     return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
+
+
+def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """One operation at a time per folder, on what is written and not on what this handle last read: a restart can
+    overlap a tick that is still running, and a person's process is not the loop's. The lock is the operating system's,
+    so it dies with its process, and a refusal is a reply, never a raised error."""
+
+    @wraps(method)
+    def invoke(self: ShadowLoop, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            with Coordination(self.root / ".tick").mutex():
+                self.log.reload()
+                if self.mh is not None:
+                    self.mh.refresh()
+                return method(self, *args, **kwargs)
+        except WorkspaceRefused:
+            return _blocked(BUSY, "another operation is running on this folder; this one did nothing")
+        except LedgerError as exc:
+            reply = _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
+                             "A person inspects the folder. Nothing runs on records that do not check out.")
+            self._beat(reply["completion_state"], RECORDS_UNREADABLE)
+            return reply
+
+    return invoke
 
 
 class ShadowLoop:
@@ -197,8 +267,8 @@ class ShadowLoop:
                  clock: Callable[[], float] = time.monotonic,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
         self.domain, self.settings, self._now = domain, settings, now
-        self.counts = [0]
-        self._proposer = _Counted(proposer, self.counts)
+        self.requests = _Requests()
+        self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
         if reach:                                # before anything is written: this folder is all the loop ever writes
@@ -213,7 +283,7 @@ class ShadowLoop:
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
             self.cut = cut_pool(domain.development(), settings.seed)
-            self.workflow = _workflow(domain, self.cut, settings, self.counts)
+            self.workflow = _workflow(domain, self.cut, settings, self.requests)
             self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
         if not self.problems:
             self.mh = adapt_shadow(self.workflow, domain.execution().factory, workspace=self.root / "workspace",
@@ -232,9 +302,10 @@ class ShadowLoop:
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
         split. The judge's whole file is digested, since a helper it calls judges too. No profile is in it."""
-        run, sealed = self.domain.execution(), self.domain.sealed()
+        run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
         return {"envelope": envelope_sha256(),
-                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(self.domain.judge()),
+                "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
+                                     "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
                                                                                          *run.optional_checks.values())]}),
                 "cases": cut_pool(self.domain.development(), self.settings.seed).digest(),
@@ -270,18 +341,43 @@ class ShadowLoop:
         invalid = self._invalid()
         if invalid is not None:
             return invalid
-        paused = self.log.paused()
+        paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
         changed = self._changed()
         if changed:
             return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
                             "measured against it would mean what it did", "A person checks the change and enrols again.")
+        lacking = self._lacking()
+        if lacking is not None:
+            return lacking
         if self.mh.held_out_left() <= 0:
             return _blocked(HELD_OUT_SPENT, "this held-out split has given all the evaluations it may: the gate needs a "
                             "fresh split, and only a person can confirm one", "A person freezes a fresh split and enrols.")
         return None
 
+    def _lacking(self) -> dict[str, Any] | None:
+        """The domain checked as it is now: a handle's first check says nothing of what has changed since."""
+        problems = domain_problems(self.domain)
+        if not problems:
+            return None
+        return _blocked(problems[0][0], "; ".join(why for _, why in problems),
+                        "Give this domain what it lacks; the loop will not run without it.")
+
+    def _must_stop(self) -> str:
+        """Why the durable record of cycles says stop, whether or not a pause was written: the cycles themselves are the
+        fact, and the pause is only its note."""
+        cycles = self.log.since_resumed()
+        for cycle in reversed(cycles):
+            if cycle["outcome"] == "sealed_breach" or cycle.get("code") == UNMETERED_CALLER:
+                return cycle["reason"]
+        streak = self.log.failed_streak()
+        if streak < MAX_FAILED_CYCLES:
+            return ""
+        return "three failed cycles in a row: " + "; ".join(
+            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in cycles[-streak:])
+
+    @_exclusive
     def enrol(self, confirmed_by: str) -> dict[str, Any]:
         """A person confirms what judges this domain. It happens once, and it is the one step the loop cannot do."""
         if self.problems:
@@ -289,6 +385,9 @@ class ShadowLoop:
         who = confirmed_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person enrols a domain (no empty or auto: name)")
+        lacking = self._lacking()
+        if lacking is not None:
+            return lacking
         reused = self._reused()
         if reused:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
@@ -298,9 +397,12 @@ class ShadowLoop:
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
         frozen = self._frozen()
+        exposed = (*self.cut.tune, *self.cut.selection)
         self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
-                       seen=sorted(c.case_id for c in (*self.cut.tune, *self.cut.selection)),
+                       seen=sorted(c.case_id for c in exposed),
+                       seen_inputs=sorted(c.ref()["input_sha256"] for c in exposed),
                        held_out=sorted(c.case_id for c in self.cut.held_out),
+                       held_out_inputs=sorted(c.ref()["input_sha256"] for c in self.cut.held_out),
                        held_out_digest=self.workflow.suite.digest("held_out"))
         return _envelope("qualified-draft", ENROLLED, f"{self.domain.name} is enrolled: the loop may run on it", **frozen,
                          next_action="loop.tick()")
@@ -308,26 +410,24 @@ class ShadowLoop:
     def _reused(self) -> list[str]:
         """Held-out cases that cannot be fresh evidence. The evaluation limit counts per split digest, so a split
         changed by one case would start again from nothing, and a re-cut could hand the gate what proposers tuned on.
-        Against each earlier enrolment: nothing it let proposers see, and nothing from a split it spent."""
+        Against each earlier enrolment: nothing it let proposers see, and nothing from a split it spent. A case is known
+        by its id and by a hash of its input, so a rename does not make it new. An input reworded is a new hash: only a
+        person sourcing cases can tell that apart."""
         current, seen = self.workflow.suite.digest("held_out"), set()
         evaluated = {r.get("split_digest") for r in self.mh.ledger.rows("evaluation")}
         for row in self.log.enrolments():
-            seen |= set(row["seen"])
+            seen |= {*row["seen"], *row["seen_inputs"]}
             if row["held_out_digest"] != current and row["held_out_digest"] in evaluated:
-                seen |= set(row["held_out"])
-        return sorted(c.case_id for c in self.cut.held_out if c.case_id in seen)
+                seen |= {*row["held_out"], *row["held_out_inputs"]}
+        return sorted(c.case_id for c in self.cut.held_out if {c.case_id, c.ref()["input_sha256"]} & seen)
 
+    @_exclusive
     def tick(self) -> dict[str, Any]:
-        """One cycle. A refusal is a reply, never a raised error, and a heartbeat follows every tick, so someone
-        watching can tell a loop that is waiting from one that has died. One tick at a time per folder: a restart
-        can overlap a tick that is still running, and the lock is the operating system's, so it dies with its process."""
-        try:
-            with Coordination(self.root / ".tick").mutex():
-                reply = self._refused() or self._run()
-                self._beat(reply["completion_state"], reply["warning_card"]["code"])
-                return reply
-        except WorkspaceRefused:
-            return _blocked(BUSY, "another tick is running on this folder; this one did nothing")
+        """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
+        has died."""
+        reply = self._refused() or self._run()
+        self._beat(reply["completion_state"], reply["warning_card"]["code"])
+        return reply
 
     def _beat(self, state: str, code: str) -> None:
         beat(self.root, domain=self.domain.name, at=self._now().isoformat(), tick=len(self.log.cycles()), state=state,
@@ -351,26 +451,37 @@ class ShadowLoop:
         if waiting is not None:
             return waiting
         self._beat("running", CYCLE)
-        before, recommended = self.counts[0], []
+        recommended: list[dict[str, Any]] = []
+        self.requests.open(spend.amount)
         with sealed_closed(self.domain.sealed().vault) as breaches:
-            try:
-                row = self._cycle(recommended)
+            try:                      # a sealed file already held open: no cycle starts over it
+                row = self._row() if breaches else self._cycle(recommended)
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
-            finally:
-                charged = self.meter.settle(spend, self.counts[0] - before)
+            finally:             # use nobody could count stays charged at its worst case
+                charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
+        unseen, stopped = self.requests.unseen, self.requests.stopped
+        self.requests.close()
         if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
             row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
-                    "reason": f"{len(breaches)} attempt(s) to open the sealed split while developing: nothing was read "
-                              "and nothing is adopted, and a person decides whether it still counts as sealed"}
+                    "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. Nothing "
+                              "is adopted. A read through a handle already open leaves no trace, so a person decides "
+                              "whether it still counts as sealed"}
+        elif unseen:
+            row |= {"outcome": "error", "code": UNMETERED_CALLER,
+                    "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
+                              "nothing is adopted, and a person gives it a caller that notes each request"}
+        elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
+            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT,
+                    "reason": f"this tick reached the {spend.amount:g} it reserved and stopped, so nothing is adopted"}
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"])
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
         reply = self._reply(self.log.cycle(row))
-        self._pause_if_failing(row)
+        self._pause_if_failing()
         return reply
 
     def _adopt(self, decision: Any) -> dict[str, Any]:
@@ -380,28 +491,31 @@ class ShadowLoop:
             return {**said, "outcome": "blocked"}
         return {**said, "outcome": "adopted", "head_version": adopted["head_version"]}
 
-    def _pause_if_failing(self, row: dict[str, Any]) -> None:
-        streak = self.log.failed_streak()
-        if row["outcome"] == "sealed_breach":
-            self.log.pause(row["reason"])
-        elif streak >= MAX_FAILED_CYCLES:
-            last = self.log.cycles()[-streak:]
-            self.log.pause("three failed cycles in a row: " + "; ".join(
-                f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in last))
+    def _pause_if_failing(self) -> None:
+        reason = self._must_stop()
+        if reason:
+            try:
+                self.log.pause(reason)
+            except (OSError, LedgerError):
+                pass                  # the cycles are already written, so the next tick is refused all the same
 
+    @_exclusive
     def resume(self, accepted_by: str) -> dict[str, Any]:
         """A person lifts a pause, having read why. The loop cannot lift its own."""
         who = accepted_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person lifts a pause (no empty or auto: name)")
-        if self.log.paused():
+        if self.log.paused() or self._must_stop():
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
-    def _cycle(self, recommended: list[dict[str, Any]]) -> dict[str, Any]:
+    def _row(self) -> dict[str, Any]:
         version, head = self.mh._head()
-        row: dict[str, Any] = {"at": self._now().isoformat(), "domain": self.domain.name, "head_version": version,
-                               "head_profile": head.digest()}
+        return {"at": self._now().isoformat(), "domain": self.domain.name, "head_version": version,
+                "head_profile": head.digest(), "code": CYCLE, "reason": ""}
+
+    def _cycle(self, recommended: list[dict[str, Any]]) -> dict[str, Any]:
+        row = self._row()
         audited = self.mh.audit(self.cut.monitor, count=self.settings.audit_per_tick)
         row["audit"] = {k: audited[k] for k in ("audited", "pairs", "mean_difference", "threshold")}
         if audited["rolled_back"]:
@@ -435,6 +549,7 @@ class ShadowLoop:
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
                 "recovery": run.recovery}
 
+    @_exclusive
     def leave_shadow(self) -> dict[str, Any]:
         """Take the head out of the loop's own workspace. Nothing in this phase can. Outside shadow a person accepts a
         change, and whether a passed gate may ever stand in for them is the owner's ruling, held in one setting."""
@@ -456,6 +571,7 @@ class ShadowLoop:
         fields = {k: v for k, v in row.items() if k not in ("code", "reason")}
         return _envelope(state, row["code"], row["reason"], **fields)
 
+    @_exclusive
     def status(self) -> dict[str, Any]:
         """Where the loop stands; it runs nothing."""
         refused = self._invalid()

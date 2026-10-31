@@ -81,6 +81,13 @@ class ShadowHarness(MetaHarness):
         super().__init__(workflow, factory, workspace, theories=None, clock=clock, problems=problems)
         self.adoptions = ChainLedger(workspace / "adoptions.jsonl", validate=_rules) if not problems else None
 
+    def refresh(self) -> None:
+        """Read every ledger again: another handle may have written them. What it wrote decides the head."""
+        if self._moved():
+            self.store._chain.reload()
+            self.ledger._chain.reload()
+        self.adoptions.reload()
+
     def adoption_rows(self) -> list[dict]:
         return [e["body"] for e in self.adoptions.entries()]
 

@@ -578,8 +578,8 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   hash-chained file.
 - **The envelope**, in code: a paced week per provider on the operator's ledger, the owner's reserve and the whole
   account counted (`pacing.py`); a `STOP` file, a heartbeat and a pause after three failed cycles (`envelope.py`); one
-  tick at a time; refusal when the evaluator, the envelope's own code, a frozen case or a sealed byte changed; the
-  sealed split shut in-process while the loop develops; a loop folder that may not overlap what judges it.
+  tick at a time; refusal when the evaluator, the envelope's own code, a frozen case or a sealed byte changed; a
+  sealed-split guard inside the process (limits below); a loop folder that may not overlap what judges it.
 - **Adoption with no person, in shadow only** (`g6/metaharness/shadow.py`). What the gate recommends becomes the loop's
   head in a separate ledger, so the loop compounds, and the monitor rolls it back if it gets worse. A person's profile
   store never moves, `activate` and live runs are refused, and each row carries the loop's `auto:` name. Nothing goes
@@ -600,6 +600,14 @@ weakness was planted and the models are stubs.
   checkout outside the loop's process, fresh held-out splits drafted by the loop, issues (P4), the north-star study
   (P5), and method changes through `method_rca`, which need `compare_methods` and a person.
 
+**What the sealed guard does not do.** It is a check inside one process, not a boundary. It refuses a Python-level open
+or memory map of a sealed file, by path or by descriptor, and it looks for a sealed file held open as a tick starts and
+ends. A read through a handle opened before the tick cannot be stopped: a read emits no audit event, so the guard can
+only notice the handle, and only if it is still open at one of those two moments. It knows nothing of what was read
+before the tick, of a mapping or buffer that outlives its file, or of a child process or native code. So a breach means
+the split may have been read, and no breach does not mean it was not. Sealing that holds needs an operating-system
+boundary, which is P3's mission container, and P5's reports state the limit under O2.
+
 **Rulings made while building, each with its cost if wrong:**
 
 | Ruling | Cost if wrong |
@@ -614,9 +622,12 @@ weakness was planted and the models are stubs.
 | Shares of the pool: 25% tuning, 15% selection, 35% held-out, 25% monitor, by a seeded hash per case | A pool under about 90 cases is refused. Other shares may suit real work better; changing them is a re-cut a person must accept |
 | The monitor uses its own split, the judge's verdict on both versions, the pairs that disagree, and each case once per adoption | It needs at least 18 disagreeing pairs. It catches a collapse, not a modest regression: a change 10% worse stays. The gate remains the main defence |
 | A failed cycle is refused, no winner, blocked, no constraint, rolled back, error or sealed breach. Waits are not cycles | A loop with nothing left it can improve pauses after three ticks and needs a person. The alternative was burning budget unseen |
-| A sealed breach pauses at once, though nothing was read | One resume. The guard is in-process: a child process or native code is not stopped, so P3's container cannot rest on it |
-| Re-enrolment refuses held-out cases that proposers saw or a spent split held. This is stricter than the meta-harness, whose limit counts per digest | A small domain can run out of cases, and a person must find new ones |
+| A sealed breach pauses at once, and a tick that finds a sealed file already held open does not start | One resume per sign. See the guard's limit below |
+| Re-enrolment refuses held-out cases that proposers saw or a spent split held, known by id and by a hash of the input. This is stricter than the meta-harness, whose limit counts per digest | A small domain can run out of cases, and a person must find new ones. A reworded input is a new hash, and a case of a bug already seen (`meta["group"]`) is not checked |
+| The envelope digest covers the loop's files and what they use to spend, seal, pin and propose, and a test holds their imports to it | It is a tripwire, not custody: the code that compares it is covered by it, so an edit there can skip the comparison. The read-only checkout of 6.5 is what would hold |
 | `OperatorStore.settle` gained `metered`: the host's count sets the charge, up or down. A run's report still cannot lower one | If a domain's executor bypasses the declared model callers, its calls go uncounted and the ledger undercharges |
+| A tick is metered at `g6.core.model_calls`, plus `Retry-After` resends, and stops at what it reserved. A caller that answers with no request noted is refused and charged the tick's worst case | A caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own retries. Only a provider's usage record shows those, which is O1's relay |
+| The ceiling is checked inside the reserving transaction, on the ledger as it stands, and pending reservations go on top of the account's figure | The account's figure is read just before that transaction, so use elsewhere in between is unseen until the next tick |
 | A tick charges one provider: the first with room | Real work may split across providers. Harmless until O1 |
 | `BudgetBook` stays for now, on the person-approved `run_one_cycle` only. The loop does not use it | Two ledgers exist until it merges, against section 6.6 |
 
