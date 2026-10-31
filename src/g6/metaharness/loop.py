@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import math
 import os
 import time
 from collections import Counter
@@ -32,7 +33,8 @@ import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import digest
-from g6.core.llm import DEFAULT_MAX_TOKENS
+from g6.core.llm import DEFAULT_MAX_TOKENS, LLMError, waits
+from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
@@ -79,6 +81,8 @@ BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
 NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
 BUSY = "G6_E_LOOP_BUSY"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
+TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
+UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/shadow.py",
                      "self_maintenance/envelope.py", "self_maintenance/pacing.py")
 UNKNOWN = "unknown"
@@ -135,21 +139,53 @@ class _OnConstraint:
         return self.inner.propose(replace(view, failures=shown), runner)
 
 
-class _Counted:
-    """A model caller the host counts. Every call of a tick passes through one, so what a tick is charged is what the
-    host saw, and nothing a run reports about itself."""
+class _Requests:
+    """What a tick has sent to its backends, and the limit it reserved. Past that limit nothing more goes out."""
 
-    def __init__(self, inner: Any, counts: list[int]) -> None:
-        self.inner, self.counts = inner, counts
+    def __init__(self) -> None:
+        self.close()
+
+    def open(self, limit: float) -> None:
+        self.sent, self.limit, self.stopped, self.unseen = 0, limit, False, False
+
+    def close(self) -> None:
+        self.open(math.inf)
+
+    def admit(self) -> None:
+        if self.unseen or self.sent >= self.limit:
+            self.stopped = True
+            raise LLMError(f"{TICK_BUDGET_SPENT}: this tick has sent {self.sent} of the {self.limit:g} it reserved")
+
+
+class _Counted:
+    """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
+    backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so an ``EmptyRetry``
+    or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
+    is added from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
+
+    A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
+    this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
+    retries. Only a usage record from the provider can show those, which is the relay of design section 3."""
+
+    def __init__(self, inner: Any, requests: _Requests) -> None:
+        self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        self.counts[0] += 1
-        return self.inner.complete(system, user, max_tokens=max_tokens)
+        self.requests.admit()
+        with counting() as noted, waits() as resent:
+            try:
+                text = self.inner.complete(system, user, max_tokens=max_tokens)
+            finally:
+                self.requests.sent += noted() + len(resent)
+            if not noted():
+                self.requests.unseen = True
+                raise LLMError(f"{UNMETERED_CALLER}: a model caller answered with no request noted")
+        return text
 
 
-def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, counts: list[int]) -> Workflow:
+def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, requests: _Requests) -> Workflow:
     run, judge = domain.execution(), domain.judge()
-    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, counts))
+    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, requests))
               for name, model in run.models.items()}
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
@@ -197,8 +233,8 @@ class ShadowLoop:
                  clock: Callable[[], float] = time.monotonic,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
         self.domain, self.settings, self._now = domain, settings, now
-        self.counts = [0]
-        self._proposer = _Counted(proposer, self.counts)
+        self.requests = _Requests()
+        self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
         if reach:                                # before anything is written: this folder is all the loop ever writes
@@ -213,7 +249,7 @@ class ShadowLoop:
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
             self.cut = cut_pool(domain.development(), settings.seed)
-            self.workflow = _workflow(domain, self.cut, settings, self.counts)
+            self.workflow = _workflow(domain, self.cut, settings, self.requests)
             self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
         if not self.problems:
             self.mh = adapt_shadow(self.workflow, domain.execution().factory, workspace=self.root / "workspace",
@@ -351,19 +387,29 @@ class ShadowLoop:
         if waiting is not None:
             return waiting
         self._beat("running", CYCLE)
-        before, recommended = self.counts[0], []
+        recommended: list[dict[str, Any]] = []
+        self.requests.open(spend.amount)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:
                 row = self._cycle(recommended)
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
-            finally:
-                charged = self.meter.settle(spend, self.counts[0] - before)
+            finally:             # use nobody could count stays charged at its worst case
+                charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
+        unseen, stopped = self.requests.unseen, self.requests.stopped
+        self.requests.close()
         if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
             row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
                     "reason": f"{len(breaches)} attempt(s) to open the sealed split while developing: nothing was read "
                               "and nothing is adopted, and a person decides whether it still counts as sealed"}
+        elif unseen:
+            row |= {"outcome": "error", "code": UNMETERED_CALLER,
+                    "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
+                              "nothing is adopted, and a person gives it a caller that notes each request"}
+        elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
+            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT,
+                    "reason": f"this tick reached the {spend.amount:g} it reserved and stopped, so nothing is adopted"}
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"])
         seen = self.meter.reading(spend.provider, self._now())
@@ -382,7 +428,7 @@ class ShadowLoop:
 
     def _pause_if_failing(self, row: dict[str, Any]) -> None:
         streak = self.log.failed_streak()
-        if row["outcome"] == "sealed_breach":
+        if row["outcome"] == "sealed_breach" or row["code"] == UNMETERED_CALLER:
             self.log.pause(row["reason"])
         elif streak >= MAX_FAILED_CYCLES:
             last = self.log.cycles()[-streak:]
