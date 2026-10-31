@@ -721,6 +721,31 @@
     "vetting": null
   },
   {
+    "name": "algorithm_design",
+    "summary": "g6.algorithm_design \u2014 suggests catalogued algorithms for a stated problem, estimates their cost, and runs a fixed set of algorithm kernels that check each answer.",
+    "maturity": "beta",
+    "maturity_reason": "a fixed catalogue, bundled ontology metadata, hard-coded cost models, a bounded type-directed search, fusion with the change-impact map and 22 fixed kernels with instance checks, tested on their contract examples, missing preconditions and inputs past each bound; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "primitives",
+      "ontology",
+      "search",
+      "estimate",
+      "fuse",
+      "list_kernels",
+      "run_kernel"
+    ],
+    "requires": [
+      "coding_agent_gate",
+      "complexity",
+      "harness",
+      "operator",
+      "workforce"
+    ],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
     "name": "align_prompt_library",
     "summary": "g6.workspace.align_prompt_library \u2014 keeps every version of a prompt, spec or test set by the SHA-256 of its content, so a result can cite the exact version it used.",
     "maturity": "beta",
@@ -733,10 +758,13 @@
       "search",
       "render",
       "retire",
-      "rollback"
+      "rollback",
+      "catalogue",
+      "install_catalog"
     ],
     "requires": [],
     "sensitive_ops": [
+      "install_catalog",
       "put",
       "retire",
       "rollback"
@@ -865,6 +893,23 @@
       "keep_operators"
     ],
     "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "complexity",
+    "summary": "g6.complexity \u2014 maps a Python package's modules, state and effects from its source, without running it, and lists what a change can reach.",
+    "maturity": "beta",
+    "maturity_reason": "a static atlas, reverse impact cone and simplification proposals over a file map, tested on small packages and hostile input sizes; nothing runs, and every answer is qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "atlas",
+      "impact",
+      "simplify"
+    ],
+    "requires": [
+      "design_governance"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },
@@ -1371,10 +1416,14 @@
     "name": "goal_engine",
     "summary": "g6.goal_engine \u2014 holds the subtasks you declare as a tree and checks them against what your executor reports.",
     "maturity": "beta",
-    "maturity_reason": "",
-    "surface": "python",
-    "ops": [],
-    "requires": [],
+    "maturity_reason": "a bounded breadth-first proposal loop over a model the caller configures, tested with scripted models for the call bound, malformed and oversized replies and a reply claiming a state; qualified-draft at best",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "propose_goal_tree"
+    ],
+    "requires": [
+      "align_prompt_library"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },
@@ -1650,6 +1699,7 @@
     "ops": [],
     "requires": [
       "action_gating",
+      "align_prompt_library",
       "bundles",
       "coding_agent_gate",
       "context",
@@ -1781,6 +1831,27 @@
     "surface": "python",
     "ops": [],
     "requires": [],
+    "sensitive_ops": [],
+    "vetting": null
+  },
+  {
+    "name": "self_maintenance",
+    "summary": "g6.self_maintenance \u2014 names the constraint of a measured workflow and plans the next maintenance ticket within a token budget, running nothing.",
+    "maturity": "beta",
+    "maturity_reason": "read-only constraint identification and simulated ticket ranking over caller measurements; no scheduler, and the live agent path refuses in this release",
+    "surface": "python + cli + mcp",
+    "ops": [
+      "identify_constraint",
+      "plan"
+    ],
+    "requires": [
+      "action_gating",
+      "agent_claude",
+      "agent_codex",
+      "agents",
+      "operator",
+      "safety_engine"
+    ],
     "sensitive_ops": [],
     "vetting": null
   },

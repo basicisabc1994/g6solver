@@ -41,6 +41,9 @@ from g6.operator.store import OwnerScope, append_only
 
 OUTWARD_TYPES = frozenset({"email", "post", "publish_copy", "price_test", "spend", "experiment"})
 GUARD_CANDIDATE = "guard_candidate"   # internal: a learned check a person may adopt; never outward
+RUN_APPROVAL = "run_approval"         # internal: a person's approval of one bound run; never outward
+APPROVAL_REQUIRED = "G6_E_OPERATOR_APPROVAL_REQUIRED"
+APPROVAL_MISMATCH = "G6_E_OPERATOR_APPROVAL_MISMATCH"
 DECOY_AUTHOR = "operator:decoy"
 
 _SCHEMA = """
@@ -270,6 +273,40 @@ class ActionQueue:
             action_id = self._insert(vid, "", GUARD_CANDIDATE, _clean(body), {"guard": guard.name, "sha": guard.sha()},
                                      proposed_by, review)
         return self.get(vid, action_id)
+
+    # -- run approvals: a person's decision, bound to exactly one run -------------------------
+    def request_run(self, venture_id: str, *, binding: str, summary: str, requested_by: str) -> dict[str, Any]:
+        """Queue a request that a person approve one run, bound to ``binding`` (the digest of exactly what will run),
+        as ``proposed``. The requester cannot decide it, nor can an ``auto:`` reviewer (``approve``'s rules)."""
+        vid = self.scope.resolve(venture_id)
+        if not str(binding or "").strip():
+            raise QueueError(f"[{APPROVAL_REQUIRED}] a run approval needs the binding of what will run")
+        if not str(requested_by or "").strip():
+            raise QueueError(f"[{APPROVAL_REQUIRED}] a run approval needs the actor that requested it")
+        review = {"state": QUALIFIED, "code": APPROVAL_REQUIRED,
+                  "message": "a run waits for a person's approval of exactly this binding"}
+        with self._conn:
+            action_id = self._insert(vid, "", RUN_APPROVAL, _clean(summary), {"binding": str(binding)},
+                                     str(requested_by), review)
+        return self.get(vid, action_id)
+
+    def run_approver(self, venture_id: str, action_id: str, *, binding: str) -> str:
+        """The name of the person whose decision approved exactly ``binding``; otherwise ``QueueError`` starting
+        ``[G6_E_OPERATOR_APPROVAL_REQUIRED]`` (no such run approval, or not approved) or
+        ``[G6_E_OPERATOR_APPROVAL_MISMATCH]`` (approved for another binding)."""
+        vid = self.scope.resolve(venture_id)
+        row = self._row(vid, action_id)
+        if row is None or row["action_type"] != RUN_APPROVAL or row["decoy"]:
+            raise QueueError(f"[{APPROVAL_REQUIRED}] no run approval {str(action_id)[:40]!r} in this venture's queue")
+        if row["status"] != "approved":
+            raise QueueError(f"[{APPROVAL_REQUIRED}] this run approval is {row['status']}; a person must approve it")
+        if json.loads(row["meta_json"]).get("binding") != binding:
+            raise QueueError(f"[{APPROVAL_MISMATCH}] this approval was given for another run, not this one")
+        decided = self._conn.execute("SELECT reviewer FROM decisions WHERE action_id=? AND outcome='approved'"
+                                     " ORDER BY seq DESC LIMIT 1", (row["action_id"],)).fetchone()
+        if decided is None:   # the schema's trigger makes this unreachable; a run never goes ahead on it
+            raise QueueError(f"[{APPROVAL_REQUIRED}] no person's decision is recorded for this run approval")
+        return str(decided["reviewer"])
 
     def promote_guard(self, venture_id: str, action_id: str, guard: Guard) -> Guard:
         """``guard`` promoted, only when a person adopted exactly this guard (VEN-012)."""

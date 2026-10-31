@@ -40,7 +40,7 @@ Every result carries one of three labels, and G6 never upgrades a label it did n
   check runs in the same process as the work: it catches mistakes, not code written to defeat it.
 - **Results are published, misses included,** on the [Research](site/docs/research.md) page, as a worked example.
 - **Local-first and open.** No telemetry and no server of ours. Data goes only to the model you choose.
-- **Small parts.** 34 components in the core harness, each usable on its own, extensions that join the library one at
+- **Small parts.** 37 components in the core harness, each usable on its own, extensions that join the library one at
   a time, and 11 bundles that package them for one problem each.
 
 ## Install
@@ -179,12 +179,12 @@ recommending a new release.
   *surface* column says which; the rest are Python-only for now.
   - Evidence and claims: `grounding`, `epistemic_integrity`, `evidence`, `invariants`.
   - Actions and runtime safety: `action_gating`, `action_logic`, `safety_engine`, `guards`, `goal_engine`.
-  - Coding agents: `coding_agent_gate`, `workforce`.
+  - Coding agents: `coding_agent_gate`, `workforce`, `complexity`.
   - Tasks, plans and context: `intent_engine`, `reliability_pipeline`, `solver`, `navigator`, `context`.
-  - Reasoning and search: `reasoning`, `debate`, `abstraction`.
+  - Reasoning and search: `reasoning`, `debate`, `abstraction`, `algorithm_design`.
   - Formal methods, shown together on the Components page: `formal`, `algebra`, `lean`, `model_checking`,
     `datalog`, `prolog`, `cegis`, `csf`, `causal`, `optimisation`, `graph_reasoning`.
-  - Governed learning: `learning`, `self_training`, `distillation`, `metaharness`.
+  - Governed learning: `learning`, `self_training`, `distillation`, `metaharness`, `self_maintenance`.
 - **The harness** (`g6.harness`): the one place components are composed. A standard (goal plus checks) runs through
   intake, plan, execute, adjudicate and remember.
 - **Extensions**: components outside the core, each with its tests, its skill and the

@@ -4,7 +4,7 @@
 
 Every way of failing G6 names, the components in the library that guard against it today, and the ones whose own use can cause it. A component built in a vetted area guards nothing until its certificate is current.
 
-240 failure modes: 148 guarded by at least one component, 92 with no guard yet.
+240 failure modes: 150 guarded by at least one component, 90 with no guard yet.
 
 | Failure mode | Code | Guarded by | Can be caused by | Built, awaiting its certificate |
 |---|---|---|---|---|
@@ -51,7 +51,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a safety check that passes when its parts are missing | `fail_open_check` | `action_gating` | — | — |
 | a failed or blocked search taken to mean there are no results | `failure_read_as_empty` | `ctx_search`, `knowledge_fetcher` | — | — |
 | a false analogy between fields that differ in structure | `false_analogy` | `reasoning` | — | — |
-| an uncertain or evasive answer passed off as confident | `false_confidence` | `epistemic_integrity` | — | — |
+| an uncertain or evasive answer passed off as confident | `false_confidence` | `epistemic_integrity` | `complexity` | — |
 | output presented as expert-reviewed when it was not | `false_expert_review` | — | — | — |
 | code changed by text edits that break its structure | `fragile_text_edit` | `meta_programming` | — | — |
 | a long task drifting from its goal | `goal_drift` | `goal_engine` | — | — |
@@ -61,7 +61,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a result handed over without saying how far to rely on it | `handoff_gap` | `reliability_pipeline` | — | — |
 | boilerplate web code written by hand, inconsistently | `handwritten_boilerplate` | `adapt_django` | — | — |
 | acting on a risky or privacy-violating request | `harmful_request_followed` | `guards` | — | — |
-| an unstated assumption that would change the answer if false | `hidden_assumption` | `reliability_pipeline` | — | — |
+| an unstated assumption that would change the answer if false | `hidden_assumption` | `reliability_pipeline` | `algorithm_design` | — |
 | agents overwriting each other's work | `hidden_state_or_workspace_conflict` | `shared_workspace` | — | — |
 | optimising one goal while quietly hurting another | `hidden_tradeoff` | `metaharness` | — | — |
 | a point estimate that hides its uncertainty | `hidden_uncertainty` | `adapt_bayesian` | — | — |
@@ -90,7 +90,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | tests run in a repository that can change during the run | `live_working_tree` | — | `workforce` | — |
 | a model lost in too much context | `long_context_degradation` | `context` | — | — |
 | messages between agents lost or mixed up | `lost_agent_message` | `agent_nanoclaw` | — | — |
-| effort spent on low-value tasks first | `low_value_first` | — | — | — |
+| effort spent on low-value tasks first | `low_value_first` | `self_maintenance` | — | — |
 | model output that does not match the expected structure | `malformed_model_output` | `grounding` | — | — |
 | a manual deployment step done wrong, or impossible to repeat | `manual_deploy_error` | — | — | — |
 | a wrong or planted entry in stored memory, used as if true | `memory_poisoning` | `ctx_ace` | — | — |
@@ -117,7 +117,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | off-brand or unreviewed content going out | `off_brand_content` | — | — | — |
 | container steps failing without clear errors | `opaque_container_failure` | — | — | — |
 | output contract missing | `output_contract_missing` | — | — | — |
-| a change that alters behaviour outside the part it was meant to touch | `outside_scope` | — | `meta_programming` | — |
+| a change that alters behaviour outside the part it was meant to touch | `outside_scope` | `complexity` | `meta_programming` | — |
 | overbroad retrieval | `overbroad_retrieval` | — | — | — |
 | generated code that only works on the examples it was shown | `overfit_to_examples` | `cegis` | `adapt_healing` | — |
 | a coding agent run with more access than it needs | `overprivileged_agent` | `agent_claude`, `agent_codex` | — | — |
@@ -132,7 +132,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | model calls wired separately for each provider | `provider_specific_glue` | — | — | — |
 | quality defects and production bottlenecks found too late | `quality_defect_missed` | — | — | — |
 | a design that fails only in a rare order of events nobody tried | `rare_interleaving` | `model_checking` | — | — |
-| reimplementing a method that already exists | `reinvented_method` | `ctx_library_mapper` | — | — |
+| reimplementing a method that already exists | `reinvented_method` | `algorithm_design`, `ctx_library_mapper` | — | — |
 | repeating the same mistake | `repeated_mistake` | `action_gating`, `learning`, `metaharness` | — | — |
 | the same claim repeated, counted as more evidence | `repetition_as_corroboration` | `epistemic_integrity` | — | — |
 | repository dumping | `repository_dumping` | — | — | — |
@@ -180,8 +180,8 @@ Every way of failing G6 names, the components in the library that guard against 
 | financial risk and compliance gaps left unchecked | `unchecked_financial_risk` | — | — | — |
 | a maths claim accepted without a machine-checked proof | `unchecked_maths_claim` | `lean` | — | — |
 | a message released without checking its coverage or tone | `unchecked_message_release` | — | — | — |
-| a plan from an agent or a model followed without checking each step against what its actions need | `unchecked_plan` | `cog_arch_gps` | — | — |
-| a self-change that slips past its own checks | `unchecked_self_change` | `metaharness`, `self_training` | — | — |
+| a plan from an agent or a model followed without checking each step against what its actions need | `unchecked_plan` | `cog_arch_gps` | `goal_engine` | — |
+| a self-change that slips past its own checks | `unchecked_self_change` | `metaharness`, `self_maintenance`, `self_training` | — | — |
 | a multi-step workflow failing in a step nobody checked | `unchecked_step` | — | — | — |
 | a task sent to a paid or unsuitable model nobody chose | `unchosen_model` | `llm_router` | — | — |
 | a paid outside service used without the person choosing it | `unchosen_paid_service` | `adapt_image`, `adapt_voice` | — | — |
@@ -201,10 +201,10 @@ Every way of failing G6 names, the components in the library that guard against 
 | a lesson that sounds right and does not help | `unhelpful_lesson` | `learning` | — | — |
 | a planning agent acting on a model that has not learned the environment's rewards | `unlearned_reward_model` | `cog_arch_aixi` | — | — |
 | facts spread across text with no links between them | `unlinked_facts` | `ctx_cognee` | — | — |
-| code growing more complex than anyone can safely change | `unmanaged_complexity` | `design_governance` | — | — |
+| code growing more complex than anyone can safely change | `unmanaged_complexity` | `complexity`, `design_governance` | — | — |
 | a model of human recall that ignores how memory fades and interferes | `unmodelled_recall` | `cog_arch_actr` | — | — |
 | a slow decline in quality or speed that nobody notices | `unnoticed_drift` | `solver` | — | — |
-| a plan called the best when nobody proved it | `unproven_optimum` | `optimisation` | — | — |
+| a plan called the best when nobody proved it | `unproven_optimum` | `algorithm_design`, `optimisation` | — | — |
 | useful heuristics forgotten or never ranked | `unranked_heuristics` | `learning` | — | — |
 | source material skipped or garbled because its format could not be read | `unreadable_source` | `knowledge_converter`, `knowledge_fetcher` | — | — |
 | a deployment sent without a readiness check | `unready_deploy` | — | — | — |
@@ -244,7 +244,7 @@ Every way of failing G6 names, the components in the library that guard against 
 | a law or ruling from another jurisdiction given as the one asked about | `wrong_jurisdiction` | `australian_legal_corpus` | — | — |
 | a poor solution from the wrong optimisation method | `wrong_optimiser` | `optimisation` | — | — |
 | a plan based on wrong physical expectations | `wrong_physics_expectation` | — | — | — |
-| solving the wrong problem | `wrong_problem` | `intent_engine` | `adapt_library_synthesizer`, `component_creator` | — |
+| solving the wrong problem | `wrong_problem` | `intent_engine` | `adapt_library_synthesizer`, `component_creator`, `self_maintenance` | — |
 | harm or irreversibility underestimated | `wrong_risk_tier` | `reliability_pipeline` | — | — |
 | a wrong formula, root or integral stated with confidence | `wrong_symbolic_result` | `algebra` | — | — |
 | a transcript too empty or too long for the speech it came from | `wrong_transcript` | `adapt_voice` | — | — |

@@ -42,7 +42,7 @@ combine, and each worked example applies a restricted subset of them to one prob
 
 -   **Open and composable**
 
-    34 components in the core harness, each usable alone, with their dependencies declared, and extensions in
+    37 components in the core harness, each usable alone, with their dependencies declared, and extensions in
     families of their own. Over MCP, the CLI or Python. Read every line.
 
 </div>

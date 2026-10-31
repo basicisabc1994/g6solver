@@ -172,16 +172,17 @@ forbidden_modules = ["g6.harness", "g6.research", "g6.operator", "g6.mcp", "g6.c
 name = "the meta-harness is a layer on top: MCP and CLI consent entry points"
 type = "forbidden"
 source_modules = [
-  "g6.abstraction", "g6.action_gating", "g6.action_logic", "g6.algebra", "g6.bundles", "g6.causal", "g6.cegis",
+  "g6.abstraction", "g6.action_gating", "g6.action_logic", "g6.algebra", "g6.algorithm_design", "g6.bundles", "g6.causal",
+  "g6.cegis",
   "g6.cli",
-  "g6.coding_agent_gate",
+  "g6.coding_agent_gate", "g6.complexity",
   "g6.context", "g6.core", "g6.csf", "g6.datalog", "g6.debate", "g6.distillation", "g6.epistemic_integrity",
   "g6.evidence",
   "g6.formal", "g6.goal_engine", "g6.graph_reasoning", "g6.grounding", "g6.guards", "g6.harness", "g6.integrity",
   "g6.intent_engine",
   "g6.invariants", "g6.lean", "g6.learning", "g6.llm_router", "g6.model_checking", "g6.navigator", "g6.operator",
   "g6.optimisation", "g6.prolog", "g6.reasoning", "g6.reliability_pipeline",
-  "g6.research", "g6.safety_engine", "g6.self_training", "g6.skills", "g6.solver", "g6.triage", "g6.workforce",
+  "g6.research", "g6.safety_engine", "g6.self_maintenance", "g6.self_training", "g6.skills", "g6.solver", "g6.triage", "g6.workforce",
   "g6.agents", "g6.code", "g6.cogarch", "g6.deploy", "g6.domains", "g6.embodied", "g6.integrations", "g6.jobs",
   "g6.knowledge", "g6.media", "g6.memory", "g6.ml", "g6.provers", "g6.sources", "g6.workspace",
 ]

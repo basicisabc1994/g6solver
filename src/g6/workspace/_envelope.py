@@ -57,6 +57,9 @@ LIBRARY_KIND_MISMATCH = "G6_E_LIBRARY_KIND_MISMATCH"
 LIBRARY_MISSING_VALUE = "G6_E_LIBRARY_MISSING_VALUE"
 LIBRARY_EXTRA_VALUE = "G6_E_LIBRARY_EXTRA_VALUE"
 LIBRARY_CORRUPT = "G6_E_LIBRARY_CORRUPT"
+LIBRARY_CATALOGUE = "G6_E_LIBRARY_CATALOGUE"
+LIBRARY_NAME_TAKEN = "G6_E_LIBRARY_NAME_TAKEN"
+LIBRARY_INSTALL_PARTIAL = "G6_E_LIBRARY_INSTALL_PARTIAL"
 
 _ACTIONS: dict[str, str] = {
     INPUT_INVALID: "Correct the input as the reason says and ask again.",
@@ -83,6 +86,7 @@ _ACTIONS: dict[str, str] = {
     LIBRARY_MISSING_VALUE: "Give a value for every placeholder the reason names.",
     LIBRARY_EXTRA_VALUE: "Leave out the values the template has no placeholder for.",
     LIBRARY_CORRUPT: "Nothing was read or stored. Ask a person to check the library file against a copy they kept.",
+    LIBRARY_NAME_TAKEN: "The name holds a prompt of your own; install the catalogue under a prefix, or keep yours.",
 }
 
 State = Literal["qualified-draft", "blocked-escalated"]
@@ -132,7 +136,8 @@ def refuse(operation: str, code: str, reason: str, *, evidence: dict[str, Any] |
 
 
 __all__ = ["ARCHIVE_REFUSED", "BACKED_UP", "BUSY", "DRY_RUN", "INPUT_INVALID", "LIBRARY_CORRUPT", "LIBRARY_EXTRA_VALUE",
-           "LIBRARY_INPUT_INVALID", "LIBRARY_KIND_MISMATCH", "LIBRARY_LISTED", "LIBRARY_MISSING_VALUE",
+           "LIBRARY_CATALOGUE", "LIBRARY_INPUT_INVALID", "LIBRARY_INSTALL_PARTIAL", "LIBRARY_KIND_MISMATCH", "LIBRARY_LISTED",
+           "LIBRARY_MISSING_VALUE", "LIBRARY_NAME_TAKEN",
            "LIBRARY_NOT_FOUND", "LIBRARY_READ", "LIBRARY_RENDERED", "LIBRARY_RETIRED", "LIBRARY_STORED",
            "LIBRARY_UNKNOWN_VERSION", "LISTED", "LOCKED", "LOCK_RELEASED", "LOCK_TAKEN", "NOT_A_FILE", "NOT_A_WORKSPACE", "NOT_FOUND", "NOT_TEXT", "OP_FAILED", "OUTSIDE_ROOT", "READ",
            "REMOVED", "RESERVED", "RESOLVED", "RESOURCE_LIMIT", "RESTORED", "STALE_WRITE", "WRITTEN",

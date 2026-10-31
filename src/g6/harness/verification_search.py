@@ -112,6 +112,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from g6.core import component_process
 from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.harness import verification_controller
 from g6.harness.patch_review import (
     NORMATIVE,
     NOT_ESTABLISHED,
@@ -738,13 +739,21 @@ def _bound(left: float) -> int:
 
 
 def search(change: repo_tests.Change, checks: list[ProposedCheck], placed: dict[str, str], *, deadline: float,
-           artifact: str, origins: dict[str, Origin] | None = None, roots: tuple[str, ...] = ()) -> Search:
+           artifact: str, origins: dict[str, Origin] | None = None, roots: tuple[str, ...] = (),
+           select: bool = False) -> Search:
     """Run each proposed check on the patch and at the base commit (``_run_check``, with the review's import
     ``roots``), classify it, and say what it found; the stage stops when the review's deadline would be passed.
-    ``origins``: the checks G6 compiled from template instances, by id (the others are free-form proposals)."""
+    ``origins``: the checks G6 compiled from template instances, by id (the others are free-form proposals).
+
+    ``select``: run the checks in the experiment selector's order (``verification_controller.order_checks``) instead
+    of the order given. It is off by default, ``search_config`` has no key for it and no review sets it: Gate C (V11)
+    must show the selector helps before any caller does."""
     done = Search()
     stopped = False
     rooted = {"roots": tuple(roots)} if roots else {}
+    if select:
+        checks = verification_controller.order_checks(
+            checks, patch_only=lambda ident: (origins or {}).get(ident, FREE_FORM).patch_only)
 
     def read(at_base: bool) -> dict:
         ran = _run_check(change, activity["placed"], one.source, node, at_base=at_base,

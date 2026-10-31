@@ -80,6 +80,25 @@ jobs:
       # And every skill's Python examples, which the test job skips where an extra they use is not installed.
       - name: Extension conformance kit
         run: python -m pytest -q tests/conformance tests/core/test_component_skills.py
+  # The outside review's gate 5: every operation P1 added, over a real stdio MCP server started from an installed wheel
+  # (not editable), so `import g6` comes from site-packages. No extra beyond mcp, no key, no model call. It checks no
+  # certificate, so it needs neither the reviewed head's ref nor the whole history.
+  mcp-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ".[mcp]"
+      - name: Installed-MCP smoke test
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: python "$GITHUB_WORKSPACE/tools/mcp_smoke.py"
   scan:
     runs-on: ubuntu-latest
     steps:
