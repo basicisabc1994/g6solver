@@ -18,6 +18,8 @@ established.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import os
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -26,12 +28,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import digest
 from g6.core.llm import DEFAULT_MAX_TOKENS
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
-from g6.metaharness.domain import Cut, Domain, FailureRecord, cut_pool, domain_problems, judge_source
+from g6.metaharness.domain import Cut, Domain, FailureRecord, Judge, cut_pool, domain_problems, judge_source
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
@@ -40,12 +43,17 @@ from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, Work
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
-from g6.self_maintenance.envelope import ENDS_A_STREAK, CycleLog, beat, stop_reason
+from g6.self_maintenance.envelope import ENDS_A_STREAK, MAX_FAILED_CYCLES, CycleLog, beat, stop_reason
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 
 NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
 POOL_TOO_SMALL = "G6_E_LOOP_POOL_TOO_SMALL"
+EVALUATOR_IN_REACH = "G6_E_LOOP_EVALUATOR_IN_REACH"
 STOPPED = "G6_E_LOOP_STOPPED"
+PAUSED = "G6_E_LOOP_PAUSED"
+RESUMED = "G6_E_LOOP_RESUMED"
+FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
+HELD_OUT_SPENT = "G6_E_LOOP_HELD_OUT_SPENT"
 ENROLLED = "G6_E_LOOP_ENROLLED"
 STATUS = "G6_E_LOOP_STATUS"
 IDLE = "G6_E_LOOP_IDLE"
@@ -137,6 +145,26 @@ def _pool_problems(cut: Cut, policy: EvidencePolicy) -> list[tuple[str, str]]:
             for name, (found, least) in needs.items() if len(found) < least]
 
 
+def _overlap(a: str, b: str) -> bool:
+    return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
+
+
+def _in_reach(root: Path, domain: Domain) -> list[str]:
+    """What judges that lies in or around the loop's folder, which is the only place it writes."""
+    judge, sealed = domain.judge(), domain.sealed()
+    source = judge_source(judge.verdict) if judge is not None else None
+    guarded = {"G6's own source": str(Path(g6.__file__).resolve().parent),
+               **({"the judge's folder": str(source.resolve().parent)} if source is not None else {}),
+               **{f"sealed root {i}": r for i, r in enumerate(sealed.vault.roots if sealed is not None else ())}}
+    where = os.path.normcase(str(root))
+    return [name for name, path in guarded.items() if _overlap(where, os.path.normcase(path))]
+
+
+def _judge_digest(judge: Judge | None) -> str:
+    source = judge_source(judge.verdict) if judge is not None else None
+    return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
+
+
 class ShadowLoop:
     def __init__(self, domain: Domain, root: str | Path, settings: LoopSettings, *, proposer: Any,
                  now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -146,6 +174,10 @@ class ShadowLoop:
         self.counts = [0]
         self._proposer = _Counted(proposer, self.counts)
         self.root = Path(root).resolve()
+        reach = _in_reach(self.root, domain)
+        if reach:                                # before anything is written: this folder is all the loop ever writes
+            raise ValueError(f"[{EVALUATOR_IN_REACH}] the loop's folder overlaps {', '.join(reach)}: it never writes "
+                             "what judges it")
         self.log = CycleLog(self.root / "records" / "constraint_log.jsonl")
         self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
                                  read_account=read_account)
@@ -171,11 +203,25 @@ class ShadowLoop:
                 + method.cycles * (proposing + racing) + self.settings.eval_calls + per_run * (per_run + 2))
 
     def _frozen(self) -> dict[str, str]:
-        """What must not change: what judges, and every frozen case."""
-        judge = self.domain.judge()
-        return {"evaluator": digest({"judging": judging_sha256(), "workflow": self.workflow.digest(),
-                                     "judge_source": judge_source(judge.verdict).read_bytes().hex()}),
-                "cases": self.cut.digest(), "sealed": self.domain.sealed().vault.digest}
+        """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
+        split. The judge's whole file is digested, since a helper it calls judges too. No profile is in it."""
+        run, sealed = self.domain.execution(), self.domain.sealed()
+        return {"evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(self.domain.judge()),
+                                     "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
+                                                                                         *run.optional_checks.values())]}),
+                "cases": cut_pool(self.domain.development(), self.settings.seed).digest(),
+                "sealed": digest({"vault": sealed.vault.digest if sealed is not None else "",
+                                  "refs": [dict(r) for r in sealed.refs] if sealed is not None else []})}
+
+    def _changed(self) -> list[str]:
+        """Which of the frozen things differ from what a person enrolled. The vault's digest is of the files as sealed,
+        so the sealed bytes are compared as well."""
+        recorded, now = self.log.enrolled()["frozen"], self._frozen()
+        changed = {name for name, value in now.items() if value != recorded.get(name)}
+        sealed = self.domain.sealed()
+        if sealed is not None and sealed.vault.verify_unchanged():
+            changed.add("sealed")
+        return sorted(changed)
 
     def _invalid(self) -> dict[str, Any] | None:
         if self.problems:
@@ -193,7 +239,20 @@ class ShadowLoop:
         engaged = stop.engaged()
         if engaged is not None:
             return _blocked(stop.STOPPED, f"G6 is stopped: {engaged}", "Whoever engaged the stop releases it.")
-        return self._invalid()
+        invalid = self._invalid()
+        if invalid is not None:
+            return invalid
+        paused = self.log.paused()
+        if paused:
+            return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
+        changed = self._changed()
+        if changed:
+            return _blocked(FROZEN_CHANGED, f"changed since a person enrolled this domain: {', '.join(changed)}. Nothing "
+                            "measured against it would mean what it did", "A person checks the change and enrols again.")
+        if self.mh.held_out_left() <= 0:
+            return _blocked(HELD_OUT_SPENT, "this held-out split has given all the evaluations it may: the gate needs a "
+                            "fresh split, and only a person can confirm one", "A person freezes a fresh split and enrols.")
+        return None
 
     def enrol(self, confirmed_by: str) -> dict[str, Any]:
         """A person confirms what judges this domain. It happens once, and it is the one step the loop cannot do."""
@@ -250,7 +309,25 @@ class ShadowLoop:
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
-        return self._reply(self.log.cycle(row))
+        reply = self._reply(self.log.cycle(row))
+        self._pause_if_failing()
+        return reply
+
+    def _pause_if_failing(self) -> None:
+        streak = self.log.failed_streak()
+        if streak >= MAX_FAILED_CYCLES:
+            last = self.log.cycles()[-streak:]
+            self.log.pause("three failed cycles in a row: " + "; ".join(
+                f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in last))
+
+    def resume(self, accepted_by: str) -> dict[str, Any]:
+        """A person lifts a pause, having read why. The loop cannot lift its own."""
+        who = accepted_by.strip()
+        if not who or is_automated(who):
+            return _blocked(APPROVAL_REQUIRED, "a person lifts a pause (no empty or auto: name)")
+        if self.log.paused():
+            self.log.resume(who)
+        return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
     def _cycle(self) -> dict[str, Any]:
         version, head = self.mh._head()

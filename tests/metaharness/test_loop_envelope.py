@@ -2,6 +2,7 @@
 """The envelope around a tick (design 6.6, 6.10), enforced in code. Each section's test was seen failing first."""
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import sys
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
+import g6
 from g6.core import stop
+from g6.harness import Check
+from g6.metaharness import SuiteCase
+from g6.metaharness.domain import Judge
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.self_maintenance.envelope import heartbeat
@@ -191,3 +196,178 @@ def test_a_cycle_that_breaks_is_charged_what_it_used(tmp_path):
     domain.failures = broken
     assert loop.tick()["outcome"] == "error"
     assert 0 < loop.meter.reading("claude", NOW).used == len(domain.llm.calls)
+
+# Three failed cycles -------------------------------------------------------------------------------------------------
+NOTHING_HELPS = {"prompt": "Please be polite."}
+
+
+def test_three_failed_cycles_in_a_row_pause_the_loop_with_a_stated_reason(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    ends = [loop.tick()["outcome"] for _ in range(3)]
+    why = loop.log.paused()
+    assert "three failed cycles" in why and all(end in why for end in ends)
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_PAUSED" and why in got["message"] and len(domain.llm.calls) == calls
+    assert len(loop.log.cycles()) == 3 and heartbeat(loop.root)["code"] == "G6_E_LOOP_PAUSED"
+
+
+def test_two_failed_cycles_do_not_pause_it(tmp_path):
+    loop, _ = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    for _ in range(2):
+        loop.tick()
+    assert loop.log.paused() == ""
+
+
+def test_a_pause_outlives_the_process(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    for _ in range(3):
+        loop.tick()
+    again, _ = _loop(tmp_path, domain=domain)
+    assert _code(again.tick()) == "G6_E_LOOP_PAUSED"
+
+
+def test_only_a_person_lifts_the_pause_and_then_it_runs(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    for _ in range(3):
+        loop.tick()
+    for name in ("", "auto:loop"):
+        assert loop.resume(name)["completion_state"] == "blocked-escalated"
+    assert _code(loop.tick()) == "G6_E_LOOP_PAUSED"
+    assert loop.resume("Ada")["completion_state"] == "qualified-draft"
+    assert loop.log.paused() == "" and loop.status()["failed_streak"] == 0
+    assert _code(loop.tick()) != "G6_E_LOOP_PAUSED"
+
+
+def test_a_cycle_that_breaks_counts_towards_the_pause(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def broken(view):
+        raise RuntimeError("no")
+
+    domain.failures = broken
+    for _ in range(3):
+        loop.tick()
+    assert "error" in loop.log.paused()
+
+
+# The frozen digests --------------------------------------------------------------------------------------------------
+
+def test_a_changed_frozen_case_stops_the_loop_before_anything_is_spent(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    domain.pool[0] = SuiteCase(domain.pool[0].case_id, domain.pool[0].input, "999")
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "cases" in got["message"]
+    assert len(domain.llm.calls) == calls and loop.log.cycles() == []
+
+
+def test_a_new_case_is_a_changed_pool(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    domain.pool.append(SuiteCase("late", "What is the answer?", "1"))
+    assert _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED"
+
+
+def _judge_in(folder: Path, name: str):
+    path = folder / f"{name}.py"
+    path.write_text("def exact(output, expected):\n    return output.strip() == f'Answer: {expected}'\n",
+                    encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.exact, path
+
+
+def test_an_edit_anywhere_in_the_judges_file_stops_the_loop(tmp_path):
+    (tmp_path / "judges").mkdir()
+    verdict, path = _judge_in(tmp_path / "judges", "judge_for_a_test")
+    domain = domains.WordProblems(tmp_path)
+    domain.judge = lambda: Judge(verdict, answers_by="independent")
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    path.write_text(path.read_text(encoding="utf-8") + "\n# a helper the judge calls changed\n", encoding="utf-8")
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "evaluator" in got["message"]
+
+
+def test_a_change_to_g6s_judging_code_stops_the_loop(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path)
+    monkeypatch.setattr("g6.metaharness.loop.judging_sha256", lambda: "changed")
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "evaluator" in got["message"]
+
+
+def test_a_changed_check_stops_the_loop(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    run = domain.execution()
+    weaker = Check("anything goes", lambda out: True, check_id="anything", known_bad=(), known_good="x")
+    domain.execution = lambda: dataclasses.replace(run, checks=(weaker,))
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "evaluator" in got["message"]
+
+
+def test_a_changed_sealed_file_stops_the_loop(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    domain.sealed_file.write_text("a sealed case was edited", encoding="utf-8")
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "sealed" in got["message"]
+
+
+def test_a_change_is_not_a_failed_cycle_and_a_person_enrolling_again_accepts_it(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    domain.pool.append(SuiteCase("late", "What is the answer?", "1"))
+    for _ in range(4):
+        loop.tick()
+    assert loop.log.failed_streak() == 0 and loop.log.paused() == ""
+    again, _ = _loop(tmp_path, domain=domain)
+    assert _code(again.tick()) == "G6_E_LOOP_FROZEN_CHANGED"       # the new process is no way round it
+    assert again.enrol("Ada")["completion_state"] == "qualified-draft"
+    assert _code(again.tick()) != "G6_E_LOOP_FROZEN_CHANGED"
+
+
+def test_the_digest_is_of_what_judges_never_of_the_profile(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"                     # the head moved
+    assert _code(loop.tick()) != "G6_E_LOOP_FROZEN_CHANGED"        # and nothing frozen did
+
+
+# The held-out split ---------------------------------------------------------------------------------------------------
+
+def _spend_the_split(loop) -> None:
+    split = loop.workflow.suite.digest("held_out")
+    for i in range(loop.workflow.policy.max_evaluations):
+        loop.mh.ledger.append("evaluation", f"spent-{i}", {"split_digest": split})
+
+
+def test_a_spent_held_out_split_is_a_wait_for_a_person_and_costs_nothing(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    _spend_the_split(loop)
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_HELD_OUT_SPENT" and "fresh" in got["message"]
+    assert len(domain.llm.calls) == calls and loop.log.cycles() == []
+
+
+# What the loop can reach ---------------------------------------------------------------------------------------------
+
+def test_the_loops_folder_may_not_hold_the_sealed_split(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    with pytest.raises(ValueError, match="G6_E_LOOP_EVALUATOR_IN_REACH"):
+        ShadowLoop(domain, tmp_path, SETTINGS, proposer=domains.proposes({"prompt": "x"}))
+
+
+def test_the_loops_folder_may_not_hold_the_judge(tmp_path):
+    (tmp_path / "judge-here").mkdir()
+    verdict, _ = _judge_in(tmp_path / "judge-here", "judge_two")
+    domain = domains.WordProblems(tmp_path)
+    domain.judge = lambda: Judge(verdict, answers_by="independent")
+    with pytest.raises(ValueError, match="G6_E_LOOP_EVALUATOR_IN_REACH"):
+        ShadowLoop(domain, tmp_path / "judge-here" / "loop", SETTINGS, proposer=domains.proposes({"prompt": "x"}))
+    with pytest.raises(ValueError, match="G6_E_LOOP_EVALUATOR_IN_REACH"):
+        ShadowLoop(domain, tmp_path / "judge-here", SETTINGS, proposer=domains.proposes({"prompt": "x"}))
+
+
+def test_the_loops_folder_may_not_lie_in_g6s_own_source_and_nothing_is_created_there(tmp_path):
+    root = Path(g6.__file__).parent / "loop-must-not-be-created-here"
+    with pytest.raises(ValueError, match="G6_E_LOOP_EVALUATOR_IN_REACH"):
+        ShadowLoop(domains.WordProblems(tmp_path), root, SETTINGS, proposer=domains.proposes({"prompt": "x"}))
+    assert not root.exists()
