@@ -99,17 +99,17 @@ class BudgetMeter:
 
     def _venture(self, window: ProviderWindow, start: datetime) -> str:
         """The ledger's venture for this provider week; its cap is the allowance that held when the week began."""
-        name = f"{window.provider}@{start.isoformat()}"
-        for venture in self.scope.list_ventures():
-            if venture["name"] == name:
-                return venture["venture_id"]
-        return self.scope.create_venture(name, caps={_ACCOUNT: window.allowance, "cash": 0})["venture_id"]
+        return self.scope.venture_named(f"{window.provider}@{start.isoformat()}",
+                                        caps={_ACCOUNT: window.allowance, "cash": 0})
 
     def reading(self, provider: str, now: datetime) -> Admission:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
+        return self._look(provider, now)[0]
+
+    def _look(self, provider: str, now: datetime) -> tuple[Admission, AccountReading | None]:
         window = self.windows.get(provider)
         if window is None:
-            return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}")
+            return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None
         start, day = window.place(now)
         venture = self._venture(window, start)
         account = self._read_account(provider, start) if self._read_account is not None else None
@@ -121,21 +121,26 @@ class BudgetMeter:
                          ceiling(window.allowance, day, window.reserve_share),
                          window.estimated or (above and account is not None and account.estimated),
                          reason=f"at a reported limit; waiting for the reset at {wait.isoformat()}" if limited else "",
-                         wait_until=wait if limited else None, venture=venture)
+                         wait_until=wait if limited else None, venture=venture), account
 
     def reserve(self, provider: str, now: datetime, worst_case: float) -> Admission:
         """Reserve ``worst_case`` when the week's ceiling allows it. A refusal is an admission with ``admitted`` false
-        and its reason: the loop waits, and never spends elsewhere."""
-        seen = self.reading(provider, now)
+        and its reason: the loop waits, and never spends elsewhere. The ceiling is checked inside the transaction that
+        reserves, on the ledger as it stands then, so two ticks that each read room cannot both pass it."""
+        seen, account = self._look(provider, now)
         if seen.reason:
             return seen
-        if seen.used + worst_case > seen.ceiling + _SLACK:
-            return replace(seen, reason=f"{seen.used:g} used plus a worst case of {worst_case:g} is over day "
-                                         f"{seen.day}'s ceiling of {seen.ceiling:g}")
-        window = self.windows[provider]
-        start, _ = window.place(now)
+
+        def over_the_ceiling(committed: float, pending: float) -> str:
+            used = _used(committed, pending, account)[0]
+            if used + worst_case <= seen.ceiling + _SLACK:
+                return ""
+            return f"{used:g} used plus a worst case of {worst_case:g} is over day {seen.day}'s ceiling of {seen.ceiling:g}"
+
+        start, _ = self.windows[provider].place(now)
         try:
-            reservation = self.scope.reserve(seen.venture, month=start.isoformat(), account=_ACCOUNT, amount=worst_case)
+            reservation = self.scope.reserve(seen.venture, month=start.isoformat(), account=_ACCOUNT, amount=worst_case,
+                                             admit=over_the_ceiling)
         except BudgetRefused as exc:
             return replace(seen, reason=str(exc))
         return replace(seen, admitted=True, reservation=reservation, amount=float(worst_case))

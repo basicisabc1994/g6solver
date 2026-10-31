@@ -2,6 +2,7 @@
 """The loop's budget (design 6.6): weekly provider windows, paced, on the operator's one ledger."""
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -173,3 +174,60 @@ def test_7_the_estimate_flag_follows_whichever_figure_was_used():
     quiet = _meter(read_account=lambda provider, start: AccountReading(used=10, estimated=True))
     quiet.settle(quiet.reserve("claude", _day(3), 100), 100)
     assert not quiet.reading("claude", _day(3)).estimated
+
+# Finding 8: the ceiling is checked in the transaction that reserves --------------------------------------------------------
+
+def _shared_meters(path, count: int, allowance: float = 1000, read_account=None) -> list[BudgetMeter]:
+    return [BudgetMeter((ProviderWindow("claude", allowance, START),), store=OperatorStore(path), read_account=read_account)
+            for _ in range(count)]
+
+
+def test_8_two_admissions_that_each_read_room_cannot_both_pass_the_ceiling(tmp_path):
+    path = tmp_path / "operator.db"
+    late: list = []
+
+    meter, rival = _shared_meters(path, 2)
+    read = meter._look
+
+    def another_tick_gets_in_first(provider, now):
+        seen = read(provider, now)
+        if not late:
+            late.append(rival.reserve("claude", _day(2), 300))  # after this one has read its room, before it writes
+        return seen
+
+    meter._look = another_tick_gets_in_first
+    got = meter.reserve("claude", _day(2), 300)                # 300 + 300 is over day two's 400
+    assert late[0].admitted and not got.admitted and "ceiling" in got.reason
+    assert meter.reading("claude", _day(2)).used == 300
+
+
+def test_8_concurrent_admissions_stay_under_the_ceiling(tmp_path):
+    path, workers = tmp_path / "operator.db", 8
+    meters = _shared_meters(path, workers)
+    start = threading.Barrier(workers)
+    admitted: list[bool] = []
+
+    def tick(meter: BudgetMeter) -> None:
+        start.wait()
+        admitted.append(meter.reserve("claude", _day(2), 150).admitted)
+
+    threads = [threading.Thread(target=tick, args=(m,)) for m in meters]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sum(admitted) == 2                                  # 2 x 150 fits day two's 400; a third never does
+    assert meters[0].reading("claude", _day(2)).used == 300
+
+
+def test_8_the_check_sees_the_account_as_read_and_the_ledger_as_it_stands(tmp_path):
+    reading = AccountReading(used=250)
+    meter, rival = _shared_meters(tmp_path / "operator.db", 2, read_account=lambda provider, start: reading)
+    assert rival.reserve("claude", _day(2), 100).admitted      # 250 + 100 fits 400
+    assert not meter.reserve("claude", _day(2), 100).admitted  # 250 + 100 pending + 100 does not
+
+
+def test_8_a_refused_admission_writes_nothing(tmp_path):
+    meter = _shared_meters(tmp_path / "operator.db", 1)[0]
+    assert not meter.reserve("claude", _day(1), 201).admitted
+    assert meter.reading("claude", _day(1)).used == 0
