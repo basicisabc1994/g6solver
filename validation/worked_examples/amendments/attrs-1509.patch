@@ -68,7 +68,7 @@ index c8d65ae..381ef7f 100644
      @pytest.mark.parametrize("cls", [Sub, SubSlots])
      def test_subclassing_with_extra_attrs(self, cls):
 diff --git a/tests/test_hooks.py b/tests/test_hooks.py
-index 54ca2ab..40ad2eb 100644
+index 54ca2ab..bdfeb04 100644
 --- a/tests/test_hooks.py
 +++ b/tests/test_hooks.py
 @@ -171,15 +171,11 @@ class TestTransformHook:
@@ -153,8 +153,21 @@ index 54ca2ab..40ad2eb 100644
  
      def test_hook_evolve_alias_sets_not_default(self):
          """
-@@ -375,7 +376,6 @@ class TestTransformHook:
-         f = attr.fields(C).x
+@@ -366,16 +367,17 @@ class TestTransformHook:
+         """
+ 
+         def hook(cls, attribs):
+-            return [a.evolve(alias="custom") for a in attribs]
++            return [
++                a.evolve(alias="custom").evolve(name="renamed") for a in attribs
++            ]
+ 
+         @attr.s(auto_attribs=True, field_transformer=hook)
+         class C:
+             x: int
+ 
+-        f = attr.fields(C).x
++        f = attr.fields(C).renamed
  
          assert "custom" == f.alias
 -        assert f.alias_is_default is False

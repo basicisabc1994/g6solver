@@ -8,7 +8,7 @@ The fix adds a new field, `Attribute.alias_is_default`. Searched the parent's `s
 
 ## tests/utils.py and four comparisons
 
-**Pinned name.** `simple_attr()` and the expected `Attribute(...)` objects passed `alias_is_default=True` or a parametrised value. Dropping the argument is not enough: with the fix's extra field, an `Attribute` built with an explicit alias compares unequal to a real field. So a helper `fields_view()` is added to `tests/utils.py`, and the four comparisons go through it. It keeps what comparing tuples of `Attribute` checks at the parent: the collection is a tuple, each item is exactly an `Attribute`, and it lists the fields `Attribute.__eq__` compares (all except `inherited`). The tuple and class checks matter because the parent's `attrs.fields()` documents its return as a tuple of `attrs.Attribute`, and the generated `__eq__` refuses another class. A fix with no new field, or one under any other name, is treated the same.
+**Pinned name.** `simple_attr()` and the expected `Attribute(...)` objects passed `alias_is_default=True` or a parametrised value. Dropping the argument is not enough: with the fix's extra field, an `Attribute` built with an explicit alias compares unequal to a real field. So a helper `fields_view()` is added to `tests/utils.py`, and the four comparisons go through it. It keeps what comparing tuples of `Attribute` checks at the parent: the collection is a tuple, each item is exactly an `Attribute`, and it lists the fields `Attribute.__eq__` compares (all except `inherited`). The tuple and class checks matter because the parent's `attrs.fields()` documents its return as a tuple of `attrs.Attribute`, and the generated `__eq__` refuses another class. A fix with no new field, or one under any other name, is treated the same by these comparisons.
 
 What stays checked, in `test_fields`, `test_programmatic`, `test_these` and `test_can_unpickle_25_3_attributes`: a tuple of `Attribute`, and every field that existed at the parent, compared as before, including `alias`. `test_can_unpickle_25_3_attributes` keeps its parametrisation, so its test ids do not change, but it no longer uses the flag. Old pickles must still load.
 
@@ -16,11 +16,13 @@ What stays checked, in `test_fields`, `test_programmatic`, `test_these` and `tes
 
 **Pinned name.** `test_hook_alias_available` recorded `a.alias_is_default` next to the name and alias. It now records `(a.name, a.alias)`. The aliases stay checked, including the private-name stripping and the explicit alias from the issue's example. This is the test that must go from failing to passing.
 
-**Pinned name.** A trailing `assert f.alias_is_default is ...` is removed from `test_hook_evolve_name_updates_auto_alias`, `test_hook_evolve_name_keeps_explicit_alias`, `test_hook_new_field_without_alias` and `test_hook_evolve_alias_sets_not_default`. In each one the `f.alias` assertion stays. These hold at the parent: a transformer that renames a field gets an `__init__` argument named after the new name. That is public behaviour at the parent, so it stays. It adds no new burden: a control that only moved the alias step also failed the older `test_hook_add_field`, which the fix did not touch.
+**Pinned name.** A trailing `assert f.alias_is_default is ...` is removed from `test_hook_evolve_name_updates_auto_alias`, `test_hook_evolve_name_keeps_explicit_alias` and `test_hook_new_field_without_alias`. In each one the `f.alias` assertion stays. These hold at the parent: a transformer that renames a field gets an `__init__` argument named after the new name. That is public behaviour at the parent, so it stays. It adds no new burden: a control that only moved the alias step also failed the older `test_hook_add_field`, which the fix did not touch.
 
 **Pinned name, replaced by behaviour.** `test_hook_explicit_alias_matching_default` asserted that the flag is false for an explicit alias equal to the default. That assertion is replaced: a transformer renames such a field, and the alias must stay. This holds at the parent and with the fix. `test_hook_evolve_name_keeps_explicit_alias` cannot do this job, because its alias differs from the default.
 
-**Not extended.** `test_hook_evolve_alias_sets_not_default` could also be rewritten, by renaming after `evolve(alias=...)`. It stays a plain removal. The docs' statement is about aliases the user gives on the field. Searched the parent's `docs` and `tests` for every `evolve(` and for a rename chained after an alias: nothing does this, so that would be a scenario I invented, not one the parent states.
+**Pinned name, replaced by behaviour.** `test_hook_evolve_alias_sets_not_default` asserted that the flag is false after `evolve(alias=...)`. That assertion is replaced: the hook now renames the field after setting the alias, and the alias must stay. At the parent `Attribute.evolve` copies the attribute and applies only the changes given, and `_transform_attrs` leaves a non-empty alias alone. So this follows directly from the parent, although no parent doc or test chains the two calls.
+
+**History of this hunk.** I first removed the assertion outright and called a chained rename a scenario I had invented. The third audit disagreed, and the experiment's lead restored the maintainers' assertion by tie-break. A control then showed the restore put the unstated name back: the fix itself failed once only that name changed. I conceded the audit's point, which ended the disagreement the tie-break rested on, so the lead withdrew it and took the audit's replacement.
 
 ## tests/test_hooks.py and tests/test_make.py, the conflicting-defaults message
 
@@ -41,12 +43,13 @@ No test removed.
 - With the fix's new field renamed throughout its source, all the amended tests in the three modules pass, so no use of the name is left.
 - With that field moved to the front of `__slots__` and made visible in the repr, both conflicting-defaults tests pass.
 - `fields_view()` refuses a list, and refuses a look-alike object with the same attributes.
-- A fix that guesses whether an alias is automatic by comparing it with the default fails exactly the two tests rewritten above, and nothing else. On the previous version of this diff it passed everything, which is the gap the second audit found. It breaks public behaviour: the constructor argument changes.
+- A fix that guesses whether an alias is automatic by comparing it with the default fails exactly `test_hook_explicit_alias_matching_default` and `test_alias_is_default`, and nothing else. On the diff before the second audit it passed everything, which is the gap that audit found. It breaks public behaviour: the constructor argument changes.
+- A fix that does not record an alias set through `evolve` as explicit fails exactly `test_hook_evolve_alias_sets_not_default`.
 - The parent, with no fix, fails only `test_hook_alias_available`.
 
 ## Independent audit
 
-Two blind audit rounds from another model family returned `revise`. Every finding held when tested against the parent, so all are accepted and none was rejected.
+Three blind audit rounds from another model family returned `revise`. Every finding held when tested against the parent, so all are accepted and none was rejected. I resisted the third before conceding it.
 
 First round:
 
@@ -56,3 +59,5 @@ First round:
 Second round:
 
 - **Removing the flag also removed a stated distinction.** The first versions removed the flag assertion from `test_hook_explicit_alias_matching_default` and deleted `test_alias_is_default`, on the reasoning that nothing name-free could be checked. That reasoning was wrong. Run at the parent and with the fix, an explicit alias equal to the default survives a transformer's rename, and an automatic one does not. A fix guessing from the value passed the whole previous diff. Under rule 4 a test may be deleted only if nothing in it is stated, so both are now rewritten, and `lost` is 0. The audit counted this one finding, across those two places, under over-relaxed, stated-check-could-stay and beyond-name-message-format.
+
+Third round: one finding, that the assertion in `test_hook_evolve_alias_sets_not_default` should become a rename check rather than be removed. Accepted after the tie-break described in the section on `tests/test_hooks.py`.

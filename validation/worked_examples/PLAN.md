@@ -907,3 +907,14 @@ runs on the training bugs, as development: a fault it shows may be fixed, and th
 held-out bugs are archived and unread, like their runs. Codex's own estimate of the reachable rate on unseen bugs is 60 to 80%, low
 confidence, against the owner's 95%. It also notes, fairly, that moving 95% onto amended tests answers a different question: hence both
 scores, always.
+
+**The five amendments, as they ended.** All are in `amendments/`, one diff and one note per bug. A blind audit from another model family,
+with the task, the parent, the maintainers' tests and each diff but no fix and no run, kept `click-3678`, `black-5144` and `starlette-3166`,
+and sent back `attrs-1509` and `pydantic-13133`; the reviewer accepted every finding. On `click-3678` the amendment goes past a name or
+message: a fix that drops the automatic help option when a parameter takes its name now passes, because the parent's documentation says
+so. The audit upheld that. `attrs-1509` took three passes. On the last, reviewer and auditor seemed split on one assertion, and I ruled the
+maintainers' assertion should stand; the reviewer showed that this put back the unstated item and that an honest fix would fail, and that it
+now agreed with the audit, so I withdrew the ruling and took the audit's replacement. Controls hold both ways: the fix passes, the same
+fix with the unstated item changed passes, and a fix with the stated behaviour wrong fails. No audit has read the last form of that one
+hunk, which differs from the audited replacement only in line wrapping. On `click-3678`'s saved runs the amendment moved arm A from 0 of 2
+to 2 of 2, G1 from 0 of 2 to 2 of 2, and E and L2 from 0 of 2 to 1 of 2 each: it lifts plain Claude Code as much as any harness.
