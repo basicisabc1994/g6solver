@@ -299,6 +299,172 @@ def test_failures_are_read_from_pytests_summary():
     assert we.failed_ids(text) == {"test_eof.py::test_cross[a-b]", "test_y.py"}
 
 
+JUNIT = """<?xml version="1.0"?><testsuites><testsuite>
+<testcase classname="test_x" name="test_cross[fmt: off-tail]"/>
+<testcase classname="test_x" name="test_cross[fmt: off-head]"><failure message="assert 1 == 2">the traceback</failure></testcase>
+<testcase classname="test_x" name="test_cross[other]"><skipped message="cannot occur"/></testcase>
+<testcase classname="test_x" name="test_random[1]"/>
+<testcase classname="test_x" name="test_boom"><error message="fixture broke">its traceback</error></testcase>
+</testsuite></testsuites>"""
+
+
+def _said(code, xml=JUNIT):
+    return f"console tail\nexit={code}\n{we.JUNIT_MARK}\n{xml}"
+
+
+def _run(**cases):
+    return we.ProbeRun(1, {f"t::{k}": v for k, v in cases.items()}, {f"t::{k}": f"why {k}" for k in cases})
+
+
+def test_l8_on_reads_pytests_own_report():
+    assert not we.qualified("L7") and not we.qualified("M7") and we.qualified("L8") and we.qualified("M9")
+
+
+def test_the_report_keeps_a_parametrized_id_whole_so_two_cases_stay_two():
+    got = we.read_probes(_said(1))
+    assert got.exit == 1 and {"test_x::test_cross[fmt: off-tail]", "test_x::test_cross[fmt: off-head]"} <= set(got.results)
+    assert got.results["test_x::test_cross[fmt: off-tail]"] == "passed"
+    assert got.results["test_x::test_cross[fmt: off-head]"] == "failed"
+
+
+def test_the_report_gives_each_failure_its_own_words():
+    got = we.read_probes(_said(1))
+    assert "assert 1 == 2" in got.texts["test_x::test_cross[fmt: off-head]"]
+    assert "the traceback" in got.texts["test_x::test_cross[fmt: off-head]"]
+    assert "fixture broke" in got.texts["test_x::test_boom"]
+
+
+def test_only_a_run_that_exercised_something_is_usable():
+    assert we.read_probes(_said(1)).usable
+    assert we.read_probes(_said(0, JUNIT.replace(' name="test_boom"', ' name="b"'))).usable
+    assert not we.read_probes("garbage, no exit line").usable                     # nothing readable
+    assert not we.read_probes(_said(1, "not xml")).usable                         # an unreadable report
+    assert not we.read_probes(_said(5, "<testsuites/>")).usable                   # no tests collected
+    assert not we.read_probes(_said(2)).usable                                    # could not run
+    skipped = '<testsuites><testsuite><testcase classname="t" name="a"><skipped/></testcase></testsuite></testsuites>'
+    assert not we.read_probes(_said(0, skipped)).usable                           # exit 0, and nothing ran
+
+
+def test_a_case_that_passed_before_the_change_is_a_regression_and_others_are_owed():
+    now = _run(a="failed", b="failed", c="error", d="passed")
+    base = _run(a="passed", b="failed", d="failed")
+    assert we.split_failures(now, base) == (["t::a"], ["t::b", "t::c"])
+    assert we.split_failures(now, None) == ([], ["t::a", "t::b", "t::c"])
+
+
+def test_the_agent_sees_regressions_first_with_each_cases_own_words():
+    failing, text = we.failures_of([("held0", _run(a="failed", b="failed"), _run(a="failed", b="passed"))])
+    assert failing == {"held0:t::a", "held0:t::b"}
+    assert text.index("why b") < text.index("why a") and "Passed before your change" in text
+
+
+def test_a_long_list_of_failures_is_cut_and_says_how_many_are_left():
+    cases = {f"c{i:03}": "failed" for i in range(we.MAX_SHOWN + 5)}
+    failing, text = we.failures_of([("held0", _run(**cases), None)])
+    assert len(failing) == we.MAX_SHOWN + 5 and "and 5 more" in text and "c999" not in text
+
+
+def test_a_set_that_stops_running_on_the_patch_is_reported_never_clean():
+    gone = we.ProbeRun(2, {}, {}, "ImportError: cannot import name")
+    failing, text = we.failures_of([("held1", gone, _run(a="passed"))])
+    assert failing == {"held1:exit 2"} and "ImportError" in text
+
+
+def test_a_clean_usable_set_reports_nothing():
+    assert we.failures_of([("scout", _run(a="passed"), None)]) == (set(), "")
+
+
+def _repairs_with_state(results, states, asked):
+    from g6.cegis import InputDomain, cegis
+
+    answers, trees = iter(results), iter(states)
+    loop = we.Repairs(lambda: next(answers), lambda text, n: asked.append((n, text)), state=lambda: next(trees))
+    got = cegis(we.WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
+                max_iterations=we.MAX_REPAIRS + 1, timeout_s=60.0)
+    return got, loop
+
+
+def test_a_failure_goes_back_while_the_agent_is_still_changing_the_code():
+    asked = []
+    got, _ = _repairs_with_state([({"h:a"}, "a"), ({"h:a"}, "a again"), (set(), "")], ["t1", "t2"], asked)
+    assert len(asked) == 2 and "a again" in asked[1][1] and got.status == "no_counterexample_in_domain"
+
+
+def test_the_loop_ends_when_the_agent_leaves_the_code_as_it_was():
+    asked = []
+    got, loop = _repairs_with_state([({"h:a"}, "a"), ({"h:a"}, "a")], ["t1", "t1"], asked)
+    assert len(asked) == 1 and got.status == "inconclusive" and loop.round == 2
+
+
+def test_repairs_stay_capped_when_the_agent_keeps_changing_the_code():
+    asked = []
+    got, _ = _repairs_with_state([({"h:a"}, "a")] * 9, [f"t{i}" for i in range(9)], asked)
+    assert len(asked) == we.MAX_REPAIRS and got.status == "counterexample_budget_exhausted"
+
+
+def test_the_gate_refuses_a_set_in_which_no_case_ran():
+    assert any("ran" in w for w in we.scout_gate(CROSS, exit_code=1, collected=6, executed=0))
+    assert we.scout_gate(CROSS, exit_code=1, collected=6, executed=1) == []
+
+
+class _Reply:
+    def __init__(self, text):
+        self.stdout, self.stderr, self.returncode = text.encode("utf-8"), b"", 0
+
+
+class _Docker:
+    """Answers the probes' script with ``said`` and anything else with the tree."""
+
+    def __init__(self, said):
+        self.said, self.scripts = said, []
+
+    def sh(self, ctr, script, *args, **kw):
+        self.scripts.append(script)
+        return _Reply(self.said if "junitxml" in script else CROSS)
+
+
+def _gate(said, arm="L8"):
+    class Ctx:
+        pass
+
+    ctx = Ctx()
+    ctx.arm, ctx.docker = arm, _Docker(said)
+    return we.probe_gate(ctx, we.load_tasks()[0], "agent", f"{we.WE}/probes", f"{we.WE}/tree.json")
+
+
+def _xml(cross=6, random=we.MIN_RANDOM, outcome="", extra=""):
+    cases = [f'<testcase classname="t" name="test_cross[{i}]">{outcome}</testcase>' for i in range(cross)]
+    cases += [f'<testcase classname="t" name="test_random[{i}]"/>' for i in range(random)]
+    return f"<testsuites><testsuite>{''.join(cases)}{extra}</testsuite></testsuites>"
+
+
+FAILS = '<testcase classname="t" name="test_symptom"><failure message="assert 1 == 2">t</failure></testcase>'
+
+
+def test_the_l8_gate_counts_cases_from_the_report_not_from_collection():
+    assert _gate(_said(1, _xml(extra=FAILS))) == []
+
+
+def test_the_l8_gate_counts_only_generated_inputs_that_ran():
+    skipped = _xml(random=0, extra=FAILS).replace(
+        "</testsuite>", "".join(f'<testcase classname="t" name="test_random[{i}]"><skipped/></testcase>'
+                                for i in range(we.MIN_RANDOM)) + "</testsuite>")
+    assert any("test_random has 0" in w for w in _gate(_said(1, skipped)))
+
+
+def test_the_l8_gate_refuses_a_cross_test_that_only_skipped():
+    assert any("ran" in w for w in _gate(_said(1, _xml(outcome="<skipped/>", extra=FAILS))))
+
+
+def test_the_l8_gate_still_refuses_a_crash():
+    crash = '<testcase classname="t" name="test_c"><failure message="TypeError: nope">t</failure></testcase>'
+    assert any("not an assertion" in w for w in _gate(_said(1, _xml(extra=FAILS + crash))))
+
+
+def test_the_probe_sets_are_named_for_the_arm():
+    assert we.probe_sets("L8") == [("scout", f"{we.WE}/probes"), ("held0", f"{we.WE}/hidden"), ("held1", f"{we.WE}/hidden2")]
+
+
 def test_only_the_loops_arms_get_a_stop_hook():
     assert "Stop" not in json.loads(we.hook_settings())["hooks"]
     got = json.loads(we.hook_settings(stop=True))["hooks"]

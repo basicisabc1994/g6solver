@@ -123,6 +123,7 @@ PROBE_RUN = f".venv/bin/python -m pytest {WE}/probes -q --tb=short -p no:cachepr
 PROBE_COLLECT = PROBE_RUN.replace(" -q --tb=short", " --collect-only -q")
 HIDDEN, HIDDEN_TREE, HELD_COPY = f"{WE}/hidden", f"{WE}/hidden_tree.json", "/tmp/we-held"
 MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS, MAX_REPAIRS, MIN_RANDOM = 4, 2.0, 12000, 200, 3, 300
+JUNIT_OUT, JUNIT_MARK, MAX_SHOWN, MAX_CASE_CHARS = "/tmp/we-probes.xml", "=== junit ===", 12, 900
 FAILED = re.compile(r"^(?:FAILED|ERROR) \S*?([^/\s]+\.py(?:::\S+)?)", re.M)
 SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
 the code it concerns, in the current directory, and work out what a complete fix must do.
@@ -211,6 +212,14 @@ COUNTEREXAMPLES = """The runner ran the scout's probes and further checks on you
 
 Take each in turn. If the issue or the repository supports what it expects, repair the cause and rerun your own checks.
 If they do not, leave the code alone and say why in one line. Then finish."""
+#: Arm L8 on (PLAN.md, 2026-10-31): a case that passed before the change stands on the code's own past behaviour.
+COUNTEREXAMPLES_8 = """The runner ran the scouts' probes on your code, and these fail:
+
+{text}
+
+A case that passed before your change and fails now is a regression: repair it unless the issue asks for that change. A case
+that failed before and still fails is one careful reader's view of what the issue requires: repair the cause if the issue or
+the repository supports it, and otherwise leave that case and say why in one line. Rerun your own checks, then finish."""
 LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
 `{PROBE_RUN}`). Read them before you edit. When you try to finish, the runner runs the probes on your code, and a failing
@@ -336,6 +345,93 @@ def gate_numbers(said: str) -> tuple[int, int, int]:
     return int(code[1]) if code else 2, int(cross[1]) if cross else 0, crashes(said)
 
 
+def qualified(arm: str) -> bool:
+    """From L8 a probe set is read from pytest's own report, and a set that exercised nothing is unknown, never clean."""
+    return int(arm[1:]) >= 8
+
+
+@dataclass
+class ProbeRun:
+    """One run of a probe set, from pytest's own report, so no reading of its console can cut an id or hide a failure."""
+    exit: int | None
+    results: dict[str, str]
+    texts: dict[str, str]
+    tail: str = ""
+
+    @property
+    def ran(self) -> int:
+        return sum(v in ("passed", "failed") for v in self.results.values())
+
+    @property
+    def usable(self) -> bool:
+        return self.exit in (0, 1) and self.ran > 0
+
+
+def probe_script(where: str) -> str:
+    return (f"rm -f {JUNIT_OUT}; {probes_at(where)} --junitxml={JUNIT_OUT} -o junit_family=xunit2 > /tmp/we-console.txt 2>&1; "
+            f'code=$?; tail -c 4000 /tmp/we-console.txt; echo "exit=$code"; echo "{JUNIT_MARK}"; cat {JUNIT_OUT} 2>/dev/null; '
+            f"rm -f {JUNIT_OUT} /tmp/we-console.txt")
+
+
+def failure_texts(xml: str) -> dict[str, str]:
+    """Each failing case's message and traceback, keyed as ``parse_junit`` keys it."""
+    found: dict[str, str] = {}
+    for case in ET.fromstring(xml).iter("testcase"):
+        for child in case:
+            if child.tag in ("failure", "error"):
+                found[f"{case.get('classname', '')}::{case.get('name', '')}"] = (f"{child.get('message', '')}\n"
+                                                                                  f"{child.text or ''}").strip()
+    return found
+
+
+def read_probes(said: str) -> ProbeRun:
+    """What ``probe_script`` printed. A report that cannot be read has no results, so the run is not usable."""
+    head, _, xml = said.partition(JUNIT_MARK)
+    code = re.search(r"^exit=(\d+)$", head, re.M)
+    try:
+        results, texts = parse_junit(xml.strip()), failure_texts(xml.strip())
+    except ET.ParseError:
+        results, texts = {}, {}
+    return ProbeRun(int(code[1]) if code else None, results, texts, head)
+
+
+def split_failures(now: ProbeRun, base: ProbeRun | None) -> tuple[list[str], list[str]]:
+    """G6's plan rule 3 (``classify``) on each failing case: one that passed at the base and fails now is a counterexample
+    on what worked before; any other is what a reader says the fix still owes."""
+    from g6.harness.verification_search import COUNTEREXAMPLE, classify
+
+    regressions, owed = [], []
+    for case in sorted(k for k, v in now.results.items() if v in ("failed", "error")):
+        before = base.results.get(case) if base else None
+        verdict = classify("preserve", {"result": "failed", "detail": ""}, {"result": before, "detail": ""} if before else None)
+        (regressions if verdict["result"] == COUNTEREXAMPLE else owed).append(case)
+    return regressions, owed
+
+
+def failures_of(sets: Iterable[tuple[str, ProbeRun, ProbeRun | None]]) -> tuple[set[str], str]:
+    """The failing ids of ``(label, run now, run at the base)``, and what the agent reads: regressions first, each case in
+    its own words, ``MAX_SHOWN`` at most. A set that no longer runs is reported, never clean."""
+    failing: set[str] = set()
+    broke, regress, owed = [], [], []
+    for label, now, base in sets:
+        if not now.usable:
+            failing.add(f"{label}:exit {now.exit}" if now.exit is not None else f"{label}:no exit")
+            broke.append(f"- the {label} probes no longer run on your code:\n{now.tail[-MAX_CASE_CHARS:]}")
+            continue
+        lost, still = split_failures(now, base)
+        failing |= {f"{label}:{case}" for case in [*lost, *still]}
+        regress += [(label, case, now.texts.get(case, "")) for case in lost]
+        owed += [(label, case, now.texts.get(case, "")) for case in still]
+    parts, left = list(broke), MAX_SHOWN
+    for heading, cases in (("Passed before your change and fail now:", regress), ("Failed before your change and still fail:", owed)):
+        if cases:
+            shown = cases[:left]
+            left -= len(shown)
+            parts.append("\n".join([heading, *(f"- {label}:{case}\n{text[:MAX_CASE_CHARS]}" for label, case, text in shown),
+                                    *([f"(and {len(cases) - len(shown)} more)"] if len(cases) > len(shown) else [])]))
+    return failing, "\n\n".join(parts)
+
+
 def has_hook(arm: str) -> bool:
     """Arms L1 to L4: the Stop hook. From L5 the runner holds the loop itself."""
     return int(arm[1:]) < 5
@@ -355,20 +451,27 @@ class WorkingTree:
 
 class Repairs:
     """G6's CEGIS over the agent's work (PLAN.md, 2026-10-31): ``search`` is the agent, told what failed; ``evaluate`` is
-    the probes, which the runner holds. A failure the agent has already seen is not sent again: it has decided."""
+    the probes, which the runner holds. A failure the agent has already seen is not sent again: it has decided. With
+    ``state``, from L8, what says the agent has decided is that it left the code as it was: a failure that survives a
+    repair goes back, up to the cap."""
 
-    def __init__(self, check: Callable[[], tuple[set[str], str]], ask: Callable[[str, int], Any]) -> None:
-        self.check, self.ask = check, ask
-        self.round, self.failing, self.text, self.sent = 0, set(), "", set()
+    def __init__(self, check: Callable[[], tuple[set[str], str]], ask: Callable[[str, int], Any],
+                 state: Callable[[], str] | None = None) -> None:
+        self.check, self.ask, self.state = check, ask, state
+        self.round, self.failing, self.text, self.sent, self.tree = 0, set(), "", set(), None
 
     def search(self, sketch: Any, examples: Any, *, max_exhaustive: int = 0) -> Any:
         from g6.cegis import SearchResult
 
         if self.round:
-            if self.failing <= self.sent:
+            tree = self.state() if self.state else None
+            if self.state and tree == self.tree:
+                return SearchResult(None, "the agent left the code as it was", False, self.round)
+            if not self.state and self.failing <= self.sent:
                 return SearchResult(None, "nothing new fails", False, self.round)
             self.sent |= self.failing
-            self.ask(COUNTEREXAMPLES.format(text=self.text), self.round)
+            self.tree = tree
+            self.ask((COUNTEREXAMPLES_8 if self.state else COUNTEREXAMPLES).format(text=self.text), self.round)
         self.round += 1
         return SearchResult({0: f"round {self.round}"}, "agent", False, self.round)
 
@@ -385,12 +488,15 @@ def critic_prompt(number: int, title: str, text: str) -> str:
     return CRITIC_PROMPT.format(number=number, title=title, text=text)
 
 
-def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, randoms: int | None = None) -> list[str]:
+def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, randoms: int | None = None,
+               executed: int | None = None) -> list[str]:
     """What is wrong with the scout's probes, by the runner's own count: G6's ``InputDomain`` says how many combinations
     the declared dimensions make, up to ``MAX_CROSS``. Empty when the fix may start."""
     from g6.cegis import InputDomain
 
     wrong = []
+    if executed == 0:
+        wrong.append("no case of test_cross ran: a skipped case tests nothing")
     if randoms is not None and randoms < MIN_RANDOM:
         wrong.append(f"test_random has {randoms} of {MIN_RANDOM} generated inputs")
     if broken:
@@ -1298,6 +1404,18 @@ def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str
 def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> list[str]:
     """``scout_gate`` on the probes in ``where``: pytest's exit, the cross test's cases, and failures that are not
     assertions, as the container reports them."""
+    if qualified(ctx.arm):
+        got = read_probes(out(ctx.docker.sh(agent, probe_script(where), workdir=task.repo, timeout=300)))
+
+        def cases(test: str) -> list[str]:
+            return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
+
+        crashed = sum(v == "error" or (v == "failed" and not re.match(r"assert|AssertionError|Failed", got.texts.get(k, "")))
+                      for k, v in got.results.items())
+        return scout_gate(out(ctx.docker.sh(agent, f"cat {tree} 2>/dev/null", timeout=60)),
+                          exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,
+                          randoms=sum(v in ("passed", "failed") for v in cases("test_random")),
+                          executed=sum(v in ("passed", "failed") for v in cases("test_cross")))
     run_them, count = probes_at(where), PROBE_COLLECT.replace(f"{WE}/probes", where)
     said = out(ctx.docker.sh(agent, f"COLUMNS=300 {run_them} {gate_flags()} > /tmp/we-gate.txt 2>&1; code=$?; "
                                     'grep "^FAILED" /tmp/we-gate.txt | head -c 400000; echo "exit=$code"; '
@@ -1308,6 +1426,23 @@ def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> l
     return scout_gate(out(ctx.docker.sh(agent, f"cat {tree} 2>/dev/null", timeout=60)), exit_code=code,
                       collected=collected, broken=broken,
                       randoms=random_cases(said) if int(ctx.arm[1:]) >= 6 else None)
+
+
+def probe_sets(arm: str) -> list[tuple[str, str]]:
+    """Each probe set's label and place: the agent's, then the hidden ones."""
+    return [("scout", f"{WE}/probes"), *((f"held{i}", hidden_at(i)[0]) for i in range(hidden_scouts(arm)))]
+
+
+def run_set(ctx: Context, task: Task, agent: str, where: str) -> ProbeRun:
+    """One probe set on the tree as it stands. A hidden set is copied in for the run and removed: the agent cannot read it."""
+    held = where != f"{WE}/probes"
+    if held:
+        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && chown -R {USER} {HELD_COPY}; "
+                             "true", user="root", timeout=60)
+    said = out(ctx.docker.sh(agent, probe_script(HELD_COPY if held else where), workdir=task.repo, timeout=300))
+    if held:
+        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
+    return read_probes(said)
 
 
 def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, title: str,
@@ -1393,20 +1528,38 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
     tree = scout_tree(tree_file.read_text("utf-8") if copy_out(ctx.docker, agent, f"{WE}/tree.json", tree_file)
                       else "no tree")
     run.write("tree.txt", tree["text"])
+    sets: dict[str, ProbeRun] = {}
+    if qualified(ctx.arm):   # on the clean base: what each case did before any fix, and which sets can be trusted to run
+        sets = {label: run_set(ctx, task, agent, where) for label, where in probe_sets(ctx.arm)}
+        run.write_json("probes_at_base.json", {label: {"exit": got.exit, "ran": got.ran, "results": got.results}
+                                               for label, got in sets.items()})
     return {"ended": ended, "usd": round(tally.cost_usd, 6), "refused": refused, "still_wrong": wrong, "hidden": hidden,
+            "quarantined": sorted(label for label, got in sets.items() if not got.usable), "at_base": sets,
             **{k: tree.get(k) for k in ("shapes", "open", "error")}}
 
 
 def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally,
-                stop: float, started: float) -> dict[str, Any]:
+                stop: float, started: float, at_base: Mapping[str, ProbeRun] | None = None) -> dict[str, Any]:
     """G6's ``cegis`` over the agent's finished work: the runner runs both scouts' probes and sends failures back in the
-    same session. The hidden set is copied in for the run and removed, so the agent can never read it."""
+    same session. The hidden set is copied in for the run and removed, so the agent can never read it. From L8 a set that
+    exercised nothing on the base is left out: it can say nothing of the patch."""
     from g6.cegis import InputDomain, cegis
 
     rounds = [0]
 
     def check() -> tuple[set[str], str]:
         rounds[0] += 1
+        if qualified(ctx.arm):
+            seen = []
+            for label, where in probe_sets(ctx.arm):
+                base = (at_base or {}).get(label)
+                if base is None or not base.usable:
+                    continue
+                got = run_set(ctx, task, agent, where)
+                run.write_json(f"repair_check_{rounds[0]}_{label}.json", {"exit": got.exit, "ran": got.ran,
+                                                                          "results": got.results, "tail": got.tail})
+                seen.append((label, got, base))
+            return failures_of(seen)
         failing, said = set(), []
         for label, where in (("scout", f"{WE}/probes"),
                              *((f"held{i}", hidden_at(i)[0]) for i in range(hidden_scouts(ctx.arm)))):
@@ -1430,7 +1583,10 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
         run_session(ctx, run, agent, scout_again(docker_args), key, tally, text, f"repair_stream_{n}.jsonl",
                     seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
 
-    loop = Repairs(check, ask)
+    def state() -> str:
+        return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
+
+    loop = Repairs(check, ask, state if qualified(ctx.arm) else None)
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                 max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
     return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40]}
@@ -1531,9 +1687,13 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         run.write_json("command.json", {"docker": docker_args, "caps": {"usd": cap, "stop_usd": stop,
                                         "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
                                         "key": "passed by name; its value only in the docker client's environment"})
+        at_base: dict[str, ProbeRun] = {}
         if looped and not dry:   # the hook arrives after the scout, so it cannot stop the scout
             record["agent_started"] = True
             record["scout"] = run_scout(ctx, task, run, agent, base, docker_args, key, title, text)
+            at_base = record["scout"].pop("at_base")
+            if qualified(ctx.arm):   # one allowance for the whole run: the scouts' spend comes out of the fixer's
+                stop = max(1.0, stop - float(record["scout"]["usd"]))
         if looped and has_hook(ctx.arm):
             write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings(stop=True))
         tally = c.Tally(count_reported=round3)
@@ -1560,7 +1720,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         drain.join(timeout=30)
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         if looped and holds_loop(ctx.arm) and not dry and not ended:
-            record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started)
+            record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base)
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
