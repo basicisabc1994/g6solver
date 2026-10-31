@@ -1068,3 +1068,27 @@ public and search would break the rule that agents never see the maintainers' te
 
 **The loop in G6.** The design approved on 2026-10-29 stands, and its next phase, the local shadow loop, is being built on its own branch with a
 domain-neutral seam. `evolve.py` stays here for stage 3 until that loop can replace it. Nothing built there changes these runs.
+
+### 2026-10-31 (late): the final review, and a feed of labelled patches (before any M9 run and before stage 2's bugs are judged)
+
+**Why.** The trust measure above shows that nothing G6 says yet separates good patches from bad. The approved loop design rests its gate decisions
+on replays of recorded patches, and none exist for coding. `final_review.py` starts both.
+
+**What it is.** After a run has ended, another model family reads the finished patch, with L8's reviewer text unchanged, and its test, if it wrote
+one, runs on the parent and on the patch, in a container with no network from the agent's image. The reviewer gets the issue with its discussion,
+the parent and the patch. It gets no maintainers' test or fix, and is not told the arm or any verdict. Each distinct patch is reviewed once, in
+the order of the patches' digests.
+
+**What it may say.** "Reproduced": its own test ran and failed on the patch. "Opinion": it says defect, with no such test. "None": it found
+nothing. "Failed": there was no review, which is no verdict, and it is made again. Each is reported as right or wrong on both scores, beside what
+the run said of itself.
+
+**What it does not do.** It changes no run, no verdict, no repair and no rule. L9 and M9 are unchanged, and no agent ever reads a review. The
+frozen comparison stays M9 against A and T.
+
+**When.** On the training bugs' saved patches now, as development: 79 distinct patches, 60 right and 19 wrong on the amended tests. On a stage's
+bugs only after all of that stage's runs have ended, and nothing read from those is used to tune anything.
+
+**The limit, stated before any result.** 14 of the 19 wrong training patches come from one bug, black-5634, and the other five from two more. The
+effective sample is about three bugs, not 79 patches. A result on it is a lead for the loop to test on unseen bugs, not a measure, and it is
+reported bug by bug. Reviews use the owner's Codex sign-in, outside the budget, and are reported apart.
