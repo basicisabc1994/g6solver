@@ -47,8 +47,11 @@
    module, where it came from, and the import root (``import_roots``) or editable install that would load the patch.
    Or a proposed check, or a check G6 compiled from a template instance, finding a counterexample or a failure of the
    change, neither confirmed (``unconfirmed_counterexample``, ``unconfirmed_failure``);
-4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks and integrity is intact. That is
-   support on the checks named, never a claim that the patch does everything the task needs.
+   Or a requirement with no independent check (``checks_written_with_patch``): each check is new with the patch, or
+   passes at the base commit too, so the author's own tests are all that speak for the change;
+4. ``supported_within_scope``: otherwise. Every requirement passed its stated checks, at least one of them independent
+   of the patch (it exists at the base commit in an unchanged file and, for new behaviour, fails there), and integrity
+   is intact. That is support on the checks named, never a claim that the patch does everything the task needs.
 
 Each requirement reads ``passed_on_stated_checks``, ``failed`` or ``not_established`` (with a reason and a suggested
 test in words); G6 never invents a passing test. Checks adapt to cost: tier 1 (always) is the digest, integrity, and
@@ -614,8 +617,9 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
 
 #: What a run says of what it could not see, kept in the reply's record of it when it says anything (review M1): the
 #: links its copy left out or copied in place, the modules it loaded from outside the tree, the submodule folders G6
-#: could not hash.
-_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed")
+#: could not hash, and the git-ignored files the build writes it took (path to SHA-256) or left out (path to why).
+_SEEN_KEYS = ("links_left_out", "links_materialised", "loaded_outside", "submodules_not_hashed", "generated_copied",
+              "generated_left_out")
 
 
 def _record(tier: int, kind: str, ids: list[str], ran: dict, command: str = "", provenance: str = STATED) -> dict:
@@ -1155,9 +1159,13 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
                             "file, so the contract was not checked (why is in assessment.completion.activities)")
     if not any(run.get("passed", 0) + run.get("failed", 0) for run in runs):
         reason("evidence", "no_test_ran", "no test ran to a result")
+    self_checked = ", ".join(_self_checked(evaluated, change, Path(root), runs))
+    if self_checked:
+        reason("evidence", SELF_CHECKED, SELF_CHECKED_DETAIL.format(ids=self_checked))
     return _reply(change, evaluated, reasons, unknowns, runs, skipped, receipts, first or second, gate, merge_reasons,
                   artifact, claim, sources, started, follow_ups, listed, assumed, search=search, defects=defects,
-                  first_action=MISSING_IMPORT_ASK.format(name=missing[0]) if missing else "",
+                  first_action=(MISSING_IMPORT_ASK.format(name=missing[0]) if missing else
+                                SELF_CHECKED_ASK.format(ids=self_checked) if self_checked else ""),
                   prepared=prepared, adequacy=adequacy, config=config,
                   counts={"template_instances": len(instances), "proposed_checks": len(proposed),
                           "model_calls": proposals.calls if proposals else 0}, roots=roots,
@@ -1318,6 +1326,40 @@ _NEXT = {
                "change is intended, then review it again.",
     INSUFFICIENT: "State each requirement with the tests that check it, make those tests run here, and review again.",
 }
+
+
+#: Worked examples, round 3: the author's own tests share its reading of the task, so they cannot support the patch.
+SELF_CHECKED = "checks_written_with_patch"
+SELF_CHECKED_DETAIL = ("{ids}: every check that passed is new with this patch or passes at the base commit too, so "
+                       "nothing independent of the patch shows its change works. This is not a finding against it")
+SELF_CHECKED_ASK = ("{ids}: this rests on the author's own tests, so tell the person that. Only a check the patch did "
+                    "not write and that fails at the base commit can change it. Do not rewrite tests to change it.")
+
+
+def _self_checked(evaluated: list[dict], change, root: Path, runs: list[dict]) -> list[str]:
+    """The requirements with no independent check. A check is independent when it exists at the base commit, its file
+    is unchanged, a folder holds no test the patch adds or changes, and, unless the requirement only keeps behaviour,
+    it does not pass at the base commit too: an old test that passes there says nothing of the change."""
+    at_base = next((run.get("outcomes") or {} for run in runs if run.get("check") == AT_BASE), {})
+
+    def written(check: str) -> bool:
+        head = (root / check.partition("::")[0]).resolve()
+        try:
+            rel = head.relative_to(Path(change.repo).resolve()).as_posix()
+        except ValueError:
+            return False
+        rel = "" if rel == "." else rel
+        inside = [path for path in change.files if not rel or path.startswith(rel + "/")]
+        if rel in change.files or any(repo_tests.is_test_related(path) for path in inside):
+            return True
+        return bool(rel) and not repo_tests._git(change.repo, "ls-tree", "--name-only", change.base_commit, "--", rel)
+
+    def independent(req: dict, check: dict) -> bool:
+        return (check["provenance"] == STATED and not written(check["id"])
+                and (req["kind"] == "preserve" or at_base.get(check["id"]) != "passed"))
+
+    return [req["id"] for req in evaluated if req["status"] == PASSED_ON_CHECKS
+            and not any(independent(req, check) for check in req["checks"])]
 
 
 #: What a requirement no one stated is (rule 11): listed, and nothing more.

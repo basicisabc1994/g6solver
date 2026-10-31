@@ -375,3 +375,16 @@ def test_a_structural_instances_result_is_said_in_plain_words_and_not_said_to_de
                                           "completion": {"activities": activities}}))
     assert "`FD1` for `R1`: failed" in tested and "``failed``" not in tested and "`failed`" not in tested, tested
     assert "`FD2` for `R2`: vacuous" in tested and "decide nothing" not in tested and "(above)" not in tested, tested
+
+
+def test_the_gate_says_when_a_proposed_check_could_not_be_judged():
+    # worked examples, round 3: "nothing else was found" stood beside two checks that never ran
+    assessment = {"outcome": "supported_within_scope", "completion": {"activities": [
+        {"activity": "proposed check", "check": "D1", "result": "check_error"}]}}
+    assert "1 proposed check could not be judged" in patch_report._gate_note(assessment)
+    assert patch_report._gate_note({"outcome": "supported_within_scope", "completion": {"activities": []}}) == ""
+
+
+def test_the_gates_note_counts_only_proposed_and_template_checks():
+    assessment = {"completion": {"activities": [{"activity": "check run", "result": "check_error"}]}}
+    assert patch_report._gate_note(assessment) == ""

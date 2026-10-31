@@ -49,7 +49,9 @@ For a Python task, work in this order.
    specialised needs, find more components with `g6_find`.
 
 The outcome is one of: test integrity compromised, defect detected, insufficient evidence, or supported within scope
-(every stated requirement passed its stated checks; never proof the patch is complete).
+(every stated requirement passed a stated check the patch did not write; never proof the patch is complete).
+If no check the patch did not write fails at the base commit, the outcome is insufficient evidence
+(`checks_written_with_patch`). Tell the person the result rests on your own tests. Do not rewrite tests to change it.
 
 ## Find
 

@@ -23,6 +23,7 @@ started, by name. The key is read only through ``g6.core.keys`` and passed by na
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import queue
@@ -30,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -50,6 +52,10 @@ import wecommon as c  # noqa: E402
 
 REPO_ROOT = HERE.parents[1]
 TASKS = HERE / "tasks.json"
+TASKS_FRESH = HERE / "tasks_fresh.json"   # bugs the loop has not seen (PLAN.md, 2026-10-31)
+TASKS_UNSEEN = HERE / "tasks_unseen.json"   # stage 2: bugs in repositories never used in training (PLAN.md, 2026-10-31 evening)
+TASKS_DEV = HERE / "tasks_dev.json"   # stage 3: new bugs for G6 to learn from, none of them judged on
+AMENDMENTS = HERE / "amendments"   # the owner's scoring change: one test diff per bug its task does not determine
 PROXY = REPO_ROOT / "validation" / "v7_swebench" / "egress_proxy.py"
 FROM_IMAGE = "g6-a2-linux"
 SECURITY = ("--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined")
@@ -85,6 +91,214 @@ Issue #{number}: {title}
 {text}
 """
 
+#: Round 3, arm A (PLAN.md section 9, "Round 3 (2026-10-30)"): round 1's prompt without the G6 instruction.
+PROMPT_A = """You are working in a clone of {owner}/{name}, at the commit just before the maintainers fixed the issue below.
+The project's development environment is the virtual environment in .venv (its Python is .venv/bin/python).
+There is no network apart from the model.
+
+Fix the issue. Nobody is available to answer questions during this run: put any questions in your final
+report and carry on with the most likely reading. Leave your changes uncommitted in the working tree. End with
+your final report.
+
+Issue #{number}: {title}
+
+{text}
+"""
+
+#: Round 3, arm C: added after round 1's instruction, before the issue. It names no bug, project or diagnosis.
+ADDENDUM_C = """Before you say the fix is done, also check it with G6's formal tools:
+1. State each requirement of the issue as a property: what must hold, and for which inputs.
+2. Check each property with G6. Compare the patch with the base code on the inputs the issue names and on variants
+   of them: a differential.v1 template instance in g6_review_patch (intent preserve where behaviour must stay, change
+   where it must change). Where a property is over whole numbers and booleans, or a small state machine, also check
+   it through g6_invoke: component formal (find_counterexample, check_validity, check_equivalence) or model_checking
+   (check_invariant, prove_invariant); g6_describe gives each op's parameters. For behaviour over several steps, use a
+   state_invariant.v1 template instance.
+3. Repair what a check refutes, then review again with g6_review_patch. Stop when a review reproduces no new
+   counterexample and every property you stated has been checked, or when the budget ends.
+In your final report, list each property, the tool that checked it, and what it gave."""
+#: Round 3, arm D (PLAN.md, 2026-10-30): C, and what to do when a template cannot say the check.
+ADDENDUM_D = ADDENDUM_C + """
+If a template instance is refused, or cannot express the inputs (they are not JSON values, or the function exists only
+in the patch), check the property with a proposed_checks test file instead. Every check, in whichever form, must assert
+a specific expected value taken from the issue, not from what the patched code returns, so that it can fail."""
+#: Round 3, arm L (PLAN.md, 2026-10-31): the probes one reader wrote before any patch; run in the repository.
+PROBE_RUN = f".venv/bin/python -m pytest {WE}/probes -q --tb=short -p no:cacheprovider -p no:pretty --rootdir={WE}/probes"
+PROBE_COLLECT = PROBE_RUN.replace(" -q --tb=short", " --collect-only -q")
+HIDDEN, HIDDEN_TREE, HELD_COPY = f"{WE}/hidden", f"{WE}/hidden_tree.json", "/tmp/we-held"
+MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS, MAX_REPAIRS, MIN_RANDOM = 4, 2.0, 12000, 200, 3, 300
+JUNIT_OUT, JUNIT_MARK, MAX_SHOWN, MAX_CASE_CHARS = "/tmp/we-probes.xml", "=== junit ===", 12, 900
+CRITIC_AT, CRITIC_SECONDS = f"{WE}/critic", 1500
+FAILED = re.compile(r"^(?:FAILED|ERROR) \S*?([^/\s]+\.py(?:::\S+)?)", re.M)
+SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
+the code it concerns, in the current directory, and work out what a complete fix must do.
+
+1. Constraints: list what the issue requires, and separately what you only infer.
+2. Heuristics: for the code path involved, list the ways a fix that handles only the issue's example would still be
+   wrong: sibling constructs handled by the same code, other scopes, nesting, line endings and whitespace, empty and
+   boundary inputs, what the same feature does elsewhere in this repository.
+3. Decompose: write a goal tree of required behaviours, each with the concrete input shapes that test it.
+4. Probes: for each shape, write a pytest test under {WE}/probes/ that asserts what the issue and the repository's own
+   conventions require. Keep them short and call the project's public interface. Write nothing inside the repository.
+5. Critique: run them from the repository with `{PROBE_RUN}`. Reproduce the symptom with at least one probe. A probe for
+   behaviour that must stay should pass now. Delete any probe whose expectation you cannot justify from the issue or the
+   repository: a wrong probe costs the fix's author more than a missing one.
+
+Then write {WE}/tree.json:
+{{{{"goal": "...", "branches": [{{{{"goal": "a required behaviour", "shapes": [{{{{"shape": "...", "probe": "test_x.py::test_y"}}}}]}}}}]}}}}
+Use an empty probe for a shape you could not test.
+
+Issue #{{number}}: {{title}}
+
+{{text}}
+"""
+#: Arm L2 on (PLAN.md, 2026-10-31): L1's smoke run probed each dimension alone and left "unclear" shapes unprobed.
+SCOUT_V2 = """   Treat the shapes as dimensions, and combine them: every pair of dimensions that can occur together gets a probe,
+   with parametrized tests where that is shorter. A bug that survives a fix usually lives where two dimensions cross.
+   Never leave a shape as unclear. Where the issue states a principle, apply it uniformly to the shape unless the
+   repository's own code, tests or documentation say otherwise, and write the probe that follows.
+"""
+#: Arm L3 on: L2's scouts skipped pairs they were asked for, so the runner now counts them (``scout_gate``).
+SCOUT_V3 = f"""   In {WE}/tree.json also give "dimensions": an object from each dimension's name to its list of values, as short
+   strings. Write one test named test_cross, parametrized with itertools.product over every dimension, that builds its
+   input from each combination's values. Skip a combination that cannot occur with pytest.skip inside the test; never
+   leave it out. The runner counts these cases and refuses the probes if any are missing.
+"""
+#: Arm L4 on: which dimensions a scout thinks of varies by run, so a second reader attacks the tree (PR #4's critique).
+CRITIC_PROMPT = f"""You are a critic. A scout read the issue below and wrote what a complete fix must handle: the goal tree
+and dimensions in {WE}/tree.json and the probes in {WE}/probes. Read them and the code involved. Do not fix anything.
+
+Find what they miss. Imagine a fix that passes every probe yet is still wrong for a user of this feature. Ask which
+construct, scope, kind of neighbouring content, or form of input reaches this code path and appears in no dimension, and
+which value of one dimension was never tried with the others. Look at how the code's own branches differ, not at the
+issue's example.
+
+Add each thing you find as a new value or a new dimension in {WE}/tree.json, and extend test_cross to match, so that it
+stays the full product. Add a separate probe where a product cannot say it. Keep every expectation justified by the issue
+or the repository, and delete none of the scout's probes unless the repository contradicts it. Then run them from the
+repository with `{PROBE_RUN}`.
+
+Issue #{{number}}: {{title}}
+
+{{text}}
+"""
+#: Arm L5 on: L2's "never leave a shape unclear" made scouts invent expectations, and only exact assertions had power.
+SCOUT_V5 = f"""   Treat the shapes as dimensions. In {WE}/tree.json also give "dimensions": an object from each dimension's name to
+   its list of values, as short strings. Write one test named test_cross, parametrized with itertools.product over every
+   dimension, that builds its input from each combination's values. Skip a combination that cannot occur with pytest.skip
+   inside the test; never leave it out. The runner counts these cases and refuses the probes if any are missing.
+   Assert the exact value required: compare whole outputs, not normalised forms, predicates or parts of them.
+   Where the issue and the repository are silent on what a shape should do, write no probe for it and keep it out of the
+   dimensions: list it with an empty probe. A wrong expectation is worse than a missing one.
+"""
+#: Arm L6 on: every failing patch on the hardest training bug failed where two dimensions cross that most scouts never
+#: listed, and the rule on silence made them list less. So dimensions come from the code, and a generator mixes them.
+SCOUT_V6 = f"""   Find the dimensions in the code as well as in the issue: read the functions the symptom passes through, and list
+   each kind of thing that can reach that point and each branch it can take there. In {WE}/tree.json also give
+   "dimensions": an object from each dimension's name to its list of values, as short strings. Write one test named
+   test_cross, parametrized with itertools.product over every dimension, that builds its input from each combination's
+   values. Skip a combination that cannot occur with pytest.skip inside the test; never leave it out.
+   Write one test named test_random, parametrized over at least {MIN_RANDOM} seeds: each seed composes an input at random
+   from the building blocks of all the dimensions, freely mixed, at random positions and depths, and checks the rule on
+   it. It finds the crossings nobody listed. The runner counts both tests and refuses the probes if cases are missing.
+   Assert the exact value required: compare whole outputs, not normalised forms, predicates or parts of them.
+   Apply the issue's principle to every shape the code treats alike. Leave a shape out only where the repository shows it
+   is meant to behave differently, and list it with an empty probe.
+"""
+LOOP_ADDENDUM_5 = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
+complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
+`{PROBE_RUN}`). Read them before you edit. When you finish, the runner runs these and further checks you cannot see on
+your code, and sends back any that fail. A failing check is one careful reader's view: repair the cause if the issue or
+the repository supports it, and otherwise leave the code alone and say why in one line. One g6_review_patch at the end is
+enough."""
+COUNTEREXAMPLES = """The runner ran the scout's probes and further checks on your code, and these fail:
+
+{text}
+
+Take each in turn. If the issue or the repository supports what it expects, repair the cause and rerun your own checks.
+If they do not, leave the code alone and say why in one line. Then finish."""
+#: Arm L8 on (PLAN.md, 2026-10-31): a case that passed before the change stands on the code's own past behaviour.
+COUNTEREXAMPLES_8 = """The runner ran the scouts' probes on your code, and these fail:
+
+{text}
+
+A case that passed before your change and fails now is a regression: repair it unless the issue asks for that change. A case
+that failed before and still fails is one careful reader's view of what the issue requires: repair the cause if the issue or
+the repository supports it, and otherwise leave that case and say why in one line. Rerun your own checks, then finish."""
+#: Arm L8 on: a reviewer from another model family reads the finished patch (PLAN.md, 2026-10-31). The text is the one the
+#: blind experiment measured, for one bug.
+PATCH_CRITIC = """<task>
+You are reviewing a candidate bug fix written by someone else. Your cwd has:
+- issue.txt: the issue and its discussion.
+- parent/: the repository just before the fix.
+- candidate.patch: the candidate fix, applied on top of parent/.
+
+The candidate may be complete or not. You are not told which. Judge it on its merits.
+
+1. State the general rule the issue implies, in one or two sentences. Derive it from the issue and the repository's own code, tests
+   and documentation, not from the patch.
+2. Read the patch against that rule. Look for where it handles the issue's example but not the rule: a hard-coded name or value that
+   should be derived, a branch of the same code path left out, another scope or nesting level, a sibling construct, an input position,
+   or behaviour that used to work and now does not.
+3. Write a pytest file that calls the project's public interface. Each test must assert an exact expected value that the issue or the
+   repository justifies, and must fail on the candidate if you are right. Write nothing whose expectation you cannot justify: a wrong
+   test is worse than none. If you find no defect, say so and write no test. Not finding one is a valid and useful answer.
+</task>
+
+<hard_limits>
+Read-only, and only inside your cwd. No writes, no git writes, no docker, no network, no model or API calls. You cannot run code, so
+reason carefully about what each test will do.
+</hard_limits>
+
+<structured_output_contract>
+In this exact form:
+
+READ: <the first line of issue.txt, exactly>
+RULE: <one or two sentences>
+VERDICT: defect or none
+WHY: <the concrete input, what the candidate does, what it should do, and the evidence in issue.txt or parent/ with file and line>
+```python
+<a complete pytest file, or nothing if VERDICT is none>
+```
+
+Name each test test_<something>. The test file must import only the project and the standard library, and pytest if needed.
+</structured_output_contract>
+
+<grounding_rules>
+Every expectation must point at the issue or at a file and line in parent/. If you are unsure of an expected value, drop that test.
+</grounding_rules>
+
+<default_follow_through_policy>
+Do not ask questions. Finish.
+</default_follow_through_policy>
+"""
+CRITIC_NOTE = """A reviewer from another team read your patch, without seeing your reasoning or how you got there, and says:
+
+{rule}
+
+{why}
+
+Their test, which fails on your code:
+
+```python
+{test}
+```
+
+They can be wrong, as anyone can. Check their expectation against the issue and the repository before you act on it."""
+REVIEW_ASK = ("\n\nIf the issue or the repository supports their expectation, repair the cause and rerun your own checks. If not, "
+              "leave the code alone and say why in one line. Then finish.")
+LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
+complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
+`{PROBE_RUN}`). Read them before you edit. When you try to finish, the runner runs the probes on your code, and a failing
+probe sends you back here. Repair the cause of what fails. A probe is one reader's view and can be wrong: if you are sure
+of that, add a line to {WE}/waived.txt with the test's id, then a space, then the reason and what you observed. Never
+remove a feature to settle a conflict. One g6_review_patch at the end is enough."""
+PROMPT_C = PROMPT.replace("\nIssue #{number}", "\n" + ADDENDUM_C.replace("{", "{{").replace("}", "}}")
+                          + "\n\nIssue #{number}", 1)
+
+PROMPT_D = PROMPT.replace("\nIssue #{number}", "\n" + ADDENDUM_D.replace("{", "{{").replace("}", "}}")
+                          + "\n\nIssue #{number}", 1)
+
 
 # --- tasks ----------------------------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -118,15 +332,372 @@ def load_tasks(path: Path = TASKS) -> list[Task]:
 
 
 def task_by_id(task_id: str, path: Path = TASKS) -> Task:
-    for task in load_tasks(path):
+    for task in (*load_tasks(path), *load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN), *load_tasks(TASKS_DEV)):
         if task.id == task_id:
             return task
     raise SystemExit(f"no task {task_id!r} in {path.name}")
 
 
-def prompt(task: Task, title: str, text: str) -> str:
+def is_fresh(task_id: str) -> bool:
+    return any(task.id == task_id for task in (*load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN)))
+
+
+def is_dev(task_id: str) -> bool:
+    return any(task.id == task_id for task in load_tasks(TASKS_DEV))
+
+
+def amendment(task_id: str) -> Path | None:
+    """The bug's test diff (PLAN.md, 2026-10-31), or None: every other bug keeps the maintainers' tests exactly."""
+    found = AMENDMENTS / f"{task_id}.patch"
+    return found if found.is_file() else None
+
+
+def hidden_at(i: int) -> tuple[str, str]:
+    """Where hidden scout ``i`` works: its probes' folder and its tree."""
+    place = f"{HIDDEN}{i + 1}" if i else HIDDEN
+    return place, f"{place}_tree.json"
+
+
+def hidden_scouts(arm: str) -> int:
+    return 2 if int(arm[1:]) >= 6 else 1
+
+
+def trained(arm: str) -> dict[str, str]:
+    """What harness training added for arm ``L<n>`` or ``M<n>`` from 10 (PLAN.md, stage 3), committed before it ran. It can only
+    add to a part's instructions: the sets, the scoring, the reply forms and the stop rule are not among them."""
+    if not re.fullmatch(r"[LM]\d+", arm) or int(arm[1:]) < 10:
+        return {}
+    text = json.loads((HARNESS / f"L{arm[1:]}.json").read_text(encoding="utf-8"))
+    odd = sorted(set(text) - set(TRAINED))
+    if odd:
+        raise ValueError(f"harness training cannot change {odd}")
+    return text
+
+
+def literal(text: str) -> str:
+    """``text`` for a template that ``format`` fills."""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+def repair_text(arm: str) -> str:
+    add = trained(arm).get("repair")
+    return COUNTEREXAMPLES_8 + (f"\n\n{literal(add)}" if add else "")
+
+
+def critic_text(arm: str) -> str:
+    add = trained(arm).get("critic")
+    return PATCH_CRITIC.replace("</task>", f"4. {add}\n</task>", 1) if add else PATCH_CRITIC
+
+
+def scout_prompt(arm: str, *, hidden: bool = False, at: int = 0) -> str:
+    """The scout's prompt for arm ``L<n>`` or ``M<n>``: ``SCOUT_V2`` from generation 2 and ``SCOUT_V3`` from 3, then
+    ``SCOUT_V5`` alone from 5 and ``SCOUT_V6`` from 6, before its critique. ``hidden``: hidden scout ``at``'s, whose work
+    the agent never sees."""
+    n = int(arm[1:])
+    extra = SCOUT_V6 if n >= 6 else SCOUT_V5 if n == 5 else (SCOUT_V2 if n >= 2 else "") + (SCOUT_V3 if n >= 3 else "")
+    add = trained(arm).get("scout")
+    if add:
+        extra += f"   {literal(add)}\n"
+    text = SCOUT_PROMPT.replace("5. Critique:", extra + "5. Critique:", 1)
+    if hidden:
+        place, tree = hidden_at(at)
+        text = text.replace(f"{WE}/probes", place).replace(f"{WE}/tree.json", tree)
+    return text
+
+
+def probes_at(where: str) -> str:
+    return PROBE_RUN.replace(f"{WE}/probes", where)
+
+
+def failed_ids(output: str) -> set[str]:
+    """The tests pytest's short summary names as failed or in error."""
+    return set(FAILED.findall(output))
+
+
+def probe_failures(said: str, label: str) -> set[str]:
+    """What failed in a run reported with its ``exit=`` line. pytest's exit decides: names that cannot be read never make
+    a failing run look clean, and a run that reported no exit is not a pass. 0 is clean, 5 is no tests collected."""
+    named = {f"{label}:{i}" for i in failed_ids(said)}
+    code = re.search(r"^exit=(\d+)$", said, re.M)
+    if named or (code and code[1] in ("0", "5")):
+        return named
+    return {f"{label}:exit {code[1]}" if code else f"{label}:no exit"}
+
+
+def gate_flags() -> str:
+    """Added to a probe run for the gate. Never ``--tb=no``: the summary then drops the reason ``crashes`` reads."""
+    return "-rf"
+
+
+def crashes(output: str) -> int:
+    """How many summary lines say a test failed with something other than an assertion or ``pytest.fail``."""
+    return sum(1 for line in output.splitlines() if line.startswith("FAILED ")
+               and not re.search(r" - (?:assert|AssertionError|Failed)", line))
+
+
+def random_cases(said: str) -> int:
+    got = re.search(r"^random=(\d+)$", said, re.M)
+    return int(got[1]) if got else 0
+
+
+def gate_numbers(said: str) -> tuple[int, int, int]:
+    """What the container reported: pytest's exit (2 when it reported none), the cross test's cases, the crashes."""
+    code, cross = re.search(r"^exit=(\d+)$", said, re.M), re.search(r"^cross=(\d+)$", said, re.M)
+    return int(code[1]) if code else 2, int(cross[1]) if cross else 0, crashes(said)
+
+
+def qualified(arm: str) -> bool:
+    """From L8 a probe set is read from pytest's own report, and a set that exercised nothing is unknown, never clean."""
+    return int(arm[1:]) >= 8
+
+
+@dataclass
+class ProbeRun:
+    """One run of a probe set, from pytest's own report, so no reading of its console can cut an id or hide a failure."""
+    exit: int | None
+    results: dict[str, str]
+    texts: dict[str, str]
+    tail: str = ""
+
+    @property
+    def ran(self) -> int:
+        return sum(v in ("passed", "failed") for v in self.results.values())
+
+    @property
+    def usable(self) -> bool:
+        return self.exit in (0, 1) and self.ran > 0
+
+
+def probe_script(where: str) -> str:
+    return (f"rm -f {JUNIT_OUT}; {probes_at(where)} --junitxml={JUNIT_OUT} -o junit_family=xunit2 > /tmp/we-console.txt 2>&1; "
+            f'code=$?; tail -c 4000 /tmp/we-console.txt; echo "exit=$code"; echo "{JUNIT_MARK}"; cat {JUNIT_OUT} 2>/dev/null; '
+            f"rm -f {JUNIT_OUT} /tmp/we-console.txt")
+
+
+def failure_texts(xml: str) -> dict[str, str]:
+    """Each failing case's message and traceback, keyed as ``parse_junit`` keys it."""
+    found: dict[str, str] = {}
+    for case in ET.fromstring(xml).iter("testcase"):
+        for child in case:
+            if child.tag in ("failure", "error"):
+                found[f"{case.get('classname', '')}::{case.get('name', '')}"] = (f"{child.get('message', '')}\n"
+                                                                                  f"{child.text or ''}").strip()
+    return found
+
+
+def read_probes(said: str) -> ProbeRun:
+    """What ``probe_script`` printed. A report that cannot be read has no results, so the run is not usable."""
+    head, _, xml = said.partition(JUNIT_MARK)
+    code = re.search(r"^exit=(\d+)$", head, re.M)
+    try:
+        results, texts = parse_junit(xml.strip()), failure_texts(xml.strip())
+    except ET.ParseError:
+        results, texts = {}, {}
+    return ProbeRun(int(code[1]) if code else None, results, texts, head)
+
+
+def split_failures(now: ProbeRun, base: ProbeRun | None) -> tuple[list[str], list[str]]:
+    """G6's plan rule 3 (``classify``) on each failing case: one that passed at the base and fails now is a counterexample
+    on what worked before; any other is what a reader says the fix still owes."""
+    from g6.harness.verification_search import COUNTEREXAMPLE, classify
+
+    regressions, owed = [], []
+    for case in sorted(k for k, v in now.results.items() if v in ("failed", "error")):
+        before = base.results.get(case) if base else None
+        verdict = classify("preserve", {"result": "failed", "detail": ""}, {"result": before, "detail": ""} if before else None)
+        (regressions if verdict["result"] == COUNTEREXAMPLE else owed).append(case)
+    return regressions, owed
+
+
+def failures_of(sets: Iterable[tuple[str, ProbeRun, ProbeRun | None]]) -> tuple[set[str], str]:
+    """The failing ids of ``(label, run now, run at the base)``, and what the agent reads: regressions first, each case in
+    its own words, ``MAX_SHOWN`` at most. A set that no longer runs is reported, never clean."""
+    failing: set[str] = set()
+    broke, regress, owed = [], [], []
+    for label, now, base in sets:
+        if not now.usable:
+            failing.add(f"{label}:exit {now.exit}" if now.exit is not None else f"{label}:no exit")
+            broke.append(f"- the {label} probes no longer run on your code:\n{now.tail[-MAX_CASE_CHARS:]}")
+            continue
+        lost, still = split_failures(now, base)
+        failing |= {f"{label}:{case}" for case in [*lost, *still]}
+        regress += [(label, case, now.texts.get(case, "")) for case in lost]
+        owed += [(label, case, now.texts.get(case, "")) for case in still]
+    parts, left = list(broke), MAX_SHOWN
+    for heading, cases in (("Passed before your change and fail now:", regress), ("Failed before your change and still fail:", owed)):
+        if cases:
+            shown = cases[:left]
+            left -= len(shown)
+            parts.append("\n".join([heading, *(f"- {label}:{case}\n{text[:MAX_CASE_CHARS]}" for label, case, text in shown),
+                                    *([f"(and {len(cases) - len(shown)} more)"] if len(cases) > len(shown) else [])]))
+    return failing, "\n\n".join(parts)
+
+
+def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
+    """The critic's reply: its rule, verdict, reasons and test. Progress lines say nothing, so only what follows them counts,
+    and a test comes with a verdict of defect or not at all. ``proof``: the line it must quote from inside the pack, because
+    a critic that could not read the pack still answers, and "none" from it looks like a clean review (L8's smoke run)."""
+    body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
+    if proof and not re.search(rf"^READ:\s*{re.escape(proof)}\s*$", body, re.M):
+        return {"verdict": "unread", "rule": "", "why": "", "test": "", "error": f"the reply does not quote {proof}"}
+    verdict = re.search(r"^VERDICT:\s*(\w+)", body, re.M)
+    rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
+    why = re.search(r"^WHY:\s*(.*?)(?=^```|\Z)", body, re.M | re.S)
+    test = re.search(r"^```python\n(.*?)^```", body, re.M | re.S)
+    said_defect = bool(verdict) and verdict[1].lower() == "defect"
+    return {"verdict": verdict[1].lower() if verdict else "unreadable", "rule": rule[1].strip() if rule else "",
+            "why": why[1].strip() if why else "", "test": test[1].strip() if test and said_defect else "", "error": ""}
+
+
+def run_codex(pack: Path) -> str:
+    """One read-only Codex task in ``pack``, on the owner's sign-in. ``G6_CODEX_COMPANION``: the Codex plugin's companion script."""
+    companion = os.environ.get("G6_CODEX_COMPANION")
+    if not companion:
+        raise RuntimeError("G6_CODEX_COMPANION is not set")
+    try:
+        got = subprocess.run(["node", companion, "task", "--fresh", "--effort", "high", "--cwd", str(pack), "--prompt-file",
+                              str(pack / "critic_prompt.md")], capture_output=True, timeout=CRITIC_SECONDS, cwd=pack)
+    finally:   # the companion leaves a broker and a codex process for each workspace: 0.4 GB a time, and they hold the pack open
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
+                        f"Where-Object {{ $_.CommandLine -like '*{pack.name}*' }} | "
+                        "ForEach-Object { taskkill /T /F /PID $_.ProcessId | Out-Null }"], capture_output=True, timeout=60)
+    return got.stdout.decode("utf-8", errors="replace")
+
+
+def with_critic(found: tuple[set[str], str], critic: Mapping[str, str]) -> tuple[set[str], str]:
+    """What fails, with the critic's rule, reasons and test before it if the critic's own test is among the failures."""
+    failing, text = found
+    if not any(case.startswith("critic:") for case in failing):
+        return failing, text
+    return failing, CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + "\n\n" + text
+
+
+def has_hook(arm: str) -> bool:
+    """Arms L1 to L4: the Stop hook. From L5 the runner holds the loop itself."""
+    return int(arm[1:]) < 5
+
+
+def holds_loop(arm: str) -> bool:
+    return int(arm[1:]) >= 5
+
+
+class WorkingTree:
+    """Stands where ``cegis`` has a sketch: the candidate is the agent's working tree, which ``Repairs`` looks at."""
+
+    @staticmethod
+    def instantiate(control: dict[int, str]) -> str:
+        return control[0]
+
+
+class Repairs:
+    """G6's CEGIS over the agent's work (PLAN.md, 2026-10-31): ``search`` is the agent, told what failed; ``evaluate`` is
+    the probes, which the runner holds. A failure the agent has already seen is not sent again: it has decided. With
+    ``state``, from L8, what says the agent has decided is that it left the code as it was: a failure that survives a
+    repair goes back, up to the cap."""
+
+    def __init__(self, check: Callable[[], tuple[set[str], str]], ask: Callable[[str, int], Any],
+                 state: Callable[[], str] | None = None, told: str = "") -> None:
+        self.check, self.ask, self.state, self.told = check, ask, state, told
+        self.round, self.failing, self.text, self.sent, self.tree = 0, set(), "", set(), None
+
+    def search(self, sketch: Any, examples: Any, *, max_exhaustive: int = 0) -> Any:
+        from g6.cegis import SearchResult
+
+        if self.round:
+            tree = self.state() if self.state else None
+            if self.state and tree == self.tree:
+                return SearchResult(None, "the agent left the code as it was", False, self.round)
+            if not self.state and self.failing <= self.sent:
+                return SearchResult(None, "nothing new fails", False, self.round)
+            self.sent |= self.failing
+            self.tree = tree
+            told = self.told or (COUNTEREXAMPLES_8 if self.state else COUNTEREXAMPLES)
+            self.ask(told.format(text=self.text), self.round)
+        self.round += 1
+        return SearchResult({0: f"round {self.round}"}, "agent", False, self.round)
+
+    def evaluate(self, sketch: Any, controls: Any, inputs: Any) -> list[list[dict[str, bool]]]:
+        self.failing, self.text = self.check()
+        return [[{"ok": not self.failing} for _ in inputs]]
+
+
+def has_critic(arm: str) -> bool:
+    return int(arm[1:]) == 4
+
+
+def critic_prompt(number: int, title: str, text: str) -> str:
+    return CRITIC_PROMPT.format(number=number, title=title, text=text)
+
+
+def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, randoms: int | None = None,
+               executed: int | None = None) -> list[str]:
+    """What is wrong with the scout's probes, by the runner's own count: G6's ``InputDomain`` says how many combinations
+    the declared dimensions make, up to ``MAX_CROSS``. Empty when the fix may start."""
+    from g6.cegis import InputDomain
+
+    wrong = []
+    if executed == 0:
+        wrong.append("no case of test_cross ran: a skipped case tests nothing")
+    if randoms is not None and randoms < MIN_RANDOM:
+        wrong.append(f"test_random has {randoms} of {MIN_RANDOM} generated inputs")
+    if broken:
+        wrong.append(f"{broken} probes fail with an error, not an assertion: they test nothing until they run")
+    if exit_code not in (0, 1):
+        wrong.append(f"the probes could not run (pytest exit {exit_code}): make them importable from the repository")
+    elif exit_code == 0:
+        wrong.append("every probe passes on the unfixed code, so none fails: reproduce the issue's symptom")
+    try:
+        dimensions = json.loads(raw).get("dimensions") or {}
+        domain = InputDomain.of(dimensions, max_inputs=MAX_CROSS)
+    except (ValueError, TypeError, AttributeError):
+        dimensions, domain = {}, None
+    if domain is None or len(dimensions) < 2:
+        wrong.append('tree.json needs "dimensions" with at least two dimensions')
+    elif collected < min(domain.size, MAX_CROSS):
+        wrong.append(f"test_cross has {collected} of {min(domain.size, MAX_CROSS)} combinations of the dimensions")
+    return wrong
+
+
+def scout_again(args: Sequence[str]) -> list[str]:
+    """The same command, continuing the scout's session: the flag that takes a list stays last."""
+    at = args.index("--disallowedTools")
+    return [*args[:at], "--continue", *args[at:]]
+
+
+def gets_thread(arm: str) -> bool:
+    """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31)."""
+    return re.fullmatch(r"T|R|[LM]\d+", arm) is not None
+
+
+def thread_text(comments: Iterable[Mapping[str, Any]], until: str) -> str:
+    """The discussion a person would read, cut where the fix's pull request opens: ISO times compare as text."""
+    kept = [f"{str(n.get('author_association') or 'NONE').lower()} on {str(n['created_at'])[:10]}: {n.get('body') or ''}"
+            for n in comments if n["created_at"] < until and (n.get("user") or {}).get("type") != "Bot"]
+    body = "\n\n".join(kept)[:MAX_THREAD_CHARS]
+    return f"\n\nThe issue's discussion so far:\n\n{body}" if body else ""
+
+
+def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
+    """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
+    addendum."""
+    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A, "R": PROMPT_A}
+    if re.fullmatch(r"[GH]\d+", arm):
+        harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
+        texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + harness.replace("{", "{{").replace("}", "}}")
+                                    + "\n\nIssue #{number}", 1)
+    if re.fullmatch(r"[LM]\d+", arm):
+        added = LOOP_ADDENDUM
+        if holds_loop(arm):
+            added = (HARNESS / "G1.txt").read_text(encoding="utf-8").strip() + "\n\n" + LOOP_ADDENDUM_5
+        add = trained(arm).get("fixer")
+        if add:
+            added += f"\n\n{add}"
+        texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + added.replace("{", "{{").replace("}", "}}")
+                                    + "\n\nIssue #{number}", 1)
+    if arm not in texts:
+        raise ValueError(f"no arm {arm!r}")
     owner, name = task.project.split("/", 1)
-    return PROMPT.format(owner=owner, name=name, number=task.issue, title=title, text=text)
+    return texts[arm].format(owner=owner, name=name, number=task.issue, title=title, text=text)
 
 
 # --- docker ---------------------------------------------------------------------------------------------------------------
@@ -321,6 +892,120 @@ def g6_model_cost(assessments: Iterable[Any]) -> dict[str, Any]:
             "output_tokens": tokens_out, "usd": round(usd, 6)}
 
 
+# --- round 3: formal methods (PLAN.md section 9, "Round 3 (2026-10-30)") ----------------------------------------------
+ROUND3 = "r3"
+R3_MODELS = ("claude-haiku-4-5", "claude-sonnet-5-5", "claude-fable-5-1")   # in the order they run
+# PLAN.md, 2026-10-30, the smoke test: Haiku's pilot never called G6, so these go before Haiku's runs are done
+R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "C", 1),
+            (R3_MODELS[1], "attrs-1593", "C", 1), (R3_MODELS[1], "click-3678", "C", 1),
+            (R3_MODELS[1], "pydantic-14052", "C", 1)}
+R3_PROBE = {(R3_MODELS[1], task, "D", 1) for task in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
+R3_D_G6 = "f50953c"          # arm D's G6, reviewed (PLAN.md, 2026-10-30): its refusals name proposed_checks
+HARNESS = Path(__file__).resolve().parent / "harness"   # the distilled text of each generation
+TRAINED = ("fixer", "scout", "repair", "critic")   # the parts of the loop harness training can add to
+R3_LOOP_G6 = "c53d310"       # the distillation loop's G6 (PLAN.md, 2026-10-30)
+R3_HELD = ("black-5521", "click-3769", "starlette-3718")   # by hash, before any tuning; never read by the distiller
+R3_HELD_REPEATS = 5          # the final comparison, set before any generation ran (PLAN.md, 2026-10-30)
+R3_ARMS = ("A", "B", "C")
+R3_REPEATS = {("claude-sonnet-5-5", "A"): 2}    # the noise control: Sonnet's arm A twice per bug
+R3_CAP_USD = 180.00          # round 3's own hard stop, agent and G6 together (the owner, 2026-10-30)
+R3_RUN_CAP_USD = 10.00       # each run's cap (Claude Code's --max-budget-usd); Fable's from the budget left
+R3_MARGIN = 1.05             # the runner's own stop is the cap and 5% (round 1: $10 and $10.50)
+G6_BIN = "/usr/local/bin/g6"
+#: What the agent's container holds of G6 for Claude Code: the user-level MCP servers and skills (arm check).
+ARM_STATE = ("echo we-arm-state >/dev/null; python3 -I -c 'import json, os\n"
+             "p = os.path.expanduser(\"~/.claude.json\")\n"
+             "d = json.load(open(p)) if os.path.isfile(p) else {}\n"
+             "s = os.path.expanduser(\"~/.claude/skills\")\n"
+             "print(json.dumps({\"mcp_servers\": sorted(d.get(\"mcpServers\") or {}), "
+             "\"skills\": sorted(os.listdir(s)) if os.path.isdir(s) else []}))'")
+
+
+def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
+    """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
+    text) on the held-out ones. The final comparison runs A and ``H<n>`` five times on each held-out bug."""
+    model, task, arm, repeat = key
+    held_out = task in R3_HELD and (arm in ("A", "T", "R") or arm[0] in "HM")
+    if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
+        return False
+    if is_fresh(task):
+        return arm in ("A", "T", "R") or re.fullmatch(r"M\d+", arm) is not None
+    if arm in ("A", "E", "T", "R"):
+        return True
+    return re.fullmatch(r"[GHLM]\d+", arm) is not None and (arm[0] in "HM") == (task in R3_HELD)
+
+
+def r3_schedule(tasks: Sequence[Task]) -> list[tuple[str, str, str, int]]:
+    """Every round 3 run, in order, as (model, task, arm, repeat): Haiku's, then Sonnet's, then Fable's; within a model,
+    the tasks in the plan's order, each with arms A, B and C."""
+    return [(model, task.id, arm, repeat) for model in R3_MODELS for task in tasks for arm in R3_ARMS
+            for repeat in range(1, R3_REPEATS.get((model, arm), 1) + 1)]
+
+
+def r3_caps(model: str, *, spent: float, fable_left: int) -> tuple[float, float]:
+    """A run's cap and the runner's stop: $10 and $10.50; for Fable, the budget left over the Fable runs left (this
+    one included), at most those, the cap rounded down to the cent."""
+    stop = R3_RUN_CAP_USD * R3_MARGIN
+    if model == R3_MODELS[2]:
+        stop = min(stop, max(0.0, R3_CAP_USD - spent) / max(1, fable_left))
+    cap = int(stop / R3_MARGIN * 100 + 1e-9) / 100
+    return cap, round(cap * R3_MARGIN, 6)
+
+
+def r3_done(rows: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str, str, int], str]:
+    """The round 3 runs whose agent started, by (model, task, arm, repeat), with how each ended."""
+    ended = {r["run"]: r for r in rows if r.get("event") == "ended"}
+    done = {}
+    for r in rows:
+        end = ended.get(r.get("run"))
+        if r.get("event") == "started" and r.get("kind") == "run" and r.get("arm") and end and end.get("agent_started"):
+            done[(str(r.get("model")), str(r.get("task")), str(r.get("arm")), int(r.get("repeat") or 1))] = end["status"]
+    return done
+
+
+def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
+    """Round 3's own rules: the arm, model and repeat are scheduled, not run already, and in order (no Sonnet run while
+    a Haiku run is left, no Fable run while a Sonnet one is); the cap; and the $100 stop. Returns (why, cap, stop)."""
+    rows = ctx.archive.rows()
+    sched = r3_schedule(ctx.tasks if ctx.tasks is not None else load_tasks())
+    key = (ctx.model, task.id, ctx.arm, ctx.repeat)
+    if ctx.model not in R3_MODELS:
+        return f"round 3 has no model {ctx.model!r}", 0.0, 0.0
+    if key not in sched and key not in R3_PROBE and not r3_loop_key(key):
+        return f"round 3 schedules no run {key}", 0.0, 0.0
+    if ctx.arm not in R3_ARMS[:3] and ctx.arm != "D" and not str(ctx.g6.get("commit")).startswith(R3_LOOP_G6):
+        return f"the loop's arms run only on the reviewed G6, {R3_LOOP_G6}", 0.0, 0.0
+    if ctx.arm == "D" and not str(ctx.g6.get("commit")).startswith(R3_D_G6):
+        return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
+    done = r3_done(rows)
+    if key in done and not (ctx.rerun_why and done[key] == "error"):
+        return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
+    earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
+    if earlier and key not in R3_SMOKE and key not in R3_PROBE and not r3_loop_key(key):
+        return f"out of order: {len(earlier)} run(s) of an earlier model are left, first {earlier[0]}", 0.0, 0.0
+    spent = c.spent(rows)
+    fable_left = sum(1 for k in sched if k[0] == R3_MODELS[2] and k not in done)
+    cap, stop = r3_caps(ctx.model, spent=spent, fable_left=fable_left)
+    ok, why = c.may_start(spent, cap=R3_CAP_USD, need=stop)
+    if not ok or cap <= 0:
+        return f"the round's ${R3_CAP_USD:.0f} stop: {why or 'no budget left'}", cap, stop
+    return "", cap, stop
+
+
+def r3_ledger(archive: c.Archive, record: Mapping[str, Any]) -> dict[str, Any]:
+    """One line of round 3's ledger after each run: what it cost and what the round has spent since it began."""
+    used = (record.get("observed") or {}).get("tool_use") or {}
+    row = {"at": c.now(), "run": record.get("run"), "task": record.get("task"), "model": record.get("model"),
+           "arm": record.get("arm"), "repeat": record.get("repeat"), "status": record.get("status"),
+           "g6_calls": used.get("g6_calls"), "tool_search": used.get("tool_search"),
+           "cost_usd": float(record.get("cost_usd") or 0.0), "reported_usd": record.get("reported_usd"),
+           "cap_usd": record.get("cap_usd"), "spent_after": c.spent(archive.rows()), "stop_usd": R3_CAP_USD}
+    archive.root.mkdir(parents=True, exist_ok=True)
+    with open(archive.root / "ledger.jsonl", "a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return row
+
+
 # --- the hook that saves each round's patch, and the patch capture -------------------------------------------------------
 def diff_script(repo: str, base: str, dest: str) -> str:
     """The working tree's diff against ``base``, new files included, through a separate index: the repository's own
@@ -342,9 +1027,55 @@ exit 0
 """
 
 
-def hook_settings() -> str:
-    return json.dumps({"hooks": {"PreToolUse": [{"matcher": "mcp__g6__g6_review_patch", "hooks": [
-        {"type": "command", "command": f"{WE}/round_hook.sh", "timeout": 120}]}]}}, indent=1)
+def hook_settings(*, stop: bool = False) -> str:
+    hooks: dict[str, Any] = {"PreToolUse": [{"matcher": "mcp__g6__g6_review_patch", "hooks": [
+        {"type": "command", "command": f"{WE}/round_hook.sh", "timeout": 120}]}]}
+    if stop:
+        hooks["Stop"] = [{"hooks": [{"type": "command", "command": f"{WE}/stop_hook.sh", "timeout": 300}]}]
+    return json.dumps({"hooks": hooks}, indent=1)
+
+
+def stop_hook(repo: str) -> str:
+    """Arm L's hook: only a failing probe (pytest's exit 1) blocks the stop; it lets go after ``MAX_STOPS`` blocks."""
+    return f"""#!/bin/sh
+cat >/dev/null
+cd {repo} || exit 0
+mkdir -p {WE}/rounds
+n=$(cat {WE}/rounds/stops 2>/dev/null || echo 0)
+[ "$n" -ge {MAX_STOPS} ] && exit 0
+args=""
+[ -f {WE}/waived.txt ] && args=$(awk 'NF{{print "--deselect " $1}}' {WE}/waived.txt)
+timeout 240 {PROBE_RUN} $args > {WE}/rounds/stop-$n.txt 2>&1
+code=$?
+if [ "$code" -ne 1 ] && [ "$code" -ne 2 ]; then
+  echo "exit $code" >> {WE}/rounds/stop-$n.txt
+  exit 0
+fi
+echo $((n + 1)) > {WE}/rounds/stops
+tail -c 6000 {WE}/rounds/stop-$n.txt | python3 -I -c 'import json, sys
+print(json.dumps({{"decision": "block", "reason": "The scout probes fail on your code. Repair the cause, or waive a wrong "
+                  "probe as your instructions say, then finish again.\\n\\n" + sys.stdin.read()}}))'
+"""
+
+
+def scout_tree(raw: str) -> dict[str, Any]:
+    """The scout's ``tree.json`` as PR #5's ``GoalTree``: its text, how many shapes, and which have no probe."""
+    from g6.goal_engine.goal_tree import GoalTree
+
+    try:
+        data = json.loads(raw)
+        tree = GoalTree(str(data["goal"]), branching_factor=12, max_depth=2, max_nodes=200)
+        branches = data["branches"]
+        if not branches:
+            raise ValueError("the tree has no branches")
+        ids = tree.add_subgoals("root", [str(b["goal"]) for b in branches])
+        shapes = [s for b in branches for s in b["shapes"]]
+        for ident, branch in zip(ids, branches):
+            tree.add_subgoals(ident, [str(s["shape"]) for s in branch["shapes"]])
+    except (ValueError, TypeError, KeyError) as exc:
+        return {"error": f"{type(exc).__name__}: {exc}", "text": "", "shapes": 0, "open": []}
+    return {"text": tree.visualize(), "shapes": len(shapes),
+            "open": [str(s["shape"]) for s in shapes if not s.get("probe")]}
 
 
 # --- tests: maintainers' test files, junit, FAIL_TO_PASS -----------------------------------------------------------------
@@ -567,15 +1298,16 @@ def extract_rounds(objects: Iterable[Mapping[str, Any]],
 
 
 # --- the stream ----------------------------------------------------------------------------------------------------------
-def claude_args() -> list[str]:
-    """PLAN.md section 4. The flag that takes a list goes last; the prompt comes on standard input."""
-    return [CLAUDE, "-p", "--model", c.MODEL, "--output-format", "stream-json", "--verbose", "--max-turns",
-            str(c.MAX_TURNS), "--max-budget-usd", f"{c.RUN_CAP_USD:.2f}", "--dangerously-skip-permissions",
+def claude_args(model: str = c.MODEL, cap_usd: float = c.RUN_CAP_USD) -> list[str]:
+    """PLAN.md section 4 (round 3: the run's model and cap). The flag that takes a list goes last; the prompt comes on
+    standard input."""
+    return [CLAUDE, "-p", "--model", model, "--output-format", "stream-json", "--verbose", "--max-turns",
+            str(c.MAX_TURNS), "--max-budget-usd", f"{cap_usd:.2f}", "--dangerously-skip-permissions",
             "--disallowedTools", "WebFetch", "WebSearch"]
 
 
 def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, write: Callable[[str], None],
-                clock: Callable[[], float] = time.monotonic) -> str:
+                clock: Callable[[], float] = time.monotonic, stop_usd: float = c.RUN_STOP_USD) -> str:
     """Feed the stream to ``tally`` until it ends ("") or a cap is reached ("timeout", "cap_turns", "cap_cost")."""
     q: queue.Queue = queue.Queue()
 
@@ -607,7 +1339,7 @@ def read_stream(lines: Iterable[bytes], tally: c.Tally, *, deadline: float, writ
             tally.feed(obj)
         if tally.model_calls > c.MAX_TURNS * TURN_BACKSTOP:
             return "cap_turns"
-        if tally.cost_usd > c.RUN_STOP_USD:
+        if tally.cost_usd > stop_usd:
             return "cap_cost"
 
 
@@ -639,8 +1371,14 @@ class Context:
     proxy_source: Path = PROXY
     environ: Mapping[str, str] | None = None
     tree_reader: Callable[[Task], str] | None = None    # upstream's tree for the base commit (default: GitHub's API)
-    variant: str = ""            # "r2": round 2, G6 with its own model (PLAN.md section 9)
+    critic: Callable[[Path], str] | None = None         # the patch's reviewer, given its pack (default: ``run_codex``)
+    variant: str = ""            # "r2": round 2, G6 with its own model; "r3": round 3, formal methods (PLAN.md section 9)
     prior_spent: float = 0.0     # what earlier rounds spent, under the same $100 stop
+    arm: str = ""                # round 3: "A" (no G6), "B" (G6 as shipped) or "C" (G6 and the formal addendum)
+    model: str = c.MODEL         # round 3: the agent's model
+    repeat: int = 1              # round 3: which repeat of the same model, task and arm (Sonnet's arm A: 1 or 2)
+    tasks: Sequence[Task] | None = None   # round 3's schedule's tasks (default: tasks.json)
+    rerun_why: str = ""          # round 3: a run whose agent started and ended in "error" may be made again, saying why
 
     def client_env(self, key: str | None = None) -> dict[str, str]:
         base = dict(self.environ) if self.environ is not None else {
@@ -742,6 +1480,8 @@ def refusal(ctx: Context, task: Task) -> str:
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     if v["record"].get("oracle_image_id") != out(ctx.docker("image", "inspect", oracle, "--format", "{{.Id}}")):
         return "the task's validation was not made on the images this run would use"
+    if ctx.variant == ROUND3:
+        return ""     # round 3's own stop, order and caps: r3_refusal
     need = c.RUN_STOP_USD + (G6_ALLOWANCE_USD if ctx.variant == ROUND2 else 0.0)
     ok, why = c.may_start(c.spent(ctx.archive.rows()) + ctx.prior_spent, need=need)
     return "" if ok else f"the $100 stop: {why}"
@@ -770,20 +1510,323 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     """One run (PLAN.md section 4). Refused before anything starts when G6's commit, the validation or the stop says
     so; a failed key check starts no agent. ``dry``: the same path with no key and no way out (a placeholder in the
     key's place, Claude Code's proxy a dead port), plus a self-test of the round hook; nothing can be spent."""
+    round3 = ctx.variant == ROUND3
     why = "" if dry else refusal(ctx, task)
+    cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
+    if round3:
+        if not re.fullmatch(r"[A-ET]|[GHLM]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
+            why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
+        elif dry:
+            cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
+        elif not why:
+            why, cap, stop = r3_refusal(ctx, task)
     if why:
         return {"status": "refused", "why": why, "task": task.id}
+    body = _run_task(ctx, task, dry=dry, cap=cap, stop=stop)
+    if round3 and not dry:
+        body["ledger"] = r3_ledger(ctx.archive, body)
+    return body
+
+
+def run_session(ctx: Context, run: Any, agent: str, command: list[str], key: str, tally: c.Tally, text_in: str, name: str,
+                *, seconds: float, stop_usd: float) -> str:
+    """One Claude Code session in the container, its stream saved as ``name``: how it ended, as ``read_stream`` says."""
+    proc = ctx.docker.popen(*command, env=ctx.client_env(key))
+    stream = open(run.fresh_path(name), "w", encoding="utf-8", newline="\n")
+    try:
+        proc.stdin.write(text_in.encode("utf-8"))
+        proc.stdin.close()
+        return read_stream(iter(proc.stdout.readline, b""), tally, deadline=time.monotonic() + seconds,
+                           write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                           stop_usd=stop_usd)
+    finally:
+        stream.close()
+        if proc.poll() is None:
+            ctx.docker.sh(agent, KILL_AGENT, user="root", timeout=60)
+            proc.kill()
+        proc.wait(timeout=60)
+
+
+def probe_gate(ctx: Context, task: Task, agent: str, where: str, tree: str) -> list[str]:
+    """``scout_gate`` on the probes in ``where``: pytest's exit, the cross test's cases, and failures that are not
+    assertions, as the container reports them."""
+    if qualified(ctx.arm):
+        got = read_probes(out(ctx.docker.sh(agent, probe_script(where), workdir=task.repo, timeout=300)))
+
+        def cases(test: str) -> list[str]:
+            return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
+
+        crashed = sum(v == "error" or (v == "failed" and not re.match(r"assert|AssertionError|Failed", got.texts.get(k, "")))
+                      for k, v in got.results.items())
+        return scout_gate(out(ctx.docker.sh(agent, f"cat {tree} 2>/dev/null", timeout=60)),
+                          exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,
+                          randoms=sum(v in ("passed", "failed") for v in cases("test_random")),
+                          executed=sum(v in ("passed", "failed") for v in cases("test_cross")))
+    run_them, count = probes_at(where), PROBE_COLLECT.replace(f"{WE}/probes", where)
+    said = out(ctx.docker.sh(agent, f"COLUMNS=300 {run_them} {gate_flags()} > /tmp/we-gate.txt 2>&1; code=$?; "
+                                    'grep "^FAILED" /tmp/we-gate.txt | head -c 400000; echo "exit=$code"; '
+                                    f'echo "cross=$({count} 2>/dev/null | grep -c test_cross)"; '
+                                    f'echo "random=$({count} 2>/dev/null | grep -c test_random)"; rm -f /tmp/we-gate.txt',
+                             workdir=task.repo, timeout=300))
+    code, collected, broken = gate_numbers(said)
+    return scout_gate(out(ctx.docker.sh(agent, f"cat {tree} 2>/dev/null", timeout=60)), exit_code=code,
+                      collected=collected, broken=broken,
+                      randoms=random_cases(said) if int(ctx.arm[1:]) >= 6 else None)
+
+
+def probe_sets(arm: str) -> list[tuple[str, str]]:
+    """Each probe set's label and place: the agent's, then the hidden ones."""
+    return [("scout", f"{WE}/probes"), *((f"held{i}", hidden_at(i)[0]) for i in range(hidden_scouts(arm)))]
+
+
+def run_set(ctx: Context, task: Task, agent: str, where: str) -> ProbeRun:
+    """One probe set on the tree as it stands. A hidden set is copied in for the run and removed: the agent cannot read it."""
+    held = where != f"{WE}/probes"
+    if held:
+        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && chown -R {USER} {HELD_COPY}; "
+                             "true", user="root", timeout=60)
+    said = out(ctx.docker.sh(agent, probe_script(HELD_COPY if held else where), workdir=task.repo, timeout=300))
+    if held:
+        ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
+    return read_probes(said)
+
+
+def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title: str, text: str) -> dict[str, Any]:
+    """Arm L8's critic (PLAN.md, 2026-10-31): another model family reads the finished patch, on the host, with what the agent
+    was given and the parent. It sees no maintainers' test and no fix: the tree comes from the agent's own container. A critic
+    that fails is recorded and the run goes on. Its test, if it has one, waits where ``run_set`` can run it."""
+    started = time.monotonic()
+    found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
+    proof = f"review {uuid.uuid4().hex}"
+    # an ordinary folder: mkdtemp's 0o700 is an ACL on Windows that shuts out the critic's sandbox account
+    pack = ctx.archive.root / "critic_packs" / proof.split()[1]
+    try:
+        pack.mkdir(parents=True)
+        checked(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/critic.patch"), workdir=task.repo, timeout=300),
+                "the critic's patch")
+        if not copy_out(ctx.docker, agent, f"{WE}/critic.patch", pack / "candidate.patch"):
+            raise RuntimeError("the patch could not be copied")
+        tree = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "git", "archive", "--format=tar", base, timeout=300)
+        checked(tree, "the parent's tree")
+        with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
+            for member in tar.getmembers():
+                if member.isfile():
+                    dest = pack / "parent" / member.name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(tar.extractfile(member).read())
+        (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
+        (pack / "critic_prompt.md").write_text(critic_text(ctx.arm), encoding="utf-8")
+        said = (ctx.critic or run_codex)(pack)
+        run.write("critic_reply.txt", ctx.archive.redact(said))
+        found = critic_report(said, proof=proof)
+        if found["test"]:
+            write_in(ctx.docker, agent, f"{CRITIC_AT}/test_critic.py", found["test"] + "\n", user="root")
+    except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
+        found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    finally:
+        shutil.rmtree(pack, ignore_errors=True)
+    return {**found, "seconds": round(time.monotonic() - started, 1)}
+
+
+def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, title: str,
+              text: str) -> dict[str, Any]:
+    """Arm L's first step (PLAN.md, 2026-10-31): the scout's session, then the repository back at the base and its probes
+    out of the agent's reach. From L5, a second scout whose work the agent never sees. The sessions' cost is returned, to
+    count in the run."""
+    owner, name = task.project.split("/", 1)
+    cap_at = docker_args.index("--max-budget-usd") + 1
+    args = [*docker_args[:cap_at], f"{SCOUT_CAP_USD:.2f}", *docker_args[cap_at + 1:]]
+    tally = c.Tally(count_reported=True)
+    filled = {"owner": owner, "name": name, "number": task.issue, "title": title, "text": text}
+    asked = scout_prompt(ctx.arm).format(**filled)
+    run.write("scout_prompt.txt", asked)
+
+    def session(command: list[str], text_in: str, name: str) -> str:
+        return run_session(ctx, run, agent, command, key, tally, text_in, name, seconds=1200.0,
+                           stop_usd=SCOUT_CAP_USD * R3_MARGIN)
+
+    def checked_again(wrong: list[str], name: str, where: str, tree: str) -> tuple[str, list[str]]:
+        """One more try, in the same session, with what the runner counted."""
+        ended = session(scout_again(args), "The runner checked your work and refused it:\n- " + "\n- ".join(wrong)
+                        + "\nPut this right and finish.", name)
+        return ended, probe_gate(ctx, task, agent, where, tree)
+
+    def restore() -> None:
+        checked(ctx.docker.sh(agent, f"git reset -q --hard {base} && git clean -fdq", workdir=task.repo, timeout=120),
+                "restore the repository")
+
+    visible = (f"{WE}/probes", f"{WE}/tree.json")
+    ended = session(args, asked, "scout_stream.jsonl")
+    wrong = probe_gate(ctx, task, agent, *visible) if int(ctx.arm[1:]) >= 3 else []
+    refused = list(wrong)
+    if wrong:
+        ended, wrong = checked_again(wrong, "scout_stream_2.jsonl", *visible)
+    if has_critic(ctx.arm):   # a fresh session: it has read neither the scout's reasoning nor any patch
+        restore()
+        ended = session(args, critic_prompt(task.issue, title, text), "critic_stream.jsonl")
+        wrong = probe_gate(ctx, task, agent, *visible)
+        if wrong:
+            refused += wrong
+            ended, wrong = checked_again(wrong, "critic_stream_2.jsonl", *visible)
+    hidden: dict[str, Any] = {}
+    if holds_loop(ctx.arm):
+        restore()
+        checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes; chown -R root:root {WE}/probes {WE}/tree.json; "
+                                     f"chmod -R go-rwx {WE}/probes {WE}/tree.json; true", user="root", timeout=60),
+                "keep the first scout's work from the second")
+        ctx.docker.sh(agent, f"mv {HOME}/.claude/projects {WE}/scout-projects; chown -R root:root {WE}/scout-projects; "
+                             f"chmod -R go-rwx {WE}/scout-projects; true", user="root", timeout=60)
+        for i in range(hidden_scouts(ctx.arm)):
+            where, tree_at = hidden_at(i)
+            tag = f"hidden{i + 1}" if i else "hidden"
+            second = scout_prompt(ctx.arm, hidden=True, at=i).format(**filled)
+            run.write(f"{tag}_prompt.txt", second)
+            session(args, second, f"{tag}_stream.jsonl")
+            left = probe_gate(ctx, task, agent, where, tree_at)
+            refused += left
+            if left:
+                _, left = checked_again(left, f"{tag}_stream_2.jsonl", where, tree_at)
+            run.write(f"{tag}_at_base.txt", out(ctx.docker.sh(agent, f"{probes_at(where)} 2>&1 | tail -c 8000",
+                                                              workdir=task.repo, timeout=300)))
+            copy_out(ctx.docker, agent, where, run.path / f"{tag}_probes")
+            held_tree = scout_tree(out(ctx.docker.sh(agent, f"cat {tree_at} 2>/dev/null", timeout=60)) or "no tree")
+            run.write(f"{tag}_tree.txt", held_tree["text"])
+            hidden[tag] = {"still_wrong": left, **{k: held_tree.get(k) for k in ("shapes", "open", "error")}}
+            restore()
+            checked(ctx.docker.sh(agent, f"mkdir -p {where}; chown -R root:root {where} {tree_at}; chmod -R go-rwx {where} "
+                                         f"{tree_at}; mv {HOME}/.claude/projects {WE}/scout-projects-{tag}; chown -R "
+                                         f"root:root {WE}/scout-projects-{tag}; chmod -R go-rwx {WE}/scout-projects-{tag}; "
+                                         "true", user="root", timeout=60), "hide a scout's work from the next")
+        checked(ctx.docker.sh(agent, f"mkdir -p {HOME}/.claude/projects; rm -rf {HOME}/.claude/todos "
+                                     f"{HOME}/.claude/shell-snapshots /tmp/*; chown -R {USER} {HOME}/.claude/projects; "
+                                     "true", user="root", timeout=120), "clear what the scouts left")
+    restore()
+    checked(ctx.docker.sh(agent, f"mkdir -p {WE}/probes && chown -R root:root {WE}/probes && chmod -R a+rX,go-w "
+                                 f"{WE}/probes; [ -f {WE}/tree.json ] && chown root:root {WE}/tree.json "
+                                 f"&& chmod a+r {WE}/tree.json; true", user="root", timeout=60), "lock the probes")
+    at_base = ctx.docker.sh(agent, f"{PROBE_RUN} 2>&1 | tail -c 8000", workdir=task.repo, timeout=300)
+    run.write("scout_at_base.txt", out(at_base))
+    copy_out(ctx.docker, agent, f"{WE}/probes", run.path / "scout_probes")
+    tree_file = run.fresh_path("tree.json")
+    tree = scout_tree(tree_file.read_text("utf-8") if copy_out(ctx.docker, agent, f"{WE}/tree.json", tree_file)
+                      else "no tree")
+    run.write("tree.txt", tree["text"])
+    sets: dict[str, ProbeRun] = {}
+    if qualified(ctx.arm):   # on the clean base: what each case did before any fix, and which sets can be trusted to run
+        sets = {label: run_set(ctx, task, agent, where) for label, where in probe_sets(ctx.arm)}
+        run.write_json("probes_at_base.json", {label: {"exit": got.exit, "ran": got.ran, "results": got.results}
+                                               for label, got in sets.items()})
+    return {"ended": ended, "usd": round(tally.cost_usd, 6), "refused": refused, "still_wrong": wrong, "hidden": hidden,
+            "quarantined": sorted(label for label, got in sets.items() if not got.usable), "at_base": sets,
+            **{k: tree.get(k) for k in ("shapes", "open", "error")}}
+
+
+def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally,
+                stop: float, started: float, at_base: Mapping[str, ProbeRun] | None = None,
+                critique: Callable[[], dict[str, Any]] | None = None) -> dict[str, Any]:
+    """G6's ``cegis`` over the agent's finished work: the runner runs both scouts' probes and sends failures back in the
+    same session. The hidden set is copied in for the run and removed, so the agent can never read it. From L8 a set that
+    exercised nothing on the base is left out, as it can say nothing of the patch, and the critic reads the patch once."""
+    from g6.cegis import InputDomain, cegis
+
+    rounds = [0]
+    critic: dict[str, Any] = {}
+
+    def check() -> tuple[set[str], str]:
+        rounds[0] += 1
+        if qualified(ctx.arm):
+            if critique and rounds[0] == 1:
+                critic.update(critique())
+            seen = []
+            for label, where in [*probe_sets(ctx.arm), *([("critic", CRITIC_AT)] if critic.get("test") else [])]:
+                base = (at_base or {}).get(label)
+                if label != "critic" and (base is None or not base.usable):
+                    continue
+                got = run_set(ctx, task, agent, where)
+                run.write_json(f"repair_check_{rounds[0]}_{label}.json", {"exit": got.exit, "ran": got.ran,
+                                                                          "results": got.results, "tail": got.tail})
+                if label != "critic" or got.usable:     # a critic's test that will not run says nothing of the patch
+                    seen.append((label, got, base))
+            return with_critic(failures_of(seen), critic)
+        failing, said = set(), []
+        for label, where in (("scout", f"{WE}/probes"),
+                             *((f"held{i}", hidden_at(i)[0]) for i in range(hidden_scouts(ctx.arm)))):
+            held = where != f"{WE}/probes"
+            if held:
+                ctx.docker.sh(agent, f"rm -rf {HELD_COPY}; [ -d {where} ] && cp -r {where} {HELD_COPY} && "
+                                     f"chown -R {USER} {HELD_COPY}; true", user="root", timeout=60)
+            got = out(ctx.docker.sh(agent, f"COLUMNS=300 {probes_at(HELD_COPY if held else where)} --maxfail=10 -rfE "
+                                           "> /tmp/we-check.txt 2>&1; code=$?; tail -c 12000 /tmp/we-check.txt; "
+                                           'echo "exit=$code"; rm -f /tmp/we-check.txt', workdir=task.repo, timeout=300))
+            if held:
+                ctx.docker.sh(agent, f"rm -rf {HELD_COPY}", user="root", timeout=60)
+            run.write(f"repair_check_{rounds[0]}_{label}.txt", got)
+            found = probe_failures(got, label)
+            failing |= found
+            if found:
+                said.append(got)
+        return failing, "\n\n".join(said)
+
+    def ask(text: str, n: int) -> None:
+        run_session(ctx, run, agent, scout_again(docker_args), key, tally, text, f"repair_stream_{n}.jsonl",
+                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+
+    def state() -> str:
+        return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
+
+    loop = Repairs(check, ask, state if qualified(ctx.arm) else None, repair_text(ctx.arm) if qualified(ctx.arm) else "")
+    got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
+                max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
+    return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40],
+            "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+
+
+def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
+                started: float, critique: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Arm R, the control for the loop (PLAN.md, 2026-10-31 night): one review by another model family, and one repair if its test
+    fails on the patch. No scout, no probes, no G6, so what the full loop adds is the difference. A test that will not run says
+    nothing of the patch."""
+    critic = critique()
+    rounds, failing = 1, set()
+
+    def check() -> set[str]:
+        got = run_set(ctx, task, agent, CRITIC_AT)
+        run.write_json(f"repair_check_{rounds}_critic.json", {"exit": got.exit, "ran": got.ran, "results": got.results, "tail": got.tail})
+        return failures_of([("critic", got, None)])[0] if got.usable else set()
+
+    if critic.get("test"):
+        failing = check()
+    if failing:
+        rounds = 2
+        run_session(ctx, run, agent, scout_again(docker_args), key, tally,
+                    CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, "repair_stream_1.jsonl",
+                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        failing = check()
+    return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": "",
+            "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+
+
+def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:
+    round3 = ctx.variant == ROUND3
+    looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
+    model = ctx.model if round3 else c.MODEL
+    no_g6 = round3 and ctx.arm in ("A", "T", "R")       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     tag = uuid.uuid4().hex[:10]
     common = {"g6_commit": ctx.g6.get("commit"), "g6_image": ctx.g6.get("image"), "task_image": task_image,
-              "model": c.MODEL}
+              "model": model}
+    if round3:
+        common.update(arm=ctx.arm, repeat=ctx.repeat, cap_usd=cap, stop_usd=stop, label="development",
+                      **({"rerun_why": ctx.rerun_why} if ctx.rerun_why else {}))
     run = ctx.archive.start("dryrun" if dry else "run", task.id, **common)
-    record: dict[str, Any] = {**common, "task": task.id, "agent_started": False, "cost_usd": 0.0}
+    record: dict[str, Any] = {**common, "task": task.id, "run": run.rel, "agent_started": False, "cost_usd": 0.0}
     agent, net, px, status = "", "", "", "error"
     try:
         title, text = ctx.issue_reader(task)
+        if round3 and gets_thread(ctx.arm):
+            text += read_thread(task)
         record["image_id"] = out(ctx.docker("image", "inspect", task_image, "--format", "{{.Id}}"))
         round2 = ctx.variant == ROUND2
         if round2:
@@ -817,33 +1860,57 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         base = str(state["head"])
         record["base_commit"] = base
         record["claude_version"] = out(ctx.docker("exec", "-u", USER, agent, CLAUDE, "--version", timeout=120))
-        doctor = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", agent, "g6", "doctor", timeout=600)
-        run.write("g6_doctor.txt", out(doctor) + "\n" + err(doctor))
-        setup = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", "-w", HOME, agent,
-                           "g6", "setup", "--client", "claude", "--allow", "patch_review.review", timeout=600)
-        run.write("g6_setup.txt", out(setup) + "\n" + err(setup))
-        record["g6_setup_exit"] = setup.returncode
-        if setup.returncode != 0:
-            raise RuntimeError(f"g6 setup exited {setup.returncode}")
+        if no_g6:    # round 3, arm A: no g6 setup, and no g6 command on the agent's path
+            checked(ctx.docker("exec", "-u", "root", agent, "rm", "-f", G6_BIN, timeout=60), "remove the g6 command")
+            record["g6_setup_exit"] = None
+        else:
+            doctor = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", agent, "g6", "doctor", timeout=600)
+            run.write("g6_doctor.txt", out(doctor) + "\n" + err(doctor))
+            setup = ctx.docker("exec", "-u", USER, "-e", f"HOME={HOME}", "-w", HOME, agent,
+                               "g6", "setup", "--client", "claude", "--allow", "patch_review.review", timeout=600)
+            run.write("g6_setup.txt", out(setup) + "\n" + err(setup))
+            record["g6_setup_exit"] = setup.returncode
+            if setup.returncode != 0:
+                raise RuntimeError(f"g6 setup exited {setup.returncode}")
+        if round3:   # what Claude Code will find of G6: nothing in arm A; G6's server and skill in B and C
+            try:
+                record["arm_state"] = json.loads(out(ctx.docker.sh(agent, ARM_STATE)).splitlines()[-1])
+            except (ValueError, IndexError):
+                record["arm_state"] = {"mcp_servers": [], "skills": [], "error": "nothing readable"}
+            servers = record["arm_state"].get("mcp_servers") or []
+            if (servers != []) if no_g6 else ("g6" not in servers):
+                status = "arm_mismatch"
+                return run.finish(record, status)
         if round2:
             write_key_file(ctx.docker, agent, key)     # G6's model and its key, where g6.core.keys reads them
         write_in(ctx.docker, agent, f"{WE}/round_hook.sh", hook_script(task.repo, base), mode="755")
         write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings())
+        if looped and has_hook(ctx.arm):
+            write_in(ctx.docker, agent, f"{WE}/stop_hook.sh", stop_hook(task.repo), user="root", mode="755")
         if dry:
             record["hook_selftest"] = hook_selftest(ctx, agent, task)
-        text_in = prompt(task, title, text)
+        text_in = prompt(task, title, text, ctx.arm if round3 else "")
         run.write("prompt.txt", text_in)
-        args = claude_args()
+        args = claude_args(model, cap)
         way_out = DEAD_PROXY if dry else f"http://{px}:{PROXY_PORT}"
         env_names = ["ANTHROPIC_API_KEY", f"HTTPS_PROXY={way_out}", f"HTTP_PROXY={way_out}",
                      "NO_PROXY=localhost,127.0.0.1", f"HOME={HOME}", "DISABLE_AUTOUPDATER=1",
                      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1"]
         docker_args = ["exec", "-i", "-u", USER, "-w", task.repo, *[a for e in env_names for a in ("-e", e)], agent,
                        *args]
-        run.write_json("command.json", {"docker": docker_args, "caps": {"usd": c.RUN_CAP_USD, "stop_usd": c.RUN_STOP_USD,
+        run.write_json("command.json", {"docker": docker_args, "caps": {"usd": cap, "stop_usd": stop,
                                         "turns": c.MAX_TURNS, "wall_clock_s": c.WALL_CLOCK_S},
                                         "key": "passed by name; its value only in the docker client's environment"})
-        tally = c.Tally()
+        at_base: dict[str, ProbeRun] = {}
+        if looped and not dry:   # the hook arrives after the scout, so it cannot stop the scout
+            record["agent_started"] = True
+            record["scout"] = run_scout(ctx, task, run, agent, base, docker_args, key, title, text)
+            at_base = record["scout"].pop("at_base")
+            if qualified(ctx.arm):   # one allowance for the whole run: the scouts' spend comes out of the fixer's
+                stop = max(1.0, stop - float(record["scout"]["usd"]))
+        if looped and has_hook(ctx.arm):
+            write_in(ctx.docker, agent, f"{HOME}/.claude/settings.json", hook_settings(stop=True))
+        tally = c.Tally(count_reported=round3)
         started = time.monotonic()
         proc = ctx.docker.popen(*docker_args, env=ctx.client_env(key))
         record["agent_started"] = True
@@ -855,8 +1922,9 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
         try:
             proc.stdin.write(text_in.encode("utf-8"))
             proc.stdin.close()
-            stop = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
-                               write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()))
+            ended = read_stream(iter(proc.stdout.readline, b""), tally, deadline=started + c.WALL_CLOCK_S,
+                                write=lambda line: (stream.write(ctx.archive.redact(line) + "\n"), stream.flush()),
+                                stop_usd=stop)
         finally:
             stream.close()
             if proc.poll() is None:
@@ -865,9 +1933,16 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
             proc.wait(timeout=60)
         drain.join(timeout=30)
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
+        if looped and holds_loop(ctx.arm) and not dry and not ended:
+            record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
+                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
+        if ctx.arm == "R" and not dry and not ended:
+            record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
+                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
         result = tally.result or {}
-        record.update(status_detail=status_of(stop, tally), agent_usd=tally.cost_usd,
-                      cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0), 6),
+        record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
+                      cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
+                                     + float((record.get("scout") or {}).get("usd") or 0.0), 6),
                       stream_usd=round(tally.stream_usd, 6),
                       result_usd=tally.result_usd, reported_usd=result.get("total_cost_usd"),
                       model_calls=tally.model_calls, num_turns=result.get("num_turns"), usage=tally.usage,
@@ -930,9 +2005,10 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
 # --- validation, the independent check and replays ------------------------------------------------------------------------
 def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: bool = False, tests: bool = True,
                 extra: Mapping[str, Path] | None = None, modules: Sequence[str] | None = None,
-                folder: c.RunFolder | None = None, label: str = "") -> dict[str, Any]:
+                folder: c.RunFolder | None = None, label: str = "", amended: bool = False) -> dict[str, Any]:
     """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
-    a patch), the maintainers' test files when ``tests``, extra files, then pytest on ``modules``."""
+    a patch), the maintainers' test files when ``tests``, the bug's amendment when ``amended``, extra files, then
+    pytest on ``modules``."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -954,6 +2030,10 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
             files = out(ctx.docker.sh(name, "cat /oracle/fix.files"))
             pairs = [x for st, p in test_changes(files) for x in (st, p)]
             checked(ctx.docker.sh(name, APPLY_TESTS, task.repo, *pairs, workdir=task.repo), "the maintainers' tests")
+        if amended:
+            checked(ctx.docker("cp", str(amendment(task.id)), f"{name}:/tmp/we-amend.patch", timeout=300), "amendment copy")
+            checked(ctx.docker.sh(name, "git apply --whitespace=nowarn /tmp/we-amend.patch", workdir=task.repo),
+                    "the amendment")
         for dest, src in (extra or {}).items():
             checked(ctx.docker("cp", str(src), f"{name}:{task.repo}/{dest}", timeout=300), f"copy {dest}")
         ran = ctx.docker.sh(name, pytest_script(modules or task.test_modules), workdir=task.repo, timeout=2400)
@@ -982,24 +2062,61 @@ def validate(ctx: Context, task: Task) -> dict[str, Any]:
     return run.finish(record, "finished")
 
 
-def check(ctx: Context, task: Task, run_rel: str | None = None) -> dict[str, Any]:
+def amend(ctx: Context, task: Task) -> dict[str, Any]:
+    """The amended tests' own controls (no model, PLAN.md 2026-10-31): the lists an amended check scores against, and
+    every maintainers' test the fix no longer passes. A diff that leaves no test telling the parent from the fix is
+    refused, here and by every check that would use it."""
+    diff = amendment(task.id)
+    if diff is None:
+        raise SystemExit(f"{task.id} has no amendment")
     v = latest(ctx.archive, "validate", task.id)
     if v is None:
         raise SystemExit("validate the task first")
+    run = ctx.archive.start("amend", task.id, g6_commit=ctx.g6.get("commit"))
+    base = _oracle_run(ctx, task, folder=run, label="base", amended=True)
+    fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed", amended=True)
+    before, results = base.get("results") or {}, fixed.get("results") or {}
+    f2p, p2p = fail_to_pass(before, results)
+    seen = sum(before.get(k) in ("failed", "error") for k in f2p)   # absent from a report is not a failure anyone saw
+    lost = sorted(k for k in [*v["record"]["fail_to_pass"], *v["record"]["pass_to_pass"]] if results.get(k) != "passed")
+    return run.finish({"sha256": c.sha256_file(diff), "fail_to_pass": f2p, "pass_to_pass": p2p, "parent_failed": seen,
+                       "lost": lost, "ok": bool(seen), "base": base, "fixed": fixed,
+                       "why": "" if seen else "no amended test was seen failing on the parent's code and passing with the fix"},
+                      "finished" if seen else "refused")
+
+
+def amend_control(archive: c.Archive, task_id: str) -> dict[str, Any] | None:
+    """The control for the diff as it stands: the newest control to end, if it passed and it ran these bytes. So neither
+    a newer refusal nor a changed diff can be scored on an older list."""
+    ended = [r for r in archive.rows() if r.get("event") == "ended" and str(r.get("run", "")).startswith(f"amend/{task_id}/")]
+    if not ended or max(ended, key=lambda r: str(r["run"])).get("status") != "finished":
+        return None
+    found, diff = latest(archive, "amend", task_id), amendment(task_id)
+    return found if found and diff and found["record"].get("sha256") == c.sha256_file(diff) else None
+
+
+def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool = False) -> dict[str, Any]:
+    v = amend_control(ctx.archive, task.id) if amended else latest(ctx.archive, "validate", task.id)
+    if v is None:
+        raise SystemExit("this diff has no passing control: run amend" if amended else "validate the task first")
     src = ctx.archive.root / run_rel if run_rel else (latest(ctx.archive, "run", task.id) or {}).get("path")
     if src is None:
         raise SystemExit("no run to check")
     src = Path(src)
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
-    folder = ctx.archive.start("check", task.id, checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))
-    patches = sorted((src / "rounds").glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))
+    folder = ctx.archive.start("recheck" if amended else "check", task.id,
+                               checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))
+    patches = [] if amended else sorted((src / "rounds").glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))
     rows = []
     for patch in [*patches, src / "final.patch"]:
         label = patch.stem
-        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label)
+        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)
+        if body.get("patch_applied", True) and not body.get("results") and str(body.get("pytest_exit")).strip() != "124":
+            raise RuntimeError(f"no test report for {label}")   # a check that did not happen is not a failed patch
         rows.append({"patch": label, "bytes": patch.stat().st_size if patch.exists() else 0,
                      "patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p)})
-    return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p)}, "finished")
+    return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p), "amended": amended},
+                         "finished")
 
 
 def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
@@ -1228,6 +2345,18 @@ def read_tree(task: Task) -> str:
     return got.stdout.decode("utf-8", errors="replace").strip() if got.returncode == 0 else ""
 
 
+def read_thread(task: Task) -> str:
+    """The issue's comments from before the fix's pull request was opened, as ``thread_text`` keeps them."""
+    def api(path: str, *flags: str) -> Any:
+        got = subprocess.run(["gh", "api", *flags, path], capture_output=True, timeout=120)
+        if got.returncode != 0:
+            raise RuntimeError(f"{path} could not be read: {got.stderr.decode(errors='replace')[-200:]}")
+        return json.loads(got.stdout.decode("utf-8"))
+
+    return thread_text(api(f"repos/{task.full_name}/issues/{task.issue}/comments?per_page=100"),
+                       str(api(f"repos/{task.full_name}/pulls/{task.pr}")["created_at"]))
+
+
 def read_issue(task: Task) -> tuple[str, str]:
     got = subprocess.run(["gh", "api", f"repos/{task.full_name}/issues/{task.issue}"], capture_output=True, timeout=120)
     if got.returncode != 0:
@@ -1248,6 +2377,10 @@ def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
         return {"checks": [{k: row.get(k) for k in ("patch", "bytes", "patch_applied", "passes",
                                                      "fail_to_pass_failing")} | {"failing": len(row.get("failing") or [])}
                            for row in record.get("checks") or []]}
+    if kind == "amend":     # counts only: on a fresh or held-out bug the names stay unread (PLAN.md, 2026-10-31)
+        return {"ok": record.get("ok"), "why": record.get("why"), "sha256": record.get("sha256"),
+                "parent_failed": record.get("parent_failed"),
+                **{k: len(record.get(k) or []) for k in ("fail_to_pass", "pass_to_pass", "lost")}}
     return {k: v for k, v in record.items() if k not in ("results", "base", "fixed", "usage")}
 
 
@@ -1278,8 +2411,10 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "modelcheck", "dryrun",
-                                        "run", "check", "replay", "g6replay", "show", "progress", "rounds"))
+                                        "run", "check", "amend", "replay", "g6replay", "show", "progress", "rounds",
+                                        "schedule"))
     ap.add_argument("--args", type=Path, help="g6replay: a JSON file of the review's arguments")
+    ap.add_argument("--amended", action="store_true", help="check: score on the amended tests (PLAN.md, 2026-10-31)")
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -1289,13 +2424,27 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--code")
     ap.add_argument("--test", type=Path)
     ap.add_argument("--kind", default="validate", help="show: validate, run, check, freecheck, replay or build")
-    ap.add_argument("--round", type=int, choices=(1, 2), default=1,
-                    help="2: round 2, G6 with its own model (its archive is round2/ inside the worked examples' one)")
+    ap.add_argument("--round", type=int, choices=(1, 2, 3), default=1,
+                    help="2: round 2, G6 with its own model (its archive is round2/ inside the worked examples' one); "
+                         "3: round 3, formal methods (round3/, with its own $100 stop and ledger)")
+    ap.add_argument("--arm", type=str,
+                    help="round 3: A (no G6), B (G6 as shipped), C (G6 and the addendum), D (C and its fallback)")
+    ap.add_argument("--model", choices=R3_MODELS, help="round 3: the agent's model")
+    ap.add_argument("--repeat", type=int, default=1, help="round 3: 2 for Sonnet's second arm A run of a bug")
+    ap.add_argument("--rerun-why", default="", help="round 3: make again a run that ended in error, saying why")
     args = ap.parse_args(argv)
     first = c.Archive(c.archive_root(args.archive))
-    variant = ROUND2 if args.round == 2 else ""
-    archive = c.Archive(first.root / "round2") if variant else first
-    prior = c.spent(first.rows()) if variant else 0.0     # one $100 stop for both rounds
+    variant = {2: ROUND2, 3: ROUND3}.get(args.round, "")
+    archive = c.Archive(first.root / {ROUND2: "round2", ROUND3: "round3"}[variant]) if variant else first
+    prior = c.spent(first.rows()) if variant == ROUND2 else 0.0     # one $100 stop for rounds 1 and 2
+    if args.command == "schedule":      # round 3's runs in order, each with how it ended, and the money
+        rows = archive.rows()
+        done = r3_done(rows)
+        sched = r3_schedule(load_tasks())
+        print(json.dumps({"spent_usd": c.spent(rows), "stop_usd": R3_CAP_USD,
+                          "runs": [{"model": m, "task": t, "arm": a, "repeat": r, "ended": done.get((m, t, a, r))}
+                                   for m, t, a, r in sched]}, indent=1))
+        return 0
     if args.command == "base":
         print(json.dumps(build_base(archive, args.ref, args.claude or default_claude(), variant=variant), indent=1))
         return 0
@@ -1322,12 +2471,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "images":
         result = build_images(archive, task, g6["commit"], variant=variant)
     else:
+        if variant == ROUND3 and args.command in ("dryrun", "run") and not (args.arm and args.model):
+            raise SystemExit("round 3's dryrun and run need --arm and --model")
+        if variant == ROUND3 and args.command == "modelcheck":
+            raise SystemExit("round 3 gives G6 no model")
         ctx = Context(archive=archive, docker=Docker(), key_reader=read_key, issue_reader=read_issue, g6=g6,
-                      variant=variant, prior_spent=prior)
+                      variant=variant, prior_spent=prior, arm=args.arm or "", model=args.model or c.MODEL,
+                      repeat=args.repeat, rerun_why=args.rerun_why)
         result = {"validate": lambda: validate(ctx, task), "selfcheck": lambda: selfcheck(ctx, task),
                   "freecheck": lambda: freecheck(ctx, task), "modelcheck": lambda: modelcheck(ctx, task),
                   "dryrun": lambda: run_task(ctx, task, dry=True),
-                  "run": lambda: run_task(ctx, task), "check": lambda: check(ctx, task, args.run_rel),
+                  "run": lambda: run_task(ctx, task), "amend": lambda: amend(ctx, task),
+                  "check": lambda: check(ctx, task, args.run_rel, amended=args.amended),
                   "replay": lambda: replay(ctx, task, args.code, args.test),
                   "g6replay": lambda: g6replay(ctx, task, args.code, args.args)}[args.command]()
     print(json.dumps(brief(args.command, result), indent=1, default=str)[:8000])

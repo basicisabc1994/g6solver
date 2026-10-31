@@ -290,3 +290,123 @@ what happened in each run.
   and in one of run 1's two finished reviews, and summarised it elsewhere.
 - **Spent in round 2:** $11.64, which is $1.89 for the agent and $9.71 for G6's model at its upper bound, with the
   one-call model check. Both rounds together: $13.48 of the $100 stop.
+
+## Round 3: formal methods
+
+**Development, not evaluation** (PLAN.md section 9, "Round 3 (2026-10-30): formal methods").
+
+**State (2026-10-30, twelve paid runs, $4.80 of the $100 stop): held for the owner's decision.** These are single runs on
+bugs already seen, so they are signals, not rates. Arms A, B and C ran on G6 894597f, and arm D on f50953c.
+
+| Run | G6 calls | G6's verdict (last) | Its own extra checks | Maintainers' tests | Cost |
+|---|---|---|---|---|---|
+| Haiku black A | 0 | none | none | failed 1 | $0.89 |
+| Haiku black B | 0 | none | none | failed | $1.03 |
+| Haiku black C | 0 | none | none | failed 1 | $0.89 |
+| Sonnet black B | 3 | supported | none asked | failed 2 | $0.23 |
+| Sonnet black C | 5 | supported | 2 templates refused | failed 2 | $0.30 |
+| Sonnet attrs C | 5 | insufficient evidence | 2 templates passed | passed | $0.18 |
+| Sonnet click C | 6 | supported | 2 proposed passed | failed 10 | $0.23 |
+| Sonnet pydantic C | 3 | insufficient evidence | 2 proposed passed | failed 1 | $0.14 |
+| Sonnet black D | 3 | supported | 2 proposed, neither judged | failed 2 | $0.29 |
+| Sonnet attrs D | 7 | supported | 2 templates passed | passed | $0.25 |
+| Sonnet click D | 4 | supported | none | failed 10 | $0.18 |
+| Sonnet pydantic D | 5 | supported | 2 proposed passed | failed 1 | $0.19 |
+
+- **Haiku never called G6,** so its three runs say nothing about G6: see PLAN.md, "Haiku's first three runs, and a smoke
+  test before the rest".
+- **False acceptance is the main finding.** G6 said "supported" on 7 of Sonnet's 9 runs, and the maintainers' tests reject
+  6 of those 7 patches. That verdict rests on checks the agent wrote itself, which share its reading of the bug.
+- **No extra check found a defect.** Every template and proposed check that ran passed, on arm D too, where each had to
+  assert a value taken from the issue. No `formal` or `model_checking` op was called in any run.
+- **Arm D's two changes are only partly tested.** No template was refused in arm D, so no agent ever saw the new refusal
+  text. Arm D's click run asked for no extra check at all, though its addendum told it what to do.
+- **A wording gap.** In the black D run G6 said "nothing else was found" when both proposed checks could not be judged.
+  The cause of those two errors has not been traced.
+
+**Before any paid run (the same day).** On the earlier commit 286c173, for black #5634, with no model and no key:
+the task and oracle images were built, validation
+gave the same 2 FAIL_TO_PASS tests as before with 216 PASS_TO_PASS, the check's own control passed, the free check ran
+confined under bubblewrap, and a dry run of each arm reached the agent's start with its way out a dead port (no
+request left the container):
+- arm A: no MCP server and no skill registered, the `g6` command removed;
+- arms B and C: G6's server connected with its 20 tools, and the `using-g6` skill in place.
+
+A replay on the maintainers' fix with a proposed check that imports black ran it in G6's copy: not refuted. In round 2
+every such check failed with `No module named '_black_version'`.
+
+## Round 3: the baseline, arm A (Claude Code alone, Sonnet 5.5, no G6)
+
+Two runs on each of the ten bugs, judged by the maintainers' tests, which no agent sees. Total $1.18.
+
+| Bug | Set | Passed | Determined by its task |
+|---|---|---|---|
+| attrs-1593 | training | 2 of 2 | yes |
+| fastapi-15077 | training | 2 of 2 | yes |
+| pydantic-14065 | training | 2 of 2 | yes |
+| starlette-3720 | training | 2 of 2 | yes |
+| pydantic-14052 | training | 1 of 2 | yes |
+| black-5634 | training | 0 of 2 | yes |
+| click-3678 | training | 0 of 2 | no |
+| starlette-3718 | held out | 2 of 2 | yes |
+| black-5521 | held out | 0 of 2 | yes |
+| click-3769 | held out | 0 of 2 | yes |
+
+- **All ten bugs:** 11 of 20 (55%). Training 9 of 14 (64%). Held out 2 of 6 (33%).
+- **The nine determined bugs:** 11 of 18 (61%).
+- **Determined by its task** comes from the audit in PLAN.md. `click-3678` is not: its tests need a storage name and
+  warning texts stated in neither the issue nor the repository. It stays in every score on all ten bugs.
+
+## Round 3: arm E (G6 with the earlier addendum, Sonnet 5.5)
+
+Two runs on each of the ten bugs on G6 c53d310, judged by the maintainers' tests. Total $4.14.
+
+| Bug | Set | Arm A | Arm E |
+|---|---|---|---|
+| attrs-1593 | training | 2 of 2 | 2 of 2 |
+| fastapi-15077 | training | 2 of 2 | 2 of 2 |
+| pydantic-14065 | training | 2 of 2 | 2 of 2 |
+| starlette-3720 | training | 2 of 2 | 2 of 2 |
+| pydantic-14052 | training | 1 of 2 | 0 of 2 |
+| black-5634 | training | 0 of 2 | 0 of 2 |
+| click-3678 | training | 0 of 2 | 0 of 2 |
+| starlette-3718 | held out | 2 of 2 | 1 of 2 |
+| black-5521 | held out | 0 of 2 | 0 of 2 |
+| click-3769 | held out | 0 of 2 | 0 of 2 |
+
+- **All ten bugs:** arm E 9 of 20 (45%), arm A 11 of 20 (55%).
+- **Training:** arm E 8 of 14 (57%), arm A 9 of 14 (64%).
+- **Held out:** arm E 1 of 6 (17%), arm A 2 of 6 (33%).
+- **The nine determined bugs:** arm E 9 of 18 (50%), arm A 11 of 18 (61%).
+- **Reading:** G6 as it stood did not beat Claude Code alone here, and cost about three and a half times as much. Two runs
+  per bug are too few to say it did worse.
+
+## Round 3: G1, a hand-written stop rule, and its held-out comparison
+
+G1 is the stop rule that G6's model checker accepted, written by hand into the prompt. It was not distilled. Each arm's
+runs were scored by the maintainers' tests, which no agent sees.
+
+| Bug | Set | Arm A | Arm E | G1 |
+|---|---|---|---|---|
+| attrs-1593 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| fastapi-15077 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| pydantic-14065 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| starlette-3720 | training | 2 of 2 | 2 of 2 | 2 of 2 |
+| pydantic-14052 | training | 1 of 2 | 0 of 2 | 2 of 2 |
+| black-5634 | training | 0 of 2 | 0 of 2 | 0 of 2 |
+| click-3678 | training | 0 of 2 | 0 of 2 | 0 of 2 |
+| starlette-3718 | held out | 5 of 5 | 1 of 2 | 3 of 5 |
+| black-5521 | held out | 0 of 5 | 0 of 2 | 0 of 5 |
+| click-3769 | held out | 0 of 5 | 0 of 2 | 0 of 5 |
+
+| | Training | Held out |
+|---|---|---|
+| Arm A, Claude Code alone | 9 of 14 (64%) | 5 of 15 (33%) |
+| G1 | 10 of 14 (71%) | 3 of 15 (20%) |
+
+- **The gain on training did not carry over.** G1 beat arm A on training by one run and lost to it on held-out bugs by two.
+  Fifteen runs on three bugs cannot show harm, but they show no benefit, and G1 earns no claim.
+- **Distillation did not run.** G2, G3 and G4 were refused by a false alarm in the audit, so `cegis.json`'s `inconclusive`
+  says nothing about distilled text. See PLAN.md, 2026-10-31.
+- **The runner's spend reads high** ($46.11 at the end of this loop): a run killed for low memory counts at its full $10.50
+  limit until it is closed, and that total also holds earlier rounds' spend.
