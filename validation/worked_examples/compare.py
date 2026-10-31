@@ -121,10 +121,12 @@ def judged(results: Sequence[Mapping[str, Any]]) -> bool:
 
 
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
-           others: Sequence[str] = ("A", "T")) -> None:
+           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",)) -> None:
+    """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it."""
+    shown = [arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
     for score in SCORES:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
-        for r in results:
+        for r in [*results, *(compare(rows, loop_arm, other, tasks, repeats, score) for other in shown)]:
             uplift = "n/a" if r["uplift"] is None else f"{r['uplift']:+.1%}"
             bugs = by_bug(rows, loop_arm, r["other"], tasks, repeats, score)
             span = interval(rows, loop_arm, r["other"], tasks, repeats, score)
@@ -132,8 +134,8 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
                   f" uplift {uplift:>7}  wins {r['wins']:2} losses {r['losses']:2}  p {r['p']:.4f}"
                   f"  bugs better {bugs['better']} worse {bugs['worse']} same {bugs['same']}"
                   f"  95% by bug {f'{span[0]:+.0%} to {span[1]:+.0%}' if span else 'n/a'}"
-                  + (f"  MISSING {r['missing']}" if r["missing"] else ""))
-        for arm in (loop_arm, *others):
+                  + (f"  MISSING {r['missing']}" if r["missing"] else "") + ("  report only" if r["other"] in shown else ""))
+        for arm in (loop_arm, *others, *shown):
             for said, cell in sorted(trust(rows, arm, tasks, repeats, score).items()):
                 total = cell["right"] + cell["wrong"]
                 print(f"{name:22} {score:11} {arm} said {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")

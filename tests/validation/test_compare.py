@@ -82,6 +82,15 @@ def test_the_report_prints_the_bug_count_beside_the_rule(capsys):
     assert "bugs better 2 worse 0 same 0" in capsys.readouterr().out
 
 
+def test_the_control_is_reported_beside_the_rule_and_cannot_change_it(capsys):
+    """Arm R is a report, by the plan: the rule stays M9 against A and T, so R beating M9 leaves the rule met."""
+    rows = _cells(M9="a11 b11 c11 d11 e11", A="a00 b00 c00 d00 e00", T="a00 b00 c00 d00 e00", R="a11 b11 c11 d11 e11")
+    compare.report(rows, "stage 2", "abcde", (1, 2))
+    out = capsys.readouterr().out
+    assert sum(" M9 " in line and " R " in line and "uplift" in line and "report only" in line for line in out.splitlines()) == 2
+    assert "frozen rule: met" in out
+
+
 def test_trust_counts_what_the_system_said_against_the_verdict():
     rows = {("M9", "a", 1): {"amended": True, "said": "clean"}, ("M9", "a", 2): {"amended": False, "said": "clean"},
             ("M9", "b", 1): {"amended": True, "said": "unsure"}, ("M9", "b", 2): {"amended": None, "said": "unsure"}}

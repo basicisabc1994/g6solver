@@ -117,7 +117,7 @@ def waiting(root: Path, tasks: Sequence[str]) -> list[dict[str, Any]]:
 
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--g6", required=True, help="the G6 checkout the runs' images were built from")
+    ap.add_argument("--g6", default=we.R3_LOOP_G6, help="the G6 commit the runs' images were built from")
     ap.add_argument("--tasks", nargs="*", default=list(TRAINING), help="the bugs to review; a bug being judged only after its runs end")
     ap.add_argument("--limit", type=int, default=0, help="stop after this many reviews")
     args = ap.parse_args(argv)
