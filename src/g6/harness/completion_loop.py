@@ -5,23 +5,93 @@ back in the same session until the work holds or the stop rule fires, and say wh
 It is the worked examples' arm L9 (``validation/worked_examples/run.py``), moved into the product. Its text is data
 (``HARNESS``, read by ``harness``; a test holds it to ``run.py``'s), and a later trained harness needs no code: a file
 with the fields ``trained`` holds, the parts ``TRAINED`` names, adds to those parts as ``run.py``'s ``trained`` does.
+
+``advance`` takes a repository, the task's text, the base commit and a session's state folder, and says what comes next:
+continue, with the text that goes back to the agent, or stop, with the report. Each call is one hook of one session, so
+what must last between them is in the folder's ``state.json``. Python changes only: with none, nothing runs or is spent.
+
+The scouts. L9's scouts read the code with tools, and that reading matters, so ``verification_proposer`` cannot host them:
+it asks for text about a diff, and a scout works before any fix, across the code. Each is a session on the person's own
+Claude Code (``ToolSession``), in a scratch copy of the base commit with no history, so it sees no fix. It has no shell:
+a shell would run model-written tests outside G6's boundary. So the probes it writes are run by G6, and what is wrong with
+them goes back to it once, where L9's scout ran them itself. Hidden scouts work under the session's folder, which the agent
+is never told of; the agent's own scout works in a temporary folder, which it is. That keeps hidden probes from being read
+by accident or habit. It is no protection against code running as the same user.
+
+The evidence. A model wrote the probes, so they never pass a requirement: they run only through
+``verification_search._run_check``, confined, in scratch copies with no network, and they never reach the review. With no
+operating-system boundary the stage is refused and reported, and no model is asked. What stops the loop comes last:
+``patch_review.review_patch`` assesses the patch on the task's text, with no stated check, so the outcome is at most
+``insufficient_evidence``, and ``patch_report.completion_report`` puts what the probes did above its report.
+
+The stop rule. ``g6.cegis.cegis`` holds it, as in L9: at most ``MAX_REPAIRS`` repairs, and an end when the agent leaves the
+code as it was. L9's runner waits for the agent inside the loop, and a hook cannot, so each hook runs ``cegis`` again:
+``Repairs`` replays the rounds in the state, and hands back when a new round's failures must go to the agent.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+import shutil
+import tempfile
+import time
+import uuid
+from collections.abc import Callable, Iterable, Mapping
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
-from g6.cegis import InputDomain
+from g6.cegis import InputDomain, SearchResult, cegis
+from g6.core import host_models, keys
+from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.ledger import digest
+from g6.core.llm import LLMCaller, LLMError, _start_model_call, provider_from_env
+from g6.harness import patch_report
+from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
+from g6.harness.patch_review import _in_repository, _loaded_elsewhere, review_patch
+from g6.workforce import repo_tests
 
 HARNESS = Path(__file__).with_name("data") / "completion_harness.json"
 #: The parts of the loop harness training can add to: never the sets, the scoring, the reply forms or the stop rule.
 TRAINED = ("fixer", "scout", "repair", "critic")
+CONTINUE, STOP = "continue", "stop"
 MAX_REPAIRS, MAX_CROSS, MIN_RANDOM, MAX_SHOWN, MAX_CASE_CHARS = 3, 200, 300, 12, 900
 SCOUT_CAP_USD, CRITIC_SECONDS = 2.0, 1500
+#: One scout's session, its turns, one probe file's run, the final review and the critic's pack.
+SCOUT_SECONDS, SCOUT_TURNS, RUN_S, REVIEW_S, MAX_PACK_CHARS = 1200, 200, 300, 600, 120_000
+#: One hook's work, within the plugin's 3600-second timeout; the whole loop, from the first hook on (L9's wall clock); what
+#: a hook keeps back for the checks and the report; the least time a scout is started with.
+HOOK_S, LOOP_S, RESERVE_S, MIN_SCOUT_S = 3300, 120 * 60, 900, 60
+#: A scout may read and write files, and nothing else: no shell, so no model-written test runs outside G6's boundary.
+SCOUT_TOOLS = "Read,Glob,Grep,Write"
+SCOUT_SETTINGS = {"disableAllHooks": True, "permissions": {"deny": [f"Read(~/{folder}/**)" for folder in (
+    ".g6", ".claude", ".codex", ".ssh")]}}
+#: Set in a scout's session, so that G6's own hooks do nothing there, whatever settings that session reads.
+CHILD = "G6_COMPLETION_LOOP_CHILD"
+#: The line in the person's key file that approves Codex as the reviewer from another model family.
+CRITIC_LINE = "G6_LOOP_CRITIC"
+#: The one requirement the final review assesses: the task's text, which no stated check tests.
+REQUIREMENT = "task"
+RUN_BY_G6 = "G6 runs them for you when you finish, confined, with no network, and sends back what each did"
+REFUSED = "\n\nThe runner checked your work and refused it:\n- {wrong}\n{did}Put this right and finish."
+NO_BOUNDARY = ("G6's completion loop did not run: no operating-system boundary can confine model-written tests here "
+               "({why}), so G6 ran none of them and asked no model. Nothing was tested. g6 doctor says what this computer "
+               "needs for a boundary.")
+NOT_APPROVED = ("G6's completion loop did not run: its scouts use your Claude Code sign-in, and nothing in your key file "
+                "approves that. Add the line G6_LLM_PROVIDER=claude_code to {path} to turn it on. Nothing was tested.")
+STOPPED = {"no_counterexample_in_domain": "no probe failed", "timeout": "the loop's time ran out",
+           "counterexample_budget_exhausted": "the stop rule: every repair the loop allows has been sent"}
+#: Where L9's text names its container: its folders, and the sentence that runs the probes there.
+_RUN = re.compile(r"run them from the repository with\s+`[^`]*`")
+_TREE = re.compile(r"/opt/we/(?:hidden\d*_)?tree\.json")
+_PROBES = re.compile(r"/opt/we/(?:probes|hidden\d*)")
+#: Where ``verification_search`` places a check in its copy: left out of a case's name, as it says nothing of the case.
+_PLACE = re.compile(r"^.*?g6_check_[0-9a-f]{12}/")
+#: A scout's session: what it is asked, where it starts, the one folder it may write to, and its time.
+Host = Callable[[str, Path, Path, float], str]
 
 
 def literal(text: str) -> str:
@@ -163,3 +233,337 @@ def scout_gate(raw: str, *, exit_code: int, collected: int, broken: int = 0, ran
     elif collected < min(domain.size, MAX_CROSS):
         wrong.append(f"test_cross has {collected} of {min(domain.size, MAX_CROSS)} combinations of the dimensions")
     return wrong
+
+
+def located(text: str, where: Path) -> str:
+    """L9's text on this machine: its container's folders become ``where``'s, and G6 runs the probes, not the reader."""
+    text = _TREE.sub(lambda _: (where / "tree.json").as_posix(), _RUN.sub(RUN_BY_G6, text))
+    return _PROBES.sub(lambda _: (where / "probes").as_posix(), text)
+
+
+# --- the sessions: the person's own sign-ins, each only with the line in their key file that approves it --------------------
+
+class ToolSession(host_models.ClaudeCodeCaller):
+    """Claude Code, signed in as the person, with ``SCOUT_TOOLS``. What ``host_models`` gives a text completion, it gives
+    this: the program found the same way, a clean environment, the prompt on stdin, a bounded run, and nothing kept on
+    disk. It starts in ``cwd``, may write only there and in ``where``, and runs no hook and no MCP server."""
+
+    def run(self, prompt: str, cwd: Path, where: Path, seconds: float) -> str:
+        _start_model_call()
+        program = self.locate()
+        with host_models._folders() as (_, files):
+            (files / "no_mcp_servers.json").write_text(host_models.NO_SERVERS, encoding="utf-8")
+            (files / "g6_settings.json").write_text(json.dumps(SCOUT_SETTINGS), encoding="utf-8")
+            argv = [program, "-p", "--output-format", "json", "--tools", SCOUT_TOOLS, "--permission-mode", "acceptEdits",
+                    "--add-dir", host_models._plain(where), "--strict-mcp-config",
+                    "--mcp-config", host_models._plain(files / "no_mcp_servers.json"),
+                    "--settings", host_models._plain(files / "g6_settings.json"), "--setting-sources", "user",
+                    "--no-session-persistence", "--max-turns", str(SCOUT_TURNS),
+                    "--max-budget-usd", f"{SCOUT_CAP_USD:.2f}", *(("--model", self.model) if self.model else ())]
+            env = host_models._environment(self.keep_env, files / "tmp") | {CHILD: "1"}
+            code, printed, errors = host_models._run(argv, prompt, cwd, files, env, seconds, self.program.name)
+            return self._reply(code, printed, errors, files, (prompt,))
+
+
+def scout_host() -> Host | None:
+    """The scouts' session, when the key file's own ``G6_LLM_PROVIDER`` line approves Claude Code; else None."""
+    caller = proposer._backend(provider_from_env())
+    return ToolSession(caller.model).run if isinstance(caller, host_models.ClaudeCodeCaller) else None
+
+
+def critic_host() -> LLMCaller | None:
+    """Codex as the reviewer from another model family, when the key file's own ``CRITIC_LINE`` approves it; else None.
+    It takes no tools (``host_models``), so it reads what ``_pack`` gives it and no file of the person's."""
+    if (keys.get(CRITIC_LINE) or "").strip().lower() != "codex":
+        return None
+    return host_models.CodexCaller(timeout=CRITIC_SECONDS)
+
+
+# --- the probes: G6's rules for a check a model proposed, and its confined runs --------------------------------------------
+
+def _checks(where: Path, root: Path) -> tuple[list[vs.ProposedCheck], dict[str, str], list[str]]:
+    """The test files in ``where`` a proposed check may be, their places in a copy, and why each other file is refused."""
+    checks, refused = [], []
+    for path in sorted(item for item in where.iterdir() if item.is_file()) if where.is_dir() else ():
+        source = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            if proposer._PLUGIN.search(source):
+                raise ValueError("it declares a pytest plugin or a conftest, which G6 refuses")
+            checks += vs.proposed_checks([{"id": path.stem, "requirement_id": REQUIREMENT, "intent": "change",
+                                           "file": path.name, "source": source}], {REQUIREMENT})
+        except ValueError as exc:
+            refused.append(f"{path.name}: {exc}"[:300])
+    refused += [f"{one.file}: past the limit of {vs.MAX_CHECKS} files" for one in checks[vs.MAX_CHECKS:]]
+    checks = checks[:vs.MAX_CHECKS]
+    try:
+        return checks, vs.placements(root, checks), refused
+    except ValueError as exc:
+        return [], {}, [*refused, str(exc)[:300]]
+
+
+def _outcome(phases: Mapping[str, str]) -> str:
+    return "error" if "failed" in (phases.get("setup"), phases.get("teardown")) else phases.get("call") or "skipped"
+
+
+def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
+    """A set's runs, one for each file, as one ``ProbeRun``, read from pytest's per-case outcomes: ``reading`` judges a
+    check as a whole, and calls a file of passes and skips no result, where L9's probes skip the cases that cannot occur.
+    A case that failed on an operating-system error is unknown, as a refused access looks like one. A run that did not
+    finish, or tested code from outside its copy, leaves the set unusable."""
+    code: int | None = 0
+    results, texts, tail = {}, {}, []
+    for ran in runs:
+        elsewhere, verdict = _loaded_elsewhere(change, ran), ran.get("verdict")
+        if elsewhere or verdict not in repo_tests.RAN:
+            code = None
+            tail.append(vs.LOADED_ELSEWHERE.format(elsewhere) if elsewhere else f"{verdict}: {ran.get('said') or ''}")
+            continue
+        code = None if code is None else max(code, int(verdict == repo_tests.FAILED))
+        full, refused = _in_repository(ran), set(ran.get("os_errors") or ())
+        for named, phases in (ran.get("test_outcomes") or {}).items():
+            results[_PLACE.sub("", full(named))] = "unknown" if named in refused else _outcome(phases)
+        texts.update({_PLACE.sub("", full(named)): text for named, text in (ran.get("failure_messages") or {}).items()})
+    return ProbeRun(code, results, texts, "\n".join(tail))
+
+
+def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool) -> ProbeRun:
+    """The probes in ``probes`` on the tree or at the base commit: each file in its own confined copy, with no network."""
+    checks, placed, _ = _checks(probes, change.repo)
+    if not checks:
+        return ProbeRun(None, {}, {}, "no test file G6 could run")
+    return _read(change, [vs._run_check(change, placed[one.id], one.source, placed[one.id], at_base=at_base, timeout_s=RUN_S)
+                          for one in checks])
+
+
+def _gate(tree: Path, got: ProbeRun) -> list[str]:
+    """``scout_gate`` on a set's run at the base commit."""
+    def cases(test: str) -> list[str]:
+        return [v for k, v in got.results.items() if k.rsplit("::", 1)[-1].split("[")[0] == test]
+
+    crashed = sum(v == "error" or (v == "failed" and not re.match(r"assert|AssertionError|Failed", got.texts.get(k, "")))
+                  for k, v in got.results.items())
+    return scout_gate(tree.read_text(encoding="utf-8", errors="replace") if tree.is_file() else "",
+                      exit_code=2 if got.exit is None else got.exit, collected=len(cases("test_cross")), broken=crashed,
+                      randoms=sum(v in ("passed", "failed") for v in cases("test_random")),
+                      executed=sum(v in ("passed", "failed") for v in cases("test_cross")))
+
+
+@contextmanager
+def _base_copy(change: repo_tests.Change, seconds: float):
+    """A scratch copy of the base commit's code: no history, and nothing of the change."""
+    deadline, report = time.monotonic() + seconds + 120, {}
+    with repo_tests.repository_copy(change.repo, deadline=deadline, report=report, base=change.base_commit) as copy:
+        with repo_tests._base_revision(change, copy, deadline, materialised=report.get("links_materialised")):
+            yield copy
+
+
+def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: Host, deadline: float) -> dict:
+    """One scout's set: its session, its probes run at the base commit, and, if they are refused, one more try, told what
+    G6 counted and what they did, as it could not run them itself. A set that exercised nothing is left out."""
+    (where / "probes").mkdir(parents=True, exist_ok=True)
+    asked = located(text.format(number=1, title=task.splitlines()[0][:200], text=task), where)
+    failed, again = "", ""
+    got = None
+    for _ in range(2):
+        left = min(SCOUT_SECONDS, deadline - time.monotonic() - RESERVE_S)
+        if left < MIN_SCOUT_S:
+            failed = failed or "the hook's time ran out before this scout could start"
+            break
+        try:
+            with _base_copy(change, left) as copy:
+                host(asked + again, copy, where, left)
+        except (LLMError, repo_tests.CopyNotRun, OSError) as exc:
+            failed = f"{type(exc).__name__}: {exc}"[:400]
+        got = run_set(change, where / "probes", at_base=True)
+        wrong = _gate(where / "tree.json", got)
+        if failed or not wrong:
+            break
+        did = [f"- {case}: {got.texts.get(case, '')[:MAX_CASE_CHARS]}" for case, said in got.results.items()
+               if said in ("failed", "error")][:MAX_SHOWN]
+        again = REFUSED.format(wrong="\n- ".join(wrong), did=f"What they did on the base commit:\n{chr(10).join(did)}\n"
+                               if did else "")
+    usable = got is not None and got.usable
+    return {"where": str(where), "at_base": asdict(got) if got else None, "refused": _checks(where / "probes", change.repo)[2],
+            "left_out": "" if usable else failed or "it exercised nothing on the base commit"}
+
+
+def _pack(change: repo_tests.Change, task: str, proof: str) -> str:
+    """What L9's critic reads in its folder, as text, since it has no tools: the issue, the patch, and of the base commit
+    the files the patch touches."""
+    parts = [f"issue.txt:\n{proof}\n\n{task}", f"candidate.patch:\n{repo_tests.diff_text(change)}"]
+    for rel in change.files:
+        text = repo_tests.read_at(change.repo, change.base_commit, rel)
+        if text is not None:
+            parts.append(f"parent/{rel}:\n{text}")
+    return "\n\n".join(parts)[:MAX_PACK_CHARS]
+
+
+def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path) -> dict:
+    """L9's critic: another model family reads the finished patch once. One that fails is recorded and the loop goes on. Its
+    test, if it has one, waits in ``where`` to run with the probes."""
+    found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
+    proof = f"review {uuid.uuid4().hex}"
+    try:
+        found = critic_report(caller.complete(system, _pack(change, task, proof)), proof=proof)
+    except (LLMError, OSError) as exc:
+        found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    if found["test"]:
+        where.mkdir(parents=True, exist_ok=True)
+        (where / "test_critic.py").write_text(found["test"] + "\n", encoding="utf-8")
+    return found
+
+
+# --- the loop --------------------------------------------------------------------------------------------------------------
+
+class WorkingTree:
+    """Stands where ``cegis`` has a sketch: the candidate is the agent's working tree, which ``Repairs`` looks at."""
+
+    @staticmethod
+    def instantiate(control: dict[int, str]) -> str:
+        return control[0]
+
+
+class Repairs:
+    """G6's CEGIS over the agent's work, as L9's ``Repairs``: ``search`` is the agent, told what failed, and ``evaluate``
+    the probes. A hook cannot wait for the agent, so ``rounds``, which the state keeps, replays what is done: a round
+    whose failures have not gone back ends this hook with ``pending``, and a failure that survives a repair goes back, up
+    to the cap, unless the agent left the code as it was."""
+
+    def __init__(self, rounds: list[dict], check: Callable[[], tuple[set[str], str]], tree: Callable[[], str]) -> None:
+        self.rounds, self.check, self.tree = rounds, check, tree
+        self.round, self.pending, self.why = 0, "", ""
+
+    def search(self, sketch: Any, examples: Any, *, max_exhaustive: int = 0) -> SearchResult:
+        if self.round and self.round == len(self.rounds):
+            last, tree = self.rounds[-1], self.tree()
+            if last["tree"] is None:
+                last["tree"], self.pending = tree, last["text"]
+                return SearchResult(None, "the agent has what failed", False, self.round)
+            if last["tree"] == tree:
+                self.why = "the agent left the code as it was"
+                return SearchResult(None, self.why, False, self.round)
+        self.round += 1
+        return SearchResult({0: f"round {self.round}"}, "agent", False, self.round)
+
+    def evaluate(self, sketch: Any, controls: Any, inputs: Any) -> list[list[dict[str, bool]]]:
+        if self.round > len(self.rounds):
+            failing, text = self.check()
+            self.rounds.append({"failing": sorted(failing), "text": text, "tree": None})
+        return [[{"ok": not self.rounds[self.round - 1]["failing"]} for _ in inputs]]
+
+
+@dataclass(frozen=True)
+class Step:
+    """What comes next: ``CONTINUE``, with the text for the agent, or ``STOP``, with the report ("" when there is none)."""
+    action: str
+    text: str = ""
+
+
+def _load(session: Path) -> dict:
+    path = session / "state.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def _save(session: Path, state: dict) -> None:
+    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (session / "state.json.new").write_text(json.dumps(state), encoding="utf-8")
+    os.replace(session / "state.json.new", session / "state.json")
+
+
+def _finish(session: Path, state: dict, report: str) -> Step:
+    """The end of the loop for this session: the report, which is kept beside the state."""
+    state["done"] = True
+    _save(session, state)
+    (session / "report.md").write_text(report, encoding="utf-8")
+    if state.get("visible"):
+        shutil.rmtree(state["visible"], ignore_errors=True)
+    return Step(STOP, report)
+
+
+def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
+    """What the probes did, above the patch review of what stopped the loop. They are not given to the review."""
+    reply = review_patch(root, task=task, requirements=[{"id": REQUIREMENT, "text": task[:20_000], "checks": []}], base=base,
+                         timeout_s=REVIEW_S)
+    review = (reply.get("assessment") or {}).get("report") or ("The patch review gave no report: " + patch_report.code(
+        (reply.get("warning_card") or {}).get("message", ""), 300))
+    rounds, ran = state.get("rounds") or [], state.get("ran") or {}
+    return patch_report.completion_report({
+        "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
+        "failing": rounds[-1]["failing"] if rounds else [], "critic": state.get("critic"),
+        "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
+                  "refused": one["refused"]} for label, one in state["sets"].items()]}, review)
+
+
+def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, shipped: Harness, host: Host,
+            deadline: float) -> None:
+    """The scouts' sets, each kept as it ends, so a hook cut short loses only the one it was in."""
+    for label, text in [("scout", shipped.scout), *((f"held{i}", one) for i, one in enumerate(shipped.hidden_scouts))]:
+        if label in state["sets"]:
+            continue
+        if label == "scout":
+            state["visible"] = tempfile.mkdtemp(prefix="g6_scout_")
+        state["sets"][label] = _scout(change, task, text, Path(state["visible"]) if label == "scout"
+                                      else session / "sets" / label, host, deadline)
+        _save(session, state)
+
+
+def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None,
+            critic: LLMCaller | None = None) -> Step:
+    """One hook of the loop, for the repository's working tree against ``base``: see the module's docstring. ``scout`` and
+    ``critic``: the sessions to use, else the ones the person's key file approves."""
+    session = Path(session)
+    state = _load(session)
+    if state.get("done"):
+        return Step(STOP)
+    root = repo_tests.checked_repo(repo)
+    change = repo_tests.change(root, base)
+    if not change.sources:
+        return Step(STOP)
+    why = proposer.boundary(root)
+    if why:
+        return _finish(session, state, NO_BOUNDARY.format(why=why))
+    scout = scout or scout_host()
+    if scout is None:
+        return _finish(session, state, NOT_APPROVED.format(path=keys.path()))
+    critic = critic or critic_host()
+    shipped = harness()
+    state.setdefault("started", time.time())
+    state.setdefault("sets", {})
+    rounds = state.setdefault("rounds", [])
+
+    def check() -> tuple[set[str], str]:
+        if critic is not None and "critic" not in state:
+            state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic")
+        seen = []
+        state["ran"] = {}
+        for label, one in state["sets"].items():
+            if not one["left_out"]:
+                got = run_set(change, Path(one["where"]) / "probes", at_base=False)
+                state["ran"][label] = got.ran
+                seen.append((label, got, ProbeRun(**one["at_base"])))
+        if (state.get("critic") or {}).get("test"):
+            got = run_set(change, session / "sets" / "critic", at_base=False)
+            if got.usable:     # a critic's test that will not run says nothing of the patch
+                state["ran"]["critic"] = got.ran
+                seen.append(("critic", got, None))
+        return with_critic(failures_of(seen), state.get("critic") or {}, shipped.critic_note)
+
+    def tree() -> str:
+        return digest(repo_tests.snapshot(root))
+
+    try:
+        _scouts(change, task, session, state, shipped, scout, time.monotonic() + HOOK_S)
+        if all(one["left_out"] for one in state["sets"].values()):
+            return _finish(session, state, _report(root, task, base, state, "no probe set could run"))
+        loop = Repairs(rounds, check, tree)
+        got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
+                    max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
+    except repo_tests.RepoRefused as exc:
+        if exc.code != ISOLATION_UNAVAILABLE:
+            raise
+        return _finish(session, state, NO_BOUNDARY.format(why=exc))
+    if loop.pending:
+        _save(session, state)
+        told = shipped.repair.format(text=loop.pending)
+        return Step(CONTINUE, f"{located(shipped.fixer, Path(state['visible']))}\n\n{told}" if len(rounds) == 1 else told)
+    return _finish(session, state, _report(root, task, base, state, loop.why or STOPPED.get(got.status, got.reason)))
