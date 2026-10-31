@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import digest
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
@@ -36,15 +37,17 @@ from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, Workflow
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
-from g6.self_maintenance.envelope import ENDS_A_STREAK, CycleLog
+from g6.self_maintenance.envelope import ENDS_A_STREAK, CycleLog, beat, stop_reason
 from g6.self_maintenance.pacing import ProviderWindow
 
 NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
 POOL_TOO_SMALL = "G6_E_LOOP_POOL_TOO_SMALL"
+STOPPED = "G6_E_LOOP_STOPPED"
 ENROLLED = "G6_E_LOOP_ENROLLED"
 STATUS = "G6_E_LOOP_STATUS"
 IDLE = "G6_E_LOOP_IDLE"
 CYCLE = "G6_E_LOOP_CYCLE"
+CYCLE_FAILED = "G6_E_LOOP_CYCLE_FAILED"
 NO_CONSTRAINT = "G6_E_LOOP_NO_CONSTRAINT"
 UNKNOWN = "unknown"
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
@@ -137,7 +140,7 @@ class ShadowLoop:
                                      "judge_source": judge_source(judge.verdict).read_bytes().hex()}),
                 "cases": self.cut.digest(), "sealed": self.domain.sealed().vault.digest}
 
-    def _refused(self) -> dict[str, Any] | None:
+    def _invalid(self) -> dict[str, Any] | None:
         if self.problems:
             return _blocked(self.problems[0][0], "; ".join(why for _, why in self.problems),
                             "Give this domain what it lacks; the loop will not run without it.")
@@ -145,10 +148,20 @@ class ShadowLoop:
             return _blocked(NOT_ENROLLED, "no person has enrolled this domain", "loop.enrol('<your name>')")
         return None
 
+    def _refused(self) -> dict[str, Any] | None:
+        """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle."""
+        halted = stop_reason(self.root)
+        if halted:
+            return _blocked(STOPPED, halted, "Remove the STOP file to resume.")
+        engaged = stop.engaged()
+        if engaged is not None:
+            return _blocked(stop.STOPPED, f"G6 is stopped: {engaged}", "Whoever engaged the stop releases it.")
+        return self._invalid()
+
     def enrol(self, confirmed_by: str) -> dict[str, Any]:
         """A person confirms what judges this domain. It happens once, and it is the one step the loop cannot do."""
         if self.problems:
-            return self._refused()
+            return self._invalid()
         who = confirmed_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person enrols a domain (no empty or auto: name)")
@@ -161,11 +174,24 @@ class ShadowLoop:
                          next_action="loop.tick()")
 
     def tick(self) -> dict[str, Any]:
-        """One cycle. A refusal is a reply, never a raised error."""
-        refused = self._refused()
-        if refused is not None:
-            return refused
-        return self._reply(self.log.cycle(self._cycle()))
+        """One cycle. A refusal is a reply, never a raised error, and a heartbeat follows every tick, so someone
+        watching can tell a loop that is waiting from one that has died."""
+        reply = self._refused() or self._run()
+        self._beat(reply["completion_state"], reply["warning_card"]["code"])
+        return reply
+
+    def _beat(self, state: str, code: str) -> None:
+        beat(self.root, domain=self.domain.name, at=self._now().isoformat(), tick=len(self.log.cycles()), state=state,
+             code=code)
+
+    def _run(self) -> dict[str, Any]:
+        self._beat("running", CYCLE)
+        try:
+            row = self._cycle()
+        except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
+            row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
+                   "reason": f"{type(exc).__name__}: {exc}"[:500]}
+        return self._reply(self.log.cycle(row))
 
     def _cycle(self) -> dict[str, Any]:
         version, head = self.mh._head()
@@ -212,7 +238,7 @@ class ShadowLoop:
 
     def status(self) -> dict[str, Any]:
         """Where the loop stands; it runs nothing."""
-        refused = self._refused()
+        refused = self._invalid()
         if refused is not None:
             return refused
         version, head = self.mh._head()
