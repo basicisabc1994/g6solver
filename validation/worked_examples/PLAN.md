@@ -858,3 +858,52 @@ win, so such a run is now not saved and a restart checks it again, a check with 
 row as missing (of 108 saved rows, none is). A cached amended verdict held for any diff, so it now holds for one run and one diff.
 An unreadable parent report passed the control, so a failure must now be seen on the parent. Not adopted: checking the oracle image's
 identity in each amended check, since nothing rebuilds those images.
+
+### 2026-10-31: L7 retired unrun, and arm L8, with a critic from another model family (before any L7, L8 or M run)
+
+**Why L7 is not run.** The owner asked for a second opinion from another model family. Codex read the code and the raw training
+runs, forming its view before reading this plan, and answered that L7 was not worth about $45 as frozen. I checked each claim
+against the code; all held. The gate only advised: a set still failing it went on to the fixer (the words "must pass" above overstate
+it). pytest exit 5 and all-skipped runs counted as clean. Cases were counted when collected, not when run. Failure ids were cut at a
+space, so two cases could be one. A failure the agent had seen once was never sent again, even after a repair changed it. Scout
+spend sat on top of the fixer's cap. No L7 or M7 run exists and no fresh bug has been spent on the loop, only arm A's two runs on
+`pydantic-13243`, which stand, so the freeze above is lifted at no cost. Codex also showed that both of L6's `black-5634` final patches
+are byte for byte the first round's: the repair loop changed nothing there, so those passes came from the visible probes.
+
+**L8's instrument (commit 64c490a).** A probe run is read from pytest's own junit report. A set that exercised nothing on the base is
+quarantined, reported, and sends no counterexample. Cases count when they ran. A failure goes back while the agent is still changing the
+code, and the loop ends when it leaves the code as it was. G6's `classify` (plan rule 3) separates a case that passed before the
+change, a regression, from what one reader says the fix still owes. On six real archived probe sets, in the task images, this keeps ids
+with spaces whole and sees pydantic's failures, which the old reader could not.
+
+**A free experiment on a critic that reads the patch.** Every scout so far was barred from seeing a patch. The top cause in both
+reviews is a fix that handles the issue's example and misses the rule, and that is visible only in a patch. So critics read the issue,
+the parent and a candidate patch, blind to its outcome and without running code, and wrote tests. Six archived training patches, three
+that fail and three that pass, one patch per bug in each batch. Each test ran on the patch and on the maintainers' fix, which only this
+measurement may see: failing on the patch and passing on the fix confirms a finding, and failing on the fix makes the test wrong.
+
+| Patch (its verdict) | Codex | Claude Sonnet, the fixer's model |
+|---|---|---|
+| `black-5634` A-1 (fails) | confirmed | said none |
+| `pydantic-14052` A-1 (fails) | confirmed | said none |
+| `click-3678` L2-1 (fails, amended tests) | confirmed | confirmed, one more test wrong |
+| `pydantic-14052` G1-1 (passes) | said none | said none |
+| `black-5634` L6-1 (passes) | wrong: its test also fails on the fix | said none |
+| `click-3678` A-1 (passes, amended tests) | confirmed, a defect the tests miss | confirmed, the same |
+
+Codex caught 3 of 3 failing patches and Claude 1 of 3. The two it alone caught are the failure that has held every arm back. Six patches
+on three bugs are few, and this compares one model with another, so it cannot separate lineage from model strength or effort. It is a
+reason to try the critic, and proves nothing about unseen bugs.
+
+**L8's critic.** When the fixer first finishes, Codex reviews the patch once, read-only, on the host, with the task, the parent and the
+patch, as above. It never sees a maintainers' test or the fix. Its test runs on the patched tree in the container; if it fails, the
+agent gets the critic's rule, reasons and test as a counterexample, can reject it with a reason, and the loop runs as above. A critic
+can be wrong, as Codex was once here, so nothing it says scores a run. Only the maintainers' tests and the amended tests do. L8's other
+text is L7's. Codex is billed to the owner's sign-in, not the $180, so each run records the critic's seconds and verdict, and that cost
+is reported apart. A run whose critic fails stays in the score as it fell, with that recorded.
+
+**How it is judged.** The comparison rule above stands with L8 and M8 in place of L7 and M7, on both scores, through `compare.py`. L8 first
+runs on the training bugs, as development: a fault it shows may be fixed, and then L8 freezes before any M8 run. Critic replies on fresh and
+held-out bugs are archived and unread, like their runs. Codex's own estimate of the reachable rate on unseen bugs is 60 to 80%, low
+confidence, against the owner's 95%. It also notes, fairly, that moving 95% onto amended tests answers a different question: hence both
+scores, always.

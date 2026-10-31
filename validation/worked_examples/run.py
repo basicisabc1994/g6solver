@@ -23,6 +23,7 @@ started, by name. The key is read only through ``g6.core.keys`` and passed by na
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import queue
@@ -30,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -124,6 +126,7 @@ PROBE_COLLECT = PROBE_RUN.replace(" -q --tb=short", " --collect-only -q")
 HIDDEN, HIDDEN_TREE, HELD_COPY = f"{WE}/hidden", f"{WE}/hidden_tree.json", "/tmp/we-held"
 MAX_STOPS, SCOUT_CAP_USD, MAX_THREAD_CHARS, MAX_CROSS, MAX_REPAIRS, MIN_RANDOM = 4, 2.0, 12000, 200, 3, 300
 JUNIT_OUT, JUNIT_MARK, MAX_SHOWN, MAX_CASE_CHARS = "/tmp/we-probes.xml", "=== junit ===", 12, 900
+CRITIC_AT, CRITIC_SECONDS = f"{WE}/critic", 1500
 FAILED = re.compile(r"^(?:FAILED|ERROR) \S*?([^/\s]+\.py(?:::\S+)?)", re.M)
 SCOUT_PROMPT = f"""You are the scout for a bug fix someone else will write. Do not fix anything. Read the issue below and
 the code it concerns, in the current directory, and work out what a complete fix must do.
@@ -220,6 +223,65 @@ COUNTEREXAMPLES_8 = """The runner ran the scouts' probes on your code, and these
 A case that passed before your change and fails now is a regression: repair it unless the issue asks for that change. A case
 that failed before and still fails is one careful reader's view of what the issue requires: repair the cause if the issue or
 the repository supports it, and otherwise leave that case and say why in one line. Rerun your own checks, then finish."""
+#: Arm L8 on: a reviewer from another model family reads the finished patch (PLAN.md, 2026-10-31). The text is the one the
+#: blind experiment measured, for one bug.
+PATCH_CRITIC = """<task>
+You are reviewing a candidate bug fix written by someone else. Your cwd has:
+- issue.txt: the issue and its discussion.
+- parent/: the repository just before the fix.
+- candidate.patch: the candidate fix, applied on top of parent/.
+
+The candidate may be complete or not. You are not told which. Judge it on its merits.
+
+1. State the general rule the issue implies, in one or two sentences. Derive it from the issue and the repository's own code, tests
+   and documentation, not from the patch.
+2. Read the patch against that rule. Look for where it handles the issue's example but not the rule: a hard-coded name or value that
+   should be derived, a branch of the same code path left out, another scope or nesting level, a sibling construct, an input position,
+   or behaviour that used to work and now does not.
+3. Write a pytest file that calls the project's public interface. Each test must assert an exact expected value that the issue or the
+   repository justifies, and must fail on the candidate if you are right. Write nothing whose expectation you cannot justify: a wrong
+   test is worse than none. If you find no defect, say so and write no test. Not finding one is a valid and useful answer.
+</task>
+
+<hard_limits>
+Read-only, and only inside your cwd. No writes, no git writes, no docker, no network, no model or API calls. You cannot run code, so
+reason carefully about what each test will do.
+</hard_limits>
+
+<structured_output_contract>
+In this exact form:
+
+RULE: <one or two sentences>
+VERDICT: defect or none
+WHY: <the concrete input, what the candidate does, what it should do, and the evidence in issue.txt or parent/ with file and line>
+```python
+<a complete pytest file, or nothing if VERDICT is none>
+```
+
+Name each test test_<something>. The test file must import only the project and the standard library, and pytest if needed.
+</structured_output_contract>
+
+<grounding_rules>
+Every expectation must point at the issue or at a file and line in parent/. If you are unsure of an expected value, drop that test.
+</grounding_rules>
+
+<default_follow_through_policy>
+Do not ask questions. Finish.
+</default_follow_through_policy>
+"""
+CRITIC_NOTE = """A reviewer from another team read your patch, without seeing your reasoning or how you got there, and says:
+
+{rule}
+
+{why}
+
+Their test, which fails on your code:
+
+```python
+{test}
+```
+
+They can be wrong, as anyone can. Check their expectation against the issue and the repository before you act on it."""
 LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
 `{PROBE_RUN}`). Read them before you edit. When you try to finish, the runner runs the probes on your code, and a failing
@@ -430,6 +492,37 @@ def failures_of(sets: Iterable[tuple[str, ProbeRun, ProbeRun | None]]) -> tuple[
             parts.append("\n".join([heading, *(f"- {label}:{case}\n{text[:MAX_CASE_CHARS]}" for label, case, text in shown),
                                     *([f"(and {len(cases) - len(shown)} more)"] if len(cases) > len(shown) else [])]))
     return failing, "\n\n".join(parts)
+
+
+def critic_report(said: str) -> dict[str, str]:
+    """The critic's reply: its rule, verdict, reasons and test. Progress lines say nothing, so only what follows them counts,
+    and a test comes with a verdict of defect or not at all."""
+    body = said[said.rfind("[codex]"):].split("\n", 1)[-1] if "[codex]" in said else said
+    verdict = re.search(r"^VERDICT:\s*(\w+)", body, re.M)
+    rule = re.search(r"^RULE:\s*(.*?)(?=^VERDICT:)", body, re.M | re.S)
+    why = re.search(r"^WHY:\s*(.*?)(?=^```|\Z)", body, re.M | re.S)
+    test = re.search(r"^```python\n(.*?)^```", body, re.M | re.S)
+    said_defect = bool(verdict) and verdict[1].lower() == "defect"
+    return {"verdict": verdict[1].lower() if verdict else "unreadable", "rule": rule[1].strip() if rule else "",
+            "why": why[1].strip() if why else "", "test": test[1].strip() if test and said_defect else "", "error": ""}
+
+
+def run_codex(pack: Path) -> str:
+    """One read-only Codex task in ``pack``, on the owner's sign-in. ``G6_CODEX_COMPANION``: the Codex plugin's companion script."""
+    companion = os.environ.get("G6_CODEX_COMPANION")
+    if not companion:
+        raise RuntimeError("G6_CODEX_COMPANION is not set")
+    got = subprocess.run(["node", companion, "task", "--fresh", "--effort", "high", "--cwd", str(pack), "--prompt-file",
+                          str(pack / "critic_prompt.md")], capture_output=True, timeout=CRITIC_SECONDS, cwd=pack)
+    return got.stdout.decode("utf-8", errors="replace")
+
+
+def with_critic(found: tuple[set[str], str], critic: Mapping[str, str]) -> tuple[set[str], str]:
+    """What fails, with the critic's rule, reasons and test before it if the critic's own test is among the failures."""
+    failing, text = found
+    if not any(case.startswith("critic:") for case in failing):
+        return failing, text
+    return failing, CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + "\n\n" + text
 
 
 def has_hook(arm: str) -> bool:
@@ -1226,6 +1319,7 @@ class Context:
     proxy_source: Path = PROXY
     environ: Mapping[str, str] | None = None
     tree_reader: Callable[[Task], str] | None = None    # upstream's tree for the base commit (default: GitHub's API)
+    critic: Callable[[Path], str] | None = None         # the patch's reviewer, given its pack (default: ``run_codex``)
     variant: str = ""            # "r2": round 2, G6 with its own model; "r3": round 3, formal methods (PLAN.md section 9)
     prior_spent: float = 0.0     # what earlier rounds spent, under the same $100 stop
     arm: str = ""                # round 3: "A" (no G6), "B" (G6 as shipped) or "C" (G6 and the formal addendum)
@@ -1445,6 +1539,39 @@ def run_set(ctx: Context, task: Task, agent: str, where: str) -> ProbeRun:
     return read_probes(said)
 
 
+def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title: str, text: str) -> dict[str, Any]:
+    """Arm L8's critic (PLAN.md, 2026-10-31): another model family reads the finished patch, on the host, with what the agent
+    was given and the parent. It sees no maintainers' test and no fix: the tree comes from the agent's own container. A critic
+    that fails is recorded and the run goes on. Its test, if it has one, waits where ``run_set`` can run it."""
+    started = time.monotonic()
+    found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
+    try:
+        with tempfile.TemporaryDirectory(prefix="g6we-critic-", ignore_cleanup_errors=True) as tmp:
+            pack = Path(tmp)
+            checked(ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/critic.patch"), workdir=task.repo, timeout=300),
+                    "the critic's patch")
+            if not copy_out(ctx.docker, agent, f"{WE}/critic.patch", pack / "candidate.patch"):
+                raise RuntimeError("the patch could not be copied")
+            tree = ctx.docker("exec", "-u", USER, "-w", task.repo, agent, "git", "archive", "--format=tar", base, timeout=300)
+            checked(tree, "the parent's tree")
+            with tarfile.open(fileobj=io.BytesIO(tree.stdout)) as tar:
+                for member in tar.getmembers():
+                    if member.isfile():
+                        dest = pack / "parent" / member.name
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(tar.extractfile(member).read())
+            (pack / "issue.txt").write_text(f"{title}\n\n{text}", encoding="utf-8")
+            (pack / "critic_prompt.md").write_text(PATCH_CRITIC, encoding="utf-8")
+            said = (ctx.critic or run_codex)(pack)
+        run.write("critic_reply.txt", ctx.archive.redact(said))
+        found = critic_report(said)
+        if found["test"]:
+            write_in(ctx.docker, agent, f"{CRITIC_AT}/test_critic.py", found["test"] + "\n", user="root")
+    except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
+        found["error"] = f"{type(exc).__name__}: {exc}"[:400]
+    return {**found, "seconds": round(time.monotonic() - started, 1)}
+
+
 def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, title: str,
               text: str) -> dict[str, Any]:
     """Arm L's first step (PLAN.md, 2026-10-31): the scout's session, then the repository back at the base and its probes
@@ -1539,27 +1666,32 @@ def run_scout(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_
 
 
 def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally,
-                stop: float, started: float, at_base: Mapping[str, ProbeRun] | None = None) -> dict[str, Any]:
+                stop: float, started: float, at_base: Mapping[str, ProbeRun] | None = None,
+                critique: Callable[[], dict[str, Any]] | None = None) -> dict[str, Any]:
     """G6's ``cegis`` over the agent's finished work: the runner runs both scouts' probes and sends failures back in the
     same session. The hidden set is copied in for the run and removed, so the agent can never read it. From L8 a set that
-    exercised nothing on the base is left out: it can say nothing of the patch."""
+    exercised nothing on the base is left out, as it can say nothing of the patch, and the critic reads the patch once."""
     from g6.cegis import InputDomain, cegis
 
     rounds = [0]
+    critic: dict[str, Any] = {}
 
     def check() -> tuple[set[str], str]:
         rounds[0] += 1
         if qualified(ctx.arm):
+            if critique and rounds[0] == 1:
+                critic.update(critique())
             seen = []
-            for label, where in probe_sets(ctx.arm):
+            for label, where in [*probe_sets(ctx.arm), *([("critic", CRITIC_AT)] if critic.get("test") else [])]:
                 base = (at_base or {}).get(label)
-                if base is None or not base.usable:
+                if label != "critic" and (base is None or not base.usable):
                     continue
                 got = run_set(ctx, task, agent, where)
                 run.write_json(f"repair_check_{rounds[0]}_{label}.json", {"exit": got.exit, "ran": got.ran,
                                                                           "results": got.results, "tail": got.tail})
-                seen.append((label, got, base))
-            return failures_of(seen)
+                if label != "critic" or got.usable:     # a critic's test that will not run says nothing of the patch
+                    seen.append((label, got, base))
+            return with_critic(failures_of(seen), critic)
         failing, said = set(), []
         for label, where in (("scout", f"{WE}/probes"),
                              *((f"held{i}", hidden_at(i)[0]) for i in range(hidden_scouts(ctx.arm)))):
@@ -1589,7 +1721,8 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
     loop = Repairs(check, ask, state if qualified(ctx.arm) else None)
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                 max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
-    return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40]}
+    return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40],
+            "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
 def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:
@@ -1720,7 +1853,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         drain.join(timeout=30)
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         if looped and holds_loop(ctx.arm) and not dry and not ended:
-            record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base)
+            record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
+                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)

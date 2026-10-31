@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "validation" / "worked_examples"))
 
@@ -459,6 +461,150 @@ def test_the_l8_gate_refuses_a_cross_test_that_only_skipped():
 def test_the_l8_gate_still_refuses_a_crash():
     crash = '<testcase classname="t" name="test_c"><failure message="TypeError: nope">t</failure></testcase>'
     assert any("not an assertion" in w for w in _gate(_said(1, _xml(extra=FAILS + crash))))
+
+
+REPLY = """[codex] Starting Codex task thread.
+[codex] Assistant message captured: I think VERDICT: none, for now...
+[codex] Turn completed.
+RULE: Every name the option can take must be derived, not assumed.
+VERDICT: defect
+WHY: With `--my-help` the candidate compares `my-help` to `my_help` and misses it (core.py:3155).
+```python
+def test_it():
+    assert 1 == 2
+```
+"""
+
+
+def test_the_critics_reply_is_read_after_its_progress_lines():
+    got = we.critic_report(REPLY)
+    assert got["verdict"] == "defect" and "derived" in got["rule"] and "my_help" in got["why"]
+    assert got["test"].startswith("def test_it") and "assert 1 == 2" in got["test"]
+
+
+def test_a_critic_that_finds_nothing_gives_no_test():
+    got = we.critic_report("[codex] Turn completed.\nRULE: r\nVERDICT: none\nWHY: nothing found\n```python\n```\n")
+    assert got["verdict"] == "none" and got["test"] == ""
+
+
+def test_a_critic_saying_none_cannot_send_a_test():
+    got = we.critic_report("RULE: r\nVERDICT: none\nWHY: w\n```python\ndef test_a():\n    assert 0\n```\n")
+    assert got["test"] == ""
+
+
+def test_a_reply_that_cannot_be_read_is_no_verdict():
+    assert we.critic_report("the model said something else")["verdict"] == "unreadable"
+    assert we.critic_report("")["test"] == ""
+
+
+def test_the_critics_prompt_names_no_bug_and_keeps_the_fix_out():
+    assert we.PATCH_CRITIC.count("candidate.patch") and "VERDICT" in we.PATCH_CRITIC
+    assert "maintainers" not in we.PATCH_CRITIC and "/oracle" not in we.PATCH_CRITIC
+
+
+def test_the_critic_needs_the_companions_place_set_and_says_so(monkeypatch, tmp_path):
+    monkeypatch.delenv("G6_CODEX_COMPANION", raising=False)
+    with pytest.raises(RuntimeError, match="G6_CODEX_COMPANION"):
+        we.run_codex(tmp_path)
+
+
+class _Archive:
+    @staticmethod
+    def redact(text):
+        return text
+
+
+class _Run:
+    def __init__(self):
+        self.written = {}
+
+    def write(self, name, text):
+        self.written[name] = text
+
+
+def _tar():
+    import io
+    import tarfile
+
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as tar:
+        body = b"print('parent')\n"
+        info = tarfile.TarInfo("src/app.py")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+    return raw.getvalue()
+
+
+class _CriticDocker:
+    def __init__(self):
+        self.calls, self.scripts = [], []
+
+    def __call__(self, *args, input=None, timeout=None, env=None):
+        self.calls.append((args, input))
+        out = _tar() if "archive" in args else b"a patch" if "cat" in args else b""
+        return type("Done", (), {"stdout": out, "stderr": b"", "returncode": 0})()
+
+    def sh(self, ctr, script, *args, **kw):
+        self.scripts.append(script)
+        return _Reply("")
+
+
+def _critic_ctx(docker, reply):
+    class Ctx:
+        archive = _Archive()
+
+    ctx = Ctx()
+    ctx.docker, ctx.seen = docker, {}
+
+    def critic(folder):
+        ctx.seen = {p.relative_to(folder).as_posix(): p.read_text("utf-8") for p in folder.rglob("*") if p.is_file()}
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    ctx.critic = critic
+    return ctx
+
+
+def _critic(ctx):
+    task = we.load_tasks()[0]
+    run = _Run()
+    return we.run_critic(ctx, task, run, "agent", "b" * 40, "a title", "the issue"), run
+
+
+def test_the_critic_sees_the_task_the_parent_and_the_patch_and_nothing_else(monkeypatch):
+    monkeypatch.setattr(we, "copy_out", lambda docker, ctr, src, dest: Path(dest).write_bytes(b"a patch") or True)
+    ctx = _critic_ctx(_CriticDocker(), REPLY)
+    got, run = _critic(ctx)
+    assert set(ctx.seen) == {"issue.txt", "candidate.patch", "critic_prompt.md", "parent/src/app.py"}
+    assert "the issue" in ctx.seen["issue.txt"] and ctx.seen["candidate.patch"] == "a patch"
+    assert got["verdict"] == "defect" and run.written["critic_reply.txt"] == REPLY
+    assert not any("/oracle" in " ".join(map(str, args)) for args, _ in ctx.docker.calls)
+
+
+def test_the_critics_test_goes_where_the_runner_runs_it_and_only_when_there_is_one(monkeypatch):
+    monkeypatch.setattr(we, "copy_out", lambda docker, ctr, src, dest: Path(dest).write_bytes(b"a patch") or True)
+    ctx = _critic_ctx(_CriticDocker(), REPLY)
+    _critic(ctx)
+    wrote = [(args, body) for args, body in ctx.docker.calls if body]
+    assert len(wrote) == 1 and f"{we.CRITIC_AT}/test_critic.py" in " ".join(wrote[0][0]) and b"assert 1 == 2" in wrote[0][1]
+    quiet = _critic_ctx(_CriticDocker(), "RULE: r\nVERDICT: none\nWHY: fine\n")
+    _critic(quiet)
+    assert not [body for _, body in quiet.docker.calls if body]
+
+
+def test_a_critic_that_fails_is_recorded_and_the_run_goes_on(monkeypatch):
+    monkeypatch.setattr(we, "copy_out", lambda docker, ctr, src, dest: Path(dest).write_bytes(b"a patch") or True)
+    got, _ = _critic(_critic_ctx(_CriticDocker(), RuntimeError("quota")))
+    assert got["verdict"] == "failed" and "quota" in got["error"] and got["test"] == ""
+
+
+def test_the_agent_reads_the_critics_rule_reasons_and_test_only_if_its_test_fails():
+    found = {"rule": "the rule", "why": "the reasons", "test": "def test_it(): ..."}
+    failing, text = we.with_critic(({"critic:t::a"}, "cases"), found)
+    assert failing == {"critic:t::a"} and "the rule" in text and "the reasons" in text and "def test_it" in text and "cases" in text
+    assert we.with_critic(({"held0:t::a"}, "cases"), found) == ({"held0:t::a"}, "cases")
+    assert we.with_critic((set(), ""), found) == (set(), "")
 
 
 def test_the_probe_sets_are_named_for_the_arm():

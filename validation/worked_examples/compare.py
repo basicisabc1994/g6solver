@@ -62,7 +62,7 @@ def judged(results: Sequence[Mapping[str, Any]]) -> bool:
     return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < 0.05 for r in results)
 
 
-def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M7",
+def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M8",
            others: Sequence[str] = ("A", "T")) -> None:
     for score in SCORES:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
@@ -84,7 +84,7 @@ def main() -> None:
     report(rows, "fresh, all eleven", fresh, (1, 2))
     report(rows, "fresh, determined 7", [t for t in fresh if t in DETERMINED], (1, 2))
     report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5))
-    report(rows, "training, tuned", train, (1, 2), loop_arm="L7", others=("A",))
+    report(rows, "training, tuned", train, (1, 2), loop_arm="L8", others=("A",))
 
 
 if __name__ == "__main__":
