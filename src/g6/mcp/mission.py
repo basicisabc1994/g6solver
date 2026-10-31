@@ -72,6 +72,10 @@ NO_CHANGE = ("[G6_E_MISSION_NO_CHANGE] The working tree changes nothing against 
 INTEGRITY_HELD = ("The mission did not take this patch: the review found a sign the tests cannot be believed, so no "
                   "attempt was used. Show the person the report.")
 DRAFT = f"{WHO}: usable with caution; g6_mission_certificate says what the evidence supports"
+# COPY: A brief's instructions on this surface, in place of ``coding.OBJECTIVE_INSTRUCTIONS``: the patch is the tree.
+SUBMIT_HERE = ("Change only the source files in scope in the working tree, do not change the tests, and call "
+               "g6_mission_submit with the repository's folder. G6 runs the frozen tests after each submission and tells "
+               "you what failed.")
 #: The library names a mission's steps as an earlier server did, and offers its terminal for a person's: as this surface
 #: offers each of them.
 _TOOLS = {"create": "g6_mission_create", "status": "g6_mission_status", "submit": "g6_mission_submit",
@@ -95,9 +99,10 @@ def refused() -> dict | None:
 
 
 def _here(value: Any) -> Any:
-    """``value`` with each step named as this surface offers it (``_TOOLS``, ``_DIALOG``)."""
+    """``value`` with each step named as this surface offers it (``_TOOLS``, ``_DIALOG``, ``SUBMIT_HERE``)."""
     if isinstance(value, str):
-        return _TERMINAL.sub(lambda found: _DIALOG[found[1]], _NAMED.sub(lambda found: _TOOLS[found[1]], value))
+        named = _NAMED.sub(lambda found: _TOOLS[found[1]], value.replace(coding.OBJECTIVE_INSTRUCTIONS, SUBMIT_HERE))
+        return _TERMINAL.sub(lambda found: _DIALOG[found[1]], named)
     if isinstance(value, dict):
         return {key: _here(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
@@ -108,8 +113,10 @@ def _here(value: Any) -> Any:
 def reply(found: dict) -> dict:
     """``found`` in the library envelope: the state a closed mission reached, a ``qualified-draft`` while it is open."""
     said = said_state(found) if found.get("completion_state") else "qualified-draft"
-    shown = None if said == "verified" else (card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])
-                                             if said == "blocked-escalated" else card(None, "G6_E_QUALIFIED_DRAFT", DRAFT))
+    if said == "blocked-escalated":
+        shown = card(None, "G6_E_BLOCKED", f"{WHO} reported blocked-escalated: {found.get('result')}"[:500])
+    else:
+        shown = None if said == "verified" else card(None, "G6_E_QUALIFIED_DRAFT", DRAFT)
     envelope = door_envelope(said, who=WHO, value=found, warning_card=shown, run_id=str(found.get("mission_id") or ""))
     state = envelope["completion_state"]
     return {"ok": state != "blocked-escalated", **corrected_result(_here(found), state), **envelope}

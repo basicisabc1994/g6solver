@@ -673,6 +673,9 @@ def test_a_whole_mission_inside_the_boundary(live):
     made, confirmed, wrong, right, status, certificate = asyncio.run(flow())
     assert made["status"] == "awaiting_plan" and made["awaiting_human"], made
     assert confirmed["awaiting_chat"] and confirmed["awaiting_chat"][0]["unit"] == "patch", confirmed
+    # the brief tells the agent what this tool takes: its folder, not a map of files
+    assert "<the full new text>" not in _says(confirmed), confirmed
+    assert "g6_mission_submit" in confirmed["awaiting_chat"][0]["instructions"], confirmed
     assert wrong["assessment"]["outcome"] == patch_review.DEFECT, wrong
     assert wrong["mission"]["awaiting_chat"] and wrong["mission"]["status"] != "done", wrong   # sent back to repair
     assert right["assessment"]["outcome"] == patch_review.SUPPORTED, right
@@ -681,6 +684,50 @@ def test_a_whole_mission_inside_the_boundary(live):
     assert check_envelope(right) == [] and check_envelope(status) == [] and check_envelope(certificate) == []
     assert certificate["certificate"]
     assert "verified" not in right["assessment"]["report"].lower().replace("unverified", "")
+    # each round's review is on the mission's record, bound to the tree it read, and the two trees differ
+    kept = [m["refs"]["review"] for m in api.bind().missions.messages(made["mission_id"]) if "review" in m["refs"]]
+    assert [k["outcome"] for k in kept] == [patch_review.DEFECT, patch_review.SUPPORTED]
+    assert all(k["artifact_digest"] for k in kept) and kept[0]["artifact_digest"] != kept[1]["artifact_digest"]
+
+
+def test_a_repeated_patch_counts_as_repeated_work_on_the_missions_own_ladder(live):
+    async def flow():
+        async with Client(live.server, elicitation_handler=named) as client:
+            async def job(tool, **arguments):
+                return await finished(client, data(await client.call_tool(tool, arguments)))
+
+            mid = (await job("g6_mission_create", repo=str(live.repo), objective=OBJECTIVE, module="calc.py",
+                             function="double"))["mission_id"]
+            await job("g6_mission_confirm", mission_id=mid)
+            _write(live.repo, "def double(x):\n    return x + x + 2\n")
+            first = await job("g6_mission_submit", mission_id=mid, repo=str(live.repo))
+            return first, await job("g6_mission_submit", mission_id=mid, repo=str(live.repo))
+
+    first, again = asyncio.run(flow())
+    assert first["mission"]["awaiting_chat"][0]["attempts_left"] == 2, first
+    assert coding.REPEAT_RULE not in _says(first["mission"]), first
+    assert again["mission"]["awaiting_chat"][0]["attempts_left"] == 1, again   # it used an attempt
+    assert coding.REPEAT_RULE in _says(again["mission"]), again                # and the brief changed
+
+
+def test_a_high_consequence_mission_waits_for_a_person_after_its_checks(live):
+    """Its patch approval is not over MCP yet: the mission waits, the state is no pass, and the status says who decides."""
+    async def flow():
+        async with Client(live.server, elicitation_handler=named) as client:
+            async def job(tool, **arguments):
+                return await finished(client, data(await client.call_tool(tool, arguments)))
+
+            mid = (await job("g6_mission_create", repo=str(live.repo), objective=OBJECTIVE, module="calc.py",
+                             function="double", risk="R3"))["mission_id"]
+            await job("g6_mission_confirm", mission_id=mid)
+            _write(live.repo, FIXED)
+            return await job("g6_mission_submit", mission_id=mid, repo=str(live.repo))
+
+    got = asyncio.run(flow())
+    mission_now = got["mission"]
+    assert [w["unit"] for w in mission_now["awaiting_human"]] == ["approve-patch"], mission_now
+    assert mission_now["status"] != "done" and mission_now["completion_state"] == "qualified-draft", mission_now
+    assert "g6.workforce.decide list" in _says(mission_now["result"]), mission_now["result"]
 
 
 def test_the_repair_ladder_is_the_missions_own_and_stops_for_a_person(live):
