@@ -13,6 +13,7 @@ month (the archive kept a lifetime ledger beside a month counter it charged afte
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import uuid
@@ -180,10 +181,17 @@ class OwnerScope:
             self.conn.rollback()
             raise
 
-    def settle(self, venture_id: str, reservation: str, *, reported: float | None) -> float:
+    def settle(self, venture_id: str, reservation: str, *, reported: float | None = None,
+               metered: float | None = None) -> float:
         """Release ``reservation`` and charge it: the full reservation, or ``reported`` when that is higher. What a
         run reports can raise its charge, never lower it, so an executor that reports 0 still spends its reservation
-        (the archive recorded local and customer-client runs as 0, so their cap never tripped: VEN-004)."""
+        (the archive recorded local and customer-client runs as 0, so their cap never tripped: VEN-004).
+
+        ``metered`` is different: the host's own count of what the run used, taken where the run cannot touch it. When
+        given it is the charge, up or down, and ``reported`` is not read."""
+        if metered is not None and (isinstance(metered, bool) or not isinstance(metered, int | float)
+                                    or not math.isfinite(metered) or metered < 0):
+            raise ValueError(f"a metered amount must be finite and not negative, got {metered!r}")
         vid = self.resolve(venture_id)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
@@ -193,7 +201,9 @@ class OwnerScope:
                 raise LookupError("no such reservation for this venture")
             charged = float(row["amount"])
             reported_value = gates.amount_of(reported)
-            if reported_value is not None and reported_value > charged:
+            if metered is not None:
+                charged = float(metered)
+            elif reported_value is not None and reported_value > charged:
                 charged = reported_value
             self._append_ledger(vid, row["month"], row["account"], "release", row["amount"], reservation)
             self._append_ledger(vid, row["month"], row["account"], "charge", charged, reservation)
