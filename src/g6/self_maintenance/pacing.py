@@ -82,10 +82,10 @@ class Admission:
     amount: float = 0.0
 
 
-def _used(committed: float, pending: float, account: AccountReading | None) -> tuple[float, bool]:
+def _used(booked: float, pending: float, account: AccountReading | None) -> tuple[float, bool]:
     """What this week has used, and whether the account's figure is what set it. A charge may already be in that figure,
     so the larger of the two stands. A pending reservation cannot be, so it goes on top of whichever that is."""
-    charged = committed - pending
+    charged = booked - pending
     above = account is not None and account.used > charged
     return (account.used if above else charged) + pending, above
 
@@ -131,8 +131,8 @@ class BudgetMeter:
         if seen.reason:
             return seen
 
-        def over_the_ceiling(committed: float, pending: float) -> str:
-            used = _used(committed, pending, account)[0]
+        def over_the_ceiling(booked: float, pending: float) -> str:
+            used = _used(booked, pending, account)[0]
             if used + worst_case <= seen.ceiling + _SLACK:
                 return ""
             return f"{used:g} used plus a worst case of {worst_case:g} is over day {seen.day}'s ceiling of {seen.ceiling:g}"

@@ -197,9 +197,9 @@ class OwnerScope:
             raise BudgetRefused(f"a reservation must be a finite, positive amount, got {amount!r}")
         self.conn.execute("BEGIN IMMEDIATE")
         try:
-            why = gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value)
-            if not why and admit is not None:
-                why = admit(self._committed(vid, month).get(account, 0.0), self._outstanding(vid, month).get(account, 0.0))
+            why = "" if admit is None else admit(self._committed(vid, month).get(account, 0.0),
+                                                 self._outstanding(vid, month).get(account, 0.0))
+            why = why or gates.spend_refusal(self.venture(vid), self._committed(vid, month), account, value)
             if why:
                 raise BudgetRefused(why)
             reservation = uuid.uuid4().hex
