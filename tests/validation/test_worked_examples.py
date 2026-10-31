@@ -1162,7 +1162,7 @@ def test_distillation_reads_a_failed_run_that_left_no_report(tmp_path):
     import distill
     (tmp_path / "run").mkdir()
     got = distill.failures([{"task": "x", "run": "run", "tests": ["t::a"]}], tmp_path)
-    assert got[0].failed_checks == ("t::a",) and "--- the patch ---" in got[0].output
+    assert got[0].failed_checks == ("check-1",) and "--- the patch ---" in got[0].output
 
 
 def test_round3_fable_cap_comes_from_the_budget_left(tmp_path):

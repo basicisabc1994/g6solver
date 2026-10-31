@@ -183,6 +183,51 @@ def test_the_distiller_reads_a_near_miss_and_never_the_maintainers_test_text(tmp
     assert "RULE: a rule" not in got[0].output and "a rule" in got[0].output and got[0].failed_checks == ()
 
 
+def test_the_proposer_gets_opaque_ids_for_the_maintainers_tests(tmp_path):
+    _row(tmp_path, "L9", "black-5634", 1, passes=False)
+    got = distill.failures(evolve.records(tmp_path, "L9", TRAIN), tmp_path)[0]
+    assert got.failed_checks == ("check-1",) and "test_rule" not in json.dumps(got.__dict__)
+
+
+def test_the_proposer_reads_the_issue_as_the_run_was_given_it(tmp_path):
+    _row(tmp_path, "L9", "black-5634", 1, passes=False)
+    (tmp_path / "run" / "black-5634" / "L91" / "prompt.txt").write_text("the addendum\n\nIssue #7: a title\n\nthe body", "utf-8")
+    got = distill.failures(evolve.records(tmp_path, "L9", TRAIN), tmp_path)[0]
+    assert got.input == "Issue #7: a title\n\nthe body"
+
+
+def test_a_near_miss_says_what_repair_changed_and_what_failed_before_the_patch(tmp_path):
+    _row(tmp_path, "L9", "attrs-1593", 1, passes=True,
+         repairs={"critic": {"c1": "failed"}, "scout": {"s1": "failed", "s2": "failed", "s3": "passed"}})
+    run = tmp_path / "run" / "attrs-1593" / "L91"
+    (run / "repair_check_2_critic.json").write_text(json.dumps({"results": {"c1": "passed"}}), "utf-8")
+    (run / "repair_check_2_scout.json").write_text(json.dumps({"results": {"s1": "failed", "s2": "failed", "s3": "passed"}}), "utf-8")
+    (run / "probes_at_base.json").write_text(json.dumps({"scout": {"results": {"s1": "failed", "s2": "failed", "s3": "passed"}}}), "utf-8")
+    caught = evolve.records(tmp_path, "L9", TRAIN)[0]["caught"]
+    assert "critic: 1 failing on the first patch, unknown before it, 0 at the end" in caught
+    assert "scout: 2 failing on the first patch, 2 of them failing before it, 2 at the end" in caught
+
+
+def test_a_long_list_of_failures_does_not_crowd_out_the_rest(tmp_path):
+    _row(tmp_path, "L9", "attrs-1593", 1, passes=True, repairs={"scout": {f"s{i}": "failed" for i in range(50)}})
+    caught = evolve.records(tmp_path, "L9", TRAIN)[0]["caught"]
+    assert "(and 44 more)" in caught and len(caught) < 400
+
+
+def test_every_bug_reaches_the_proposer_before_any_bug_twice_and_failures_come_first():
+    rows = [{"task": t, "kind": k, "repeat": r} for t, k, r in (("a", "near_miss", 1), ("a", "near_miss", 2), ("a", "failed", 3),
+                                                                ("b", "near_miss", 1), ("c", "failed", 1), ("c", "failed", 2))]
+    got = evolve.diverse(rows, 4)
+    assert [(r["task"], r["kind"]) for r in got[:3]] == [("a", "failed"), ("c", "failed"), ("b", "near_miss")] and len(got) == 4
+
+
+def test_no_stage_2_repository_was_used_in_training_or_development():
+    repos = {name: {t.project.lower() for t in we.load_tasks(path)} for name, path in
+             (("train", we.TASKS), ("fresh", we.TASKS_FRESH), ("unseen", we.TASKS_UNSEEN), ("dev", we.TASKS_DEV))}
+    assert not repos["unseen"] & (repos["train"] | repos["fresh"] | repos["dev"])
+    assert not repos["dev"] & (repos["train"] | repos["fresh"])
+
+
 # --- the paired decision ------------------------------------------------------------------------------------------------
 def _passes(**bugs):
     return {task: sum(got) for task, got in bugs.items()}, {task: len(got) for task, got in bugs.items()}

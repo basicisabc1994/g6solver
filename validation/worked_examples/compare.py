@@ -15,8 +15,9 @@ from typing import Any
 
 import run as we
 import wecommon as c
+from g6.metaharness.method_rca import compare_methods
 
-SCORES = ("maintainers", "amended")
+SCORES =("maintainers", "amended")
 DETERMINED = ("pydantic-13243", "black-5148", "click-3434", "click-3404", "starlette-3189", "fastapi-14616", "fastapi-13920")
 TARGET = 0.95
 Rows = Mapping[tuple[str, str, int], Mapping[str, bool | None]]
@@ -72,6 +73,19 @@ def by_bug(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats:
     return counts
 
 
+def interval(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int],
+             score: str) -> tuple[float, float] | None:
+    """The 95% interval of the uplift from G6's ``compare_methods``, resampling whole bugs. It is read beside the rule, not by it."""
+    pairs, clusters = [], []
+    for task in tasks:
+        for repeat in repeats:
+            ours, theirs = (rows.get((arm, task, repeat), {}).get(score) for arm in (loop_arm, other))
+            if ours is not None and theirs is not None:
+                pairs.append((float(theirs), float(ours)))
+                clusters.append(task)
+    return tuple(compare_methods(pairs, clusters=clusters)["ci95"]) if pairs else None
+
+
 def judged(results: Sequence[Mapping[str, Any]]) -> bool:
     """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each."""
     return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < 0.05 for r in results)
@@ -84,9 +98,11 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
         for r in results:
             uplift = "n/a" if r["uplift"] is None else f"{r['uplift']:+.1%}"
             bugs = by_bug(rows, loop_arm, r["other"], tasks, repeats, score)
+            span = interval(rows, loop_arm, r["other"], tasks, repeats, score)
             print(f"{name:22} {score:11} {loop_arm} {r['loop_passed']:3}/{r['pairs']:<3} {r['other']:2} {r['other_passed']:3}/{r['pairs']:<3}"
                   f" uplift {uplift:>7}  wins {r['wins']:2} losses {r['losses']:2}  p {r['p']:.4f}"
                   f"  bugs better {bugs['better']} worse {bugs['worse']} same {bugs['same']}"
+                  f"  95% by bug {f'{span[0]:+.0%} to {span[1]:+.0%}' if span else 'n/a'}"
                   + (f"  MISSING {r['missing']}" if r["missing"] else ""))
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
         print(f"{name:22} {score:11} frozen rule: {'met' if judged(results) else 'not shown'}; "

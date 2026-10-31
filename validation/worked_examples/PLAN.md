@@ -1013,3 +1013,25 @@ fixed menu on G6's `SolverPlanner` pattern, with a recorded fallback. It decides
 **Spend.** The runner's count holds $10.50 for each run that started and never ended. Four such runs were killed, and the rule says each
 counts until it is closed with its streams' cost. They will be closed that way when no stream is running, with the amounts in the report.
 The $180 stop and the loop's $170 stop are unchanged.
+
+**Codex's wiring review (2026-10-31 night, before any stage 3 run).** The owner holds that the gap is wiring: the primitives exist and
+are not composed to address the failures. Codex was asked to test that and try to break it, reading the source, the loop, the PRs, the
+override design and training evidence only, with a proof of reading.
+- **Its verdict: partly.** "Mainly wiring" is not established. The useful missing wiring concerns the quality, delivery and reuse of
+  evidence. Connecting more parts will not by itself find the right requirement, generate a distinguishing input or correct a mistaken
+  expectation, and an unstated maintainer choice or an interpreter the container lacks is out of any wiring's reach.
+- **Counterevidence, both checked in the archive.** On `L9-black-5634-2`, all 48 scout failures left at the end also failed before the
+  patch, and the run passes the maintainers' tests: the fixer was right to leave them, so more repair pressure could only have done harm.
+  L9 also tells the fixer a critic's test "failed before your change" when no base result exists, which is a wording fault. L9 keeps it:
+  changing it now would change what agents see, and nothing shows a lost pass.
+- **Its decision: freeze L9 now**, without its three proposed additions, none of which has a demonstrated gain. This plan does that.
+- **Its estimate, low confidence and labelled an inference:** about +5 points on unseen bugs in training repositories and about 0 in new
+  repositories, with a negative result plausible. It would budget zero for its own additions until shown.
+- **Taken into stage 3, and no agent sees any of it:** the proposer gets opaque ids in place of the maintainers' test names and reads the
+  issue; a near miss now says what repair changed and how many failures predate the patch, so mistaken probes show; and records are
+  taken across bugs, because the proposer reads only the first eight. A test keeps stage 2's repositories apart from every other pool.
+  Reports add a 95% interval that resamples whole bugs through G6's `compare_methods`, read beside the rule and not by it.
+- **Not taken:** `Pool`, which four candidates do not need; final-artifact review, whose gain is unshown; and a scout-only limit, because
+  each candidate changes one part anyway, and the model chose the scouts on every real call so far.
+- **G6's gate is not applied.** `gate.py` needs 30 confirmation cases, and stage 2's bugs give 20 outcomes on ten bugs. A candidate that
+  wins is therefore reported as recommended and tested, never as promoted by G6.

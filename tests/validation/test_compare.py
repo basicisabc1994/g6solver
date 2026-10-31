@@ -82,6 +82,16 @@ def test_the_report_prints_the_bug_count_beside_the_rule(capsys):
     assert "bugs better 2 worse 0 same 0" in capsys.readouterr().out
 
 
+def test_the_interval_resamples_whole_bugs():
+    clear = compare.interval(_cells(M9="a11 b11 c11", A="a00 b00 c00"), "M9", "A", "abc", (1, 2), "amended")
+    mixed = compare.interval(_cells(M9="a11 b00 c11", A="a00 b11 c00"), "M9", "A", "abc", (1, 2), "amended")
+    assert clear == (1.0, 1.0) and mixed[0] < 0 < mixed[1]
+
+
+def test_no_runs_give_no_interval():
+    assert compare.interval({}, "M9", "A", "abc", (1, 2), "amended") is None
+
+
 def test_stage_3_compares_the_trained_arm_with_its_untrained_parent_too(capsys):
     rows = _cells(M10="a11", M9="a00", A="a00", T="a00")
     compare.report(rows, "stage 3", "a", (1, 2), loop_arm="M10", others=("M9", "A", "T"))

@@ -45,6 +45,7 @@ FIELD_SYSTEM = ("A coding agent fixes bugs inside a harness with several parts. 
 ADD_ONLY = ("Your text is added to that part's existing instructions, which stay. Write only what to add, at most 120 words, "
             "as instructions. It cannot change how results are scored.")
 NEAR_COPY = 0.8
+MAX_CASES, MAX_RECORDS = 6, 8
 
 
 def judged_on() -> set[str]:
@@ -68,15 +69,41 @@ def verdicts(root: Path, arm: str, tasks: Sequence[str], repeats: Sequence[int] 
 
 
 def near_miss(folder: Path) -> str:
-    """What the runner's own checks caught on the first patch: the critic's rule and reasons, and the ids of what failed. It needs
-    no maintainers' test, so a run that ended well can still teach something."""
-    caught = []
-    for path in sorted(folder.glob("repair_check_1_*.json")):
+    """What the runner's own checks caught on the first patch, and what became of it: the critic's rule and reasons, then for each
+    set how many failed, how many of those failed before the patch too, and how many still fail. That last pair is how a set of
+    mistaken probes shows on a run that ended well. It needs no maintainers' test, so a passing run can still teach something."""
+    rounds: dict[str, dict[int, list[str]]] = {}
+    for path in folder.glob("repair_check_*_*.json"):
+        _, _, n, label = path.stem.split("_", 3)
         results = json.loads(path.read_text("utf-8")).get("results") or {}
-        caught += [f"{path.stem.rsplit('_', 1)[1]}:{case}" for case, got in results.items() if got in ("failed", "error")]
+        rounds.setdefault(label, {})[int(n)] = [case for case, got in results.items() if got in ("failed", "error")]
+    if not any(seen.get(1) for seen in rounds.values()):
+        return ""
+    at_base = json.loads((folder / "probes_at_base.json").read_text("utf-8")) if (folder / "probes_at_base.json").is_file() else {}
+    lines = []
+    for label, seen in sorted(rounds.items()):
+        first = seen.get(1) or []
+        if not first:
+            continue
+        results = (at_base.get(label) or {}).get("results")
+        before = f"{sum(results.get(c) in ('failed', 'error') for c in first)} of them failing before it" if results else "unknown before it"
+        lines.append(f"{label}: {len(first)} failing on the first patch, {before}, {len(seen[max(seen)])} at the end")
+        lines += [f"  {case}" for case in first[:MAX_CASES]] + ([f"  (and {len(first) - MAX_CASES} more)"] if len(first) > MAX_CASES else [])
     reply = folder / "critic_reply.txt"
-    critic = we.critic_report(reply.read_text("utf-8", errors="replace")) if caught and reply.is_file() else {}
-    return "\n".join(text for text in (critic.get("rule"), critic.get("why"), *caught) if text)
+    critic = we.critic_report(reply.read_text("utf-8", errors="replace")) if reply.is_file() else {}
+    return "\n".join(text for text in (critic.get("rule"), critic.get("why"), *lines) if text)
+
+
+def diverse(rows: Sequence[Mapping[str, Any]], limit: int = MAX_RECORDS) -> list[Mapping[str, Any]]:
+    """Up to ``limit`` records, each bug in turn and failed runs first: the proposer reads only the first eight it is given, and
+    runs on one bug are not independent."""
+    queues: dict[str, list[Mapping[str, Any]]] = {}
+    for row in sorted(rows, key=lambda r: r["kind"] != "failed"):
+        queues.setdefault(row["task"], []).append(row)
+    picked: list[Mapping[str, Any]] = []
+    while len(picked) < limit and any(queues.values()):
+        picked += [queue.pop(0) for queue in queues.values() if queue][:limit - len(picked)]
+    return picked
 
 
 def records(root: Path, arm: str, tasks: Sequence[str]) -> list[dict[str, Any]]:
@@ -163,11 +190,12 @@ class Training:
             self.seen.append(entry["text"])
             return entry
         way = WAYS[child.operator]
-        summary = [{"kind": r["kind"], "caught": str(r.get("caught") or "")[:600]} for r in self.rows]
+        rows = diverse(self.rows)
+        summary = [{"kind": r["kind"], "caught": str(r.get("caught") or "")[:600]} for r in rows]
         field, decision = agentic.choice(self.caller, "field", FIELD_SYSTEM, {"way": way, "parts": FIELDS, "failures": summary},
                                          tuple(FIELDS), DEFAULT_FIELD[child.operator])
         try:
-            text, bad = distill.distill(self.text.get(field, ""), self.rows, self.root, self.caller,
+            text, bad = distill.distill(self.text.get(field, ""), rows, self.root, self.caller,
                                         [way, f"Your text is the {FIELDS[field]}.", ADD_ONLY], projects=projects())
         except distill.llm.LLMError as exc:
             text, bad = "", [f"the model call failed: {exc}"]

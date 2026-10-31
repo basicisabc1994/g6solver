@@ -48,9 +48,13 @@ def failures(rows: Sequence[Mapping[str, Any]], archive: Path) -> list[DevFailur
         report, patch = [(folder / name).read_text("utf-8", errors="replace")[:size] if (folder / name).is_file() else ""
                          for name, size in (("final_report.txt", OUT_CHARS), ("final.patch", PATCH_CHARS))]
         caught = f"\n--- what the runner's checks caught on the first patch ---\n{row['caught'][:OUT_CHARS]}" if row.get("caught") else ""
-        found.append(DevFailure(case_id=row["task"], input="", output=f"{report}\n--- the patch ---\n{patch}{caught}",
+        asked = (folder / "prompt.txt").read_text("utf-8", errors="replace") if (folder / "prompt.txt").is_file() else ""
+        # the ids are opaque: what the proposer writes reaches agents, so a maintainers' test's name never reaches it
+        found.append(DevFailure(case_id=row["task"], input=asked[asked.rfind("Issue #"):][:OUT_CHARS] if "Issue #" in asked else "",
+                                output=f"{report}\n--- the patch ---\n{patch}{caught}",
                                 expected="the project's own tests for this bug pass", oracle="the project's own tests",
-                                failed_checks=tuple(row.get("tests") or ()), failure_codes=()))
+                                failed_checks=tuple(f"check-{i}" for i, _ in enumerate(row.get("tests") or (), 1)),
+                                failure_codes=()))
     return found
 
 
