@@ -60,19 +60,54 @@ def test_a_missing_run_is_never_a_win_or_a_loss():
     assert got["pairs"] == 9 and got["missing"] == 1 and not compare.judged([got])
 
 
+def _archive(root, monkeypatch, *rows):
+    (root / "loop" / "amended").mkdir(parents=True)
+    diff = root / "x-1.patch"
+    diff.write_text("a diff", encoding="utf-8")
+    monkeypatch.setattr(compare.we, "amendment", lambda task: diff if task == "x-1" else None)
+    for row in rows:
+        row = {"repeat": 1, "run": f"run/{row['task']}/{row['arm']}", **row}
+        (root / "loop" / f"{row['arm']}-{row['task']}-1.json").write_text(json.dumps(row), "utf-8")
+    (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
+    return compare.c.sha256_file(diff)
+
+
+def _amended(root, arm, sha, *, run=None, passes=True):
+    (root / "loop" / "amended" / f"{arm}-x-1-1.json").write_text(json.dumps(
+        {"amended_passes": passes, "amendment_sha256": sha, "run": run or f"run/x-1/{arm}"}), "utf-8")
+
+
 def test_an_amended_bug_not_yet_rescored_counts_as_missing_not_as_its_old_verdict(tmp_path, monkeypatch):
-    monkeypatch.setattr(compare.we, "amendment", lambda task: Path("d") if task == "x-1" else None)
-    (tmp_path / "loop" / "amended").mkdir(parents=True)
-    for arm, task, passes in (("A", "x-1", True), ("A", "y-1", True), ("M7", "x-1", False)):
-        (tmp_path / "loop" / f"{arm}-{task}-1.json").write_text(
-            json.dumps({"arm": arm, "task": task, "repeat": 1, "passes": passes}), "utf-8")
-    (tmp_path / "loop" / "amended" / "M7-x-1-1.json").write_text(json.dumps({"amended_passes": True}), "utf-8")
-    (tmp_path / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
+    sha = _archive(tmp_path, monkeypatch, {"arm": "A", "task": "x-1", "passes": True}, {"arm": "A", "task": "y-1", "passes": True},
+                   {"arm": "M7", "task": "x-1", "passes": False})
+    _amended(tmp_path, "M7", sha)
     rows = compare.saved(tmp_path)
     assert rows[("A", "y-1", 1)] == {"maintainers": True, "amended": True}      # no amendment: one score
     assert rows[("M7", "x-1", 1)] == {"maintainers": False, "amended": True}
     assert rows[("A", "x-1", 1)] == {"maintainers": True, "amended": None}
     assert compare.compare(rows, "M7", "A", ["x-1"], (1,), "amended")["missing"] == 1
+
+
+def test_a_verdict_from_another_diff_or_another_run_is_missing(tmp_path, monkeypatch):
+    sha = _archive(tmp_path, monkeypatch, {"arm": "A", "task": "x-1", "passes": True}, {"arm": "M7", "task": "x-1", "passes": False})
+    _amended(tmp_path, "A", "not-this-diff")
+    _amended(tmp_path, "M7", sha, run="run/x-1/another")
+    rows = compare.saved(tmp_path)
+    assert rows[("A", "x-1", 1)]["amended"] is None and rows[("M7", "x-1", 1)]["amended"] is None
+
+
+def test_a_finished_run_with_no_independent_verdict_is_missing_not_a_failure(tmp_path, monkeypatch):
+    _archive(tmp_path, monkeypatch, {"arm": "A", "task": "y-1", "passes": False, "status": "finished", "failing": None},
+             {"arm": "M7", "task": "y-1", "passes": False, "status": "error", "failing": None},
+             {"arm": "T", "task": "y-1", "passes": False, "status": "finished", "failing": 3})
+    rows = compare.saved(tmp_path)
+    assert rows[("A", "y-1", 1)] == {"maintainers": None, "amended": None}
+    assert rows[("M7", "y-1", 1)]["maintainers"] is False                       # a run that ended badly did fail
+    assert rows[("T", "y-1", 1)]["maintainers"] is False
+    five_missing = {("M7", f"b{n}", 1): {"maintainers": True} for n in range(5)}
+    five_missing.update({("A", f"b{n}", 1): rows[("A", "y-1", 1)] for n in range(5)})
+    got = compare.compare(five_missing, "M7", "A", [f"b{n}" for n in range(5)], (1,), "maintainers")
+    assert got["missing"] == 5 and got["pairs"] == 0 and not compare.judged([got])
 
 
 def test_the_seven_determined_fresh_bugs_are_the_audits_labels():

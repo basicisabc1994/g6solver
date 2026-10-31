@@ -849,3 +849,12 @@ alone is not uplift: G1 gained one run on training (10 of 14 to 9 of 14) and los
 **What this supersedes.** "The owner's 95% stays the target on the ten, with `click-3678` in the score" now reads on both
 scores: `click-3678` stays in, on its amended tests. The section above saying `click-3678` is out of honest reach still holds
 for the maintainers' tests. The owner's 95% is read on the amended tests, and the maintainers' score stands beside it.
+
+**A review from another model family, asked for by the owner.** Codex reviewed the scoring change read-only and showed four faults
+in it, each with a reproduction; none had affected a saved result, and no agent sees any of this. All four are fixed, test first.
+A newer refused control could be passed over for an older good one, so a control now counts only if it is the newest to end and ran
+the diff's exact bytes. A finished run with no independent verdict could be saved as a failure, which could manufacture a significant
+win, so such a run is now not saved and a restart checks it again, a check with no test report raises, and `compare.py` reads such a
+row as missing (of 108 saved rows, none is). A cached amended verdict held for any diff, so it now holds for one run and one diff.
+An unreadable parent report passed the control, so a failure must now be seen on the parent. Not adopted: checking the oracle image's
+identity in each amended check, since nothing rebuilds those images.

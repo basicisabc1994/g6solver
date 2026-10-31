@@ -61,10 +61,11 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     if rec.get("status") == "finished":
         final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, timeout=1200)).get("checks", [])
                  if x.get("patch") == "final"]
-        if final:
-            failing, tests = final[-1].get("failing"), list(final[-1].get("fail_to_pass_failing") or [])
-            row.update(passes=bool(final[-1].get("passes")), tests=tests[:20],
-                       failing=failing if isinstance(failing, int) else len(failing or []))
+        if not final:       # no verdict is not a failed run: nothing is saved, and a restart checks it again
+            raise SystemExit(f"no verdict for {arm} {task} {repeat}")
+        failing, tests = final[-1].get("failing"), list(final[-1].get("fail_to_pass_failing") or [])
+        row.update(passes=bool(final[-1].get("passes")), tests=tests[:20],
+                   failing=failing if isinstance(failing, int) else len(failing or []))
     saved.parent.mkdir(exist_ok=True)
     saved.write_text(json.dumps(row, indent=1), "utf-8")
     print(json.dumps({k: row[k] for k in ("arm", "task", "repeat", "status", "passes", "failing", "cost_usd")}), flush=True)
@@ -73,23 +74,29 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
 
 def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
     """Every saved run of a bug with an amendment, its final patch scored on the amended tests, saved beside the
-    maintainers' verdict under ``loop/amended/``, once (PLAN.md, 2026-10-31). No model; the saved rows stay as they are."""
+    maintainers' verdict under ``loop/amended/`` (PLAN.md, 2026-10-31). A verdict holds for one run and one diff, and is
+    scored again if either changes. No model; the saved rows stay as they are."""
     rows = []
     for path in sorted((root / "loop").glob("*-*.json")):
         row, saved = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        if not we.amendment(row["task"]):
+        diff = we.amendment(row["task"])
+        if not diff:
             continue
+        sha = c.sha256_file(diff)
         if saved.is_file():
-            rows.append(json.loads(saved.read_text("utf-8")))
-            continue
+            kept = json.loads(saved.read_text("utf-8"))
+            if (kept.get("amendment_sha256"), kept.get("run")) == (sha, row.get("run")):
+                rows.append(kept)
+                continue
         passes = False
         if row.get("status") == "finished":
             final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", row["run"], "--amended",
                                                timeout=1200)).get("checks", []) if x.get("patch") == "final"]
-            if not final:       # no verdict is not a failed run
+            passes = final[-1].get("passes") if final else None
+            if not isinstance(passes, bool):       # no verdict is not a failed run
                 raise SystemExit(f"no amended verdict for {path.stem}")
-            passes = bool(final[-1].get("passes"))
-        rows.append({**{k: row.get(k) for k in ("arm", "task", "repeat", "run", "passes")}, "amended_passes": passes})
+        rows.append({**{k: row.get(k) for k in ("arm", "task", "repeat", "run", "passes")}, "amended_passes": passes,
+                     "amendment_sha256": sha})
         saved.parent.mkdir(exist_ok=True)
         saved.write_text(json.dumps(rows[-1], indent=1), "utf-8")
     return rows

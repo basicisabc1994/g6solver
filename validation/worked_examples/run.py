@@ -1697,18 +1697,30 @@ def amend(ctx: Context, task: Task) -> dict[str, Any]:
     run = ctx.archive.start("amend", task.id, g6_commit=ctx.g6.get("commit"))
     base = _oracle_run(ctx, task, folder=run, label="base", amended=True)
     fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed", amended=True)
-    results = fixed.get("results") or {}
-    f2p, p2p = fail_to_pass(base.get("results") or {}, results)
+    before, results = base.get("results") or {}, fixed.get("results") or {}
+    f2p, p2p = fail_to_pass(before, results)
+    seen = sum(before.get(k) in ("failed", "error") for k in f2p)   # absent from a report is not a failure anyone saw
     lost = sorted(k for k in [*v["record"]["fail_to_pass"], *v["record"]["pass_to_pass"]] if results.get(k) != "passed")
-    return run.finish({"sha256": c.sha256_file(diff), "fail_to_pass": f2p, "pass_to_pass": p2p, "lost": lost, "ok": bool(f2p),
-                       "why": "" if f2p else "no amended test fails on the parent's code and passes with the fix"},
-                      "finished" if f2p else "refused")
+    return run.finish({"sha256": c.sha256_file(diff), "fail_to_pass": f2p, "pass_to_pass": p2p, "parent_failed": seen,
+                       "lost": lost, "ok": bool(seen), "base": base, "fixed": fixed,
+                       "why": "" if seen else "no amended test was seen failing on the parent's code and passing with the fix"},
+                      "finished" if seen else "refused")
+
+
+def amend_control(archive: c.Archive, task_id: str) -> dict[str, Any] | None:
+    """The control for the diff as it stands: the newest control to end, if it passed and it ran these bytes. So neither
+    a newer refusal nor a changed diff can be scored on an older list."""
+    ended = [r for r in archive.rows() if r.get("event") == "ended" and str(r.get("run", "")).startswith(f"amend/{task_id}/")]
+    if not ended or max(ended, key=lambda r: str(r["run"])).get("status") != "finished":
+        return None
+    found, diff = latest(archive, "amend", task_id), amendment(task_id)
+    return found if found and diff and found["record"].get("sha256") == c.sha256_file(diff) else None
 
 
 def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool = False) -> dict[str, Any]:
-    v = latest(ctx.archive, "amend" if amended else "validate", task.id)
+    v = amend_control(ctx.archive, task.id) if amended else latest(ctx.archive, "validate", task.id)
     if v is None:
-        raise SystemExit("run amend first" if amended else "validate the task first")
+        raise SystemExit("this diff has no passing control: run amend" if amended else "validate the task first")
     src = ctx.archive.root / run_rel if run_rel else (latest(ctx.archive, "run", task.id) or {}).get("path")
     if src is None:
         raise SystemExit("no run to check")
@@ -1721,6 +1733,8 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     for patch in [*patches, src / "final.patch"]:
         label = patch.stem
         body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)
+        if body.get("patch_applied", True) and not body.get("results") and str(body.get("pytest_exit")).strip() != "124":
+            raise RuntimeError(f"no test report for {label}")   # a check that did not happen is not a failed patch
         rows.append({"patch": label, "bytes": patch.stat().st_size if patch.exists() else 0,
                      "patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p)})
     return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p), "amended": amended},
@@ -1987,6 +2001,7 @@ def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
                            for row in record.get("checks") or []]}
     if kind == "amend":     # counts only: on a fresh or held-out bug the names stay unread (PLAN.md, 2026-10-31)
         return {"ok": record.get("ok"), "why": record.get("why"), "sha256": record.get("sha256"),
+                "parent_failed": record.get("parent_failed"),
                 **{k: len(record.get(k) or []) for k in ("fail_to_pass", "pass_to_pass", "lost")}}
     return {k: v for k, v in record.items() if k not in ("results", "base", "fixed", "usage")}
 

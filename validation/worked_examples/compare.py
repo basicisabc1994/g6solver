@@ -28,15 +28,19 @@ def sign_test(wins: int, losses: int) -> float:
 
 
 def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
-    """Each saved run's two verdicts. A bug with no amendment has one score; an amended bug not yet rescored has no
-    amended verdict, which is missing, never its old one."""
+    """Each saved run's two verdicts; None is missing, and a missing verdict is neither a pass nor a failure. A finished
+    run with no independent verdict has none on either score. A bug with no amendment has one score, and an amended bug
+    has an amended verdict only if it was scored for this run on the diff as it stands."""
     rows: dict[tuple[str, str, int], dict[str, bool | None]] = {}
     for path in (root / "loop").glob("*-*.json"):
         row, again = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
-        passes = bool(row["passes"])
-        amended: bool | None = passes
-        if we.amendment(row["task"]):
-            amended = bool(json.loads(again.read_text("utf-8"))["amended_passes"]) if again.is_file() else None
+        passes = None if row.get("status") == "finished" and row.get("failing") is None else bool(row["passes"])
+        amended = passes
+        diff = we.amendment(row["task"])
+        if diff:
+            kept = json.loads(again.read_text("utf-8")) if again.is_file() else {}
+            same = (kept.get("amendment_sha256"), kept.get("run")) == (c.sha256_file(diff), row.get("run"))
+            amended = kept.get("amended_passes") if same else None
         rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended}
     return rows
 
