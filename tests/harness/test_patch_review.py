@@ -934,6 +934,19 @@ def test_a_marker_on_a_test_that_looks_new_stops_support_and_accuses_nobody(repo
     assert not any(r["stage"] == "integrity" for r in got["assessment"]["reasons"])
 
 
+def test_a_crashed_run_with_a_failure_the_base_has_too_never_reaches_support(repo, monkeypatch):
+    """The outside review's second pass: a derived run crashed after one failure, and the failure was the base's own. Discounting it
+    must not forget that the rest of that run never ran."""
+    (repo / "calc.py").write_text(GOOD)
+    (repo / "test_more.py").write_text("from calc import add\n\n\ndef test_zero():\n    assert add(0, 0) == 0\n")
+    known = "test_more.py::test_zero"
+    crashed = result([ADD, NEGATIVE], failed=[known], verdict="crashed", said="the test process crashed, so this run gave no result")
+    Recorded(monkeypatch, {(ADD, NEGATIVE): result([ADD, NEGATIVE])}, default=crashed)
+    got = review(repo)
+    assert got["assessment"]["outcome"] == "insufficient_evidence", got["assessment"]["reasons"]
+    assert "run_crashed" in _reasons(got)
+
+
 def test_a_failure_on_the_record_survives_a_crash_after_it():
     """The outside review's input: a crash later in the run must not erase a check that already failed."""
     node = "test_x.py::test_fails"
