@@ -60,6 +60,34 @@ def test_a_missing_run_is_never_a_win_or_a_loss():
     assert got["pairs"] == 9 and got["missing"] == 1 and not compare.judged([got])
 
 
+def _cells(**arms):
+    """``M9="a11 b10"``: bug a passed twice, bug b once."""
+    return {(arm, part[0], i + 1): {"maintainers": flag == "1", "amended": flag == "1"}
+            for arm, cells in arms.items() for part in cells.split() for i, flag in enumerate(part[1:])}
+
+
+def test_each_comparison_counts_the_bugs_as_well_as_the_runs():
+    rows = _cells(M9="a11 b10 c00", A="a00 b11 c00")
+    assert compare.by_bug(rows, "M9", "A", "abc", (1, 2), "amended") == {"better": 1, "worse": 1, "same": 1}
+
+
+def test_a_bug_with_a_run_missing_is_counted_neither_way():
+    rows = _cells(M9="a11", A="a00")
+    del rows[("M9", "a", 2)]
+    assert compare.by_bug(rows, "M9", "A", "a", (1, 2), "amended") == {"better": 0, "worse": 0, "same": 0}
+
+
+def test_the_report_prints_the_bug_count_beside_the_rule(capsys):
+    compare.report(_cells(M9="a11 b11", A="a00 b00", T="a00 b00"), "stage 2", "ab", (1, 2))
+    assert "bugs better 2 worse 0 same 0" in capsys.readouterr().out
+
+
+def test_stage_3_compares_the_trained_arm_with_its_untrained_parent_too(capsys):
+    rows = _cells(M10="a11", M9="a00", A="a00", T="a00")
+    compare.report(rows, "stage 3", "a", (1, 2), loop_arm="M10", others=("M9", "A", "T"))
+    assert sum(" M10 " in line and "uplift" in line for line in capsys.readouterr().out.splitlines()) == 6
+
+
 def _archive(root, monkeypatch, *rows):
     (root / "loop" / "amended").mkdir(parents=True)
     diff = root / "x-1.patch"

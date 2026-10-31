@@ -6,6 +6,7 @@ same bugs and repeats. Every comparison is printed on the maintainers' tests and
 """
 from __future__ import annotations
 
+import argparse
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from math import comb
@@ -57,6 +58,20 @@ def compare(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats
             "wins": wins, "losses": losses, "p": sign_test(wins, losses)}
 
 
+def by_bug(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, int]:
+    """The bugs on which the loop passed more runs, fewer or the same: repeats of one bug are not independent, so a p-value
+    overstates the evidence. A bug with a run missing counts neither way."""
+    repeats = list(repeats)
+    counts = {"better": 0, "worse": 0, "same": 0}
+    for task in tasks:
+        ours, theirs = ([rows.get((arm, task, r), {}).get(score) for r in repeats] for arm in (loop_arm, other))
+        if None in ours or None in theirs:
+            continue
+        ahead = sum(map(bool, ours)) - sum(map(bool, theirs))
+        counts["better" if ahead > 0 else "worse" if ahead < 0 else "same"] += 1
+    return counts
+
+
 def judged(results: Sequence[Mapping[str, Any]]) -> bool:
     """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each."""
     return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < 0.05 for r in results)
@@ -68,23 +83,35 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
         for r in results:
             uplift = "n/a" if r["uplift"] is None else f"{r['uplift']:+.1%}"
+            bugs = by_bug(rows, loop_arm, r["other"], tasks, repeats, score)
             print(f"{name:22} {score:11} {loop_arm} {r['loop_passed']:3}/{r['pairs']:<3} {r['other']:2} {r['other_passed']:3}/{r['pairs']:<3}"
                   f" uplift {uplift:>7}  wins {r['wins']:2} losses {r['losses']:2}  p {r['p']:.4f}"
+                  f"  bugs better {bugs['better']} worse {bugs['worse']} same {bugs['same']}"
                   + (f"  MISSING {r['missing']}" if r["missing"] else ""))
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
         print(f"{name:22} {score:11} frozen rule: {'met' if judged(results) else 'not shown'}; "
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--loop", default="M9", help="the frozen loop's arm")
+    ap.add_argument("--trained", help="stage 3: the arm G6's training produced, as M<n>, judged against --loop as well")
+    args = ap.parse_args(argv)
     root = c.archive_root() / "round3"
     rows = saved(root)
     fresh = [t.id for t in we.load_tasks(we.TASKS_FRESH)]
+    unseen = [t.id for t in we.load_tasks(we.TASKS_UNSEEN)]
     train = [t.id for t in we.load_tasks() if t.id not in we.R3_HELD]
-    report(rows, "fresh, all eleven", fresh, (1, 2))
-    report(rows, "fresh, determined 7", [t for t in fresh if t in DETERMINED], (1, 2))
-    report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5))
-    report(rows, "training, tuned", train, (1, 2), loop_arm="L9", others=("A",))
+    report(rows, "stage 1, all eleven", fresh, (1, 2), loop_arm=args.loop)
+    report(rows, "stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.loop)
+    report(rows, "stage 2, new repos", unseen, (1, 2), loop_arm=args.loop)
+    report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop)
+    report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",))
+    if args.trained:
+        others = (args.loop, "A", "T")
+        report(rows, "stage 3, new repos", unseen, (1, 2), loop_arm=args.trained, others=others)
+        report(rows, "stage 3, stage 1 bugs", fresh, (1, 2), loop_arm=args.trained, others=others)
 
 
 if __name__ == "__main__":

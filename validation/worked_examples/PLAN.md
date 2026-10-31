@@ -969,3 +969,47 @@ so a p-value overstates the evidence; beside it, each report counts the bugs on 
 judged by.
 
 **Stage 3** gets its own dated section before its first run.
+
+### 2026-10-31 (night): stage 3, harness training by G6 (before any stage 3 run, and before stage 2's bugs are judged)
+
+**Why it needs new bugs.** L9 was tuned by hand on the seven training bugs, and on the runs saved so far it has no failed run on the
+amended tests. G6 can therefore learn nothing more from those bugs' verdicts, and no change could show a gain there. Two things
+follow, and both are now in the runner. A failure record can be a **near miss**: a first patch the runner's own probes or critic
+caught, which needs no maintainers' test. And stage 3 gets a **development pool** of its own.
+
+**The development pool.** Stage 2's rule goes on in rank order after its ten bugs are taken, and the next repositories give five more
+bugs, two at most from each, judged the same way. They share no repository with stage 2's bugs, so stage 2's bugs stay in repositories
+never used in training or in development. No development bug is ever judged on, and `evolve.records` refuses every bug that is.
+
+**What runs, in order.**
+1. L9, the parent, frozen and unchanged, twice on each development bug. Its failed runs and near misses there, with those on the
+   training bugs, are the failure records.
+2. Up to four candidates, one for each operator from PR #4 (`regression`, `boundary`, `counterexample`, `metamorphic`), written by G6's
+   `FailureTraceStrategy`. A model picks which part of the harness each adds to (fixer, scout, repair or critic), with a fixed fallback
+   for each operator, and the record says who chose.
+3. A candidate can only add at most 120 words to a part's instructions. The sets, the scoring, the reply forms and the stop rule cannot
+   be changed, and any other field is refused. It is refused if it names a project, an issue, a test or a file, or if it is a near copy
+   of an earlier one. Each text is committed before it runs, and nobody edits it.
+4. **A cheap screen:** one run on each development bug the parent failed. A candidate that solves none of them stops there.
+5. **The paired check:** twice on every development bug, against the parent, using PR #4's `assess`. A bug counts as solved if any of its
+   runs passed, so one slipped run is noise and losing a bug outright is a veto, and the candidate must also pass more runs overall.
+   Being cheaper is not a gain. Training stops at the first candidate recommended, because each paired check costs real money.
+6. **The test:** the recommended text as `M<n>`, twice on each stage 2 bug, judged under the frozen rule against M9, A and T, on both
+   scores, with the bug counts beside it. Beating M9 is what would show a gain from training itself. Beating only A and T would not.
+
+If no candidate is recommended, that is the result, and no stage 3 test is run.
+
+**What a result can be called.** The candidates' text is G6's, and nothing in session edits it. The machinery around them was written in
+session, and so was the parent. The report says "G6 proposed this change from its own failure records" and never that G6 engineered
+itself. The operators were chosen by a person and the proposer is a model, so a gain here is a gain for this composition on these bugs.
+
+**The proposer on real records (no run, nothing committed, texts discarded).** Three real calls on L9's near misses gave two clear texts
+and one empty reply, and a repeat of that operator gave a clear text. Its cause is unknown, because the reply was not kept then. A reply
+with no text is now kept and labelled. All three chose the scouts as the part to change.
+
+**The agentic kernel.** `g6.agentic` was designed (800a2e8) and never built. What runs here is `agentic.choice`, a model decision from a
+fixed menu on G6's `SolverPlanner` pattern, with a recorded fallback. It decides nothing about evidence.
+
+**Spend.** The runner's count holds $10.50 for each run that started and never ended. Four such runs were killed, and the rule says each
+counts until it is closed with its streams' cost. They will be closed that way when no stream is running, with the amounts in the report.
+The $180 stop and the loop's $170 stop are unchanged.

@@ -58,12 +58,13 @@ class Metered:
     """The model, and what its calls cost at most: tokens estimated generously from characters (2.5 to a token)."""
 
     def __init__(self, inner: llm.LLMCaller) -> None:
-        self.inner, self.cost_usd = inner, 0.0
+        self.inner, self.cost_usd, self.last = inner, 0.0, ""
 
     def complete(self, system: str, user: str, *, max_tokens: int = llm.DEFAULT_MAX_TOKENS) -> str:
         self.cost_usd += len(system + user) * 4.00 / 2.5 / 1_000_000      # counted first: a failed call can still cost
         said = self.inner.complete(system, user, max_tokens=max_tokens)
         self.cost_usd += len(said) * 20.00 / 2.5 / 1_000_000
+        self.last = said
         return said
 
 
@@ -75,7 +76,8 @@ def distill(base: str, rows: Sequence[Mapping[str, Any]], archive: Path, caller:
                         optional_checks=(), base={"prompt": base}, dev=(), failures=tuple(found),
                         dev_success=len(rows) - len(found), notes=tuple(notes))
     proposals = FailureTraceStrategy(caller).propose(view, None)
-    text = str((proposals[0] if proposals else {}).get("prompt") or "").strip()
+    chosen = proposals[0] if proposals else {}     # the strategy may answer in either field, and it keeps the base's prompt
+    text = str((chosen.get("prompt") if chosen.get("prompt") != base else chosen.get("skill_text")) or "").strip()
     if "\n" not in text:      # the model sent the text with its line breaks escaped
         text = text.replace("\\n", "\n")
     tests = [t for row in rows for t in row.get("tests") or ()]

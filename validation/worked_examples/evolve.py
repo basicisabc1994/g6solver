@@ -174,10 +174,14 @@ class Training:
         entry.update(field=field, decision=decision.as_dict(), text=text)
         folder = c.Archive(self.root).start("distill", arm, parent=self.parent)
         folder.write("text.txt", text)
+        if not text:
+            folder.write("reply.txt", str(getattr(self.caller, "last", "")))
         folder.finish({"cost_usd": getattr(self.caller, "cost_usd", 0.0), "named": bad, "parent": self.parent,
                        "operator": child.operator, "field": field}, "finished" if text else "error")
         self.caller.cost_usd = 0.0
-        if bad or not text:
+        if not text:
+            return {**entry, "outcome": f"refused: no text {bad}".rstrip(" []")}
+        if bad:
             return {**entry, "outcome": f"refused: named {bad}"}
         if any(similar(text, old) >= NEAR_COPY for old in self.seen):
             return {**entry, "outcome": "refused: a near copy of an earlier candidate"}

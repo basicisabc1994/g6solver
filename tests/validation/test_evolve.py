@@ -289,6 +289,29 @@ def test_a_text_that_names_a_project_is_refused_before_any_run(lab):
     assert made == [] and "named" in got["candidates"][0]["outcome"] and not (we.HARNESS / "L10.json").exists()
 
 
+def test_a_proposal_written_as_skill_text_is_still_a_proposal(lab):
+    root, made, outcomes = lab
+    outcomes[("L10", "black-5634")] = False
+    model = Model(json.dumps({"choice": "scout", "rationale": "r"}), json.dumps({"skill_text": "List the branches first."}))
+    got = evolve.train(root, "c53d", TASKS, "L9", model, first=10, candidates=1)
+    assert got["candidates"][0]["text"] == "List the branches first." and made == [("L10", "black-5634", 1)]
+
+
+def test_an_empty_proposal_says_so_and_keeps_what_the_model_replied(lab):
+    root, made, _ = lab
+    model = Model(json.dumps({"choice": "scout", "rationale": "r"}), json.dumps({"prompt": ""}))
+    model.last = '{"prompt": ""}'
+    got = evolve.train(root, "c53d", TASKS, "L9", model, first=10, candidates=1)
+    assert made == [] and got["candidates"][0]["outcome"] == "refused: no text"
+    assert list((root / "distill" / "L10").glob("*/reply.txt"))[0].read_text("utf-8") == '{"prompt": ""}'
+
+
+def test_metered_keeps_the_last_reply():
+    metered = distill.Metered(Model("the reply"))
+    metered.complete("s", "u")
+    assert metered.last == "the reply"
+
+
 def test_a_near_copy_of_an_earlier_candidate_is_refused_before_any_run(lab):
     root, made, outcomes = lab
     outcomes[("L10", "black-5634")] = False
