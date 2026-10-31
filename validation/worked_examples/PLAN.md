@@ -820,3 +820,32 @@ each fresh bug, and T and M7 five times on each held-out bug, a second look at t
 `pydantic-13243`, `black-5148`, `click-3434`, `click-3404`, `starlette-3189`, `fastapi-14616`, `fastapi-13920`. Not determined:
 `black-5144`, `attrs-1509`, `starlette-3166`, `pydantic-13133`. No bug is dropped: the score on all eleven is the score, and the
 score on the seven goes beside it, with the same rule applied to each comparison.
+
+### 2026-10-31: the owner's scoring change, tests a task-determined fix can pass (before any amended test exists, and before any further run)
+
+**What the owner asked.** "We need to modify the tests so that a 100% result is achievable." On five of the 21 bugs the audits
+found that the maintainers' tests need a name, message or format the task does not state: `click-3678`, `black-5144`,
+`attrs-1509`, `starlette-3166` and `pydantic-13133`. No honest run can be expected to pass those, so 100% was out of reach by
+construction. The owner's measure is **harness adaptation uplift**: what adapting the harness adds over plain Claude Code.
+
+**The rule.** The set of bugs comes from the audits' labels, so it was fixed before this change and no outcome chooses it.
+1. Only those five bugs change. The other 16 keep the maintainers' tests exactly, including every bug that every arm fails.
+2. A fresh reviewer who sees no run, patch or score writes one diff per bug against the maintainers' test files. The diff is
+   the smallest that removes what the task does not state: a pinned name, message or format becomes the weakest check the
+   task does state, and a behaviour the task states stays checked. A bug's diff changes no test because a run failed it.
+3. **Controls, no model:** on the amended tests at least one test still fails on the parent and passes with the maintainers'
+   fix, and every maintainers' test that no longer passes on the fix is listed. A diff that fails the first is refused.
+4. **Every arm alike.** The saved patches of every arm are rescored without a model and new runs get both verdicts. The
+   amended tests stay out of every agent's reach, as the maintainers' do. On a fresh or held-out bug I read neither the diff
+   nor the tests behind it; the reviewer reports counts only.
+5. **Both scores, always.** Every report gives "maintainers' tests" and "amended tests" side by side. An amended score is
+   never called the maintainers' tests, and the comparison rule above is applied to each separately.
+6. L7 stays frozen. This changes how runs are scored, not what any agent sees.
+
+**Uplift, as it will be reported.** M7's pass rate minus arm A's and minus arm T's, same model and budget, on bugs the loop was
+not tuned on (the fresh bugs, and the held-out bugs as a second look), on both scores, beside the tuned L7 score. A tuned score
+alone is not uplift: G1 gained one run on training (10 of 14 to 9 of 14) and lost two on held-out bugs (3 of 15 to 5 of 15).
+
+**What this supersedes.** "The owner's 95% stays the target on the ten, with `click-3678` in the score" now reads on both
+scores: `click-3678` stays in, on its amended tests. The section above saying `click-3678` is out of honest reach still holds
+for the maintainers' tests. The owner's 95% is read on the amended tests, and the maintainers' score stands beside it.

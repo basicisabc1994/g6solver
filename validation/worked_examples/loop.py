@@ -71,6 +71,30 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     return row
 
 
+def rescore(root: Path, g6: str) -> list[dict[str, Any]]:
+    """Every saved run of a bug with an amendment, its final patch scored on the amended tests, saved beside the
+    maintainers' verdict under ``loop/amended/``, once (PLAN.md, 2026-10-31). No model; the saved rows stay as they are."""
+    rows = []
+    for path in sorted((root / "loop").glob("*-*.json")):
+        row, saved = json.loads(path.read_text("utf-8")), root / "loop" / "amended" / path.name
+        if not we.amendment(row["task"]):
+            continue
+        if saved.is_file():
+            rows.append(json.loads(saved.read_text("utf-8")))
+            continue
+        passes = False
+        if row.get("status") == "finished":
+            final = [x for x in last_json(tool("check", "--task", row["task"], "--g6", g6, "--run", row["run"], "--amended",
+                                               timeout=1200)).get("checks", []) if x.get("patch") == "final"]
+            if not final:       # no verdict is not a failed run
+                raise SystemExit(f"no amended verdict for {path.stem}")
+            passes = bool(final[-1].get("passes"))
+        rows.append({**{k: row.get(k) for k in ("arm", "task", "repeat", "run", "passes")}, "amended_passes": passes})
+        saved.parent.mkdir(exist_ok=True)
+        saved.write_text(json.dumps(rows[-1], indent=1), "utf-8")
+    return rows
+
+
 def spent(root: Path) -> float:
     return c.spent(c.Archive(root).rows())
 
@@ -176,8 +200,12 @@ def generations(root: Path, g6: str, train: list[str], arm: str, text: str, rows
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--g6", default=we.R3_LOOP_G6)
+    ap.add_argument("--rescore", action="store_true", help="score saved runs on the amended tests, and nothing else")
     args = ap.parse_args()
     root = c.archive_root() / "round3"
+    if args.rescore:
+        print(json.dumps(rescore(root, args.g6), indent=1), flush=True)
+        return
     tasks = [t.id for t in we.load_tasks()]
     train = [t for t in tasks if t not in we.R3_HELD]
     for arm in ("A", "E"):

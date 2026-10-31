@@ -538,6 +538,114 @@ def test_selfcheck_needs_the_fix_to_pass_and_nothing_to_fail(tmp_path, monkeypat
     assert not we.selfcheck(ctx, TASK)["ok"]          # a check an empty patch passes shows nothing
 
 
+def _amendment(tmp_path, monkeypatch):
+    folder = tmp_path / "amendments"
+    folder.mkdir()
+    (folder / f"{TASK.id}.patch").write_text("a diff", encoding="utf-8")
+    monkeypatch.setattr(we, "AMENDMENTS", folder)
+    return folder
+
+
+def test_only_a_bug_with_a_diff_has_an_amendment(tmp_path, monkeypatch):
+    folder = _amendment(tmp_path, monkeypatch)
+    assert we.amendment(TASK.id) == folder / f"{TASK.id}.patch"
+    assert we.amendment("another-1") is None
+
+
+def test_the_amendment_goes_on_after_the_maintainers_tests_and_before_pytest(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    docker = FakeDocker()
+    we._oracle_run(_ctx(tmp_path, docker), TASK, amended=True)
+    text = [" ".join(call) for call in docker.calls]
+    at = [next(i for i, t in enumerate(text) if want in t)
+          for want in ("/oracle/fixed", "we-amend.patch", "git apply --whitespace=nowarn /tmp/we-amend.patch", "-m pytest")]
+    assert at == sorted(at) and len(set(at)) == 4
+
+
+def test_the_maintainers_tests_stay_as_they_are_unless_an_amended_score_is_asked_for(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    docker = FakeDocker()
+    we._oracle_run(_ctx(tmp_path, docker), TASK)
+    assert not any("we-amend" in " ".join(call) for call in docker.calls)
+
+
+def test_a_refused_amendment_stops_the_score(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+
+    class NoApply(FakeDocker):
+        def __call__(self, *args, input=None, timeout=None, env=None):
+            if "/tmp/we-amend.patch" in " ".join(args) and args[0] == "exec":
+                return Done(b"", 1)
+            return super().__call__(*args, input=input, timeout=timeout, env=env)
+
+    with pytest.raises(RuntimeError, match="the amendment"):
+        we._oracle_run(_ctx(tmp_path, NoApply()), TASK, amended=True)
+
+
+def _amended_oracle(on_parent, on_fix):
+    def oracle_run(ctx_, task, *, fix=False, amended=False, **_):
+        assert amended
+        return {"results": on_fix if fix else on_parent}
+    return oracle_run
+
+
+def test_amend_keeps_a_test_that_tells_the_parent_from_the_fix(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle({"t::a": "failed", "t::b": "passed"},
+                                                           {"t::a": "passed", "t::b": "passed"}))
+    found = we.amend(ctx, TASK)
+    assert found["ok"] and found["fail_to_pass"] == ["t::a"] and found["lost"] == []
+    assert found["sha256"] and we.latest(ctx.archive, "amend", TASK.id)["record"]["ok"]
+
+
+def test_amend_refuses_a_diff_that_leaves_no_test_telling_them_apart(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    both = {"t::a": "passed", "t::b": "passed"}
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle(both, both))
+    assert not we.amend(ctx, TASK)["ok"]
+
+
+def test_amend_lists_every_maintainers_test_the_fix_no_longer_passes(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    monkeypatch.setattr(we, "_oracle_run", _amended_oracle({"t::c": "failed"}, {"t::c": "passed"}))
+    assert we.amend(ctx, TASK)["lost"] == ["t::a", "t::b"]
+
+
+def test_amend_needs_a_diff(tmp_path, monkeypatch):
+    monkeypatch.setattr(we, "AMENDMENTS", tmp_path)
+    with pytest.raises(SystemExit):
+        we.amend(_ctx(tmp_path, FakeDocker()), TASK)
+
+
+def test_an_amended_check_scores_the_final_patch_on_the_amended_lists(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    ctx.archive.start("amend", TASK.id).finish({"fail_to_pass": ["t::z"], "pass_to_pass": [], "ok": True}, "finished")
+    run = ctx.archive.start("run", TASK.id)
+    (run.path / "final.patch").write_text("a patch", encoding="utf-8")
+    (run.path / "rounds").mkdir()
+    (run.path / "rounds" / "round-1.patch").write_text("an earlier patch", encoding="utf-8")
+    seen = []
+
+    def oracle_run(ctx_, task, *, patch=None, amended=False, label="", **_):
+        seen.append((label, amended))
+        return {"results": {"t::z": "passed"}}
+
+    monkeypatch.setattr(we, "_oracle_run", oracle_run)
+    found = we.check(ctx, TASK, run.rel, amended=True)
+    assert seen == [("final", True)] and found["checks"][0]["passes"] and found["amended"]
+
+
+def test_an_amended_check_needs_the_amend_step_first(tmp_path, monkeypatch):
+    _amendment(tmp_path, monkeypatch)
+    ctx = _ctx(tmp_path, FakeDocker())
+    with pytest.raises(SystemExit):
+        we.check(ctx, TASK, amended=True)
+
+
 MINI_SEARCH = '''SEARCH_SETTINGS = {"templates": True, "test_adequacy": False}
 PROPOSER_FREE_FORM, PROPOSER_TEMPLATES_FIRST = "free_form", "templates_first"
 PROPOSER_SETTINGS = {"propose": False, "proposer": PROPOSER_TEMPLATES_FIRST, "max_model_calls": 10,
@@ -900,6 +1008,49 @@ def test_the_loop_reads_the_runners_output_and_stops_on_a_refusal(tmp_path, monk
         {"task": "z", "arm": "A", "repeat": 1, "run": "run/z/1", "status": "finished", "cost_usd": 0.3}) + "\n", "utf-8")
     again = loop.one(tmp_path, "g", "A", "z", 1)
     assert again["run"] == "run/z/1" and again["failing"] == 2 and again["cost_usd"] == 0.3
+
+
+def _saved_runs(root):
+    (root / "loop").mkdir()
+    rows = [{"arm": "A", "task": "x-1", "repeat": 1, "run": "run/x-1/1", "status": "finished", "passes": False},
+            {"arm": "A", "task": "x-1", "repeat": 2, "run": "run/x-1/2", "status": "error", "passes": False},
+            {"arm": "A", "task": "y-1", "repeat": 1, "run": "run/y-1/1", "status": "finished", "passes": True}]
+    for row in rows:
+        name = f"{row['arm']}-{row['task']}-{row['repeat']}.json"
+        (root / "loop" / name).write_text(json.dumps(row), "utf-8")
+    (root / "loop" / "cegis.json").write_text('{"status": "inconclusive"}', "utf-8")
+
+
+def test_rescoring_keeps_both_verdicts_and_touches_only_amended_bugs(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    _saved_runs(tmp_path)
+    monkeypatch.setattr(loop.we, "amendment", lambda task: Path("d") if task == "x-1" else None)
+    calls = []
+
+    def tool(command, *args, **_):
+        calls.append(args)
+        return json.dumps({"checks": [{"patch": "final", "passes": True, "failing": []}]})
+
+    monkeypatch.setattr(loop, "tool", tool)
+    rows = loop.rescore(tmp_path, "g")
+    assert [(r["repeat"], r["passes"], r["amended_passes"]) for r in rows] == [(1, False, True), (2, False, False)]
+    assert len(calls) == 1 and "--amended" in calls[0] and "run/x-1/1" in calls[0]    # a run that made no patch has nothing to score
+    assert json.loads((tmp_path / "loop" / "A-x-1-1.json").read_text("utf-8"))["passes"] is False
+    assert (tmp_path / "loop" / "amended" / "A-x-1-1.json").is_file()
+    loop.rescore(tmp_path, "g")
+    assert len(calls) == 1                                                            # saved once
+
+
+def test_rescoring_never_reads_a_missing_verdict_as_a_failure(tmp_path, monkeypatch):
+    pytest.importorskip("distill")
+    import loop
+    _saved_runs(tmp_path)
+    monkeypatch.setattr(loop.we, "amendment", lambda task: Path("d") if task == "x-1" else None)
+    monkeypatch.setattr(loop, "tool", lambda *a, **k: "")
+    with pytest.raises(SystemExit):
+        loop.rescore(tmp_path, "g")
+    assert not (tmp_path / "loop" / "amended" / "A-x-1-1.json").exists()
 
 
 def test_distillation_reads_a_failed_run_that_left_no_report(tmp_path):

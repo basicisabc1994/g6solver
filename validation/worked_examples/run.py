@@ -51,6 +51,7 @@ import wecommon as c  # noqa: E402
 REPO_ROOT = HERE.parents[1]
 TASKS = HERE / "tasks.json"
 TASKS_FRESH = HERE / "tasks_fresh.json"   # bugs the loop has not seen (PLAN.md, 2026-10-31)
+AMENDMENTS = HERE / "amendments"   # the owner's scoring change: one test diff per bug its task does not determine
 PROXY = REPO_ROOT / "validation" / "v7_swebench" / "egress_proxy.py"
 FROM_IMAGE = "g6-a2-linux"
 SECURITY = ("--security-opt", "seccomp=unconfined", "--security-opt", "apparmor=unconfined")
@@ -263,6 +264,12 @@ def task_by_id(task_id: str, path: Path = TASKS) -> Task:
 
 def is_fresh(task_id: str) -> bool:
     return any(task.id == task_id for task in load_tasks(TASKS_FRESH))
+
+
+def amendment(task_id: str) -> Path | None:
+    """The bug's test diff (PLAN.md, 2026-10-31), or None: every other bug keeps the maintainers' tests exactly."""
+    found = AMENDMENTS / f"{task_id}.patch"
+    return found if found.is_file() else None
 
 
 def hidden_at(i: int) -> tuple[str, str]:
@@ -1620,9 +1627,10 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
 # --- validation, the independent check and replays ------------------------------------------------------------------------
 def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: bool = False, tests: bool = True,
                 extra: Mapping[str, Path] | None = None, modules: Sequence[str] | None = None,
-                folder: c.RunFolder | None = None, label: str = "") -> dict[str, Any]:
+                folder: c.RunFolder | None = None, label: str = "", amended: bool = False) -> dict[str, Any]:
     """In a fresh container from the oracle image, with no network: the code (the parent's, the maintainers' fix or
-    a patch), the maintainers' test files when ``tests``, extra files, then pytest on ``modules``."""
+    a patch), the maintainers' test files when ``tests``, the bug's amendment when ``amended``, extra files, then
+    pytest on ``modules``."""
     _, oracle = image_names(task, str(ctx.g6["commit"]), ctx.variant)
     name = f"g6we-check-{uuid.uuid4().hex[:10]}"
     body: dict[str, Any] = {"label": label}
@@ -1644,6 +1652,10 @@ def _oracle_run(ctx: Context, task: Task, *, patch: Path | None = None, fix: boo
             files = out(ctx.docker.sh(name, "cat /oracle/fix.files"))
             pairs = [x for st, p in test_changes(files) for x in (st, p)]
             checked(ctx.docker.sh(name, APPLY_TESTS, task.repo, *pairs, workdir=task.repo), "the maintainers' tests")
+        if amended:
+            checked(ctx.docker("cp", str(amendment(task.id)), f"{name}:/tmp/we-amend.patch", timeout=300), "amendment copy")
+            checked(ctx.docker.sh(name, "git apply --whitespace=nowarn /tmp/we-amend.patch", workdir=task.repo),
+                    "the amendment")
         for dest, src in (extra or {}).items():
             checked(ctx.docker("cp", str(src), f"{name}:{task.repo}/{dest}", timeout=300), f"copy {dest}")
         ran = ctx.docker.sh(name, pytest_script(modules or task.test_modules), workdir=task.repo, timeout=2400)
@@ -1672,24 +1684,47 @@ def validate(ctx: Context, task: Task) -> dict[str, Any]:
     return run.finish(record, "finished")
 
 
-def check(ctx: Context, task: Task, run_rel: str | None = None) -> dict[str, Any]:
+def amend(ctx: Context, task: Task) -> dict[str, Any]:
+    """The amended tests' own controls (no model, PLAN.md 2026-10-31): the lists an amended check scores against, and
+    every maintainers' test the fix no longer passes. A diff that leaves no test telling the parent from the fix is
+    refused, here and by every check that would use it."""
+    diff = amendment(task.id)
+    if diff is None:
+        raise SystemExit(f"{task.id} has no amendment")
     v = latest(ctx.archive, "validate", task.id)
     if v is None:
         raise SystemExit("validate the task first")
+    run = ctx.archive.start("amend", task.id, g6_commit=ctx.g6.get("commit"))
+    base = _oracle_run(ctx, task, folder=run, label="base", amended=True)
+    fixed = _oracle_run(ctx, task, fix=True, folder=run, label="fixed", amended=True)
+    results = fixed.get("results") or {}
+    f2p, p2p = fail_to_pass(base.get("results") or {}, results)
+    lost = sorted(k for k in [*v["record"]["fail_to_pass"], *v["record"]["pass_to_pass"]] if results.get(k) != "passed")
+    return run.finish({"sha256": c.sha256_file(diff), "fail_to_pass": f2p, "pass_to_pass": p2p, "lost": lost, "ok": bool(f2p),
+                       "why": "" if f2p else "no amended test fails on the parent's code and passes with the fix"},
+                      "finished" if f2p else "refused")
+
+
+def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool = False) -> dict[str, Any]:
+    v = latest(ctx.archive, "amend" if amended else "validate", task.id)
+    if v is None:
+        raise SystemExit("run amend first" if amended else "validate the task first")
     src = ctx.archive.root / run_rel if run_rel else (latest(ctx.archive, "run", task.id) or {}).get("path")
     if src is None:
         raise SystemExit("no run to check")
     src = Path(src)
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
-    folder = ctx.archive.start("check", task.id, checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))
-    patches = sorted((src / "rounds").glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))
+    folder = ctx.archive.start("recheck" if amended else "check", task.id,
+                               checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))
+    patches = [] if amended else sorted((src / "rounds").glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))
     rows = []
     for patch in [*patches, src / "final.patch"]:
         label = patch.stem
-        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label)
+        body = _oracle_run(ctx, task, patch=patch, folder=folder, label=label, amended=amended)
         rows.append({"patch": label, "bytes": patch.stat().st_size if patch.exists() else 0,
                      "patch_applied": body.get("patch_applied", True), **verdict(body.get("results") or {}, f2p, p2p)})
-    return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p)}, "finished")
+    return folder.finish({"checks": rows, "fail_to_pass": f2p, "pass_to_pass_count": len(p2p), "amended": amended},
+                         "finished")
 
 
 def selfcheck(ctx: Context, task: Task) -> dict[str, Any]:
@@ -1950,6 +1985,9 @@ def brief(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
         return {"checks": [{k: row.get(k) for k in ("patch", "bytes", "patch_applied", "passes",
                                                      "fail_to_pass_failing")} | {"failing": len(row.get("failing") or [])}
                            for row in record.get("checks") or []]}
+    if kind == "amend":     # counts only: on a fresh or held-out bug the names stay unread (PLAN.md, 2026-10-31)
+        return {"ok": record.get("ok"), "why": record.get("why"), "sha256": record.get("sha256"),
+                **{k: len(record.get(k) or []) for k in ("fail_to_pass", "pass_to_pass", "lost")}}
     return {k: v for k, v in record.items() if k not in ("results", "base", "fixed", "usage")}
 
 
@@ -1980,8 +2018,10 @@ def progress(archive: c.Archive, task: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("command", choices=("base", "images", "validate", "selfcheck", "freecheck", "modelcheck", "dryrun",
-                                        "run", "check", "replay", "g6replay", "show", "progress", "rounds", "schedule"))
+                                        "run", "check", "amend", "replay", "g6replay", "show", "progress", "rounds",
+                                        "schedule"))
     ap.add_argument("--args", type=Path, help="g6replay: a JSON file of the review's arguments")
+    ap.add_argument("--amended", action="store_true", help="check: score on the amended tests (PLAN.md, 2026-10-31)")
     ap.add_argument("--archive", type=Path, default=None)
     ap.add_argument("--ref", default="origin/claude/launch")
     ap.add_argument("--claude", type=Path, default=None)
@@ -2048,7 +2088,8 @@ def main(argv: list[str] | None = None) -> int:
         result = {"validate": lambda: validate(ctx, task), "selfcheck": lambda: selfcheck(ctx, task),
                   "freecheck": lambda: freecheck(ctx, task), "modelcheck": lambda: modelcheck(ctx, task),
                   "dryrun": lambda: run_task(ctx, task, dry=True),
-                  "run": lambda: run_task(ctx, task), "check": lambda: check(ctx, task, args.run_rel),
+                  "run": lambda: run_task(ctx, task), "amend": lambda: amend(ctx, task),
+                  "check": lambda: check(ctx, task, args.run_rel, amended=args.amended),
                   "replay": lambda: replay(ctx, task, args.code, args.test),
                   "g6replay": lambda: g6replay(ctx, task, args.code, args.args)}[args.command]()
     print(json.dumps(brief(args.command, result), indent=1, default=str)[:8000])
