@@ -52,7 +52,7 @@ from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
-from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, Workflow
+from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
@@ -208,6 +208,11 @@ def _pool_problems(cut: Cut, policy: EvidencePolicy) -> list[tuple[str, str]]:
              "monitor": (cut.monitor, MIN_PAIRS)}
     return [(POOL_TOO_SMALL, f"the {name} split has {len(found)} cases and needs {least}")
             for name, (found, least) in needs.items() if len(found) < least]
+
+
+def _groups(cases: Sequence[SuiteCase]) -> list[str]:
+    """The groups these cases name: a case's group is exposed when any of its members is, whatever its id or text."""
+    return sorted({f"group:{c.meta['group']}" for c in cases if c.meta.get("group")})
 
 
 def _overlap(a: str, b: str) -> bool:
@@ -401,8 +406,10 @@ class ShadowLoop:
         self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
                        seen=sorted(c.case_id for c in exposed),
                        seen_inputs=sorted(c.ref()["input_sha256"] for c in exposed),
+                       seen_groups=_groups(exposed),
                        held_out=sorted(c.case_id for c in self.cut.held_out),
                        held_out_inputs=sorted(c.ref()["input_sha256"] for c in self.cut.held_out),
+                       held_out_groups=_groups(self.cut.held_out),
                        held_out_digest=self.workflow.suite.digest("held_out"))
         return _envelope("qualified-draft", ENROLLED, f"{self.domain.name} is enrolled: the loop may run on it", **frozen,
                          next_action="loop.tick()")
@@ -416,10 +423,10 @@ class ShadowLoop:
         current, seen = self.workflow.suite.digest("held_out"), set()
         evaluated = {r.get("split_digest") for r in self.mh.ledger.rows("evaluation")}
         for row in self.log.enrolments():
-            seen |= {*row["seen"], *row["seen_inputs"]}
+            seen |= {*row["seen"], *row["seen_inputs"], *row.get("seen_groups", ())}
             if row["held_out_digest"] != current and row["held_out_digest"] in evaluated:
-                seen |= {*row["held_out"], *row["held_out_inputs"]}
-        return sorted(c.case_id for c in self.cut.held_out if {c.case_id, c.ref()["input_sha256"]} & seen)
+                seen |= {*row["held_out"], *row["held_out_inputs"], *row.get("held_out_groups", ())}
+        return sorted(c.case_id for c in self.cut.held_out if {c.case_id, c.ref()["input_sha256"], *_groups((c,))} & seen)
 
     @_exclusive
     def tick(self) -> dict[str, Any]:

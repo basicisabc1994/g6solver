@@ -2,6 +2,7 @@
 """Coding as a domain of the loop: a reviewer reads recorded patches, and the maintainers' tests say if it read them right. FakeLLM only."""
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -32,10 +33,10 @@ def _row(bug: str, i: int) -> dict:
     return {"id": f"{bug}-{i}", "bug": bug, "input": f"The issue of {bug}.\n\nPatch {i} ({label})", "label": label}
 
 
-def _cases(folder, bugs, *, name="cases.jsonl", per_bug=5):
+def _cases(folder, bugs, *, name="cases.jsonl", per_bug=5, first=0):
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / name
-    path.write_text("".join(json.dumps(_row(b, i)) + "\n" for b in bugs for i in range(per_bug)), encoding="utf-8")
+    path.write_text("".join(json.dumps(_row(b, i)) + "\n" for b in bugs for i in range(first, first + per_bug)), encoding="utf-8")
     return path
 
 
@@ -169,6 +170,18 @@ def test_the_loop_improves_a_planted_weak_reader_on_recorded_patches(tmp_path):
     assert got["outcome"] == "adopted", got
     assert HINT in loop.mh._head()[1].prompt and loop.mh._head()[1].digest() != start.digest()
     assert domain.llm.calls and not any("held" in str(call) for call in domain.llm.calls)
+
+
+def test_a_new_patch_of_a_bug_proposers_saw_is_not_fresh_evidence(tmp_path):
+    """After a re-cut, a patch no proposer read can still be a bug they tuned on: its id and its text are new, and its issue is not."""
+    bugs = [f"bug{n}" for n in range(60)]
+    first = CodingReplay(_cases(tmp_path / "a", bugs), _cases(tmp_path / "a-sealed", ["held0"]), FakeLLM(Reader()))
+    assert ShadowLoop(first, tmp_path / "loop", SETTINGS, proposer=_proposer(), now=lambda: START + timedelta(days=2),
+                      clock=_Clock()).enrol("Ada")["completion_state"] == "qualified-draft"
+    later = CodingReplay(_cases(tmp_path / "b", bugs, first=5), _cases(tmp_path / "b-sealed", ["held0"]), FakeLLM(Reader()))
+    again = ShadowLoop(later, tmp_path / "loop", dataclasses.replace(SETTINGS, seed=SETTINGS.seed + 1), proposer=_proposer(),
+                       now=lambda: START + timedelta(days=2), clock=_Clock())
+    assert again.enrol("Ada")["warning_card"]["code"] == "G6_E_LOOP_SPLIT_REUSED"
 
 
 def test_too_few_bugs_is_refused_and_not_run(tmp_path):
