@@ -49,6 +49,7 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call, provider_from_env
 from g6.harness import patch_report
+from g6.harness.completion_hook import CHILD
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.harness.patch_review import _in_repository, _loaded_elsewhere, review_patch
@@ -62,15 +63,14 @@ MAX_REPAIRS, MAX_CROSS, MIN_RANDOM, MAX_SHOWN, MAX_CASE_CHARS = 3, 200, 300, 12,
 SCOUT_CAP_USD, CRITIC_SECONDS = 2.0, 1500
 #: One scout's session, its turns, one probe file's run, the final review and the critic's pack.
 SCOUT_SECONDS, SCOUT_TURNS, RUN_S, REVIEW_S, MAX_PACK_CHARS = 1200, 200, 300, 600, 120_000
-#: One hook's work, within the plugin's 3600-second timeout; the whole loop, from the first hook on (L9's wall clock); what
-#: a hook keeps back for the checks and the report; the least time a scout is started with.
-HOOK_S, LOOP_S, RESERVE_S, MIN_SCOUT_S = 3300, 120 * 60, 900, 60
+#: The first hook's window: its scouts must end ``RESERVE_S`` before it closes, which leaves the critic, the probes' runs
+#: and the review inside the plugin's 5400-second timeout, as a hook that times out loses its report. The whole loop, from
+#: the first hook on (L9's wall clock), and the least time a scout is started with.
+HOOK_S, RESERVE_S, LOOP_S, MIN_SCOUT_S = 3300, 900, 120 * 60, 60
 #: A scout may read and write files, and nothing else: no shell, so no model-written test runs outside G6's boundary.
 SCOUT_TOOLS = "Read,Glob,Grep,Write"
 SCOUT_SETTINGS = {"disableAllHooks": True, "permissions": {"deny": [f"Read(~/{folder}/**)" for folder in (
     ".g6", ".claude", ".codex", ".ssh")]}}
-#: Set in a scout's session, so that G6's own hooks do nothing there, whatever settings that session reads.
-CHILD = "G6_COMPLETION_LOOP_CHILD"
 #: The line in the person's key file that approves Codex as the reviewer from another model family.
 CRITIC_LINE = "G6_LOOP_CRITIC"
 #: The one requirement the final review assesses: the task's text, which no stated check tests.

@@ -475,6 +475,56 @@ def test_a_scout_session_has_no_shell_no_hooks_no_servers_and_keeps_nothing(monk
     assert "G6_ALLOW_UNCONFINED" not in seen["env"]
 
 
+CROSS = """import itertools
+import random
+
+import pytest
+
+from calc import clamp
+
+
+@pytest.mark.parametrize("side,kind", itertools.product(["low", "mid", "high"], ["int", "float"]))
+def test_cross(side, kind):
+    if side == "mid" and kind == "float":
+        pytest.skip("cannot occur")
+    x = {"low": -5, "mid": 5, "high": 50}[side]
+    assert clamp(float(x) if kind == "float" else x, 0, 10) == {"low": 0, "mid": 5, "high": 10}[side]
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_random(seed):
+    x = random.Random(seed).randint(-100, 100)
+    assert clamp(x, 0, 10) == min(10, max(0, x))
+"""
+
+
+def test_end_to_end_with_real_confined_runs_and_the_real_review(bwrap_backend, tmp_path, monkeypatch):
+    """Everything real but the scouts' sessions: a file of passes and in-test skips is a run, a failure goes back, and a
+    repair that holds ends in the review, with no claim for the patch."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return max(x, lo)\n", encoding="utf-8")
+    git(root, "init", "-q")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base, session = git(root, "rev-parse", "HEAD"), tmp_path / "g6" / "completion_loop" / "s1"
+    tree = json.dumps({"goal": "g", "dimensions": {"side": ["low", "mid", "high"], "kind": ["int", "float"]}, "branches": []})
+    scouts = Scouts({"test_probe.py": CROSS}, tree)
+    task = "clamp must keep x between lo and hi"
+
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return min(max(x, lo), hi) if x < 40 else x\n", encoding="utf-8")
+    first = loop.advance(root, task, base, session, scout=scouts)
+    assert first.action == loop.CONTINUE and "test_cross[high-int]" in first.text
+    assert not list(root.rglob("g6_check_*"))      # the runs were in scratch copies
+
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return min(max(x, lo), hi)\n", encoding="utf-8")
+    second = loop.advance(root, task, base, session, scout=scouts)
+    assert second.action == loop.STOP
+    assert f"no counterexample found in {3 * 305} probes" in second.text     # five crossings and 300 inputs in each set
+    assert "insufficient_evidence" in second.text and "Not established" in second.text
+
+
 def test_an_unfinished_hook_is_picked_up_where_it_stopped(world, monkeypatch):
     Runs(monkeypatch)
     calls = []
