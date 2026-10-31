@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -79,6 +80,7 @@ def world(tmp_path, monkeypatch):
     """A repository with the bug at its base commit, and G6's boundary and final review stood in for."""
     home = tmp_path / "g6"
     monkeypatch.setenv("G6_HOME", str(home))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))     # the agent's scout's folder, kept to this test
     monkeypatch.setattr(proposer, "boundary", lambda root: "")
     root = tmp_path / "repo"
     root.mkdir()
