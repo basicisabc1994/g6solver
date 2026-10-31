@@ -285,6 +285,8 @@ Their test, which fails on your code:
 ```
 
 They can be wrong, as anyone can. Check their expectation against the issue and the repository before you act on it."""
+REVIEW_ASK = ("\n\nIf the issue or the repository supports their expectation, repair the cause and rerun your own checks. If not, "
+              "leave the code alone and say why in one line. Then finish.")
 LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
 `{PROBE_RUN}`). Read them before you edit. When you try to finish, the runner runs the probes on your code, and a failing
@@ -363,7 +365,7 @@ def hidden_scouts(arm: str) -> int:
 def trained(arm: str) -> dict[str, str]:
     """What harness training added for arm ``L<n>`` or ``M<n>`` from 10 (PLAN.md, stage 3), committed before it ran. It can only
     add to a part's instructions: the sets, the scoring, the reply forms and the stop rule are not among them."""
-    if int(arm[1:]) < 10:
+    if not re.fullmatch(r"[LM]\d+", arm) or int(arm[1:]) < 10:
         return {}
     text = json.loads((HARNESS / f"L{arm[1:]}.json").read_text(encoding="utf-8"))
     odd = sorted(set(text) - set(TRAINED))
@@ -664,7 +666,7 @@ def scout_again(args: Sequence[str]) -> list[str]:
 
 def gets_thread(arm: str) -> bool:
     """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31)."""
-    return re.fullmatch(r"T|[LM]\d+", arm) is not None
+    return re.fullmatch(r"T|R|[LM]\d+", arm) is not None
 
 
 def thread_text(comments: Iterable[Mapping[str, Any]], until: str) -> str:
@@ -678,7 +680,7 @@ def thread_text(comments: Iterable[Mapping[str, Any]], until: str) -> str:
 def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
     addendum."""
-    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A}
+    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A, "R": PROMPT_A}
     if re.fullmatch(r"[GH]\d+", arm):
         harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
         texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + harness.replace("{", "{{").replace("}", "}}")
@@ -923,12 +925,12 @@ def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
     text) on the held-out ones. The final comparison runs A and ``H<n>`` five times on each held-out bug."""
     model, task, arm, repeat = key
-    held_out = task in R3_HELD and (arm in ("A", "T") or arm[0] in "HM")
+    held_out = task in R3_HELD and (arm in ("A", "T", "R") or arm[0] in "HM")
     if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
     if is_fresh(task):
-        return arm in ("A", "T") or re.fullmatch(r"M\d+", arm) is not None
-    if arm in ("A", "E", "T"):
+        return arm in ("A", "T", "R") or re.fullmatch(r"M\d+", arm) is not None
+    if arm in ("A", "E", "T", "R"):
         return True
     return re.fullmatch(r"[GHLM]\d+", arm) is not None and (arm[0] in "HM") == (task in R3_HELD)
 
@@ -1779,11 +1781,36 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
             "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
+def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
+                started: float, critique: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Arm R, the control for the loop (PLAN.md, 2026-10-31 night): one review by another model family, and one repair if its test
+    fails on the patch. No scout, no probes, no G6, so what the full loop adds is the difference. A test that will not run says
+    nothing of the patch."""
+    critic = critique()
+    rounds, failing = 1, set()
+
+    def check() -> set[str]:
+        got = run_set(ctx, task, agent, CRITIC_AT)
+        run.write_json(f"repair_check_{rounds}_critic.json", {"exit": got.exit, "ran": got.ran, "results": got.results, "tail": got.tail})
+        return failures_of([("critic", got, None)])[0] if got.usable else set()
+
+    if critic.get("test"):
+        failing = check()
+    if failing:
+        rounds = 2
+        run_session(ctx, run, agent, scout_again(docker_args), key, tally,
+                    CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, "repair_stream_1.jsonl",
+                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        failing = check()
+    return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": "",
+            "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+
+
 def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -> dict[str, Any]:
     round3 = ctx.variant == ROUND3
     looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
     model = ctx.model if round3 else c.MODEL
-    no_g6 = round3 and ctx.arm in ("A", "T")       # Claude Code alone: no G6 server, skill or command
+    no_g6 = round3 and ctx.arm in ("A", "T", "R")       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
@@ -1908,6 +1935,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         run.write("stderr.txt", b"".join(errors).decode("utf-8", errors="replace"))
         if looped and holds_loop(ctx.arm) and not dry and not ended:
             record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
+                                            lambda: run_critic(ctx, task, run, agent, base, title, text))
+        if ctx.arm == "R" and not dry and not ended:
+            record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,

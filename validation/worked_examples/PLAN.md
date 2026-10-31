@@ -1045,3 +1045,26 @@ bugs, and `left` the $170 stop less the spend then recorded, the bugs are the la
 at most eight screens and two paired checks (28), M9 and the trained arm on stage 2 (4n), and $8 for arms A and T on stage 1 and for proposals, with
 A and T on stage 2. No outcome enters it, and it is fixed before any issue is judged. If the $170 stop arrives first, the runs that remain
 are not made, and the report says so.
+
+### 2026-10-31 (night): a control, a trust measure and reference material (before any M9 run and before stage 2's bugs are judged)
+
+**What the owner asked.** That the system can be trusted when it says a change is done, that its debugging strategy be better, and that the
+loop be coded into G6 itself, for any cognitive work, with programming as the first case.
+
+**Arm R, a control.** Claude Code with the issue's discussion, as arm T, plus one review from another model family and one repair if the
+reviewer's test fails on the patch. No scouts, no probes, no G6. It runs twice on each stage 1 and stage 2 bug and five times on each held-out
+bug. If it matches M9, the gain comes from a second reviewer and not from the loop or G6, and the report says so. It joins the comparison as a
+report and does not change the frozen rule, which stays M9 against A and T. Its cost goes into the sum that sets stage 2's size.
+
+**The trust measure.** Every report now says, for each arm, how often "done" meant right: on the runs a system called clean, and on those it
+left unsure, on both scores. On the saved training runs so far, the signal does not separate good patches from bad: G6's review gave
+"insufficient evidence" on 29 right and 14 wrong patches, its integrity alarm fired on five correct patches, and the loop's "clean" was right 7
+of 9 times while "unsure" was right 7 of 7. That is a small, tuned sample and is reported as a warning.
+
+**Reference material for the proposer.** With `G6_LIBRARY` set, stage 3's proposer reads up to three passages from the person's own folders.
+They reach the proposer and nothing else, and a text sharing eight words in a row with a passage is refused. Reference material can only
+improve what the proposer writes: it is not verification. **Web search stays off for every agent in these studies,** because each bug's fix is
+public and search would break the rule that agents never see the maintainers' tests.
+
+**The loop in G6.** The design approved on 2026-10-29 stands, and its next phase, the local shadow loop, is being built on its own branch with a
+domain-neutral seam. `evolve.py` stays here for stage 3 until that loop can replace it. Nothing built there changes these runs.

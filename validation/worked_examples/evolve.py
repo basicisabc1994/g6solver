@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -21,6 +22,7 @@ import agentic
 import compare
 import distill
 import heuristics
+import library
 import loop
 import run as we
 import wecommon as c
@@ -162,9 +164,9 @@ class Training:
     and then the paired check on every bug. It stops at the first candidate recommended: each full check costs real money."""
 
     def __init__(self, root: Path, g6: str, tasks: Sequence[str], parent: str, caller: Any, first: int, candidates: int,
-                 committed: Callable[[Path], bool]) -> None:
+                 committed: Callable[[Path], bool], shelves: Sequence[Path] = ()) -> None:
         self.root, self.g6, self.tasks, self.parent, self.caller = root, g6, list(tasks), parent, caller
-        self.committed, self.n = committed, first - 1
+        self.committed, self.n, self.shelves = committed, first - 1, list(shelves)
         self.rows = records(root, parent, tasks)
         self.failed = sorted({r["task"] for r in self.rows if r["kind"] == "failed"})
         self.ahead = list(heuristics.mutate(heuristics.Heuristic("root", "prompt_revision"), max_children=candidates))
@@ -194,9 +196,12 @@ class Training:
         summary = [{"kind": r["kind"], "caught": str(r.get("caught") or "")[:600]} for r in rows]
         field, decision = agentic.choice(self.caller, "field", FIELD_SYSTEM, {"way": way, "parts": FIELDS, "failures": summary},
                                          tuple(FIELDS), DEFAULT_FIELD[child.operator])
+        read = library.passages(self.shelves, f"{way} {' '.join(s['caught'] for s in summary)}") if self.shelves else []
+        notes = [way, f"Your text is the {FIELDS[field]}.", ADD_ONLY]
+        if read:
+            notes.append("Reference on method, to use in your own words. Never quote it or name it:\n" + "\n---\n".join(read))
         try:
-            text, bad = distill.distill(self.text.get(field, ""), rows, self.root, self.caller,
-                                        [way, f"Your text is the {FIELDS[field]}.", ADD_ONLY], projects=projects())
+            text, bad = distill.distill(self.text.get(field, ""), rows, self.root, self.caller, notes, projects=projects())
         except distill.llm.LLMError as exc:
             text, bad = "", [f"the model call failed: {exc}"]
         entry.update(field=field, decision=decision.as_dict(), text=text)
@@ -211,6 +216,8 @@ class Training:
             return {**entry, "outcome": f"refused: no text {bad}".rstrip(" []")}
         if bad:
             return {**entry, "outcome": f"refused: named {bad}"}
+        if library.copied(text, read):
+            return {**entry, "text": "", "outcome": "refused: copied from the reference"}
         if any(similar(text, old) >= NEAR_COPY for old in self.seen):
             return {**entry, "outcome": "refused: a near copy of an earlier candidate"}
         self.seen.append(text)
@@ -244,9 +251,10 @@ class Training:
 
 
 def train(root: Path, g6: str, tasks: Sequence[str], parent: str, caller: Any, *, first: int, candidates: int = 4,
-          committed: Callable[[Path], bool] = tracked) -> dict[str, Any]:
-    """Candidates from ``parent``'s failure records, tried in turn: the best arm, and everything that happened to each."""
-    runner = Training(root, g6, tasks, parent, caller, first, candidates, committed)
+          committed: Callable[[Path], bool] = tracked, shelves: Sequence[Path] = ()) -> dict[str, Any]:
+    """Candidates from ``parent``'s failure records, tried in turn: the best arm, and everything that happened to each. ``shelves``:
+    folders of reference Markdown for the proposer (``library.py``), named outside the repository."""
+    runner = Training(root, g6, tasks, parent, caller, first, candidates, committed, shelves)
     said: dict[str, Any] = {"status": "not run", "reason": "the parent failed nothing, so training could show no gain"}
     if runner.failed:
         got = cegis(loop.Harness(), lambda **_: True, domain=InputDomain.of({"task": list(tasks), "repeat": [1, 2]}), runner=runner,
@@ -268,7 +276,9 @@ def main() -> None:
     ap.add_argument("--tasks", nargs="+", required=True)
     args = ap.parse_args()
     caller = distill.Metered(distill.llm.AnthropicCaller(distill.MODEL, api_key=we.read_key()))
-    got = train(c.archive_root() / "round3", args.g6, args.tasks, args.parent, caller, first=args.first, candidates=args.candidates)
+    shelves = [Path(p) for p in os.environ.get("G6_LIBRARY", "").split(os.pathsep) if p]
+    got = train(c.archive_root() / "round3", args.g6, args.tasks, args.parent, caller, first=args.first, candidates=args.candidates,
+                shelves=shelves)
     print(json.dumps({k: got[k] for k in ("parent", "best", "stopped", "cegis", "records")}, indent=1), flush=True)
     print(json.dumps([{k: e.get(k) for k in ("arm", "operator", "field", "outcome")} for e in got["candidates"]], indent=1), flush=True)
 

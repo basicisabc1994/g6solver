@@ -82,6 +82,31 @@ def test_the_report_prints_the_bug_count_beside_the_rule(capsys):
     assert "bugs better 2 worse 0 same 0" in capsys.readouterr().out
 
 
+def test_trust_counts_what_the_system_said_against_the_verdict():
+    rows = {("M9", "a", 1): {"amended": True, "said": "clean"}, ("M9", "a", 2): {"amended": False, "said": "clean"},
+            ("M9", "b", 1): {"amended": True, "said": "unsure"}, ("M9", "b", 2): {"amended": None, "said": "unsure"}}
+    assert compare.trust(rows, "M9", "ab", (1, 2), "amended") == {"clean": {"right": 1, "wrong": 1}, "unsure": {"right": 1, "wrong": 0}}
+
+
+def test_the_report_says_how_often_done_meant_right(capsys):
+    rows = {("M9", "a", 1): {"maintainers": True, "amended": True, "said": "clean"},
+            ("M9", "a", 2): {"maintainers": False, "amended": False, "said": "clean"},
+            ("A", "a", 1): {"maintainers": True, "amended": True, "said": "done"},
+            ("A", "a", 2): {"maintainers": False, "amended": False, "said": "done"}}
+    compare.report(rows, "stage 2", "a", (1, 2), others=("A",))
+    assert "M9 said clean: right 1 wrong 1 (50%)" in capsys.readouterr().out
+
+
+def test_what_a_run_said_comes_from_its_own_record(tmp_path):
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"repairs": {"status": "no_counterexample_in_domain"}}), "utf-8")
+    assert compare.said_of(tmp_path, {"arm": "M9", "run": "run"}) == "clean"
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"repairs": {"status": "inconclusive"}}), "utf-8")
+    assert compare.said_of(tmp_path, {"arm": "M9", "run": "run"}) == "unsure"
+    assert compare.said_of(tmp_path, {"arm": "A", "run": "run"}) == "done"
+    assert compare.said_of(tmp_path, {"arm": "M9", "run": "missing"}) == "unsure"
+
+
 def test_the_interval_resamples_whole_bugs():
     clear = compare.interval(_cells(M9="a11 b11 c11", A="a00 b00 c00"), "M9", "A", "abc", (1, 2), "amended")
     mixed = compare.interval(_cells(M9="a11 b00 c11", A="a00 b11 c00"), "M9", "A", "abc", (1, 2), "amended")
@@ -120,9 +145,9 @@ def test_an_amended_bug_not_yet_rescored_counts_as_missing_not_as_its_old_verdic
                    {"arm": "M7", "task": "x-1", "passes": False})
     _amended(tmp_path, "M7", sha)
     rows = compare.saved(tmp_path)
-    assert rows[("A", "y-1", 1)] == {"maintainers": True, "amended": True}      # no amendment: one score
-    assert rows[("M7", "x-1", 1)] == {"maintainers": False, "amended": True}
-    assert rows[("A", "x-1", 1)] == {"maintainers": True, "amended": None}
+    assert rows[("A", "y-1", 1)] == {"maintainers": True, "amended": True, "said": "done"}      # no amendment: one score
+    assert rows[("M7", "x-1", 1)] == {"maintainers": False, "amended": True, "said": "unsure"}
+    assert rows[("A", "x-1", 1)] == {"maintainers": True, "amended": None, "said": "done"}
     assert compare.compare(rows, "M7", "A", ["x-1"], (1,), "amended")["missing"] == 1
 
 
@@ -139,7 +164,7 @@ def test_a_finished_run_with_no_independent_verdict_is_missing_not_a_failure(tmp
              {"arm": "M7", "task": "y-1", "passes": False, "status": "error", "failing": None},
              {"arm": "T", "task": "y-1", "passes": False, "status": "finished", "failing": 3})
     rows = compare.saved(tmp_path)
-    assert rows[("A", "y-1", 1)] == {"maintainers": None, "amended": None}
+    assert rows[("A", "y-1", 1)] == {"maintainers": None, "amended": None, "said": "done"}
     assert rows[("M7", "y-1", 1)]["maintainers"] is False                       # a run that ended badly did fail
     assert rows[("T", "y-1", 1)]["maintainers"] is False
     five_missing = {("M7", f"b{n}", 1): {"maintainers": True} for n in range(5)}

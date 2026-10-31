@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "validation" / "worked_examples"))
 import agentic  # noqa: E402
 import distill  # noqa: E402
 import evolve  # noqa: E402
+import library  # noqa: E402
 import run as we  # noqa: E402
 import wecommon as c  # noqa: E402
 
@@ -99,6 +100,93 @@ def test_the_critics_reply_contract_survives_training(trained):
     text = we.critic_text("L10")
     for line in ("READ: <the first line of issue.txt, exactly>", "VERDICT: defect or none", "<hard_limits>"):
         assert line in text
+
+
+# --- the control: one plain review ---------------------------------------------------------------------------------------
+def test_the_control_runs_where_claude_code_alone_runs(pools):
+    sonnet = we.R3_MODELS[1]
+    assert we.r3_loop_key((sonnet, "newrepo-1", "R", 2)) and we.r3_loop_key((sonnet, we.R3_HELD[0], "R", 5))
+    assert we.r3_loop_key((sonnet, we.load_tasks()[1].id, "R", 1)) and not we.r3_loop_key((sonnet, "newrepo-1", "R", 3))
+
+
+def test_the_control_is_plain_claude_code_with_the_discussion_and_no_trained_text():
+    task = we.load_tasks()[0]
+    assert we.prompt(task, "t", "body", "R") == we.prompt(task, "t", "body", "A") and we.gets_thread("R")
+    assert we.trained("R") == {} and we.critic_text("R") == we.PATCH_CRITIC
+
+
+class _Run:
+    def __init__(self):
+        self.saved = []
+
+    def write_json(self, name, body):
+        self.saved.append(name)
+
+
+def _review(monkeypatch, critic, *sets):
+    runs, asked = list(sets), []
+    monkeypatch.setattr(we, "run_set", lambda ctx, task, agent, where: runs.pop(0))
+    monkeypatch.setattr(we, "run_session", lambda ctx, run, agent, args, key, tally, text, name, **kw: asked.append((text, name)))
+    monkeypatch.setattr(we, "scout_again", lambda args: args)
+    got = we.review_once(None, None, _Run(), "agent", [], "key", None, 1.0, 0.0, lambda: critic)
+    return got, asked
+
+
+FAILS = we.ProbeRun(exit=1, results={"t": "failed"}, texts={"t": "AssertionError"})
+PASSES = we.ProbeRun(exit=0, results={"t": "passed"}, texts={})
+BROKEN = we.ProbeRun(exit=2, results={}, texts={})
+DEFECT = {"verdict": "defect", "rule": "the rule", "why": "the reason", "test": "def test_t(): assert 0"}
+
+
+def test_a_review_that_finds_nothing_ends_the_run(monkeypatch):
+    got, asked = _review(monkeypatch, {"verdict": "none", "test": ""})
+    assert asked == [] and got["status"] == "no_counterexample_in_domain" and got["rounds"] == 1
+
+
+def test_a_failing_review_test_gets_one_repair_and_a_second_look(monkeypatch):
+    got, asked = _review(monkeypatch, DEFECT, FAILS, PASSES)
+    assert len(asked) == 1 and "the rule" in asked[0][0] and "scouts" not in asked[0][0] and "before your change" not in asked[0][0]
+    assert got["status"] == "no_counterexample_in_domain" and got["rounds"] == 2
+
+
+def test_a_defect_that_survives_its_one_repair_is_left_open(monkeypatch):
+    got, asked = _review(monkeypatch, DEFECT, FAILS, FAILS)
+    assert len(asked) == 1 and got["status"] == "inconclusive" and got["failing"] == ["critic:t"]
+
+
+def test_a_review_test_that_will_not_run_says_nothing_of_the_patch(monkeypatch):
+    got, asked = _review(monkeypatch, DEFECT, BROKEN)
+    assert asked == [] and got["status"] == "no_counterexample_in_domain"
+
+
+# --- the reference library ----------------------------------------------------------------------------------------------
+def _shelf(folder):
+    (folder / "shelf").mkdir()
+    (folder / "shelf" / "method.md").write_text(COPIED, "utf-8")
+    (folder / "shelf" / "kitchen.md").write_text("Food is prepared with care in a warm kitchen.", "utf-8")
+    (folder / "shelf" / "README.md").write_text("Reproduce reproduce reproduce the failure failure failure.", "utf-8")
+    return folder / "shelf"
+
+
+COPIED = "Reproduce the failure before you change anything, and check what already works outside the scope of the issue."
+
+
+def test_passages_are_chosen_by_the_words_they_share_and_a_readme_is_no_passage(tmp_path):
+    assert library.passages([_shelf(tmp_path)], "reproduce the failure first", limit=1) == [COPIED]
+
+
+def test_a_run_of_eight_words_from_a_passage_is_a_copy():
+    assert library.copied("First, reproduce the failure before you change anything, and check what already works.", [COPIED])
+    assert not library.copied("Make the bug happen on demand, then study why it happens.", [COPIED])
+
+
+def test_training_gives_the_proposer_passages_and_refuses_a_text_copied_from_them(lab, monkeypatch):
+    root, made, _ = lab
+    shelf = _shelf(root)
+    model = Model(json.dumps({"choice": "scout", "rationale": "r"}), json.dumps({"prompt": COPIED}))
+    got = evolve.train(root, "c53d", TASKS, "L9", model, first=10, candidates=1, shelves=[shelf])
+    assert made == [] and "copied" in got["candidates"][0]["outcome"]
+    assert "Reference on method" in model.asked[1][1]
 
 
 # --- pools --------------------------------------------------------------------------------------------------------------

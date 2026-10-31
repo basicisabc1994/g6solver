@@ -43,8 +43,19 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
             kept = json.loads(again.read_text("utf-8")) if again.is_file() else {}
             same = (kept.get("amendment_sha256"), kept.get("run")) == (c.sha256_file(diff), row.get("run"))
             amended = kept.get("amended_passes") if same else None
-        rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended}
+        rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended, "said": said_of(root, row)}
     return rows
+
+
+def said_of(root: Path, row: Mapping[str, Any]) -> str:
+    """What the system said of its own run: "done" for an arm with no loop, "clean" for a loop that ended with nothing failing, and
+    "unsure" for any other end, a missing record included. It never decides the rule; it is how the report asks if "done" can be
+    trusted."""
+    if row.get("arm", "")[:1] not in ("L", "M", "R"):
+        return "done"
+    path = root / str(row.get("run")) / "run.json"
+    status = (json.loads(path.read_text("utf-8")).get("repairs") or {}).get("status") if path.is_file() else None
+    return "clean" if status == "no_counterexample_in_domain" else "unsure"
 
 
 def compare(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, Any]:
@@ -86,6 +97,19 @@ def interval(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeat
     return tuple(compare_methods(pairs, clusters=clusters)["ci95"]) if pairs else None
 
 
+def trust(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, dict[str, int]]:
+    """For each thing the arm said of its runs, how often that run was right: the owner's own question, when it says done, is it?"""
+    table: dict[str, dict[str, int]] = {}
+    repeats = list(repeats)
+    for task in tasks:
+        for repeat in repeats:
+            row = rows.get((arm, task, repeat), {})
+            if row.get(score) is not None:
+                cell = table.setdefault(str(row.get("said", "done")), {"right": 0, "wrong": 0})
+                cell["right" if row[score] else "wrong"] += 1
+    return table
+
+
 def judged(results: Sequence[Mapping[str, Any]]) -> bool:
     """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each."""
     return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < 0.05 for r in results)
@@ -104,6 +128,10 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
                   f"  bugs better {bugs['better']} worse {bugs['worse']} same {bugs['same']}"
                   f"  95% by bug {f'{span[0]:+.0%} to {span[1]:+.0%}' if span else 'n/a'}"
                   + (f"  MISSING {r['missing']}" if r["missing"] else ""))
+        for arm in (loop_arm, *others):
+            for said, cell in sorted(trust(rows, arm, tasks, repeats, score).items()):
+                total = cell["right"] + cell["wrong"]
+                print(f"{name:22} {score:11} {arm} said {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
         print(f"{name:22} {score:11} frozen rule: {'met' if judged(results) else 'not shown'}; "
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
