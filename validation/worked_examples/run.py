@@ -684,7 +684,7 @@ def scout_again(args: Sequence[str]) -> list[str]:
 
 def gets_thread(arm: str) -> bool:
     """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31)."""
-    return re.fullmatch(r"T|R|X\d+|[LM]\d+", arm) is not None
+    return re.fullmatch(r"T|R|[KX]\d+|[LM]\d+", arm) is not None
 
 
 def convert_cases() -> list[dict[str, Any]]:
@@ -723,6 +723,8 @@ def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     addendum."""
     texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A, "R": PROMPT_A,
              **dict.fromkeys(CONVERT_ARMS, PROMPT_A)}
+    if re.fullmatch(r"K\d+", arm):
+        texts[arm] = PROMPT_A
     if re.fullmatch(r"[GH]\d+", arm):
         harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
         texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + harness.replace("{", "{{").replace("}", "}}")
@@ -970,12 +972,12 @@ def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     if arm in CONVERT_ARMS:      # development: never a bug kept for measurement
         return (model == R3_MODELS[1] and task not in R3_HELD and not is_fresh(task)
                 and any((x["task"], x["repeat"]) == (task, repeat) for x in convert_cases()))
-    held_out = task in R3_HELD and (arm in ("A", "T", "R") or arm[0] in "HM")
+    held_out = task in R3_HELD and (arm in ("A", "T", "R") or arm[0] in "HKM")
     if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
     if is_fresh(task):
-        return arm in ("A", "T", "R") or re.fullmatch(r"M\d+", arm) is not None
-    if arm in ("A", "E", "T", "R"):
+        return arm in ("A", "T", "R") or re.fullmatch(r"[KM]\d+", arm) is not None
+    if arm in ("A", "E", "T", "R") or re.fullmatch(r"K\d+", arm):
         return True
     return re.fullmatch(r"[GHLM]\d+", arm) is not None and (arm[0] in "HM") == (task in R3_HELD)
 
@@ -1559,7 +1561,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     why = "" if dry else refusal(ctx, task)
     cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
     if round3:
-        if not re.fullmatch(r"[A-ERT]|[GHLMX]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
+        if not re.fullmatch(r"[A-ERT]|[GHKLMX]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
             why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
         elif dry:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
@@ -1636,10 +1638,16 @@ def run_set(ctx: Context, task: Task, agent: str, where: str) -> ProbeRun:
     return read_probes(said)
 
 
-def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title: str, text: str) -> dict[str, Any]:
+def critic_files(n: int) -> tuple[str, str]:
+    """Where review ``n`` keeps its reply and its test, beside the earlier ones: an earlier test stays to catch a repair that undoes it."""
+    return ("critic_reply.txt", "test_critic.py") if n == 1 else (f"critic_reply_{n}.txt", f"test_critic_{n}.py")
+
+
+def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title: str, text: str, n: int = 1) -> dict[str, Any]:
     """Arm L8's critic (PLAN.md, 2026-10-31): another model family reads the finished patch, on the host, with what the agent
     was given and the parent. It sees no maintainers' test and no fix: the tree comes from the agent's own container. A critic
     that fails is recorded and the run goes on. Its test, if it has one, waits where ``run_set`` can run it."""
+    reply, test_file = critic_files(n)
     started = time.monotonic()
     found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
@@ -1662,10 +1670,10 @@ def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title:
         (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
         (pack / "critic_prompt.md").write_text(critic_text(ctx.arm), encoding="utf-8")
         said = (ctx.critic or run_codex)(pack)
-        run.write("critic_reply.txt", ctx.archive.redact(said))
+        run.write(reply, ctx.archive.redact(said))
         found = critic_report(said, proof=proof)
         if found["test"]:
-            write_in(ctx.docker, agent, f"{CRITIC_AT}/test_critic.py", found["test"] + "\n", user="root")
+            write_in(ctx.docker, agent, f"{CRITIC_AT}/{test_file}", found["test"] + "\n", user="root")
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     finally:
@@ -1826,9 +1834,47 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
             "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
-def keep_first_patch(ctx: Context, task: Task, agent: str, base: str) -> None:
+def keep_first_patch(ctx: Context, task: Task, agent: str, base: str, n: int = 1) -> None:
     """The patch before a review, where ``check`` scores each round, so that what the repair changed can be seen."""
-    ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/round-1.patch"), workdir=task.repo, timeout=300)
+    ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/round-{n}.patch"), workdir=task.repo, timeout=300)
+
+
+def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
+                        stop: float, started: float, critique: Callable[[int], dict[str, Any]]) -> dict[str, Any]:
+    """Arm K (PLAN.md, 2026-11-01): plain Claude Code, then the patch is read by another model family, repaired in the same session if
+    the reader's test fails on it, and read again, until a reader reproduces nothing. One review saw one layer of a defect, so one
+    repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6."""
+    def tree() -> str:
+        return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
+
+    rounds, failing, reason, verdicts, seconds = 0, [], "", [], 0.0
+    for n in range(1, MAX_REPAIRS + 2):
+        rounds = n
+        keep_first_patch(ctx, task, agent, base, n)
+        critic = critique(n)
+        verdicts.append(critic.get("verdict"))
+        seconds += float(critic.get("seconds") or 0.0)
+        failing = []
+        if critic.get("test"):
+            got = run_set(ctx, task, agent, CRITIC_AT)
+            run.write_json(f"repair_check_{n}_critic.json", {"exit": got.exit, "ran": got.ran, "results": got.results, "tail": got.tail})
+            failing = sorted(failures_of([("critic", got, None)])[0]) if got.usable else []
+        if not failing:
+            reason = "a review reproduced nothing" if critic.get("verdict") in ("none", "defect") else "a review failed"
+            break
+        if n > MAX_REPAIRS:
+            reason = "the repairs ran out with a defect open"
+            break
+        before = tree()
+        run_session(ctx, run, agent, scout_again(docker_args), key, tally,
+                    CRITIC_NOTE.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + REVIEW_ASK, f"repair_stream_{n}.jsonl",
+                    seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+        if tree() == before:
+            reason = "the agent left the code as it was"
+            break
+    clean = not failing and verdicts[-1] in ("none", "defect")
+    return {"status": "no_counterexample_in_domain" if clean else "inconclusive", "rounds": rounds, "reason": reason,
+            "failing": failing[:40], "critic": {"verdicts": verdicts, "seconds": round(seconds, 1)}}
 
 
 def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
@@ -1860,7 +1906,8 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     round3 = ctx.variant == ROUND3
     looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
     model = ctx.model if round3 else c.MODEL
-    no_g6 = round3 and ctx.arm in ("A", "T", "R", *CONVERT_ARMS)       # Claude Code alone: no G6 server, skill or command
+    critic_led = round3 and re.fullmatch(r"K\d+", ctx.arm) is not None
+    no_g6 = round3 and (critic_led or ctx.arm in ("A", "T", "R", *CONVERT_ARMS))       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
@@ -1998,6 +2045,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             keep_first_patch(ctx, task, agent, base)
             record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
+        if critic_led and not dry and not ended:
+            record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
+                                                    lambda n: run_critic(ctx, task, run, agent, base, title, text, n))
         result = tally.result or {}
         record.update(status_detail=status_of(ended, tally), agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
