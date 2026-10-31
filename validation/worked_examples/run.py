@@ -287,6 +287,24 @@ Their test, which fails on your code:
 They can be wrong, as anyone can. Check their expectation against the issue and the repository before you act on it."""
 REVIEW_ASK = ("\n\nIf the issue or the repository supports their expectation, repair the cause and rerun your own checks. If not, "
               "leave the code alone and say why in one line. Then finish.")
+CONVERT_ARMS = ("X1", "X2")     # a saved finding and a fresh session, on the patch or on the parent (PLAN.md, 2026-11-01)
+CONVERT_CASES = HERE / "convert_cases.json"
+CONVERT_ON_PATCH = "\n\nA change for this issue is already in the working tree, uncommitted. Treat it as your patch.\n\n"
+CONVERT_ON_PARENT = """
+
+An earlier attempt at this issue was thrown away, and its patch is not in the tree. A reviewer from another team read it and says:
+
+{rule}
+
+{why}
+
+Their test, which failed on that attempt:
+
+```python
+{test}
+```
+
+They can be wrong, as anyone can. Check their expectation against the issue and the repository before you act on it."""
 LOOP_ADDENDUM = f"""A scout has read this issue, without seeing any fix, and written the behaviours and input shapes a
 complete fix must handle in {WE}/tree.json, with runnable probes in {WE}/probes (run them from the repository with
 `{PROBE_RUN}`). Read them before you edit. When you try to finish, the runner runs the probes on your code, and a failing
@@ -666,7 +684,30 @@ def scout_again(args: Sequence[str]) -> list[str]:
 
 def gets_thread(arm: str) -> bool:
     """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31)."""
-    return re.fullmatch(r"T|R|[LM]\d+", arm) is not None
+    return re.fullmatch(r"T|R|X\d+|[LM]\d+", arm) is not None
+
+
+def convert_cases() -> list[dict[str, Any]]:
+    """The saved patches arms X1 and X2 start from, fixed by a rule before any of their runs."""
+    return json.loads(CONVERT_CASES.read_text(encoding="utf-8"))
+
+
+def convert_start(root: Path, task: str, repeat: int) -> tuple[Path, dict[str, str]]:
+    """The saved patch a conversion run starts from, and the rule, reasons and test of the saved review of it."""
+    case = next(x for x in convert_cases() if (x["task"], x["repeat"]) == (task, repeat))
+    row = json.loads((root / "loop" / f"{case['arm']}-{task}-{case['of']}.json").read_text("utf-8"))
+    patch = root / row["run"] / "final.patch"
+    found = json.loads((root / "loop" / "final_review" / f"{c.sha256_file(patch)}.json").read_text("utf-8"))
+    if found.get("said") != "reproduced":
+        raise ValueError(f"{case['arm']}-{case['of']} of {task} has no reproduced finding")
+    return patch, {k: str(found.get(k) or "") for k in ("rule", "why", "test")}
+
+
+def convert_note(arm: str, found: Mapping[str, str]) -> str:
+    """What a conversion run is told: the review's own words, with no verdict on any patch."""
+    if arm == "X1":
+        return CONVERT_ON_PATCH + CRITIC_NOTE.format(**found) + REVIEW_ASK
+    return CONVERT_ON_PARENT.format(**found)
 
 
 def thread_text(comments: Iterable[Mapping[str, Any]], until: str) -> str:
@@ -680,7 +721,8 @@ def thread_text(comments: Iterable[Mapping[str, Any]], until: str) -> str:
 def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
     addendum."""
-    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A, "R": PROMPT_A}
+    texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A, "R": PROMPT_A,
+             **dict.fromkeys(CONVERT_ARMS, PROMPT_A)}
     if re.fullmatch(r"[GH]\d+", arm):
         harness = (HARNESS / f"G{arm[1:]}.txt").read_text(encoding="utf-8").strip()
         texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + harness.replace("{", "{{").replace("}", "}}")
@@ -925,6 +967,9 @@ def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
     text) on the held-out ones. The final comparison runs A and ``H<n>`` five times on each held-out bug."""
     model, task, arm, repeat = key
+    if arm in CONVERT_ARMS:      # development: never a bug kept for measurement
+        return (model == R3_MODELS[1] and task not in R3_HELD and not is_fresh(task)
+                and any((x["task"], x["repeat"]) == (task, repeat) for x in convert_cases()))
     held_out = task in R3_HELD and (arm in ("A", "T", "R") or arm[0] in "HM")
     if model != R3_MODELS[1] or repeat not in (range(1, R3_HELD_REPEATS + 1) if held_out else (1, 2)):
         return False
@@ -1514,7 +1559,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     why = "" if dry else refusal(ctx, task)
     cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
     if round3:
-        if not re.fullmatch(r"[A-ERT]|[GHLM]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
+        if not re.fullmatch(r"[A-ERT]|[GHLMX]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
             why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
         elif dry:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
@@ -1781,6 +1826,11 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
             "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
 
 
+def keep_first_patch(ctx: Context, task: Task, agent: str, base: str) -> None:
+    """The patch before a review, where ``check`` scores each round, so that what the repair changed can be seen."""
+    ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/round-1.patch"), workdir=task.repo, timeout=300)
+
+
 def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: list[str], key: str, tally: c.Tally, stop: float,
                 started: float, critique: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     """Arm R, the control for the loop (PLAN.md, 2026-10-31 night): one review by another model family, and one repair if its test
@@ -1810,7 +1860,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     round3 = ctx.variant == ROUND3
     looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
     model = ctx.model if round3 else c.MODEL
-    no_g6 = round3 and ctx.arm in ("A", "T", "R")       # Claude Code alone: no G6 server, skill or command
+    no_g6 = round3 and ctx.arm in ("A", "T", "R", *CONVERT_ARMS)       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
@@ -1890,6 +1940,14 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if dry:
             record["hook_selftest"] = hook_selftest(ctx, agent, task)
         text_in = prompt(task, title, text, ctx.arm if round3 else "")
+        if round3 and ctx.arm in CONVERT_ARMS:
+            start, found = convert_start(ctx.archive.root, task.id, ctx.repeat)
+            text_in += convert_note(ctx.arm, found)
+            if ctx.arm == "X1":
+                checked(ctx.docker("cp", str(start), f"{agent}:/tmp/we-start.patch", timeout=300), "the starting patch")
+                checked(ctx.docker.sh(agent, "git apply --binary --whitespace=nowarn /tmp/we-start.patch", workdir=task.repo, timeout=120),
+                        "apply the starting patch")
+                ctx.docker.sh(agent, "rm -f /tmp/we-start.patch", user="root", timeout=60)
         run.write("prompt.txt", text_in)
         args = claude_args(model, cap)
         way_out = DEAD_PROXY if dry else f"http://{px}:{PROXY_PORT}"
@@ -1937,6 +1995,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             record["repairs"] = repair_loop(ctx, task, run, agent, docker_args, key, tally, stop, started, at_base,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
         if ctx.arm == "R" and not dry and not ended:
+            keep_first_patch(ctx, task, agent, base)
             record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
         result = tally.result or {}

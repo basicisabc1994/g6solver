@@ -1102,3 +1102,29 @@ reported bug by bug. Reviews use the owner's Codex sign-in, outside the budget, 
 **Closures.** Four runs killed before they ended are closed at their streams' measured cost with the runner's 5% margin, $1.32 in all, in place of a $10.50 hold each: black-5634 arm G1, arm L7 and arm L9, and black-5144 arm A. None gave a result and none is counted.
 
 **Stage 2's size.** The rule with arm R added, taking $0.20 a run for R as an upper estimate until R has run: 0.59 × (75 + 4n) + 8 + 0.24n + 0.20 × (37 + 2n) ≤ what is left of $170, about $132. That holds at n = 24, so stage 2 takes the plan's upper limit, 20 bugs.
+
+### 2026-11-01 (later): where the loop's gain comes from, and arms X1 and X2 (before any X run)
+
+**Why now.** The owner asked where exactly the bottleneck is, whether the research code should be switched on, and whether the bugs should change. Stage 1 goes on unchanged from its own worktree: nothing here touches M9, T, R or A on a stage's bugs, or the comparison rule. Everything below reads the seven training bugs only.
+
+**The first patch decides the run.** `check` scores each round's patch, so the first can be set against the last. In 70 saved runs of E, G1 and L2 to L9, the first patch's verdict on the maintainers' tests was the final verdict every time: no failing patch became a passing one, and no passing one a failing one. So L9's gain over arm A on training came before its first review, from the scouts and the discussion. Its critic and repairs added nothing the score can see. That does not show they cannot: L9's only failures are `click-3678`, which the maintainers' tests put out of honest reach, so the critic has never had a wrong patch it could fix. A repair of a defect the maintainers' tests do not cover also scores nothing.
+
+**Detection is not the bottleneck.** On all 14 wrong `black-5634` patches the final review states the same rule, and it is the failure the maintainers' tests catch; on the three wrong `pydantic-14052` patches it does the same. It saw neither test. Its text names no bug, so it is the likeliest part of the loop to carry to unseen bugs. Two fixable bugs are few, and it also flagged 26 right patches.
+
+**Fresh draws and a selector help less than hoped.** On saved patches, keeping the first patch the review finds nothing in lifts `pydantic-14052` from 0.80 to 1.00 by four draws and leaves `black-5634` at 0.38 from 0.26, because a clean review of black is rare. Choosing among candidates by each other's probes lifts `black-5634` from 0.08 to 0.16 and `pydantic-14052` not at all: attempts on black fail alike, so more of them adds little.
+
+**The research code is not the missing piece.** ECHA, CSIR and AHI record, certify and gate evidence. Nothing outside `g6.research` imports them, and none of them outputs anything that changes what an agent does next, so switching them on would change no score. AHI's funnel is the right question to ask of a run, and the table above is that funnel by hand. `coding_learning`'s probes fire only on the same function of the same repository, so never on an unseen bug.
+
+**What "trained" has meant so far.** Four of the seven training bugs pass in every arm, and `click-3678` cannot pass, so two bugs carry all the signal. The changes from L1 to L9 were written by hand in session, mostly from one of them, and the plan has said so. A harness tuned on two bugs has no reason to generalise, whatever it is called. Metacognition generalises only if what is learned changes what gets observed on a new bug, and only if there are many failures to learn from. This is the case for a larger failure-rich training pool, which stage 2's preparation can supply, and it is reported as a limit of L9, whatever M9 scores.
+
+**The one link never measured: a right finding, then a right fix.** Three arms, Sonnet, no G6, no scout, with the issue's discussion. All are development, on training bugs:
+
+- **X1:** a fresh session on a saved wrong patch, told the saved review's rule, reasons and test.
+- **X2:** a fresh session on the parent, told the same, and told the attempt was thrown away. If anchoring on the first idea stops a repair, X2 beats X1.
+- **R** on `black-5634`, `pydantic-14052` and `click-3678`, twice each: the same-session repair, with its patch from before the review now kept so `check` scores it. This changes nothing an agent sees, and stage 1's R runs, on the earlier code, do not have it.
+
+The cases are fixed by rule in `convert_cases.json`, before any run: every distinct patch from a no-scout arm (A, E, G1) that the review reproduced a defect on and that is wrong on the amended tests, ten in all, six of them black. The controls are four such patches that are right: the first four by digest, one per bug first. They measure harm. X1 and X2 use the saved reviews, so they make no Codex call. About $4 of the $180.
+
+**How it will be read.** Conversion is the share of wrong starts whose final patch passes, on both scores, by bug, and it is ten starts on three bugs: a lead, not a measure. At least half converting on black or pydantic means the critic can carry a loop, and the next generation is a critic-led one, reviewing again after each repair until it finds nothing, with no scout. Under a quarter on both means repair is the limit, and what is tried next is a stronger fixer or a better statement of the behaviour. Between the two, it is judged by which of X1 and X2 did better. A next generation is judged on stage 2's bugs, beside M9, never on a bug it was shaped on.
+
+**Disclosure.** Reading the end of stage 1's log while checking on it, I saw three arm T outcomes on fresh bugs, as I had seen arm A's last rows before. They were used for nothing, and stage 1's progress is now read by line count only.
