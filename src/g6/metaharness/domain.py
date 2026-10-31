@@ -135,10 +135,11 @@ class Cut:
 
 
 def cut_pool(cases: Sequence[SuiteCase], seed: int) -> Cut:
-    """Each case goes to a side by a seeded hash of its id, so it keeps that side whatever else joins the pool."""
+    """Each case goes to a side by a seeded hash of its id, so it keeps that side whatever else joins the pool. Cases that are not
+    independent name a ``meta["group"]``, which is hashed in place of the id, so a group stays on one side."""
     parts: dict[str, list[SuiteCase]] = {name: [] for name, _ in SHARES}
     for case in cases:
-        point = int.from_bytes(hashlib.sha256(f"{seed}:{case.case_id}".encode()).digest()[:8], "big") / 2 ** 64
+        point = int.from_bytes(hashlib.sha256(f"{seed}:{case.meta.get('group') or case.case_id}".encode()).digest()[:8], "big") / 2 ** 64
         for name, share in SHARES:
             if point < share:
                 parts[name].append(case)
