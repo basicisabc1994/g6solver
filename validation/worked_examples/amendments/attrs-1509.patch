@@ -1,0 +1,299 @@
+diff --git a/tests/test_functional.py b/tests/test_functional.py
+index c8d65ae..381ef7f 100644
+--- a/tests/test_functional.py
++++ b/tests/test_functional.py
+@@ -21,6 +21,8 @@ from attr._compat import PY_3_13_PLUS
+ from attr._make import NOTHING, Attribute
+ from attr.exceptions import FrozenInstanceError
+ 
++from .utils import fields_view
++
+ 
+ @attr.s
+ class C1:
+@@ -117,7 +119,7 @@ class TestFunctional:
+         """
+         `attr.fields` works.
+         """
+-        assert (
++        assert fields_view((
+             Attribute(
+                 name="x",
+                 alias="x",
+@@ -130,7 +132,6 @@ class TestFunctional:
+                 hash=None,
+                 init=True,
+                 inherited=False,
+-                alias_is_default=True,
+             ),
+             Attribute(
+                 name="y",
+@@ -144,9 +145,8 @@ class TestFunctional:
+                 hash=None,
+                 init=True,
+                 inherited=False,
+-                alias_is_default=True,
+             ),
+-        ) == attr.fields(cls)
++        )) == fields_view(attr.fields(cls))
+ 
+     @pytest.mark.parametrize("cls", [C1, C1Slots])
+     def test_asdict(self, cls):
+@@ -190,7 +190,7 @@ class TestFunctional:
+         """
+         PC = attr.make_class("PC", ["a", "b"], slots=slots, frozen=frozen)
+ 
+-        assert (
++        assert fields_view((
+             Attribute(
+                 name="a",
+                 alias="a",
+@@ -203,7 +203,6 @@ class TestFunctional:
+                 hash=None,
+                 init=True,
+                 inherited=False,
+-                alias_is_default=True,
+             ),
+             Attribute(
+                 name="b",
+@@ -217,9 +216,8 @@ class TestFunctional:
+                 hash=None,
+                 init=True,
+                 inherited=False,
+-                alias_is_default=True,
+             ),
+-        ) == attr.fields(PC)
++        )) == fields_view(attr.fields(PC))
+ 
+     @pytest.mark.parametrize("cls", [Sub, SubSlots])
+     def test_subclassing_with_extra_attrs(self, cls):
+diff --git a/tests/test_hooks.py b/tests/test_hooks.py
+index 54ca2ab..40ad2eb 100644
+--- a/tests/test_hooks.py
++++ b/tests/test_hooks.py
+@@ -171,15 +171,11 @@ class TestTransformHook:
+                 x: int = attr.ib(metadata={"field_order": 1})
+                 y: int = attr.ib(metadata={"field_order": 0}, default=0)
+ 
+-        assert (
++        assert e.value.args[0].startswith(
+             "No mandatory attributes allowed after an attribute with a "
+             "default value or factory.  Attribute in question: Attribute"
+-            "(name='x', default=NOTHING, validator=None, repr=True, "
+-            "eq=True, eq_key=None, order=True, order_key=None, "
+-            "hash=None, init=True, "
+-            "metadata=mappingproxy({'field_order': 1}), type='int', converter=None, "
+-            "kw_only=False, inherited=False, on_setattr=None, alias='x')",
+-        ) == e.value.args
++            "(name='x'"
++        )
+ 
+     def test_hook_with_inheritance(self):
+         """
+@@ -243,7 +239,7 @@ class TestTransformHook:
+         seen = []
+ 
+         def hook(cls, attribs):
+-            seen[:] = [(a.name, a.alias, a.alias_is_default) for a in attribs]
++            seen[:] = [(a.name, a.alias) for a in attribs]
+             return attribs
+ 
+         @attr.s(auto_attribs=True, field_transformer=hook)
+@@ -253,9 +249,9 @@ class TestTransformHook:
+             public: int
+ 
+         assert [
+-            ("_private", "private", True),
+-            ("_explicit", "_explicit", False),
+-            ("public", "public", True),
++            ("_private", "private"),
++            ("_explicit", "_explicit"),
++            ("public", "public"),
+         ] == seen
+ 
+     def test_hook_evolve_name_updates_auto_alias(self):
+@@ -276,7 +272,6 @@ class TestTransformHook:
+         f = attr.fields(C).renamed
+ 
+         assert "renamed" == f.alias
+-        assert f.alias_is_default is True
+ 
+     def test_hook_evolve_name_keeps_explicit_alias(self):
+         """
+@@ -296,7 +291,6 @@ class TestTransformHook:
+         f = attr.fields(C).renamed
+ 
+         assert "my_alias" == f.alias
+-        assert f.alias_is_default is False
+ 
+     def test_hook_new_field_without_alias(self):
+         """
+@@ -338,7 +332,6 @@ class TestTransformHook:
+         f = attr.fields(C)._extra
+ 
+         assert "extra" == f.alias
+-        assert f.alias_is_default is True
+ 
+     def test_hook_explicit_alias_matching_default(self):
+         """
+@@ -355,7 +348,15 @@ class TestTransformHook:
+         f = attr.fields(C)._private
+ 
+         assert "private" == f.alias
+-        assert f.alias_is_default is False
++
++        def hook(cls, attribs):
++            return [a.evolve(name="renamed") for a in attribs]
++
++        @attr.s(auto_attribs=True, field_transformer=hook)
++        class D:
++            _private: int = attr.ib(alias="private")
++
++        assert "private" == attr.fields(D).renamed.alias
+ 
+     def test_hook_evolve_alias_sets_not_default(self):
+         """
+@@ -375,7 +376,6 @@ class TestTransformHook:
+         f = attr.fields(C).x
+ 
+         assert "custom" == f.alias
+-        assert f.alias_is_default is False
+ 
+ 
+ class TestAsDictHook:
+diff --git a/tests/test_make.py b/tests/test_make.py
+index 6430195..85cc00b 100644
+--- a/tests/test_make.py
++++ b/tests/test_make.py
+@@ -56,7 +56,7 @@ from .strategies import (
+     simple_attrs_without_metadata,
+     simple_classes,
+ )
+-from .utils import simple_attr
++from .utils import fields_view, simple_attr
+ 
+ 
+ attrs_st = simple_attrs.map(
+@@ -238,15 +238,11 @@ class TestTransformAttrs:
+             _transform_attrs(
+                 C, None, False, ClassProps.KeywordOnly.NO, True, None
+             )
+-        assert (
++        assert e.value.args[0].startswith(
+             "No mandatory attributes allowed after an attribute with a "
+             "default value or factory.  Attribute in question: Attribute"
+-            "(name='y', default=NOTHING, validator=None, repr=True, "
+-            "eq=True, eq_key=None, order=True, order_key=None, "
+-            "hash=None, init=True, "
+-            "metadata=mappingproxy({}), type=None, converter=None, "
+-            "kw_only=False, inherited=False, on_setattr=None, alias='y')",
+-        ) == e.value.args
++            "(name='y'"
++        )
+ 
+     def test_kw_only(self):
+         """
+@@ -312,7 +308,7 @@ class TestTransformAttrs:
+         )
+ 
+         assert [] == base_attrs
+-        assert (simple_attr("x"),) == attrs
++        assert fields_view((simple_attr("x"),)) == fields_view(attrs)
+ 
+     def test_these_leave_body(self):
+         """
+@@ -2394,7 +2390,10 @@ class TestInitAlias:
+         auto-generated default.
+         """
+ 
+-        @attrs.define
++        def hook(cls, attribs):
++            return [a.evolve(name=f"new_{a.name}") for a in attribs]
++
++        @attrs.define(field_transformer=hook)
+         class C:
+             auto: int
+             _private_auto: int
+@@ -2403,10 +2402,10 @@ class TestInitAlias:
+ 
+         fields = attr.fields_dict(C)
+ 
+-        assert fields["auto"].alias_is_default is True
+-        assert fields["_private_auto"].alias_is_default is True
+-        assert fields["explicit"].alias_is_default is False
+-        assert fields["_matches_default"].alias_is_default is False
++        assert "new_auto" == fields["new_auto"].alias
++        assert "new__private_auto" == fields["new__private_auto"].alias
++        assert "custom" == fields["new_explicit"].alias
++        assert "matches_default" == fields["new__matches_default"].alias
+ 
+     def test_alias_is_default_pickle_roundtrip(self):
+         """
+@@ -2424,7 +2423,6 @@ class TestInitAlias:
+             restored = pickle.loads(pickle.dumps(a))
+ 
+             assert a.alias == restored.alias
+-            assert a.alias_is_default == restored.alias_is_default
+ 
+     X = (
+         b"\x80\x05\x95_\x00\x00\x00\x00\x00\x00\x00\x8c\nattr._make\x94\x8c\tAttrib"
+@@ -2460,10 +2458,9 @@ class TestInitAlias:
+         Can unpickle attributes created in 25.3.
+         """
+ 
+-        assert Attribute(
++        assert fields_view((Attribute(
+             name=name,
+             alias=alias,
+-            alias_is_default=alias_is_default,
+             default=attrs.NOTHING,
+             validator=None,
+             repr=True,
+@@ -2480,7 +2477,7 @@ class TestInitAlias:
+             kw_only=False,
+             inherited=False,
+             on_setattr=None,
+-        ) == pickle.loads(pickle_data)
++        ),)) == fields_view((pickle.loads(pickle_data),))
+ 
+ 
+ class TestMakeOrder:
+diff --git a/tests/utils.py b/tests/utils.py
+index f42f1a9..d9a9f00 100644
+--- a/tests/utils.py
++++ b/tests/utils.py
+@@ -64,5 +64,33 @@ def simple_attr(
+         kw_only=kw_only,
+         inherited=inherited,
+         alias=_default_init_alias_for(name),
+-        alias_is_default=True,
+     )
++
++
++def fields_view(attributes):
++    """
++    What comparing tuples of `Attribute` checks at the parent commit, so that
++    a field a fix adds to `Attribute` for its own use is not compared: a tuple
++    of exactly `Attribute`, and the fields `Attribute.__eq__` compares.
++    """
++    assert isinstance(attributes, tuple)
++    assert all(a.__class__ is Attribute for a in attributes)
++    names = (
++        "name",
++        "default",
++        "validator",
++        "repr",
++        "eq",
++        "eq_key",
++        "order",
++        "order_key",
++        "hash",
++        "init",
++        "metadata",
++        "type",
++        "converter",
++        "kw_only",
++        "on_setattr",
++        "alias",
++    )
++    return tuple(tuple(getattr(a, n) for n in names) for a in attributes)
