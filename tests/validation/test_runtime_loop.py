@@ -600,7 +600,7 @@ def _critic_ctx(docker, reply, root):
         pass
 
     ctx = Ctx()
-    ctx.archive, ctx.docker, ctx.seen, ctx.pack = _Archive(root), docker, {}, None
+    ctx.archive, ctx.docker, ctx.seen, ctx.pack, ctx.arm = _Archive(root), docker, {}, None, "L9"
 
     def critic(folder):
         ctx.pack = folder

@@ -29,9 +29,9 @@ TASK = ("Improve the instructions given to a coding agent that fixes a bug in an
 PROJECTS = ("attrs", "black", "click", "fastapi", "pydantic", "starlette")
 
 
-def named(text: str, tests: Iterable[str], files: Iterable[str]) -> list[str]:
+def named(text: str, tests: Iterable[str], files: Iterable[str], projects: Sequence[str] = PROJECTS) -> list[str]:
     """What ``text`` names that it must not: a project, an issue number, a test's own name, or a file from the runs."""
-    found = [word for word in PROJECTS if re.search(rf"\b{word}\b", text, re.I)]
+    found = [word for word in projects if re.search(rf"\b{word}\b", text, re.I)]
     found += re.findall(r"#?\b\d{4,5}\b", text)
     found += re.findall(r"(?<![A-Za-z])[A-Za-z]:\\|/(?:home|Users)/", text)      # the text is pushed to a public branch
     names = {test.rpartition("::")[2].partition("[")[0] for test in tests} | {Path(f).name for f in files}
@@ -40,13 +40,15 @@ def named(text: str, tests: Iterable[str], files: Iterable[str]) -> list[str]:
 
 
 def failures(rows: Sequence[Mapping[str, Any]], archive: Path) -> list[DevFailure]:
-    """One ``DevFailure`` for each failed run in ``rows`` (each with ``task``, ``run``, ``failing``, ``tests``)."""
+    """One ``DevFailure`` for each failed run in ``rows`` (each with ``task``, ``run``, ``failing``, ``tests``). A run that ended
+    well has ``caught``: what the runner's own checks found on its first patch."""
     found = []
     for row in rows:
         folder = archive / row["run"]
         report, patch = [(folder / name).read_text("utf-8", errors="replace")[:size] if (folder / name).is_file() else ""
                          for name, size in (("final_report.txt", OUT_CHARS), ("final.patch", PATCH_CHARS))]
-        found.append(DevFailure(case_id=row["task"], input="", output=f"{report}\n--- the patch ---\n{patch}",
+        caught = f"\n--- what the runner's checks caught on the first patch ---\n{row['caught'][:OUT_CHARS]}" if row.get("caught") else ""
+        found.append(DevFailure(case_id=row["task"], input="", output=f"{report}\n--- the patch ---\n{patch}{caught}",
                                 expected="the project's own tests for this bug pass", oracle="the project's own tests",
                                 failed_checks=tuple(row.get("tests") or ()), failure_codes=()))
     return found
@@ -66,7 +68,7 @@ class Metered:
 
 
 def distill(base: str, rows: Sequence[Mapping[str, Any]], archive: Path, caller: llm.LLMCaller,
-            notes: Sequence[str] = ()) -> tuple[str, list[str]]:
+            notes: Sequence[str] = (), projects: Sequence[str] = PROJECTS) -> tuple[str, list[str]]:
     """The new instructions from ``base`` and the failures in ``rows``, and what they wrongly name ([] when clean)."""
     found = failures(rows, archive)
     view = ProposerView(workflow="round3", task="\n".join([TASK, *notes]), checks=(), steps=(), models=(MODEL,),
@@ -78,7 +80,7 @@ def distill(base: str, rows: Sequence[Mapping[str, Any]], archive: Path, caller:
         text = text.replace("\\n", "\n")
     tests = [t for row in rows for t in row.get("tests") or ()]
     files = re.findall(r"^diff --git a/(\S+)", "\n".join(f.output for f in found), re.M)
-    return text, named(text, tests, files)
+    return text, named(text, tests, files, projects)
 
 
 def main_row(path: Path) -> list[dict]:

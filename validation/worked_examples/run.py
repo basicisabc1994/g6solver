@@ -53,6 +53,8 @@ import wecommon as c  # noqa: E402
 REPO_ROOT = HERE.parents[1]
 TASKS = HERE / "tasks.json"
 TASKS_FRESH = HERE / "tasks_fresh.json"   # bugs the loop has not seen (PLAN.md, 2026-10-31)
+TASKS_UNSEEN = HERE / "tasks_unseen.json"   # stage 2: bugs in repositories never used in training (PLAN.md, 2026-10-31 evening)
+TASKS_DEV = HERE / "tasks_dev.json"   # stage 3: new bugs for G6 to learn from, none of them judged on
 AMENDMENTS = HERE / "amendments"   # the owner's scoring change: one test diff per bug its task does not determine
 PROXY = REPO_ROOT / "validation" / "v7_swebench" / "egress_proxy.py"
 FROM_IMAGE = "g6-a2-linux"
@@ -328,14 +330,18 @@ def load_tasks(path: Path = TASKS) -> list[Task]:
 
 
 def task_by_id(task_id: str, path: Path = TASKS) -> Task:
-    for task in (*load_tasks(path), *load_tasks(TASKS_FRESH)):
+    for task in (*load_tasks(path), *load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN), *load_tasks(TASKS_DEV)):
         if task.id == task_id:
             return task
     raise SystemExit(f"no task {task_id!r} in {path.name}")
 
 
 def is_fresh(task_id: str) -> bool:
-    return any(task.id == task_id for task in load_tasks(TASKS_FRESH))
+    return any(task.id == task_id for task in (*load_tasks(TASKS_FRESH), *load_tasks(TASKS_UNSEEN)))
+
+
+def is_dev(task_id: str) -> bool:
+    return any(task.id == task_id for task in load_tasks(TASKS_DEV))
 
 
 def amendment(task_id: str) -> Path | None:
@@ -354,12 +360,42 @@ def hidden_scouts(arm: str) -> int:
     return 2 if int(arm[1:]) >= 6 else 1
 
 
+def trained(arm: str) -> dict[str, str]:
+    """What harness training added for arm ``L<n>`` or ``M<n>`` from 10 (PLAN.md, stage 3), committed before it ran. It can only
+    add to a part's instructions: the sets, the scoring, the reply forms and the stop rule are not among them."""
+    if int(arm[1:]) < 10:
+        return {}
+    text = json.loads((HARNESS / f"L{arm[1:]}.json").read_text(encoding="utf-8"))
+    odd = sorted(set(text) - set(TRAINED))
+    if odd:
+        raise ValueError(f"harness training cannot change {odd}")
+    return text
+
+
+def literal(text: str) -> str:
+    """``text`` for a template that ``format`` fills."""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
+def repair_text(arm: str) -> str:
+    add = trained(arm).get("repair")
+    return COUNTEREXAMPLES_8 + (f"\n\n{literal(add)}" if add else "")
+
+
+def critic_text(arm: str) -> str:
+    add = trained(arm).get("critic")
+    return PATCH_CRITIC.replace("</task>", f"4. {add}\n</task>", 1) if add else PATCH_CRITIC
+
+
 def scout_prompt(arm: str, *, hidden: bool = False, at: int = 0) -> str:
     """The scout's prompt for arm ``L<n>`` or ``M<n>``: ``SCOUT_V2`` from generation 2 and ``SCOUT_V3`` from 3, then
     ``SCOUT_V5`` alone from 5 and ``SCOUT_V6`` from 6, before its critique. ``hidden``: hidden scout ``at``'s, whose work
     the agent never sees."""
     n = int(arm[1:])
     extra = SCOUT_V6 if n >= 6 else SCOUT_V5 if n == 5 else (SCOUT_V2 if n >= 2 else "") + (SCOUT_V3 if n >= 3 else "")
+    add = trained(arm).get("scout")
+    if add:
+        extra += f"   {literal(add)}\n"
     text = SCOUT_PROMPT.replace("5. Critique:", extra + "5. Critique:", 1)
     if hidden:
         place, tree = hidden_at(at)
@@ -558,8 +594,8 @@ class Repairs:
     repair goes back, up to the cap."""
 
     def __init__(self, check: Callable[[], tuple[set[str], str]], ask: Callable[[str, int], Any],
-                 state: Callable[[], str] | None = None) -> None:
-        self.check, self.ask, self.state = check, ask, state
+                 state: Callable[[], str] | None = None, told: str = "") -> None:
+        self.check, self.ask, self.state, self.told = check, ask, state, told
         self.round, self.failing, self.text, self.sent, self.tree = 0, set(), "", set(), None
 
     def search(self, sketch: Any, examples: Any, *, max_exhaustive: int = 0) -> Any:
@@ -573,7 +609,8 @@ class Repairs:
                 return SearchResult(None, "nothing new fails", False, self.round)
             self.sent |= self.failing
             self.tree = tree
-            self.ask((COUNTEREXAMPLES_8 if self.state else COUNTEREXAMPLES).format(text=self.text), self.round)
+            told = self.told or (COUNTEREXAMPLES_8 if self.state else COUNTEREXAMPLES)
+            self.ask(told.format(text=self.text), self.round)
         self.round += 1
         return SearchResult({0: f"round {self.round}"}, "agent", False, self.round)
 
@@ -650,6 +687,9 @@ def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
         added = LOOP_ADDENDUM
         if holds_loop(arm):
             added = (HARNESS / "G1.txt").read_text(encoding="utf-8").strip() + "\n\n" + LOOP_ADDENDUM_5
+        add = trained(arm).get("fixer")
+        if add:
+            added += f"\n\n{add}"
         texts[arm] = PROMPT.replace("\nIssue #{number}", "\n" + added.replace("{", "{{").replace("}", "}}")
                                     + "\n\nIssue #{number}", 1)
     if arm not in texts:
@@ -860,6 +900,7 @@ R3_SMOKE = {(R3_MODELS[1], "black-5634", "B", 1), (R3_MODELS[1], "black-5634", "
 R3_PROBE = {(R3_MODELS[1], task, "D", 1) for task in ("black-5634", "attrs-1593", "click-3678", "pydantic-14052")}
 R3_D_G6 = "f50953c"          # arm D's G6, reviewed (PLAN.md, 2026-10-30): its refusals name proposed_checks
 HARNESS = Path(__file__).resolve().parent / "harness"   # the distilled text of each generation
+TRAINED = ("fixer", "scout", "repair", "critic")   # the parts of the loop harness training can add to
 R3_LOOP_G6 = "c53d310"       # the distillation loop's G6 (PLAN.md, 2026-10-30)
 R3_HELD = ("black-5521", "click-3769", "starlette-3718")   # by hash, before any tuning; never read by the distiller
 R3_HELD_REPEATS = 5          # the final comparison, set before any generation ran (PLAN.md, 2026-10-30)
@@ -1572,7 +1613,7 @@ def run_critic(ctx: Context, task: Task, run: Any, agent: str, base: str, title:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(tar.extractfile(member).read())
         (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
-        (pack / "critic_prompt.md").write_text(PATCH_CRITIC, encoding="utf-8")
+        (pack / "critic_prompt.md").write_text(critic_text(ctx.arm), encoding="utf-8")
         said = (ctx.critic or run_codex)(pack)
         run.write("critic_reply.txt", ctx.archive.redact(said))
         found = critic_report(said, proof=proof)
@@ -1731,7 +1772,7 @@ def repair_loop(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
     def state() -> str:
         return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
 
-    loop = Repairs(check, ask, state if qualified(ctx.arm) else None)
+    loop = Repairs(check, ask, state if qualified(ctx.arm) else None, repair_text(ctx.arm) if qualified(ctx.arm) else "")
     got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                 max_iterations=MAX_REPAIRS + 1, timeout_s=float(c.WALL_CLOCK_S))
     return {"status": got.status, "rounds": loop.round, "reason": got.reason, "failing": sorted(loop.failing)[:40],
