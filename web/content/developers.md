@@ -79,7 +79,8 @@ The [catalogue](components.md) is generated from the code, so it always matches 
 | Governed learning | `learning`, `self_training`, `distillation` |
 
 A component with an MCP block also has a command-line surface, and the [catalogue](components.md) says which ones do. The others
-are Python-only for now: `g6 describe` shows no ops for them, and `g6 invoke` answers `G6_E_NO_BLOCK`.
+are Python-only for now: `g6 describe` shows no ops for them, and `g6 invoke` answers `G6_E_NO_BLOCK`. `workforce` has
+no block but has MCP tools of its own, below.
 
 Outside the components: `g6.core.stop` (the stop switch), `g6.core.snapshots` (`g6 state`), `g6.integrity` (file
 hashes against a pinned manifest), `g6.triage` (Python error triage) and `g6.operator` (a budgeted loop with a
@@ -97,6 +98,7 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
 Six discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_review_patch`;
+`g6_premortem` and six `g6_mission_*` tools for a coding mission;
 and thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
@@ -111,6 +113,23 @@ its own evidence, and merging always needs a separate approval. It returns a job
 then what is not established, then what the person decides. The reply is compact; its `full_assessment` names the file
 in G6's state folder that holds every field, and `metaharness_job` with `detail="full"` returns them all. The `using-g6` skill tells the agent to fix what G6
 reproduced, add each earlier reproduction as a stated check, and review again, for at most three rounds.
+
+A coding mission holds a change to a standard fixed before the work. `g6_premortem` proposes it, with no model call and
+nothing run: the intent contract, the requirements with their stated checks or marked not established, the competing
+ways the task can fail and at most three questions. `g6_mission_create` freezes the standard from the commit a clean
+repository stands at; `g6_mission_clarify` answers the one question an objective about retries or duplicates asks;
+`g6_mission_confirm` has the person confirm the standard; the agent changes the one permitted file, and
+`g6_mission_submit` checks it: `g6_review_patch`'s assessment in the working tree with the frozen tests as its stated
+checks, then the mission's own bench on its frozen copy, so each attempt runs the tests twice. The mission's repair
+ladder decides what comes next: three attempts, then a focused brief, then the person. The agent repairs and G6 never
+writes code. `g6_mission_status` and `g6_mission_certificate` read the mission. Allow the tools that run code with
+`workforce.mission`, as in `g6 setup --client claude --allow patch_review.review,workforce.mission`.
+
+What a person allows and confirms goes through the client's own dialog (MCP elicitation) and nowhere else. No argument
+confirms a standard, an agent cannot answer for the person, and there is no terminal fallback: a decline, a cancel or a
+client without a dialog leaves the mission unconfirmed, and an unconfirmed mission takes no patch. The name the person
+types is recorded as given; it is not an authenticated identity. Merging is the person's separate decision. An `R3`
+mission's patch approval is not over MCP yet: its status names the terminal command for the person.
 
 ## Choose a model
 

@@ -53,6 +53,10 @@ The outcome is one of: test integrity compromised, defect detected, insufficient
 If no check the patch did not write fails at the base commit, the outcome is insufficient evidence
 (`checks_written_with_patch`). Tell the person the result rests on your own tests. Do not rewrite tests to change it.
 
+When what counts as done must be fixed before the work, run a mission instead: `g6_premortem`, `g6_mission_create`,
+`g6_mission_confirm` (the person answers in the client's dialog, never you), `g6_mission_submit`
+(`references/lifecycle.md`).
+
 ## Find
 
 Call `g6_help`, then `g6_find` with the task or failure mode. Read `g6_describe` before choosing fields or an operation.

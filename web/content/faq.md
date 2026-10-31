@@ -183,7 +183,7 @@ harness, and 60 extensions are in the library, each in a family for one kind of 
 | `self_maintenance` | Finds the stage of a measured workflow that limits it most and picks the next fix that raises it most within a token budget, without running anything | MCP | none |
 | `self_training` | Decides whether a proposed change to the harness may go live; safety rules and failed tests can only make that decision stricter | Python-only | — |
 | `solver` | Runs a goal through a fixed sequence of 15 problem-solving steps that you supply, and reports where it stopped | Python-only | — |
-| `workforce` | Fixes what done means before a coding task starts, has a person confirm it, then checks the agent's change against it | Python-only | — |
+| `workforce` | Fixes what done means before a coding task starts, has a person confirm it, then checks the agent's change against it | MCP | `mission` |
 
 ### Which extensions are in the library?
 The last column links the certificate G6 issued for each extension that works in a vetted area, such as clinical or
@@ -282,8 +282,9 @@ All are implemented and tested. Three have been through a study registered befor
 checking, the action gate and the meta-harness (see [Research](research.md)). None has been studied in real use.
 
 ### Which components can I call over MCP?
-Every extension in the library can be called over MCP, as can 18 of the 37 core components; the other 19 are
-Python-only for now. The tables above say which.
+Every extension in the library can be called over MCP, as can 19 of the 37 core components; the other 18 are
+Python-only for now. The tables above say which. `workforce` has tools of its own, `g6_mission_create` and the others,
+and no op for `g6_invoke`.
 
 An op a component marks sensitive, because it runs a program on your computer, reaches the network, spends money,
 deletes what it kept or changes your machine, is refused over MCP unless the person who runs the server lists it in

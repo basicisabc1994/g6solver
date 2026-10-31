@@ -212,7 +212,7 @@ def _rows() -> tuple[dict, ...]:
         rows.append({"name": name, "maturity": info.get("maturity") or "unlabelled", "summary": summary.rstrip("."),
                      "title": title, "plain": plain, "guards": guards,
                      "requires": sorted(r for r in getattr(mod, "__g6_requires__", ()) if r in names),
-                     "mcp": bool(getattr(mod, "__g6_block__", None))})
+                     "mcp": bool(getattr(mod, "__g6_block__", None) or getattr(mod, "__g6_mcp_tools__", ()))})
     return tuple(rows)
 
 

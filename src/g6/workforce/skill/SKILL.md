@@ -66,8 +66,9 @@ approver to the person and never answers for them. G6 cannot prove a person gave
 
 ## Alone and composed
 
-Alone, from Python only (no block, so no `g6_invoke` op): `from g6.workforce import bind, allow_execution,
-create_coding_mission, confirm, submit_patch, status, certificate`.
+Alone, over MCP: `g6_mission_create`, `g6_mission_confirm` (the client's dialog, no terminal fallback),
+`g6_mission_submit` (`g6_review_patch` on the tree, then the bench), `g6_mission_status`, `g6_mission_certificate`; host
+permission `workforce.mission`. From Python: the API above (no block, so no `g6_invoke` op).
 
 Composed:
 
@@ -155,10 +156,10 @@ A mission (it needs git and a repository under `repository_dir(wf)`):
 
 ```text
 wf = bind()
-allow_execution(wf, "sample", approver)            # a person allows G6 to run this revision's code
+allow_execution(wf, "sample", approver)
 found = create_coding_mission(wf, "make tests/test_policy.py pass", repo="sample", module="policy.py",
                               function="label")
-confirm(wf, found["mission_id"], approver)         # a person confirms the frozen standard
+confirm(wf, found["mission_id"], approver)
 submit_patch(wf, found["mission_id"], {"policy.py": "...full new text..."})
 status(wf, found["mission_id"])["completion_state"]
 certificate(wf, found["mission_id"])

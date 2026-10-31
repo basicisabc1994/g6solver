@@ -176,7 +176,8 @@ recommending a new release.
 
 - **Components** ([catalogue](site/docs/components.md), generated from the code). Each one works alone and declares
   any other component it imports. Those with an MCP block can be called over MCP and the CLI, and the catalogue's
-  *surface* column says which; the rest are Python-only for now.
+  *surface* column says which; the coding mission has MCP tools of its own, `g6_mission_*`; the rest are Python-only
+  for now.
   - Evidence and claims: `grounding`, `epistemic_integrity`, `evidence`, `invariants`.
   - Actions and runtime safety: `action_gating`, `action_logic`, `safety_engine`, `guards`, `goal_engine`.
   - Coding agents: `coding_agent_gate`, `workforce`, `complexity`.

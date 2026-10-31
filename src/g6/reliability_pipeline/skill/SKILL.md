@@ -45,6 +45,8 @@ an assessor you inject may only tighten them.
   `metadata["task_contract"]`.
 - `premortem.premortem_failure_mode_questions`: each premortem failure-mode code with its diagnostic question.
 - `premortem.PREMORTEM_FAILURE_MODES`: the thirteen codes, in checklist order.
+- `premortem.hypotheses`: those thirteen and six ways a code change can fail, each with what would test it, ranking
+  none (`g6_premortem` returns them over MCP).
 - `relevant`: the curated failure-mode skills whose trigger words appear in an objective.
 - `SKILLS`: the curated skills (today one: `event-replay-semantics.v1`).
 - `replay_question`: the one clarification question for a vague "make this event handler idempotent" request.
