@@ -352,6 +352,11 @@ OK = {"passed": 2, "failures": 0, "errors": 0, "skipped": 0}
     (3221225477, NO_TALLY, "", [], "crashed"),
     (1, NO_TALLY, "", [], "inconsistent_report"),
     (0, NO_TALLY, "Fatal Python error: Segmentation fault", [], "inconsistent_report"),
+    # an exit a test can choose is no signal (the outside review's input), and a failure on the record survives the crash after it
+    (200, NO_TALLY, "", [], "inconsistent_report"),
+    (-15, {"passed": 0, "failures": 1, "errors": 0, "skipped": 0, "expected": 2, "finished": 1, "failed_ids": ["t"]}, "", [], "failed"),
+    (139, {"passed": 1, "failures": 0, "errors": 0, "skipped": 0, "expected": 3, "finished": 2, "failed_ids": ["t"]}, "", [], "failed"),
+    (139, {"passed": 1, "failures": 0, "errors": 0, "skipped": 0, "expected": 3, "finished": 2, "setup_errors": {"t": "x"}}, "", [], "failed"),
     (1, NO_TALLY, "ModuleNotFoundError: No module named 'pytest'", [], "pytest_not_found"),
     (5, NO_TALLY, "", [], "no_tests_collected"),
     (2, {"passed": 0, "failures": 0, "errors": 1, "skipped": 0}, "", [], "collection_error"),

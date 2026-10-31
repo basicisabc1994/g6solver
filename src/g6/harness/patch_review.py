@@ -585,10 +585,12 @@ def _verdicts(ids: list[str], ran: dict) -> dict[str, dict]:
         states = set(nodes.values())
         if run in UNTRUSTED:
             verdict, detail = run, said or "the run's results are not believed"
-        elif run in (repo_tests.RUN_INCONSISTENT, repo_tests.CRASHED):   # the owner's ruling (2026-10-29): no check passes on such a run
-            verdict, detail = run, said or repo_tests.SAID[run].format(where="")
+        elif run == repo_tests.RUN_INCONSISTENT:   # the owner's ruling (2026-10-29): no check passes on such a run
+            verdict, detail = run, said or repo_tests.SAID[run]
         elif "failed" in states:
             verdict, detail = FAILED, "failed: " + ", ".join(sorted(n for n, s in nodes.items() if s == "failed")[:5])
+        elif run == repo_tests.CRASHED:   # after the line above: a crash withholds a pass, and never erases a failure on the record
+            verdict, detail = run, said or repo_tests.SAID[run].format(where="")
         elif "skipped" in states:
             verdict, detail = "skipped", f"{sum(s == 'skipped' for s in nodes.values())} of {len(nodes)} skipped"
         elif dropped:
@@ -1138,6 +1140,8 @@ def _assess(root, change, stated, ids, stated_ids, norm, before, artifact, task,
         if finding.get("code") == "shortcut_in_answer" and not in_diff:
             # review I9(c), the owner's ruling: the claim's words alone say nothing about the tests
             reason("evidence", "claim_reports_shortcut", finding.get("message", ""))
+        elif finding.get("code") == "marker_on_new_test":   # never accepted, and no accusation: the person reads it
+            reason("evidence", "marker_on_new_test", finding.get("message", ""))
         elif finding.get("code") in INTEGRITY_FINDINGS:
             reason("integrity", "gate_shortcut", finding.get("message", ""))
         else:
