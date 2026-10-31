@@ -19,11 +19,7 @@ It converts to a validated `GoalSpec` and calls existing `build_plan_tree`.
 An optional caller-provided root `GoalSpec` preserves resource bounds,
 guardrails, checkpoints, breakpoints, constraints and success criteria; these
 are never invented for generated children. The result is
-<<<<<<< HEAD
 `qualified-draft` at best: a useful plan proposal is *not* a checked
-=======
-`qualified-draft` at best: a useful plan proposal is *not* a verified
->>>>>>> origin/claude/runtime-l10
 solution, a checked dependency ordering, or an authorization to execute.
 `generate_goal_stack()` is a postorder list, not an execution permission.
 
@@ -31,7 +27,6 @@ For execution, the executor must still call
 `g6.goal_engine.evaluate_controls` with measured observations and obey
 breakpoints and action gates. Proposed subtasks require review.
 
-<<<<<<< HEAD
 ## Over MCP
 
 `g6_invoke("goal_engine", "propose_goal_tree", ...)` runs the same loop with the
@@ -41,8 +36,6 @@ object whose `subgoals` are objects with a `goal`, and anything else is that nod
 error, never a subgoal or a state. With no model configured it refuses
 (`G6_E_GOAL_NO_MODEL`).
 
-=======
->>>>>>> origin/claude/runtime-l10
 ## Example
 
 ```python
