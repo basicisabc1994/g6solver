@@ -62,8 +62,11 @@ class CycleLog:
     def enrol(self, by: str, frozen: Mapping[str, str], **fields: Any) -> dict:
         return self._append("enrolled", {"by": by, "frozen": dict(frozen), **fields})
 
+    def enrolments(self) -> list[dict]:
+        return [body for kind, body in self._rows() if kind == "enrolled"]
+
     def enrolled(self) -> dict | None:
-        rows = [body for kind, body in self._rows() if kind == "enrolled"]
+        rows = self.enrolments()
         return rows[-1] if rows else None
 
     def pause(self, reason: str) -> dict:

@@ -26,6 +26,10 @@ change without a person; take an irreversible action; give a result a better lab
 are ``qualified-draft`` at best, never ``verified``). The only change it makes on its own is a move back to a version a
 person approved before.
 
+The self-improvement loop (``loop``, imported on its own, never by this package) runs this same gate on any kind of work
+behind a domain seam (``domain``). Its adoptions hold only in its own workspace (``shadow``): a person's profile store
+never moves, and everything above still holds of it.
+
     from g6.harness import Check
     from g6.metaharness import Model, Suite, SuiteCase, Workflow, adapt
     wf = Workflow(name="unit-answers", task="Answer with a number and its unit: {input}",
@@ -112,7 +116,8 @@ __g6_maturity__ = "beta"  # no block: Python API only
 # ``coding`` (imported on its own, never by this package) is the only module that reaches workforce and the gate.
 __g6_requires__: tuple[str, ...] = ("action_gating", "align_prompt_library", "bundles", "coding_agent_gate", "context",
                                      "distillation", "guards", "harness", "integrity", "intent_engine", "learning",
-                                     "llm_router", "navigator", "reasoning", "self_training", "workforce", "workspace")
+                                     "llm_router", "navigator", "operator", "reasoning", "self_maintenance",
+                                     "self_training", "workforce", "workspace")
 # Failure-mode codes (g6.core.failure_modes): what it guards against, and what its own use can cause.
 __g6_mitigates__: tuple[str, ...] = (
     "repeated_mistake", "unchecked_self_change", "untested_prompt_change", "unseen_early_warning",

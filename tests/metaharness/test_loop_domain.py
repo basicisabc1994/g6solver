@@ -183,17 +183,22 @@ def _imports(path: Path) -> set[str]:
 
 @pytest.mark.parametrize("name", LOOP_FILES)
 def test_no_file_of_the_loop_imports_coding(name):
-    path = SRC / name
-    if not path.is_file():
-        pytest.skip("written in a later commit")
-    assert not [i for i in _imports(path) if any(i == c or i.startswith(c + ".") for c in CODING_IMPORTS)]
+    assert not [i for i in _imports(SRC / name) if any(i == c or i.startswith(c + ".") for c in CODING_IMPORTS)]
+
+
+@pytest.mark.parametrize("name", LOOP_FILES)
+def test_no_file_of_the_loop_can_reach_outward(name):
+    outward = ("subprocess", "socket", "urllib", "http", "requests", "httpx", "git", "ssl", "ftplib", "smtplib")
+    assert not [i for i in _imports(SRC / name) if any(i == o or i.startswith(o + ".") for o in outward)]
+
+
+def test_the_loops_files_are_the_ones_these_checks_cover():
+    assert all((SRC / name).is_file() for name in LOOP_FILES)
 
 
 @pytest.mark.parametrize("name", LOOP_FILES)
 def test_no_file_of_the_loop_assumes_coding_in_its_code(name):
     path = SRC / name
-    if not path.is_file():
-        pytest.skip("written in a later commit")
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.ClassDef)}
     names |= {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}

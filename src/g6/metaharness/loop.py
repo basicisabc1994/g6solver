@@ -54,6 +54,8 @@ from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import ENDS_A_STREAK, MAX_FAILED_CYCLES, CycleLog, beat, stop_reason
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
+from g6.workspace._coordination import Coordination
+from g6.workspace._envelope import WorkspaceRefused
 
 NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
 POOL_TOO_SMALL = "G6_E_LOOP_POOL_TOO_SMALL"
@@ -74,8 +76,8 @@ CYCLE_FAILED = "G6_E_LOOP_CYCLE_FAILED"
 NO_CONSTRAINT = "G6_E_LOOP_NO_CONSTRAINT"
 BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
 NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
-#: The proposers one cycle of ``tune`` runs: recovery, reflection and failure traces.
-PROPOSERS = 3
+BUSY = "G6_E_LOOP_BUSY"
+SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 UNKNOWN = "unknown"
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
@@ -212,7 +214,8 @@ class ShadowLoop:
         """The most one tick can call, from the limits it runs under: a measurement, the audits, each proposer and race
         of each cycle, and one evaluation. Each limit is checked before a run, so each can be passed by one run."""
         method, per_run = self.settings.method, max(m.max_calls_per_run for m in self.workflow.models.values())
-        proposing = PROPOSERS * (method.propose_budget + per_run) + method.reflect_calls + 1
+        proposers = 1 + method.use_recovery + method.use_reflection + method.use_edits   # failure traces always run
+        proposing = proposers * (method.propose_budget + per_run + method.reflect_calls + 1)
         racing = method.select_budget + per_run
         return (method.propose_budget + per_run + 2 * self.settings.audit_per_tick * per_run
                 + method.cycles * (proposing + racing) + self.settings.eval_calls + per_run * (per_run + 2))
@@ -276,20 +279,45 @@ class ShadowLoop:
         who = confirmed_by.strip()
         if not who or is_automated(who):
             return _blocked(APPROVAL_REQUIRED, "a person enrols a domain (no empty or auto: name)")
+        reused = self._reused()
+        if reused:
+            return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
+                            f"earlier split, for example {reused[:3]}: a gain measured on them proves nothing",
+                            "Give the gate cases the loop has not used: a split changed by a few cases is not fresh.")
         confirmed = self.mh.confirm(who, initial=self.domain.execution().initial)
         if confirmed["completion_state"] == "blocked-escalated":
             return confirmed
         frozen = self._frozen()
-        self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat())
+        self.log.enrol(who, frozen, domain=self.domain.name, at=self._now().isoformat(),
+                       seen=sorted(c.case_id for c in (*self.cut.tune, *self.cut.selection)),
+                       held_out=sorted(c.case_id for c in self.cut.held_out),
+                       held_out_digest=self.workflow.suite.digest("held_out"))
         return _envelope("qualified-draft", ENROLLED, f"{self.domain.name} is enrolled: the loop may run on it", **frozen,
                          next_action="loop.tick()")
 
+    def _reused(self) -> list[str]:
+        """Held-out cases that cannot be fresh evidence. The evaluation limit counts per split digest, so a split
+        changed by one case would start again from nothing, and a re-cut could hand the gate what proposers tuned on.
+        Against each earlier enrolment: nothing it let proposers see, and nothing from a split it spent."""
+        current, seen = self.workflow.suite.digest("held_out"), set()
+        evaluated = {r.get("split_digest") for r in self.mh.ledger.rows("evaluation")}
+        for row in self.log.enrolments():
+            seen |= set(row["seen"])
+            if row["held_out_digest"] != current and row["held_out_digest"] in evaluated:
+                seen |= set(row["held_out"])
+        return sorted(c.case_id for c in self.cut.held_out if c.case_id in seen)
+
     def tick(self) -> dict[str, Any]:
         """One cycle. A refusal is a reply, never a raised error, and a heartbeat follows every tick, so someone
-        watching can tell a loop that is waiting from one that has died."""
-        reply = self._refused() or self._run()
-        self._beat(reply["completion_state"], reply["warning_card"]["code"])
-        return reply
+        watching can tell a loop that is waiting from one that has died. One tick at a time per folder: a restart
+        can overlap a tick that is still running, and the lock is the operating system's, so it dies with its process."""
+        try:
+            with Coordination(self.root / ".tick").mutex():
+                reply = self._refused() or self._run()
+                self._beat(reply["completion_state"], reply["warning_card"]["code"])
+                return reply
+        except WorkspaceRefused:
+            return _blocked(BUSY, "another tick is running on this folder; this one did nothing")
 
     def _beat(self, state: str, code: str) -> None:
         beat(self.root, domain=self.domain.name, at=self._now().isoformat(), tick=len(self.log.cycles()), state=state,

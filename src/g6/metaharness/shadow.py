@@ -143,7 +143,7 @@ class ShadowHarness(MetaHarness):
     def audit(self, cases: Sequence[SuiteCase], *, count: int) -> dict[str, Any]:
         """Audit up to ``count`` cases not yet used for the adopted version; roll back if the monitor says it got worse.
         Each case is used once per adoption: a repeated case would count one piece of evidence twice."""
-        quiet = {"audited": 0, "pairs": 0, "mean_difference": 0.0, "threshold": 0.0, "rolled_back": False}
+        quiet = {"audited": 0, "pairs": 0, "mean_difference": 0.0, "threshold": None, "rolled_back": False}
         refused = self._refusal()
         if refused:
             return {**refused, **quiet}
@@ -167,7 +167,7 @@ class ShadowHarness(MetaHarness):
                 "completion_state": result.get("completion_state", "blocked-escalated")})
         verdict = drift.assess([d for d in differences if d], alpha=self.workflow.policy.demote_alpha)
         said = {"audited": len(fresh), "pairs": verdict.pairs, "mean_difference": verdict.mean_difference,
-                "threshold": verdict.threshold, "rolled_back": verdict.demote}
+                "threshold": verdict.threshold if verdict.pairs else None, "rolled_back": verdict.demote}
         if not verdict.demote:
             return _envelope("qualified-draft", AUDITED, f"{len(fresh)} audited, no sign it got worse", **said)
         number = len(self.adoption_rows()) + 1

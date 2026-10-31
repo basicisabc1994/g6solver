@@ -24,6 +24,7 @@ from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.self_maintenance.envelope import heartbeat
 from g6.self_maintenance.pacing import ProviderWindow
+from g6.workspace._coordination import Coordination
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -523,3 +524,85 @@ def test_everything_a_tick_writes_is_inside_the_loops_folder(tmp_path):
     loop.tick()
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted([*before, "loop"])
     assert domain.sealed_file.read_bytes() == sealed_bytes
+
+# What a self-review of the envelope found ------------------------------------------------------------------------------
+
+def test_an_audit_whose_pairs_all_tie_does_not_break_the_tick(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=0.6)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.tick()["outcome"] == "adopted"
+    domain.tutor.weak = domain.tutor.strong                        # old and new now answer alike: no disagreement
+    got = loop.tick()
+    assert got["outcome"] != "error"
+    assert loop.log.cycles()[-1]["audit"]["pairs"] == 0 and loop.log.cycles()[-1]["audit"]["threshold"] is None
+
+
+def test_two_ticks_cannot_run_on_one_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr("g6.workspace._coordination.MUTEX_WAIT", 0.05)
+    loop, domain = _enrolled(tmp_path)
+    calls = len(domain.llm.calls)
+    with Coordination(loop.root / ".tick").mutex():                # another process's tick
+        got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUSY" and got["completion_state"] == "blocked-escalated"
+    assert len(domain.llm.calls) == calls and heartbeat(loop.root) is None
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def _in_held_out(loop) -> set[str]:
+    return {c.case_id for c in loop.cut.held_out}
+
+
+def _fresh_cases(start: int, count: int) -> list[SuiteCase]:
+    return [SuiteCase(f"fresh-{i:04d}", *domains._case(domains.word_problem(i))) for i in range(start, start + count)]
+
+
+def test_a_person_cannot_refresh_a_spent_split_by_adding_a_case_to_it(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"                     # one use of the split
+    domain.pool.extend(_fresh_cases(5000, 40))                     # its digest moves; its cases are the same
+    again, _ = _loop(tmp_path, domain=domain)
+    got = again.enrol("Ada")
+    assert _code(got) == "G6_E_LOOP_SPLIT_REUSED" and got["completion_state"] == "blocked-escalated"
+    assert _code(again.tick()) == "G6_E_LOOP_FROZEN_CHANGED"
+
+
+def test_a_truly_fresh_split_resets_the_count_and_the_head_carries_over(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    head, spent = loop.mh._head(), _in_held_out(loop)
+    domain.pool[:] = [c for c in domain.pool if c.case_id not in spent] + _fresh_cases(5000, 240)
+    again, _ = _loop(tmp_path, domain=domain)
+    assert again.enrol("Ada")["completion_state"] == "qualified-draft"
+    assert again.mh.held_out_left() == again.workflow.policy.max_evaluations
+    assert again.mh._head() == head and not spent & _in_held_out(again)
+
+
+def test_a_new_seed_cannot_move_cases_proposers_saw_into_the_held_out_split(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    moved = dataclasses.replace(SETTINGS, seed=SETTINGS.seed + 1)
+    again, _ = _loop(tmp_path, domain=domain, settings=moved)
+    assert _code(again.enrol("Ada")) == "G6_E_LOOP_SPLIT_REUSED"
+
+
+def test_a_judge_taken_away_after_enrolment_stops_the_loop(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    domain._judged = False
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "evaluator" in got["message"]
+    again, _ = _loop(tmp_path, domain=domain)
+    assert _code(again.tick()) == "G6_E_LOOP_NO_INDEPENDENT_JUDGE"
+
+
+def test_the_gate_runs_at_the_designs_numbers_and_no_setting_moves_them(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    policy = loop.workflow.policy
+    assert (policy.alpha, policy.max_evaluations, policy.threshold) == (0.05, 5, 0.01)
+    assert (policy.min_cases, policy.min_discordant) == (30, 5)
+    assert not {"alpha", "max_evaluations", "min_cases", "min_discordant"} & set(LoopSettings.__dataclass_fields__)
+
+
+def test_the_worst_case_counts_every_proposer_the_method_asks_for(tmp_path):
+    more = Method(cycles=1, propose_budget=120, select_budget=400, race_block=12, reflect_calls=1, use_edits=True)
+    loop, _ = _enrolled(tmp_path, settings=dataclasses.replace(SETTINGS, method=more))
+    fewer, _ = _enrolled(tmp_path / "b", settings=SETTINGS)
+    assert loop.worst_case() > fewer.worst_case()
