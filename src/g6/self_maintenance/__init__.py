@@ -11,6 +11,11 @@ without a person's approval in the operator's queue (``ActionQueue.request_run``
 that ticket, provider and day, and the report names who approved. The live agent path (``run_existing_agent``, Codex
 or Claude Code with writes) refuses in this release (``G6_E_SELF_MAINTENANCE_LIVE_AGENT_OFF``) before any runtime is
 built; it waits for the mission container of a later phase.
+
+``pacing`` (a paced week per provider, on the operator's ledger) and ``envelope`` (the constraint log, the stop file,
+the heartbeat and the failed-cycle streak) know nothing of what the work is. The tick that uses them needs the
+meta-harness, so it lives there, in ``g6.metaharness.loop``: the layer rule lets that package import this one, and
+never the reverse.
 """
 from g6.self_maintenance.block import MaintenanceInput, SelfMaintenanceBlock
 from g6.self_maintenance.codes import SelfMaintenanceRefused

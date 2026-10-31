@@ -63,6 +63,8 @@ measuring and recommending never activate a profile. The workspace keeps the exi
 - `PromotionRequest`: typed mode, report digest, approval name and security claims; unknown fields/modes refuse.
 - `detect_anchor_decoupling`: paired development versus held-out score changes across versions.
 - `detect_agreement_collapse`: exact comparison of agree/disagree counts for any named judge pair.
+- `loop.ShadowLoop`: the self-improvement loop's tick on any `domain.Domain` (development cases, a sealed split, how a
+  profile runs, an independent judge, failure records). No independent judge, no run. A person enrols a domain once.
 
 ## MCP tools
 
@@ -82,7 +84,9 @@ use the refusal's instructions for approval from another session or the person's
 Confirmation, activation, rollback, online tuning and audit-rate changes retain their existing person checks.
 Every upward readiness step separately records an approval claim; security declarations remain claims and can
 only lower a cap. An agent must hand decisions to a person, never invent `accepted_by`. Readiness is
-`qualified-draft` at best. The monitor may demote without approval, never promote.
+`qualified-draft` at best. The monitor may demote without approval, never promote. The shadow loop's adoptions hold
+only in its own workspace (`shadow.ShadowHarness`): they never count as a person's approval, and a person's store
+never moves.
 
 ## Alone and composed
 
