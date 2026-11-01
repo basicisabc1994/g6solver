@@ -36,6 +36,7 @@ established.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import os
 import sys
@@ -53,6 +54,7 @@ from g6.metaharness.loop import (
     BUDGET_WAIT,
     BUSY,
     CYCLE_FAILED,
+    FROZEN_CHANGED,
     STATUS_LINE,
     STOPPED,
     LoopSettings,
@@ -92,24 +94,43 @@ def _local_now() -> datetime:
     return datetime.now().astimezone()
 
 
-def _domain_file(path: Any) -> dict[str, Any]:
+class DomainChanged(ValueError):
+    """The Python file a folder names is not the one a person enrolled."""
+
+
+def _domain_file(path: Any, pinned: str | None = None) -> dict[str, Any]:
+    """What a domain file declares. With ``pinned`` its bytes are read once, checked, and run as they were read, so
+    nothing can swap them between the check and the run. ``None`` is a person enrolling it: what they accept is what it
+    is now. The pin holds this file, not what it imports."""
     if not path or not Path(str(path)).is_file():
         raise ValueError(f"{SETTINGS_FILE} needs domain_file: the Python file that defines LOOP, not {path!r}")
+    source = Path(str(path)).read_bytes()
+    if pinned is not None and hashlib.sha256(source).hexdigest() != pinned:
+        raise DomainChanged(f"{path} is not the file a person enrolled, so it did not run. A person checks it and enrols "
+                            "again")
     spec = importlib.util.spec_from_file_location(_MODULE, str(path))
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
     declared = getattr(module, "LOOP", None)
     if not isinstance(declared, dict) or "domain" not in declared or "proposer" not in declared:
         raise ValueError(f"{path} must define LOOP = {{'domain': ..., 'proposer': ...}}")
     return declared
 
 
-def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now) -> tuple[ShadowLoop, AccountReader | None]:
+def _pinned(root: Path) -> str:
+    """The digest of the domain file a person enrolled, from the records and never from the file; ``""`` with none."""
+    path = root / CYCLE_LOG
+    enrolled = CycleLog(path).enrolled() if path.is_file() else None
+    return (enrolled or {}).get("frozen", {}).get("domain_file") or ""
+
+
+def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now,
+              pinned: str | None = None) -> tuple[ShadowLoop, AccountReader | None]:
     """The loop a folder declares, and what reads its account, when the settings leave that on."""
     settings = read_settings(root)
     windows = windows_from(settings)
-    declared = _domain_file(settings.get("domain_file"))
+    declared = _domain_file(settings.get("domain_file"), pinned)
     reader = AccountReader(windows) if settings.get("read_account", True) is not False else None
     tuned = LoopSettings(windows=windows, **{name: declared[name] for name in _TUNING if name in declared})
     return ShadowLoop(declared["domain"], root, tuned, proposer=declared["proposer"], now=now, read_account=reader,
@@ -316,7 +337,9 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
                 refused = _not_started(root)
                 if refused:
                     return _refuse(root, NOT_STARTED, refused, now)
-                loop, reader = open_loop(root, now=now)
+                loop, reader = open_loop(root, now=now, pinned=_pinned(root))
+            except DomainChanged as exc:
+                return _refuse(root, FROZEN_CHANGED, str(exc)[:500], now)
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why, and leave word
                 return _refuse(root, CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500], now)
             return Runner(loop, now=now, sleep=sleep, reader=reader).run()
@@ -332,12 +355,16 @@ def _at_a_terminal() -> bool:
         return False
 
 
-def _person(root: Path, who: str, verb: str) -> ShadowLoop | None:
+def _person(root: Path, who: str, verb: str, pinned: str | None = None) -> ShadowLoop | None:
     """The folder's loop when a person is at this terminal and types its domain's name back. A convenience check."""
     if not _at_a_terminal():
         print(f"Only a person at an interactive terminal can {verb}: nothing was recorded.", file=sys.stderr)
         return None
-    loop, _ = open_loop(root)
+    try:
+        loop, _ = open_loop(root, pinned=pinned)
+    except DomainChanged as exc:
+        print(f"{exc}: nothing was recorded.", file=sys.stderr)
+        return None
     print(f"Domain: {loop.domain.name}. Folder: {root}. Name given: {who}, recorded as given and not authenticated.")
     if input(f"Type the domain's name to {verb}: ").strip() != loop.domain.name:
         print("That is not the domain's name: nothing was recorded.", file=sys.stderr)
@@ -356,7 +383,7 @@ def enrol(root: Path, who: str) -> int:
 
 
 def resume(root: Path, who: str) -> int:
-    loop = _person(root, who, "lift the pause")
+    loop = _person(root, who, "lift the pause", pinned=_pinned(root))
     return 1 if loop is None else _said(loop.resume(who))
 
 

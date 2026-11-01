@@ -516,6 +516,53 @@ def test_nothing_of_the_folders_runs_before_the_start_is_checked(tmp_path):
     assert run(root) == 1 and not marker.exists()
 
 
+def _plants_a_marker(tmp_path: Path) -> tuple[str, Path]:
+    marker = tmp_path / "changed-domain-ran"
+    return f"open({str(marker)!r}, 'w').close()\nraise RuntimeError('the changed file ran')\n", marker
+
+
+def test_a_restart_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path, capsys):
+    root, _ = _enrolled_folder(tmp_path)
+    changed, marker = _plants_a_marker(tmp_path)
+    (tmp_path / "domain.py").write_text(changed, encoding="utf-8")
+    assert run(root) == 1 and not marker.exists()
+    assert heartbeat(root)["code"] == "G6_E_LOOP_FROZEN_CHANGED" and "enrolled" in capsys.readouterr().err
+    assert CycleLog(root / CYCLE_LOG).cycles() == []
+
+
+def test_the_bytes_that_were_checked_are_the_bytes_that_run(tmp_path, monkeypatch):
+    root, _ = _enrolled_folder(tmp_path)
+    changed, marker = _plants_a_marker(tmp_path)
+    real = importlib.util.spec_from_file_location
+
+    def swapped_after_the_check(name, path, *args, **kwargs):
+        Path(path).write_text(changed, encoding="utf-8")
+        return real(name, path, *args, **kwargs)
+
+    monkeypatch.setattr("g6.metaharness.runner.importlib.util.spec_from_file_location", swapped_after_the_check)
+    run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root))
+    assert not marker.exists()
+
+
+def test_lifting_a_pause_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path, monkeypatch, capsys):
+    root, loop = _enrolled_folder(tmp_path)
+    loop.log.pause("three failed cycles in a row")
+    changed, marker = _plants_a_marker(tmp_path)
+    (tmp_path / "domain.py").write_text(changed, encoding="utf-8")
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    assert main(["resume", str(root), "--as", "Ada"]) == 1 and not marker.exists()
+    assert CycleLog(root / CYCLE_LOG).paused() and "enrolled" in capsys.readouterr().err
+
+
+def test_a_person_enrolling_again_accepts_a_changed_domain_file(tmp_path, monkeypatch):
+    root, _ = _enrolled_folder(tmp_path)
+    path = tmp_path / "domain.py"
+    path.write_text(path.read_text(encoding="utf-8") + "\n# one line more\n", encoding="utf-8")
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
+    assert main(["enrol", str(root), "--as", "Ada"]) == 0
+
+
 def test_a_start_the_person_agreed_to_lets_a_restart_run(tmp_path):
     root, _ = _enrolled_folder(tmp_path)
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
