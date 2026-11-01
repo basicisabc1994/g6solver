@@ -23,18 +23,19 @@ from pathlib import Path
 import pytest
 
 import g6
-from g6.core import host_models, llm, model_calls
+from g6.core import host_models, llm, model_calls, stop
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
 from g6.metaharness import JUDGING_PATTERNS, Model, SuiteCase
 from g6.metaharness import domain as sealed_module
 from g6.metaharness.domain import Judge, sealed_closed
-from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Requests
+from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Halted, _Requests
 from g6.metaharness.method import Method
 from g6.metaharness.schema import Workflow, default_objectives
 from g6.metaharness.shadow import lineage
 from g6.operator.store import OperatorStore
+from g6.self_maintenance.envelope import ask_to_stop, stop_to_lift
 from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import AccountReader, UsageUnavailable
 
@@ -1092,3 +1093,144 @@ def test_the_limit_of_this_a_limit_that_arrives_during_an_evaluation_still_spend
     domain.llm._responder = limited_on_the_held_out_split
     before = loop.mh.held_out_left()
     assert loop.tick()["outcome"] == "refused" and loop.mh.held_out_left() == before - 1
+
+
+# A stop lands at the next model call, not the next tick --------------------------------------------------------------------
+
+def _held_out_inputs(loop) -> set[str]:
+    return {c.input for c in loop.cut.held_out}
+
+
+def _on_the_held_out_split(user: str, held: set[str]) -> bool:
+    return user.rsplit("Problem: ", 1)[-1].strip() in held
+
+
+def _a_stop_at_the_third_request(loop, domain) -> list[str]:
+    tutor, seen = domain.tutor, []
+
+    def stopped_at_the_third(system: str, user: str) -> str:
+        seen.append(user)
+        if len(seen) == 3:
+            ask_to_stop(loop.root, "the owner wants the subscription back")
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_at_the_third
+    return seen
+
+
+def test_a_stop_lands_at_the_next_model_call_and_not_the_next_tick(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    seen = _a_stop_at_the_third_request(loop, domain)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_STOPPED" and got["completion_state"] == "blocked-escalated"
+    assert len(seen) == 3 and got["charged"] == 3 and loop.meter.reading("claude", NOW).used == 3
+    assert "at a model call" in got["message"] and "the owner wants the subscription back" in got["message"]
+    assert loop.log.cycles() == [] and loop.mh.adoption_rows() == []
+
+
+def test_a_stop_during_an_evaluation_spends_none_of_the_split_and_says_so(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    held, tutor = _held_out_inputs(loop), domain.tutor
+
+    def stopped_on_the_held_out_split(system: str, user: str) -> str:
+        if _on_the_held_out_split(user, held):
+            ask_to_stop(loop.root, "the owner's review")
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_on_the_held_out_split
+    before = loop.mh.held_out_left()
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_STOPPED" and loop.mh.held_out_left() == before
+    assert loop.mh.ledger.rows("evaluation") == [] and "none of the split's five was spent" in got["message"]
+    [row] = [body for kind, body in loop.log._rows() if kind == "stopped"]
+    assert row["cut_off"]["evaluation"] is True and row["cut_off"]["charged"] == got["charged"]
+
+
+def test_a_stop_before_any_evaluation_says_nothing_of_one(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    _a_stop_at_the_third_request(loop, domain)
+    got = loop.tick()
+    assert "evaluation" not in got["message"]
+    [row] = [body for kind, body in loop.log._rows() if kind == "stopped"]
+    assert row["cut_off"]["evaluation"] is False
+
+
+def test_the_candidate_a_stop_cut_off_is_taken_up_by_the_next_start(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    held, tutor = _held_out_inputs(loop), domain.tutor
+
+    def stopped_on_the_held_out_split(system: str, user: str) -> str:
+        if _on_the_held_out_split(user, held):
+            ask_to_stop(loop.root, "the owner's review")
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_on_the_held_out_split
+    before = loop.mh.held_out_left()
+    loop.tick()
+    domain.llm._responder = tutor
+    loop.log.start("Ada", **stop_to_lift(loop.root))
+    assert loop.tick()["outcome"] == "adopted" and loop.mh.held_out_left() == before - 1
+
+
+def test_a_stop_a_tick_met_ends_the_start_with_nothing_left_to_note(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.log.start("Ada")
+    _a_stop_at_the_third_request(loop, domain)
+    loop.tick()
+    assert not loop.log.start_in_force()
+
+
+def test_a_stop_that_cannot_be_noted_still_stops_the_tick(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    seen = _a_stop_at_the_third_request(loop, domain)
+
+    def full(*args, **kwargs):
+        raise OSError("no space left on the device")
+
+    monkeypatch.setattr(loop.log, "stop", full)
+    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(seen) == 3
+
+
+def test_g6s_own_stop_lands_at_the_next_model_call_too(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    loop.requests.open(10)
+    stop.engage("the machine is going down")
+    try:
+        with pytest.raises(_Halted) as raised:
+            loop.workflow.models["local"].caller.complete("system", "user")
+    finally:
+        stop.release()
+        loop.requests.close()
+    assert raised.value.code == stop.STOPPED and "the machine is going down" in raised.value.said
+
+
+def test_g6s_own_stop_during_an_evaluation_costs_one_and_the_record_says_so(tmp_path):
+    """``evaluate`` looks at this stop itself, before each case, and keeps what it has as a partial report, which is
+    recorded. That code judges, so it stays: what can be done here is to say so."""
+    loop, domain = _enrolled(tmp_path)
+    held, tutor = _held_out_inputs(loop), domain.tutor
+
+    def stopped_on_the_held_out_split(system: str, user: str) -> str:
+        if _on_the_held_out_split(user, held):
+            stop.engage("the machine is going down")
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_on_the_held_out_split
+    before = loop.mh.held_out_left()
+    try:
+        got = loop.tick()
+    finally:
+        stop.release()
+    assert loop.mh.held_out_left() == before - 1 and got["outcome"] == "blocked"
+    assert got["message"].startswith("the evaluation stopped part way and still spent one of the split's five")
+
+
+def test_outside_a_tick_a_stop_holds_no_request_back(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    ask_to_stop(loop.root, "the owner's review")
+    assert loop.workflow.models["local"].caller.complete("system", f"Problem: {loop.cut.tune[0].input}")
+
+
+def test_a_request_goes_out_when_no_stop_stands(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"

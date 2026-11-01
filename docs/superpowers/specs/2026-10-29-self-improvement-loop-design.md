@@ -422,7 +422,7 @@ The owner decided that the loop reads issues, answers them publicly and works on
 
 **Kill switch and health (designer's call):**
 - A `STOP` file on `main`, which the loop's identity cannot change under the ruleset, or a `STOP` file in the loop's
-  local folder, halts the loop at its next tick. Removing it resumes the loop, except that a runner it ended needs a
+  local folder, halts the loop at its next model call. Removing it resumes the loop, except that a runner it ended needs a
   person's start again (section 11). A `loop:stop` label on the pinned
   status issue also halts it, and the loop never removes that label itself.
 - Three failed cycles in a row pause the loop and post a status comment saying why. A failed cycle is a fault, not a
@@ -671,6 +671,19 @@ read.
 
 All of this is a check and not a boundary. A process with the owner's rights can reach this code or write the records, which
 are hash-chained and not signed.
+
+**A stop lands at the next model call, not the next tick (the owner's ruling, 2026-11-01).** A stop reaching the next call
+matters more than the one evaluation it may cost. Each request of a tick looks at the `STOP` file and G6's own stop before it
+goes out, so a request already sent comes back first, and that can take as long as its caller allows. Nothing here ends one.
+The tick then ends with no cycle: what ran is charged, nothing is scored or adopted, and the runner ends a second later. The
+candidates it was working on race again after the next start, as after a limit. The reply and the day's digest say how many
+requests it had sent, and a `STOP` file's note in the log carries the same under `cut_off`.
+
+An evaluation a `STOP` file cuts off costs nothing of the split: no report was written, so it is not one of the five, as with a
+limit, and the digest says it was dropped. G6's process-wide stop (`g6.core.stop`) costs one: `evaluate` checks that stop itself
+before each case and keeps what it has as a partial report, which is recorded, and that code judges, so it stays. The cycle's
+reason then starts by saying the evaluation stopped part way and still spent one of the split's five. A model call is the only
+place a tick looks, so a domain's own long step with no model call runs on until the next one.
 
 **Restart after a reboot.** The owner runs this once, in their own terminal, with the Python that has G6 installed and the
 loop's folder (`pythonw.exe`, so no console window opens that could be closed by accident). `/SC ONLOGON` runs as the owner

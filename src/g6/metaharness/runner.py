@@ -2,8 +2,8 @@
 """The self-improvement loop with nobody at the keyboard: ``python -P -m g6.metaharness.loop run <folder>``.
 
 The runner repeats one pass: stop check, tick, then wait until the next tick could be admitted or the next digest is due.
-No sleep is longer than ``NAP``, so a ``STOP`` is seen within a minute of a tick ending. Time comes in through ``now`` and
-``sleep``, so a week can pass in a test. Everything it needs to carry on is in the folder's records, so it restarts safely:
+No sleep is longer than ``NAP``, so a waiting runner sees a ``STOP`` within a minute, and a tick meets it at its next model
+call. Time comes in through ``now`` and ``sleep``, so a week can pass in a test. Everything it needs to carry on is in the folder's records, so it restarts safely:
 a crashed tick is charged its worst case, a rest is read back from the log, and only one runner can hold a folder.
 
 **Who may start it.** It runs only on a start that stands: of the starts and stops on record, the last is a start a person
@@ -226,6 +226,8 @@ class Runner:
         """When the tick after ``reply`` may run. A cycle that reached a result is followed at once, for the budget and
         the rest to bound. A budget wait lasts until a ceiling can rise, or a reported limit ends if that is sooner."""
         code = reply["warning_card"]["code"]
+        if code == STOPPED:
+            return now                      # the next pass reads the stop and ends the run
         if code == BUDGET_WAIT:
             room = self.loop.meter.next_room(now)
             told = reply.get("wait_until")
@@ -276,8 +278,11 @@ class Runner:
         if until is not None and until > now:
             found.append(f"Backing off: {quiet} tick{'s' if quiet != 1 else ''} in a row found nothing to try, so nothing more "
                          f"is spent on it. The next try is at {until.isoformat(timespec='minutes')}.")
-        if self.last.get("warning_card", {}).get("code") == BUDGET_WAIT:
+        code = self.last.get("warning_card", {}).get("code")
+        if code == BUDGET_WAIT:
             found.append(f"Waiting for the budget: {self.last.get('message', '')}")
+        if code in (STOPPED, stop.STOPPED) and "charged" in self.last:
+            found.append(self.last["message"])
         return found
 
     def _page(self, day: date, now: datetime, halted: str) -> str:

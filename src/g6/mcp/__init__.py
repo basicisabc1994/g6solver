@@ -560,8 +560,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
     def g6_improve_stop(folder: str = "", reason: str = "") -> dict:
         """Stop the self-improvement loop: writes the folder's local STOP file, with no dialog and no permission. Safe to
         repeat, and it works when the runner is already dead. It kills nothing and touches no container: the runner ends
-        itself once it sees the file, within a minute of its current tick ending, so running and stopped say whether it
-        has gone yet."""
+        itself once it sees the file, at its next model call or within a minute while it waits, so running and stopped say
+        whether it has gone yet."""
         from g6.mcp import improve
         return improve.stop(folder, reason)
 

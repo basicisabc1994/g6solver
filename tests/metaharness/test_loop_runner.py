@@ -97,6 +97,23 @@ def test_it_ticks_until_a_stop_file_and_then_ends_cleanly(tmp_path):
     assert beat["state"] == "stopped" and "the test is over" in beat["reason"]
 
 
+def test_a_stop_during_a_tick_ends_the_run_at_once_and_the_days_page_says_what_it_cut_off(tmp_path):
+    runner, time, domain = _runner(tmp_path)
+    tutor, seen = domain.tutor, []
+
+    def stopped_at_the_third(system: str, user: str) -> str:
+        seen.append(user)
+        if len(seen) == 3:
+            ask_to_stop(runner.loop.root, "the owner wants the subscription back")
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_at_the_third
+    assert runner.run() == 0 and len(seen) == 3 and time.naps == [1.0]
+    assert heartbeat(runner.loop.root)["state"] == "stopped"
+    page = latest(runner.loop.root).read_text(encoding="utf-8")
+    assert "The runner ended" in page and "at a model call after 3 requests" in page
+
+
 def test_no_sleep_is_longer_than_a_minute_so_a_stop_is_seen_within_one(tmp_path):
     runner, time, _ = _runner(tmp_path, settings=_windows(("claude", 100)))     # never room: it only waits
     _stopped_after(time, timedelta(minutes=10))

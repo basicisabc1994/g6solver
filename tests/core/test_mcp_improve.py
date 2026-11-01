@@ -394,6 +394,11 @@ def test_stop_reports_a_runner_that_has_not_gone_yet_and_ends_nothing(rig):
         assert got["running"] is True and got["stopped"] is False and "still alive" in got["message"]
 
 
+def test_stop_says_it_lands_at_the_runners_next_model_call(rig):
+    with runner_lock(rig.root):
+        assert "next model call" in rig.call("g6_improve_stop", folder=str(rig.root))["message"]
+
+
 def test_stop_kills_nothing_and_touches_no_container(rig, monkeypatch):
     def refused(*args, **kwargs):
         raise AssertionError("stop reached outside the folder")

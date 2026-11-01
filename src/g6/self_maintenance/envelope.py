@@ -4,7 +4,7 @@
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
 came of it, plus each enrolment, pause, resumption, start and provider's limit. Only a person can enrol a domain, resume a
 paused loop or start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its
-next tick, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the file a
+next model call, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the file a
 person agreed to lift, and anything else, or any later write, stands, so a stop has no moment in which it can be lost. A
 runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped. A
 heartbeat is written whole or not at all, and a heartbeat that cannot be written is one missed, never a failed tick.
@@ -239,7 +239,7 @@ def stops_asked(root: str | Path) -> int:
 
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
     """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
-    nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
+    nothing: the runner reads the file before each model call and ends itself. It returns why the folder is stopped.
 
     Each stop writes a token of its own there, so no two stops leave the same bytes, and that is what keeps a stop: a start
     lifts only the file a person agreed to, so it needs no record to know a new stop when it sees one. A stop that cannot

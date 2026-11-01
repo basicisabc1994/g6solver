@@ -184,14 +184,25 @@ class _AtLimit(BaseException):
         self.until, self.said = until, said
 
 
+class _Halted(BaseException):
+    """A stop, met at a model call, on its way out of the tick as ``_AtLimit`` is, and for the same reason: nothing from the
+    run it cut off is written, so an evaluation it cut off is not one of the split's five."""
+
+    def __init__(self, code: str, said: str) -> None:
+        super().__init__(said)
+        self.code, self.said = code, said
+
+
 class _Requests:
     """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
     nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
     ``stopped`` says which stopped it. A request takes its place in ``sent`` before it goes out, under one lock, so requests
-    running at once can never pass the limit between them."""
+    running at once can never pass the limit between them. During a tick each request looks at ``halted`` first, so a stop
+    lands at the next model call: a request already sent comes back first, since nothing here can end one."""
 
-    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
-        self.now = now
+    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
+                 halted: Callable[[], _Halted | None] = lambda: None) -> None:
+        self.now, self.halted = now, halted
         self._lock = threading.Lock()
         self.close()
 
@@ -204,6 +215,9 @@ class _Requests:
     def admit(self, wait: float = 0.0, *, places: int = 0) -> None:
         """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
         server asked for before this one goes out."""
+        stopped = self.halted() if self.limit != math.inf else None
+        if stopped is not None:
+            raise stopped
         with self._lock:
             if self.unseen or self.sent >= self.limit:
                 self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
@@ -383,7 +397,8 @@ class ShadowLoop:
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
-        self.requests = _Requests(lambda: self._now())
+        self.evaluating = False                   # this tick has begun its held-out evaluation
+        self.requests = _Requests(lambda: self._now(), self._halted)
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
@@ -420,20 +435,28 @@ class ShadowLoop:
         self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
         self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
                                                           workspace=self.root / "workspace", clock=self._clock,
-                                                          before_evaluation=self._no_limit_stands)
+                                                          before_evaluation=self._before_evaluation)
 
-    def _no_limit_stands(self) -> None:
+    def _before_evaluation(self) -> None:
         """Read the account once more before a held-out evaluation: a limit reads as a failed case, and an evaluation of
         failed cases spends one of the split's five on a reason untrue of the candidate. So a run already under a limit ends
         here, as one met in a request does, with nothing spent. The limit of this: only a read can show a Codex limit, so one
         that arrives during the evaluation still spends it, until an issuance window gives those callers a code."""
-        if self._read_now is None:
-            return
-        now = self._now()
-        self._read_now(now)
-        seen = self.meter.reading(self.provider, now)
-        if seen.wait_until is not None:
-            raise _AtLimit(seen.wait_until, seen.reason)
+        if self._read_now is not None:
+            now = self._now()
+            self._read_now(now)
+            seen = self.meter.reading(self.provider, now)
+            if seen.wait_until is not None:
+                raise _AtLimit(seen.wait_until, seen.reason)
+        self.evaluating = True
+
+    def _halted(self) -> _Halted | None:
+        """What stops a tick between two requests: this folder's stop, or G6's own."""
+        why = self.cannot_record or stop_reason(self.root)
+        if why:
+            return _Halted(STOPPED, why)
+        engaged = stop.engaged()
+        return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
 
     def _calls_per_run(self) -> int:
         """The most one run can call: what the models declare, or, on G6's own executor with no step of the domain's, one
@@ -508,12 +531,10 @@ class ShadowLoop:
 
     def _refused(self) -> dict[str, Any] | None:
         """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle."""
-        halted = self.cannot_record or stop_reason(self.root)
-        if halted:
-            return _blocked(STOPPED, halted, "Remove the STOP file to resume.")
-        engaged = stop.engaged()
-        if engaged is not None:
-            return _blocked(stop.STOPPED, f"G6 is stopped: {engaged}", "Whoever engaged the stop releases it.")
+        halted = self._halted()
+        if halted is not None:
+            return _blocked(halted.code, halted.said, "Remove the STOP file to resume." if halted.code == STOPPED else
+                            "Whoever engaged the stop releases it.")
         invalid = self._invalid()
         if invalid is not None:
             return invalid
@@ -658,12 +679,16 @@ class ShadowLoop:
         self._beat("running", CYCLE)
         recommended: list[dict[str, Any]] = []
         limit: _AtLimit | None = None
+        halted: _Halted | None = None
+        self.evaluating = False
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
             except _AtLimit as reached:
                 row, limit = self._row(), reached
+            except _Halted as reached:
+                row, halted = self._row(), reached
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
@@ -690,6 +715,8 @@ class ShadowLoop:
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
+        elif halted is not None:      # also no cycle: what ran is charged, and none of it counts
+            return self._cut_off(halted, charged)
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
@@ -698,6 +725,21 @@ class ShadowLoop:
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
         return self._record(row)
+
+    def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
+        """A stop met at a model call: say what it cut off, and note this folder's stop in the records, which this tick
+        holds, so no one else can. The file is what stops the loop, so a note that cannot be written changes nothing."""
+        dropped = (", and the held-out evaluation under way was dropped, so none of the split's five was spent"
+                   if self.evaluating else "")
+        if halted.code == STOPPED:
+            try:
+                self.log.stop(halted.said, at=self._now().isoformat(),
+                              cut_off={"charged": charged, "evaluation": self.evaluating})
+            except (OSError, LedgerError):
+                pass
+        return _blocked(halted.code, f"a stop ended this tick at a model call after {charged:g} requests{dropped}: {halted.said}",
+                        "A new g6_improve_start lets it run again." if halted.code == STOPPED else
+                        "Whoever engaged the stop releases it.", charged=charged)
 
     def _record(self, row: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -795,6 +837,8 @@ class ShadowLoop:
                    space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
                    carried=self.mh.unfinished())
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
+        if (run.confirmation or {}).get("partial"):   # first, so the digest's one line for a tick keeps it
+            reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
                 "recovery": run.recovery, **strategy.findings}

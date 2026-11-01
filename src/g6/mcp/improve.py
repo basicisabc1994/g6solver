@@ -14,9 +14,9 @@ file the person agreed to lift, by digest, length and modification time, and any
 survives it, whatever became of any count or record.
 
 **Stop** always works and asks nobody: it adds to the local ``STOP`` file, which is safe to repeat and works when the runner
-is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. The runner
-sees the file between ticks, so a tick under way finishes first. It also ends the person's start, so nothing but a new
-agreement brings the runner back, not a restart and not the file's removal.
+is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. A tick under
+way sees the file at its next model call, so a request already sent comes back first and nothing after it goes out. It also
+ends the person's start, so nothing but a new agreement brings the runner back, not a restart and not the file's removal.
 
 **Status** only reads: its files, no lock it could hold up and no model. What it shows of each provider's use is the
 runner's last heartbeat, with the time of that heartbeat, because opening the ledger would write to it.
@@ -128,8 +128,8 @@ def _cannot_start(root: Path) -> dict | None:
         return _blocked(BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.")
     if runner_alive(root):
         return _blocked(RUNNER_ALIVE, "a runner is already alive on this folder, so nothing was started",
-                        "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: within a "
-                        "minute of its current tick ending.")
+                        "Read g6_improve_status. If you have just stopped it, it ends once it sees the STOP file: at its next "
+                        "model call, or within a minute while it waits.")
     try:
         log = _log(root)
     except LedgerError as exc:
@@ -250,8 +250,8 @@ def stop(folder: str, reason: str = "") -> dict:
                         running=runner_alive(root), folder=str(root))
     record_stop(root, why, at=datetime.now().astimezone().isoformat())
     running = runner_alive(root)
-    said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, within a minute of "
-            "its current tick ending" if running else "the STOP file is in place and no runner is alive")
+    said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, at its next model "
+            "call, or within a minute while it waits" if running else "the STOP file is in place and no runner is alive")
     return _envelope("qualified-draft", STOP_ASKED, said, running=running, stopped=not running, stop=why, folder=str(root),
                      next_action="g6_improve_status says when it has gone." if running else
                      "g6_improve_start starts it again, and lifts the stop once the person agrees.")
