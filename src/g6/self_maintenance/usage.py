@@ -51,21 +51,24 @@ callers, which waits for an issuance window.
 **A classifier or a permission stop** is read the same way: ``refused_by`` takes only G6's own code at the start of the text.
 ``AnthropicCaller`` raises that code. Claude Code writes a refusal's ``stop_reason`` ahead of its long ``usage`` record, past
 the 300 characters ``g6.core.host_models`` keeps, so nothing in that error can show one, and that file is bound. So the loop
-calls Claude Code through ``WatchedClaude``, which reads the same fields from the whole result as parsed JSON, before the
-caller cuts it. A model's words stay inside the string ``result``, so they cannot read as a field. This was read from the text
-of Claude Code 2.1.316 and has not been seen at a real refusal, and a version that moves those fields is not read. Codex prints
-text, as above, so a refusal from it reads as a failed case, and the same request goes out again on a later tick. That too
-waits for an issuance window.
+has any Claude Code caller read the same fields from the whole result as parsed JSON, before it is cut: as a request goes out,
+the caller really sending it becomes a ``WatchedClaude`` (``read_stops``), whatever holds it. What that reads goes straight to
+the loop (``telling_stops``), so a wrapper that catches failed requests cannot retry a refusal or hide it. A model's words stay
+inside the string ``result``, so they cannot read as a field. This was read from the text of Claude Code 2.1.316 and has not been
+seen at a real refusal, and a version that moves those fields is not read. Codex prints text, as above, so a refusal from it
+reads as a failed case, and the same request goes out again on a later tick. That too waits for an issuance window.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -80,6 +83,7 @@ REFRESH = timedelta(minutes=15)
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
 #: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
 _STOPPED_BY = ("dlp_request_denied", "safety_monitor_blocked")
+_TELL: contextvars.ContextVar[Callable[[str], None] | None] = contextvars.ContextVar("g6_loop_stops", default=None)
 ASK_TIMEOUT = 30.0
 WEEK_MINUTES = 7 * 24 * 60
 FULL = 100
@@ -182,21 +186,37 @@ def _stop_in(result: Mapping[str, Any]) -> str:
     return f"permission denied ({len(denied)})" if isinstance(denied, list) and denied else ""
 
 
+@contextmanager
+def telling_stops(tell: Callable[[str], None]) -> Iterator[None]:
+    """Inside, a stop ``WatchedClaude`` reads goes to ``tell`` before anything else sees it. What ``tell`` raises is what stops
+    the request, so a wrapper between it and the loop cannot take the refusal for a failed request and send it again."""
+    token = _TELL.set(tell)
+    try:
+        yield
+    finally:
+        _TELL.reset(token)
+
+
 class WatchedClaude(host_models.ClaudeCodeCaller):
     """Claude Code as the loop calls it: as the bound caller, and a stop in its result raises G6's own code."""
 
     def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
         stopped = _stop_in(host_models._result(printed) or {})
         if stopped:
+            tell = _TELL.get()
+            if tell is not None:
+                tell(f"{MODEL_REFUSED}: {stopped}")
             raise LLMError(f"{MODEL_REFUSED}: {stopped}")
         return super()._reply(code, printed, errors, files, hide)
 
 
-def watched(caller: Any) -> Any:
-    """``caller``, as ``WatchedClaude`` when it is a plain Claude Code caller. A subclass of a domain's own is left as it is,
-    since it may read the result its own way, and so is any wrapper around one."""
-    plain = type(caller) is host_models.ClaudeCodeCaller
-    return WatchedClaude(caller.model, timeout=caller.timeout) if plain else caller
+def read_stops(sender: Any) -> None:
+    """Have ``sender``, when it is any kind of Claude Code caller, read its whole result. It is done to the caller that is
+    sending, as it sends, so what holds it does not matter. Its class changes and nothing else does: a subclass of a domain's
+    own keeps all it has, and reads the result first."""
+    kind = type(sender)
+    if isinstance(sender, host_models.ClaudeCodeCaller) and not isinstance(sender, WatchedClaude):
+        sender.__class__ = type(kind.__name__, (WatchedClaude, kind), {})
 
 
 def _number(value: Any) -> bool:
@@ -323,4 +343,4 @@ class AccountReader:
 
 
 __all__ = ["AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude", "codex_limits",
-           "limit_ends", "limits_reading", "read_limits", "refused_by", "watched"]
+           "limit_ends", "limits_reading", "read_limits", "read_stops", "refused_by", "telling_stops"]

@@ -1373,15 +1373,6 @@ def test_a_failure_that_is_no_refusal_is_still_a_failed_case_and_pauses_nothing(
     assert _code(loop.tick()) != "G6_E_LOOP_CLASSIFIER_STOP" and loop.log.paused() == ""
 
 
-def test_the_loop_calls_a_plain_claude_code_caller_as_the_one_that_reads_its_whole_result(tmp_path):
-    domain = domains.WordProblems(tmp_path)
-    _with_model(domain, host_models.ClaudeCodeCaller("a-model", timeout=7.0))
-    loop, _ = _loop(tmp_path, domain=domain, proposer=host_models.ClaudeCodeCaller())
-    inner = loop.workflow.models["local"].caller.inner
-    assert isinstance(inner, WatchedClaude) and inner.model == "a-model" and inner.timeout == 7.0
-    assert isinstance(loop._proposer.inner, WatchedClaude)
-
-
 def test_the_workflow_a_person_enrolled_is_the_same_whichever_claude_caller_runs_it(tmp_path):
     plain = domains.WordProblems(tmp_path / "a")
     _with_model(plain, host_models.ClaudeCodeCaller())
@@ -1449,3 +1440,199 @@ def test_real_faults_on_either_side_of_a_cut_off_tick_still_pause_and_say_which(
     domain.failures = broken
     loop.tick()
     assert "three failed cycles" in loop.log.paused() and loop.log.paused().count("the domain fell over") == 3
+
+
+# What goes out decides: a request is held to the caller that sends it, not to what a domain declared -----------------------------
+
+def _claude_that_refuses(monkeypatch, *, is_error: bool = True) -> list[str]:
+    """Claude Code's program stood in for at the one place it is run, printing a refusal. What was sent is in the list."""
+    printed = json.dumps({"type": "result", "is_error": is_error, "stop_reason": "refusal", "result": "Request denied"})
+    sent: list[str] = []
+
+    def program(argv, stdin, *rest):
+        sent.append(stdin)
+        return (1 if is_error else 0), printed, ""
+
+    monkeypatch.setattr(host_models.ClaudeCodeCaller, "locate", lambda self: "unused-program")
+    monkeypatch.setattr(host_models, "_run", program)
+    return sent
+
+
+class Delegates:
+    """A wrapper of a domain's own, holding its caller as G6's wrappers do."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        return self._inner.complete(system, user, max_tokens=max_tokens)
+
+
+class TriesAgain(Delegates):
+    """A retry of a domain's own, which enrolment cannot see: it treats any failed request as worth sending again."""
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        for _ in range(3):
+            try:
+                return self._inner.complete(system, user, max_tokens=max_tokens)
+            except LLMError:
+                continue
+        return "no answer"
+
+
+class Swallows(Delegates):
+    """One that turns any failure into a blank reply, which would then read as a failed case."""
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        try:
+            return self._inner.complete(system, user, max_tokens=max_tokens)
+        except LLMError:
+            return ""
+
+
+class Declares(Delegates):
+    """It declares one caller as ``_inner`` and sends through another: enrolment can only see what it declares."""
+
+    def __init__(self, sends_through) -> None:
+        super().__init__(FakeLLM())
+        self.held = sends_through
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        return self.held.complete(system, user, max_tokens=max_tokens)
+
+
+class ClaudeOfItsOwn(host_models.ClaudeCodeCaller):
+    """As ``ToolSession`` is: a subclass of the host caller."""
+
+
+@pytest.mark.parametrize("wrap", [lambda claude: claude, Delegates, lambda claude: Delegates(Delegates(claude)), Declares,
+                                  lambda claude: llm.TimingLLMCaller(claude, lambda seconds: None)])
+def test_a_refusal_ends_the_tick_and_holds_the_loop_through_any_wrapper_enrolment_accepts(tmp_path, monkeypatch, wrap):
+    sent = _claude_that_refuses(monkeypatch)
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, wrap(host_models.ClaudeCodeCaller()))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_CLASSIFIER_STOP" and len(sent) == 1 and "stopped a request" in loop.log.paused()
+
+
+def test_a_refusal_is_seen_on_a_subclass_of_the_host_caller_too(tmp_path, monkeypatch):
+    sent = _claude_that_refuses(monkeypatch)
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, ClaudeOfItsOwn())
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert _code(loop.tick()) == "G6_E_LOOP_CLASSIFIER_STOP" and len(sent) == 1
+
+
+@pytest.mark.parametrize("wrap", [TriesAgain, Swallows])
+def test_a_wrapper_that_catches_failures_cannot_retry_a_refusal_or_hide_it(tmp_path, monkeypatch, wrap):
+    sent = _claude_that_refuses(monkeypatch)
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, wrap(host_models.ClaudeCodeCaller()))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert _code(loop.tick()) == "G6_E_LOOP_CLASSIFIER_STOP" and len(sent) == 1
+
+
+def test_a_refusal_the_program_did_not_flag_as_an_error_is_a_refusal_all_the_same(tmp_path, monkeypatch):
+    sent = _claude_that_refuses(monkeypatch, is_error=False)
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, Delegates(host_models.ClaudeCodeCaller()))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert _code(loop.tick()) == "G6_E_LOOP_CLASSIFIER_STOP" and len(sent) == 1
+
+
+def test_a_proposer_behind_a_wrapper_is_watched_too(tmp_path, monkeypatch):
+    sent = _claude_that_refuses(monkeypatch)
+    loop, _ = _enrolled(tmp_path, proposer=TriesAgain(host_models.ClaudeCodeCaller()))
+    assert _code(loop.tick()) == "G6_E_LOOP_CLASSIFIER_STOP" and len(sent) == 1
+
+
+def _keyed() -> llm.OpenAICompatibleCaller:
+    return llm.OpenAICompatibleCaller("gpt", base_url="https://unused.invalid/v1", api_key="a-key")
+
+
+def test_a_keyed_caller_a_wrapper_hides_sends_nothing_and_holds_the_loop(tmp_path, monkeypatch):
+    posted = []
+    monkeypatch.setattr(llm, "_post_json", lambda *args: posted.append(args) or {"choices": [{"message": {"content": "x"}}]})
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, Declares(_keyed()))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_PAID_MODEL" and got["outcome"] == "error" and posted == []
+    assert got["budget"]["charged"] == 0 and "API key" in loop.log.paused()
+
+
+def test_a_host_caller_on_another_provider_behind_a_wrapper_sends_nothing(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(host_models.CodexCaller, "locate", lambda self: "unused-program")
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest: sent.append(stdin) or (0, "", ""))
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, Declares(host_models.CodexCaller()))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert _code(loop.tick()) == "G6_E_LOOP_PROVIDER_MISMATCH" and sent == []
+
+
+def test_a_caller_nothing_knows_that_notes_its_own_requests_sends_nothing(tmp_path):
+    class NotesItsOwn(Delegates):
+        def __init__(self) -> None:
+            super().__init__(FakeLLM())
+            self.sent = 0
+
+        def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+            model_calls.note_model_call()
+            self.sent += 1
+            return "an answer"
+
+    domain = domains.WordProblems(tmp_path)
+    caller = NotesItsOwn()
+    _with_model(domain, caller)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert _code(loop.tick()) == "G6_E_LOOP_UNKNOWN_CALLER" and caller.sent == 0
+
+
+def test_outside_a_tick_nothing_is_barred(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, Declares(domains.proposes({"prompt": "x"})))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.workflow.models["local"].caller.complete("system", "user")
+
+
+def _notes_who_sends() -> tuple[_Requests, list]:
+    seen: list = []
+    requests = _Requests(barring=lambda sender: seen.append(sender))
+    requests.open(10)
+    return requests, seen
+
+
+def test_the_sender_of_a_request_is_read_at_the_request_for_each_kind_of_caller(monkeypatch):
+    """Nothing in the bound files hands the sender over, so this is held by test: each built-in caller, as it really sends."""
+    monkeypatch.setattr(llm, "_post_json", lambda *args: {"message": {"content": "x"}, "choices": [{"message": {"content": "x"}}]})
+    monkeypatch.setattr(host_models.ClaudeCodeCaller, "locate", lambda self: "unused-program")
+    monkeypatch.setattr(host_models.CodexCaller, "locate", lambda self: "unused-program")
+    answered = json.dumps({"type": "result", "is_error": False, "result": "x"})
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest: (0, answered, ""))
+    monkeypatch.setattr(host_models.CodexCaller, "_reply", lambda self, *args: "x")
+
+    class Answers:
+        class beta:
+            class messages:
+                @staticmethod
+                def create(**kwargs):
+                    return dataclasses.make_dataclass("Reply", [("content", list), ("stop_reason", str)])([], "end_turn")
+
+    for caller in (FakeLLM(), llm.OllamaCaller(), _keyed(), llm.AnthropicCaller(client=Answers()), host_models.ClaudeCodeCaller(),
+                   host_models.CodexCaller()):
+        requests, seen = _notes_who_sends()
+        _Counted(Delegates(caller), requests).complete("system", "user")
+        assert seen == [caller]
+
+
+def test_a_host_caller_goes_on_answering_once_it_is_watched(monkeypatch):
+    monkeypatch.setattr(host_models.ClaudeCodeCaller, "locate", lambda self: "unused-program")
+    answered = json.dumps({"type": "result", "is_error": False, "stop_reason": "end_turn", "result": "an answer"})
+    monkeypatch.setattr(host_models, "_run", lambda argv, stdin, *rest: (0, answered, ""))
+    claude = ClaudeOfItsOwn("a-model", timeout=7.0)
+    requests, _ = _notes_who_sends()
+    assert _Counted(Delegates(claude), requests).complete("system", "user") == "an answer"
+    assert isinstance(claude, ClaudeOfItsOwn) and isinstance(claude, WatchedClaude)
+    assert (claude.model, claude.timeout) == ("a-model", 7.0)

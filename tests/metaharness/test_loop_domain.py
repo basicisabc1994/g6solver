@@ -180,6 +180,28 @@ def test_a_caller_nothing_here_knows_is_refused_since_nothing_can_say_who_pays(t
     assert _codes(domain) == {UNKNOWN_CALLER}
 
 
+class SendsItselfWithAHostBeside(OpenAICompatibleCaller):
+    """It sends for itself, with its key, whatever else it holds under ``_inner``."""
+
+    def __init__(self) -> None:
+        super().__init__("gpt", base_url="https://api.openai.com/v1", api_key="a-key")
+        self._inner = host_models.ClaudeCodeCaller()
+
+
+def test_a_caller_that_sends_for_itself_is_judged_by_itself_whatever_it_holds(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, SendsItselfWithAHostBeside())
+    assert PAID_MODEL in _codes(domain) and who_pays(SendsItselfWithAHostBeside()) == PAID
+
+
+def test_a_retry_held_by_a_caller_that_sends_for_itself_is_no_wrapper_around_it(tmp_path):
+    caller = FakeLLM()
+    caller._inner = EmptyRetry(FakeLLM())
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, caller)
+    assert domain_problems(domain) == []
+
+
 def test_a_wrapper_of_a_domains_own_is_seen_through_when_it_holds_its_caller_as_the_wrappers_do(tmp_path):
     class Logged:
         def __init__(self, inner) -> None:

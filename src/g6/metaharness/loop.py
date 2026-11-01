@@ -23,6 +23,7 @@ import dataclasses
 import hashlib
 import math
 import os
+import sys
 import threading
 import time
 from collections import Counter
@@ -43,6 +44,7 @@ from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
+    BARRED,
     FALLBACK_MODEL,
     Cut,
     Domain,
@@ -55,6 +57,7 @@ from g6.metaharness.domain import (
     judge_source,
     provider_problems,
     sealed_closed,
+    sender_problems,
 )
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
@@ -78,7 +81,7 @@ from g6.self_maintenance.envelope import (
     stop_reason,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import limit_ends, refused_by, watched
+from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -206,17 +209,32 @@ def _request_digest(system: str, user: str) -> str:
     return hashlib.sha256(f"{system}\0{user}".encode("utf-8", "replace")).hexdigest()
 
 
+def _sender(counted: Any) -> Any:
+    """The caller sending the request being noted, from ``counting``'s observer. ``g6.core.model_calls`` says only that one is
+    going out, and that file is bound, so this is read from the stack above the note: the first ``self`` there is what calls the
+    model, whatever holds it and whatever that declares. A test holds this for each built-in caller. With no object between the
+    note and ``counted``, a plain function noted it, or another thread did, and the stack cannot say: then it is what ``counted``
+    holds, as declared."""
+    frame = sys._getframe(2)
+    while frame is not None and "self" not in frame.f_locals:
+        frame = frame.f_back
+    found = frame.f_locals["self"] if frame is not None else counted
+    return counted.inner if found is counted else found
+
+
 class _Requests:
     """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
     nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
     ``stopped`` says which stopped it. A request takes its place in ``sent`` before it goes out, under one lock, so requests
     running at once can never pass the limit between them. During a tick each request looks at ``halted`` first, so a stop
-    lands at the next model call: a request already sent comes back first, since nothing here can end one. After a refusal
-    nothing more goes out that tick, and ``refused`` holds each request ever refused here, which never goes out again."""
+    lands at the next model call: a request already sent comes back first, since nothing here can end one. ``barring`` is what
+    a request's real sender is held to. After a refusal nothing more goes out that tick, and ``refused`` holds each request ever
+    refused here, which never goes out again."""
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
-                 halted: Callable[[], _Halted | None] = lambda: None) -> None:
-        self.now, self.halted = now, halted
+                 halted: Callable[[], _Halted | None] = lambda: None,
+                 barring: Callable[[Any], _Halted | None] = lambda sender: None) -> None:
+        self.now, self.halted, self.barring = now, halted, barring
         self.refused: set[str] = set()
         self._lock = threading.Lock()
         self.close()
@@ -249,6 +267,12 @@ class _Requests:
         """A request about to go out. It keeps its place whatever becomes of it: a failed one may have reached the model."""
         self.admit(wait, places=1)
 
+    def from_sender(self, sender: Any) -> None:
+        """Refuse a request its real sender may not send, before it goes out or takes a place."""
+        barred = self.barring(sender) if self.limit != math.inf else None
+        if barred is not None:
+            raise barred
+
     def count(self, requests: int) -> None:
         """Requests that had no boundary to take a place at."""
         with self._lock:
@@ -260,12 +284,13 @@ class _Requests:
         if until is not None and self.limit != math.inf:
             raise _AtLimit(until, str(failed)[:300]) from failed
 
-    def at_a_refusal(self, failed: LLMError, request: str) -> None:
-        """End the tick when a classifier or a permission stopped a request, and let nothing more go out of it."""
+    def at_a_refusal(self, failed: Any, request: str) -> None:
+        """End the tick when a classifier or a permission stopped a request, and let nothing more go out of it. ``failed``: what
+        the request raised, or what ``WatchedClaude`` read before it raised anything."""
         said = refused_by(str(failed))
         if said and self.limit != math.inf:
             self.refusal = {"said": said, "request": request}
-            raise _Refused(said) from failed
+            raise _Refused(said)
 
 
 class _Resends(list):
@@ -321,10 +346,14 @@ class _Counted:
         took: list[None] = []
 
         def next_request() -> None:
+            sender = _sender(self)
+            self.requests.from_sender(sender)
+            read_stops(sender)
             self.requests.take()
             took.append(None)
 
-        with counting(before_call=next_request) as noted, _gating_resends(self.requests.take):
+        with (counting(before_call=next_request) as noted, _gating_resends(self.requests.take),
+              telling_stops(lambda said: self.requests.at_a_refusal(said, asked))):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
@@ -341,8 +370,7 @@ class _Counted:
 
 def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, requests: _Requests) -> Workflow:
     run, judge = domain.execution(), domain.judge()
-    models = {name: dataclasses.replace(model, caller=_Counted(watched(model.caller), requests))
-              for name, model in run.models.items()}
+    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, requests)) for name, model in run.models.items()}
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
     return Workflow(name=domain.name, task=run.task, checks=run.checks, oracle=judge.verdict, suite=suite,
@@ -429,8 +457,8 @@ class ShadowLoop:
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self.evaluating = False                   # this tick has begun its held-out evaluation
-        self.requests = _Requests(lambda: self._now(), self._halted)
-        self._proposer = _Counted(watched(proposer), self.requests)
+        self.requests = _Requests(lambda: self._now(), self._halted, self._barred)
+        self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
         if reach:                                # before anything is written: this folder is all the loop ever writes
@@ -491,6 +519,12 @@ class ShadowLoop:
             return _Halted(STOPPED, why)
         engaged = stop.engaged()
         return _Halted(stop.STOPPED, f"G6 is stopped: {engaged}") if engaged is not None else None
+
+    def _barred(self, sender: Any) -> _Halted | None:
+        """Why the caller really sending a request may not send it. Enrolment can only read what a domain declares, so a
+        wrapper can declare one caller and send through another: this is the same rule, held to what goes out."""
+        problems = sender_problems(sender, self.provider)
+        return _Halted(*problems[0]) if problems else None
 
     def _calls_per_run(self) -> int:
         """The most one run can call: what the models declare, or, on G6's own executor with no step of the domain's, one
@@ -617,7 +651,7 @@ class ShadowLoop:
         fact, and the pause is only its note."""
         cycles = self.log.since_resumed()
         for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP):
+            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP, *BARRED):
                 return cycle["reason"]
         streak = self.log.failed_run()
         if len(streak) < MAX_FAILED_CYCLES:
@@ -761,6 +795,8 @@ class ShadowLoop:
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
                             charged=charged)
+        elif halted is not None and halted.code in BARRED:   # a fault that is on the record, and holds the loop for a person
+            row |= {"outcome": "error", "code": halted.code, "reason": f"{halted.said}: nothing was sent, and nothing is adopted"}
         elif halted is not None:      # also no cycle: what ran is charged, and none of it counts
             return self._cut_off(halted, charged)
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
