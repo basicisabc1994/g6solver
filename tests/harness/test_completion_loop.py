@@ -3563,3 +3563,13 @@ def test_a_commit_with_no_stop_since_the_prompt_never_moves_the_base(world, monk
     commit_a_dependency(world)      # the agent's, in a turn that has not ended
     prompted(world, "and fix it")
     assert asked_now()["base"] == base and asked_now()["task"] == "look at double\n\nand fix it"
+
+def test_a_comment_turned_into_code_under_a_review_leaves_no_clean_stop(world, monkeypatch):
+    """Past a review of a new file: U+2028 ends no line in Python, so one line of comment, and a newline for it makes it code."""
+    Reviewed(monkeypatch)
+    new = world.repo / "new.py"
+    new.write_bytes("value = 'safe'\n# comment\u2028value = 'unsafe'\n".encode("utf-8"))
+    critic = reads_then(lambda: new.write_bytes(b"value = 'safe'\n# comment\nvalue = 'unsafe'\n"))
+    step = world.advance(critic=critic)
+    assert step.code == loop.NO_CLEAN_REVIEW, f"a comment became code under the review, and it ended {step.ending!r}"
+    assert "+# comment\u2028value = 'unsafe'\n" in critic.calls[0][1]      # and the reviewer was shown one comment, as it was

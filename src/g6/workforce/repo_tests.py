@@ -724,6 +724,14 @@ def derive_tests(change: Change, limit: int = MAX_DERIVED, *,
 DIFF_FILE_CHARS = 200_000
 
 
+def _at_newlines(text: str) -> list[str]:
+    """``text``'s lines, cut at newlines and nowhere else, as git cuts a tracked file's. ``str.splitlines`` also cuts at
+    characters Python ends no line at, such as a form feed or U+2028, so a comment would read as code, and two files that run
+    differently as one patch. On text with none of those characters, the two give the same lines."""
+    lines = text.split("\n")
+    return lines[:-1] if not lines[-1] else lines
+
+
 def diff_text(change: Change) -> str:
     """The change as one unified diff: git's own for tracked files (each file's text, never a ``textconv`` filter's),
     then each untracked file the change holds as added lines (at most ``DIFF_FILE_CHARS`` of it), so a scan of the
@@ -736,7 +744,7 @@ def diff_text(change: Change) -> str:
     text = diffed.decode("utf-8", "replace")
     new = set(_paths(others)) | _tracked_new(change.repo, change.base_commit)   # a force-added file too (F4)
     for rel in sorted(new & set(change.files) - set(change.outside_links)):   # never read (M1)
-        lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS].splitlines()
+        lines = _at_newlines((change.repo / rel).read_text(encoding="utf-8", errors="replace")[:DIFF_FILE_CHARS])
         text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
     return text
 

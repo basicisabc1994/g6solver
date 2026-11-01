@@ -166,6 +166,40 @@ def test_a_force_added_file_is_in_the_diff_the_snapshot_and_absent_at_the_base(r
     assert (copy / "data" / "helper.py").read_bytes() == b"# a comment\n"
 
 
+def _diff_as_it_was(change) -> str:
+    """``diff_text`` as it cut a new file before: at every character ``splitlines`` takes for a line's end."""
+    diffed, others = repo_tests._private(change.repo, change.base_commit,
+                                         ("diff", "--no-color", "--no-ext-diff", "--no-textconv", "--text"),
+                                         ("ls-files", "--others", "--exclude-standard", "-z"))
+    text = diffed.decode("utf-8", "replace")
+    new = set(repo_tests._paths(others)) | repo_tests._tracked_new(change.repo, change.base_commit)
+    for rel in sorted(new & set(change.files) - set(change.outside_links)):
+        lines = (change.repo / rel).read_text(encoding="utf-8", errors="replace")[:repo_tests.DIFF_FILE_CHARS].splitlines()
+        text += f"--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+    return text
+
+
+def _decided(got: dict) -> dict:
+    assessment = got["assessment"]
+    return {"outcome": assessment["outcome"], "reasons": assessment["reasons"], "requirements": assessment["requirements"],
+            "unknowns": assessment["unknowns"], "completion": assessment["completion"],
+            "changed_files": assessment["scope"]["changed_files"], "reliability": got["completion_state"]}
+
+
+@pytest.mark.parametrize("rel, text", [("pkg/helper.py", "def helper():\n    return 1\n\n\nclass Thing:\n    pass\n"),
+                                       ("test_new.py", "def test_new():\n    assert 1 + 1 == 2\n"),
+                                       ("test_skips.py", "import pytest\n\n\n@pytest.mark.skip\ndef test_s():\n    assert 0\n"),
+                                       ("docs.txt", "plain words\r\nin a text file\r\n"), ("pkg/empty.py", "")])
+def test_on_ordinary_text_a_patch_review_decides_exactly_what_it_did(repo, monkeypatch, rel, text):
+    """Each caller of ``diff_text`` reads its text and nothing else of this change, so bytes that match decide the same."""
+    (repo / rel).write_bytes(text.encode("utf-8"))
+    _recorded(monkeypatch)
+    assert _diff_as_it_was(repo_tests.change(repo)) == repo_tests.diff_text(repo_tests.change(repo))
+    now = _review(repo)
+    monkeypatch.setattr(repo_tests, "diff_text", _diff_as_it_was)
+    assert _decided(now) == _decided(_review(repo))
+
+
 MARKER = "OUTSIDE-MARKER benign text\n"
 
 
