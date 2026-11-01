@@ -5,6 +5,8 @@ cannot drift. No model, no container, nothing written under ``validation/``."""
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,7 +17,10 @@ sys.path.insert(0, str(ROOT / "validation" / "worked_examples"))
 
 import run as we  # noqa: E402
 
+from g6.core.llm import FakeLLM, LLMError  # noqa: E402
 from g6.harness import completion_loop as loop  # noqa: E402
+from g6.harness import verification_proposer as proposer  # noqa: E402
+from g6.harness import verification_search as vs  # noqa: E402
 
 ARM = "L9"
 #: Text with braces, as a trained harness may hold: each part must take them as run.py does.
@@ -138,3 +143,113 @@ def test_the_scout_gate_counts_as_l9_counts(raw, numbers):
 ])
 def test_the_critics_reply_is_read_as_l9_reads_it(said, proof):
     assert loop.critic_report(said, proof=proof) == we.critic_report(said, proof=proof)
+
+
+# --- arm K, the review-until-clean loop: ``reviews_until_clean`` and ``advance`` on the same reviews -------------------------
+
+FOUND = {"rule": "a {rule}", "why": "a why", "test": "def test_x():\n    assert {}"}
+FAILS = we.ProbeRun(exit=1, results={"t": "failed"}, texts={"t": "AssertionError"})
+PASSES = we.ProbeRun(exit=0, results={"t": "passed"}, texts={})
+BROKEN = we.ProbeRun(exit=2, results={}, texts={})
+QUIET = {"verdict": "none", "rule": "no rule", "why": "nothing", "test": "", "error": ""}
+FAILED = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": "timeout"}
+
+
+def defect(n: int) -> dict:
+    return {"verdict": "defect", "rule": f"rule {n}", "why": f"reason {n}", "test": f"def test_{n}():\n    assert 0", "error": ""}
+
+
+def test_the_shipped_text_is_ks():
+    shipped = loop.harness()
+    assert shipped.critic_note == we.CRITIC_NOTE and shipped.review_ask == we.REVIEW_ASK
+    assert loop.review_note(FOUND, shipped) == we.CRITIC_NOTE.format(**FOUND) + we.REVIEW_ASK
+    assert we.convert_note("X1", FOUND) == we.CONVERT_ON_PATCH + loop.review_note(FOUND, shipped)
+
+
+def test_each_reviews_test_has_ks_file_name():
+    assert [loop.critic_file(n) for n in range(1, 6)] == [we.critic_files(n)[1] for n in range(1, 6)]
+
+
+def frozen(monkeypatch, reviews: list[dict], sets: list, moves: bool) -> dict:
+    """``reviews_until_clean`` itself, with a tree that moves on with each repair unless ``moves`` is false."""
+    tree, left, seen, sent = [0], list(sets), [], []
+
+    def sh(agent, script, *args, **kw):
+        return type("Done", (), {"stdout": f"tree {tree[0]}".encode(), "stderr": b"", "returncode": 0})()
+
+    def critique(n: int) -> dict:
+        seen.append(n)
+        return reviews[n - 1]
+
+    def session(ctx, run, agent, args, key, tally, text, name, **kw):
+        sent.append(text)
+        tree[0] += int(moves)
+
+    monkeypatch.setattr(we, "run_set", lambda *args: left.pop(0))
+    monkeypatch.setattr(we, "run_session", session)
+    monkeypatch.setattr(we, "scout_again", lambda args: args)
+    ctx = type("Ctx", (), {"docker": type("Docker", (), {"sh": staticmethod(sh)})()})()
+    run = type("Run", (), {"write_json": lambda self, name, body: None})()
+    got = we.reviews_until_clean(ctx, type("T", (), {"repo": "/w/r"})(), run, "agent", "b", [], "key", None, 1.0, 0.0, critique)
+    return {"reviews": len(seen), "sent": sent, "reason": got["reason"], "clean": got["status"] == "no_counterexample_in_domain"}
+
+
+def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves: bool) -> dict:
+    """``advance``, one hook at a time, on the same reviews. Each new test takes what ``sets`` says, as ``run.py``'s whole folder
+    does, and an earlier one passes, which is all the frozen loop's cases ask of one."""
+    left, seen = list(sets), []
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    monkeypatch.setattr(proposer, "boundary", lambda root: "")
+    monkeypatch.setattr(loop, "review_patch", lambda repo, **asked: {"assessment": {"report": "R"}})
+
+    def reply(system: str, user: str) -> str:
+        found = reviews[len(seen)]
+        seen.append(found)
+        if found["error"]:
+            raise LLMError(found["error"])
+        proof = re.search(r"review [0-9a-f]{32}", user)[0]
+        return (f"READ: {proof}\nRULE: {found['rule']}\nVERDICT: {found['verdict']}\nWHY: {found['why']}\n"
+                + (f"```python\n{found['test']}\n```\n" if found["test"] else ""))
+
+    def run_check(change, placed, source, node, *, at_base, timeout_s, roots=()):
+        got = left.pop(0) if Path(placed).name == loop.critic_file(len(seen)) else PASSES
+        if got.exit not in (0, 1):
+            return {"verdict": "collection_error", "said": "will not run"}
+        return {"verdict": "failed" if got.exit else "passed", "said": "", "rootdir": "", "loaded_outside": {},
+                "loaded_complete": True, "os_errors": [], "failure_messages": {},
+                "test_outcomes": {f"{placed}::t": {"setup": "passed", "call": got.results["t"], "teardown": "passed"}}}
+
+    monkeypatch.setattr(vs, "_run_check", run_check)
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    for args in (("init", "-q"), ("add", "."), ("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "b")):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    (root / "mod.py").write_text("x = 2\n", encoding="utf-8")
+    critic, session, sent = FakeLLM(reply), tmp_path / "g6" / "completion_loop" / "s1", []
+    for repair in range(we.MAX_REPAIRS + 2):
+        step = loop.advance(root, "the task", "HEAD", session, critic=critic)
+        if step.action == loop.STOP:
+            break
+        sent.append(step.text)
+        if moves:
+            (root / "mod.py").write_text(f"x = {repair + 3}\n", encoding="utf-8")
+    state = json.loads((session / "state.json").read_text(encoding="utf-8"))
+    return {"reviews": len(seen), "sent": sent, "reason": state["stop"], "clean": state["stop"] == loop.CLEAN}
+
+
+@pytest.mark.parametrize("reviews, sets, moves", [
+    ([QUIET], [], True),                                                    # nothing at once
+    ([defect(1), defect(2), QUIET], [FAILS, FAILS], True),                  # the point of the arm
+    ([defect(1), QUIET], [FAILS], True),
+    ([defect(n) for n in range(1, we.MAX_REPAIRS + 2)], [FAILS] * (we.MAX_REPAIRS + 1), True),     # the cap
+    ([defect(1), defect(2)], [FAILS], False),                               # the agent rejected it
+    ([defect(1)], [PASSES], True),                                          # a test that passes is no finding
+    ([defect(1)], [BROKEN], True),                                          # one that will not run says nothing
+    ([{**defect(1), "test": ""}], [], True),                                # a defect with no test sends nothing
+    ([FAILED], [], True),                                                   # no clean review
+    ([defect(1), FAILED], [FAILS], True),
+    ([defect(1), {"verdict": "maybe", "rule": "", "why": "", "test": "", "error": ""}], [FAILS], True),
+])
+def test_the_loop_runs_as_k_runs(tmp_path, monkeypatch, reviews, sets, moves):
+    assert product(tmp_path, monkeypatch, reviews, sets, moves) == frozen(monkeypatch, reviews, sets, moves)

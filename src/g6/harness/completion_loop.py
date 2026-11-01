@@ -2,6 +2,17 @@
 """The completion loop: when a coding agent says it has finished, test the work with checks it never saw, send failures
 back in the same session until the work holds or the stop rule fires, and say what was tested and what remains unknown.
 
+Two loops share this module. Once a critic is approved it is the worked examples' arm K (``reviews_until_clean`` in
+``validation/worked_examples/run.py``), the review-until-clean loop: another model family reads the finished patch without the
+agent's reasoning, and must state a rule, reasons and a test. If that test fails on the patch, the three go back in the same
+session, and a fresh review reads the new patch, up to ``MAX_REPAIRS`` repairs. The agent may reject a finding by leaving the
+code as it was. No scout and no probe: ``advance`` needs the boundary and the critic and nothing else, and a review that fails
+or cannot be read ends the loop with no clean review. Each review's test stays beside the earlier ones (``critic_file``) to
+catch a repair that undoes it, and runs alone, so one that will not run says nothing of the patch and hides no other. A run
+that reproduced a finding leaves a row in ``FAILURES`` for the next cycle of the self-improvement loop.
+
+``MODE_LINE`` in the person's key file, or no critic, gives the other loop, described from here on.
+
 It is the worked examples' arm L9 (``validation/worked_examples/run.py``), moved into the product. Its text is data
 (``HARNESS``, read by ``harness``; a test holds it to ``run.py``'s), and a later trained harness needs no code: a file
 with the fields ``trained`` holds, the parts ``TRAINED`` names, adds to those parts as ``run.py``'s ``trained`` does.
@@ -52,6 +63,7 @@ from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import LLMCaller, LLMError, _start_model_call, provider_from_env
+from g6.core.storage import state_path
 from g6.harness import patch_report
 from g6.harness.completion_hook import CHILD
 from g6.harness import verification_proposer as proposer
@@ -85,6 +97,18 @@ SCOUT_SETTINGS = {"disableAllHooks": True, "permissions": {"deny": [f"Read(~/{fo
     ".g6", ".claude", ".codex", ".ssh")]}}
 #: The line in the person's key file that approves Codex as the reviewer from another model family.
 CRITIC_LINE = "G6_LOOP_CRITIC"
+#: The line in the person's key file that keeps the scouts' loop where a critic is approved: ``scouts``.
+MODE_LINE = "G6_LOOP_MODE"
+#: How the review-until-clean loop ends, ``reviews_until_clean``'s words where it has them; what a review that was read says.
+CLEAN, NO_REVIEW, RAN_OUT = "a review reproduced nothing", "a review failed", "the repairs ran out with a defect open"
+LEFT, WITHDRAWN, READ_VERDICTS = "the agent left the code as it was", "the agent took its change back", ("none", "defect")
+NO_REASON = "no reason was given"
+#: A stop that leaves the patch with no review that came back clean, whatever earlier reviews said.
+NO_CLEAN_REVIEW = "G6_E_NO_CLEAN_REVIEW"
+#: A finding reproduced in a run: the row's stable cause, for ``metaharness.domain.FailureRecord``.
+OPEN, FIXED = "review_finding_open", "review_finding_fixed"
+#: Where those rows go, beside the sessions' folders: local, and never pushed.
+FAILURES = ("completion_loop", "failures.jsonl")
 #: The one requirement the final review assesses: the task's text, which no stated check tests.
 REQUIREMENT = "task"
 RUN_BY_G6 = "G6 runs them for you when you finish, confined, with no network, and sends back what each did"
@@ -94,6 +118,9 @@ NO_BOUNDARY = ("G6's completion loop did not run: no operating-system boundary c
                "needs for a boundary.")
 NOT_APPROVED = ("G6's completion loop did not run: its scouts use your Claude Code sign-in, and nothing in your key file "
                 "approves that. Add the line G6_LLM_PROVIDER=claude_code to {path} to turn it on. Nothing was tested.")
+NOT_ON = ("G6's completion loop did not run: nothing in your key file approves a reviewer. Add the line "
+          f"{CRITIC_LINE}=codex to {{path}} to turn on the review-until-clean loop, on your Codex sign-in. The line "
+          "G6_LLM_PROVIDER=claude_code turns on the scouts' loop instead. Nothing was tested.")
 NO_TASK = ("G6's completion loop did not run: it could not tell what you asked for, so there was nothing to test the work "
            "against. Nothing was tested.")
 STOPPED = {"no_counterexample_in_domain": "no probe failed", "timeout": "the loop's time ran out",
@@ -122,6 +149,7 @@ class Harness:
     repair: str
     critic: str
     critic_note: str
+    review_ask: str
 
 
 def harness(path: Path = HARNESS) -> Harness:
@@ -141,7 +169,7 @@ def harness(path: Path = HARNESS) -> Harness:
                    data["fixer"] + (f"\n\n{fixer}" if fixer else ""),
                    data["repair"] + (f"\n\n{literal(repair)}" if repair else ""),
                    data["critic"].replace("</task>", f"4. {critic}\n</task>", 1) if critic else data["critic"],
-                   data["critic_note"])
+                   data["critic_note"], data["review_ask"])
 
 
 @dataclass
@@ -205,6 +233,11 @@ def with_critic(found: tuple[set[str], str], critic: Mapping[str, str], note: st
     if not any(case.startswith("critic:") for case in failing):
         return failing, text
     return failing, note.format(**{k: critic.get(k, "") for k in ("rule", "why", "test")}) + "\n\n" + text
+
+
+def review_note(found: Mapping[str, str], shipped: Harness) -> str:
+    """What goes back to the agent in the review-until-clean loop, as ``reviews_until_clean`` sends it."""
+    return shipped.critic_note.format(**{k: found.get(k, "") for k in ("rule", "why", "test")}) + shipped.review_ask
 
 
 def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
@@ -296,10 +329,11 @@ def critic_host() -> LLMCaller | None:
 
 # --- the probes: G6's rules for a check a model proposed, and its confined runs --------------------------------------------
 
-def _checks(where: Path, root: Path) -> tuple[list[vs.ProposedCheck], dict[str, str], list[str]]:
-    """The test files in ``where`` a proposed check may be, their places in a copy, and why each other file is refused."""
+def _checks(where: Path, root: Path, only: str = "") -> tuple[list[vs.ProposedCheck], dict[str, str], list[str]]:
+    """The test files in ``where`` (``only`` that one, if named) a proposed check may be, their places in a copy, and why each
+    other file is refused."""
     checks, refused = [], []
-    for path in sorted(item for item in where.iterdir() if item.is_file()) if where.is_dir() else ():
+    for path in sorted(item for item in where.iterdir() if item.is_file() and only in ("", item.name)) if where.is_dir() else ():
         source = path.read_text(encoding="utf-8", errors="replace")
         try:
             if proposer._PLUGIN.search(source):
@@ -342,12 +376,13 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
     return ProbeRun(code, results, texts, "\n".join(tail), boundary)
 
 
-def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float) -> ProbeRun:
-    """The probes in ``probes`` on the tree or at the base commit: each file in its own confined copy, with no network. A
-    file with no time left before ``deadline`` is not started, so the set is unusable and says nothing of the code."""
-    checks, placed, _ = _checks(probes, change.repo)
+def run_set(change: repo_tests.Change, probes: Path, *, at_base: bool, deadline: float, only: str = "") -> ProbeRun:
+    """The probes in ``probes`` (``only`` that file, if named) on the tree or at the base commit: each file in its own confined
+    copy, with no network. A file with no time left before ``deadline`` is not started, so the set is unusable and says
+    nothing of the code."""
+    checks, placed, refused = _checks(probes, change.repo, only)
     if not checks:
-        return ProbeRun(None, {}, {}, "no test file G6 could run")
+        return ProbeRun(None, {}, {}, "; ".join(refused) or "no test file G6 could run")
     runs = []
     for one in checks:
         left = int(min(RUN_S, deadline - _clock()))
@@ -421,9 +456,14 @@ def _pack(change: repo_tests.Change, task: str, proof: str) -> str:
     return "\n\n".join(parts)[:MAX_PACK_CHARS]
 
 
-def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path) -> dict:
-    """L9's critic: another model family reads the finished patch once. One that fails is recorded and the loop goes on. Its
-    test, if it has one, waits in ``where`` to run with the probes."""
+def critic_file(n: int) -> str:
+    """Where review ``n`` keeps its test, beside the earlier ones: an earlier test stays to catch a repair that undoes it."""
+    return "test_critic.py" if n == 1 else f"test_critic_{n}.py"
+
+
+def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path, n: int = 1) -> dict:
+    """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
+    recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes."""
     found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
     try:
@@ -432,8 +472,29 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if found["test"]:
         where.mkdir(parents=True, exist_ok=True)
-        (where / "test_critic.py").write_text(found["test"] + "\n", encoding="utf-8")
+        (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
     return found
+
+
+def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, where: Path, reviews: list[dict],
+                 deadline: float) -> tuple[set[str], str]:
+    """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
+    review's test, each alone. It gives what fails and the words of the latest review whose test fails. A review that failed
+    ends the loop whatever fails, as the patch it should have read was not read, so it gives nothing to send back."""
+    n, results, failing = len(reviews) + 1, {}, set()
+    said = run_critic(change, task, critic, shipped.critic, where, n)
+    for name in [critic_file(i) for i in range(1, n + 1) if (where / critic_file(i)).is_file()]:
+        got = run_set(change, where, at_base=False, deadline=deadline, only=name)
+        found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
+        failing |= found
+        results[name] = "failed" if found else "passed" if got.usable else "did not run"
+        if name == critic_file(n) and not got.usable:
+            said["unrun"] = got.tail[-300:]
+    said.update(patch=digest(repo_tests.diff_text(change)), file=critic_file(n), results=results)
+    reviews.append(said)
+    if said["verdict"] not in READ_VERDICTS or not failing:
+        return set(), ""
+    return failing, review_note(next(one for one in reversed(reviews) if results.get(one["file"]) == "failed"), shipped)
 
 
 # --- the loop --------------------------------------------------------------------------------------------------------------
@@ -463,7 +524,7 @@ class Repairs:
                 last["tree"], self.pending = tree, last["text"]
                 return SearchResult(None, "the agent has what failed", False, self.round)
             if last["tree"] == tree:
-                self.why = "the agent left the code as it was"
+                self.why = LEFT
                 return SearchResult(None, self.why, False, self.round)
         self.round += 1
         return SearchResult({0: f"round {self.round}"}, "agent", False, self.round)
@@ -477,9 +538,11 @@ class Repairs:
 
 @dataclass(frozen=True)
 class Step:
-    """What comes next: ``CONTINUE``, with the text for the agent, or ``STOP``, with the report ("" when there is none)."""
+    """What comes next: ``CONTINUE``, with the text for the agent, or ``STOP``, with the report ("" when there is none).
+    ``code``: the stable code of a stop that tested nothing or left no clean review, for a surface with G6's envelope."""
     action: str
     text: str = ""
+    code: str = ""
 
 
 def _load(session: Path) -> dict:
@@ -493,26 +556,35 @@ def _save(session: Path, state: dict) -> None:
     os.replace(session / "state.json.new", session / "state.json")
 
 
-def _finish(session: Path, state: dict, report: str) -> Step:
+def _finish(session: Path, state: dict, report: str, code: str = "") -> Step:
     """The end of the loop for this session: the report, which is kept beside the state."""
     state["done"] = True
     _save(session, state)
     (session / "report.md").write_text(report, encoding="utf-8")
     if state.get("visible"):
         shutil.rmtree(state["visible"], ignore_errors=True)
-    return Step(STOP, report)
+    return Step(STOP, report, code)
 
 
 def _before_fix() -> bool:
     return (keys.get(WHEN_LINE) or "").strip().lower() == "before_fix"
 
 
-def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
-    """What the probes did, above the patch review of what stopped the loop. They are not given to the review."""
+def _scouts_chosen() -> bool:
+    return (keys.get(MODE_LINE) or "").strip().lower() == "scouts"
+
+
+def _final_review(root: Path, task: str, base: str) -> str:
+    """The patch review of what stopped the loop, on the task's text alone: what the loop ran is not given to it."""
     reply = review_patch(root, task=task, requirements=[{"id": REQUIREMENT, "text": task[:20_000], "checks": []}], base=base,
                          timeout_s=REVIEW_S)
-    review = (reply.get("assessment") or {}).get("report") or ("The patch review gave no report: " + patch_report.code(
+    return (reply.get("assessment") or {}).get("report") or ("The patch review gave no report: " + patch_report.code(
         (reply.get("warning_card") or {}).get("message", ""), 300))
+
+
+def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
+    """What the probes did, above the patch review of what stopped the loop. They are not given to the review."""
+    review = _final_review(root, task, base)
     rounds, ran = state.get("rounds") or [], state.get("ran") or {}
     return patch_report.completion_report({
         "reason": reason, "repairs": sum(one["tree"] is not None for one in rounds), "max_repairs": MAX_REPAIRS,
@@ -522,6 +594,54 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
         "sets": [{"label": label, "hidden": label != "scout", "ran": ran.get(label, 0), "left_out": one["left_out"],
                   "refused": one["refused"], "late": one.get("when") != BEFORE} for label, one in state["sets"].items()]},
         review)
+
+
+def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The reviews whose own test failed when they wrote it, fixed (it passed on the last run) and open (anything else)."""
+    last = reviews[-1]["results"] if reviews else {}
+    found = [one for one in reviews if one["results"].get(one["file"]) == "failed"]
+    return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
+
+
+def _failure_row(task: str, base: str, change: repo_tests.Change, state: dict) -> dict:
+    """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
+    a cause must be a stable code, and a reproduced finding is observed apart from the agent: G6 ran another family's test."""
+    reviews = state["reviews"]
+    fixed, still = findings(reviews)
+    return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": OPEN if still else FIXED, "changeable": True,
+            "note": (still or fixed)[0]["rule"], "independently_observed": True, "task": digest(task), "base": base,
+            "rounds": len(reviews), "reviews": [{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")}
+                                                for one in reviews],
+            "stop": state["stop"], "left": state.get("left", ""),
+            "tree_changed": digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
+
+
+def _keep_failures(task: str, base: str, change: repo_tests.Change, state: dict) -> None:
+    """The run's row, added to ``FAILURES``, when it reproduced a finding. A row that cannot be written costs no report."""
+    if not any(findings(state.get("reviews") or [])):
+        return
+    try:
+        path = state_path(*FAILURES)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8", newline="\n") as out:
+            out.write(json.dumps(_failure_row(task, base, change, state), ensure_ascii=False) + "\n")
+    except OSError as exc:
+        state["row"] = f"{type(exc).__name__}: {exc}"[:300]
+
+
+def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, session: Path, state: dict, reason: str,
+                said: str = "") -> Step:
+    """The end of the review-until-clean loop: the row, then what the reviews found above the patch review. Only a review that
+    was read and reproduced nothing is clean, and running out of repairs or a finding the agent rejected is a result."""
+    state["stop"] = reason
+    if reason == LEFT:
+        state["left"] = " ".join(said.split())[:MAX_CASE_CHARS] or NO_REASON
+    code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
+    _keep_failures(task, base, change, state)
+    return _finish(session, state, patch_report.completion_report({
+        "reason": reason, "reviews": state.get("reviews") or [], "repairs": sum(one["tree"] is not None for one in state["rounds"]),
+        "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "boundary": state.get("boundary")},
+        _final_review(root, task, base)), code)
 
 
 def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, shipped: Harness, host: Host,
@@ -561,8 +681,8 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     """The scouts before the fix, at a session's first task, as L9 runs them, when ``WHEN_LINE`` in the person's key file says
     ``before_fix``; what the agent is told before it starts ("" for nothing). With no such line nothing here runs or is
     spent. Whatever keeps them from running, the agent's turn goes ahead, and ``advance`` does what is left, or says what
-    did not happen. Nothing is spent on a repository with no Python."""
-    if not _before_fix():
+    did not happen. Nothing is spent on a repository with no Python, or where the review-until-clean loop will run."""
+    if not _before_fix() or (critic_host() is not None and not _scouts_chosen()):
         return ""
     session = Path(session)
     root = repo_tests.checked_repo(repo)
@@ -586,31 +706,43 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
 
 def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None,
-            critic: LLMCaller | None = None) -> Step:
+            critic: LLMCaller | None = None, said: str = "") -> Step:
     """One hook of the loop, for the repository's working tree against ``base``: see the module's docstring. ``scout`` and
-    ``critic``: the sessions to use, else the ones the person's key file approves."""
+    ``critic``: the sessions to use, else the ones the person's key file approves. ``said``: the agent's words as it stopped,
+    kept as its reason if it left the code as it was."""
     session = Path(session)
     state = _load(session)
     if state.get("done"):
         return Step(STOP)
     root = repo_tests.checked_repo(repo)
     change = repo_tests.change(root, base)
+
+    def refused(text: str, code: str) -> Step:
+        state["stop"] = text
+        _keep_failures(task, base, change, state)
+        return _finish(session, state, text, code)
+
     if not change.sources:
-        return Step(STOP)
+        return _review_end(root, task, base, change, session, state, WITHDRAWN) if state.get("reviews") else Step(STOP)
     if not task.strip():
-        return _finish(session, state, NO_TASK)
+        return refused(NO_TASK, "G6_E_INPUT_VALIDATION")
     why = proposer.boundary(root)
     if why:
-        return _finish(session, state, NO_BOUNDARY.format(why=why))
-    scout = scout or scout_host()
-    if scout is None:
-        return _finish(session, state, NOT_APPROVED.format(path=keys.path()))
+        return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE)
     critic = critic or critic_host()
+    reviewing = critic is not None and not _scouts_chosen()
+    if not reviewing:
+        scout = scout or scout_host()
+        if scout is None:
+            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=keys.path()), keys.KEY_MISSING)
     shipped = harness()
     state.setdefault("started", time.time())
     state.setdefault("sets", {})
-    rounds = state.setdefault("rounds", [])
+    rounds, reviews = state.setdefault("rounds", []), state.setdefault("reviews", [])
     ends = _clock() + STOP_S - REVIEW_S
+
+    def reviewed() -> tuple[set[str], str]:
+        return review_round(change, task, critic, shipped, session / "sets" / "critic", reviews, ends)
 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
@@ -633,18 +765,29 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
         return digest(repo_tests.snapshot(root))
 
     try:
-        _scouts(change, task, session, state, shipped, scout, AT_STOP)
-        if all(one["left_out"] for one in state["sets"].values()):
-            return _finish(session, state, _report(root, task, base, state, "no probe set could run"))
-        loop = Repairs(rounds, check, tree)
+        if not reviewing:
+            _scouts(change, task, session, state, shipped, scout, AT_STOP)
+            if all(one["left_out"] for one in state["sets"].values()):
+                return _finish(session, state, _report(root, task, base, state, "no probe set could run"))
+        loop = Repairs(rounds, reviewed if reviewing else check, tree)
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:
             raise
-        return _finish(session, state, NO_BOUNDARY.format(why=exc))
+        return refused(NO_BOUNDARY.format(why=exc), ISOLATION_UNAVAILABLE)
+    if loop.pending and reviewing:
+        _save(session, state)
+        return Step(CONTINUE, loop.pending)
     if loop.pending:
         told, first = shipped.repair.format(text=loop.pending), _told(state, shipped)   # first: no hook could say it before
         _save(session, state)
         return Step(CONTINUE, f"{first}\n\n{told}" if first else told)
-    return _finish(session, state, _report(root, task, base, state, loop.why or STOPPED.get(got.status, got.reason)))
+    reason = loop.why or STOPPED.get(got.status, got.reason)
+    if not reviewing:
+        return _finish(session, state, _report(root, task, base, state, reason))
+    if got.status == "no_counterexample_in_domain":
+        reason = CLEAN if reviews[-1]["verdict"] in READ_VERDICTS else NO_REVIEW
+    elif got.status == "counterexample_budget_exhausted":
+        reason = RAN_OUT
+    return _review_end(root, task, base, change, session, state, reason, said)

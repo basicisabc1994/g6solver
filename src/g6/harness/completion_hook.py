@@ -10,7 +10,9 @@ Nothing heavy is imported until a hook has work to do.
 
 ``stop``: ``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
 from the transcript and HEAD is the base. ``{"decision": "block", "reason": ...}`` hands the repair text back to the agent;
-when the stop rule fires the turn ends and ``systemMessage`` shows the report.
+when the stop rule fires the turn ends and ``systemMessage`` shows the report. What the agent said as it stopped goes with
+each call, from the hook's ``last_assistant_message`` where Claude Code gives one and else from the transcript, as it is the
+agent's reason if it left the code as it was.
 
 The hooks are a convenience, not a security boundary. A failure never holds the person's turn or the agent's: it ends with
 one line on standard error, and only exit 2 would block, which these never give. A session's folder is named by a digest,
@@ -53,24 +55,39 @@ def _record(session: Path, cwd: str, task: str) -> dict | None:
     return asked
 
 
-def _prompts(transcript: object) -> str:
-    """What the person asked, from the session's transcript: for a task no prompt hook saw ("" when it cannot be read)."""
+def _items(transcript: object, kind: str) -> list[list[str]]:
+    """The text of each item of ``kind`` in the session's transcript, skipping meta items and any line it cannot read ([]
+    when the file cannot be read)."""
     try:
         lines = Path(str(transcript)).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return ""
-    found: list[str] = []
+        return []
+    found: list[list[str]] = []
     for line in lines:
         try:
             item = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(item, dict) or item.get("type") != "user" or item.get("isMeta"):
+        if not isinstance(item, dict) or item.get("type") != kind or item.get("isMeta"):
             continue
         said = (item.get("message") or {}).get("content")
-        found += [said] if isinstance(said, str) else [part.get("text") or "" for part in said or []
-                                                       if isinstance(part, dict) and part.get("type") == "text"]
-    return "\n\n".join(text.strip() for text in found if text.strip())
+        found.append([said] if isinstance(said, str) else [part.get("text") or "" for part in said or []
+                                                           if isinstance(part, dict) and part.get("type") == "text"])
+    return found
+
+
+def _prompts(transcript: object) -> str:
+    """What the person asked, from the session's transcript: for a task no prompt hook saw ("" when it cannot be read)."""
+    return "\n\n".join(text.strip() for item in _items(transcript, "user") for text in item if text.strip())
+
+
+def _said(event: dict) -> str:
+    """What the agent said as it stopped: the hook's own field, else the transcript's last text ("" with neither)."""
+    said = event.get("last_assistant_message")
+    if isinstance(said, str) and said.strip():
+        return said
+    spoken = ["\n".join(text for text in item if text.strip()) for item in _items(event.get("transcript_path"), "assistant")]
+    return next((text for text in reversed(spoken) if text), "")
 
 
 def on_prompt(event: dict) -> dict:
@@ -100,7 +117,7 @@ def on_stop(event: dict) -> dict:
     from g6.harness import completion_loop as loop
 
     asked = json.loads((session / "task.json").read_text(encoding="utf-8"))
-    step = loop.advance(asked["repo"], asked["task"], asked["base"], session)
+    step = loop.advance(asked["repo"], asked["task"], asked["base"], session, said=_said(event))
     if step.action == loop.CONTINUE:
         return {"decision": "block", "reason": step.text}
     return {"systemMessage": step.text} if step.text else {}

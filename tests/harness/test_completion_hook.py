@@ -166,7 +166,7 @@ def test_a_repository_with_no_commit_records_nothing(tmp_path, monkeypatch, caps
 def advance_says(monkeypatch, step) -> list:
     calls = []
 
-    def advance(repo, task, base, session):
+    def advance(repo, task, base, session, said=""):
         calls.append((repo, task, base, session))
         if isinstance(step, Exception):
             raise step
@@ -191,6 +191,47 @@ def test_stop_blocks_the_turn_with_the_repair_text(repo, monkeypatch, capsys):
     assert code == 0
     assert json.loads(out) == {"decision": "block", "reason": "repair this: é"}
     assert calls == [(str(repo.resolve()), "fix the parser", git(repo, "rev-parse", "HEAD"), hook.folder("s1"))]
+
+
+def said_to_the_loop(monkeypatch) -> list:
+    """What each stop hook hands the loop as the agent's words."""
+    words = []
+
+    def advance(repo, task, base, session, said=""):
+        words.append(said)
+        return loop.Step(loop.STOP)
+
+    monkeypatch.setattr(loop, "advance", advance)
+    return words
+
+
+def test_the_agents_last_words_go_to_the_loop_from_the_hooks_own_field(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    words = said_to_the_loop(monkeypatch)
+    hooked(monkeypatch, capsys, "stop", {**stop(repo), "last_assistant_message": "The reviewer is wrong: é."})
+    assert words == ["The reviewer is wrong: é."]
+
+
+def test_with_no_such_field_the_agents_last_words_come_from_the_transcript(repo, monkeypatch, capsys, tmp_path):
+    lines = [{"type": "assistant", "message": {"content": [{"type": "text", "text": "the first thing it said"}]}},
+             {"type": "user", "message": {"content": "not the agent"}},
+             {"type": "assistant", "message": {"content": [{"type": "text", "text": "the last thing"},
+                                                           {"type": "text", "text": "it said"}]}},
+             {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit"}]}}]
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("\n".join(json.dumps(line) for line in lines) + "\nnot json\n", encoding="utf-8")
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    words = said_to_the_loop(monkeypatch)
+    hooked(monkeypatch, capsys, "stop", {**stop(repo), "transcript_path": str(transcript)})
+    assert words == ["the last thing\nit said"]
+
+
+@pytest.mark.parametrize("more", [{}, {"transcript_path": "absent.jsonl"}, {"last_assistant_message": "   "}])
+def test_a_stop_that_gives_no_words_gives_the_loop_none(repo, monkeypatch, capsys, more):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    words = said_to_the_loop(monkeypatch)
+    hooked(monkeypatch, capsys, "stop", {**stop(repo), **more})
+    assert words == [""]
 
 
 def test_when_the_stop_rule_fires_the_turn_ends_and_the_report_is_shown(repo, monkeypatch, capsys):
