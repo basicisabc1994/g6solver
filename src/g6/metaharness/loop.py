@@ -172,10 +172,12 @@ class _Requests:
     def close(self) -> None:
         self.open(math.inf)
 
-    def admit(self) -> None:
-        if self.unseen or self.sent >= self.limit:
+    def admit(self, under_way: int = 0) -> None:
+        """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``."""
+        if self.unseen or self.sent + under_way >= self.limit:
             self.stopped = True
-            raise LLMError(f"{TICK_BUDGET_SPENT}: this tick has sent {self.sent} of the {self.limit:g} it reserved")
+            raise LLMError(f"{TICK_BUDGET_SPENT}: this tick has sent {self.sent + under_way} of the {self.limit:g} it "
+                           "reserved")
 
 
 class _Counted:
@@ -184,16 +186,27 @@ class _Counted:
     or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
     is added from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
 
+    Each noted request is admitted at that same boundary, before it goes out, so a retry inside a caller stops at what the
+    tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
+    else's request. This one is the gate on that request: it raises before anything is sent or counted, and what it raises
+    is the ``LLMError`` a failed request raises, which every caller here passes on. That file is bound, so its sentence
+    stays until an issuance window.
+
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
-    retries. Only a usage record from the provider can show those, which is the relay of design section 3."""
+    retries. Only a usage record from the provider can show those, which is the relay of design section 3. A ``Retry-After``
+    resend has no boundary either: it is charged, and a call can pass the limit by those, when a server turned it away."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
         self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         self.requests.admit()
-        with counting() as noted, waits() as resent:
+
+        def next_request() -> None:
+            self.requests.admit(noted() + len(resent))
+
+        with counting(before_call=next_request) as noted, waits() as resent:
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             finally:

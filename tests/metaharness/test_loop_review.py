@@ -23,9 +23,10 @@ from g6.integrity import build_manifest
 from g6.metaharness import JUDGING_PATTERNS, Model, SuiteCase
 from g6.metaharness import domain as sealed_module
 from g6.metaharness.domain import Judge, sealed_closed
-from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
+from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Requests
 from g6.metaharness.method import Method
-from g6.self_maintenance.pacing import ProviderWindow
+from g6.operator.store import OperatorStore
+from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -506,3 +507,51 @@ def test_9_a_stale_handle_cannot_accept_a_judge_that_lost_its_independence_by_en
     got = loop.enrol("Ada")
     assert _code(got) == "G6_E_LOOP_NO_INDEPENDENT_JUDGE"
     assert _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED"
+
+# The review of the runner: a retry inside a caller stays within what was reserved ------------------------------------------
+
+def test_a_retry_inside_a_caller_cannot_pass_what_was_reserved():
+    store = OperatorStore(":memory:")
+    meter = BudgetMeter((ProviderWindow("claude", 5, START),), store=store)
+    reservation = meter.reserve("claude", START, 1)
+    assert reservation.admitted and reservation.ceiling == 1
+    requests = _Requests()
+    requests.open(reservation.amount)
+    backend = FakeLLM(default="")
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(EmptyRetry(backend), requests).complete("system", "user")
+    assert len(backend.calls) == 1 and requests.sent == 1 and requests.stopped
+
+
+def test_a_fallback_cannot_pass_what_was_reserved():
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: the first backend is down")
+
+    first, second = FakeLLM(down), FakeLLM()
+    requests = _Requests()
+    requests.open(1)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(FallbackCaller((first, second)), requests).complete("system", "user")
+    assert len(first.calls) == 1 and second.calls == [] and requests.sent == 1 and requests.stopped
+
+
+def test_a_retry_within_what_was_reserved_goes_out_and_is_counted():
+    answers = iter(("", "", "an answer"))
+    backend = FakeLLM(lambda system, user: next(answers))
+    requests = _Requests()
+    requests.open(3)
+    assert _Counted(EmptyRetry(backend), requests).complete("system", "user") == "an answer"
+    assert len(backend.calls) == requests.sent == 3 and not requests.stopped
+
+
+def test_a_tick_of_blank_replies_stops_at_what_it_reserved_retries_and_all(tmp_path, monkeypatch):
+    domain = domains.WordProblems(tmp_path)
+    backend = FakeLLM(default="")
+    _with_model(domain, EmptyRetry(backend))
+    proposer = domains.proposes({"prompt": domains.WORKING})
+    loop, _ = _enrolled(tmp_path, domain=domain, proposer=proposer)
+    start, reserved = loop.mh._head(), 10
+    monkeypatch.setattr(loop, "worst_case", lambda: reserved)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT" and got["outcome"] == "blocked"
+    assert len(backend.calls) + len(proposer.calls) <= reserved and loop.mh._head() == start
