@@ -489,6 +489,13 @@ def test_a_test_that_first_fails_after_a_later_repair_is_a_finding_and_stays_ope
     assert [[one["n"] for one in side] for side in patch_report.findings(reviews)] == [[1], [2]]
 
 
+def test_a_test_whose_failing_case_has_not_passed_stays_open_and_says_so():
+    reviews = [review(1, results={"test_critic_1.py": "failed"}), review(2, "none", {"test_critic_1.py": patch_report.NOT_PASSED})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "**Open:** review 1" in text and "**Fixed:**" not in text
+    assert "`test_critic_1.py` ran, but the case that failed did not pass, so nothing shows it is fixed." in text
+
+
 def test_a_test_that_never_failed_in_any_run_is_no_finding():
     reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {"test_critic_1.py": "passed"})]
     assert patch_report.findings(reviews) == ([], [])

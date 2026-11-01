@@ -501,8 +501,10 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     review's test, each alone. It gives what fails and the words of the latest review whose test fails. A review that failed
     ends the loop whatever fails, as the patch it should have read was not read, so it gives nothing to send back. A hook cut
     short repeats its review, and that review's test is the only one with its number. The patch itself is kept first, byte
-    for byte, as ``run.py`` keeps ``round-n.patch``: a later repair must not lose what a finding was about."""
-    n, results, failing, where = len(reviews) + 1, {}, set(), session / "sets" / "critic"
+    for byte, as ``run.py`` keeps ``round-n.patch``: a later repair must not lose what a finding was about. A file counts as
+    passed only if each case that ever failed in it has passed by its own id: a skip, a rename or a case no longer collected
+    fixes nothing. This decides what the report may call fixed, and what fails, and so what goes back, is as it was."""
+    n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
     patch, kept = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch"
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_bytes(patch.encode("utf-8"))
@@ -513,11 +515,14 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         got = run_set(change, where, at_base=False, deadline=deadline, only=name)
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
         failing |= found
-        results[name] = "failed" if found else "passed" if got.usable else "did not run"
+        failed[name] = sorted(case.removeprefix("critic:") for case in found)
+        owed = {case for one in reviews for case in one["failed"].get(name, ())}
+        results[name] = ("failed" if found else "did not run" if not got.usable else
+                         "passed" if all(got.results.get(case) == "passed" for case in owed) else patch_report.NOT_PASSED)
         said["boundary"] = got.boundary or said.get("boundary", "")
         if name == critic_file(n) and not got.usable:
             said["unrun"] = got.tail[-300:]
-    said.update(n=n, patch=digest(patch), file=critic_file(n), results=results)
+    said.update(n=n, patch=digest(patch), file=critic_file(n), results=results, failed=failed)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""

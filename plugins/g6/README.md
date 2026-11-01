@@ -63,9 +63,10 @@ loop runs once per session: start a new session for a new task.
 
 ## What the report says, and what it does not
 
-The report leads with reproduced findings: what was found, what was fixed, and what stayed open. A finding is open when the
-repairs ran out with its test still failing, or when the agent rejected it, with the agent's reason if it gave one. On the
-training bugs an open finding did not always mean a wrong patch, so read it as a question for you.
+The report leads with reproduced findings: what was found, what was fixed, and what stayed open. A finding is fixed only when
+the case that failed has passed: a skip or a rename fixes nothing. It is open when the repairs ran out with its test still
+failing, or when the agent rejected it, with the agent's reason if it gave one. On the training bugs an open finding did not
+always mean a wrong patch, so read it as a question for you.
 
 A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure it could show. A
 model wrote the tests, so none of them passes a requirement, and they are never given to the patch review as evidence.

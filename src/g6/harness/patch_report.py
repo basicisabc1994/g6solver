@@ -75,6 +75,8 @@ IGNORED_TO_DO = ("  - What to do: these files are untracked and git-ignored, yet
                  "project, commit them before the change under review; otherwise remove them or move them out of the "
                  "repository; then review again. Each is named once in `assessment.next_actions`.")
 TO_DO = frozenset({"ignored_file_can_change_tests"})
+#: A file of a reviewer's test that ran, and nothing failed, but a case that failed before has not passed by its own id.
+NOT_PASSED = "ran, but a case that failed has not passed"
 #: What the review-until-clean loop's report says of itself, every time (the worked examples' arm K).
 LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
                "- A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure "
@@ -394,7 +396,9 @@ def _review_lines(loop: dict) -> list[str]:
     lines += _cut([[f"- **Fixed:** review {one['n']}: {code(one['rule'], 200)}; its test passes now."] for one in fixed],
                   BUDGET["findings"], "report.md's folder, state.json")
     lines += _cut([[f"- **Open:** review {one['n']}: {code(one['rule'], 200)}; its test {code(one['file'])} "
-                    + ("fails." if last.get(one["file"]) == "failed" else "did not run again, so nothing shows it is fixed."),
+                    + {"failed": "fails.", NOT_PASSED: "ran, but the case that failed did not pass, so nothing shows it is "
+                                                       "fixed."}.get(last.get(one["file"]),
+                                                                     "did not run again, so nothing shows it is fixed."),
                     f"  - The reviewer's reasons: {code(one['why'], 300)}"] for one in still],
                   BUDGET["findings"], "report.md's folder, state.json")
     if loop.get("left"):
@@ -434,4 +438,4 @@ def safe_render(assessment: dict) -> str:
                 "assessment's fields. Qualified draft: merging needs your separate approval.")
 
 
-__all__ = ["MAX_LINES", "STANDING_NOTE", "code", "completion_report", "findings", "render", "safe_render"]
+__all__ = ["MAX_LINES", "NOT_PASSED", "STANDING_NOTE", "code", "completion_report", "findings", "render", "safe_render"]

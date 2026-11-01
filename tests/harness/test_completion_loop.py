@@ -22,6 +22,7 @@ from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import FakeLLM, LLMError
 from g6.harness import completion_loop as loop
+from g6.harness import patch_report
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.metaharness.domain import FailureRecord
@@ -1639,6 +1640,56 @@ def test_a_log_another_run_holds_is_never_written_over_and_costs_no_report(world
         step = world.advance(critic=critic)
     assert step.action == loop.STOP and "THE REVIEW" in step.text
     assert "another writer" in world.state()["row"] and not rows(world)
+
+
+@pytest.mark.parametrize("after", [
+    {"test_bug": "skipped", "test_smoke": "passed"},     # a skip closes nothing
+    {"test_smoke": "passed"},                            # uncollected or deselected: it is simply gone
+    {"test_bug_2": "passed", "test_smoke": "passed"},    # renamed: another test's pass is not this one's
+])
+def test_a_finding_closes_only_when_the_case_that_failed_has_passed(world, monkeypatch, after):
+    outcomes = {"test_bug": "failed", "test_smoke": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none")
+    world.edit()
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 1\n")
+    outcomes = after
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and loop.CLEAN in step.text      # the stop is K's: nothing fails on this run
+    fixed, still = patch_report.findings(world.state()["reviews"])
+    assert not fixed and [one["n"] for one in still] == [1]
+    assert "**Fixed:**" not in step.text and "**Open:** review 1" in step.text
+    [row] = rows(world)
+    assert row["cause"] == loop.OPEN
+
+
+def test_a_finding_closes_when_the_case_that_failed_passes(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_smoke": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "passed", "test_smoke": "passed"}
+    step = world.advance(critic=critic)
+    assert "**Fixed:** review 1" in step.text and "**Open:**" not in step.text
+    [row] = rows(world)
+    assert row["cause"] == loop.FIXED
+
+
+def test_a_case_a_later_run_skips_stays_open_though_it_passed_in_between(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_smoke": "failed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "passed", "test_smoke": "failed"}
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 2\n")
+    outcomes = {"test_bug": "skipped", "test_smoke": "passed"}
+    assert "**Open:** review 1" in world.advance(critic=critic).text
 
 
 def test_a_retained_test_a_later_repair_breaks_is_an_open_finding(world, monkeypatch):
