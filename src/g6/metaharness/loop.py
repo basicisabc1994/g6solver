@@ -406,14 +406,19 @@ class ShadowLoop:
             self.problems.append((NO_BUDGET, f"the windows are for {', '.join(named)} and this folder's calls are stated to "
                                   f"go to {settings.provider or 'none of them'}: an allowance pays only for its own "
                                   "provider's requests, so LOOP must name the one they go to"))
+        self._clock = clock
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
-            self.cut = cut_pool(domain.development(), settings.seed)
-            self.workflow = _workflow(domain, self.cut, settings, self.requests)
-            self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
-        if not self.problems:
-            self.mh = adapt_shadow(self.workflow, domain.execution().factory, workspace=self.root / "workspace",
-                                   clock=clock)
+            self._bind()
+
+    def _bind(self) -> None:
+        """What this handle runs: the domain's cases as they stand, cut, and a harness on them with nothing kept from
+        before. An enrolment does this again, so what a person froze is what runs, on this handle as on a new one."""
+        self.cut = cut_pool(self.domain.development(), self.settings.seed)
+        self.workflow = _workflow(self.domain, self.cut, self.settings, self.requests)
+        self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
+        self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
+                                                          workspace=self.root / "workspace", clock=self._clock)
 
     def _calls_per_run(self) -> int:
         """The most one run can call: what the models declare, or, on G6's own executor with no step of the domain's, one
@@ -547,7 +552,7 @@ class ShadowLoop:
 
     @_exclusive
     def enrol(self, confirmed_by: str) -> dict[str, Any]:
-        """A person confirms what judges this domain. It happens once, and it is the one step the loop cannot do."""
+        """A person confirms what judges this domain, as it stands now. It is the one step the loop cannot do."""
         if self.problems:
             return self._invalid()
         who = confirmed_by.strip()
@@ -556,6 +561,9 @@ class ShadowLoop:
         lacking = self._lacking()
         if lacking is not None:
             return lacking
+        self._bind()
+        if self.problems:
+            return self._invalid()
         reused = self._reused()
         if reused:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "

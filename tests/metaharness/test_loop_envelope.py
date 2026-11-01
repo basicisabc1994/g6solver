@@ -653,6 +653,57 @@ def test_a_truly_fresh_split_resets_the_count_and_the_head_carries_over(tmp_path
     assert again.mh._head() == head and not spent & _in_held_out(again)
 
 
+def _with_answer(domain, case_id: str, answer: str) -> None:
+    domain.pool[:] = [dataclasses.replace(c, expected=answer) if c.case_id == case_id else c for c in domain.pool]
+
+
+def test_enrolling_again_on_an_open_handle_shows_proposers_the_cases_it_froze(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.mh.measure(budget=120)["view"].dev
+    changed = loop.cut.tune[0].case_id
+    _with_answer(domain, changed, "999999")
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    assert loop._changed() == []
+    shown = loop.mh.measure(budget=120)["view"].dev
+    assert next(case["expected"] for case in shown if case["case_id"] == changed) == "999999"
+
+
+def test_enrolling_again_on_an_open_handle_runs_the_split_it_recorded(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    spent = _in_held_out(loop)
+    domain.pool[:] = [c for c in domain.pool if c.case_id not in spent] + _fresh_cases(5000, 240)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    row, fresh = loop.log.enrolled(), _loop(tmp_path, domain=domain)[0]
+    assert row["held_out_digest"] == loop.workflow.suite.digest("held_out") == fresh.workflow.suite.digest("held_out")
+    assert row["held_out"] == sorted(_in_held_out(fresh)) and not spent & _in_held_out(loop)
+    assert loop.mh.held_out_left() == loop.workflow.policy.max_evaluations
+    assert _code(loop.tick()) != "G6_E_LOOP_FROZEN_CHANGED"
+
+
+def test_a_spent_split_is_seen_on_an_open_handle_as_on_a_fresh_one(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    domain.pool.extend(_fresh_cases(5000, 40))
+    got = loop.enrol("Ada")
+    assert _code(got) == "G6_E_LOOP_SPLIT_REUSED" and _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED"
+
+
+def test_cases_that_no_longer_fill_the_splits_refuse_enrolling_again_and_write_nothing(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    rows = len(loop.log.enrolments())
+    domain.pool[:] = domain.pool[:10]
+    assert _code(loop.enrol("Ada")) == "G6_E_LOOP_POOL_TOO_SMALL" and len(loop.log.enrolments()) == rows
+    assert _code(loop.tick()) == "G6_E_LOOP_POOL_TOO_SMALL"
+
+
+def test_enrolling_again_keeps_what_the_handle_counts_with(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    Limited(domain, lambda problem: True)
+    loop.enrol("Ada")
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT"             # it went through this handle's count of requests
+
+
 def test_a_new_seed_cannot_move_cases_proposers_saw_into_the_held_out_split(tmp_path):
     loop, domain = _enrolled(tmp_path)
     moved = dataclasses.replace(SETTINGS, seed=SETTINGS.seed + 1)
