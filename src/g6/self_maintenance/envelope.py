@@ -187,6 +187,20 @@ def stops_asked(root: str | Path) -> int:
         return -1
 
 
+def stops_countable(root: str | Path) -> bool:
+    """Whether a stop asked for now would be counted, and the count read. A start stands on that count, so it refuses a
+    folder where it would not: there a stop leaves no sign a start can see, and the start would remove its ``STOP`` file.
+    It writes nothing, and no count yet is a count of none."""
+    path = Path(root) / STOPS_FILE
+    try:
+        if path.exists():
+            with open(path, "ab"):
+                pass
+    except OSError:
+        return False
+    return stops_asked(root) >= 0
+
+
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
     """Write the ``STOP`` file, or leave one that is there, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
@@ -259,4 +273,4 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
            "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop",
-           "runner_alive", "runner_lock", "stop_reason", "stops_asked"]
+           "runner_alive", "runner_lock", "stop_reason", "stops_asked", "stops_countable"]

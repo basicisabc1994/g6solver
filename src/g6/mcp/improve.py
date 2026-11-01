@@ -4,8 +4,9 @@
 **Start** is a sensitive operation, allowed as any other is (``metaharness.improve`` or ``metaharness`` in
 ``G6_MCP_SENSITIVE``), and the person then answers in the client's own dialog (``g6.mcp.consent``). There is no terminal
 fallback and no agent answer: a decline, a cancel or a client with no dialog starts nothing. It starts the runner as a
-process of its own, which outlives the session that asked, and refuses when a runner is alive or no person has enrolled a
-domain in the folder. This module never runs the domain's code: only the runner it starts does, and the dialog names it.
+process of its own, which outlives the session that asked, and refuses when a runner is alive, no person has enrolled a
+domain in the folder or a stop could not be counted there. This module never runs the domain's code: only the runner it
+starts does, and the dialog names it.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
 settings file needs a new agreement even with no stop in between.
@@ -41,6 +42,7 @@ from g6.self_maintenance.envelope import (
     FINDINGS,
     RUNNER_LOCK,
     STOP_FILE,
+    STOPS_FILE,
     CycleLog,
     ask_to_stop,
     file_digest,
@@ -49,6 +51,7 @@ from g6.self_maintenance.envelope import (
     runner_alive,
     stop_reason,
     stops_asked,
+    stops_countable,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.workspace._coordination import Coordination
@@ -131,6 +134,9 @@ def _cannot_start(root: Path) -> dict | None:
     except LedgerError as exc:
         return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
                         "A person inspects the folder; nothing was started.")
+    if not stops_countable(root):
+        return _blocked(RECORDS_UNREADABLE, "the count of stops cannot be read and added to, so a stop during the start "
+                        "could go unseen and nothing was started", f"A person frees {STOPS_FILE} in {root}.")
     enrol = (f'A person enrols it at their own terminal: python -P -m g6.metaharness.loop enrol "{root}" --as "Your name". '
              "An agent cannot do that step.")
     if log is None or log.enrolled() is None:
@@ -207,6 +213,8 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
         return cannot
     settings, stops = read_settings(root), stops_asked(root)
     try:
+        if stops < 0:
+            raise OSError(f"{STOPS_FILE} cannot be read")      # two unreadable counts would match, and hide a stop between them
         if shown is not None and _terms(root, settings, stops) != shown:
             return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                             ASK_AGAIN, running=False, folder=str(root))

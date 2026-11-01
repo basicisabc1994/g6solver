@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import socket
+import stat
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -475,6 +476,73 @@ def test_a_stop_arriving_just_as_an_old_stop_is_removed_still_wins(rig, monkeypa
     monkeypatch.setattr(improve, "stops_asked", a_stop_after_the_check)
     got = improve.start(rig.root, "Ada")
     assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and (rig.root / "STOP").is_file()
+
+
+def _a_stop_while_it_is_recorded(rig, monkeypatch) -> None:
+    real = CycleLog.start
+
+    def interleaved(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        improve.stop(str(rig.root), "a newer stop")
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", interleaved)
+
+
+def test_a_stop_count_that_cannot_be_read_refuses_the_start_so_no_stop_can_be_erased(rig, monkeypatch):
+    rig.enrol()
+    (rig.root / "stops.log").mkdir()                                     # a broken record, whatever this machine's rights
+    _a_stop_while_it_is_recorded(rig, monkeypatch)
+    offered = improve.asked(str(rig.root))
+    got = improve.start(rig.root, "Ada")
+    assert isinstance(offered, dict) and _code(offered) == "G6_E_LOOP_RECORDS_UNREADABLE"
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and got["completion_state"] == "blocked-escalated"
+    monkeypatch.undo()
+    assert CycleLog(rig.root / CYCLE_LOG).started() is None
+
+
+def test_a_stop_count_that_cannot_be_added_to_refuses_the_start_as_well(rig, monkeypatch):
+    """Read, it looks unchanged whatever is asked: a stop that cannot be counted would be erased with the old file."""
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    count = rig.root / "stops.log"
+    count.write_text("an old stop\n", encoding="utf-8")
+    count.chmod(stat.S_IREAD)
+    _a_stop_while_it_is_recorded(rig, monkeypatch)
+    try:
+        got = improve.start(rig.root, "Ada")
+    finally:
+        count.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and (rig.root / "STOP").is_file()
+
+
+def test_a_count_that_breaks_after_the_check_is_never_recorded_as_what_a_start_saw(rig, monkeypatch):
+    rig.enrol()
+    monkeypatch.setattr(improve, "stops_asked", lambda root: -1)
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and got["completion_state"] == "blocked-escalated"
+    monkeypatch.undo()
+    assert CycleLog(rig.root / CYCLE_LOG).started() is None
+
+
+def test_a_count_that_breaks_during_the_start_stops_it_and_keeps_the_stop(rig, monkeypatch):
+    rig.enrol()
+    real = CycleLog.start
+
+    def broken_then_stopped(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        (rig.root / "stops.log").mkdir()
+        improve.stop(str(rig.root), "a newer stop")
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", broken_then_stopped)
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a newer stop" in stop_reason(rig.root)
+
+
+def test_no_stop_count_yet_is_no_reason_to_refuse_and_asking_writes_none(rig):
+    rig.enrol()
+    assert not isinstance(improve.asked(str(rig.root)), dict) and not (rig.root / "stops.log").exists()
 
 
 def test_stop_ends_the_start_so_only_a_new_agreement_brings_it_back(rig):
