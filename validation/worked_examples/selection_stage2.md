@@ -93,6 +93,14 @@ setuptools images have been built with theirs, and none of the others has been t
 | s3transfer | `-e . -r requirements-dev.txt` | |
 | aiobotocore | `-e ".[httpx]" --group test` | |
 | python-dotenv | `-e ".[cli]" -r requirements.txt` | |
+
+## Notes for the blind audit and the report
+
+The issues of the three kept bugs were read in full on 2026-11-01. All three stand on the rule. None of this was read from a fix or a test.
+
+- **Issue 5346 (`urllib3-5347`)** gives its fix as a diff, so every arm may pass it, and it may add no pair that differs.
+- **Issue 771 (`charset-normalizer-772`)** keeps its reproducing file at a URL the sandbox cannot reach, so an agent reads the report without the file.
+- **Issue 672 (`charset-normalizer-715`, the next task)** has the same limit on its attachment.
 | pyjwt | `-e ".[crypto]" --group tests` | |
 | platformdirs | `-e . --group test` | 4.9.0 |
 | fsspec | `-e ".[test]"` | 2026.10.0 |
