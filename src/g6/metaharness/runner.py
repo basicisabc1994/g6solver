@@ -281,8 +281,9 @@ class Runner:
                          "g6.metaharness.loop resume <folder> --as <your name>")
         elif pause is not None:
             found.append(f"{pause['reason']}. {self.last.get('next_action', '')}")
-        return [*found, *(f"The allowance for {w.provider} is an estimate: put the real figure in {SETTINGS_FILE} when "
-                          "there is one." for w in self.loop.meter.windows.values() if w.estimated)]
+        return [*found, *(f"The allowance for {w.provider} is an estimate: put the real figure in {SETTINGS_FILE} when there "
+                          "is one. A runner alive keeps what it read, and a restart is refused until a new g6_improve_start."
+                          for w in self.loop.meter.windows.values() if w.estimated)]
 
     def _stops(self, now: datetime, halted: str) -> list[str]:
         found = [f"The runner ended: {halted}."] if halted else []

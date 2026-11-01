@@ -428,6 +428,15 @@ def test_a_digest_that_cannot_be_written_does_not_end_the_run(tmp_path, monkeypa
     assert runner.run() == 0 and runner.loop.log.cycles()
 
 
+def test_the_owner_told_to_change_an_estimate_is_told_what_changing_the_file_costs(tmp_path):
+    """Whole, past the digest's cut of a line. A runner alive keeps what it read, so nothing halts now: the next restart does."""
+    estimated = LoopSettings(windows=(ProviderWindow("claude", 1_000_000, START, estimated=True),), method=FAST, audit_per_tick=60)
+    runner, _, _ = _runner(tmp_path, settings=estimated)
+    runner.step()
+    owed = latest(runner.loop.root).read_text(encoding="utf-8").split("## Decisions for the owner")[1].split("##")[0]
+    assert "settings.json" in owed and "keeps what it read" in owed and "new g6_improve_start" in owed
+
+
 def test_the_account_is_read_between_ticks_not_in_one(tmp_path):
     class Reader:
         said = {"claude": "reported by its own tool"}
