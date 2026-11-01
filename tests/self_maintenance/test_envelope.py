@@ -233,6 +233,22 @@ def test_no_agent_name_can_start_it(tmp_path, name):
         _log(tmp_path).start(name)
 
 
+# The generation the log saw --------------------------------------------------------------------------------------------
+
+def test_the_log_knows_the_latest_generation_a_cycle_made(tmp_path):
+    log = _log(tmp_path)
+    assert log.generation() == 0
+    _cycle(log, "adopted", head_version=1)
+    _cycle(log, "rolled_back", head_version=2, undoes=1)
+    assert log.generation() == 2
+
+
+def test_a_cycle_that_made_no_generation_says_nothing_of_the_chain(tmp_path):
+    log = _log(tmp_path)
+    _cycle(log, "refused", head_version=7)                       # the head it began on, which can be a person's version
+    assert log.generation() == 0
+
+
 # A start in force ------------------------------------------------------------------------------------------------------
 
 def test_no_start_is_in_force_until_a_person_gives_one(tmp_path):

@@ -228,11 +228,11 @@ def status(folder: str) -> dict:
     if not _is_a_loop(root):
         return _not_a_loop(root)
     beat, running = heartbeat(root) or {}, runner_alive(root)
-    cycles, paused, started, unreadable = [], "", None, ""
+    cycles, paused, started, seen, unreadable = [], "", None, 0, ""
     try:
         log = _log(root)
         if log is not None:
-            cycles, paused, started = log.cycles(), log.paused(), log.started()
+            cycles, paused, started, seen = log.cycles(), log.paused(), log.started(), log.generation()
     except LedgerError as exc:
         unreadable = f"the loop's records cannot be trusted: {exc}"[:400]
     try:
@@ -240,6 +240,8 @@ def status(folder: str) -> dict:
     except LedgerError as exc:
         generations = {"current": None, "recent": []}
         unreadable = unreadable or f"the chain of generations cannot be trusted: {exc}"[:400]
+    if generations["current"] is not None and seen > generations["current"]:
+        unreadable = unreadable or f"the log saw generation {seen} and the chain of adoptions is at {generations['current']}"
     held = beat.get("pause") if (beat.get("pause") or {}).get("code") != PAUSED else None
     pause = ({"code": PAUSED, "reason": paused} if paused else
              {"code": RECORDS_UNREADABLE, "reason": unreadable} if unreadable else held)

@@ -374,6 +374,10 @@ class ShadowLoop:
         invalid = self._invalid()
         if invalid is not None:
             return invalid
+        lost = self._lost_generations()
+        if lost:
+            return _blocked(RECORDS_UNREADABLE, lost, "A person inspects the folder. Nothing runs on records that do not "
+                            "check out.")
         paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
@@ -388,6 +392,14 @@ class ShadowLoop:
             return _blocked(HELD_OUT_SPENT, "this held-out split has given all the evaluations it may: the gate needs a "
                             "fresh split, and only a person can confirm one", "A person freezes a fresh split and enrols.")
         return None
+
+    def _lost_generations(self) -> str:
+        """Why the chain of adoptions cannot be the one the log saw, or ``""``. A chain emptied or cut short still opens,
+        and numbers from its length, so the log is what shows it: a generation it saw must be there. A chain ahead of the
+        log is the crash between the two writes. Both cut together leave nothing to compare."""
+        seen, held = self.log.generation(), len(self.mh.adoption_rows())
+        return "" if seen <= held else (f"the log saw generation {seen} and the chain of adoptions holds {held}: a "
+                                        "generation's number must never be used twice")
 
     def _lacking(self) -> dict[str, Any] | None:
         """The domain checked as it is now: a handle's first check says nothing of what has changed since."""

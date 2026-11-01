@@ -23,7 +23,10 @@ fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
 from fastmcp.client.elicitation import ElicitResult  # noqa: E402
 
+from g6.core.ledger import ChainLedger  # noqa: E402
 from g6.mcp import build_server, improve  # noqa: E402
+from g6.metaharness import shadow  # noqa: E402
+from g6.metaharness.shadow import ADOPTIONS  # noqa: E402
 from g6.self_maintenance import digest  # noqa: E402
 from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, beat, file_digest, runner_lock  # noqa: E402
 
@@ -432,8 +435,19 @@ def test_a_folder_left_empty_is_the_one_under_g6s_state_folder(rig, tmp_path):
 
 # Status ---------------------------------------------------------------------------------------------------------------
 
+def _adoption(rig: Rig) -> Path:
+    """The chain's row for the adoption ``_worked`` records, so the log and the chain agree."""
+    path = rig.root / "workspace" / ADOPTIONS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ChainLedger(path, validate=shadow._rules).append("adopt", "1", {
+        "kind": "adopt", "version": 1, "base_version": 0, "by": shadow.ADOPTER, "scope": shadow.SCOPE, "at": NOW.isoformat(),
+        "decision_digest": "d", "profile": {"prompt": "p"}, "profile_digest": "p"})
+    return path
+
+
 def _worked(rig: Rig) -> None:
     rig.enrol()
+    _adoption(rig)
     rig.log.cycle({"at": NOW.isoformat(), "outcome": "adopted", "code": "G6_E_LOOP_ADOPTED", "reason": "it won",
                    "constraint": "wrong_answer", "basis": "b", "head_version": 1, "structure": "a regularity"})
     beat(rig.root, at=NOW.isoformat(), tick=1, state="waiting", code="G6_E_LOOP_BUDGET_WAIT", next_tick="later", pid=7,
@@ -498,6 +512,13 @@ def test_a_pause_a_person_lifted_is_not_read_back_from_an_old_heartbeat(rig):
 def test_status_says_the_stop_in_place(rig):
     (rig.root / "STOP").write_text("the owner's review\n", encoding="utf-8")
     assert "the owner's review" in improve.status(str(rig.root))["stop"]
+
+
+def test_status_says_a_generation_the_log_saw_and_the_chain_lost(rig):
+    _worked(rig)
+    (rig.root / "workspace" / ADOPTIONS).write_text("", encoding="utf-8")
+    got = improve.status(str(rig.root))
+    assert got["pause"]["code"] == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 1" in got["pause"]["reason"]
 
 
 def test_status_says_records_that_do_not_check_out_and_does_not_raise(rig):

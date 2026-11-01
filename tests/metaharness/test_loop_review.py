@@ -555,3 +555,52 @@ def test_a_tick_of_blank_replies_stops_at_what_it_reserved_retries_and_all(tmp_p
     got = loop.tick()
     assert _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT" and got["outcome"] == "blocked"
     assert len(backend.calls) + len(proposer.calls) <= reserved and loop.mh._head() == start
+
+# The review of the runner: a generation's number is never used twice --------------------------------------------------------
+
+def _chain(loop) -> Path:
+    return loop.root / "workspace" / "adoptions.jsonl"
+
+
+def test_an_emptied_chain_of_adoptions_stops_the_loop_and_reuses_no_generation(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    first = loop.tick()
+    assert first["outcome"] == "adopted" and first["head_version"] == 1
+    _chain(loop).write_text("", encoding="utf-8")
+    again, _ = _loop(tmp_path, domain=domain, proposer=domains.proposes({"prompt": f"{domains.WORKING} Use careful arithmetic."}))
+    calls = len(domain.llm.calls)
+    got = again.tick()
+    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and got["completion_state"] == "blocked-escalated"
+    assert "generation 1" in got["message"] and len(domain.llm.calls) == calls
+    assert _chain(again).read_text(encoding="utf-8") == "" and len(again.log.cycles()) == 1
+
+
+def test_a_chain_cut_short_stops_the_loop(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=0.6)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.tick()["outcome"] == "adopted"
+    domain.tutor.collapsed = True
+    assert loop.tick()["outcome"] == "rolled_back"
+    _chain(loop).write_text(_chain(loop).read_text(encoding="utf-8").splitlines(keepends=True)[0], encoding="utf-8")
+    again, _ = _loop(tmp_path, domain=domain)
+    got = again.tick()
+    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 2" in got["message"]
+
+
+def test_a_lost_generation_stops_every_tick_until_a_person_acts(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    _chain(loop).write_text("", encoding="utf-8")
+    again, _ = _loop(tmp_path, domain=domain)
+    assert {_code(again.tick()) for _ in range(4)} == {"G6_E_LOOP_RECORDS_UNREADABLE"}
+    assert len(again.log.cycles()) == 1
+
+
+def test_a_chain_ahead_of_the_log_is_a_crash_between_two_writes_and_runs_on(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    lines = loop.log.path.read_text(encoding="utf-8").splitlines(keepends=True)
+    loop.log.path.write_text("".join(lines[:-1]), encoding="utf-8")   # the adoption was written, its cycle was not
+    again, _ = _loop(tmp_path, domain=domain)
+    assert _code(again.tick()) != "G6_E_LOOP_RECORDS_UNREADABLE"
+    assert again.mh._head()[0] >= 1

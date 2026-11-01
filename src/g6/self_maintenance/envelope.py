@@ -83,6 +83,11 @@ class CycleLog:
         empty = {"structure": "", "resource": "", "obstruction": "", "composed_from": []}
         return self._append("cycle", {"tick": len(self.cycles()) + 1, **empty, **row})
 
+    def generation(self) -> int:
+        """The latest generation a cycle made. Only an adoption or a rollback makes one: any other cycle's ``head_version``
+        is the head it began on, which can be a version of a person's."""
+        return max((c["head_version"] for c in self.cycles() if c["outcome"] in ("adopted", "rolled_back")), default=0)
+
     def findings(self, last: int = 8) -> list[dict]:
         """The latest cycles that recorded a finding, each with its tick and what was found: what a next tick reads."""
         found = [c for c in self.cycles() if any(c.get(name) for name in FINDINGS)]
