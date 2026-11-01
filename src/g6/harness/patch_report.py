@@ -75,6 +75,15 @@ IGNORED_TO_DO = ("  - What to do: these files are untracked and git-ignored, yet
                  "project, commit them before the change under review; otherwise remove them or move them out of the "
                  "repository; then review again. Each is named once in `assessment.next_actions`.")
 TO_DO = frozenset({"ignored_file_can_change_tests"})
+#: What the review-until-clean loop's report says of itself, every time (the worked examples' arm K).
+LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
+               "- A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure "
+               "it could show.",
+               "- An open finding is a reviewer's test that still fails; on the training bugs that did not always mean a wrong "
+               "patch.",
+               "- It differs from what was measured: the reviewer here reads a text pack and has no tools, and each step "
+               "replays the rounds before it.",
+               "- A model wrote these tests, so none of them passes a requirement.")
 
 
 def _plain(node: object) -> str:
@@ -359,10 +368,55 @@ def _loop_lines(loop: dict) -> list[str]:
     return [*lines, "", "A model wrote these probes, so none of them passes a requirement."]
 
 
+def _times(count: int) -> str:
+    return {1: "once", 2: "twice"}.get(count, f"{count} times")
+
+
+def _review_lines(loop: dict) -> list[str]:
+    """What the review-until-clean loop did, reproduced findings first: what was found, what was fixed, what stayed open.
+    A finding is a reviewer's test that failed on the patch. It stays open at the cap, or when the agent rejects it, and an
+    open finding is no ruling on the patch: nothing here says it is right or wrong."""
+    reviews, last = loop.get("reviews") or [], {}
+    if reviews:
+        last = reviews[-1]["results"]
+    numbered = list(enumerate(reviews, 1))
+    found = [(n, one) for n, one in numbered if one["results"].get(one["file"]) == "failed"]
+    fixed = [(n, one) for n, one in found if last.get(one["file"]) == "passed"]
+    still = [(n, one) for n, one in found if last.get(one["file"]) != "passed"]
+    lines = ["## What the reviews found"]
+    lines.append(f"- **Found:** {len(found)} reproduced, each a reviewer's test that failed on the patch." if found else
+                 "- **Found:** no reviewer's test failed on the patch.")
+    lines += _cut([[f"- **Fixed:** review {n}: {code(one['rule'], 200)}; its test passes now."] for n, one in fixed],
+                  BUDGET["findings"], "report.md's folder, state.json")
+    lines += _cut([[f"- **Open:** review {n}: {code(one['rule'], 200)}; its test {code(one['file'])} fails.",
+                    f"  - The reviewer's reasons: {code(one['why'], 300)}"] for n, one in still],
+                  BUDGET["findings"], "report.md's folder, state.json")
+    if loop.get("left"):
+        lines.append(f"- **The agent left the code as it was.** Its reason: {code(loop['left'], 300)}.")
+    if loop.get("no_clean"):
+        error = reviews[-1].get("error") if reviews else ""
+        lines.append(f"- **No clean review:** {loop.get('reason')}" + (f": {code(error, 200)}." if error else "."))
+    lines += ["", "## How the loop ran",
+              f"- **Stopped:** {loop.get('reason')}, after {len(reviews)} review{'s' if len(reviews) != 1 else ''} and "
+              f"{loop.get('repairs')} of at most {loop.get('max_repairs')} repairs."]
+    if reviews:
+        lines.append(f"- A reviewer from another model family read the patch {_times(len(reviews))}: "
+                     + ", ".join(code(one.get("verdict")) for one in reviews) + ".")
+    for n, one in numbered:
+        if one.get("verdict") == "defect" and one["results"].get(one["file"]) != "failed":
+            why = (f"its test would not run: {code(one['unrun'], 200)}" if one.get("unrun") else
+                   "its test passes on the patch" if one["file"] in one["results"] else "it wrote no test")
+            lines.append(f"- Review {n} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
+    if found and loop.get("boundary"):
+        lines.append(f"- **Boundary:** the reviewers' tests ran inside {code(loop['boundary'])}, in scratch copies with no "
+                     "network.")
+    return [*lines, "", "## What this loop does not show", *LOOP_LIMITS]
+
+
 def completion_report(loop: dict, review: str) -> str:
     """The completion loop's report: what it tested and what still fails, above the ``review`` of the patch it stopped
     on, which says what is not established."""
-    return "\n".join([*_loop_lines(loop), "", review])
+    return "\n".join([*(_loop_lines(loop) if loop.get("reviews") is None else _review_lines(loop)), "", review])
 
 
 def safe_render(assessment: dict) -> str:
