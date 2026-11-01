@@ -1388,3 +1388,29 @@ def test_the_workflow_a_person_enrolled_is_the_same_whichever_claude_caller_runs
     watched = domains.WordProblems(tmp_path / "b")
     _with_model(watched, WatchedClaude())
     assert (_loop(tmp_path / "a", domain=plain)[0].workflow.digest() == _loop(tmp_path / "b", domain=watched)[0].workflow.digest())
+
+
+# The gate on a request stands on a bound file raising what an observer raises --------------------------------------------------
+
+class SendsThree:
+    """A caller that notes each of three requests and sends it, as a retry inside a caller does."""
+
+    def __init__(self) -> None:
+        self.sent = 0
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        for _ in range(3):
+            model_calls.note_model_call()
+            self.sent += 1
+        return "an answer"
+
+
+def test_the_third_of_three_requests_under_a_limit_of_two_never_goes_out():
+    """``counting`` asks its observers not to raise, and the gate on a request is an observer that does. That file is bound,
+    so its sentence stands until an issuance window, and the day it is made true this test is what says so: a swallowed raise
+    lets the third request out."""
+    caller, requests = SendsThree(), _Requests()
+    requests.open(2)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(caller, requests).complete("system", "user")
+    assert caller.sent == 2 and requests.sent == 2 and requests.stopped
