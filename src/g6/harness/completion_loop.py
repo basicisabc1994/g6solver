@@ -130,8 +130,10 @@ ALREADY_RUNNING = "Another step of G6's completion loop is running for this sess
 WAITING_ON_PERSON = "G6_E_LOOP_WAITING_ON_PERSON"
 ASKED = ("G6's completion loop is waiting for your answer: the agent asked a question, so it neither repaired the finding nor "
          "rejected it, and the finding stays open. The loop goes on when the agent next stops.")
-#: A last sentence that asks: a question mark past any closing marks, and after it at most a closing that hands over the turn.
-_ASKS = re.compile(r"\?[\s*_`'\")\]]*(?:(?:let me know|please confirm|i.ll wait)\b[^.!?\n]*[.!]?[\s*_`'\")\]]*)?$", re.I)
+#: A question mark that ends a sentence, past any closing marks, and the ones that stand alone in other scripts.
+_ASKS = re.compile(r"[\uff1f\u061f]|\?[*_'\"\u201d\u2019)\]]*(?:\s|$)")
+#: Code a reply quotes: a question mark there asks nobody anything.
+_QUOTED = re.compile(r"```.*?```|`[^`\n]*`", re.S)
 #: Why a run ended, from what stopped it: the row's stable cause, for ``metaharness.domain.FailureRecord``.
 OPEN, FIXED, CONTESTED = "review_finding_open", "review_finding_fixed", "review_finding_contested"
 FOUND_NOTHING, UNREACHABLE, UNREADABLE, OVERSIZE = ("review_found_nothing", "reviewer_unreachable", "reviewer_unreadable",
@@ -286,10 +288,16 @@ def review_note(found: Mapping[str, str], shipped: Harness) -> str:
 
 
 def asks(said: str) -> bool:
-    """Whether the agent's last words ask something. Only the last sentence counts: a refusal may ask a question on its way to
-    its reason. A plain "let me know" with no question is an offer, so it decides nothing here, and a person's yes to it is
-    still reviewed, by the loop their prompt arms."""
-    return bool(_ASKS.search(said.rstrip()))
+    """Whether the agent's reply asks anything: a question mark that ends a sentence, anywhere in it, outside quoted code. It
+    reads punctuation and no wording, as a list of what people say around a question knows only the sayings on the list.
+
+    It leans one way on purpose. Read as a wait, a refusal costs a person one look. Read as a refusal, a question writes a false
+    rejection into the record the loop learns from. So a refusal that asks anything on its way to its reason waits, and if no
+    one answers, that run has no end and no row until its next stop.
+
+    What it still gets wrong: a request with no question mark ("I need your decision") reads as a refusal. Its words stay in
+    the row for the maintainers' label to put right, and a person's yes to it is reviewed by the loop their prompt arms."""
+    return bool(_ASKS.search(_QUOTED.sub(" ", said)))
 
 
 def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
@@ -629,7 +637,7 @@ class Repairs:
     whose failures have not gone back ends this hook with ``pending``, and a failure that survives a repair goes back, up
     to the cap, unless the agent left the code as it was. ``answered``: whether this call is the agent's reply. With none,
     an unchanged tree says nothing of what it decided, so what failed goes back as it was, and no round is spent. ``asked``:
-    whether that reply ends on a question. An unchanged tree then decides nothing either, but nothing goes back, as sending it
+    whether that reply asks anything. An unchanged tree then decides nothing either, but nothing goes back, as sending it
     would hold the question from the person who must answer it: ``waiting`` says so, and no round is spent."""
 
     def __init__(self, rounds: list[dict], check: Callable[[], tuple[set[str], str]], tree: Callable[[], str],
@@ -988,7 +996,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     ``answered``: whether this call is the agent's reply to what the last one sent back. A Stop hook is: it fires only once
     the agent has taken its turn, so an unchanged tree there is the agent's decision. A call over MCP may be a client's retry
     of a reply it lost, so there only a stated reason rejects a finding, and with none what failed goes back as it was. On
-    either, a reply with the code unchanged that ends on a question (``asks``) rejects nothing: the step says ``WAIT``, with
+    either, a reply with the code unchanged that asks anything (``asks``) rejects nothing: the step says ``WAIT``, with
     ``WAITING_ON_PERSON``, and the loop goes on when the agent next stops.
 
     A step reads its round from the state and then writes that round's files, so two at once would undo each other: a call

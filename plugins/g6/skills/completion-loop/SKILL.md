@@ -17,10 +17,10 @@ be wrong: this is one careful reader's view, so check their expectation against 
 
 - If the task or the repository supports it, repair the cause, rerun your own checks and finish. A fresh review reads the
   new patch. Earlier reviewers' tests keep running.
-- If not, leave the code as it was and say why in one line. The loop ends, the finding stays open in the report, and your
-  reason goes with it.
-- If you need the person to decide, leave the code as it was and end on your question. A question rejects nothing: the loop
-  waits for their answer and goes on when you next stop.
+- If not, leave the code as it was and say why in one line, with no question in it. The loop ends, the finding stays open in
+  the report, and your reason goes with it.
+- If you need the person to decide, leave the code as it was and ask, with a question mark. A reply that asks anything
+  rejects nothing: the loop waits for their answer and goes on when you next stop.
 
 It ends after three repairs at most, when a review reproduces nothing, or when a review fails. This loop has been measured on
 seven training bugs only.

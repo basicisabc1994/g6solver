@@ -2496,12 +2496,25 @@ ASKS = ["Shall I fix this?",
         "**Should I go ahead with this repair?**",
         "Should I repair this? I'll wait for your answer.",
         "The finding looks valid to me.\n\nWant me to apply the fix?",
-        "Should I change it? Please confirm."]
+        "Should I change it? Please confirm.",
+        "Before I change the public API, which behavior should I keep?\n\nI need your decision before I can proceed.",
+        "Which of the two do you want? This one is a product call, so it is yours to make, and nothing here can settle it.",
+        "Is the old behaviour still needed? The task does not say.\n\nHolding off until I hear from you.",
+        "\u3069\u3061\u3089\u3092\u6b8b\u3057\u307e\u3059\u304b\uff1f",
+        "\u0647\u0644 \u0623\u0635\u0644\u062d \u0647\u0630\u0627\u061f"]
 DECIDES = ["The task says x is never negative, so the reviewer's test asks for something else. I left the code as it was.",
-           "Why would x be negative here? The task rules it out, so I am leaving the code alone.",
            "Not a defect: the reviewer misread the task.",
            "I am leaving the code as it is. Let me know if you want it changed.",
-           "No change: `double('a')` is outside the task (is it even reachable? no)."]
+           "Left as it was: `re.compile('a? b')` is what the task asks for.",
+           "See https://example.com/a?b=1 for why: no change.",
+           "Not a defect:\n\n```python\nx = a ? b : c\n```\n\nI left the code as it was."]
+#: The price of the rule, chosen on purpose: a refusal with a question in it waits for a person's look.
+REFUSES_BUT_ASKS = ["Why would x be negative here? The task rules it out, so I am leaving the code alone.",
+                    "No change: `double('a')` is outside the task (is it even reachable? no)."]
+#: What the rule still gets wrong: a request with no question mark in it reads as a refusal.
+ASKS_WITH_NO_MARK = ["I need your decision before I can proceed.",
+                     "Please confirm how you would like to proceed.",
+                     "Let me know which behaviour to keep."]
 
 
 @pytest.mark.parametrize("said", ASKS)
@@ -2525,6 +2538,27 @@ def test_a_reply_that_decides_is_still_a_refusal_whatever_it_mentions(world, mon
     step = world.advance(critic=critic, said=said)
     assert step.action == loop.STOP and world.state()["stop"] == loop.LEFT
     assert world.state()["left"] == " ".join(said.split())
+
+
+@pytest.mark.parametrize("said", REFUSES_BUT_ASKS)
+def test_a_refusal_with_a_question_in_it_waits_for_a_look_which_costs_less_than_a_false_rejection(world, monkeypatch, said):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    step = world.advance(critic=critic, said=said)
+    assert (step.action, step.code) == (loop.WAIT, loop.WAITING_ON_PERSON) and not rows(world)
+
+
+@pytest.mark.parametrize("said", ASKS_WITH_NO_MARK)
+def test_a_request_with_no_question_mark_reads_as_a_refusal_which_is_what_the_rule_gets_wrong(world, monkeypatch, said):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    step = world.advance(critic=critic, said=said)
+    assert step.action == loop.STOP and world.state()["stop"] == loop.LEFT
+    assert world.state()["left"] == said      # its words stay in the row, for the maintainers' label to put right
 
 
 def test_the_persons_yes_to_the_agents_question_is_reviewed(world, monkeypatch):

@@ -54,8 +54,9 @@ below runs instead. With neither, nothing is tested, and the report says which l
    and could not be reproduced.
 4. If the test fails, the rule, the reasons and the test go back to the agent in the same session. The agent may reject the
    finding: the reviewer can be wrong. A fresh review then reads the new patch, at most three repairs and so four reviews.
-   Each review's test stays and keeps running, to catch a repair that undoes it. If the agent changes nothing and ends on a
-   question, that rejects nothing: the turn ends so you can answer, and the loop goes on when the agent next stops.
+   Each review's test stays and keeps running, to catch a repair that undoes it. If the agent changes nothing and its reply
+   asks anything, by a question mark anywhere in it, that rejects nothing: the turn ends so you can answer, and the loop goes
+   on when the agent next stops. A reply that asks with no question mark reads as a rejection, with its words in the report.
 5. The loop ends when a review reproduces nothing, when the agent leaves the code as it was, when the repairs run out, or when
    a review fails or cannot be read. That last one is reported as no clean review, and never counts as clean. Neither does a
    review of a patch that changed after it was read.
@@ -112,7 +113,7 @@ repository, the task, a session name and the base commit, and returns a job to p
 continue, with the text for the agent, or stop, with the report. The first call fixes the session's repository, task and
 base, and a call for another repository or task is refused. A session takes one step at a time: a call that finds another
 running does nothing, and says wait. Over this tool only a stated reason rejects a finding, so a client that repeats a call
-gets the same finding back, and nothing is spent. A reason that ends on a question rejects nothing, and also says wait.
+gets the same finding back, and nothing is spent. A reason that asks anything rejects nothing, and also says wait.
 
 ## The scouts' loop
 
