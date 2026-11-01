@@ -47,8 +47,8 @@ file, call `g6_review_until_clean` when you finish, with the folder, the task an
 test. `continue` gives that finding when its test fails on your patch: check it against the task, then repair the cause, or
 leave the code as it was, and call again, with `reason` in one line if you leave it: only a reason rejects a finding, and a
 call with neither gets the same finding back. `wait` means another step is running, so wait for its result, or that your
-reason was a question, which rejects nothing, so ask the person first. A fresh review reads each repair, at most 3 repairs. `stop` gives the report: show it as it is, and `ending` says how the run ended: `clean`,
-`fixed`, `contested`, `open` or `untested`. A review that
+reason was a question, which rejects nothing, so ask the person first. A fresh review reads each repair, at most 3 repairs. `stop` gives the report: show it as it is, and `ending` says how the run ended: clean,
+fixed, contested, open or untested. A review that
 reproduces nothing is not evidence the work is right, only that this reviewer found no failure it could show, and this loop
 has been measured on seven training bugs only.
 
