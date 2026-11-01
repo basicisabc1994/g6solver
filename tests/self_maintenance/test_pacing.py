@@ -243,6 +243,54 @@ def test_8_a_refused_admission_writes_nothing(tmp_path):
     assert meter.reading("claude", _day(1)).used == 0
 
 
+# A reading has a date: what was charged after it cannot be in its figure ---------------------------------------------------
+
+def _dated(used: float, hour: int) -> AccountReading:
+    return AccountReading(used=used, read_at=START + timedelta(hours=hour))
+
+
+def test_a_charge_after_a_dated_reading_goes_on_top_of_it():
+    reading = _dated(350, 1)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reading("claude", _day(3)).used == 350
+    meter.settle(meter.reserve("claude", _day(3), 200), 100)
+    assert meter.reading("claude", _day(3)).used == 450
+
+
+def test_a_charge_before_a_dated_reading_may_be_in_it_so_it_does_not_add():
+    readings = [None]
+    meter = _meter(read_account=lambda provider, start: readings[0])
+    meter.settle(meter.reserve("claude", _day(3), 200), 100)
+    readings[0] = _dated(350, 1)
+    assert meter.reading("claude", _day(3)).used == 350
+
+
+def test_a_fresh_reading_takes_over_from_what_was_added_to_the_last():
+    readings = [_dated(350, 1)]
+    meter = _meter(read_account=lambda provider, start: readings[0])
+    meter.reading("claude", _day(3))
+    meter.settle(meter.reserve("claude", _day(3), 100), 100)
+    assert meter.reading("claude", _day(3)).used == 450
+    readings[0] = _dated(470, 2)
+    assert meter.reading("claude", _day(3)).used == 470
+
+
+def test_the_check_inside_the_transaction_counts_a_charge_since_the_reading():
+    reading = _dated(350, 1)
+    meter, rival = _shared_meters_with(reading)
+    assert meter.reading("claude", _day(3)).used == 350
+    rival.settle(rival.reserve("claude", _day(3), 100), 100)         # another handle, on the same ledger
+    assert meter.reading("claude", _day(3)).used == 450
+    assert not meter.reserve("claude", _day(3), 151).admitted        # 450 + 151 is over day three's 600
+    assert meter.reserve("claude", _day(3), 150).admitted
+
+
+def _shared_meters_with(reading: AccountReading) -> list[BudgetMeter]:
+    store = OperatorStore(":memory:")
+    return [BudgetMeter((ProviderWindow("claude", 1000, START),), store=store, read_account=lambda provider, start: reading)
+            for _ in range(2)]
+
+
 # When room comes, and the settings file ----------------------------------------------------------------------------------
 
 def test_the_next_day_of_a_window_is_when_its_ceiling_can_rise():

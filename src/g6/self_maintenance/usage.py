@@ -15,7 +15,9 @@ What each tool reports was checked by running it, on 2026-11-01:
 A percentage says the same thing whatever the allowance is: use over allowance is what the provider reported. So the
 reading is exact as a share of the week, and only the allowance's unit stays an estimate, which the window says.
 
-The tool is asked between ticks and never inside one, and at most once per ``REFRESH``: a tick starts no process.
+The tool is asked between ticks and never inside one, and at most once per ``REFRESH``: a tick starts no process. Each
+reading carries when it was read, so what the loop charges after that goes on top of it until the next one. A reading that
+lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -148,7 +151,7 @@ class AccountReader:
             if found is None:
                 self.said[provider] = "its reply could not be read, so the meter counts model calls"
                 continue
-            self.readings[provider] = found
+            self.readings[provider] = replace(found, read_at=now)
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
 
     def __call__(self, provider: str, start: datetime) -> AccountReading | None:

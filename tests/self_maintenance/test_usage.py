@@ -126,6 +126,21 @@ def test_a_reading_reaches_the_meter_and_the_loop_gives_way():
     assert not meter.reserve("codex", NOW, 51).admitted                # 550 + 51 is over day three's 600
 
 
+def test_a_call_settled_since_the_reading_uses_up_the_room_it_left():
+    now = START
+    window = ProviderWindow("codex", 1000, now)
+    reader = AccountReader((window,), ask={"codex": Tool(_limits(19.9, resets=int((now + timedelta(days=7)).timestamp())))})
+    reader.refresh(now)
+    meter = BudgetMeter((window,), store=OperatorStore(":memory:"), read_account=reader)
+    assert meter.reading("codex", now).used == 199
+    first = meter.reserve("codex", now, 1)
+    assert first.admitted and first.ceiling == 200
+    meter.settle(first, 1)
+    second = meter.reserve("codex", now + timedelta(seconds=1), 1)
+    assert not second.admitted and "ceiling" in second.reason
+    assert meter.reading("codex", now).used == 200
+
+
 def test_an_estimated_allowance_stays_marked_whatever_the_reading_says():
     window = ProviderWindow("codex", 1000, START, estimated=True)
     reader = AccountReader((window,), ask={"codex": Tool(_limits(55))})
