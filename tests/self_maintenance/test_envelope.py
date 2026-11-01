@@ -51,30 +51,64 @@ def test_a_cycle_needs_a_known_outcome(tmp_path):
 
 def test_failed_cycles_in_a_row_are_counted(tmp_path):
     log = _log(tmp_path)
-    for outcome in ("refused", "no_winner", "blocked"):
+    for outcome in ("error", "blocked", "sealed_breach"):
         _cycle(log, outcome)
     assert log.failed_streak() == 3
 
 
-def test_a_kept_adoption_or_nothing_to_do_ends_the_streak(tmp_path):
-    for ending in ("adopted", "idle"):
-        log = _log(tmp_path / ending)
-        for outcome in ("refused", ending, "no_winner"):
-            _cycle(log, outcome)
-        assert log.failed_streak() == 1
-
-
-def test_an_adoption_that_was_undone_never_ended_the_streak(tmp_path):
+@pytest.mark.parametrize("ending", ["adopted", "idle", "no_winner", "no_constraint", "refused", "rolled_back"])
+def test_any_result_ends_the_streak_since_a_candidate_that_lost_is_a_result_not_a_fault(tmp_path, ending):
     log = _log(tmp_path)
-    _cycle(log, "refused")
+    for outcome in ("error", ending, "blocked"):
+        _cycle(log, outcome)
+    assert log.failed_streak() == 1
+
+
+def test_results_alone_are_never_a_streak(tmp_path):
+    log = _log(tmp_path)
+    for outcome in ("no_winner", "no_constraint", "refused", "rolled_back") * 3:
+        _cycle(log, outcome)
+    assert log.failed_streak() == 0
+
+
+def test_a_rollback_is_a_result_even_of_an_adoption_it_undid(tmp_path):
+    log = _log(tmp_path)
+    _cycle(log, "error")
     _cycle(log, "adopted", head_version=1)
     _cycle(log, "rolled_back", undoes=1)
-    assert log.failed_streak() == 2
+    assert log.failed_streak() == 0
+
+
+# Nothing to try ------------------------------------------------------------------------------------------------------
+
+def test_cycles_that_found_nothing_to_try_are_counted_in_a_row(tmp_path):
+    log = _log(tmp_path)
+    for outcome in ("adopted", "idle", "no_winner", "no_constraint"):
+        _cycle(log, outcome)
+    assert log.quiet_streak() == 3
+
+
+@pytest.mark.parametrize("ending", ["adopted", "refused", "rolled_back", "error"])
+def test_a_cycle_that_tried_something_or_broke_is_not_quiet(tmp_path, ending):
+    log = _log(tmp_path)
+    for outcome in ("idle", ending):
+        _cycle(log, outcome)
+    assert log.quiet_streak() == 0
+
+
+def test_a_person_enrolling_or_resuming_starts_the_quiet_count_again(tmp_path):
+    log = _log(tmp_path)
+    _cycle(log, "idle")
+    log.enrol("Ada", {"evaluator": "a"})
+    assert log.quiet_streak() == 0
+    _cycle(log, "idle")
+    log.resume("Ada")
+    assert log.quiet_streak() == 0
 
 
 def test_a_person_resuming_clears_the_streak_and_the_pause(tmp_path):
     log = _log(tmp_path)
-    _cycle(log, "refused")
+    _cycle(log, "error")
     log.pause("three failed cycles")
     assert log.paused() == "three failed cycles"
     log.resume("Ada")

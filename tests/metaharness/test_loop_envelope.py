@@ -208,8 +208,16 @@ def test_a_cycle_that_breaks_is_charged_what_it_used(tmp_path):
 NOTHING_HELPS = {"prompt": "Please be polite."}
 
 
+def _breaks(domain) -> None:
+    def broken(view):
+        raise RuntimeError("the domain fell over")
+
+    domain.failures = broken
+
+
 def test_three_failed_cycles_in_a_row_pause_the_loop_with_a_stated_reason(tmp_path):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
     ends = [loop.tick()["outcome"] for _ in range(3)]
     why = loop.log.paused()
     assert "three failed cycles" in why and all(end in why for end in ends)
@@ -220,14 +228,16 @@ def test_three_failed_cycles_in_a_row_pause_the_loop_with_a_stated_reason(tmp_pa
 
 
 def test_two_failed_cycles_do_not_pause_it(tmp_path):
-    loop, _ = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
     for _ in range(2):
         loop.tick()
     assert loop.log.paused() == ""
 
 
 def test_a_pause_outlives_the_process(tmp_path):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
     for _ in range(3):
         loop.tick()
     again, _ = _loop(tmp_path, domain=domain)
@@ -235,7 +245,8 @@ def test_a_pause_outlives_the_process(tmp_path):
 
 
 def test_only_a_person_lifts_the_pause_and_then_it_runs(tmp_path):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
     for _ in range(3):
         loop.tick()
     for name in ("", "auto:loop"):
@@ -256,6 +267,23 @@ def test_a_cycle_that_breaks_counts_towards_the_pause(tmp_path):
     for _ in range(3):
         loop.tick()
     assert "error" in loop.log.paused()
+
+
+def test_a_candidate_that_lost_is_a_result_so_the_loop_never_pauses_on_it(tmp_path):
+    loop, _ = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    ends = [loop.tick() for _ in range(4)]
+    assert {got["outcome"] for got in ends} <= {"no_winner", "refused"}
+    assert all(got["completion_state"] == "qualified-draft" for got in ends)
+    assert loop.log.paused() == "" and loop.log.failed_streak() == 0
+
+
+def test_no_constraint_is_a_result_so_the_loop_never_pauses_on_it(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    real = domain.failures
+    domain.failures = lambda view: tuple(dataclasses.replace(r, changeable=False) for r in real(view))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert [loop.tick()["outcome"] for _ in range(4)] == ["no_constraint"] * 4
+    assert loop.log.paused() == "" and loop.log.quiet_streak() == 4
 
 
 # The frozen digests --------------------------------------------------------------------------------------------------
@@ -444,7 +472,7 @@ def test_an_adoption_that_got_worse_is_rolled_back_with_no_one_asked(tmp_path):
     left = loop.mh.held_out_left()
     domain.tutor.collapsed = True
     got = loop.tick()
-    assert got["outcome"] == "rolled_back" and got["undoes"] == 1 and got["completion_state"] == "blocked-escalated"
+    assert got["outcome"] == "rolled_back" and got["undoes"] == 1 and got["completion_state"] == "qualified-draft"
     assert loop.mh._head()[1] == start and loop.mh.held_out_left() == left
     assert loop.log.cycles()[-1]["audit"]["pairs"] >= drift.MIN_PAIRS
 
@@ -459,7 +487,7 @@ def test_a_healthy_adoption_is_audited_and_kept(tmp_path):
     assert loop.log.cycles()[-1]["audit"]["audited"] == len(loop.cut.monitor)
 
 
-def test_adopting_and_rolling_back_in_turn_still_pauses(tmp_path):
+def test_adopting_and_rolling_back_in_turn_is_bounded_by_the_held_out_split_and_never_pauses(tmp_path):
     domain = domains.WordProblems(tmp_path, weak=0.6)
     tries = iter(range(99))
 
@@ -467,12 +495,15 @@ def test_adopting_and_rolling_back_in_turn_still_pauses(tmp_path):
         return json.dumps({"prompt": f"{domains.WORKING} Variant {next(tries)}."})
 
     loop, _ = _enrolled(tmp_path, domain=domain, proposer=FakeLLM(always_something_new))
-    for _ in range(3):
+    for _ in range(loop.workflow.policy.max_evaluations - 1):
         domain.tutor.collapsed = False
         assert loop.tick()["outcome"] == "adopted"
         domain.tutor.collapsed = True
         assert loop.tick()["outcome"] == "rolled_back"
-    assert "three failed cycles" in loop.log.paused()
+    assert loop.log.paused() == "" and loop.log.failed_streak() == 0
+    domain.tutor.collapsed = False
+    assert loop.tick()["outcome"] == "adopted"                     # the fifth and last use of this split
+    assert _code(loop.tick()) == "G6_E_LOOP_HELD_OUT_SPENT"        # each try used a held-out evaluation: a person's turn
 
 
 # The owner's ruling ---------------------------------------------------------------------------------------------------

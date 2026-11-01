@@ -374,9 +374,17 @@ def _second_handle(tmp_path, domain):
     return other
 
 
+def _breaks(domain) -> None:
+    def broken(view):
+        raise RuntimeError("the domain fell over")
+
+    domain.failures = broken
+
+
 def test_5_a_second_handle_does_not_run_after_another_paused_the_loop(tmp_path):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
     other = _second_handle(tmp_path, domain)                   # opened now, so it has seen no failed cycle
+    _breaks(domain)
     for _ in range(3):
         loop.tick()
     assert loop.log.paused()
@@ -403,8 +411,9 @@ def test_5_a_second_handle_counts_the_cycles_another_ran(tmp_path):
 
 
 def test_5_a_person_resumes_from_their_own_handle(tmp_path):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
     person = _second_handle(tmp_path, domain)
+    _breaks(domain)
     for _ in range(3):
         loop.tick()
     assert person.resume("Ada")["completion_state"] == "qualified-draft"
@@ -419,7 +428,8 @@ def test_5_a_second_handle_reports_where_the_loop_stands(tmp_path):
 
 
 def test_6_a_pause_that_could_not_be_written_still_stops_the_fourth_cycle(tmp_path, monkeypatch):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
 
     def full_disk(reason: str) -> None:
         raise OSError("no space left on the device")
@@ -435,7 +445,8 @@ def test_6_a_pause_that_could_not_be_written_still_stops_the_fourth_cycle(tmp_pa
 
 
 def test_6_a_person_can_clear_a_streak_whose_pause_was_never_written(tmp_path, monkeypatch):
-    loop, _ = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
     monkeypatch.setattr(loop.log, "pause", lambda reason: (_ for _ in ()).throw(OSError("full")))
     for _ in range(3):
         loop.tick()

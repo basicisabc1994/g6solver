@@ -6,8 +6,10 @@ came of it, plus each enrolment, pause and resumption. Only a person can enrol a
 the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and removing the file
 resumes it; a stop that cannot be read still stops. A heartbeat is written whole or not at all.
 
-**The failed streak.** Three failed cycles in a row pause the loop. An adoption or a tick with nothing to do ends a
-streak; an adoption the monitor later undid does not, or adopting and rolling back in turn would never pause.
+**The failed streak.** Three failed cycles in a row pause the loop. A failed cycle is a fault: an error, a sealed breach
+or a step that was blocked. The loop seeks failure and learns from it, so a candidate that lost is a result: no winner, no
+constraint, a refusal and a rolled-back adoption each end a streak and never pause. What bounds them is the held-out
+split, which allows five evaluations before a person acts, and the runner, which rests when nothing is left to try.
 """
 from __future__ import annotations
 
@@ -23,9 +25,12 @@ from g6.core.ledger import ChainLedger
 STOP_FILE = "STOP"
 HEARTBEAT_FILE = "heartbeat.json"
 MAX_FAILED_CYCLES = 3
-#: Cycles that moved nothing forward. A wait (a stop, the budget, a pause) is not a cycle at all, so it never counts.
-FAILED = ("refused", "no_winner", "blocked", "no_constraint", "rolled_back", "error", "sealed_breach")
-ENDS_A_STREAK = ("adopted", "idle")
+#: Cycles that broke. A wait (a stop, the budget, a pause) is not a cycle at all, so it never counts.
+FAILED = ("blocked", "error", "sealed_breach")
+#: Cycles that ran and reached a result, whichever way it went.
+ENDS_A_STREAK = ("adopted", "idle", "refused", "no_winner", "no_constraint", "rolled_back")
+#: Results that found nothing to try, which the runner rests on: a refusal or a rollback did try something.
+NOTHING_TO_TRY = ("idle", "no_winner", "no_constraint")
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -93,13 +98,20 @@ class CycleLog:
         return [body for kind, body in rows[start:] if kind == "cycle"]
 
     def failed_streak(self) -> int:
-        cycles = self.since_resumed()
-        undone = {c.get("undoes") for c in cycles if c["outcome"] == "rolled_back"}
         streak = 0
-        for cycle in reversed(cycles):
-            if cycle["outcome"] in ENDS_A_STREAK and cycle.get("head_version") not in undone:
+        for cycle in reversed(self.since_resumed()):
+            if cycle["outcome"] in ENDS_A_STREAK:
                 break
-            streak += cycle["outcome"] in FAILED
+            streak += 1
+        return streak
+
+    def quiet_streak(self) -> int:
+        """How many cycles in a row found nothing to try, since a person last enrolled a domain or lifted a pause."""
+        streak = 0
+        for kind, body in reversed(self._rows()):
+            if kind in ("enrolled", "resumed") or kind == "cycle" and body["outcome"] not in NOTHING_TO_TRY:
+                break
+            streak += kind == "cycle"
         return streak
 
 
@@ -130,4 +142,5 @@ def heartbeat(root: str | Path) -> dict | None:
         return None
 
 
-__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "MAX_FAILED_CYCLES", "beat", "heartbeat", "stop_reason"]
+__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY", "beat", "heartbeat",
+           "stop_reason"]
