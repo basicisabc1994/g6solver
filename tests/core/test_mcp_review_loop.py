@@ -277,8 +277,14 @@ def test_a_call_that_finds_another_step_running_is_refused_and_starts_nothing(ri
     rig.edit()
     folder = hook.folder("mcp:one")
     folder.mkdir(parents=True)
+    def read(session):
+        raise AssertionError("the running step owns the state: on Windows a reader can make its replace of the file fail")
+
+    real = loop._load
+    monkeypatch.setattr(loop, "_load", read)
     with loop._held(folder):
         got = rig.step()
+    monkeypatch.setattr(loop, "_load", real)
     assert got["ok"] is False and got["action"] == loop.WAIT and got["completion_state"] == "blocked-escalated"
     assert got["warning_card"]["code"] == loop.BUSY and "did nothing" in got["warning_card"]["message"]
     assert not critic.calls

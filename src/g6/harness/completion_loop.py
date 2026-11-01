@@ -484,10 +484,10 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
 
 
 def _read_whole(change: repo_tests.Change, task: str) -> bool:
-    """Whether the pack holds the whole task and the whole patch. It is cut from its end, so the parent files go first, and a
-    new file ``diff_text`` cuts is past this limit already. A reader of part of either has no clean review to give."""
-    pack = _pack(change, task, f"review {'0' * 32}")
-    return task in pack and repo_tests.diff_text(change) in pack
+    """Whether the pack holds the whole task and the whole patch. It is cut from its end with the task before the patch, so a
+    whole patch means a whole task, the parent files go first, and a new file ``diff_text`` cuts is past this limit already.
+    A reader of part of either has no clean review to give."""
+    return repo_tests.diff_text(change) in _pack(change, task, f"review {'0' * 32}")
 
 
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],
