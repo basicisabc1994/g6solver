@@ -829,6 +829,25 @@ outside ended the process, and what did was not found. It did not come back in t
 with the same work going on beside it. Status read it correctly as not running. Nothing restarts such a runner until the
 next scheduled start, which is what the 15-minute task above is for.
 
+The cause is still not known. What is now on record, so a next one can be read rather than guessed at:
+- a `starting` heartbeat with the process's number, before the lock, so a run that dies at once leaves word that it ran;
+- `in_job` on every heartbeat, from Windows's `IsProcessInJob`;
+- the exit code, in `G6_E_LOOP_START_FAILED`'s message and under `return_code`, for a runner that ends while the start watches.
+  A death after the start replied is past that watch, and what is left is a last heartbeat that is not `stopped`.
+
+What was measured on this machine on 2026-11-01. On Windows a venv's `python.exe` is a launcher: `Popen`'s process is not the
+interpreter, which runs as its child inside a job (`in_job` true), and ending the launcher alone ended the interpreter within a
+second, with exit code 1 and nothing written. The same child started from the base interpreter had one process and no job. So
+a runner started from a venv stands on a second process, and an end like that would leave what was seen that day. That is a
+mechanism that fits, not a finding of what happened: no run has yet been seen ending that way. The start's watch reads a
+heartbeat newer than the spawn and past opening, because neither the lock, which a runner holds while it refuses, nor the
+process's number could say. That watch reads the heartbeat ten times a second, and a reader holding that file refuses the
+writer's swap: 25 of 600 beats on this machine, against none of 300 with no reader. A beat lost that way left a runner reading
+as still starting for a whole nap, so a beat now tries its swap five times over a tenth of a second. On the fake domain, before
+that repair one of six real starts through `g6.mcp.improve` lost its first beat so, and after it eight of eight were past opening
+in 0.6 to 1.2 seconds. A stop took about a second during a tick and about 59 seconds at rest, and none of the fourteen died.
+Fourteen is too few to say the death is gone, and these ran from a shell, not a client's server.
+
 **What remains:**
 - **The rest of P2:** the cleaner (a precondition of pushing anything), the records branch and public digest (these need
   O3, the App), model routing (6.7), a `STOP` on `main` and the `loop:stop` label, the yield measurement of 6.3,

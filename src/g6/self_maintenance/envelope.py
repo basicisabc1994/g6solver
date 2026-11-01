@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +38,8 @@ from g6.workspace._envelope import WorkspaceRefused
 STOP_FILE = "STOP"
 STOPS_FILE = "stops.log"
 HEARTBEAT_FILE = "heartbeat.json"
+BEAT_TRIES = 5                          # how often to try a swap a reader holds up
+BEAT_GAP = 0.02                         # the seconds between those tries
 CYCLE_LOG = Path("records", "constraint_log.jsonl")
 #: The folder of the lock a runner holds for its whole life.
 RUNNER_LOCK = ".runner"
@@ -298,12 +301,17 @@ def runner_alive(root: str | Path) -> bool:
 
 def beat(root: str | Path, **fields: Any) -> None:
     """Write the heartbeat: a reader sees the last whole one, never half of a new one. On Windows a reader holding the
-    file can refuse the swap, which only misses this beat."""
+    file refuses the swap for as long as it reads, so the swap is tried a few times, and past that this beat is missed."""
     path = Path(root) / HEARTBEAT_FILE
     spare = path.with_suffix(".tmp")
     try:
         spare.write_text(json.dumps(fields, sort_keys=True, ensure_ascii=False), encoding="utf-8")
-        os.replace(spare, path)
+        for _ in range(BEAT_TRIES):
+            try:
+                os.replace(spare, path)
+                return
+            except PermissionError:
+                time.sleep(BEAT_GAP)
     except OSError:
         pass
 

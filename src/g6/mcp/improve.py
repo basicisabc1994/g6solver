@@ -76,8 +76,10 @@ STOP_FAILED = "G6_E_LOOP_STOP_FAILED"
 STATUS = "G6_E_LOOP_STATUS"
 PAUSED = "G6_E_LOOP_PAUSED"
 RUNNER_LOG = "runner.log"
-#: How long to watch a new runner take its lock: importing G6 takes seconds.
+#: How long to watch a new runner open its folder: importing G6 takes seconds.
 START_WAIT = 45.0
+#: The heartbeats of a runner not yet past opening its folder.
+OPENING = ("starting", "not-running")
 RECENT = 8
 # COPY: Said in every dialog: the name is a claim, and what declining does.
 NAME = ("Type your name to agree; it is recorded as you give it and is not authenticated. To refuse, decline: nothing "
@@ -193,19 +195,32 @@ def _spawn(root: Path) -> Any:
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
 
 
+def _past_opening(root: Path, since: datetime) -> bool:
+    """Whether a runner spawned at ``since`` has got past opening its folder. Its lock cannot say: a runner refuses while it
+    holds it. Nor can a process number: on Windows a venv's ``python.exe`` is a launcher, and the runner is a child of it."""
+    beat = heartbeat(root) or {}
+    try:
+        return beat.get("state") not in OPENING and datetime.fromisoformat(beat.get("at", "")) >= since
+    except (TypeError, ValueError):
+        return False
+
+
 def _watch(root: Path, process: Any) -> dict:
-    """Whether the runner took its lock, or ended first and why."""
-    deadline = time.monotonic() + START_WAIT
+    """Whether the runner got past opening its folder, or ended first, and how. Ended later, it is past what this can see:
+    its last heartbeat is what is left."""
+    since, deadline = datetime.now().astimezone(), time.monotonic() + START_WAIT
     while time.monotonic() < deadline:
-        if runner_alive(root):
+        code = process.poll()
+        if code is not None:
+            said = (heartbeat(root) or {}).get("reason") or f"see {RUNNER_LOG} in the folder"
+            return _blocked(START_FAILED, f"the runner ended as it started, with exit code {code}: {said}"[:500], running=False,
+                            return_code=code, folder=str(root))
+        if _past_opening(root, since):
             return _envelope("qualified-draft", STARTED, f"the runner is alive on {root}", running=True, folder=str(root),
                              next_action="g6_improve_status reads it; the daily digest is under its folder; "
                                          "g6_improve_stop stops it.")
-        if process.poll() is not None:
-            said = (heartbeat(root) or {}).get("reason") or f"see {RUNNER_LOG} in the folder"
-            return _blocked(START_FAILED, f"the runner ended as it started: {said}"[:500], running=False, folder=str(root))
         time.sleep(0.1)
-    return _envelope("qualified-draft", STARTED, f"the runner was started on {root} and has not taken its lock yet",
+    return _envelope("qualified-draft", STARTED, f"the runner was started on {root} and has not opened its folder yet",
                      running=False, folder=str(root), next_action="Read g6_improve_status in a minute.")
 
 

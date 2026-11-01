@@ -193,6 +193,21 @@ def test_a_heartbeat_that_cannot_be_written_is_only_a_missed_beat(tmp_path, monk
     assert heartbeat(tmp_path) == {"tick": 1}
 
 
+def test_a_reader_holding_the_heartbeat_for_a_moment_costs_no_beat(tmp_path, monkeypatch):
+    """A start reads it ten times a second, and a beat lost there is a whole nap in which the runner reads as still starting."""
+    beat(tmp_path, tick=1)
+    real, refusals = os.replace, [PermissionError("a reader holds the file")] * 2
+
+    def held_for_a_moment(*args):
+        if refusals:
+            raise refusals.pop()
+        real(*args)
+
+    monkeypatch.setattr("g6.self_maintenance.envelope.os.replace", held_for_a_moment)
+    beat(tmp_path, tick=2)
+    assert heartbeat(tmp_path) == {"tick": 2}
+
+
 def test_asking_to_stop_writes_the_file_and_repeating_keeps_the_first_reason(tmp_path):
     assert "owner's review" in ask_to_stop(tmp_path, "owner's review\nsecond line")
     assert "owner's review" in ask_to_stop(tmp_path, "something later")

@@ -320,21 +320,73 @@ def test_a_runner_that_ends_as_it_starts_is_a_failed_start_and_says_why(rig, mon
     assert got["running"] is False and check_envelope(got) == []
 
 
-def test_a_runner_that_takes_its_lock_is_reported_alive(rig, monkeypatch):
+def test_a_failed_start_says_the_code_the_process_ended_with(rig, monkeypatch):
     rig.enrol()
-    held = runner_lock(rig.root)
+    monkeypatch.setattr(improve, "_spawn", lambda root: Finished(3221225786))
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_START_FAILED" and got["return_code"] == 3221225786 and "3221225786" in got["message"]
 
-    def spawn(root: Path) -> Finished:
-        held.__enter__()
-        return Finished(None)
 
-    monkeypatch.setattr(improve, "_spawn", spawn)
-    try:
-        got = rig.start()
-    finally:
-        held.__exit__(None, None, None)
+class Holding(Finished):
+    """A process still running, which says so through ``poll`` as a runner says so through its heartbeat."""
+
+    def __init__(self, each_poll) -> None:
+        super().__init__(None)
+        self.each_poll = each_poll
+
+    def poll(self) -> int | None:
+        return self.each_poll()
+
+
+def test_a_runner_past_opening_its_folder_is_reported_alive(rig, monkeypatch):
+    rig.enrol()
+
+    def running() -> None:
+        beat(rig.root, state="waiting", at=datetime.now(UTC).isoformat())
+
+    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(running))
+    got = rig.start()
     assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is True and got["completion_state"] == "qualified-draft"
     assert check_envelope(got) == []
+
+
+def test_a_runner_that_holds_its_lock_and_then_refuses_is_a_failed_start(rig, monkeypatch):
+    """A runner refuses while it holds the lock, so a look at the lock alone can say started of one that is about to end."""
+    rig.enrol()
+    held, polls = runner_lock(rig.root), []
+
+    def refuses() -> int | None:
+        polls.append(1)
+        if len(polls) == 1:
+            held.__enter__()
+            return None
+        if len(polls) == 3:
+            held.__exit__(None, None, None)
+            beat(rig.root, state="not-running", reason="domain_file is missing", at=datetime.now(UTC).isoformat())
+            return 1
+        return None
+
+    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(refuses))
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_START_FAILED" and got["return_code"] == 1 and "domain_file is missing" in got["message"]
+
+
+def test_a_heartbeat_from_before_this_start_says_nothing_of_this_runner(rig, monkeypatch):
+    rig.enrol()
+    beat(rig.root, state="waiting", at=(datetime.now(UTC) - timedelta(hours=1)).isoformat())
+    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(lambda: None))
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is False and "not opened" in got["message"]
+
+
+def test_a_starting_heartbeat_is_no_sign_it_got_past_opening(rig, monkeypatch):
+    rig.enrol()
+
+    def only_starting() -> None:
+        beat(rig.root, state="starting", at=datetime.now(UTC).isoformat())
+
+    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(only_starting))
+    assert rig.start()["running"] is False
 
 
 def test_a_program_that_cannot_be_started_is_a_refusal_not_a_raised_error(rig, monkeypatch):

@@ -23,13 +23,14 @@ from g6.core.llm import LLMError
 from g6.metaharness import Model
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
-from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
+from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, _in_job, main, open_loop, run
 from g6.metaharness.shadow import lineage
 from g6.self_maintenance.digest import digest_path, latest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     CycleLog,
     ask_to_stop,
+    beat,
     heartbeat,
     runner_alive,
     runner_lock,
@@ -563,6 +564,47 @@ def test_run_with_a_stop_file_ends_before_it_opens_anything(tmp_path):
     root.mkdir()
     (root / "STOP").write_text("stay down\n", encoding="utf-8")
     assert run(root) == 0 and heartbeat(root) is None
+
+
+def test_a_starting_heartbeat_is_on_record_before_the_lock_is_taken(tmp_path, monkeypatch):
+    root, _ = _enrolled_folder(tmp_path)
+    seen, real = [], runner_lock
+
+    def noted(folder):
+        seen.append(heartbeat(root))
+        return real(folder)
+
+    monkeypatch.setattr("g6.metaharness.runner.runner_lock", noted)
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
+    assert seen[0]["state"] == "starting" and seen[0]["pid"] == os.getpid() and seen[0]["at"] and "in_job" in seen[0]
+
+
+def test_a_refused_runner_leaves_the_heartbeat_of_the_one_alive_as_it_was(tmp_path, monkeypatch):
+    monkeypatch.setattr("g6.workspace._coordination.MUTEX_WAIT", 0.05)
+    root = tmp_path / "loop"
+    root.mkdir()
+    with runner_lock(root):
+        beat(root, state="waiting", pid=7)
+        assert run(root) == 1
+        assert heartbeat(root) == {"state": "waiting", "pid": 7}
+
+
+def test_every_heartbeat_of_a_run_says_whether_it_is_in_a_job(tmp_path):
+    runner, _, _ = _runner(tmp_path)
+    runner.step()
+    assert heartbeat(runner.loop.root)["in_job"] == _in_job()
+    (runner.loop.root / "STOP").write_text("done\n", encoding="utf-8")
+    assert runner.step() is None and heartbeat(runner.loop.root)["in_job"] == _in_job()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a Windows job")
+def test_the_system_is_asked_whether_this_process_is_in_a_job():
+    assert _in_job() in (True, False)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="elsewhere there is no such thing to ask")
+def test_where_a_job_means_nothing_it_is_not_said():
+    assert _in_job() is None
 
 
 def test_a_second_runner_on_a_folder_does_nothing(tmp_path, capsys, monkeypatch):

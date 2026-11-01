@@ -39,12 +39,14 @@ established.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import importlib.util
 import os
 import sys
 import time
 from collections.abc import Callable
+from ctypes import wintypes
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -70,6 +72,7 @@ from g6.self_maintenance.envelope import (
     CycleLog,
     beat,
     record_stop,
+    runner_alive,
     runner_lock,
     stop_reason,
     stops_asked,
@@ -96,6 +99,18 @@ _MODULE = "g6_loop_domain"
 
 def _local_now() -> datetime:
     return datetime.now().astimezone()
+
+
+def _in_job() -> bool | None:
+    """Whether this process is in a Windows job, whose end ends it however it is detached, or ``None`` where that cannot be
+    asked. A run from a venv's ``python.exe`` is: that program is a launcher, and ending it alone ends this process."""
+    if os.name != "nt":
+        return None
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.IsProcessInJob.argtypes = (wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
+    found = wintypes.BOOL()
+    return bool(found.value) if kernel.IsProcessInJob(kernel.GetCurrentProcess(), None, ctypes.byref(found)) else None
 
 
 class DomainChanged(ValueError):
@@ -149,7 +164,7 @@ class Runner:
         self.last: dict[str, Any] = {}              # the last tick's reply
         self.not_before: datetime | None = None     # what that reply asked for
         self.day: date | None = None                # the day the digest last covered
-        loop.beat_fields = {"pid": os.getpid()}
+        loop.beat_fields = {"pid": os.getpid(), "in_job": _in_job()}
 
     def run(self) -> int:
         while True:
@@ -354,6 +369,8 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     if halted:
         record_stop(root, halted, at=now().isoformat())
         return 0
+    if not runner_alive(root):              # before the lock, so a run that dies at once still leaves word that it ran
+        beat(root, state="starting", pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
     try:
         with runner_lock(root):
             try:
