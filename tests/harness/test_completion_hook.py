@@ -166,7 +166,7 @@ def test_a_repository_with_no_commit_records_nothing(tmp_path, monkeypatch, caps
 def advance_says(monkeypatch, step) -> list:
     calls = []
 
-    def advance(repo, task, base, session, said=""):
+    def advance(repo, task, base, session, said="", agent=""):
         calls.append((repo, task, base, session))
         if isinstance(step, Exception):
             raise step
@@ -199,7 +199,7 @@ def said_to_the_loop(monkeypatch) -> list:
     """What each stop hook hands the loop as the agent's words."""
     words = []
 
-    def advance(repo, task, base, session, said=""):
+    def advance(repo, task, base, session, said="", agent=""):
         words.append(said)
         return loop.Step(loop.STOP)
 

@@ -131,8 +131,13 @@ ASKED = ("G6's completion loop is waiting for your answer: the agent asked a que
          "rejected it, and the finding stays open. The loop goes on when the agent next stops.")
 #: A last sentence that asks: a question mark past any closing marks, and after it at most a closing that hands over the turn.
 _ASKS = re.compile(r"\?[\s*_`'\")\]]*(?:(?:let me know|please confirm|i.ll wait)\b[^.!?\n]*[.!]?[\s*_`'\")\]]*)?$", re.I)
-#: What a run came to: the row's stable cause, for ``metaharness.domain.FailureRecord``.
-OPEN, FIXED, FOUND_NOTHING = "review_finding_open", "review_finding_fixed", "review_found_nothing"
+#: Why a run ended, from what stopped it: the row's stable cause, for ``metaharness.domain.FailureRecord``.
+OPEN, FIXED, CONTESTED = "review_finding_open", "review_finding_fixed", "review_finding_contested"
+FOUND_NOTHING, UNREACHABLE, UNREADABLE, OVERSIZE = ("review_found_nothing", "reviewer_unreachable", "reviewer_unreadable",
+                                                    "review_too_long")
+UNCONFINED, UNASKED, UNAPPROVED = "no_boundary", "no_task", "no_reviewer_approved"
+#: The causes a profile cannot change: nothing failed, or only a person can put it right.
+NOT_CHANGEABLE = frozenset({FOUND_NOTHING, UNREACHABLE, UNCONFINED, UNASKED, UNAPPROVED})
 #: Where those rows go, beside the sessions' folders: local, and never pushed.
 FAILURES = ("completion_loop", "failures.jsonl")
 #: The one requirement the final review assesses: the task's text, which no stated check tests.
@@ -159,6 +164,9 @@ TOO_LONG = (f"the task and the patch are past the {MAX_PACK_CHARS:,} characters 
             "asked")
 STOPPED = {"no_counterexample_in_domain": "no probe failed", "timeout": "the loop's time ran out",
            "counterexample_budget_exhausted": "the stop rule: every repair the loop allows has been sent"}
+#: The stops that are themselves a run's cause.
+CAUSES = {LEFT: CONTESTED, WITHDRAWN: "change_withdrawn", UNREPRODUCED: "review_test_unrunnable", MOVED: "patch_moved",
+          STOPPED["timeout"]: "loop_time_ran_out"}
 #: Where L9's text names its container: its folders, and the sentence that runs the probes there.
 _RUN = re.compile(r"run them from the repository with\s+`[^`]*`")
 _TREE = re.compile(r"/opt/we/(?:hidden\d*_)?tree\.json")
@@ -358,6 +366,12 @@ def scout_host() -> Host | None:
     """The scouts' session, when the key file's own ``G6_LLM_PROVIDER`` line approves Claude Code; else None."""
     caller = proposer._backend(provider_from_env())
     return ToolSession(caller.model).run if isinstance(caller, host_models.ClaudeCodeCaller) else None
+
+
+def _named(caller: Any) -> str:
+    """The model a caller was given, else its program's name, as ``critic_host`` gives Codex none and its default is known only
+    to Codex. Nothing is guessed: "" with neither."""
+    return getattr(caller, "model", "") or getattr(getattr(caller, "program", None), "name", "")
 
 
 def critic_host() -> LLMCaller | None:
@@ -705,17 +719,42 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
         review)
 
 
+def _cause(state: dict, fixed: list[dict], still: list[dict]) -> str:
+    """Why a run ended, from what stopped it, so a review that failed with a finding open is a failed review: the findings speak
+    only where nothing else ended the loop. A refusal has named its own."""
+    stop, last = state["stop"], (state.get("reviews") or [{}])[-1]
+    if "cause" in state:
+        return state["cause"]
+    if stop == NO_REVIEW:
+        return OVERSIZE if last.get("error") == TOO_LONG else UNREACHABLE if last.get("verdict") == "failed" else UNREADABLE
+    return CAUSES.get(stop) or (OPEN if still else FIXED if fixed else FOUND_NOTHING)
+
+
+def _round_outcome(one: dict) -> str:
+    """What one round came to."""
+    if one["verdict"] not in READ_VERDICTS:
+        return "review_failed"
+    if "failed" in one["results"].values():
+        return "test_failed"
+    return "test_showed_nothing" if one.get("unrun") else "nothing_reproduced"
+
+
 def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> dict:
     """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
-    a cause must be a stable code, and a reproduced finding is observed apart from the agent: G6 ran another family's test.
-    ``session`` names the folder beside it that holds each round's patch. A refused run has no reviews."""
+    a cause must be a stable code. ``independently_observed`` means only that G6 saw a test fail: it ran another family's test,
+    apart from the agent, so a run where none failed observed nothing, whatever else it says. ``session`` names the folder
+    beside it that holds each round's patch. ``label`` stays empty here: it is where the maintainers' verdict joins later. A
+    refused run has no reviews."""
     reviews = state.get("reviews") or []
     fixed, still = patch_report.findings(reviews)
-    return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": OPEN if still else FIXED if fixed else FOUND_NOTHING,
-            "changeable": True, "note": (still or fixed)[0]["rule"] if still or fixed else state["stop"],
-            "independently_observed": True, "task": digest(task), "base": base,
-            "session": session.name, "rounds": len(reviews), "reviews": [{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")}
-                                                for one in reviews],
+    cause = _cause(state, fixed, still)
+    return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": cause, "changeable": cause not in NOT_CHANGEABLE,
+            "note": (still or fixed)[0]["rule"] if still or fixed else state["stop"],
+            "independently_observed": bool(fixed or still), "task": digest(task), "base": base, "label": "",
+            "models": {"agent": state.get("agent", ""), "reviewer": state.get("reviewer", "")},
+            "session": session.name, "rounds": len(reviews),
+            "reviews": [{**{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")},
+                         "outcome": _round_outcome(one), "told": one.get("told", "")} for one in reviews],
             "stop": state["stop"], "left": state.get("left", ""),
             "tree_changed": bool(reviews) and digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
 
@@ -896,10 +935,10 @@ def _held(session: Path) -> Any:
 
 
 def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None,
-            critic: LLMCaller | None = None, said: str = "", answered: bool = True) -> Step:
+            critic: LLMCaller | None = None, said: str = "", answered: bool = True, agent: str = "") -> Step:
     """One hook of the loop, for the repository's working tree against ``base``: see the module's docstring. ``scout`` and
     ``critic``: the sessions to use, else the ones the person's key file approves. ``said``: the agent's words as it stopped,
-    kept as its reason if it left the code as it was.
+    kept as its reason if it left the code as it was. ``agent``: its model, for the row, where the caller knows it.
 
     ``answered``: whether this call is the agent's reply to what the last one sent back. A Stop hook is: it fires only once
     the agent has taken its turn, so an unchanged tree there is the agent's decision. A call over MCP may be a client's retry
@@ -913,13 +952,13 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         with _held(session):
-            return _advance(repo, task, base, session, scout, critic, said, answered)
+            return _advance(repo, task, base, session, scout, critic, said, answered, agent)
     except WorkspaceRefused:
         return Step(WAIT, ALREADY_RUNNING, BUSY)
 
 
 def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
-             said: str, answered: bool) -> Step:
+             said: str, answered: bool, agent: str) -> Step:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
     if state.get("done"):
@@ -927,11 +966,12 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
             _write_row(session, state)
             _save(session, state)
         return Step(STOP, code=state.get("code", ""), note=ALREADY_ENDED, ending=state.get("ending", ""))
+    state["agent"] = agent or state.get("agent", "")
     root = repo_tests.checked_repo(repo)
     change = repo_tests.change(root, base)
 
-    def refused(text: str, code: str) -> Step:
-        state["stop"] = text
+    def refused(text: str, code: str, cause: str) -> Step:
+        state.update(stop=text, cause=cause)
         _keep_failures(task, base, change, session, state)
         return _finish(session, state, text, code, "untested")
 
@@ -941,16 +981,17 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     if state.get("reviewed") and "started" not in state and state["reviewed"] == digest(repo_tests.diff_text(change)):
         return Step(STOP, note=ALREADY_READ)
     if not task.strip():
-        return refused(NO_TASK, "G6_E_INPUT_VALIDATION")
+        return refused(NO_TASK, "G6_E_INPUT_VALIDATION", UNASKED)
     why = proposer.boundary(root)
     if why:
-        return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE)
+        return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
     critic = critic or critic_host()
     reviewing = critic is not None and not _scouts_chosen()
+    state["reviewer"] = _named(critic) if reviewing else ""
     if not reviewing:
         scout = scout or scout_host()
         if scout is None:
-            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=keys.path()), keys.KEY_MISSING)
+            return refused((NOT_APPROVED if _scouts_chosen() else NOT_ON).format(path=keys.path()), keys.KEY_MISSING, UNAPPROVED)
     shipped = harness()
     state.setdefault("started", time.time())
     state.setdefault("sets", {})
@@ -993,7 +1034,7 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:
             raise
-        return refused(NO_BOUNDARY.format(why=exc), ISOLATION_UNAVAILABLE)
+        return refused(NO_BOUNDARY.format(why=exc), ISOLATION_UNAVAILABLE, UNCONFINED)
     if loop.waiting:
         _save(session, state)
         return Step(WAIT, ASKED, WAITING_ON_PERSON)

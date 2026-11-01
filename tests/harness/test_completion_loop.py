@@ -1158,7 +1158,7 @@ def test_a_run_with_a_finding_leaves_one_row_a_failure_record_can_be_built_from(
     assert row["reviews"][1]["why"] == "why two" and "'two'" in row["reviews"][1]["test"]
     assert row["tree_changed"] is True
     record = FailureRecord(**{field.name: row[field.name] for field in dataclasses.fields(FailureRecord)})
-    assert record.cause == "review_finding_open" and record.changeable and record.independently_observed
+    assert record.cause == "review_finding_contested" and record.changeable and record.independently_observed
     assert record.case_id == f"{digest(TASK)[:16]}:{world.base[:12]}" and record.note == "rule two"
 
 
@@ -1806,7 +1806,7 @@ def test_a_retained_test_a_later_repair_breaks_is_an_open_finding(world, monkeyp
     assert step.action == loop.CONTINUE and "rule two" in step.text
     ended = world.advance(critic=critic, said="I reject the second finding.")
     [row] = rows(world)
-    assert (row["cause"], row["note"]) == (loop.OPEN, "rule two")
+    assert (row["cause"], row["note"]) == (loop.CONTESTED, "rule two")
     assert "**Found:** 2 reproduced" in ended.text and "**Fixed:** review 1" in ended.text
     assert "**Open:** review 2" in ended.text and "showed no failure" not in ended.text
 
@@ -2127,7 +2127,7 @@ def test_a_row_describes_the_runs_final_outcome_after_a_killed_finish(world, mon
     ended = world.advance(critic=critic, said="I reject the finding")
     assert ended.action == loop.STOP and "**Open:**" in ended.text and world.state()["done"]
     [row] = rows(world)
-    assert row["cause"] == loop.OPEN, "the run ended with a finding open, and its row still says fixed"
+    assert row["cause"] == loop.CONTESTED, "the run ended with a finding rejected, and its row still says fixed"
 
 
 def test_a_row_replaced_after_a_kill_leaves_every_other_line_as_it_was(world, monkeypatch):
@@ -2174,7 +2174,7 @@ def test_a_row_that_cannot_replace_the_stale_one_is_kept_and_written_by_the_next
     assert rows(world)[0]["cause"] == loop.FIXED      # it stays what it was until it can be replaced whole
     world.advance(critic=critic)
     [row] = rows(world)
-    assert row["cause"] == loop.OPEN and "row" not in world.state()
+    assert row["cause"] == loop.CONTESTED and "row" not in world.state()
 
 def test_a_failed_review_leaves_a_row_for_the_next_cycle(world, monkeypatch):
     Reviewed(monkeypatch)
@@ -2699,3 +2699,198 @@ def test_a_call_after_the_end_keeps_its_ending(world, monkeypatch):
     world.edit()
     assert world.advance(critic=critic).ending == "clean"
     assert world.advance(critic=critic).ending == "clean"
+
+
+# --- the row: a cause, not an outcome, from the stop chain, and what the maintainers' verdict will join --------------------------
+
+def the_row(world) -> dict:
+    [row] = rows(world)
+    return row
+
+
+def test_a_reviewer_out_of_reach_is_the_cause_and_nothing_was_seen_to_fail(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reviewer(LLMError("gone away")))
+    row = the_row(world)
+    assert row["cause"] == "reviewer_unreachable" and row["changeable"] is False
+    assert row["independently_observed"] is False
+
+
+def test_what_stopped_the_loop_is_the_cause_even_with_a_finding_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", LLMError("gone away"))
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    world.advance(critic=critic)
+    row = the_row(world)
+    assert row["cause"] == "reviewer_unreachable" and row["note"] == "rule one"
+    assert row["independently_observed"] is True      # G6 saw that test fail, whatever came after
+
+
+@pytest.mark.parametrize("reply", ["no form at all", "READ: {proof}\nVERDICT: maybe\n"])
+def test_a_reply_that_cannot_be_read_is_the_cause(world, monkeypatch, reply):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=FakeLLM(lambda system, user: reply.format(proof=re.search(r"review [0-9a-f]{32}", user)[0])))
+    row = the_row(world)
+    assert row["cause"] == "reviewer_unreadable" and row["changeable"] is True
+
+
+def test_a_pack_too_long_is_the_cause(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reviewer("never"), task="A" * (loop.MAX_PACK_CHARS + 1))
+    assert the_row(world)["cause"] == "review_too_long"
+
+
+def test_a_test_that_would_not_run_is_the_cause_and_no_failure_was_observed(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    world.edit()
+    world.advance(critic=reviewer("one", "one"))
+    row = the_row(world)
+    assert row["cause"] == "review_test_unrunnable" and row["independently_observed"] is False
+    assert "ImportError" in row["reviews"][0]["told"]
+
+
+def test_a_finding_rejected_is_contested_and_not_merely_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    world.advance(critic=critic, said="They misread the task.")
+    assert the_row(world)["cause"] == "review_finding_contested" and the_row(world)["independently_observed"] is True
+
+
+def test_repairs_that_ran_out_leave_the_finding_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py", "test_critic_2.py", "test_critic_3.py", "test_critic_4.py")
+    critic = reviewer("one", "two", "three", "four")
+    for repair in range(loop.MAX_REPAIRS):
+        world.edit(FIXED + f"# {repair}\n")
+        world.advance(critic=critic)
+    world.edit(FIXED + "# the last\n")
+    world.advance(critic=critic)
+    assert the_row(world)["cause"] == loop.OPEN
+
+
+def test_a_clean_run_names_that_nothing_was_found_and_nothing_to_change(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reviewer("none"))
+    row = the_row(world)
+    assert row["cause"] == "review_found_nothing" and row["changeable"] is False
+    assert row["independently_observed"] is False and row["note"] == loop.CLEAN
+
+
+def test_a_change_taken_back_is_the_cause(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(BASE)
+    world.advance(critic=critic)
+    assert the_row(world)["cause"] == "change_withdrawn"
+
+
+def test_the_loops_time_is_the_cause(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    state = world.state()
+    state["started"] = time.time() - loop.LOOP_S - 1
+    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    world.edit(FIXED + "# late\n")
+    world.advance(critic=critic)
+    assert the_row(world)["cause"] == "loop_time_ran_out"
+
+
+def test_a_patch_that_moved_is_the_cause(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reads_then(lambda: world.edit(FIXED + "# changed under the review\n")))
+    assert the_row(world)["cause"] == "patch_moved"
+
+
+@pytest.mark.parametrize("cause", ["no_boundary", "no_task", "no_reviewer_approved"])
+def test_a_refused_run_names_its_cause_and_only_a_person_can_change_it(world, monkeypatch, cause):
+    if cause == "no_boundary":
+        monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    if cause == "no_reviewer_approved":
+        monkeypatch.setattr(keys, "read", lambda: {})
+    world.edit()
+    loop.advance(world.repo, "" if cause == "no_task" else TASK, world.base, world.session,
+                 critic=None if cause == "no_reviewer_approved" else reviewer("never"))
+    row = the_row(world)
+    assert row["cause"] == cause and row["changeable"] is False and row["independently_observed"] is False
+
+
+def test_each_row_has_an_empty_label_for_the_maintainers_verdict(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reviewer("none"))
+    assert the_row(world)["label"] == ""
+
+
+def test_each_round_has_its_outcome(world, monkeypatch):
+    def now(placed: str) -> dict:
+        return ran(placed, {"test_critic": "failed" if failing[0] else "passed"})
+
+    failing = [True]
+    Runs(monkeypatch, now=now)
+    critic = reviewer("one", "two", LLMError("gone away"))
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    failing[0] = False
+    world.advance(critic=critic)
+    assert [one["outcome"] for one in the_row(world)["reviews"]] == ["test_failed", "nothing_reproduced"]
+
+
+def test_a_failed_review_and_an_unrunnable_test_are_outcomes_of_their_rounds(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    world.edit()
+    world.advance(critic=reviewer("one", "one"))
+    assert [one["outcome"] for one in the_row(world)["reviews"]] == ["test_showed_nothing"]
+    other = world.session.parent / "s2"
+    loop.advance(world.repo, TASK, world.base, other, critic=reviewer(LLMError("gone away")))
+    assert [one["outcome"] for row in rows(world) if row["session"] == "s2" for one in row["reviews"]] == ["review_failed"]
+
+
+def test_a_row_names_the_models(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    critic.model = "a-reviewer-model"
+    world.edit()
+    loop.advance(world.repo, TASK, world.base, world.session, critic=critic, agent="an-agent-model")
+    assert the_row(world)["models"] == {"agent": "an-agent-model", "reviewer": "a-reviewer-model"}
+
+
+def test_a_reviewer_given_no_model_is_named_by_its_program_and_nothing_is_guessed(monkeypatch):
+    assert loop._named(host_models.CodexCaller(timeout=1.0)) == "Codex"
+    assert loop._named(host_models.CodexCaller("a-model", timeout=1.0)) == "a-model"
+    assert loop._named(reviewer("none")) == ""
+
+
+def test_a_stop_hook_names_the_agents_model_from_the_transcript(world, monkeypatch, tmp_path):
+    Reviewed(monkeypatch)
+    approved(monkeypatch, reviewer("none"))
+    transcript = tmp_path / "t.jsonl"
+    lines = [{"type": "assistant", "message": {"model": "claude-earlier", "content": []}},
+             {"type": "assistant", "message": {"model": "claude-latest", "content": []}},
+             {"type": "assistant", "message": {"model": "<synthetic>", "content": []}}]
+    transcript.write_text("\n".join(json.dumps(line) for line in lines) + "\nnot json\n", encoding="utf-8")
+    prompted(world, "fix double")
+    world.edit()
+    hook.on_stop({"session_id": "s1", "cwd": str(world.repo), "transcript_path": str(transcript)})
+    assert the_row(world)["models"]["agent"] == "claude-latest"
+
+
+def test_a_row_with_no_finding_still_builds_a_failure_record(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reviewer("none"))
+    row = the_row(world)
+    record = FailureRecord(**{field.name: row[field.name] for field in dataclasses.fields(FailureRecord)})
+    assert record.cause == "review_found_nothing" and not record.changeable and not record.independently_observed

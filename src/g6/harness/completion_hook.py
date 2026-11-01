@@ -103,20 +103,28 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
     os.replace(session / "task.json.new", session / "task.json")
 
 
-def _items(transcript: object, kind: str) -> list[list[str]]:
-    """The text of each item of ``kind`` in the session's transcript, skipping meta items and any line it cannot read ([]
-    when the file cannot be read)."""
+def _lines(transcript: object) -> list[dict]:
+    """Each item in the session's transcript, skipping any line it cannot read ([] when the file cannot be read)."""
     try:
         lines = Path(str(transcript)).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
-    found: list[list[str]] = []
+    found: list[dict] = []
     for line in lines:
         try:
             item = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(item, dict) or item.get("type") != kind or item.get("isMeta"):
+        if isinstance(item, dict):
+            found.append(item)
+    return found
+
+
+def _items(transcript: object, kind: str) -> list[list[str]]:
+    """The text of each item of ``kind`` in the session's transcript, skipping meta items."""
+    found: list[list[str]] = []
+    for item in _lines(transcript):
+        if item.get("type") != kind or item.get("isMeta"):
             continue
         said = (item.get("message") or {}).get("content")
         found.append([said] if isinstance(said, str) else [part.get("text") or "" for part in said or []
@@ -136,6 +144,14 @@ def _said(event: dict) -> str:
         return said
     spoken = ["\n".join(text for text in item if text.strip()) for item in _items(event.get("transcript_path"), "assistant")]
     return next((text for text in reversed(spoken) if text), "")
+
+
+def _model(event: dict) -> str:
+    """The agent's model, for the run's row: the latest the transcript names, as a session may change it ("" with none). A name
+    in angle brackets is Claude Code's own, for a message no model wrote."""
+    named = ((item.get("message") or {}).get("model") for item in reversed(_lines(event.get("transcript_path")))
+             if item.get("type") == "assistant")
+    return next((one for one in named if isinstance(one, str) and one and not one.startswith("<")), "")
 
 
 def on_prompt(event: dict) -> dict:
@@ -168,7 +184,8 @@ def on_stop(event: dict) -> dict:
     from g6.harness import completion_loop as loop
 
     asked = json.loads((session / "task.json").read_text(encoding="utf-8"))
-    step = loop.advance(asked["repo"], asked["task"], asked["base"], current(event["session_id"], asked), said=_said(event))
+    step = loop.advance(asked["repo"], asked["task"], asked["base"], current(event["session_id"], asked), said=_said(event),
+                        agent=_model(event))
     if step.action == loop.CONTINUE:
         return {"decision": "block", "reason": step.text}
     said = step.text or step.note
