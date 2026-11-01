@@ -533,15 +533,18 @@ def test_a_restart_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_
 def test_the_bytes_that_were_checked_are_the_bytes_that_run(tmp_path, monkeypatch):
     root, _ = _enrolled_folder(tmp_path)
     changed, marker = _plants_a_marker(tmp_path)
+    rig = Path(__file__).with_name("_loop_domains.py")
+    before = rig.read_bytes()
     real = importlib.util.spec_from_file_location
 
     def swapped_after_the_check(name, path, *args, **kwargs):
-        Path(path).write_text(changed, encoding="utf-8")
+        if name == "g6_loop_domain":                                     # the folder's own file, and nothing it loads
+            Path(path).write_text(changed, encoding="utf-8")
         return real(name, path, *args, **kwargs)
 
     monkeypatch.setattr("g6.metaharness.runner.importlib.util.spec_from_file_location", swapped_after_the_check)
     run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root))
-    assert not marker.exists()
+    assert not marker.exists() and rig.read_bytes() == before
 
 
 def test_lifting_a_pause_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path, monkeypatch, capsys):
