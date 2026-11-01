@@ -63,7 +63,7 @@ def load_cases(path: str | Path) -> tuple[SuiteCase, ...]:
 
 class CodingReplay:
     """``cases``: the development pool. ``sealed``: a file alone in its folder, which the loop holds only as a vault. ``caller``: the
-    reviewer's model, declared unpaid: the loop never spends API credits."""
+    reviewer's model. The loop reads who pays from its type and refuses one with an API key."""
 
     name = "coding-replay"
 

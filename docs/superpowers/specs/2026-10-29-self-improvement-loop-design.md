@@ -634,8 +634,10 @@ what judges it must never be in. It defines `LOOP = {"domain": ..., "proposer": 
 proposer's, are billed to one provider, because the callers are the domain's and nothing in the loop can see where they go
 or send them elsewhere. With one window that is the window. With more, `LOOP` names it in `provider`, and without that
 nothing runs (`G6_E_LOOP_NO_BUDGET`). A tick reserves only on that provider and waits at its limit however much another
-window holds, so a second subscription's allowance is used by a second folder whose domain's callers go there. The statement
-is the person's and nothing checks it. Nothing else is read from either file, so neither
+window holds, so a second subscription's allowance is used by a second folder whose domain's callers go there. A host caller is
+checked against that statement, so a folder that names one provider and signs in to another is refused with
+`G6_E_LOOP_PROVIDER_MISMATCH`, the proposer included. A local caller is on nobody's week and fits any. Nothing else is read from
+either file, so neither
 can reach `person_free_adoption_outside_shadow`. Enrolling pins the domain file's digest, so an edit is a changed frozen
 item: `g6_improve_start`, a restart and lifting a pause each refuse it before it can run, and what runs is the bytes that
 were checked. The pin holds that file, not what it imports. Then, at a terminal, a person enrols it and types the domain's
@@ -771,6 +773,15 @@ tick there with the split unspent and the candidate carried to the next tick. A 
 evaluation runs. This cannot catch a limit that arrives during the evaluation, or one the reading does not show: those still
 spend one of the five. That is the price of not reading Codex's words. The repair is a code of its own from those callers,
 at an issuance window.
+
+**Who pays is read from the caller's type.** `Model.paid` was the only guard on the rule that the loop never spends API credits,
+and a caller with a key left it at its default and passed. Now, for each declared model and the proposer, seen through G6's
+wrappers: `ClaudeCodeCaller` and `CodexCaller` are that provider's subscription, a subclass included; `AnthropicCaller`, which finds
+a key by itself, and `OpenAICompatibleCaller` with a key are paid and refused with `G6_E_LOOP_PAID_MODEL`; `OllamaCaller`, a keyless
+HTTP caller and `FakeLLM` bill nobody; and any other type is refused with `G6_E_LOOP_UNKNOWN_CALLER`, because nothing can say who
+pays for it. It is checked at enrolment and before each tick, and `paid=True` still refuses. A wrapper of a domain's own passes if
+it holds its caller as `_inner`, as G6's do. This reads a type, and it is a check and not a boundary: a caller of a known type can
+do what it likes inside. `g6/core/host_models.py` joined `ENVELOPE_PATTERNS`, since this rests on its classes.
 
 **One backend to a model.** A `FallbackCaller` that holds two backends is refused at enrolment, for a declared model or the
 proposer, with `G6_E_LOOP_FALLBACK_MODEL`, seen through `EmptyRetry` and `TimingLLMCaller`. It answers from the next backend

@@ -73,10 +73,11 @@ def _with_model(domain, caller) -> None:
 
 # Finding 1: a tick is charged what reached the backend, and stops at what it reserved -----------------------------------
 
-class Retrying:
+class Retrying(FakeLLM):
     """Answers through a backend it asks ``tries`` times, and notes none of them: the retries the reviewer counted."""
 
     def __init__(self, inner, tries: int = 8) -> None:
+        super().__init__()
         self.inner, self.tries, self.backend = inner, tries, 0
 
     def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:

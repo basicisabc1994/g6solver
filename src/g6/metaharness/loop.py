@@ -49,9 +49,11 @@ from g6.metaharness.domain import (
     FailureRecord,
     Judge,
     backends,
+    caller_problems,
     cut_pool,
     domain_problems,
     judge_source,
+    provider_problems,
     sealed_closed,
 )
 from g6.metaharness.failure_strategy import FailureTraceStrategy
@@ -112,7 +114,7 @@ ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py",
                      "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
                      "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py",
                      "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
-                     "core/llm.py", "core/vault.py", "integrity/*.py")
+                     "core/host_models.py", "core/llm.py", "core/vault.py", "integrity/*.py")
 UNKNOWN = "unknown"
 #: What the gate holds this loop's candidates to (the owner's ruling, 2026-11-01). Wall clock is left out: differences of
 #: milliseconds refused real gains on noise, each spending one of the split's evaluations. It is still measured, and reported
@@ -410,7 +412,7 @@ class ShadowLoop:
                                  read_account=read_account)
         for provider, until in self.log.limits().items():
             self.meter.limit_reached(provider, until)
-        self.problems = domain_problems(domain)
+        self.problems = domain_problems(domain) + caller_problems({"the proposer": proposer})
         if backends(proposer) > 1:
             self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
                                   "pass unseen and its calls could go where no window covers"))
@@ -422,6 +424,8 @@ class ShadowLoop:
             self.problems.append((NO_BUDGET, f"the windows are for {', '.join(named)} and this folder's calls are stated to "
                                   f"go to {settings.provider or 'none of them'}: an allowance pays only for its own "
                                   "provider's requests, so LOOP must name the one they go to"))
+        elif named:
+            self.problems += provider_problems(self._callers(), self.provider)
         self._clock = clock
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
@@ -565,9 +569,14 @@ class ShadowLoop:
         return "" if seen <= held else (f"the log saw generation {seen} and the chain of adoptions holds {held}: a "
                                         "generation's number must never be used twice")
 
+    def _callers(self) -> dict[str, Any]:
+        """Every caller a tick can send through, as the domain declares them now."""
+        models = self.domain.execution().models
+        return {"the proposer": self._proposer.inner, **{name: model.caller for name, model in models.items()}}
+
     def _lacking(self) -> dict[str, Any] | None:
         """The domain checked as it is now: a handle's first check says nothing of what has changed since."""
-        problems = domain_problems(self.domain)
+        problems = domain_problems(self.domain) + provider_problems(self._callers(), self.provider)
         if not problems:
             return None
         return _blocked(problems[0][0], "; ".join(why for _, why in problems),
