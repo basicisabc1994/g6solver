@@ -7,6 +7,10 @@ commit, so a commit the agent makes later cannot move the base, and the name a c
 folder, so it can name no path. ``continue`` carries the text for the agent and ``stop`` the report, to show as it is. A stop
 that tested nothing or left no clean review is ``blocked-escalated`` with its own code; any other is ``qualified-draft`` at
 best, as a review that reproduces nothing is not evidence the work is right. Nothing here decides anything.
+
+A client may repeat a call whose reply it lost, and a server's jobs run one at a time, so that repeat runs just after the call
+it repeats, with no overlap for a lock to see. So only a call with a ``reason`` rejects a finding: with the code unchanged and
+no reason, the same finding goes back, and nothing is spent.
 """
 from __future__ import annotations
 
@@ -62,7 +66,7 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     request_id = uuid.uuid4().hex[:12]
     try:
         asked = _asked(repo, task, base, folder)
-        done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason)
+        done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
         return blocked_reply(f"[{exc.code}] {exc}", request_id=request_id)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here

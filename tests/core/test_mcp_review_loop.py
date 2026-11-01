@@ -270,6 +270,45 @@ def test_repeating_a_stop_with_a_finding_left_open_stays_a_draft(rig):
         True, "qualified-draft", "G6_E_REVIEW_UNTIL_CLEAN")
 
 
+def test_a_retry_with_the_code_unchanged_and_no_reason_gets_the_same_finding_and_spends_nothing(rig):
+    critic = reviewer("one", "never")
+    rig.approve(critic)
+    rig.edit()
+    first = rig.step()
+    again = rig.step()
+    assert (again["ok"], again["action"]) == (True, "continue") and again["text"] == first["text"]
+    assert len(critic.calls) == 1
+    enveloped(again)
+    assert rig.step(reason="   ")["action"] == "continue"      # blank says nothing
+    stopped = rig.step(reason="They misread the task.")
+    assert stopped["action"] == "stop" and "the agent left the code as it was" in stopped["report"]
+
+
+def test_two_calls_queued_on_one_server_are_one_step_and_one_finding(rig):
+    """A server's jobs run one at a time, so a client's retry never overlaps: it runs just after the call it repeats."""
+    critic = reviewer("one", "never")
+    rig.approve(critic)
+    rig.edit()
+    arguments = {"repo": str(rig.repo), "task": TASK, "session": "one", "base": rig.base}
+
+    async def flow():
+        async with Client(rig.server) as client:
+            jobs = [data(await client.call_tool("g6_review_until_clean", arguments)) for _ in range(2)]
+            found = []
+            for job in jobs:
+                for _ in range(3000):
+                    got = data(await client.call_tool("metaharness_job", {"job_id": job["job_id"]}))
+                    if got.get("status") in ("completed", "failed"):
+                        found.append(got.get("result") or got)
+                        break
+                    await asyncio.sleep(0.02)
+            return found
+
+    first, second = asyncio.run(flow())
+    assert (first["action"], second["action"]) == ("continue", "continue") and first["text"] == second["text"]
+    assert len(critic.calls) == 1
+
+
 def test_a_call_that_finds_another_step_running_is_refused_and_starts_nothing(rig, monkeypatch):
     monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
     critic = reviewer("one")

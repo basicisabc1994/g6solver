@@ -1705,6 +1705,72 @@ def test_overlapping_calls_cannot_delete_a_pending_test_or_earn_a_clean_stop(wor
     assert not any(loop.CLEAN in step.text for step in steps)
 
 
+def test_a_call_while_a_step_runs_says_wait_and_never_reads_that_step_as_a_rejection(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    reviewing, release, contending = threading.Event(), threading.Event(), threading.Event()
+    critic, original, real_sleep = reviewer("one"), loop.run_critic, _coordination.time.sleep
+
+    def paused(*args, **kwargs):
+        reviewing.set()
+        assert release.wait(30)
+        return original(*args, **kwargs)
+
+    def sleep(seconds):
+        if seconds == 0.01:      # the lock sleeps only once the operating system has refused it
+            contending.set()
+        return real_sleep(seconds)
+
+    monkeypatch.setattr(loop, "run_critic", paused)
+    monkeypatch.setattr(_coordination.time, "sleep", sleep)
+    world.edit()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(world.advance, None, critic)
+        assert reviewing.wait(30)
+        second = pool.submit(world.advance, None, critic)
+        second.add_done_callback(lambda _: contending.set())
+        try:
+            assert contending.wait(30), "the second call never met the lock"
+        finally:
+            release.set()
+        steps = [first.result(timeout=30), second.result(timeout=30)]
+    assert steps[0].action == loop.CONTINUE and len(critic.calls) == 1
+    assert (steps[1].action, steps[1].code) == (loop.WAIT, loop.BUSY)
+    assert "stop" not in world.state() and not rows(world)
+
+
+def test_a_call_that_may_not_be_the_agents_reply_sends_the_finding_back_and_decides_nothing(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    first = world.advance(critic=critic)
+    before = world.state()
+    again = loop.advance(world.repo, TASK, world.base, world.session, critic=critic, answered=False)
+    assert (again.action, again.text, again.code) == (loop.CONTINUE, first.text, "")
+    assert world.state() == before and len(critic.calls) == 1 and not rows(world)
+    step = world.advance(critic=critic)      # a Stop hook fires only once the agent has taken its turn
+    assert step.action == loop.STOP and "the agent left the code as it was" in step.text
+
+
+def test_a_changed_tree_is_a_reply_whatever_the_call_says(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    step = loop.advance(world.repo, TASK, world.base, world.session, critic=critic, answered=False)
+    assert step.action == loop.STOP and loop.CLEAN in step.text and len(critic.calls) == 2
+
+
+def test_a_finding_goes_back_the_same_way_on_the_scouts_loop(world, monkeypatch):
+    scouts_chosen(monkeypatch)
+    Runs(monkeypatch, now=dict(CASES))
+    world.edit()
+    first = world.advance()
+    again = loop.advance(world.repo, TASK, world.base, world.session, scout=Scouts(), answered=False)
+    assert again.action == loop.CONTINUE and "assert test_cross[0]" in again.text and "assert test_cross[0]" in first.text
+
+
 def test_a_call_that_finds_another_step_running_does_nothing_and_says_so(world, monkeypatch):
     monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
     Reviewed(monkeypatch, "test_critic.py")

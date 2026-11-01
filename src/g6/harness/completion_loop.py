@@ -538,10 +538,12 @@ class Repairs:
     """G6's CEGIS over the agent's work, as L9's ``Repairs``: ``search`` is the agent, told what failed, and ``evaluate``
     the probes. A hook cannot wait for the agent, so ``rounds``, which the state keeps, replays what is done: a round
     whose failures have not gone back ends this hook with ``pending``, and a failure that survives a repair goes back, up
-    to the cap, unless the agent left the code as it was."""
+    to the cap, unless the agent left the code as it was. ``answered``: whether this call is the agent's reply. With none,
+    an unchanged tree says nothing of what it decided, so what failed goes back as it was, and no round is spent."""
 
-    def __init__(self, rounds: list[dict], check: Callable[[], tuple[set[str], str]], tree: Callable[[], str]) -> None:
-        self.rounds, self.check, self.tree = rounds, check, tree
+    def __init__(self, rounds: list[dict], check: Callable[[], tuple[set[str], str]], tree: Callable[[], str],
+                 answered: bool = True) -> None:
+        self.rounds, self.check, self.tree, self.answered = rounds, check, tree, answered
         self.round, self.pending, self.why = 0, "", ""
 
     def search(self, sketch: Any, examples: Any, *, max_exhaustive: int = 0) -> SearchResult:
@@ -550,6 +552,9 @@ class Repairs:
             if last["tree"] is None:
                 last["tree"], self.pending = tree, last["text"]
                 return SearchResult(None, "the agent has what failed", False, self.round)
+            if last["tree"] == tree and not self.answered:
+                self.pending = last["text"]
+                return SearchResult(None, "the agent has not answered", False, self.round)
             if last["tree"] == tree:
                 self.why = LEFT
                 return SearchResult(None, self.why, False, self.round)
@@ -754,30 +759,35 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
 def _held(session: Path) -> Any:
     """One step of a session at a time. The lock is the operating system's, so it dies with its process, and a hook that is
-    killed leaves no session stuck; a call that cannot take it in a few seconds is refused (``WorkspaceRefused``)."""
-    return Coordination(session / ".step").mutex()
+    killed leaves no session stuck. A call that cannot take it at once is refused (``WorkspaceRefused``): it does not wait
+    its turn, as the step it found has not reached the agent yet, and a tree the agent never had the chance to touch would
+    read as a finding it rejected."""
+    return Coordination(session / ".step").mutex(wait=0)
 
 
 def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None,
-            critic: LLMCaller | None = None, said: str = "") -> Step:
+            critic: LLMCaller | None = None, said: str = "", answered: bool = True) -> Step:
     """One hook of the loop, for the repository's working tree against ``base``: see the module's docstring. ``scout`` and
     ``critic``: the sessions to use, else the ones the person's key file approves. ``said``: the agent's words as it stopped,
     kept as its reason if it left the code as it was.
 
+    ``answered``: whether this call is the agent's reply to what the last one sent back. A Stop hook is: it fires only once
+    the agent has taken its turn, so an unchanged tree there is the agent's decision. A call over MCP may be a client's retry
+    of a reply it lost, so there only a stated reason rejects a finding, and with none what failed goes back as it was.
+
     A step reads its round from the state and then writes that round's files, so two at once would undo each other: a call
-    that finds another running does nothing, and says ``WAIT``. It does not queue, as the agent has not answered the step
-    before it yet, and a tree it has not touched would read as a finding it rejected."""
+    that finds another running does nothing, and says ``WAIT``."""
     session = Path(session)
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
         with _held(session):
-            return _advance(repo, task, base, session, scout, critic, said)
+            return _advance(repo, task, base, session, scout, critic, said, answered)
     except WorkspaceRefused:
         return Step(WAIT, ALREADY_RUNNING, BUSY)
 
 
 def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
-             said: str) -> Step:
+             said: str, answered: bool) -> Step:
     """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
     if state.get("done"):
@@ -837,7 +847,7 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
             _scouts(change, task, session, state, shipped, scout, AT_STOP)
             if all(one["left_out"] for one in state["sets"].values()):
                 return _finish(session, state, _report(root, task, base, state, "no probe set could run"))
-        loop = Repairs(rounds, reviewed if reviewing else check, tree)
+        loop = Repairs(rounds, reviewed if reviewing else check, tree, answered)
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except repo_tests.RepoRefused as exc:
