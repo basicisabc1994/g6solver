@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Cost/latency/quality are measured together, with missing receipts visible."""
-from g6.metaharness import Objective
+from g6.metaharness import Objective, schema
+from g6.metaharness.schema import EvidencePolicy
 
 import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 _spec = importlib.util.spec_from_file_location("metaharness_merge_rig", Path(__file__).with_name("_merge_rig.py"))
 rig = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -22,6 +25,24 @@ def test_opt_meta_03_d1_a_quality_gain_exposes_its_measured_cost_regression(tmp_
     assert measures["cost_usd"]["base_mean"] == 1 and measures["cost_usd"]["candidate_mean"] == 4
     assert "wall_clock_s" in measures and got["decision"].verdict == "refuse"
     # RED: removing the `if cost and not any(o.name == "cost_usd" ...):` gate branch hides the measured regression.
+
+
+def test_with_no_cost_margin_a_costlier_gain_is_recommended_and_its_cost_stays_measured(tmp_path):
+    mh, p = harness(tmp_path, policy=EvidencePolicy(cost_margin=None))
+    got = mh.decide(mh.evaluate(p)["report"], p)
+    assert got["decision"].verdict == "recommend"
+    assert got["decision"].measurements["cost_usd"]["candidate_mean"] == 4
+
+
+def test_the_default_cost_margin_leaves_every_workflows_digest_as_it_was():
+    assert "cost_margin" not in schema._policy_fields(EvidencePolicy())
+    assert schema._policy_fields(EvidencePolicy(cost_margin=None))["cost_margin"] is None
+
+
+@pytest.mark.parametrize("margin", [-0.1, float("nan"), True])
+def test_a_cost_margin_that_is_no_margin_is_refused(margin):
+    with pytest.raises(ValueError, match="cost_margin"):
+        EvidencePolicy(cost_margin=margin)
 
 
 def test_opt_meta_01_a_report_never_activates_its_candidate(tmp_path):

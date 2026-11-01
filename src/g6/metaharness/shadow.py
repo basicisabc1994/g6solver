@@ -73,12 +73,13 @@ def _change(proposal: Proposal) -> str:
 
 
 def _measured(report: EvaluationReport) -> dict[str, Any]:
-    """The held-out figures an adoption stands on, as the gate read them: before is the head, after the candidate. Wall
-    clock is beside them and under ``not_gated``, since no adoption here stands on it."""
-    success, seconds = report.estimates["success"], report.estimates["wall_clock_s"]
+    """The held-out figures an adoption stands on, as the gate read them: before is the head, after the candidate. What the
+    gain cost is beside them and under ``not_gated``, since no adoption here stands on it."""
+    success = report.estimates["success"]
     return {"split": report.split, "cases": report.n, "before": success["base_mean"], "after": success["candidate_mean"],
             "wins": report.success["wins"], "losses": report.success["losses"],
-            "not_gated": {"wall_clock_s": {"before": seconds["base_mean"], "after": seconds["candidate_mean"]}}}
+            "not_gated": {name: {"before": report.estimates[name]["base_mean"], "after": report.estimates[name]["candidate_mean"]}
+                          for name in ("wall_clock_s", "model_calls", "cost_usd") if name in report.estimates}}
 
 
 def _generation(row: Mapping[str, Any]) -> dict[str, Any]:

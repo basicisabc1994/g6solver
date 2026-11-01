@@ -115,8 +115,11 @@ class EvidencePolicy:
     # non-inferiority: the one-sided 95% upper bound on the rise in the false-accept rate may not exceed this (V6b-F5)
     false_accept_margin: float = 0.05
     staged_evaluation: bool = False
+    cost_margin: float | None = 0.05    # a share of the base's measured cost; None measures and reports it and refuses nothing for it
 
     def __post_init__(self) -> None:
+        if self.cost_margin is not None and (isinstance(self.cost_margin, bool) or not math.isfinite(self.cost_margin) or self.cost_margin < 0):
+            raise ValueError("cost_margin must be None or a finite share of at least 0")
         if self.min_cases < 1 or self.min_discordant < 1 or self.max_evaluations < 1 or self.max_eval_model_calls < 1:
             raise ValueError("min_cases, min_discordant, max_evaluations and max_eval_model_calls must be >= 1")
         if self.staged_evaluation and self.looks != 1:
@@ -378,7 +381,7 @@ class Workflow:
         })
 
 
-_LATER_POLICY_DEFAULTS = {"looks": 1, "false_accept_margin": 0.05, "staged_evaluation": False}
+_LATER_POLICY_DEFAULTS = {"looks": 1, "false_accept_margin": 0.05, "staged_evaluation": False, "cost_margin": 0.05}
 
 
 def _policy_fields(policy: EvidencePolicy) -> dict[str, Any]:

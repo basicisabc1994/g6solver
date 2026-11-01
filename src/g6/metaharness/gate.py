@@ -234,9 +234,9 @@ def decide(report: EvaluationReport, proposal: Proposal, workflow: Workflow, *, 
     cost = report.estimates.get("cost_usd")
     if proposal.strategy == "trace_cost" and not cost:
         return out("refuse", INSUFFICIENT_EVIDENCE, "cost proposer: no measured held-out costs")
-    if cost and not any(o.name == "cost_usd" for o in workflow.objectives):
-        if cost["diff_upper_95"] > 0.05 * abs(cost["base_mean"]) + 1e-12:
-            return out("refuse", OBJECTIVE_REGRESSED, "measured cost rose beyond the default 5% margin")
+    if cost and policy.cost_margin is not None and not any(o.name == "cost_usd" for o in workflow.objectives):
+        if cost["diff_upper_95"] > policy.cost_margin * abs(cost["base_mean"]) + 1e-12:
+            return out("refuse", OBJECTIVE_REGRESSED, f"measured cost rose beyond the default {policy.cost_margin:.0%} margin")
     fa = report.estimates.get("false_accepts")
     if fa is not None:      # a rise whose upper bound passes the margin (V6b-F5: a zero-margin count fires on noise)
         if fa.get("diff_mean", 0.0) > 0 and fa.get("diff_upper_95", 0.0) > policy.false_accept_margin + 1e-12:

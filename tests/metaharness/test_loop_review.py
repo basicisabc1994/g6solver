@@ -871,7 +871,7 @@ def test_a_reservation_says_when_its_week_ends():
     meter = BudgetMeter((ProviderWindow("claude", 5, START),), store=OperatorStore(":memory:"))
     assert meter.reserve("claude", START + timedelta(hours=1), 1).ends == RESET
 
-# The owner's ruling of 2026-11-01: the loop gates on success and model calls, and only reports wall clock --------------------
+# The owner's ruling of 2026-11-02, quality first: the loop gates on success alone, and only reports what a gain cost ----------
 
 class Jittery:
     """A clock that never steps the same way twice, and whose ``at`` a model's reply can push on."""
@@ -909,15 +909,16 @@ def test_a_planted_gain_is_adopted_on_a_jittery_clock_even_when_it_really_is_slo
     assert got["outcome"] == "adopted" and got["head_version"] == 1, got["message"]
 
 
-def test_the_loop_gates_on_two_objectives_and_a_persons_workflow_still_holds_wall_clock(tmp_path):
+def test_the_loop_gates_on_success_alone_and_a_persons_workflow_still_holds_calls_time_and_cost(tmp_path):
     loop, _ = _loop(tmp_path)
-    assert [(o.name, o.direction, o.tolerance) for o in loop.workflow.objectives] == [("success", "max", 0.05),
-                                                                                      ("model_calls", "min", 0.05)]
+    assert [(o.name, o.direction, o.tolerance) for o in loop.workflow.objectives] == [("success", "max", 0.05)]
+    assert loop.workflow.policy.cost_margin is None
     assert [o.name for o in default_objectives()] == ["success", "model_calls", "wall_clock_s"]
     assert next(f for f in dataclasses.fields(Workflow) if f.name == "objectives").default_factory is default_objectives
+    assert Workflow.__dataclass_fields__["policy"].default_factory().cost_margin == 0.05
 
 
-def test_wall_clock_still_reaches_the_gates_measurements_and_is_reported_as_not_gated(tmp_path, monkeypatch):
+def test_what_a_gain_cost_still_reaches_the_gates_measurements_and_is_reported_as_not_gated(tmp_path, monkeypatch):
     loop, _ = _enrolled(tmp_path)
     seen, adopt = [], loop.mh.adopt
 
@@ -927,13 +928,15 @@ def test_wall_clock_still_reaches_the_gates_measurements_and_is_reported_as_not_
 
     monkeypatch.setattr(loop.mh, "adopt", noting)
     assert loop.tick()["outcome"] == "adopted"
-    measured = seen[0].measurements["wall_clock_s"]
-    assert measured["candidate_mean"] > 0
-    assert lineage(loop.root / "workspace")["recent"][-1]["measured"]["not_gated"] == {
-        "wall_clock_s": {"before": measured["base_mean"], "after": measured["candidate_mean"]}}
+    seconds = seen[0].measurements["wall_clock_s"]
+    assert seconds["candidate_mean"] > 0
+    reported = lineage(loop.root / "workspace")["recent"][-1]["measured"]["not_gated"]
+    assert reported["wall_clock_s"] == {"before": seconds["base_mean"], "after": seconds["candidate_mean"]}
+    assert reported["model_calls"]["after"] > 0
 
 
-def test_a_gain_past_the_limit_on_model_calls_is_still_refused(tmp_path):
+def test_a_gain_that_costs_more_model_calls_is_adopted(tmp_path):
+    """The ruling's point: a loop like arm K spends more calls to get a task right, so a limit on calls would refuse it."""
     domain = domains.WordProblems(tmp_path)
     tutor, blank_next = domain.tutor, set()
 
@@ -946,10 +949,10 @@ def test_a_gain_past_the_limit_on_model_calls_is_still_refused(tmp_path):
 
     _with_model(domain, EmptyRetry(FakeLLM(twice_for_the_gain)))
     loop, _ = _enrolled(tmp_path, domain=domain)
-    head = loop.mh._head()
     got = loop.tick()
-    assert _code(got) == "G6_E_META_OBJECTIVE_REGRESSED" and "model_calls" in got["message"]
-    assert loop.mh._head() == head
+    assert got["outcome"] == "adopted" and got["head_version"] == 1, got["message"]
+    measured = lineage(loop.root / "workspace")["recent"][-1]["measured"]["not_gated"]["model_calls"]
+    assert measured["after"] > measured["before"]
 
 
 def test_a_folder_enrolled_under_other_objectives_adopts_nothing_until_it_enrols_again(tmp_path, monkeypatch):
