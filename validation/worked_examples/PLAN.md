@@ -1202,3 +1202,13 @@ No stage 3 run has started and no stage 1 score has been read. Stage 3 asks whet
 - **Its comparison.** The winner is a change to the reviewer, so its parent is K1. It runs twice on each stage 2 bug that finished, as a new arm, against K1, A and T, under the same rule, with both scores, and is described as recommended and tested, never promoted. K1 itself still cannot count for stage 3: only the change the loop made can.
 - **If the loop adopts nothing,** stage 3 reports that. "Not shown" is a valid ending, and no change is written by hand to fill the place.
 - **Timing.** That domain is not built yet, and it lands after the API credits expire on 2026-11-04, so stage 3's runs need new credit, which is the owner's decision. `evolve.py` stays in the repository, unused for this stage.
+
+## 2026-11-01 (night): K1's report, written before any stage 1 score is read
+
+No rule, arm or bug changes here. `compare.py` could not yet report what the two entries above promise, so it is changed now, while no stage 1 score has been read and no K1 run has started on a fresh or held-out bug.
+
+- **Sections of its own.** K1 is printed in sections named for it, against A and T, on both scores, and is never pooled with M9. R and M9 appear in those sections as "report only".
+- **The bar with both primaries counted.** Beside the rule, each result says whether it also clears 0.025, for M9 as well as K1.
+- **What K1 said.** K1 was counted as an arm with no loop, so its trust table would have shown a plain "done". It now says "clean" or "unsure" from its own record, as M9 does.
+- **How each run ended.** The report counts K1's runs by the end of the last review, on each score: nothing found, a defect with no test, a defect whose test would not run, a defect whose test found nothing, or the reason on the record. On the training bugs, already seen, 8 of the 14 runs found nothing, 1 ended on a defect whose test would not run, 4 ran out of repairs with a defect open and 1 ended with the agent leaving the code as it was. So 9 runs said "clean", and one of those rests on no test that ran.
+- **Stage 3's comparison** now names K1 as the parent, as the entry above says, where the script still named `--loop`.

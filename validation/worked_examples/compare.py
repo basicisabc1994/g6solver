@@ -21,6 +21,8 @@ from g6.metaharness.method_rca import compare_methods
 SCORES =("maintainers", "amended")
 DETERMINED = ("pydantic-13243", "black-5148", "click-3434", "click-3404", "starlette-3189", "fastapi-14616", "fastapi-13920")
 TARGET = 0.95
+TWO_PRIMARIES = 0.025       # the bar with M9 and K1 both counted (PLAN.md, 2026-11-01): beside the rule, never in place of it
+CLEAN = "no_counterexample_in_domain"
 Rows = Mapping[tuple[str, str, int], Mapping[str, bool | None]]
 
 
@@ -45,9 +47,11 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
             same = (kept.get("amendment_sha256"), kept.get("run")) == (c.sha256_file(diff), row.get("run"))
             amended = kept.get("amended_passes") if same else None
         rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended, "said": said_of(root, row)}
-        review = final_review.said_of(root, row)
+        review, end = final_review.said_of(root, row), end_of(root, row)
         if review:
             rows[(row["arm"], row["task"], row["repeat"])]["review"] = review
+        if end:
+            rows[(row["arm"], row["task"], row["repeat"])]["end"] = end
     return rows
 
 
@@ -55,11 +59,30 @@ def said_of(root: Path, row: Mapping[str, Any]) -> str:
     """What the system said of its own run: "done" for an arm with no loop, "clean" for a loop that ended with nothing failing, and
     "unsure" for any other end, a missing record included. It never decides the rule; it is how the report asks if "done" can be
     trusted."""
-    if row.get("arm", "")[:1] not in ("L", "M", "R"):
+    if row.get("arm", "")[:1] not in ("K", "L", "M", "R"):
         return "done"
     path = root / str(row.get("run")) / "run.json"
     status = (json.loads(path.read_text("utf-8")).get("repairs") or {}).get("status") if path.is_file() else None
-    return "clean" if status == "no_counterexample_in_domain" else "unsure"
+    return "clean" if status == CLEAN else "unsure"
+
+
+def end_of(root: Path, row: Mapping[str, Any]) -> str | None:
+    """How arm K's last review ended; None for any other arm. A review that says ``defect`` with no test standing behind it stops the
+    loop as a clean one does (PLAN.md, 2026-11-01), so the report counts those apart on each score. It never decides the rule."""
+    if row.get("arm", "")[:1] != "K":
+        return None
+    run = root / str(row.get("run"))
+    repairs = (json.loads((run / "run.json").read_text("utf-8")).get("repairs") or {}) if (run / "run.json").is_file() else {}
+    if repairs.get("status") != CLEAN:
+        return str(repairs.get("reason") or "no record")
+    if (repairs.get("critic") or {}).get("verdicts", [""])[-1] != "defect":
+        return "nothing found"
+    check = run / f"repair_check_{repairs.get('rounds')}_critic.json"
+    if not check.is_file():
+        return "a defect with no test"
+    got = json.loads(check.read_text("utf-8"))
+    return "a defect whose test found nothing" if we.ProbeRun(got.get("exit"), got.get("results") or {}, {}).usable \
+        else "a defect whose test would not run"
 
 
 def compare(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, Any]:
@@ -115,9 +138,10 @@ def trust(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int], sc
     return table
 
 
-def judged(results: Sequence[Mapping[str, Any]]) -> bool:
-    """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each."""
-    return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < 0.05 for r in results)
+def judged(results: Sequence[Mapping[str, Any]], bar: float = 0.05) -> bool:
+    """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each. ``bar``: the same rule at
+    another p, for the line beside it."""
+    return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < bar for r in results)
 
 
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
@@ -139,18 +163,21 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
             for said, cell in sorted(trust(rows, arm, tasks, repeats, score).items()):
                 total = cell["right"] + cell["wrong"]
                 print(f"{name:22} {score:11} {arm} said {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
-            for said, cell in sorted(trust(rows, arm, tasks, repeats, score, key="review").items()):
-                total = cell["right"] + cell["wrong"]
-                print(f"{name:22} {score:11} {arm} final review {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
+            for key, whose in (("review", "final review"), ("end", "last review")):
+                for said, cell in sorted(trust(rows, arm, tasks, repeats, score, key=key).items()):
+                    total = cell["right"] + cell["wrong"]
+                    print(f"{name:22} {score:11} {arm} {whose} {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
         print(f"{name:22} {score:11} frozen rule: {'met' if judged(results) else 'not shown'}; "
+              f"at {TWO_PRIMARIES}: {'cleared' if judged(results, TWO_PRIMARIES) else 'not cleared'}; "
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--loop", default="M9", help="the frozen loop's arm")
-    ap.add_argument("--trained", help="stage 3: the arm G6's training produced, as M<n>, judged against --loop as well")
+    ap.add_argument("--second", default="K1", help="the second primary, judged apart from --loop and never pooled with it")
+    ap.add_argument("--trained", help="stage 3: the arm the loop's own tick produced, judged against --second, its parent, as well")
     args = ap.parse_args(argv)
     root = c.archive_root() / "round3"
     rows = saved(root)
@@ -162,8 +189,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     report(rows, "stage 2, new repos", unseen, (1, 2), loop_arm=args.loop)
     report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop)
     report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",))
+    second, shown = f"{args.second}, ", ("R", args.loop)
+    report(rows, f"{second}stage 1, all eleven", fresh, (1, 2), loop_arm=args.second, control=shown)
+    report(rows, f"{second}stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.second, control=shown)
+    report(rows, f"{second}stage 2, new repos", unseen, (1, 2), loop_arm=args.second, control=shown)
+    report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown)
+    report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",))
     if args.trained:
-        others = (args.loop, "A", "T")
+        others = (args.second, "A", "T")
         report(rows, "stage 3, new repos", unseen, (1, 2), loop_arm=args.trained, others=others)
         report(rows, "stage 3, stage 1 bugs", fresh, (1, 2), loop_arm=args.trained, others=others)
 

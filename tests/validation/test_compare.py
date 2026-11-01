@@ -53,6 +53,23 @@ def test_the_rule_needs_more_passes_and_p_below_5_percent_against_every_arm():
     assert not compare.judged([])
 
 
+def test_the_bar_for_two_primaries_is_stricter_and_the_rule_itself_is_unchanged():
+    five = compare.compare(_rows(BUGS[:5]), "M7", "A", BUGS, (1,), "maintainers")   # 5-0: p = 1/32
+    six = compare.compare(_rows(BUGS[:6]), "M7", "A", BUGS, (1,), "maintainers")    # 6-0: p = 1/64
+    assert compare.judged([five]) and not compare.judged([five], compare.TWO_PRIMARIES)
+    assert compare.judged([six], compare.TWO_PRIMARIES)
+
+
+def test_the_report_says_beside_the_rule_if_a_result_also_clears_the_bar_for_two_primaries(capsys):
+    def line(k1):
+        rows = _cells(K1=k1, A="a0 b0 c0 d0 e0 f0", T="a0 b0 c0 d0 e0 f0")
+        compare.report(rows, "stage 1", "abcdef", (1,), loop_arm="K1")
+        return next(text for text in capsys.readouterr().out.splitlines() if "maintainers frozen rule" in text)
+
+    assert "frozen rule: met; at 0.025: not cleared" in line("a1 b1 c1 d1 e1 f0")
+    assert "frozen rule: met; at 0.025: cleared" in line("a1 b1 c1 d1 e1 f1")
+
+
 def test_a_missing_run_is_never_a_win_or_a_loss():
     rows = _rows(BUGS[:6])
     del rows[("A", BUGS[9], 1)]
@@ -116,6 +133,77 @@ def test_what_a_run_said_comes_from_its_own_record(tmp_path):
     assert compare.said_of(tmp_path, {"arm": "M9", "run": "missing"}) == "unsure"
 
 
+def test_a_k_run_says_clean_or_unsure_from_its_own_record_and_not_a_plain_done(tmp_path):
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"repairs": {"status": compare.CLEAN}}), "utf-8")
+    assert compare.said_of(tmp_path, {"arm": "K1", "run": "run"}) == "clean"
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"repairs": {"status": "inconclusive"}}), "utf-8")
+    assert compare.said_of(tmp_path, {"arm": "K1", "run": "run"}) == "unsure"
+
+
+def _k_run(root, verdicts, *, status=compare.CLEAN, reason="a review reproduced nothing", **checks):
+    """A saved run of arm K: ``checks`` are its rounds' test runs, ``round_2={"exit": 0, ...}``."""
+    (root / "run").mkdir()
+    repairs = {"status": status, "rounds": len(verdicts), "reason": reason, "critic": {"verdicts": verdicts}}
+    (root / "run" / "run.json").write_text(json.dumps({"repairs": repairs}), "utf-8")
+    for name, body in checks.items():
+        (root / "run" / f"repair_check_{name.removeprefix('round_')}_critic.json").write_text(json.dumps(body), "utf-8")
+    return {"arm": "K1", "run": "run"}
+
+
+WOULD_NOT_RUN, FOUND_NOTHING = {"exit": 2, "ran": 0, "results": {}}, {"exit": 0, "ran": 1, "results": {"t": "passed"}}
+
+
+def test_a_k_run_that_found_nothing_ended_clean(tmp_path):
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["none"])) == "nothing found"
+
+
+def test_a_defect_with_no_test_is_counted_apart_from_a_clean_end(tmp_path):
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect"])) == "a defect with no test"
+
+
+def test_a_defect_whose_test_would_not_run_is_counted_apart_from_a_clean_end(tmp_path):
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect"], round_1=WOULD_NOT_RUN)) == "a defect whose test would not run"
+
+
+def test_a_defect_whose_test_ran_and_found_nothing_is_named_as_that(tmp_path):
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect"], round_1=FOUND_NOTHING)) == "a defect whose test found nothing"
+
+
+def test_it_is_the_last_review_that_says_how_a_k_run_ended(tmp_path):
+    row = _k_run(tmp_path, ["defect", "defect"], round_1=FOUND_NOTHING, round_2=WOULD_NOT_RUN)
+    assert compare.end_of(tmp_path, row) == "a defect whose test would not run"
+
+
+def test_a_k_run_with_a_defect_open_gives_the_reason_on_its_record(tmp_path):
+    row = _k_run(tmp_path, ["defect"] * 4, status="inconclusive", reason="the repairs ran out with a defect open")
+    assert compare.end_of(tmp_path, row) == "the repairs ran out with a defect open"
+
+
+def test_a_k_run_with_no_record_says_so_and_no_other_arm_has_an_end(tmp_path):
+    assert compare.end_of(tmp_path, {"arm": "K1", "run": "missing"}) == "no record"
+    assert compare.end_of(tmp_path, {"arm": "M9", "run": "missing"}) is None
+
+
+def test_a_saved_k_run_carries_its_end_and_no_other_arm_gains_a_field(tmp_path, monkeypatch):
+    _archive(tmp_path, monkeypatch, {"arm": "K1", "task": "y-1", "passes": True, "run": "run"}, {"arm": "A", "task": "y-1", "passes": True})
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "run.json").write_text(json.dumps({"repairs": {"status": compare.CLEAN, "critic": {"verdicts": ["none"]}}}), "utf-8")
+    rows = compare.saved(tmp_path)
+    assert rows[("K1", "y-1", 1)]["end"] == "nothing found" and "end" not in rows[("A", "y-1", 1)]
+
+
+def test_the_report_counts_each_way_a_k_run_ended_on_each_score(capsys):
+    rows = {("K1", "a", 1): {"maintainers": True, "amended": True, "said": "clean", "end": "a defect whose test would not run"},
+            ("K1", "a", 2): {"maintainers": False, "amended": True, "said": "clean", "end": "a defect whose test would not run"},
+            ("A", "a", 1): {"maintainers": False, "amended": False, "said": "done"},
+            ("A", "a", 2): {"maintainers": False, "amended": False, "said": "done"}}
+    compare.report(rows, "stage 1", "a", (1, 2), loop_arm="K1", others=("A",))
+    out = capsys.readouterr().out
+    assert "maintainers K1 last review a defect whose test would not run: right 1 wrong 1 (50%)" in out
+    assert "amended     K1 last review a defect whose test would not run: right 2 wrong 0 (100%)" in out
+
+
 def test_the_interval_resamples_whole_bugs():
     clear = compare.interval(_cells(M9="a11 b11 c11", A="a00 b00 c00"), "M9", "A", "abc", (1, 2), "amended")
     mixed = compare.interval(_cells(M9="a11 b00 c11", A="a00 b11 c00"), "M9", "A", "abc", (1, 2), "amended")
@@ -130,6 +218,43 @@ def test_stage_3_compares_the_trained_arm_with_its_untrained_parent_too(capsys):
     rows = _cells(M10="a11", M9="a00", A="a00", T="a00")
     compare.report(rows, "stage 3", "a", (1, 2), loop_arm="M10", others=("M9", "A", "T"))
     assert sum(" M10 " in line and "uplift" in line for line in capsys.readouterr().out.splitlines()) == 6
+
+
+def _main(monkeypatch, tmp_path, rows, *argv):
+    """The whole report, on these rows, with one fresh bug ``f``, one unseen ``u``, one held out ``h`` and one training bug ``t``."""
+    tasks = {compare.we.TASKS_FRESH: ["f"], compare.we.TASKS_UNSEEN: ["u"], None: ["t", "h"]}
+    monkeypatch.setattr(compare.c, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(compare, "saved", lambda root: rows)
+    monkeypatch.setattr(compare.we, "R3_HELD", ("h",))
+    monkeypatch.setattr(compare.we, "load_tasks", lambda path=None: [type("Task", (), {"id": t}) for t in tasks[path]])
+    compare.main(list(argv))
+
+
+def test_k1_is_judged_in_sections_of_its_own_and_never_pooled_with_m9(tmp_path, monkeypatch, capsys):
+    wins, none = "f11 u11 t11 h11111", "f00 u00 t00 h00000"
+    _main(monkeypatch, tmp_path, _cells(M9=wins, K1=wins, L9=wins, A=none, T=none))
+    lines = capsys.readouterr().out.splitlines()
+    for section in ("K1, stage 1, all eleven", "K1, stage 1, determined 7", "K1, stage 2, new repos", "K1, held-out, second look",
+                    "K1, training, tuned"):
+        assert any(line.startswith(section) for line in lines), section
+    judged = [line for line in lines if " uplift " in line and "report only" not in line]
+    assert all(" K1 " in line for line in judged if line.startswith("K1, "))
+    assert not any(" K1 " in line for line in judged if not line.startswith("K1, "))
+
+
+def test_m9_is_only_a_report_in_k1s_sections(tmp_path, monkeypatch, capsys):
+    rows = _cells(K1="f11", M9="f00", A="f00", T="f00", R="f00")
+    _main(monkeypatch, tmp_path, rows)
+    k1 = [line for line in capsys.readouterr().out.splitlines() if line.startswith("K1, stage 1, all eleven") and " uplift " in line]
+    assert all("report only" in line for line in k1 if " M9 " in line) and any(" M9 " in line for line in k1)
+
+
+def test_stage_3_is_judged_against_k1_its_parent_as_well_as_a_and_t(tmp_path, monkeypatch, capsys):
+    rows = _cells(P1="u11", K1="u00", A="u00", T="u00")
+    _main(monkeypatch, tmp_path, rows, "--trained", "P1")
+    judged = [line for line in capsys.readouterr().out.splitlines() if line.startswith("stage 3, new repos") and " uplift " in line]
+    assert sum(" P1 " in line for line in judged) == 6 and sum(" K1 " in line for line in judged) == 2
+    assert not any(" M9 " in line for line in judged)
 
 
 def _archive(root, monkeypatch, *rows):
