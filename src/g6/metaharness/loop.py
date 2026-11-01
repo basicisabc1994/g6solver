@@ -64,6 +64,7 @@ from g6.self_maintenance.envelope import (
     FINDINGS,
     MAX_FAILED_CYCLES,
     CycleLog,
+    ask_to_stop,
     beat,
     file_digest,
     stop_reason,
@@ -93,6 +94,7 @@ BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
 NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
 BUSY = "G6_E_LOOP_BUSY"
 RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
+CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
@@ -306,6 +308,8 @@ class ShadowLoop:
                  domain_file: str | Path | None = None) -> None:
         self.domain, self.settings, self._now, self.domain_file = domain, settings, now, domain_file
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
+        self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
+        self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self.requests = _Requests(lambda: self._now())
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
@@ -378,7 +382,7 @@ class ShadowLoop:
 
     def _refused(self) -> dict[str, Any] | None:
         """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle."""
-        halted = stop_reason(self.root)
+        halted = self.cannot_record or stop_reason(self.root)
         if halted:
             return _blocked(STOPPED, halted, "Remove the STOP file to resume.")
         engaged = stop.engaged()
@@ -494,11 +498,8 @@ class ShadowLoop:
         """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause."""
         if self.log.paused():
             return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
-        row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
-               "reason": f"{type(exc).__name__}: {exc}"[:500]}
-        reply = self._reply(self.log.cycle(row))
-        self._pause_if_failing()
-        return reply
+        return self._record({"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
+                             "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]})
 
     @_exclusive
     def quiet(self) -> dict[str, Any]:
@@ -554,9 +555,32 @@ class ShadowLoop:
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
-        reply = self._reply(self.log.cycle(row))
+        return self._record(row)
+
+    def _record(self, row: dict[str, Any]) -> dict[str, Any]:
+        try:
+            reply = self._reply(self.log.cycle(row))
+        except (OSError, LedgerError) as exc:
+            return self.lost_cycle(exc)
+        self.lost_cycles = 0
         self._pause_if_failing()
         return reply
+
+    def lost_cycle(self, exc: BaseException) -> dict[str, Any]:
+        """A cycle the log would not take. The streak that pauses the loop is read from the log, so these leave it nothing
+        to read and are counted here, for as long as this process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
+        for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
+        should those fail too, this process still spends no more. A cycle that is written starts the count again."""
+        self.lost_cycles += 1
+        why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
+               f"its log ({type(exc).__name__}: {exc})")[:400]
+        if self.lost_cycles >= MAX_FAILED_CYCLES:
+            self.cannot_record = why
+            try:
+                ask_to_stop(self.root, why)
+            except OSError:
+                pass                  # the run still ends on what is held here
+        return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
         adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row})

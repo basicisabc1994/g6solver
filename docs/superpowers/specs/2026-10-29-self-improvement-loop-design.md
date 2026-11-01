@@ -608,8 +608,12 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   to do with G6's version, tags or releases, which stay the owner's.
 - **What each tool reports of the account** (`g6/self_maintenance/usage.py`, checked by running them on 2026-11-01):
   `codex app-server` (0.165.0) answers `account/rateLimits/read` with no model call, so the loop gives way to Codex's
-  weekly percentage and its limits. Codex says this protocol may change, and a reply that does not read leaves the meter on
-  its own count. Claude Code (2.1.316) lists no such command, so Claude's meter stays on model calls.
+  weekly percentage and its limits. Codex says this protocol may change, so one field that makes no sense, a NaN or a
+  figure off its scale among them, loses the whole reply. A reply that does not read, a read that fails and a reply with no
+  week in it each leave the last good figure standing until a good read replaces it or its reset passes, with what is
+  charged meanwhile on top, because the owner uses this account too and the meter must not read low for want of a tool
+  (owner's ruling through the coordinator, 2026-11-01). That figure is held in memory, so a restart whose first read fails
+  starts on the meter's own count. Claude Code (2.1.316) lists no such command, so Claude's meter stays on model calls.
 
 **How to run it.** A folder holds `settings.json`. An allowance is in the meter's unit, model calls, and counts as an
 estimate until `"estimated": false`. `reserve_share` defaults to the owner's 20%, and `"read_account": false` turns off
@@ -673,6 +677,24 @@ its place, at the cost of a Python start every 15 minutes that does nothing whil
 ```
 schtasks /Create /TN "G6 improvement loop" /SC MINUTE /MO 15 /RL LIMITED /TR "\"<python folder>\pythonw.exe\" -P -m g6.metaharness.loop run \"<folder>\""
 ```
+
+**A tick that crosses a weekly reset stops there.** It reserved in the week that ended, and a new week's first ceiling is
+its lowest, so the request gate refuses anything at or past the reset, retries included. A request already under way stays
+in the week it was sent in. The tick ends blocked with `G6_E_LOOP_TICK_BUDGET_SPENT` and adopts nothing, and the next tick
+reserves under the new week's ceiling. A `Retry-After` resend has no boundary of its own, so one can still go out just
+past a reset, on the old week's bill.
+
+**A log that will not take a cycle.** The streak that pauses the loop is read from the log, so a cycle the log refuses
+leaves that streak nothing to read. These cycles are counted in memory instead, and one that is written starts the count
+again. Until three in a row, status shows the count under `pause` with `G6_E_LOOP_CANNOT_RECORD`, the digest lists it
+under its decisions and stops, and the run goes on, because a log held for a moment should not end it. At three the loop
+writes the reason to `STOP` and `stops.log`, which are other files, and the run ends. Status then shows `running: false`,
+the reason under `stop`, and a last heartbeat in state `stopped`, and the digest's last page says "The runner ended" and
+why. A restart stays closed until a person has freed the log and agreed to `g6_improve_start`. If `STOP` cannot be written
+either, the run still ends, though nothing then closes a restart, which could spend up to three more ticks. That needs
+the log and `STOP` unwritable and `operator.db`, in the same folder, still writable, since a tick reserves there first.
+The lost cycles' use is on the meter and their results are on record nowhere. An adoption one of them made stands in
+`adoptions.jsonl`, where the chain ahead of the log is read as the crash between two writes.
 
 **What the two test domains showed.** Each ran with `FakeLLM` only and a planted weakness, one a coding-shaped domain,
 the other V6b's GSM8K task, check and exact-answer oracle over generated word problems (the dataset is not in the

@@ -2,6 +2,7 @@
 """The runner: a loop that runs on its own, on an injected clock and sleep, so a week passes in a test. FakeLLM only."""
 from __future__ import annotations
 
+import ctypes
 import importlib.util
 import json
 import os
@@ -9,13 +10,14 @@ import sqlite3
 import subprocess
 import sys
 import time as clock
+from ctypes import wintypes
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 import g6
-from g6.core.ledger import digest
+from g6.core.ledger import LedgerError, digest
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
@@ -27,6 +29,7 @@ from g6.self_maintenance.envelope import (
     heartbeat,
     runner_alive,
     runner_lock,
+    stop_reason,
     stops_asked,
 )
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow, read_settings
@@ -760,3 +763,127 @@ def test_the_module_runs_as_a_command_with_python_minus_p():
 
 def test_a_method_a_domain_file_sets_is_what_the_tick_uses(tmp_path):
     assert open_loop(_folder(tmp_path), now=lambda: START)[0].settings.method.cycles == 1
+
+
+# A log that will not take a cycle ---------------------------------------------------------------------------------------
+
+HELD_OPEN = PermissionError("held open by something else")
+
+
+def _log_refuses(monkeypatch, loop, error: Exception = HELD_OPEN) -> None:
+    def refused(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(loop.log, "cycle", refused)
+    monkeypatch.setattr(loop.log, "pause", refused)
+
+
+def _three_passes(runner, time) -> None:
+    for _ in range(3):
+        runner.step()
+        time.at += timedelta(hours=1)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a real Windows sharing restriction")
+def test_a_log_that_reads_but_will_not_write_stops_the_spending(tmp_path):
+    runner, time, domain = _runner(tmp_path, domain=domains.WordProblems(tmp_path, weak=0.6))
+    assert runner.loop.tick()["outcome"] == "adopted"
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                   wintypes.DWORD, wintypes.HANDLE)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel.CreateFileW(str(runner.loop.log.path), 0x80000000, 1, None, 3, 0x80, None)    # readers yes, writers no
+    assert handle != wintypes.HANDLE(-1).value
+    try:
+        _three_passes(runner, time)
+        calls = len(domain.llm.calls)
+        assert runner.step() is None and len(domain.llm.calls) == calls
+    finally:
+        assert kernel.CloseHandle(handle)
+
+
+@pytest.mark.parametrize("error", [PermissionError("held open"), LedgerError("the ledger file changed")])
+def test_three_cycles_the_log_would_not_take_end_the_run_and_say_why(tmp_path, monkeypatch, error):
+    runner, time, domain = _runner(tmp_path)
+    _log_refuses(monkeypatch, runner.loop, error)
+    _three_passes(runner, time)
+    calls, root = len(domain.llm.calls), runner.loop.root
+    assert calls > 0 and runner.step() is None and len(domain.llm.calls) == calls
+    assert "could not be written" in stop_reason(root) and stops_asked(root) == 1      # a restart stays closed
+    beat = heartbeat(root)
+    assert beat["state"] == "stopped" and beat["code"] == "G6_E_LOOP_CANNOT_RECORD"
+    assert "could not be written" in beat["reason"]
+    page = latest(root).read_text(encoding="utf-8")
+    assert "The runner ended" in page and "could not be written" in page and "g6_improve_start" in page
+
+
+def test_status_shows_cycles_being_lost_and_then_why_the_run_ended(tmp_path, monkeypatch):
+    from g6.mcp import improve
+
+    runner, time, _ = _runner(tmp_path)
+    _log_refuses(monkeypatch, runner.loop)
+    runner.step()
+    time.at += timedelta(hours=1)
+    seen = improve.status(str(runner.loop.root))
+    assert seen["pause"]["code"] == "G6_E_LOOP_CANNOT_RECORD" and "could not be written" in seen["pause"]["reason"]
+    assert seen["stop"] == ""
+    _three_passes(runner, time)
+    assert runner.step() is None
+    seen = improve.status(str(runner.loop.root))
+    assert "could not be written" in seen["stop"] and seen["last_heartbeat"]["state"] == "stopped"
+
+
+def test_a_cycle_the_log_takes_starts_the_count_again(tmp_path, monkeypatch):
+    runner, time, _ = _runner(tmp_path)
+    taken, refusals = runner.loop.log.cycle, iter((True, True, False, True, True))
+
+    def now_and_then(row):
+        if next(refusals):
+            raise PermissionError("held open for a moment")
+        return taken(row)
+
+    monkeypatch.setattr(runner.loop.log, "cycle", now_and_then)
+    for _ in range(5):
+        assert runner.step() is not None
+        time.at += timedelta(hours=1)
+    assert next(refusals, None) is None and not (runner.loop.root / "STOP").exists()
+
+
+def test_a_runner_that_can_write_nothing_at_all_stops_spending_all_the_same(tmp_path, monkeypatch):
+    def no_file(*args):
+        raise PermissionError("nothing in this folder can be written")
+
+    runner, time, domain = _runner(tmp_path)
+    _log_refuses(monkeypatch, runner.loop)
+    monkeypatch.setattr(sys.modules[ShadowLoop.__module__], "ask_to_stop", no_file)
+    _three_passes(runner, time)
+    calls = len(domain.llm.calls)
+    assert not (runner.loop.root / "STOP").exists()
+    assert "could not be written" in runner.loop.tick()["message"] and len(domain.llm.calls) == calls
+    assert runner.step() is None and len(domain.llm.calls) == calls
+
+
+def test_a_tick_that_broke_and_could_not_be_written_counts_once(tmp_path, monkeypatch):
+    def broken():
+        raise RuntimeError("the tick broke")
+
+    runner, time, _ = _runner(tmp_path)
+    _log_refuses(monkeypatch, runner.loop)
+    monkeypatch.setattr(runner.loop, "_run", broken)
+    runner.step()
+    assert runner.loop.lost_cycles == 1
+    time.at += timedelta(hours=1)
+    _three_passes(runner, time)
+    assert runner.step() is None and "could not be written" in stop_reason(runner.loop.root)
+
+
+def test_a_fault_that_could_not_even_reach_the_log_counts_too(tmp_path, monkeypatch):
+    def broken(*args):
+        raise OSError("the log cannot be opened")
+
+    runner, time, _ = _runner(tmp_path)
+    monkeypatch.setattr(runner.loop, "tick", broken)
+    monkeypatch.setattr(runner.loop, "fault", broken)
+    _three_passes(runner, time)
+    assert runner.step() is None and "could not be written" in stop_reason(runner.loop.root)

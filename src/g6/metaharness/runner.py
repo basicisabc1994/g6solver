@@ -16,7 +16,8 @@ owner's rights can reach this code, or write the records, which are hash-chained
 **What it never does.** It starts no engineer, pushes nothing, and spends only within the pacing rule. A pause, a changed
 frozen item, records that do not check out or a spent held-out split stop the ticks until a person acts, and the runner
 stays up, spends nothing and says so. A failed tick is recorded and the run goes on, so three in a row pause as they would
-anywhere.
+anywhere. Three in a row that could not be recorded end the run as a stop does, since nothing could show what they cost
+(``ShadowLoop.lost_cycle``).
 
 **Nothing to try.** A tick that found nothing to try was still paid for, so the runner rests: ``FIRST_REST`` after the
 first, doubling to ``LONGEST_REST``, and the digest says so. A person enrolling or lifting a pause ends the rest.
@@ -51,7 +52,6 @@ from typing import Any
 
 from g6.core import stop
 from g6.core.ledger import LedgerError, digest as digest_of
-from g6.metaharness.api import _blocked
 from g6.metaharness.loop import (
     BUDGET_WAIT,
     BUSY,
@@ -178,7 +178,7 @@ class Runner:
     def step(self) -> float | None:
         """One pass. The seconds to sleep, or ``None`` when a stop ended the run."""
         now = self.now()
-        halted = stop_reason(self.loop.root)
+        halted = self.loop.cannot_record or stop_reason(self.loop.root)
         if halted:
             self._end(now, halted)
             return None
@@ -219,8 +219,8 @@ class Runner:
     def _fault(self, exc: Exception) -> dict[str, Any]:
         try:
             return self.loop.fault(exc)
-        except Exception as second:  # noqa: BLE001 - not even the record could be written: the next pass tries again
-            return _blocked(CYCLE_FAILED, f"{type(second).__name__}: {second}"[:500])
+        except Exception as second:  # noqa: BLE001 - it never reached the log, so the log can never count it
+            return self.loop.lost_cycle(second)
 
     def _after(self, reply: dict[str, Any], now: datetime) -> datetime:
         """When the tick after ``reply`` may run. A cycle that reached a result is followed at once, for the budget and
