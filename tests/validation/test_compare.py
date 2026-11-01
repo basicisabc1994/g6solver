@@ -151,7 +151,7 @@ def _k_run(root, verdicts, *, status=compare.CLEAN, reason="a review reproduced 
     return {"arm": "K1", "run": "run"}
 
 
-WOULD_NOT_RUN, FOUND_NOTHING = {"exit": 2, "ran": 0, "results": {}}, {"exit": 0, "ran": 1, "results": {"t": "passed"}}
+WOULD_NOT_RUN, FOUND_NOTHING = {"exit": 2, "ran": 0, "results": {}}, {"exit": 0, "ran": 1, "results": {"test_critic::t": "passed"}}
 
 
 def test_a_k_run_that_found_nothing_ended_clean(tmp_path):
@@ -173,6 +173,21 @@ def test_a_defect_whose_test_ran_and_found_nothing_is_named_as_that(tmp_path):
 def test_it_is_the_last_review_that_says_how_a_k_run_ended(tmp_path):
     row = _k_run(tmp_path, ["defect", "defect"], round_1=FOUND_NOTHING, round_2=WOULD_NOT_RUN)
     assert compare.end_of(tmp_path, row) == "a defect whose test would not run"
+
+
+def test_an_earlier_reviews_pass_does_not_stand_for_the_last_reviews_own_test(tmp_path):
+    check = {"exit": 0, "results": {"test_critic::test_first": "passed", "test_critic_2::test_second": "skipped"}}
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect", "defect"], round_2=check)) == "a defect whose test would not run"
+
+
+def test_a_last_review_with_no_test_of_its_own_on_the_record_did_not_run_one(tmp_path):
+    check = {"exit": 0, "results": {"test_critic::test_first": "passed"}}
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect", "defect"], round_2=check)) == "a defect whose test would not run"
+
+
+def test_a_last_reviews_own_test_that_ran_found_nothing_whatever_an_earlier_one_did(tmp_path):
+    check = {"exit": 0, "results": {"test_critic::test_first": "skipped", "test_critic_2::test_second": "passed"}}
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect", "defect"], round_2=check)) == "a defect whose test found nothing"
 
 
 def test_a_k_run_with_a_defect_open_gives_the_reason_on_its_record(tmp_path):

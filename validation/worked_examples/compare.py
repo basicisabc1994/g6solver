@@ -84,13 +84,16 @@ def end_of(root: Path, row: Mapping[str, Any]) -> str | None:
         return str(repairs.get("reason") or "no record")
     if (repairs.get("critic") or {}).get("verdicts", [""])[-1] != "defect":
         return "nothing found"
-    check = run / f"repair_check_{repairs.get('rounds')}_critic.json"
+    rounds = repairs.get("rounds")
+    check = run / f"repair_check_{rounds}_critic.json"
     if not check.is_file():
         return "a defect with no test"
     got = record(check)
     if not got:
         return "no record"
-    return "a defect whose test found nothing" if we.ProbeRun(got.get("exit"), got.get("results") or {}, {}).usable \
+    own = "test_critic" if rounds == 1 else f"test_critic_{rounds}"     # earlier reviews' tests stay in the folder and run again
+    cases = {case: said for case, said in (got.get("results") or {}).items() if case.split("::")[0] == own}
+    return "a defect whose test found nothing" if we.ProbeRun(got.get("exit"), cases, {}).usable \
         else "a defect whose test would not run"
 
 
