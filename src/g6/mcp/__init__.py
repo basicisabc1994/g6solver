@@ -5,7 +5,8 @@ Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, `
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
 ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
 ``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
-client's own dialog and nowhere else, and the check step is the patch review; and
+client's own dialog and nowhere else, and the check step is the patch review; three ``g6_improve_*`` tools (``_start``,
+``_stop``, ``_status``) for the self-improvement loop (``g6.mcp.improve``), whose start asks the person the same way; and
 thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
 ``_inspect``, ``_propose``, ``_evaluate``, ``_decide``, ``_diagnose``, ``_approve``, ``_rollback``) for the workflows
 declared in the file ``G6_METAHARNESS`` names, where confirmation, approval and rollback ask the person through the
@@ -27,7 +28,8 @@ server reads it from its own environment. The meta-harness tools that run a work
 ``metaharness.run``, ``metaharness.evaluate_start`` and ``metaharness.evaluate`` (``metaharness`` for all three); and
 a workflow runs only once a person confirmed it, which G6 records under its state folder, so a confirmation a
 project's files carry does not count. The mission tools that run a repository's code ask for ``workforce.mission``
-(``workforce`` for all). ``g6_describe`` says which sensitive ops this server allows. Before you list
+(``workforce`` for all), and ``g6_improve_start`` for ``metaharness.improve`` (``metaharness`` covers it too).
+``g6_describe`` says which sensitive ops this server allows. Before you list
 one, know this (the refusal says it too): Where no operating-system boundary can confine it (macOS, Linux without
 bubblewrap, and Windows before the one-time access grant), G6 refuses to run untrusted code for you (a patch, a
 generated script, a repository's tests) unless you allow it once with g6 setup. Code you allow then has your own
@@ -45,6 +47,7 @@ does. G6 re-checks artifacts with its own code; it does not defend against malic
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -499,11 +502,51 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         from g6.mcp import mission
         return mission.certificate(mission_id)
 
+    async def g6_improve_start(ctx: Any, folder: str = "") -> dict:
+        """Start G6's self-improvement loop on a folder (empty: improve under G6's state folder), as a process of its own
+        that outlives this session and runs until a stop, within the pacing rule. It adopts changes in its own workspace
+        only, pushes nothing and starts no engineer. The person is asked in the client's own dialog: you never answer for
+        them, and a decline, a cancel or a client without a dialog starts nothing; ask the person, and offer no other way
+        to agree. The name they give is recorded as given and is not authenticated. Refused, with what to do, while a
+        runner is alive or when no person has enrolled a domain in the folder, which only a person does, at their terminal.
+        Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
+        from g6.mcp import improve
+        from g6.mcp.consent import refusal, request_consent
+
+        denied = improve.refused()
+        if denied is not None:
+            return denied
+        found = improve.asked(folder)
+        if isinstance(found, dict):
+            return found
+        root, question = found
+        consent = await request_consent(ctx, question)
+        if consent.status != "accepted":
+            return refusal(consent, next_action=improve.NOT_ASKED)
+        return await asyncio.to_thread(improve.start, root, consent.answer)
+
+    def g6_improve_stop(folder: str = "", reason: str = "") -> dict:
+        """Stop the self-improvement loop: writes the folder's local STOP file, with no dialog and no permission. Safe to
+        repeat, and it works when the runner is already dead. It kills nothing and touches no container: the runner ends
+        itself once it sees the file, within a minute of its current tick ending, so running and stopped say whether it
+        has gone yet."""
+        from g6.mcp import improve
+        return improve.stop(folder, reason)
+
+    def g6_improve_status(folder: str = "") -> dict:
+        """Where the self-improvement loop stands. Reads only: running or not, the last heartbeat, this week's use against
+        target and ceiling for each provider with estimates marked (as of that heartbeat), the current constraint, the
+        last cycle, any pause and its reason, the current generation and the recent lineage with what was measured, and
+        the path and text of the latest daily digest."""
+        from g6.mcp import improve
+        return improve.status(folder)
+
     for tool in (metaharness_inspect, metaharness_propose, metaharness_evaluate, metaharness_decide,
                  metaharness_diagnose, metaharness_approve, metaharness_rollback, metaharness_start,
                  metaharness_confirm, metaharness_propose_code, metaharness_evaluate_start, metaharness_job,
                  metaharness_run, g6_premortem, g6_mission_create, g6_mission_clarify, g6_mission_confirm,
-                 g6_mission_submit, g6_mission_status, g6_mission_certificate):
+                 g6_mission_submit, g6_mission_status, g6_mission_certificate, g6_improve_start, g6_improve_stop,
+                 g6_improve_status):
         if "ctx" in tool.__annotations__:  # the real Context type, so the server injects it (annotations are strings)
             tool.__annotations__["ctx"] = context_type
         server.tool()(tool)
