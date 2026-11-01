@@ -1174,3 +1174,11 @@ Four runs went from a failing first patch to a passing final one: both `pydantic
 ### 2026-11-01 (midday): K1 frozen (before any K run on a bug kept for measurement)
 
 K1's six remaining training runs all passed at their first patch and showed no fault, so K1 freezes as it stands: the code of commit ea1e491, three repairs at most, and no text of its own. On the seven training bugs it scored 12 of 14 on the maintainers' tests and 14 of 14 on the amended tests, at a mean of $0.11 a run, beside L9's 12 and 14 at $0.59 and arm A's 9 and 11 at about $0.06. These are training scores, and K's idea came from one of these bugs, so they are reported beside the held-out scores and never in place of them. No stage 1 result had been read when it froze.
+
+## 2026-11-01 (evening): recorded before any stage 1 score is read
+
+No rule changes here. The comparison rule, its arms and its bugs stand as frozen.
+
+**What the rule can show.** At the training pass rates (9 of 14 for the controls, 12 of 14 for the treatment), two runs per bug per arm, simulated with 200,000 seeded trials and an exact binomial check, the rule fires with probability 0.34 at 11 bugs, 0.45 at 14, 0.64 at 20 and 0.92 at 40. If both repeats of a bug agree, the figures are 0.36, 0.45, 0.59 and 0.84. Unseen rates may well be lower than training rates. So at 11 bugs a "not shown" is the likelier outcome even if the training effect is real, and it is a statement about the sample as well as the method.
+
+**A disclosure for K.** In `reviews_until_clean`, a review that says `defect` with a test that will not run ends the same way as a clean review. K1 stays frozen, so its report will count how many runs ended that way, on each score.
