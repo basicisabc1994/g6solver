@@ -181,7 +181,7 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
         verdict = "not applied, tuned on these bugs" if tuned else (
             f"{'met' if judged(results) else 'not shown'}; at {TWO_PRIMARIES}: {'cleared' if judged(results, TWO_PRIMARIES) else 'not cleared'}")
         print(f"{name:22} {score:11} frozen rule: {verdict}; "
-              f"95% target:{'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
+              f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
 
 
 def main(argv: Sequence[str] | None = None) -> None:

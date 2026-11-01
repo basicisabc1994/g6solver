@@ -66,8 +66,8 @@ def test_the_report_says_beside_the_rule_if_a_result_also_clears_the_bar_for_two
         compare.report(rows, "stage 1", "abcdef", (1,), loop_arm="K1")
         return next(text for text in capsys.readouterr().out.splitlines() if "maintainers frozen rule" in text)
 
-    assert "frozen rule: met; at 0.025: not cleared" in line("a1 b1 c1 d1 e1 f0")
-    assert "frozen rule: met; at 0.025: cleared" in line("a1 b1 c1 d1 e1 f1")
+    assert "frozen rule: met; at 0.025: not cleared; 95% target: not met (83.3%)" in line("a1 b1 c1 d1 e1 f0")
+    assert "frozen rule: met; at 0.025: cleared; 95% target: met (100.0%)" in line("a1 b1 c1 d1 e1 f1")
 
 
 def test_a_missing_run_is_never_a_win_or_a_loss():
