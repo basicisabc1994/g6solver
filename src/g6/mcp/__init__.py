@@ -3,7 +3,8 @@
 
 Six discovery tools: ``g6_help``, ``g6_find``, ``g6_describe``, ``g6_invoke``, ``g6_components`` and ``g6_compose``;
 ``g6_review_patch``, which assesses a Python patch against stated requirements in confined test runs, as a job;
-``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
+``g6_review_until_clean``, one step of the completion loop for a client the plugin's hook cannot reach (``g6.mcp.review_loop``),
+as a job; ``g6_premortem`` and six ``g6_mission_*`` tools (``_create``, ``_clarify``, ``_confirm``, ``_submit``, ``_status``,
 ``_certificate``) for a coding mission (``g6.mcp.mission``), where what a person allows and confirms goes through the
 client's own dialog and nowhere else, and the check step is the patch review; and
 thirteen meta-harness tools (``metaharness_start``, ``_confirm``, ``_propose_code``, ``_evaluate_start``, ``_job``, ``_run``,
@@ -266,6 +267,33 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
                                          intent=intent, proposed_checks=proposed_checks,
                                          template_instances=template_instances, search=search,
                                          import_roots=import_roots or []), compact=finish)
+
+    @server.tool()
+    def g6_review_until_clean(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "") -> dict:
+        """One step of G6's completion loop, for an agent the plugin's Stop hook cannot reach: call it when you finish a
+        Python task, in repo, the repository's folder. Another model family reads your patch without your reasoning, and
+        must state a rule, reasons and a test. G6 runs that test, confined, with no network. Returns a job: poll
+        metaharness_job. Its result has action "continue" and text, the reviewer's words: a finding you may reject. Check
+        it against the task, then repair the cause and call again, or leave the code as it was and call again with reason,
+        one line saying why. A fresh review reads each repair, at most 3 repairs and so 4 reviews. Earlier reviewers' tests
+        stay and keep running. Or action "stop" and report: show it to the person as it is. The loop stops when a review
+        reproduces nothing, when you leave the code as it was, when the repairs run out, or when a review fails. A stop
+        with no clean review, or one that tested nothing, is blocked-escalated with its code and any other is
+        qualified-draft: a review that reproduces nothing is not evidence the work is right, only that this reviewer found
+        no failure it could show. This loop has been measured on seven training bugs only.
+
+        Use one session name for one task: the first call fixes its task and base commit, so a commit you make later does
+        not move the base, and a later call's task and base are not read. Needs a boundary (g6 doctor says what this
+        computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
+        G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. Requires
+        host permission patch_review.review in G6_MCP_SENSITIVE."""
+        from g6.core.door import blocked_reply
+        if not _allowed("patch_review", "review", allowed_sensitive()):
+            return blocked_reply(f"{_DENIED} g6_review_until_clean runs repository code and tests a model wrote; the host "
+                                 "must allow it, with patch_review.review")
+        from g6.mcp.review_loop import step
+
+        return jobs.start(lambda: step(repo, task, session, base, reason))
 
     def session(ctx: Any) -> str:
         return str(getattr(ctx, "session_id", None) or id(getattr(ctx, "session", ctx)))
