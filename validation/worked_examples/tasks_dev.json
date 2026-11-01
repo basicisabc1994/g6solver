@@ -1,4 +1,46 @@
 {
  "about": "Stage 3: bugs for G6 to learn from, in repositories kept apart from stage 2's. None of them is judged on.",
- "tasks": []
+ "tasks": [
+  {
+   "id": "fsspec-2346",
+   "project": "fsspec/filesystem_spec",
+   "full_name": "fsspec/filesystem_spec",
+   "licence": "BSD-3-Clause",
+   "pr": 2346,
+   "issue": 2345,
+   "merge_commit": "e58deb00334020a9fe83a8252f0309a309b087fb",
+   "parent": "86269671f1c520b897b0b3fa0ce276823451c051",
+   "merged_at": "2026-10-27T17:24:19Z",
+   "test_modules": [
+    "fsspec/implementations/tests/test_http.py",
+    "fsspec/implementations/tests/test_http_sync.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\""
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2026.10.0"
+   }
+  },
+  {
+   "id": "fsspec-2287",
+   "project": "fsspec/filesystem_spec",
+   "full_name": "fsspec/filesystem_spec",
+   "licence": "BSD-3-Clause",
+   "pr": 2287,
+   "issue": 1041,
+   "merge_commit": "7aa038375b89d3191ebb81c70162d57441c19f89",
+   "parent": "6086b9053412a97fd2614a97f484a61a2d287b9f",
+   "merged_at": "2026-10-26T19:44:24Z",
+   "test_modules": [
+    "fsspec/tests/test_mapping.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\""
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2026.10.0"
+   }
+  }
+ ]
 }

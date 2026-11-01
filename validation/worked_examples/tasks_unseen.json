@@ -58,6 +58,333 @@
     "uv pip install -q --python .venv/bin/python -e . --group dev"
    ],
    "env": {}
+  },
+  {
+   "id": "charset-normalizer-715",
+   "project": "jawah/charset_normalizer",
+   "full_name": "jawah/charset_normalizer",
+   "licence": "MIT",
+   "pr": 715,
+   "issue": 672,
+   "merge_commit": "5478b84058a2a04e2d67a5dabbe0a273706707aa",
+   "parent": "7411396ebd495e1abc28f5682975b5c662b2ff35",
+   "merged_at": "2026-03-15T16:30:09Z",
+   "test_modules": [
+    "tests/test_base_detection.py",
+    "tests/test_cli.py",
+    "tests/test_thread_safety.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  },
+  {
+   "id": "setuptools-5362",
+   "project": "pypa/setuptools",
+   "full_name": "pypa/setuptools",
+   "licence": "MIT",
+   "pr": 5362,
+   "issue": 5360,
+   "merge_commit": "7c5cb7a14aaa61d5fec6144a4a08a3911257f0d2",
+   "parent": "873b29c064a6981cb9764c064f6c5fe0c56b0954",
+   "merged_at": "2026-10-20T18:25:01Z",
+   "test_modules": [
+    "setuptools/tests/test_bdist_wheel.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\" coverage"
+   ],
+   "env": {}
+  },
+  {
+   "id": "setuptools-5352",
+   "project": "pypa/setuptools",
+   "full_name": "pypa/setuptools",
+   "licence": "MIT",
+   "pr": 5352,
+   "issue": 5351,
+   "merge_commit": "b3985b6d08f595de4bd123e86f83d1680c2e3e0b",
+   "parent": "0c3f3c44592ba8273ffd649d70d5a64220a3d1cc",
+   "merged_at": "2026-10-19T19:57:09Z",
+   "test_modules": [
+    "setuptools/tests/test_bdist_wheel.py",
+    "setuptools/tests/test_build_ext.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[test]\" coverage"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pygments-3204",
+   "project": "pygments/pygments",
+   "full_name": "pygments/pygments",
+   "licence": "BSD-2-Clause",
+   "pr": 3204,
+   "issue": 3034,
+   "merge_commit": "ee289546df0a807b6c990ff8a06c4a035ff96955",
+   "parent": "8c7866d2265da4d68b43b8755385a060afa0f451",
+   "merged_at": "2026-07-14T05:59:48Z",
+   "test_modules": [
+    "tests/test_markup.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt pytest wcag-contrast-ratio"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pygments-3158",
+   "project": "pygments/pygments",
+   "full_name": "pygments/pygments",
+   "licence": "BSD-2-Clause",
+   "pr": 3158,
+   "issue": 3133,
+   "merge_commit": "16b39780f6bab271f754a22265ab8b306dc9ebaf",
+   "parent": "e5e4cf7b61141a2eb9ce321360beaf279a07f223",
+   "merged_at": "2026-07-05T08:15:17Z",
+   "test_modules": [
+    "tests/test_markup.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements.txt pytest wcag-contrast-ratio"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pluggy-809",
+   "project": "pytest-dev/pluggy",
+   "full_name": "pytest-dev/pluggy",
+   "licence": "MIT",
+   "pr": 809,
+   "issue": 807,
+   "merge_commit": "49c07369faedfbf8689dc2d86c3330d48ea286ad",
+   "parent": "0224f79fc75efadaafe24dbab9deee2ff616ecd7",
+   "merged_at": "2026-10-21T05:48:58Z",
+   "test_modules": [
+    "testing/test_pluginmanager.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group testing"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "1.6.0"
+   }
+  },
+  {
+   "id": "pluggy-799",
+   "project": "pytest-dev/pluggy",
+   "full_name": "pytest-dev/pluggy",
+   "licence": "MIT",
+   "pr": 799,
+   "issue": 792,
+   "merge_commit": "20950ae1a494ce2f0bfce5d821e10a0b1cc2b82b",
+   "parent": "09fabb162b8f84af0292b827c94e0149b82d448a",
+   "merged_at": "2026-10-18T12:42:30Z",
+   "test_modules": [
+    "testing/test_tracer.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group testing"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "1.6.0"
+   }
+  },
+  {
+   "id": "botocore-3852",
+   "project": "boto/botocore",
+   "full_name": "boto/botocore",
+   "licence": "Apache-2.0",
+   "pr": 3852,
+   "issue": 3847,
+   "merge_commit": "3c9efec65ff08d246702b0eceaae197157ef1a23",
+   "parent": "750c41deb4a479d05ddfe7fe67f5595c75adf18e",
+   "merged_at": "2026-10-29T17:12:40Z",
+   "test_modules": [
+    "tests/unit/test_signers.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements-dev.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "botocore-3835",
+   "project": "boto/botocore",
+   "full_name": "boto/botocore",
+   "licence": "Apache-2.0",
+   "pr": 3835,
+   "issue": 3827,
+   "merge_commit": "34d8a3206e6c4a6db1c05deafe5487bb53bd3fb7",
+   "parent": "4de93abe62cc263980414f7a66be5226bd541b77",
+   "merged_at": "2026-10-19T14:51:45Z",
+   "test_modules": [
+    "tests/unit/test_credentials.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements-dev.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "anyio-1424",
+   "project": "agronholm/anyio",
+   "full_name": "agronholm/anyio",
+   "licence": "MIT",
+   "pr": 1424,
+   "issue": 1423,
+   "merge_commit": "6219807568bd7c32f2c08f923c7d93f95c836127",
+   "parent": "633965bad02a857574b3dbad03d1ef9f35e9caa4",
+   "merged_at": "2026-10-18T09:54:04Z",
+   "test_modules": [
+    "tests/test_sockets.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[trio]\" --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.15.1"
+   }
+  },
+  {
+   "id": "anyio-1354",
+   "project": "agronholm/anyio",
+   "full_name": "agronholm/anyio",
+   "licence": "MIT",
+   "pr": 1354,
+   "issue": 1353,
+   "merge_commit": "e414ce85d4adaa2e8248f20a108c2e51332cb86d",
+   "parent": "31c678218e9c2cbabd275f4a3745ae2a0f10f1b7",
+   "merged_at": "2026-10-13T07:42:05Z",
+   "test_modules": [
+    "tests/test_pytest_plugin.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[trio]\" --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.15.1"
+   }
+  },
+  {
+   "id": "s3transfer-423",
+   "project": "boto/s3transfer",
+   "full_name": "boto/s3transfer",
+   "licence": "Apache-2.0",
+   "pr": 423,
+   "issue": 422,
+   "merge_commit": "cddafab89e1d8d48e7ed0f00462f34793733b883",
+   "parent": "0ab921d7a0eb79c2a87d7a8b99d44c5066406c6b",
+   "merged_at": "2026-10-19T00:39:57Z",
+   "test_modules": [
+    "tests/functional/test_upload.py",
+    "tests/unit/test_s3transfer.py",
+    "tests/unit/test_utils.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . -r requirements-dev.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "python-dotenv-711",
+   "project": "theskumar/python-dotenv",
+   "full_name": "theskumar/python-dotenv",
+   "licence": "BSD-3-Clause",
+   "pr": 711,
+   "issue": 710,
+   "merge_commit": "6a49d6d88fd9bd99bef8d63b9eb6f2e46ecc7072",
+   "parent": "828bdfe5ba91b736b545561ebb53326f1f88f6e5",
+   "merged_at": "2026-10-01T05:50:13Z",
+   "test_modules": [
+    "tests/test_cli.py",
+    "tests/test_main.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[cli]\" -r requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "python-dotenv-700",
+   "project": "theskumar/python-dotenv",
+   "full_name": "theskumar/python-dotenv",
+   "licence": "BSD-3-Clause",
+   "pr": 700,
+   "issue": 699,
+   "merge_commit": "f215c0274dc4c310e5ca5feb4c6bddade25ece21",
+   "parent": "58f2d7c112235b347040bb5cb579d4ebc0a0ad91",
+   "merged_at": "2026-10-01T05:34:45Z",
+   "test_modules": [
+    "tests/test_cli.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[cli]\" -r requirements.txt"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pyjwt-1216",
+   "project": "jpadilla/pyjwt",
+   "full_name": "jpadilla/pyjwt",
+   "licence": "MIT",
+   "pr": 1216,
+   "issue": 1209,
+   "merge_commit": "7bf32526738fe837387bdedd4849a4a525c33a79",
+   "parent": "1d41a6478e1562e68ff667fcd703356acf085f68",
+   "merged_at": "2026-09-28T16:22:35Z",
+   "test_modules": [
+    "tests/test_api_jws.py",
+    "tests/test_api_jwt.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[crypto]\" --group tests"
+   ],
+   "env": {}
+  },
+  {
+   "id": "pyjwt-1201",
+   "project": "jpadilla/pyjwt",
+   "full_name": "jpadilla/pyjwt",
+   "licence": "MIT",
+   "pr": 1201,
+   "issue": 1013,
+   "merge_commit": "4adcd02722f5011c60079d3978dfc167b9a8eaa5",
+   "parent": "9e501d993b4d3e7dba14bdb1722b1d993ac75097",
+   "merged_at": "2026-09-21T11:16:40Z",
+   "test_modules": [
+    "tests/test_jwks_client.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[crypto]\" --group tests"
+   ],
+   "env": {}
+  },
+  {
+   "id": "platformdirs-666",
+   "project": "tox-dev/platformdirs",
+   "full_name": "tox-dev/platformdirs",
+   "licence": "MIT",
+   "pr": 666,
+   "issue": 673,
+   "merge_commit": "790ff1834cff89c2f4b1a02ebf5eaae27431ea2d",
+   "parent": "7753a026bcfacb929745defc0bd2eb654b6a9d9c",
+   "merged_at": "2026-10-28T18:18:04Z",
+   "test_modules": [
+    "tests/test_api.py",
+    "tests/test_macos.py",
+    "tests/test_main.py",
+    "tests/test_testing.py",
+    "tests/test_unix.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group test"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "4.9.0"
+   }
   }
  ]
 }
