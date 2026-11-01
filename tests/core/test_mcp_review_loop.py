@@ -194,6 +194,21 @@ def test_the_agents_reason_goes_with_its_call(rig):
     enveloped(got)
 
 
+def test_a_reason_that_is_a_question_rejects_nothing_and_says_who_must_answer(rig):
+    critic = reviewer("one", "none")
+    rig.approve(critic)
+    rig.edit()
+    rig.step()
+    got = rig.step(reason="Shall I fix this?")
+    assert "report" not in got and got["action"] == loop.WAIT and got["completion_state"] == "blocked-escalated"
+    assert got["warning_card"]["code"] == loop.WAITING_ON_PERSON and "waiting for your answer" in got["warning_card"]["message"]
+    enveloped(got)
+    assert len(critic.calls) == 1
+    rig.edit("def double(x):\n    return 2 * x\n")      # the person said yes
+    rig.failing = set()
+    assert rig.step()["action"] == "stop" and len(critic.calls) == 2
+
+
 def test_a_review_that_fails_is_blocked_and_says_so_and_carries_the_report(rig):
     rig.approve(reviewer(LLMError("no such program")))
     rig.edit()

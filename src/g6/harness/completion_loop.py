@@ -125,6 +125,12 @@ NO_PYTHON = "G6_E_NO_PYTHON_CHANGED"
 #: A call that found another step of its session running: the code the self-improvement loop gives the same refusal.
 BUSY = "G6_E_LOOP_BUSY"
 ALREADY_RUNNING = "Another step of G6's completion loop is running for this session, so this one did nothing."
+#: A reply that edited nothing and asks something: it repairs nothing and rejects nothing, so the person holds the next move.
+WAITING_ON_PERSON = "G6_E_LOOP_WAITING_ON_PERSON"
+ASKED = ("G6's completion loop is waiting for your answer: the agent asked a question, so it neither repaired the finding nor "
+         "rejected it, and the finding stays open. The loop goes on when the agent next stops.")
+#: A last sentence that asks: a question mark past any closing marks, and after it at most a closing that hands over the turn.
+_ASKS = re.compile(r"\?[\s*_`'\")\]]*(?:(?:let me know|please confirm|i.ll wait)\b[^.!?\n]*[.!]?[\s*_`'\")\]]*)?$", re.I)
 #: What a run came to: the row's stable cause, for ``metaharness.domain.FailureRecord``.
 OPEN, FIXED, FOUND_NOTHING = "review_finding_open", "review_finding_fixed", "review_found_nothing"
 #: Where those rows go, beside the sessions' folders: local, and never pushed.
@@ -266,6 +272,13 @@ def with_critic(found: tuple[set[str], str], critic: Mapping[str, str], note: st
 def review_note(found: Mapping[str, str], shipped: Harness) -> str:
     """What goes back to the agent in the review-until-clean loop, as ``reviews_until_clean`` sends it."""
     return shipped.critic_note.format(**{k: found.get(k, "") for k in ("rule", "why", "test")}) + shipped.review_ask
+
+
+def asks(said: str) -> bool:
+    """Whether the agent's last words ask something. Only the last sentence counts: a refusal may ask a question on its way to
+    its reason. A plain "let me know" with no question is an offer, so it decides nothing here, and a person's yes to it is
+    still reviewed, by the loop their prompt arms."""
+    return bool(_ASKS.search(said.rstrip()))
 
 
 def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
@@ -590,12 +603,14 @@ class Repairs:
     the probes. A hook cannot wait for the agent, so ``rounds``, which the state keeps, replays what is done: a round
     whose failures have not gone back ends this hook with ``pending``, and a failure that survives a repair goes back, up
     to the cap, unless the agent left the code as it was. ``answered``: whether this call is the agent's reply. With none,
-    an unchanged tree says nothing of what it decided, so what failed goes back as it was, and no round is spent."""
+    an unchanged tree says nothing of what it decided, so what failed goes back as it was, and no round is spent. ``asked``:
+    whether that reply ends on a question. An unchanged tree then decides nothing either, but nothing goes back, as sending it
+    would hold the question from the person who must answer it: ``waiting`` says so, and no round is spent."""
 
     def __init__(self, rounds: list[dict], check: Callable[[], tuple[set[str], str]], tree: Callable[[], str],
-                 answered: bool = True) -> None:
-        self.rounds, self.check, self.tree, self.answered = rounds, check, tree, answered
-        self.round, self.pending, self.why = 0, "", ""
+                 answered: bool = True, asked: bool = False) -> None:
+        self.rounds, self.check, self.tree, self.answered, self.asked = rounds, check, tree, answered, asked
+        self.round, self.pending, self.why, self.waiting = 0, "", "", False
 
     def search(self, sketch: Any, examples: Any, *, max_exhaustive: int = 0) -> SearchResult:
         if self.round and self.round == len(self.rounds):
@@ -606,6 +621,9 @@ class Repairs:
             if last["tree"] == tree and not self.answered:
                 self.pending = last["text"]
                 return SearchResult(None, "the agent has not answered", False, self.round)
+            if last["tree"] == tree and self.asked:
+                self.waiting = True
+                return SearchResult(None, "the agent asked a question", False, self.round)
             if last["tree"] == tree:
                 self.why = LEFT
                 return SearchResult(None, self.why, False, self.round)
@@ -622,9 +640,9 @@ class Repairs:
 @dataclass(frozen=True)
 class Step:
     """What comes next: ``CONTINUE``, with the text for the agent; ``STOP``, with the report ("" when there is none); or
-    ``WAIT``, when another step of the session was running and this one did nothing. ``code``: the stable code of a call
-    that tested nothing or left no clean review, for a surface with G6's envelope. ``note``: with no report, the line a hook
-    shows the person in its place, as a tool's reply has its own words for what did not run."""
+    ``WAIT``, when this step did nothing, as another of the session was running or the person must answer first. ``code``: the
+    stable code of a call that tested nothing or left no clean review, for a surface with G6's envelope. ``note``: with no
+    report, the line a hook shows the person in its place, as a tool's reply has its own words for what did not run."""
     action: str
     text: str = ""
     code: str = ""
@@ -866,7 +884,9 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
     ``answered``: whether this call is the agent's reply to what the last one sent back. A Stop hook is: it fires only once
     the agent has taken its turn, so an unchanged tree there is the agent's decision. A call over MCP may be a client's retry
-    of a reply it lost, so there only a stated reason rejects a finding, and with none what failed goes back as it was.
+    of a reply it lost, so there only a stated reason rejects a finding, and with none what failed goes back as it was. On
+    either, a reply with the code unchanged that ends on a question (``asks``) rejects nothing: the step says ``WAIT``, with
+    ``WAITING_ON_PERSON``, and the loop goes on when the agent next stops.
 
     A step reads its round from the state and then writes that round's files, so two at once would undo each other: a call
     that finds another running does nothing, and says ``WAIT``."""
@@ -948,13 +968,16 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
             _scouts(change, task, session, state, shipped, scout, AT_STOP)
             if all(one["left_out"] for one in state["sets"].values()):
                 return _finish(session, state, _report(root, task, base, state, "no probe set could run"))
-        loop = Repairs(rounds, reviewed if reviewing else check, tree, answered)
+        loop = Repairs(rounds, reviewed if reviewing else check, tree, answered, asks(said))
         got = cegis(WorkingTree(), lambda **_: True, domain=InputDomain.of({"probes": ["all"]}), runner=loop,
                     max_iterations=MAX_REPAIRS + 1, timeout_s=LOOP_S - (time.time() - state["started"]))
     except repo_tests.RepoRefused as exc:
         if exc.code != ISOLATION_UNAVAILABLE:
             raise
         return refused(NO_BOUNDARY.format(why=exc), ISOLATION_UNAVAILABLE)
+    if loop.waiting:
+        _save(session, state)
+        return Step(WAIT, ASKED, WAITING_ON_PERSON)
     if loop.pending and reviewing:
         _save(session, state)
         return Step(CONTINUE, loop.pending)

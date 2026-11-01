@@ -2486,3 +2486,91 @@ def test_a_review_that_failed_read_nothing_so_the_next_prompt_may_review_the_sam
     said = stopped(world)
     assert len(critic.calls) == 2, "a review that failed was counted as having read the patch"
     assert loop.CLEAN in said["systemMessage"]
+
+# --- a question is not a refusal: what a real agent writes when it has edited nothing, each way --------------------------------
+
+ASKS = ["Shall I fix this?",
+        "The reviewer is right that negative numbers fail here. Would you like me to fix it?",
+        "Do you want me to change `double`, or leave it as it is?\n\nLet me know.",
+        "**Should I go ahead with this repair?**",
+        "Should I repair this? I'll wait for your answer.",
+        "The finding looks valid to me.\n\nWant me to apply the fix?",
+        "Should I change it? Please confirm."]
+DECIDES = ["The task says x is never negative, so the reviewer's test asks for something else. I left the code as it was.",
+           "Why would x be negative here? The task rules it out, so I am leaving the code alone.",
+           "Not a defect: the reviewer misread the task.",
+           "I am leaving the code as it is. Let me know if you want it changed.",
+           "No change: `double('a')` is outside the task (is it even reachable? no)."]
+
+
+@pytest.mark.parametrize("said", ASKS)
+def test_a_reply_that_asks_a_question_and_edits_nothing_rejects_nothing(world, monkeypatch, said):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    step = world.advance(critic=critic, said=said)
+    assert world.state().get("stop") != loop.LEFT and not world.state().get("done"), "a question was recorded as a refusal"
+    assert (step.action, step.code) == (loop.WAIT, loop.WAITING_ON_PERSON) and step.text == loop.ASKED
+    assert not rows(world) and len(critic.calls) == 1
+
+
+@pytest.mark.parametrize("said", DECIDES)
+def test_a_reply_that_decides_is_still_a_refusal_whatever_it_mentions(world, monkeypatch, said):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    step = world.advance(critic=critic, said=said)
+    assert step.action == loop.STOP and world.state()["stop"] == loop.LEFT
+    assert world.state()["left"] == " ".join(said.split())
+
+
+def test_the_persons_yes_to_the_agents_question_is_reviewed(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    assert stopped(world)["decision"] == "block"
+    said = stopped(world, "The reviewer is right. Shall I fix this?")
+    assert "decision" not in said      # a block would keep the question from the person, and go round for ever
+    assert said == {"systemMessage": loop.ASKED} and "\n" not in said["systemMessage"]
+    prompted(world, "yes")
+    world.edit(FIXED + "# repaired\n")
+    tests.failing = set()
+    ended = stopped(world, "Fixed it.")["systemMessage"]
+    assert len(critic.calls) == 2 and "**Fixed:** review 1" in ended and "left the code" not in ended
+
+
+def test_the_persons_no_to_the_agents_question_then_counts_as_the_refusal_it_is(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    stopped(world, "Shall I fix this?")
+    prompted(world, "no, leave it")
+    ended = stopped(world, "Leaving the code as it is: the task asks for this.")["systemMessage"]
+    assert "the agent left the code as it was" in ended and "the task asks for this" in ended
+
+
+def test_a_changed_tree_is_a_reply_though_the_words_ask_a_question(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    step = world.advance(critic=critic, said="I changed it. Does that look right to you?")
+    assert step.action == loop.STOP and loop.CLEAN in step.text and len(critic.calls) == 2
+
+
+def test_a_question_on_the_scouts_loop_is_no_refusal_either(world, monkeypatch):
+    scouts_chosen(monkeypatch)
+    Runs(monkeypatch, now=dict(CASES))
+    world.edit()
+    world.advance()
+    step = world.advance(said="Shall I repair these cases?")
+    assert (step.action, step.code) == (loop.WAIT, loop.WAITING_ON_PERSON) and not world.state().get("done")

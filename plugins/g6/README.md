@@ -54,7 +54,8 @@ below runs instead. With neither, nothing is tested, and the report says which l
    and could not be reproduced.
 4. If the test fails, the rule, the reasons and the test go back to the agent in the same session. The agent may reject the
    finding: the reviewer can be wrong. A fresh review then reads the new patch, at most three repairs and so four reviews.
-   Each review's test stays and keeps running, to catch a repair that undoes it.
+   Each review's test stays and keeps running, to catch a repair that undoes it. If the agent changes nothing and ends on a
+   question, that rejects nothing: the turn ends so you can answer, and the loop goes on when the agent next stops.
 5. The loop ends when a review reproduces nothing, when the agent leaves the code as it was, when the repairs run out, or when
    a review fails or cannot be read. That last one is reported as no clean review, and never counts as clean. Neither does a
    review of a patch that changed after it was read.
