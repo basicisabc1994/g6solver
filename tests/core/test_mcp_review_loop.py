@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -18,12 +21,13 @@ from g6.harness import completion_loop as loop
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.invariants import check_envelope
+from g6.workforce import repo_tests
 from g6.workspace import _coordination
 
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
 
-from g6.mcp import build_server  # noqa: E402
+from g6.mcp import build_server, review_loop  # noqa: E402
 
 TASK = "double must return twice its argument"
 ENVELOPE = ("completion_state", "warning_card", "evidence", "request_id", "run_id")
@@ -268,6 +272,83 @@ def test_repeating_a_stop_with_a_finding_left_open_stays_a_draft(rig):
     assert again["report"] == first["report"]
     assert (again["ok"], again["completion_state"], again["warning_card"]["code"]) == (
         True, "qualified-draft", "G6_E_REVIEW_UNTIL_CLEAN")
+
+
+def race_for_a_session(rig, monkeypatch, repo: Path, task: str) -> list[dict]:
+    """Two first calls for one session, the second while the first is still working out what it asks."""
+    reached, release, real = threading.Event(), threading.Event(), repo_tests.change
+
+    def paused(where, *args, **kwargs):
+        if Path(where) == rig.repo.resolve() and not reached.is_set():
+            reached.set()
+            assert release.wait(30)
+        return real(where, *args, **kwargs)
+
+    monkeypatch.setattr(repo_tests, "change", paused)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(review_loop.step, str(rig.repo), TASK, "racing", rig.base)
+        assert reached.wait(30)
+        second = pool.submit(review_loop.step, str(repo), task, "racing")
+        try:
+            second.result(timeout=0.2)
+        except TimeoutError:
+            pass      # a call that waits its turn is held here
+        release.set()
+        return [first.result(timeout=30), second.result(timeout=30)]
+
+
+def bound(session: str) -> dict:
+    return json.loads((hook.folder(f"mcp:{session}") / "task.json").read_text(encoding="utf-8"))
+
+
+def test_racing_first_calls_bind_a_session_to_one_repository(rig, tmp_path, monkeypatch):
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    for args in (("init", "-q"), ("add", "."), ("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "b")):
+        subprocess.run(["git", "-C", str(other), *args], check=True, capture_output=True)    # a repository a session could bind
+    rig.approve(reviewer("none"))
+    rig.failing = set()
+    rig.edit()
+    answers = race_for_a_session(rig, monkeypatch, other, "another task")
+    assert [answer["ok"] for answer in answers] == [True, False]
+    assert bound("racing") == {"repo": str(rig.repo.resolve()), "task": TASK, "base": rig.base}
+
+
+def test_racing_first_calls_bind_a_session_to_one_task(rig, monkeypatch):
+    rig.approve(reviewer("none"))
+    rig.failing = set()
+    rig.edit()
+    answers = race_for_a_session(rig, monkeypatch, rig.repo, "another task")
+    assert [answer["ok"] for answer in answers] == [True, False]
+    assert bound("racing")["task"] == TASK
+
+
+def test_a_session_cannot_move_to_another_task(rig):
+    critic = reviewer("one", "never")
+    rig.approve(critic)
+    rig.edit()
+    rig.step()
+    got = rig.step(task="another task")
+    assert got["completion_state"] == "blocked-escalated" and got["warning_card"]["code"] == "G6_E_INPUT_VALIDATION"
+    assert "another task" in got["error"] and len(critic.calls) == 1
+    assert bound("one")["task"] == TASK
+
+
+def test_a_binding_is_written_whole_or_not_at_all(rig, monkeypatch):
+    rig.approve(reviewer("one"))
+    rig.edit()
+    real = os.replace
+
+    def killed(*args):
+        raise OSError("the call was cut short")
+
+    monkeypatch.setattr(os, "replace", killed)
+    with pytest.raises(OSError):
+        review_loop.step(str(rig.repo), TASK, "one", rig.base)
+    monkeypatch.setattr(os, "replace", real)
+    assert not (hook.folder("mcp:one") / "task.json").exists()
+    assert rig.step()["action"] == "continue"      # the session is free, and its task can still be bound
 
 
 def test_a_retry_with_the_code_unchanged_and_no_reason_gets_the_same_finding_and_spends_nothing(rig):

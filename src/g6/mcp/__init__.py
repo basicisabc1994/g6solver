@@ -276,17 +276,18 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         metaharness_job. Its result has action "continue" and text, the reviewer's words: a finding you may reject. Check
         it against the task, then repair the cause and call again, or leave the code as it was and call again with reason,
         one line saying why. Only a reason rejects a finding: a call with the code unchanged and no reason gets the same
-        finding back and spends nothing, so a retry is safe. A fresh review reads each repair, at most 3 repairs and so 4 reviews. Earlier reviewers' tests
-        stay and keep running. Or action "stop" and report: show it to the person as it is. The loop stops when a review
-        reproduces nothing, when you leave the code as it was, when the repairs run out, or when a review fails. A stop
+        finding back and spends nothing, so a retry is safe. A fresh review reads each repair, at most 3 repairs and so 4
+        reviews. Earlier reviewers' tests stay and keep running. Or action "stop" and report: show it to the person as it
+        is. The loop stops when a review reproduces nothing, when you leave the code as it was, when the repairs run out,
+        or when a review fails. A stop
         with no clean review, or one that tested nothing, is blocked-escalated with its code and any other is
         qualified-draft: a review that reproduces nothing is not evidence the work is right, only that this reviewer found
         no failure it could show. This loop has been measured on seven training bugs only. Action "wait" means another
         step of this session is running and this call did nothing: wait for that step's result before you call again.
 
-        Use one session name for one task: the first call fixes its task and base commit, so a commit you make later does
-        not move the base, and a later call's task and base are not read. Needs a boundary (g6 doctor says what this
-        computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
+        Use one session name for one task, and repeat that task as it was on each call: the first call fixes the session's
+        repository, task and base commit, and a call for another repository or task is refused. A later call's base is not
+        read, so a commit you make does not move it. Needs a boundary (g6 doctor says what this computer needs) and G6_LOOP_CRITIC=codex in the person's key file, which approves their Codex sign-in. The line
         G6_LOOP_MODE=scouts, or no critic and G6_LLM_PROVIDER=claude_code, runs the scouts' loop here instead. Requires
         host permission patch_review.review in G6_MCP_SENSITIVE."""
         from g6.core.door import blocked_reply

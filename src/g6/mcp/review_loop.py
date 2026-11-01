@@ -3,8 +3,8 @@
 Stop hook cannot reach, in G6's envelope.
 
 Each call is one step of one session, as each Stop hook is. The session's first call fixes its repository, task and base
-commit, so a commit the agent makes later cannot move the base, and the name a client gives is only ever digested into a
-folder, so it can name no path. ``continue`` carries the text for the agent and ``stop`` the report, to show as it is. A stop
+commit, under the session's lock, so a commit the agent makes later cannot move the base and two first calls cannot both
+bind it. The name a client gives is only ever digested into a folder, so it can name no path. ``continue`` carries the text for the agent and ``stop`` the report, to show as it is. A stop
 that tested nothing or left no clean review is ``blocked-escalated`` with its own code; any other is ``qualified-draft`` at
 best, as a review that reproduces nothing is not evidence the work is right. Nothing here decides anything.
 
@@ -15,6 +15,7 @@ no reason, the same finding goes back, and nothing is spent.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,9 @@ NOTHING = ("No Python changed against the base commit, so nothing was tested and
 
 
 def _asked(repo: str, task: str, base: str, session: Path) -> dict:
-    """What the session's first call gave, which later calls cannot move: ``repo_tests.change`` reads the base as a commit."""
+    """What the session's first call gave, which later calls cannot move: ``repo_tests.change`` reads the base as a commit.
+    Called with the session held, so one first call binds it. A call for another repository or task is refused, as its
+    reply would be about what the first asked. A later base is not compared: it may be HEAD, which the agent's commits move."""
     from g6.workforce import repo_tests
 
     root, known = repo_tests.checked_repo(repo), session / "task.json"
@@ -38,10 +41,14 @@ def _asked(repo: str, task: str, base: str, session: Path) -> dict:
         asked = json.loads(known.read_text(encoding="utf-8"))
         if asked["repo"] != str(root):
             raise repo_tests.RepoRefused("G6_E_INPUT_VALIDATION", "this session belongs to another repository")
+        if asked["task"] != task:
+            raise repo_tests.RepoRefused("G6_E_INPUT_VALIDATION", "this session belongs to another task: repeat its first "
+                                                                  "call's task as it was, or name a new session")
         return asked
-    session.mkdir(parents=True, exist_ok=True, mode=0o700)
     asked = {"repo": str(root), "task": task, "base": repo_tests.change(root, base).base_commit}
-    known.write_text(json.dumps(asked), encoding="utf-8")
+    fresh = session / "task.json.new"
+    fresh.write_text(json.dumps(asked), encoding="utf-8")
+    os.replace(fresh, known)
     return asked
 
 
@@ -59,16 +66,21 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     from g6.core.reliability_envelope import envelope_fields, warning_card
     from g6.harness import completion_hook, completion_loop as loop
     from g6.workforce import repo_tests
+    from g6.workspace._envelope import WorkspaceRefused
 
     if not task.strip() or not session.strip():
         return blocked_reply("[G6_E_INPUT_VALIDATION] a task and a session are needed: name one session for one task")
     folder = completion_hook.folder(f"mcp:{session}")
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     request_id = uuid.uuid4().hex[:12]
     try:
-        asked = _asked(repo, task, base, folder)
+        with loop._held(folder):
+            asked = _asked(repo, task, base, folder)
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason, answered=bool(reason.strip()))
     except repo_tests.RepoRefused as exc:
         return blocked_reply(f"[{exc.code}] {exc}", request_id=request_id)
+    except WorkspaceRefused:
+        done = loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY)
     if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
         return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
                 "action": done.action}

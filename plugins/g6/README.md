@@ -93,9 +93,10 @@ kept out of training. It also differs from what was measured:
 The Stop hook is Claude Code's. Any other client, or an agent without the plugin, can run the same loop one step at a time
 with `g6_review_until_clean`, which needs the same `patch_review.review` allowance as `g6_review_patch`. It takes the
 repository, the task, a session name and the base commit, and returns a job to poll with `metaharness_job`. The result says
-continue, with the text for the agent, or stop, with the report. The first call fixes the session's task and base. A session
-takes one step at a time: a call that finds another running does nothing, and says wait. Over this tool only a stated reason
-rejects a finding, so a client that repeats a call gets the same finding back, and nothing is spent.
+continue, with the text for the agent, or stop, with the report. The first call fixes the session's repository, task and
+base, and a call for another repository or task is refused. A session takes one step at a time: a call that finds another
+running does nothing, and says wait. Over this tool only a stated reason rejects a finding, so a client that repeats a call
+gets the same finding back, and nothing is spent.
 
 ## The scouts' loop
 

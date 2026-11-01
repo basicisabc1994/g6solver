@@ -23,8 +23,8 @@ be wrong: this is one careful reader's view, so check their expectation against 
 It ends after three repairs at most, when a review reproduces nothing, or when a review fails. This loop has been measured on
 seven training bugs only.
 
-Without the plugin's hook, call `g6_review_until_clean` when you finish, with the same session name for each step, and poll
-`metaharness_job`. Pass your one line as `reason` when you leave the code as it was.
+Without the plugin's hook, call `g6_review_until_clean` when you finish, with the same session name and task for each step,
+and poll `metaharness_job`. Pass your one line as `reason` when you leave the code as it was: only that rejects a finding.
 
 ## The scouts' loop
 
