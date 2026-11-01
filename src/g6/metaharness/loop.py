@@ -36,7 +36,7 @@ import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
-from g6.core.llm import DEFAULT_MAX_TOKENS, LLMError, waits
+from g6.core.llm import DEFAULT_MAX_TOKENS, MAX_RATE_LIMIT_WAITS, LLMError, OllamaCaller, OpenAICompatibleCaller, waits
 from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
@@ -195,9 +195,10 @@ class _Requests:
     def close(self) -> None:
         self.open(math.inf)
 
-    def admit(self, under_way: int = 0) -> None:
-        """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``."""
-        if self.unseen or self.sent + under_way >= self.limit:
+    def admit(self, under_way: int = 0, resends: int = 0) -> None:
+        """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``.
+        ``resends``: how often this request could be sent again, which it needs room for now, since no boundary stops one."""
+        if self.unseen or self.sent + under_way + resends >= self.limit:
             self.stopped = f"this tick has sent {self.sent + under_way} of the {self.limit:g} it reserved"
         elif self.ends is not None and self.now() >= self.ends:
             self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
@@ -210,6 +211,16 @@ class _Requests:
         until = limit_ends(str(failed), self.now())
         if until is not None and self.limit != math.inf:
             raise _AtLimit(until, str(failed)[:300]) from failed
+
+
+def _resends(caller: Any) -> int:
+    """How often a server can have one request through ``caller`` sent again. ``g6.core.llm`` does that for its HTTP callers
+    and nothing here can stop it, so a tick keeps room for it. It looks through the wrappers ``g6.core.llm`` has: a caller of
+    a domain's own that holds an HTTP caller under another name is not seen, and its resends are charged after they go."""
+    if isinstance(caller, OllamaCaller | OpenAICompatibleCaller):
+        return MAX_RATE_LIMIT_WAITS
+    held = (getattr(caller, "_inner", None), *getattr(caller, "_callers", ()))
+    return max((_resends(inner) for inner in held if inner is not None), default=0)
 
 
 class _Counted:
@@ -227,16 +238,17 @@ class _Counted:
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
     retries. Only a usage record from the provider can show those, which is the relay of design section 3. A ``Retry-After``
-    resend has no boundary either: it is charged, and a call can pass the limit by those, when a server turned it away."""
+    resend has no boundary either, and ``g6.core.llm`` is bound, so a request through a caller that can resend goes out only
+    with room left for every resend it could need (``_resends``)."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
-        self.inner, self.requests = inner, requests
+        self.inner, self.requests, self.resends = inner, requests, _resends(inner)
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        self.requests.admit()
+        self.requests.admit(0, self.resends)
 
         def next_request() -> None:
-            self.requests.admit(noted() + len(resent))
+            self.requests.admit(noted() + len(resent), self.resends)
 
         with counting(before_call=next_request) as noted, waits() as resent:
             try:
@@ -396,7 +408,8 @@ class ShadowLoop:
         racing = min(method.select_budget + per_run,         # failure traces offer one, and a champion races again
                      per_run * race_calls(len(cut.selection), racers, method.race_block, method.race_keep))
         one_case = per_run * (per_run + 2)                   # base, candidate and a control matched to the candidate's calls
-        return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1)
+        room = max(caller.resends for caller in (self._proposer, *(m.caller for m in self.workflow.models.values())))
+        return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1) + room
                 + method.cycles * (proposing + racing) + min(self.settings.eval_calls + one_case, len(cut.held_out) * one_case))
 
     def _frozen(self) -> dict[str, str]:

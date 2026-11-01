@@ -6,19 +6,21 @@ import ast
 import dataclasses
 import glob
 import importlib.util
+import io
 import json
 import mmap
 import os
 import random
 import sys
 import time
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 import g6
-from g6.core import llm
+from g6.core import host_models, llm
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
@@ -546,6 +548,94 @@ def test_a_retry_within_what_was_reserved_goes_out_and_is_counted():
     requests.open(3)
     assert _Counted(EmptyRetry(backend), requests).complete("system", "user") == "an answer"
     assert len(backend.calls) == requests.sent == 3 and not requests.stopped
+
+
+class Busy:
+    """An endpoint that turns each request away three times, asking for no wait, and answers the fourth."""
+
+    def __init__(self, answer) -> None:
+        self.answer, self.sent = answer, []
+
+    def open(self, request, timeout):
+        self.sent.append(request)
+        if len(self.sent) % 4:
+            raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
+        messages = json.loads(request.data)["messages"]
+        reply = {"choices": [{"message": {"content": self.answer(messages[0]["content"], messages[1]["content"])}}]}
+        return io.BytesIO(json.dumps(reply).encode())
+
+
+def _on_a_busy_endpoint(tmp_path, monkeypatch, wrap=lambda caller: caller):
+    domain = domains.WordProblems(tmp_path, pool=86, weak=0.0)
+    busy = Busy(domain.tutor)
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    caller = wrap(llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None))
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(caller, max_calls_per_run=1)})
+    settings = LoopSettings(windows=(ProviderWindow("claude", 500, START),), audit_per_tick=0, eval_calls=1, method=Method(
+        cycles=1, propose_budget=4, select_budget=8, use_recovery=False, use_reflection=False))
+    proposer = domains.proposes({"prompt": domains.WORKING})
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=settings, proposer=proposer, now=lambda: START + timedelta(hours=1))
+    return loop, busy, proposer
+
+
+def test_no_resend_of_a_busy_endpoint_passes_what_a_tick_reserved(tmp_path, monkeypatch):
+    loop, busy, proposer = _on_a_busy_endpoint(tmp_path, monkeypatch)
+    reserved = loop.worst_case()
+    got = loop.tick()
+    assert got["budget"]["charged"] == len(busy.sent) + len(proposer.calls) <= reserved
+    assert _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT" and got["outcome"] == "blocked"
+
+
+def test_a_resend_behind_a_retry_is_held_to_what_was_reserved_too(tmp_path, monkeypatch):
+    loop, busy, proposer = _on_a_busy_endpoint(tmp_path, monkeypatch, wrap=EmptyRetry)
+    reserved = loop.worst_case()
+    assert loop.tick()["budget"]["charged"] == len(busy.sent) + len(proposer.calls) <= reserved
+
+
+def test_a_caller_that_can_resend_needs_room_for_it_and_one_that_cannot_does_not(monkeypatch):
+    busy = Busy(lambda system, user: "an answer")
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    requests = _Requests()
+    requests.open(3)
+    resending = _Counted(llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None), requests)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        resending.complete("system", "user")
+    assert busy.sent == []                                     # three cannot hold a request and its three resends
+    requests.open(4)
+    assert resending.complete("system", "user") == "an answer" and len(busy.sent) == requests.sent == 4
+    requests.open(1)
+    assert _Counted(FakeLLM(default="an answer"), requests).complete("system", "user") == "an answer"
+
+
+@pytest.mark.parametrize(("caller", "resends"), [
+    (llm.OllamaCaller(), llm.MAX_RATE_LIMIT_WAITS),
+    (llm.OpenAICompatibleCaller("m", base_url="https://unused.invalid", api_key=None), llm.MAX_RATE_LIMIT_WAITS),
+    (EmptyRetry(llm.OllamaCaller()), llm.MAX_RATE_LIMIT_WAITS),
+    (FallbackCaller((FakeLLM(), EmptyRetry(llm.OllamaCaller()))), llm.MAX_RATE_LIMIT_WAITS),
+    (FakeLLM(), 0),
+    (EmptyRetry(FakeLLM()), 0),
+    (host_models.ClaudeCodeCaller(), 0),
+    (host_models.CodexCaller(), 0),
+])
+def test_which_callers_can_resend_is_read_through_what_wraps_them(caller, resends):
+    assert _Counted(caller, _Requests()).resends == resends
+
+
+def test_room_for_resends_is_in_the_reservation_so_a_clean_tick_is_not_cut_short(tmp_path, monkeypatch):
+    domain = domains.WordProblems(tmp_path)
+    caller = llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None)
+
+    def answers(system: str, user: str, *, max_tokens: int = 1024) -> str:
+        llm._start_model_call()
+        return domain.tutor(system, user)
+
+    monkeypatch.setattr(caller, "complete", answers)
+    plain, _ = _loop(tmp_path / "plain", domain=domains.WordProblems(tmp_path / "plain"))
+    _with_model(domain, caller)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.worst_case() == plain.worst_case() + llm.MAX_RATE_LIMIT_WAITS
+    assert loop.tick()["outcome"] == "adopted"
 
 
 def test_a_tick_of_blank_replies_stops_at_what_it_reserved_retries_and_all(tmp_path, monkeypatch):
