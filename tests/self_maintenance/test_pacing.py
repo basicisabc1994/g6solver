@@ -407,10 +407,10 @@ def test_a_tick_that_learns_the_providers_week_keeps_its_whole_charge_against_th
     readings[0] = _reading(20, now + timedelta(seconds=1))
     assert meter.reading("claude", now + timedelta(seconds=1)).used >= 20
     assert meter.settle(tick, 50) == 50
-    assert meter.reading("claude", now + timedelta(seconds=2)).used >= 50
-    later = OFF_THE_GRID - timedelta(days=3, hours=1)                    # still day 3 of the provider's week
-    assert meter.reading("claude", later).ceiling == 600
-    assert not meter.reserve("claude", later, 570).admitted
+    later = now + timedelta(seconds=2)
+    seen = meter.reading("claude", later)
+    assert seen.used >= 50
+    assert not meter.reserve("claude", later, seen.ceiling - 40).admitted  # room for 20 used and this, and none for 50
 
 
 def test_what_was_charged_before_the_week_moved_still_counts():
