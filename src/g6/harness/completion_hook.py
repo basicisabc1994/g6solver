@@ -78,8 +78,9 @@ def _record(session: Path, cwd: str, task: str) -> dict | None:
 
 def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
     """A new loop after one that ended. Its base is HEAD now, and its task this prompt, with the earlier task if that base is
-    the same, as the patch still holds that work. Its state names the patch the last review read, so a "thanks" spends no
-    review on it, unless that loop ended with a stable code: it came to no result, so the next stop may try again. The
+    the same, as the patch still holds that work. On that same base its state names the patch the last review read, so a
+    "thanks" spends no review on it. On another base it names nothing: the same diff on a parent no review saw is another
+    patch. Nor does it after a loop that ended with a stable code: that came to no result, so the next stop may try again. The
     scouts do not run here, as they do at a session's first prompt: this may be any prompt at all. A row the ended loop still
     owes is tried first, and if the log keeps it out it stays owed: the new loop's calls reach it by its mark, as they no
     longer reach that loop's folder. Outside a repository nothing moves, and the stop says so."""
@@ -97,7 +98,7 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
              "run": asked.get("run", 0) + 1}
     run = current(session_id, fresh)
     run.mkdir(parents=True, exist_ok=True, mode=0o700)
-    read = {"reviewed": reviews[-1]["patch"]} if reviews and not ended.get("code") else {}
+    read = {"reviewed": reviews[-1]["patch"]} if same and reviews and not ended.get("code") else {}
     (run / "state.json").write_text(json.dumps(read), encoding="utf-8")
     (session / "task.json.new").write_text(json.dumps(fresh), encoding="utf-8")
     os.replace(session / "task.json.new", session / "task.json")

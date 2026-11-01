@@ -276,8 +276,15 @@ def test_a_prompt_after_a_loop_ended_records_the_new_task_and_base_and_a_run_of_
     assert recorded() == {**first, "task": "the next task", "base": git(repo, "rev-parse", "HEAD"), "run": 1}
     run = hook.current("s1", recorded())
     assert run != hook.folder("s1") and run.parent == hook.folder("s1").parent
-    assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {"reviewed": "the digest"}
+    assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {}      # that review was of another base
 
+
+def test_a_prompt_on_the_same_base_keeps_what_the_ended_loop_read(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
+    (hook.folder("s1") / "state.json").write_text(json.dumps({"done": True, "reviews": [{"patch": "the digest"}]}), encoding="utf-8")
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "thanks"))
+    run = hook.current("s1", recorded())
+    assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {"reviewed": "the digest"}
 
 def test_with_nothing_to_say_the_turn_just_ends(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo))

@@ -3365,3 +3365,19 @@ def test_a_reviewer_told_of_the_error_reads_the_patch_the_round_recorded(world, 
     world.advance(critic=critic)
     first, second = (sent(call[1]) for call in critic.calls)
     assert first == second and digest(first) == world.state()["reviews"][0]["patch"]
+
+def test_a_new_base_does_not_take_a_review_of_the_same_diff_on_the_old_base(world, monkeypatch):
+    """Someone commits a file of their own: the agent's diff reads the same, on a parent the review never saw."""
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    (world.repo / "dep.py").write_text("LIMIT = 9\n", encoding="utf-8")
+    git(world.repo, "add", "dep.py")
+    git(world.repo, "commit", "-qm", "what double depends on moved")
+    prompted(world, "keep double within the new limit")
+    said = stopped(world)
+    assert len(critic.calls) == 2, f"a new base was skipped: {said}"
+    assert "keep double within the new limit" in critic.calls[1][1] and sent(critic.calls[0][1]) == sent(critic.calls[1][1])

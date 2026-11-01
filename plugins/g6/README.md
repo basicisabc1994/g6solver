@@ -64,9 +64,10 @@ below runs instead. With neither, nothing is tested, and the report says which l
 If no hook saw your prompt, the task is read from the session's transcript and the base is the commit you are on then.
 
 A new prompt after a loop has ended arms a new one, on the commit you are on at that prompt. If that is the same commit, the
-earlier task stays in it, as the patch still holds that work. A patch a loop has already come to a result on is not read
-again, so a "thanks" spends nothing, and after a review that failed the next stop tries again. Wherever a loop did not run,
-you get one line saying what did not run and why.
+earlier task stays in it, as the patch still holds that work, and a patch a loop has already come to a result on is not read
+again, so a "thanks" spends nothing. On a new commit it is read again, even if the diff is the same, as its parent is not.
+After a review that failed the next stop tries again. Wherever a loop did not run, you get one line saying what did not run
+and why.
 
 ## What the report says, and what it does not
 
