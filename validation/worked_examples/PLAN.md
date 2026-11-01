@@ -1170,3 +1170,7 @@ Four runs went from a failing first patch to a passing final one: both `pydantic
 **How it is read.** The same rule, on the same fresh runs, is applied to the failure-rich bugs alone, on each score, and reported beside the result on all 20, as a second analysis fixed here before any S run. It answers a narrower question, bugs Claude Code alone gets wrong at least sometimes, and it is never reported without the result on all 20. The count of failure-rich bugs is reported, and if it is too small to clear the rule, that is the finding.
 
 **G6's own training.** Stage 3's development pool takes its bugs the same way, with one difference: it is development, so a candidate that S passes three times in three gives way to the next one, and the record says so. G6's training then has failures to learn from, which L1 to L9 mostly did not. The pool stays disjoint from stage 2 by repository.
+
+### 2026-11-01 (midday): K1 frozen (before any K run on a bug kept for measurement)
+
+K1's six remaining training runs all passed at their first patch and showed no fault, so K1 freezes as it stands: the code of commit ea1e491, three repairs at most, and no text of its own. On the seven training bugs it scored 12 of 14 on the maintainers' tests and 14 of 14 on the amended tests, at a mean of $0.11 a run, beside L9's 12 and 14 at $0.59 and arm A's 9 and 11 at about $0.06. These are training scores, and K's idea came from one of these bugs, so they are reported beside the held-out scores and never in place of them. No stage 1 result had been read when it froze.
