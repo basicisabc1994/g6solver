@@ -3449,3 +3449,83 @@ def test_two_first_prompts_at_once_lose_neither(world, monkeypatch):
     two_prompts_at_once(world, monkeypatch)
     task = json.loads((hook.folder("s1") / "task.json").read_text(encoding="utf-8"))["task"]
     assert "the first prompt" in task and "the second prompt" in task, "one prompt was lost"
+
+# --- the third Codex review: each case failed on the code it was written against -------------------------------------------------
+
+def commit_a_dependency(world) -> str:
+    """Someone commits a file of their own, so the commit moves and the agent's diff reads the same. The new commit."""
+    (world.repo / "dep.py").write_text("LIMIT = 9\n", encoding="utf-8")
+    git(world.repo, "add", "dep.py")
+    git(world.repo, "commit", "-qm", "what double depends on moved")
+    return git(world.repo, "rev-parse", "HEAD")
+
+
+def asked_now() -> dict:
+    return json.loads((hook.folder("s1") / "task.json").read_text(encoding="utf-8"))
+
+
+def after_a_stop_that_ran_no_loop(world, monkeypatch, critic) -> None:
+    Reviewed(monkeypatch)
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    prompted(world, "thanks")
+    assert "has not changed" in stopped(world)["systemMessage"]
+
+
+def test_a_new_task_after_a_stop_that_ran_no_loop_is_reviewed_on_the_new_commit(world, monkeypatch):
+    """A commit that leaves the tree as it was: with the old base the diff reads the same, so the review was skipped."""
+    critic = reviewer("none", "none")
+    after_a_stop_that_ran_no_loop(world, monkeypatch, critic)
+    git(world.repo, "commit", "-q", "--allow-empty", "-m", "a commit that changes no file")
+    prompted(world, "keep double within the new limit")
+    said = stopped(world)
+    assert len(critic.calls) == 2, f"a new task on a new commit was skipped: {said}"
+    assert asked_now()["task"] == "keep double within the new limit"
+
+
+def test_a_new_task_after_a_stop_that_ran_no_loop_reads_no_one_elses_commit_as_its_patch(world, monkeypatch):
+    critic = reviewer("none", "none")
+    after_a_stop_that_ran_no_loop(world, monkeypatch, critic)
+    head = commit_a_dependency(world)
+    prompted(world, "keep double within the new limit")
+    stopped(world)
+    assert "dep.py" not in sent(critic.calls[1][1]), "someone else's commit was read as the agent's patch"
+    assert asked_now()["base"] == head
+
+
+def test_a_new_task_after_a_turn_with_no_python_changed_starts_on_the_new_commit(world, monkeypatch):
+    Reviewed(monkeypatch)
+    approved(monkeypatch, reviewer("never"))
+    prompted(world, "what does double do?")
+    assert "no Python changed" in stopped(world)["systemMessage"]
+    head = commit_a_dependency(world)
+    prompted(world, "now change it")
+    assert asked_now()["base"] == head, "the next task keeps a commit nobody is on"
+    assert asked_now()["task"] == "now change it"
+
+
+def test_a_prompt_on_the_same_commit_after_a_stop_that_ran_no_loop_only_adds_to_the_task(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    prompted(world, "thanks")
+    stopped(world)
+    before = asked_now()
+    prompted(world, "thanks again")
+    assert asked_now() == {**before, "task": f"{before['task']}\n\nthanks again"}
+    assert "has not changed" in stopped(world)["systemMessage"] and len(critic.calls) == 1
+
+
+def test_a_commit_with_no_stop_since_the_prompt_never_moves_the_base(world, monkeypatch):
+    Reviewed(monkeypatch)
+    approved(monkeypatch, reviewer("never"))
+    prompted(world, "look at double")
+    base = asked_now()["base"]
+    commit_a_dependency(world)      # the agent's, in a turn that has not ended
+    prompted(world, "and fix it")
+    assert asked_now()["base"] == base and asked_now()["task"] == "look at double\n\nand fix it"

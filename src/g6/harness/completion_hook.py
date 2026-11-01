@@ -40,6 +40,8 @@ NO_REPOSITORY = ("G6's completion loop did not run: this folder is not a git rep
                  "test the work against. Nothing was tested.")
 #: How long a prompt waits for another of its session: past this the hook fails, says so, and the prompt goes ahead.
 PROMPT_WAIT = 30.0
+#: A file in a run's folder: a turn ended there with no loop run, which nothing in its state can say (``on_stop``).
+TURN_ENDED = ".turn_ended"
 
 
 def folder(session_id: str) -> Path:
@@ -90,8 +92,9 @@ def _record(session: Path, cwd: str, task: str) -> dict | None:
 
 
 def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
-    """A new loop after one that ended. Its base is HEAD now, and its task this prompt, with the earlier task if that base is
-    the same, as the patch still holds that work. On that same base its state names the patch the last review read, so a
+    """A new loop after one that ended, or after a turn that ran none on a commit that has since moved: a commit nobody is on
+    is no base. Its base is HEAD now, and its task this prompt, with the earlier task if that base is the same, as the patch
+    still holds that work. On that same base its state names the patch the last review read, so a
     "thanks" spends no review on it. On another base it names nothing: the same diff on a parent no review saw is another
     patch. Nor does it after a loop that ended with a stable code: that came to no result, so the next stop may try again. The
     scouts do not run here, as they do at a session's first prompt: this may be any prompt at all. A row the ended loop still
@@ -106,15 +109,22 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
     if here is None:
         return
     repo, base, reviews = str(here[0]), here[1], ended.get("reviews") or []
-    same = (repo, base) == (asked["repo"], asked["base"])
+    same, read_last = (repo, base) == (asked["repo"], asked["base"]), reviews[-1]["patch"] if reviews else ended.get("reviewed")
     fresh = {"repo": repo, "task": f"{asked['task']}\n\n{task}" if same else task, "base": base,
              "run": asked.get("run", 0) + 1}
     run = current(session_id, fresh)
     run.mkdir(parents=True, exist_ok=True, mode=0o700)
-    read = {"reviewed": reviews[-1]["patch"]} if same and reviews and not ended.get("code") else {}
+    read = {"reviewed": read_last} if same and read_last and not ended.get("code") else {}
     (run / "state.json").write_text(json.dumps(read), encoding="utf-8")
     (session / "task.json.new").write_text(json.dumps(fresh), encoding="utf-8")
     os.replace(session / "task.json.new", session / "task.json")
+
+
+def _moved(event: dict, asked: dict) -> bool:
+    """Whether the repository here is on another commit than ``asked``'s, so a loop that has not started would start from a
+    commit nobody is on, and read what others committed since as the agent's patch."""
+    here = _here(event["cwd"])
+    return here is not None and (str(here[0]), here[1]) != (asked["repo"], asked["base"])
 
 
 def _lines(transcript: object) -> list[dict]:
@@ -176,9 +186,10 @@ def on_prompt(event: dict) -> dict:
     with _one_prompt(session):
         if known.exists():
             asked = json.loads(known.read_text(encoding="utf-8"))
-            path = current(event["session_id"], asked) / "state.json"
-            state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            if state.get("done"):
+            run = current(event["session_id"], asked)
+            state = json.loads((run / "state.json").read_text(encoding="utf-8")) if (run / "state.json").exists() else {}
+            idle = "started" not in state and (run / TURN_ENDED).exists() and _moved(event, asked)
+            if state.get("done") or idle:
                 _again(event, asked, state, task)
             elif "started" not in state:
                 known.write_text(json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}), encoding="utf-8")
@@ -199,10 +210,12 @@ def on_stop(event: dict) -> dict:
     from g6.harness import completion_loop as loop
 
     asked = json.loads((session / "task.json").read_text(encoding="utf-8"))
-    step = loop.advance(asked["repo"], asked["task"], asked["base"], current(event["session_id"], asked), said=_said(event),
-                        agent=_model(event))
+    run = current(event["session_id"], asked)
+    step = loop.advance(asked["repo"], asked["task"], asked["base"], run, said=_said(event), agent=_model(event))
     if step.action == loop.CONTINUE:
         return {"decision": "block", "reason": step.text}
+    if step.note:      # no loop ran, so nothing but this tells the next prompt that a turn ended
+        (run / TURN_ENDED).touch()
     said = step.text or step.note
     return {"systemMessage": said} if said else {}
 
