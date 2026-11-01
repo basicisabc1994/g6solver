@@ -92,7 +92,7 @@ def end_of(root: Path, row: Mapping[str, Any]) -> str | None:
     if not got:
         return "no record"
     own = "test_critic" if rounds == 1 else f"test_critic_{rounds}"     # earlier reviews' tests stay in the folder and run again
-    cases = {case: said for case, said in (got.get("results") or {}).items() if case.split("::")[0] == own}
+    cases = {case: said for case, said in (got.get("results") or {}).items() if case.split("::")[0].split(".")[0] == own}
     return "a defect whose test found nothing" if we.ProbeRun(got.get("exit"), cases, {}).usable \
         else "a defect whose test would not run"
 

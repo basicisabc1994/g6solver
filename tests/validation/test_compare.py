@@ -190,6 +190,16 @@ def test_a_last_reviews_own_test_that_ran_found_nothing_whatever_an_earlier_one_
     assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect", "defect"], round_2=check)) == "a defect whose test found nothing"
 
 
+def test_a_last_reviews_test_written_in_a_class_is_its_own(tmp_path):
+    check = {"exit": 0, "results": {"test_critic.TestFix::test_it": "passed"}}
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect"], round_1=check)) == "a defect whose test found nothing"
+
+
+def test_a_class_in_an_earlier_reviews_test_does_not_stand_for_the_last_ones(tmp_path):
+    check = {"exit": 0, "results": {"test_critic.TestFix::test_it": "passed", "test_critic_2.TestMore::test_it": "skipped"}}
+    assert compare.end_of(tmp_path, _k_run(tmp_path, ["defect", "defect"], round_2=check)) == "a defect whose test would not run"
+
+
 def test_a_k_run_with_a_defect_open_gives_the_reason_on_its_record(tmp_path):
     row = _k_run(tmp_path, ["defect"] * 4, status="inconclusive", reason="the repairs ran out with a defect open")
     assert compare.end_of(tmp_path, row) == "the repairs ran out with a defect open"
