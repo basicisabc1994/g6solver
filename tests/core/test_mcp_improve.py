@@ -1005,6 +1005,13 @@ def test_status_says_the_stop_in_place(rig):
     assert "the owner's review" in improve.status(str(rig.root))["stop"]
 
 
+def test_status_says_a_stop_that_died_before_its_file_was_written(rig, monkeypatch):
+    rig.enrol()
+    rig.start()
+    _a_stop_cut_off_before_its_file(rig, monkeypatch)
+    assert "stops.log" in improve.status(str(rig.root))["stop"]
+
+
 def test_status_says_a_generation_the_log_saw_and_the_chain_lost(rig):
     _worked(rig)
     (rig.root / "workspace" / ADOPTIONS).write_text("", encoding="utf-8")

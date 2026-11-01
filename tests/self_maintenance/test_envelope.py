@@ -27,6 +27,7 @@ from g6.self_maintenance.envelope import (
     runner_alive,
     runner_lock,
     stop_reason,
+    stop_standing,
     stops_asked,
 )
 from g6.workspace._coordination import Coordination
@@ -479,6 +480,41 @@ def test_a_count_that_cannot_be_read_is_no_count_a_start_recorded(tmp_path):
 def test_a_stop_that_cannot_be_counted_still_stops(tmp_path):
     (tmp_path / STOPS_FILE).mkdir()
     assert "why" in ask_to_stop(tmp_path, "why") and (tmp_path / "STOP").is_file()
+
+
+# A stop that died between its two writes -----------------------------------------------------------------------------------
+
+def _counted_only(folder) -> None:
+    """What ``ask_to_stop`` leaves if it dies between its two writes."""
+    with open(folder / STOPS_FILE, "a", encoding="utf-8") as stops:
+        stops.write("the owner said no\n")
+
+
+def test_a_stop_that_died_before_its_file_stands_by_its_count(tmp_path):
+    _counted_only(tmp_path)
+    assert STOPS_FILE in stop_standing(tmp_path, {"stops": 0}) and stop_reason(tmp_path) == ""
+
+
+def test_no_stop_since_the_start_is_no_stop(tmp_path):
+    assert stop_standing(tmp_path, {"stops": 0}) == ""
+    _counted_only(tmp_path)
+    assert stop_standing(tmp_path, {"stops": 1}) == ""
+
+
+@pytest.mark.parametrize("start", [None, {}, {"by": "Ada"}])
+def test_with_no_count_on_a_start_there_is_nothing_to_compare(tmp_path, start):
+    _counted_only(tmp_path)
+    assert stop_standing(tmp_path, start) == ""
+
+
+def test_a_stop_file_speaks_for_itself_ahead_of_the_count(tmp_path):
+    ask_to_stop(tmp_path, "the owner's review")
+    assert "the owner's review" in stop_standing(tmp_path, {"stops": 0})
+
+
+def test_a_count_that_cannot_be_read_stands_as_a_stop(tmp_path):
+    (tmp_path / STOPS_FILE).mkdir()
+    assert stop_standing(tmp_path, {"stops": 0})
 
 
 # What was refused --------------------------------------------------------------------------------------------------------

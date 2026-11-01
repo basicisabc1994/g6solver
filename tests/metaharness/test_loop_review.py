@@ -1733,3 +1733,31 @@ def test_a_refused_request_stays_barred_in_this_process_whatever_the_records_say
     monkeypatch.setattr(loop.log, "cycles", lambda: [])                  # nothing on disk says it was refused
     loop.tick()
     assert seen.count(refused) == 1
+
+
+# A stop is the one a person asked for, whichever of its two writes got done --------------------------------------------------
+
+def test_a_stop_that_died_before_its_file_lands_at_the_next_model_call(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.log.start("Ada", stops=0)
+    tutor, seen = domain.tutor, []
+
+    def counted_at_the_third(system: str, user: str) -> str:
+        seen.append(user)
+        if len(seen) == 3:
+            with open(loop.root / "stops.log", "a", encoding="utf-8") as stops:
+                stops.write("the owner said no\n")
+        return tutor(system, user)
+
+    domain.llm._responder = counted_at_the_third
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_STOPPED" and len(seen) == 3 and "stops.log" in got["message"]
+    assert not (loop.root / "STOP").exists() and not loop.log.start_in_force()
+
+
+def test_a_stop_a_start_has_seen_stops_nothing(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    with open(loop.root / "stops.log", "a", encoding="utf-8") as stops:
+        stops.write("an old stop\n")
+    loop.log.start("Ada", stops=1)
+    assert loop.tick()["outcome"] == "adopted"

@@ -51,6 +51,7 @@ from g6.self_maintenance.envelope import (
     record_stop,
     runner_alive,
     stop_reason,
+    stop_standing,
     stop_to_lift,
     stops_asked,
 )
@@ -332,7 +333,7 @@ def status(folder: str) -> dict:
                      constraint={"name": named[-1]["constraint"], "basis": named[-1].get("basis", ""),
                                  "tick": named[-1]["tick"]} if named else None,
                      last_cycle=_shown(cycles[-1]) if cycles else None, cycles=len(cycles), pause=pause,
-                     stop=stop_reason(root), started=started, generation=generations["current"],
+                     stop=stop_standing(root, started), started=started, generation=generations["current"],
                      lineage=generations["recent"],
                      digest={"path": str(page), "text": page.read_text(encoding="utf-8")} if page else None,
                      g6_status=STATUS_LINE)

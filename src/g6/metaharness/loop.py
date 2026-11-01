@@ -80,7 +80,7 @@ from g6.self_maintenance.envelope import (
     file_digest,
     note_refusal,
     refused_requests,
-    stop_reason,
+    stop_standing,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import limit_ends, read_stops, refused_by, telling_stops
@@ -519,9 +519,14 @@ class ShadowLoop:
                 raise _AtLimit(seen.wait_until, seen.reason)
         self.evaluating = True
 
+    def stopped_by(self) -> str:
+        """Why this folder is stopped, which a tick and the runner read alike: if the runner read less, a tick refused for a
+        stop would leave it going, and asking again."""
+        return self.cannot_record or stop_standing(self.root, self.log.started())
+
     def _halted(self) -> _Halted | None:
         """What stops a tick between two requests: this folder's stop, or G6's own."""
-        why = self.cannot_record or stop_reason(self.root)
+        why = self.stopped_by()
         if why:
             return _Halted(STOPPED, why)
         engaged = stop.engaged()

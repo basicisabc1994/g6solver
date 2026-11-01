@@ -220,6 +220,16 @@ def stop_reason(root: str | Path) -> str:
     return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
 
 
+def stop_standing(root: str | Path, start: Mapping[str, Any] | None) -> str:
+    """Why this folder is stopped, for whatever runs on ``start``, the start on record: its ``STOP`` file, or a stop counted
+    since that start which died before its file was written, which is a stop a person asked for all the same. A count that
+    cannot be read is no count that start saw, so it stands too. ``""`` when nothing stops it."""
+    why, asked = stop_reason(root), (start or {}).get("stops")
+    if why or asked is None or stops_asked(root) == asked:
+        return why
+    return f"a stop was asked for and its STOP file was not written: {STOPS_FILE} in the folder says why"
+
+
 def _unreadable(exc: Exception) -> str:
     return f"a STOP file is present and could not be read ({type(exc).__name__})"
 
@@ -266,7 +276,8 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
 
     It is also counted, first and in a file no lock stands in front of, because the records can be held for as long as a
     tick lasts and a stop may never wait. The count serves a restart after a person has removed the file, when no note of
-    the stop reached the records. A count that cannot be written is left, and only that restart loses by it."""
+    the stop reached the records, and it is all there is of a stop that dies before its file is written, which a tick and a
+    runner read as a stop (``stop_standing``). A count that cannot be written is left, and only that restart loses by it."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
     try:
         with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
@@ -359,5 +370,5 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
            "REFUSED_FILE", "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest",
-           "heartbeat", "note_refusal", "record_stop", "refused_requests",
+           "heartbeat", "note_refusal", "record_stop", "refused_requests", "stop_standing",
            "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]

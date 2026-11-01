@@ -116,6 +116,46 @@ def test_a_stop_during_a_tick_ends_the_run_at_once_and_the_days_page_says_what_i
     assert "The runner ended" in page and "at a model call after 3 requests" in page
 
 
+def _a_stop_dies_before_its_file(root: Path) -> None:
+    with open(root / "stops.log", "a", encoding="utf-8") as stops:
+        stops.write("the owner said no\n")
+
+
+def test_a_stop_that_died_before_its_file_ends_a_tick_in_flight_and_then_the_run(tmp_path):
+    runner, time, domain = _runner(tmp_path)
+    runner.loop.log.start("Ada", stops=0)
+    tutor, seen = domain.tutor, []
+
+    def stopped_at_the_third(system: str, user: str) -> str:
+        seen.append(user)
+        if len(seen) == 3:
+            _a_stop_dies_before_its_file(runner.loop.root)
+        return tutor(system, user)
+
+    domain.llm._responder = stopped_at_the_third
+    _stopped_after(time, timedelta(minutes=30))                          # so a run that misses it ends, and this fails
+    assert runner.run() == 0 and len(seen) == 3 and not (runner.loop.root / "STOP").exists()
+    assert heartbeat(runner.loop.root)["state"] == "stopped" and time.naps == [1.0]
+    assert not runner.loop.log.start_in_force()
+
+
+def test_a_waiting_runner_ends_at_a_stop_that_died_before_its_file_and_does_not_spin(tmp_path):
+    runner, time, _ = _runner(tmp_path, settings=_windows(("claude", 100)))
+    runner.loop.log.start("Ada", stops=0)
+    runner.step()
+    _a_stop_dies_before_its_file(runner.loop.root)
+    assert runner.step() is None and heartbeat(runner.loop.root)["state"] == "stopped"
+
+
+def test_a_tick_refused_for_a_stop_does_not_leave_the_runner_ticking_once_a_second(tmp_path):
+    """The tick and the runner must read the same stop, or the runner goes on, and asks again a second later, for ever."""
+    runner, time, domain = _runner(tmp_path)
+    runner.loop.log.start("Ada", stops=0)
+    _a_stop_dies_before_its_file(runner.loop.root)
+    _stopped_after(time, timedelta(minutes=5))
+    assert runner.run() == 0 and domain.llm.calls == [] and len(time.naps) <= 1
+
+
 def test_the_days_page_says_a_classifier_stopped_a_request_and_that_it_will_not_go_again(tmp_path):
     runner, _, domain = _runner(tmp_path)
 

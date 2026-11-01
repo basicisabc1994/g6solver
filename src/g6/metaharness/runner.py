@@ -194,7 +194,7 @@ class Runner:
     def step(self) -> float | None:
         """One pass. The seconds to sleep, or ``None`` when a stop ended the run."""
         now = self.now()
-        halted = self.loop.cannot_record or stop_reason(self.loop.root)
+        halted = self.loop.stopped_by()
         if halted:
             self._end(now, halted)
             return None
