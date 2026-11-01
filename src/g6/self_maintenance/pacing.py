@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -60,6 +60,10 @@ class ProviderWindow:
         """When this provider's next day begins, which is when its ceiling can rise."""
         start, day = self.place(now)
         return start + _DAY * day
+
+    def week_end(self, now: datetime) -> datetime:
+        """When the provider week ``now`` falls in ends, which is the one time its ceiling falls."""
+        return self.place(now)[0] + _WEEK
 
 
 def read_settings(root: str | Path) -> dict[str, Any]:
@@ -104,6 +108,7 @@ class AccountReading:
     estimated: bool = True                  # read from limit and reset signals, not from a usage figure
     limited_until: datetime | None = None   # a session window or the weekly cap was hit: nothing starts before this
     read_at: datetime | None = None         # when the figure was read; a charge after that cannot be in it
+    resets_at: datetime | None = field(default=None, compare=False)     # when the week that figure is of ends
 
 
 @dataclass(frozen=True)

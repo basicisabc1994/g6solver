@@ -104,31 +104,62 @@ def codex_limits() -> dict[str, Any]:
     return read_limits([where, "app-server", "--listen", "stdio://"])
 
 
+def _number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _time(value: Any) -> datetime | None:
+    """``value`` as a moment, or ``None`` when no clock could show it."""
+    try:
+        return datetime.fromtimestamp(value, UTC) if _number(value) else None
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _reads(window: Any) -> bool:
+    """Whether a window's figures can be believed. Written so that a NaN fails, as it fails every comparison. The tool may
+    leave out how long a window is and when it resets, and it may not send nonsense for either."""
+    if not isinstance(window, Mapping):
+        return False
+    percent, minutes, reset = window.get("usedPercent"), window.get("windowDurationMins"), window.get("resetsAt")
+    return (_number(percent) and 0 <= percent <= FULL and (minutes is None or _number(minutes) and minutes > 0)
+            and (reset is None or _time(reset) is not None))
+
+
 def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datetime) -> AccountReading | None:
     """``limits`` as the meter reads them, or ``None`` when they do not read: use in the meter's own unit from the
-    week's percentage, and a limit when a window is full or the provider says ordinary use is not allowed."""
-    snapshot = limits.get("rateLimits")
-    if not isinstance(snapshot, Mapping):
+    week's percentage, and a limit when a window is full or the provider says ordinary use is not allowed. One field that
+    makes no sense loses the whole reply, since a reply that wrong says nothing about the rest. A limit whose reset has
+    passed is still a limit, so it is looked at again as one with no reset is."""
+    snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
+    if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
         return None
-    seen = [w for w in (snapshot.get("primary"), snapshot.get("secondary")) if isinstance(w, Mapping)]
-    if not seen or any(isinstance(w.get("usedPercent"), bool) or not isinstance(w.get("usedPercent"), int | float)
-                       for w in seen):
+    seen = [w for w in (snapshot.get("primary"), snapshot.get("secondary")) if w is not None]
+    if not seen or not all(_reads(w) for w in seen):
         return None
     week = next((w for w in seen if w.get("windowDurationMins") == WEEK_MINUTES), None)
     full = [w for w in seen if w["usedPercent"] >= FULL]
-    held = bool(full) or limits.get("ordinaryUsageAllowed") is False
-    resets = [w["resetsAt"] for w in (full or seen) if isinstance(w.get("resetsAt"), int)]
-    until = (datetime.fromtimestamp(max(resets), UTC) if resets else now + REFRESH) if held else None
+    resets = [at for w in (full or seen) if (at := _time(w.get("resetsAt"))) is not None and at > now]
+    until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
     if week is None:
         return AccountReading(limited_until=until)
-    return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until)
+    reset = _time(week.get("resetsAt"))
+    return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
+                          resets_at=reset if reset is not None and reset > now else window.week_end(now))
+
+
+def _stands(reading: AccountReading | None, now: datetime) -> bool:
+    """Whether what a reading said still holds: its limit is still ahead, or the week its figure is of has not ended."""
+    return reading is not None and any(at is not None and at > now for at in (reading.limited_until, reading.resets_at))
 
 
 class AccountReader:
     """The ``read_account`` of a ``BudgetMeter``. Calling it only hands back what ``refresh`` last read, which the runner
-    calls between ticks. A provider whose tool reports nothing, or whose read failed, has no reading, and ``said`` says
-    why: the meter then stays on its own count. The exception is a limit still ahead, which a failed read keeps. This is
-    held in memory, so a restart whose first read fails has forgotten it."""
+    calls between ticks. A provider whose tool reports nothing has no reading, and ``said`` says why: the meter then stays
+    on its own count. A read that fails, or a reply that does not read, says nothing new, so the last good reading stands
+    until a good read replaces it or its reset passes, and what is charged meanwhile goes on top. The owner uses this
+    account too, so a broken tool must not make the meter read low. This is held in memory, so a restart whose first read
+    fails has forgotten it."""
 
     def __init__(self, windows: Sequence[ProviderWindow],
                  ask: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None) -> None:
@@ -151,18 +182,27 @@ class AccountReader:
             if found is None:
                 self._no_reading(provider, now, "its reply could not be read")
                 continue
+            known = self.readings.get(provider)
+            if found.estimated and known is not None and not known.estimated and _stands(known, now):
+                limits = (at for at in (known.limited_until, found.limited_until) if at is not None)   # no week in it
+                self.readings[provider] = replace(known, limited_until=max(limits, default=None))
+                self._no_reading(provider, now, "its reply gave no week")
+                continue
             self.readings[provider] = replace(found, read_at=now)
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
 
     def _no_reading(self, provider: str, now: datetime, why: str) -> None:
-        """A read that gave nothing says nothing of a limit still ahead, so that stands until its reset. Anything else
-        the last reading said goes, and the meter stays on its own count."""
+        """What the last good reading said stands while it holds. ``read_at`` stays as it was, so the meter goes on adding
+        what is charged after it. Past that, the meter is on its own count."""
         known = self.readings.get(provider)
-        if known is not None and known.limited_until is not None and known.limited_until > now:
+        if not _stands(known, now):
+            self.readings.pop(provider, None)
+            self.said[provider] = f"{why}, so the meter counts model calls"
+        elif known.limited_until is not None and known.limited_until > now:
             self.said[provider] = f"{why}; the limit it last reported stands until {known.limited_until.isoformat()}"
-            return
-        self.readings.pop(provider, None)
-        self.said[provider] = f"{why}, so the meter counts model calls"
+        else:
+            self.said[provider] = (f"{why}; the last figure stands until {known.resets_at.isoformat()}, with the model calls "
+                                   "charged since on top")
 
     def __call__(self, provider: str, start: datetime) -> AccountReading | None:
         return self.readings.get(provider)

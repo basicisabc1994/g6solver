@@ -71,6 +71,23 @@ def test_a_reply_that_does_not_read_is_no_reading(bad):
     assert limits_reading(bad, WINDOW, NOW) is None
 
 
+@pytest.mark.parametrize("percent", [float("nan"), float("inf"), -float("inf"), -1, 100.5, True, None])
+def test_a_percentage_off_its_scale_makes_the_whole_reply_unreadable(percent):
+    assert limits_reading(_limits(percent), WINDOW, NOW) is None
+
+
+@pytest.mark.parametrize("fields", [{"resets": True}, {"resets": "soon"}, {"resets": 10 ** 30}, {"resets": float("nan")},
+                                    {"minutes": "a week"}, {"minutes": float("nan")}, {"minutes": 0}, {"minutes": True},
+                                    {"allowed": "no"}, {"allowed": 0}, {"secondary": 7}])
+def test_any_other_field_that_makes_no_sense_makes_the_reply_unreadable(fields):
+    assert limits_reading(_limits(25, **fields), WINDOW, NOW) is None
+
+
+def test_a_limit_whose_reset_has_passed_is_looked_at_again_later():
+    gone = int((NOW - timedelta(hours=1)).timestamp())
+    assert limits_reading(_limits(40, allowed=False, resets=gone), WINDOW, NOW).limited_until == NOW + usage.REFRESH
+
+
 # The reader ---------------------------------------------------------------------------------------------------------
 
 class Tool:
@@ -110,12 +127,67 @@ def test_the_tool_is_asked_at_most_once_in_a_while():
 
 
 @pytest.mark.parametrize("failure", [OSError("no such program"), usage.UsageUnavailable("it stopped"), None, {}])
-def test_a_read_that_fails_leaves_the_meter_on_its_own_count_and_says_why(failure):
+def test_a_read_that_fails_keeps_the_last_figure_and_says_why(failure):
     tool = Tool(_limits(25), failure)
     reader = AccountReader((WINDOW,), ask={"codex": tool})
     reader.refresh(NOW)
     reader.refresh(NOW + usage.REFRESH)
+    assert reader("codex", START).used == 250.0 and "model calls" in reader.said["codex"]
+
+
+def test_a_figure_kept_through_a_failure_rises_with_what_is_charged_meanwhile():
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25), usage.UsageUnavailable("down"))})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    assert meter.reading("codex", NOW).used == 250.0
+    meter.settle(meter.reserve("codex", NOW, 30), 30)
+    later = NOW + usage.REFRESH
+    reader.refresh(later)
+    assert meter.reading("codex", later).used == 280.0
+
+
+def test_a_figure_kept_through_a_failure_goes_when_its_own_reset_passes():
+    reset = NOW + usage.REFRESH + timedelta(minutes=5)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=int(reset.timestamp())),
+                                                         usage.UsageUnavailable("down"))})
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    assert reader("codex", START).used == 250.0
+    reader.refresh(reset + usage.REFRESH)
     assert reader("codex", START) is None and "model calls" in reader.said["codex"]
+
+
+def test_a_figure_read_with_no_reset_goes_when_the_providers_week_ends():
+    week_end = START + timedelta(days=7)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=None), usage.UsageUnavailable("down"))})
+    reader.refresh(NOW)
+    reader.refresh(week_end - timedelta(minutes=1))
+    assert reader("codex", START).used == 250.0
+    reader.refresh(week_end + usage.REFRESH)
+    assert reader("codex", START) is None
+
+
+def test_a_reply_with_no_week_in_it_leaves_the_figure_and_adds_its_limit():
+    soon = NOW + timedelta(hours=1)
+    session = {"usedPercent": 100, "windowDurationMins": 300, "resetsAt": int(soon.timestamp())}
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(55), {"rateLimits": {"primary": session}})})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    meter.settle(meter.reserve("codex", NOW, 20), 20)
+    later = NOW + usage.REFRESH
+    reader.refresh(later)
+    got = reader("codex", START)
+    assert got.used == 550.0 and got.limited_until == soon and meter.reading("codex", later).used == 570.0
+
+
+def test_a_reply_that_is_not_a_number_cannot_lift_a_reported_limit():
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(100), _limits(float("nan")))})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    assert not meter.reserve("codex", NOW, 1).admitted
+    later = NOW + usage.REFRESH
+    reader.refresh(later)
+    assert not meter.reserve("codex", later, 1).admitted
 
 
 def _at_the_limit(until: datetime) -> dict:
