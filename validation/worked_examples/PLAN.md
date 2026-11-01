@@ -1182,3 +1182,13 @@ No rule changes here. The comparison rule, its arms and its bugs stand as frozen
 **What the rule can show.** At the training pass rates (9 of 14 for the controls, 12 of 14 for the treatment), two runs per bug per arm, simulated with 200,000 seeded trials and an exact binomial check, the rule fires with probability 0.34 at 11 bugs, 0.45 at 14, 0.64 at 20 and 0.92 at 40. If both repeats of a bug agree, the figures are 0.36, 0.45, 0.59 and 0.84. Unseen rates may well be lower than training rates. So at 11 bugs a "not shown" is the likelier outcome even if the training effect is real, and it is a statement about the sample as well as the method.
 
 **A disclosure for K.** In `reviews_until_clean`, a review that says `defect` with a test that will not run ends the same way as a clean review. K1 stays frozen, so its report will count how many runs ended that way, on each score.
+
+## 2026-11-01 (evening): K1 is a named second primary
+
+The owner named K1 a second primary on 2026-11-01, before any stage 1 score was read.
+
+- **M9 stays primary, and its rule does not change.** K1 is judged by the same rule, against A and T, on the same bugs, with both scores. The two results are reported separately and never pooled.
+- **Two primaries are two chances.** Beside each result goes its exact p value and whether it also clears 0.025, which is the bar with both counted: at least 6-0 or 8-1 on differing pairs, against 5-0 or 7-1 at 0.05. A result that clears 0.05 and not 0.025 is reported as exactly that.
+- **K1 on stage 1 bugs is still a second look,** since its method was tuned on those repositories. Stage 2 is its first test on untuned repositories. K1 can never count for stage 3.
+
+**The credits.** The owner confirmed that the API credits expire on 2026-11-04, and the work carries on. Stage 2 therefore runs whole bugs in the frozen order, with every arm on a bug before the next bug starts, so no pair is missing. If time runs out, the rule is applied to the bugs that finished, the number is stated, and no bug is dropped or chosen after its results are seen.
