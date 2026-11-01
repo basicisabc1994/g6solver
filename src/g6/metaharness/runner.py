@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core import stop
-from g6.core.ledger import LedgerError
+from g6.core.ledger import LedgerError, digest as digest_of
 from g6.metaharness.api import _blocked
 from g6.metaharness.loop import (
     BUDGET_WAIT,
@@ -85,6 +85,7 @@ AGAIN = timedelta(minutes=5)            # how soon to look again when only a per
 BUSY_AGAIN = timedelta(seconds=30)
 CANNOT_OPEN = "G6_E_LOOP_CANNOT_OPEN"
 NOT_STARTED = "G6_E_LOOP_NOT_STARTED"
+SETTINGS_CHANGED = "G6_E_LOOP_SETTINGS_CHANGED"
 #: What a tick is refused for that passes on its own: anything else with no cycle waits for a person.
 _WAITS = (BUDGET_WAIT, BUSY, STOPPED, stop.STOPPED)
 #: What a domain file may set beside its domain and proposer.
@@ -127,10 +128,11 @@ def _pinned(root: Path) -> str:
     return (enrolled or {}).get("frozen", {}).get("domain_file") or ""
 
 
-def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now,
-              pinned: str | None = None) -> tuple[ShadowLoop, AccountReader | None]:
-    """The loop a folder declares, and what reads its account, when the settings leave that on."""
-    settings = read_settings(root)
+def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now, pinned: str | None = None,
+              settings: dict[str, Any] | None = None) -> tuple[ShadowLoop, AccountReader | None]:
+    """The loop a folder declares, and what reads its account, when the settings leave that on. ``settings``: what a
+    caller already read and checked, so a later write to the file is not what runs."""
+    settings = read_settings(root) if settings is None else settings
     windows = windows_from(settings)
     declared = _domain_file(settings.get("domain_file"), pinned)
     reader = AccountReader(windows) if settings.get("read_account", True) is not False else None
@@ -304,20 +306,30 @@ class Runner:
         self.day = day
 
 
-def _not_started(root: Path) -> str:
-    """Why no person's start stands on this folder, or ``""`` when one does. It reads the records and runs nothing."""
+def _gate(root: Path, settings: dict[str, Any]) -> tuple[str, str]:
+    """The code and reason that refuse ``settings`` a run on this folder, both empty when a person's start covers it. It
+    reads the records and runs nothing."""
     path = root / CYCLE_LOG
     try:
         log = CycleLog(path) if path.is_file() else None
         start = log.started() if log is not None and log.start_in_force() else None
     except LedgerError as exc:
-        return f"the loop's records cannot be trusted, so nothing ran: {exc}"[:400]
+        return NOT_STARTED, f"the loop's records cannot be trusted, so nothing ran: {exc}"[:400]
     if start is None:
-        return ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's dialog, "
-                "through g6_improve_start; after that a restart carries on until a stop")
+        return NOT_STARTED, ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's "
+                             "dialog, through g6_improve_start; after that a restart carries on until a stop")
     if start.get("stops") != stops_asked(root):
-        return "a stop has been asked for since the last start, so nothing ran: only a new g6_improve_start undoes that"
-    return ""
+        return NOT_STARTED, ("a stop has been asked for since the last start, so nothing ran: only a new g6_improve_start "
+                             "undoes that")
+    if start.get("settings") != digest_of(settings):
+        return SETTINGS_CHANGED, (f"{SETTINGS_FILE} is not what the person agreed to at the last start, so nothing ran: "
+                                  "g6_improve_start shows them what stands now")
+    return "", ""
+
+
+def _not_started(root: Path) -> str:
+    """Why no person's start covers this folder as it stands, or ``""`` when one does."""
+    return _gate(root, read_settings(root))[1]
 
 
 def _refuse(root: Path, code: str, why: str, now: Callable[[], datetime]) -> int:
@@ -339,11 +351,11 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
     try:
         with runner_lock(root):
             try:
-                read_settings(root)
-                refused = _not_started(root)
-                if refused:
-                    return _refuse(root, NOT_STARTED, refused, now)
-                loop, reader = open_loop(root, now=now, pinned=_pinned(root))
+                settings = read_settings(root)
+                code, why = _gate(root, settings)
+                if code:
+                    return _refuse(root, code, why, now)
+                loop, reader = open_loop(root, now=now, pinned=_pinned(root), settings=settings)
             except DomainChanged as exc:
                 return _refuse(root, FROZEN_CHANGED, str(exc)[:500], now)
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why, and leave word

@@ -24,6 +24,7 @@ from fastmcp import Client  # noqa: E402
 from fastmcp.client.elicitation import ElicitResult  # noqa: E402
 
 from g6.core.ledger import ChainLedger  # noqa: E402
+from g6.core.ledger import digest as digest_of  # noqa: E402
 from g6.mcp import build_server, improve  # noqa: E402
 from g6.metaharness import shadow  # noqa: E402
 from g6.metaharness.shadow import ADOPTIONS  # noqa: E402
@@ -36,6 +37,7 @@ from g6.self_maintenance.envelope import (  # noqa: E402
     runner_lock,
     stop_reason,
 )
+from g6.self_maintenance.pacing import read_settings  # noqa: E402
 
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 NOW = START + timedelta(days=2)
@@ -378,6 +380,66 @@ def test_stop_still_works_with_a_broken_settings_file_and_broken_records(rig):
     path = rig.root / CYCLE_LOG
     path.write_text(path.read_text(encoding="utf-8").replace(ENROLLED_BY, "Cy"), encoding="utf-8")
     assert rig.call("g6_improve_stop", folder=str(rig.root))["stopped"] is True and (rig.root / "STOP").exists()
+
+
+def _set_allowance(rig: Rig, allowance: int) -> None:
+    path = rig.root / "settings.json"
+    settings = json.loads(path.read_text(encoding="utf-8"))
+    settings["windows"][0]["allowance"] = allowance
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+
+def _while_the_dialog_is_open(change):
+    async def handler(message, response_type, params, context):
+        change()
+        return response_type(value="Ada")
+
+    return handler
+
+
+def test_a_larger_allowance_written_while_the_dialog_is_open_starts_nothing(rig):
+    rig.enrol()
+    got = rig.start(_while_the_dialog_is_open(lambda: _set_allowance(rig, 1_000_000_000)))
+    assert "5000 a week" in rig.asked[0] and rig.spawned == []
+    assert _code(got) == "G6_E_LOOP_TERMS_CHANGED" and got["completion_state"] == "blocked-escalated"
+    assert "again" in got["next_action"] and check_envelope(got) == []
+    rig.log.reload()
+    assert rig.log.started() is None
+
+
+def test_asking_again_shows_the_new_figure_and_that_is_what_starts(rig):
+    rig.enrol()
+    rig.start(_while_the_dialog_is_open(lambda: _set_allowance(rig, 7000)))
+    rig.start()
+    assert "7000 a week" in rig.asked[-1] and rig.spawned == [rig.root]
+
+
+def test_a_stop_arriving_while_the_dialog_is_open_starts_nothing_and_stands(rig):
+    rig.enrol()
+    got = rig.start(_while_the_dialog_is_open(lambda: improve.stop(str(rig.root), "the owner said no")))
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_TERMS_CHANGED"
+    assert "the owner said no" in stop_reason(rig.root)
+
+
+def test_a_second_stop_while_the_dialog_is_open_is_not_lost_with_the_first(rig):
+    rig.enrol()
+    (rig.root / "STOP").write_text("an older stop\n", encoding="utf-8")
+    got = rig.start(_while_the_dialog_is_open(lambda: improve.stop(str(rig.root), "and again")))
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_TERMS_CHANGED" and (rig.root / "STOP").is_file()
+
+
+def test_a_pause_arriving_while_the_dialog_is_open_starts_nothing(rig):
+    rig.enrol()
+    got = rig.start(_while_the_dialog_is_open(lambda: CycleLog(rig.root / CYCLE_LOG).pause("three failed cycles in a row")))
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_TERMS_CHANGED"
+
+
+def test_the_dialog_names_the_settings_and_the_start_records_them(rig):
+    rig.enrol()
+    rig.start()
+    settings = digest_of(read_settings(rig.root))
+    rig.log.reload()
+    assert settings in rig.asked[0] and rig.log.started()["settings"] == settings
 
 
 def test_a_stop_arriving_while_a_start_is_recorded_wins_over_it(rig, monkeypatch):

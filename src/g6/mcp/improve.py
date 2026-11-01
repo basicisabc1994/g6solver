@@ -6,6 +6,9 @@
 fallback and no agent answer: a decline, a cancel or a client with no dialog starts nothing. It starts the runner as a
 process of its own, which outlives the session that asked, and refuses when a runner is alive or no person has enrolled a
 domain in the folder. This module never runs the domain's code: only the runner it starts does, and the dialog names it.
+An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
+asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
+settings file needs a new agreement even with no stop in between.
 
 **Stop** always works and asks nobody: it writes the local ``STOP`` file, which is safe to repeat and works when the runner
 is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. The runner
@@ -29,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core.door import SENSITIVE_ENV, allowed_sensitive, blocked_reply, is_allowed
-from g6.core.ledger import LedgerError
+from g6.core.ledger import LedgerError, digest as digest_of
 from g6.core.storage import g6_home
 from g6.metaharness.api import _blocked, _envelope
 from g6.self_maintenance import digest
@@ -62,6 +65,7 @@ FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
 RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
 START_FAILED = "G6_E_LOOP_START_FAILED"
 START_STOPPED = "G6_E_LOOP_START_STOPPED"
+TERMS_CHANGED = "G6_E_LOOP_TERMS_CHANGED"
 STARTED = "G6_E_LOOP_STARTED"
 STOP_ASKED = "G6_E_LOOP_STOP_ASKED"
 STOP_FAILED = "G6_E_LOOP_STOP_FAILED"
@@ -80,6 +84,8 @@ RUNS = ("It runs as a process of its own, which outlives this session, until a S
         "what it adopts holds in its own workspace only: it pushes nothing and starts no engineer.")
 NOT_ASKED = ("Nothing started. The person decided in the client's dialog, or no dialog could be shown: ask the person "
              "whether they want this before calling the tool again, and offer no other way to agree.")
+ASK_AGAIN = ("Nothing started and nothing was recorded. Call g6_improve_start again: the person reads what stands now, in "
+             "the client's dialog, and agrees to that or not.")
 
 
 def refused() -> dict | None:
@@ -135,25 +141,36 @@ def _cannot_start(root: Path) -> dict | None:
     return None
 
 
-def asked(folder: str) -> tuple[Path, str] | dict:
-    """What the person reads before the runner starts, and the folder it is about; a blocked reply when it cannot start,
-    so no dialog is shown for nothing."""
+def _terms(root: Path, settings: dict[str, Any], stops: int) -> str:
+    """A digest of all a dialog shows or stands on: the whole settings file, the Python file, who enrolled it, any stop
+    in place and every stop asked for, and any pause. A stop already in place says nothing of a second one, so the count
+    is here too."""
+    log = _log(root)
+    return digest_of({"settings": settings, "domain_file": file_digest(settings.get("domain_file")),
+                   "enrolled": log.enrolled(), "stop": stop_reason(root), "stops": stops, "paused": log.paused()})
+
+
+def asked(folder: str) -> tuple[Path, str, str] | dict:
+    """What the person reads before the runner starts, the folder it is about, and the terms that binds them to; a
+    blocked reply when it cannot start, so no dialog is shown for nothing. The terms are read before the question, so a
+    change between the two asks again rather than starting on what was not read."""
     root = _root(folder)
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
     settings, log = read_settings(root), _log(root)
+    terms = _terms(root, settings, stops_asked(root))
     enrolled = log.enrolled()
     use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
            "you until the week's last day" for w in windows_from(settings)]
     question = [f"Start G6's self-improvement loop on {enrolled.get('domain', 'its domain')}?", f"Folder: {root}",
                 f"Python file: {settings.get('domain_file')}, as enrolled by {enrolled['by']} (the name they gave).", *use,
-                RUNS]
+                f"Settings digest: {digest_of(settings)}.", RUNS]
     if stop_reason(root):
         question.append(f"Starting removes the stop now in place ({stop_reason(root)}).")
     if log.paused():
         question.append(f"The loop is paused, so it will spend nothing until you lift that: {log.paused()}"[:300])
-    return root, "\n".join([*question, NAME])
+    return root, "\n".join([*question, NAME]), terms
 
 
 def _spawn(root: Path) -> Any:
@@ -181,16 +198,21 @@ def _watch(root: Path, process: Any) -> dict:
                      running=False, folder=str(root), next_action="Read g6_improve_status in a minute.")
 
 
-def start(root: Path, who: str) -> dict:
-    """Record who started it and start the runner. What the person read is checked again: it may have moved while the
-    dialog was up."""
+def start(root: Path, who: str, shown: str | None = None) -> dict:
+    """Record who started it and start the runner. What the person read may have moved while the dialog was up, so
+    ``shown``, the terms ``asked`` gave, must still be what stands, and a change asks them again. The start records what
+    it stands on, so a restart holds to the same settings and any stop since closes it."""
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
-    stops = stops_asked(root)
+    settings, stops = read_settings(root), stops_asked(root)
     try:
+        if shown is not None and _terms(root, settings, stops) != shown:
+            return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
+                            ASK_AGAIN, running=False, folder=str(root))
         with Coordination(root / ".tick").mutex():
-            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), stops=stops)
+            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
+                                             stops=stops)
         if stops_asked(root) == stops:
             (root / STOP_FILE).unlink(missing_ok=True)
         if stops_asked(root) != stops:            # asked for since: it stands, and the removal above may have taken its file

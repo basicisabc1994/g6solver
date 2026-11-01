@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 import g6
+from g6.core.ledger import digest
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
@@ -28,7 +29,7 @@ from g6.self_maintenance.envelope import (
     runner_lock,
     stops_asked,
 )
-from g6.self_maintenance.pacing import AccountReading, ProviderWindow
+from g6.self_maintenance.pacing import AccountReading, ProviderWindow, read_settings
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -479,7 +480,14 @@ def test_a_second_runner_on_a_folder_does_nothing(tmp_path, capsys, monkeypatch)
 
 def _agreed(root: Path, log: CycleLog) -> None:
     """A person's start as ``g6_improve_start`` records it."""
-    log.start("Ada", at=START.isoformat(), stops=stops_asked(root))
+    log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root))
+
+
+def _grow_allowance(root: Path) -> None:
+    path = root / "settings.json"
+    settings = json.loads(path.read_text(encoding="utf-8"))
+    settings["windows"][0]["allowance"] = 1_000_000_000
+    path.write_text(json.dumps(settings), encoding="utf-8")
 
 
 def _enrolled_folder(tmp_path: Path, *, started: bool = True) -> tuple[Path, ShadowLoop]:
@@ -609,6 +617,35 @@ def test_a_start_with_no_stop_count_stands_on_nothing(tmp_path, capsys):
     loop.log.start("Ada", at=START.isoformat())
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
     assert CycleLog(root / CYCLE_LOG).cycles() == []
+
+
+def test_settings_changed_since_the_person_agreed_refuse_a_restart(tmp_path, capsys):
+    root, _ = _enrolled_folder(tmp_path)
+    _grow_allowance(root)
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
+    assert CycleLog(root / CYCLE_LOG).cycles() == []
+    assert heartbeat(root)["code"] == "G6_E_LOOP_SETTINGS_CHANGED" and "g6_improve_start" in capsys.readouterr().err
+
+
+def test_a_start_with_no_settings_on_record_stands_on_nothing(tmp_path):
+    root, loop = _enrolled_folder(tmp_path, started=False)
+    loop.log.start("Ada", at=START.isoformat(), stops=stops_asked(root))
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
+    assert CycleLog(root / CYCLE_LOG).cycles() == []
+
+
+def test_a_run_uses_the_settings_it_checked_not_a_later_write(tmp_path, monkeypatch):
+    root, _ = _enrolled_folder(tmp_path)
+    real, seen = stops_asked, []
+
+    def written_after_the_check(folder):
+        _grow_allowance(root)
+        return real(folder)
+
+    monkeypatch.setattr("g6.metaharness.runner.stops_asked", written_after_the_check)
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=lambda seconds: (seen.append(heartbeat(root)),
+                                                                                   _then_stop(root)(seconds))) == 0
+    assert seen[0]["use"][0]["ceiling"] < 1_000_000
 
 
 def test_a_stop_file_a_restart_finds_ends_the_start_too(tmp_path):

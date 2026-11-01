@@ -507,7 +507,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         that outlives this session and runs until a stop, within the pacing rule. It adopts changes in its own workspace
         only, pushes nothing and starts no engineer. The person is asked in the client's own dialog: you never answer for
         them, and a decline, a cancel or a client without a dialog starts nothing; ask the person, and offer no other way
-        to agree. The name they give is recorded as given and is not authenticated. Refused, with what to do, while a
+        to agree. The name they give is recorded as given and is not authenticated. If what they read changes while the
+        dialog is open, nothing starts: call this again and they read what stands. Refused, with what to do, while a
         runner is alive or when no person has enrolled a domain in the folder, which only a person does, at their terminal.
         Requires host permission metaharness.improve in G6_MCP_SENSITIVE."""
         from g6.mcp import improve
@@ -519,11 +520,11 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         found = improve.asked(folder)
         if isinstance(found, dict):
             return found
-        root, question = found
+        root, question, shown = found
         consent = await request_consent(ctx, question)
         if consent.status != "accepted":
             return refusal(consent, next_action=improve.NOT_ASKED)
-        return await asyncio.to_thread(improve.start, root, consent.answer)
+        return await asyncio.to_thread(improve.start, root, consent.answer, shown)
 
     def g6_improve_stop(folder: str = "", reason: str = "") -> dict:
         """Stop the self-improvement loop: writes the folder's local STOP file, with no dialog and no permission. Safe to
