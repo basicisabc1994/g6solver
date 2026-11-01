@@ -23,7 +23,8 @@ anywhere. Three in a row that could not be recorded end the run as a stop does, 
 first, doubling to ``LONGEST_REST``, and the digest says so. A person enrolling or lifting a pause ends the rest.
 
 **A folder** holds ``settings.json``: ``windows`` (``g6.self_maintenance.pacing``), ``read_account`` (false leaves the
-meter on its own count) and ``domain_file``, a Python file the person owns, as ``G6_METAHARNESS`` names one. It lies
+meter on its own count), ``python`` (the interpreter ``g6_improve_start`` runs this on, where one is pinned) and
+``domain_file``, a Python file the person owns, as ``G6_METAHARNESS`` names one. It lies
 outside the folder, since the loop never writes what judges it, and defines ``LOOP = {"domain": ..., "proposer": ...}``,
 with ``method``, ``seed``, ``audit_per_tick`` and ``eval_calls`` where they differ from ``LoopSettings``. All of a folder's
 calls are billed to one provider, so with more than one window ``provider`` names the one they go to, and nothing runs

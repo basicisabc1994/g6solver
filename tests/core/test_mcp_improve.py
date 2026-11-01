@@ -98,8 +98,9 @@ class Rig:
         self.spawned: list[Path] = []
         self.server = build_server()
 
-        def spawn(root: Path) -> Finished:
+        def spawn(root: Path, settings: dict) -> Finished:
             self.spawned.append(root)
+            self.spawned_with = settings
             return Finished()
 
         monkeypatch.setattr(improve, "_spawn", spawn)
@@ -314,7 +315,7 @@ def test_a_pause_is_named_in_the_dialog(rig):
 def test_a_runner_that_ends_as_it_starts_is_a_failed_start_and_says_why(rig, monkeypatch):
     rig.enrol()
     beat(rig.root, state="not-running", reason="domain_file is missing")
-    monkeypatch.setattr(improve, "_spawn", lambda root: Finished(1))
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Finished(1))
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_START_FAILED" and "domain_file is missing" in got["message"]
     assert got["running"] is False and check_envelope(got) == []
@@ -322,7 +323,7 @@ def test_a_runner_that_ends_as_it_starts_is_a_failed_start_and_says_why(rig, mon
 
 def test_a_failed_start_says_the_code_the_process_ended_with(rig, monkeypatch):
     rig.enrol()
-    monkeypatch.setattr(improve, "_spawn", lambda root: Finished(3221225786))
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Finished(3221225786))
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_START_FAILED" and got["return_code"] == 3221225786 and "3221225786" in got["message"]
 
@@ -344,7 +345,7 @@ def test_a_runner_past_opening_its_folder_is_reported_alive(rig, monkeypatch):
     def running() -> None:
         beat(rig.root, state="waiting", at=datetime.now(UTC).isoformat())
 
-    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(running))
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(running))
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is True and got["completion_state"] == "qualified-draft"
     assert check_envelope(got) == []
@@ -366,7 +367,7 @@ def test_a_runner_that_holds_its_lock_and_then_refuses_is_a_failed_start(rig, mo
             return 1
         return None
 
-    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(refuses))
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(refuses))
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_START_FAILED" and got["return_code"] == 1 and "domain_file is missing" in got["message"]
 
@@ -374,7 +375,7 @@ def test_a_runner_that_holds_its_lock_and_then_refuses_is_a_failed_start(rig, mo
 def test_a_heartbeat_from_before_this_start_says_nothing_of_this_runner(rig, monkeypatch):
     rig.enrol()
     beat(rig.root, state="waiting", at=(datetime.now(UTC) - timedelta(hours=1)).isoformat())
-    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(lambda: None))
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(lambda: None))
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is False and "not opened" in got["message"]
 
@@ -385,14 +386,14 @@ def test_a_starting_heartbeat_is_no_sign_it_got_past_opening(rig, monkeypatch):
     def only_starting() -> None:
         beat(rig.root, state="starting", at=datetime.now(UTC).isoformat())
 
-    monkeypatch.setattr(improve, "_spawn", lambda root: Holding(only_starting))
+    monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(only_starting))
     assert rig.start()["running"] is False
 
 
 def test_a_program_that_cannot_be_started_is_a_refusal_not_a_raised_error(rig, monkeypatch):
     rig.enrol()
 
-    def fails(root: Path) -> None:
+    def fails(root: Path, settings: dict) -> None:
         raise OSError("no such interpreter")
 
     monkeypatch.setattr(improve, "_spawn", fails)
@@ -409,7 +410,7 @@ def test_the_runner_is_detached_so_it_outlives_the_session(rig, monkeypatch):
 
     monkeypatch.undo()                                                  # the real _spawn
     monkeypatch.setattr(subprocess, "Popen", popen)
-    improve._spawn(rig.root)
+    improve._spawn(rig.root, {})
     assert seen["argv"][1:] == ["-P", "-m", "g6.metaharness.loop", "run", str(rig.root)]
     assert seen["argv"][0] == sys.executable and seen["stdin"] == subprocess.DEVNULL
     if os.name == "nt":
@@ -417,6 +418,70 @@ def test_the_runner_is_detached_so_it_outlives_the_session(rig, monkeypatch):
         assert seen["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         assert seen["start_new_session"] is True
+
+
+def _pin(rig: Rig, python) -> None:
+    path = rig.root / "settings.json"
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), "python": str(python)}), encoding="utf-8")
+
+
+def test_a_pinned_python_runs_the_runner_isolated_so_no_working_tree_can_come_first(rig, monkeypatch, tmp_path):
+    """``-P`` leaves ``PYTHONPATH`` standing, which puts a working tree in front of any install: seen by running it."""
+    seen: dict = {}
+
+    def popen(argv, **kwargs):
+        seen.update(kwargs, argv=argv)
+        return Finished()
+
+    monkeypatch.undo()
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    pinned = tmp_path / "python.exe"
+    pinned.write_bytes(b"")
+    improve._spawn(rig.root, {"python": str(pinned)})
+    assert seen["argv"] == [str(pinned), "-I", "-m", "g6.metaharness.loop", "run", str(rig.root)]
+
+
+def test_the_dialog_names_a_pinned_python_and_what_having_none_means(rig, tmp_path):
+    rig.enrol()
+    rig.start(declined)
+    assert "the Python of this server" in rig.asked[-1] and "enrols again" in rig.asked[-1]
+    pinned = tmp_path / "python.exe"
+    pinned.write_bytes(b"")
+    _pin(rig, pinned)
+    rig.start(declined)
+    assert str(pinned) in rig.asked[-1] and "the Python of this server" not in rig.asked[-1]
+
+
+def test_the_python_a_person_agreed_to_is_the_one_that_starts_whatever_the_file_says_after(rig, tmp_path, monkeypatch):
+    rig.enrol()
+    pinned, other = tmp_path / "python.exe", tmp_path / "other.exe"
+    pinned.write_bytes(b"")
+    other.write_bytes(b"")
+    _pin(rig, pinned)
+    real = CycleLog.start
+
+    def written_after_the_check(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        _pin(rig, other)
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", written_after_the_check)
+    improve.start(rig.root, "Ada")
+    assert rig.spawned_with["python"] == str(pinned)
+
+
+@pytest.mark.parametrize("python", ["python.exe", "", 7])
+def test_a_pinned_python_that_is_no_full_path_to_a_file_is_refused_before_anything_is_asked(rig, tmp_path, python):
+    rig.enrol()
+    path = rig.root / "settings.json"
+    path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), "python": python}), encoding="utf-8")
+    assert _code(rig.start()) == "G6_E_LOOP_BAD_SETTINGS" and rig.asked == [] and rig.spawned == []
+
+
+def test_a_pinned_python_that_is_not_there_is_refused_too(rig, tmp_path):
+    rig.enrol()
+    _pin(rig, tmp_path / "gone" / "python.exe")
+    assert _code(rig.start()) == "G6_E_LOOP_BAD_SETTINGS" and rig.spawned == []
 
 
 # Stop -----------------------------------------------------------------------------------------------------------------

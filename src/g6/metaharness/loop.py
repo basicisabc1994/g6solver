@@ -353,10 +353,13 @@ def _in_reach(root: Path, domain: Domain) -> list[str]:
 
 
 def envelope_sha256() -> str:
-    """The enforcing code: no candidate changes the envelope (design 6.5), and a change a person made is theirs to
-    accept by enrolling again. It is a tripwire, not custody: the code that compares this digest is among what it
-    covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design 6.5."""
-    return manifest_sha256(build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS))
+    """The enforcing code and where it is installed: no candidate changes the envelope (design 6.5), and a change a person
+    made is theirs to accept by enrolling again. The place counts, so a run enrolled on a pinned install cannot be swapped
+    for a working tree that holds the same bytes today. It is a tripwire, not custody: the code that compares this digest is
+    among what it covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design
+    6.5."""
+    return digest({"code": manifest_sha256(build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS)),
+                   "install": os.path.normcase(str(_SOURCE))})
 
 
 def _judge_digest(judge: Judge | None) -> str:

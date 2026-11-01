@@ -649,6 +649,29 @@ python -P -m g6.metaharness.loop enrol <folder> --as "Your name"
 
 `g6_improve_start` then starts the runner; lifting a pause is `resume`, with the same arguments, also at a terminal.
 
+**Run it from a pinned install.** The envelope's digest covers the code a run imports, so with G6 installed in editable mode, a
+builder's edit, or a branch switched in that checkout, stopped every tick with `G6_E_LOOP_FROZEN_CHANGED` until a person enrolled
+again. So a folder can name the interpreter its runner uses, and should for any run that matters:
+
+```json
+{"python": "<a venv's python>", "domain_file": "...", "windows": ["..."]}
+```
+
+The choices here are the smallest that do it (designer's call). `python` is one more setting, so the dialog shows it, the start's
+digest binds it, and a restart holds to it. It must be a full path to a file, or nothing is asked (`G6_E_LOOP_BAD_SETTINGS`). The
+runner then starts with `-I` and not `-P`, because `-P` leaves `PYTHONPATH` standing, and with `PYTHONPATH` set the same venv
+imported a working tree: `-I` was run and imports the venv's own G6. With no `python` nothing changes, and the dialog says an
+edit to that install stops the ticks. The digest now covers where G6 is installed as well as its bytes, so a person enrols with
+the pinned Python, or every tick is refused, and a working tree that holds the same bytes cannot stand in for the install.
+
+The person makes that venv and keeps it at a fixed commit, with a plain install: a venv holding G6 in editable mode follows its
+checkout, whatever interpreter runs it, and nothing here checks that. It does not stop a person, or a builder with the owner's
+rights, editing the venv itself. On Windows such a runner is also a child of the venv's launcher (see the runner that ended).
+
+This was run once, on the fake domain: a scratch venv with a plain install of this tree, enrolled from that Python, started from a
+server whose own G6 was the working tree, with `PYTHONPATH` on that tree. The two digests differed, and the tick adopted, which a
+runner that had imported the working tree could not have done.
+
 **A daily reviewer can take a generation back.** Until this, the only lever on an adoption that looked wrong was the stop:
 
 ```

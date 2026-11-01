@@ -121,11 +121,23 @@ def _log(root: Path) -> CycleLog | None:
     return CycleLog(root / CYCLE_LOG) if (root / CYCLE_LOG).is_file() else None
 
 
+def _pinned_python(settings: dict[str, Any]) -> str:
+    """The interpreter a folder pins its runner to, or ``""`` with none named. A ``ValueError`` says what is wrong with it."""
+    if "python" not in settings:
+        return ""
+    python = settings["python"]
+    if not isinstance(python, str) or not Path(python).is_absolute() or not Path(python).is_file():
+        raise ValueError(f"{SETTINGS_FILE}: python must be the full path of an interpreter, not {python!r}")
+    return python
+
+
 def _cannot_start(root: Path) -> dict | None:
     if not (root / SETTINGS_FILE).is_file():
         return _not_a_loop(root)
     try:
-        windows_from(read_settings(root))
+        settings = read_settings(root)
+        windows_from(settings)
+        _pinned_python(settings)
     except ValueError as exc:
         return _blocked(BAD_SETTINGS, f"{exc}"[:400], f"Fix {SETTINGS_FILE} in {root}; nothing was started.")
     if runner_alive(root):
@@ -172,8 +184,11 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
     enrolled = log.enrolled()
     use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
            "you until the week's last day" for w in windows_from(settings)]
+    python = _pinned_python(settings)
     question = [f"Start G6's self-improvement loop on {enrolled.get('domain', 'its domain')}?", f"Folder: {root}",
                 f"Python file: {settings.get('domain_file')}, as enrolled by {enrolled['by']} (the name they gave).", *use,
+                f"It runs on {python}." if python else ("It runs on the Python of this server, so any edit to that install "
+                                                        "stops its ticks until a person enrols again."),
                 f"Settings digest: {digest_of(settings)}.", RUNS]
     if stop_reason(root):
         question.append(f"Starting lifts the stop now in place ({stop_reason(root)}). Its file stays, and any write to it after "
@@ -186,13 +201,16 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
     return root, "\n".join([*question, NAME]), terms
 
 
-def _spawn(root: Path) -> Any:
-    """The runner as a process of its own, on the same Python: no console, its own group, its output in its folder."""
+def _spawn(root: Path, settings: dict[str, Any]) -> Any:
+    """The runner as a process of its own: no console, its own group, its output in its folder. On the Python the settings the
+    person agreed to pin, isolated, since ``-P`` leaves ``PYTHONPATH`` standing and that puts a working tree ahead of any
+    install. With none pinned, on this server's Python, as the server's own environment has it."""
     detached = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                 else {"start_new_session": True})
+    python = _pinned_python(settings)
     with open(root / RUNNER_LOG, "ab") as log:
-        return subprocess.Popen([sys.executable, "-P", "-m", "g6.metaharness.loop", "run", str(root)], cwd=root,
-                                stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
+        return subprocess.Popen([python or sys.executable, "-I" if python else "-P", "-m", "g6.metaharness.loop", "run", str(root)],
+                                cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
 
 
 def _past_opening(root: Path, since: datetime) -> bool:
@@ -247,8 +265,8 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
             record_stop(root, why, at=datetime.now().astimezone().isoformat())
             return _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: {why}"
                             [:500], NOT_ASKED, running=False, folder=str(root))
-        return {**_watch(root, _spawn(root)), "started_by": who}
-    except (OSError, LedgerError, WorkspaceRefused) as exc:
+        return {**_watch(root, _spawn(root, settings)), "started_by": who}
+    except (OSError, LedgerError, WorkspaceRefused, ValueError) as exc:
         return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,
                         folder=str(root))
 

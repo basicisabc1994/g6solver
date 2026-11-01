@@ -336,9 +336,9 @@ def _source_copy(folder: Path) -> Path:
     ("self_maintenance/constraints.py", "ranked = sorted(", "ranked = list("),
 ])
 def test_4_a_one_line_edit_anywhere_in_the_enforcement_set_stops_the_loop(tmp_path, monkeypatch, name, old, new):
-    loop, domain = _enrolled(tmp_path)
     copy = _source_copy(tmp_path / "source")
     monkeypatch.setattr("g6.metaharness.loop._SOURCE", copy)
+    loop, domain = _enrolled(tmp_path)                                 # enrolled on the copy: where it stands is pinned too
     assert _code(loop.tick()) != "G6_E_LOOP_FROZEN_CHANGED"        # survival: the untouched copy reads the same
     text = (copy / name).read_text(encoding="utf-8")
     assert old in text
@@ -347,6 +347,15 @@ def test_4_a_one_line_edit_anywhere_in_the_enforcement_set_stops_the_loop(tmp_pa
     got = loop.tick()
     assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "envelope" in got["message"]
     assert len(domain.llm.calls) == calls
+
+
+def test_4_the_same_code_installed_elsewhere_stops_the_loop(tmp_path, monkeypatch):
+    """So a run from a pinned install cannot be swapped for a working tree that happens to hold the same bytes today."""
+    loop, domain = _enrolled(tmp_path)
+    monkeypatch.setattr("g6.metaharness.loop._SOURCE", _source_copy(tmp_path / "source"))
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "envelope" in got["message"] and len(domain.llm.calls) == calls
 
 
 def _g6_imports(path: Path) -> set[str]:
