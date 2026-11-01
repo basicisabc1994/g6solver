@@ -22,6 +22,7 @@ SCORES =("maintainers", "amended")
 DETERMINED = ("pydantic-13243", "black-5148", "click-3434", "click-3404", "starlette-3189", "fastapi-14616", "fastapi-13920")
 TARGET = 0.95
 TWO_PRIMARIES = 0.025       # the bar with M9 and K1 both counted (PLAN.md, 2026-11-01): beside the rule, never in place of it
+EXPLORATORY = ("K0",)       # chosen after a result was read (PLAN.md, 2026-11-02): a report, never a verdict of the rule
 CLEAN = "no_counterexample_in_domain"
 Rows = Mapping[tuple[str, str, int], Mapping[str, bool | None]]
 
@@ -174,10 +175,10 @@ def failure_rich(rows: Rows, tasks: Iterable[str], score: str) -> list[str]:
 
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
            others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",), tuned: bool = False,
-           scores: Sequence[str] = SCORES, exploratory: bool = False) -> None:
+           scores: Sequence[str] = SCORES) -> None:
     """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it.
-    ``tuned``: bugs this arm was tuned on, which are development, so they get no verdict of the rule, however they read.
-    ``exploratory``: an arm chosen after a result was read, which gets no verdict either (PLAN.md, 2026-11-02)."""
+    ``tuned``: bugs this arm was tuned on, which are development, so they get no verdict of the rule, however they read. An arm in
+    ``EXPLORATORY`` gets none either, however it is called."""
     shown =[arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
     for score in scores:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
@@ -199,7 +200,7 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
                     total = cell["right"] + cell["wrong"]
                     print(f"{name:22} {score:11} {arm} {whose} {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
-        verdict = "not applied, tuned on these bugs" if tuned else "not applied, exploratory" if exploratory else (
+        verdict = "not applied, tuned on these bugs" if tuned else "not applied, exploratory" if loop_arm in EXPLORATORY else (
             f"{'met' if judged(results) else 'not shown'}; at {TWO_PRIMARIES}: {'cleared' if judged(results, TWO_PRIMARIES) else 'not cleared'}")
         print(f"{name:22} {score:11} frozen rule: {verdict}; "
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
@@ -241,7 +242,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown)
     report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",), tuned=True)
     if any(key[0] == "K0" for key in rows):
-        report(rows, "K0, stage 2, exploratory", stage_2, (1, 2), loop_arm="K0", control=("R", args.loop, args.second), exploratory=True)
+        report(rows, "K0, stage 2, exploratory", stage_2, (1, 2), loop_arm="K0", control=("R", args.loop, args.second))
     if args.trained:
         others = (args.second, "A", "T")
         stage_3 = finished(rows, stage_2, (args.trained,), (1, 2))

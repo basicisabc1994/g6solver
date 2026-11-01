@@ -59,8 +59,8 @@ def one(root: Path, g6: str, arm: str, task: str, repeat: int) -> dict[str, Any]
     row = {"arm": arm, "task": task, "repeat": repeat, "run": rec.get("run"), "status": rec.get("status"),
            "why": rec.get("why"), "cost_usd": rec.get("cost_usd"), "passes": False, "failing": None, "tests": []}
     if rec.get("status") == "finished":
-        final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, timeout=1200)).get("checks", [])
-                 if x.get("patch") == "final"]
+        final = [x for x in last_json(tool("check", "--task", task, "--g6", g6, "--run", rec["run"], timeout=1200)).get("checks", [])
+                 if x.get("patch") == "final"]     # by name: with no run named, check scores the bug's latest run, which a restart may not be
         if not final:       # no verdict is not a failed run: nothing is saved, and a restart checks it again
             raise SystemExit(f"no verdict for {arm} {task} {repeat}")
         failing, tests = final[-1].get("failing"), list(final[-1].get("fail_to_pass_failing") or [])

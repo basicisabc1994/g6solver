@@ -332,6 +332,21 @@ def test_k0_is_a_report_and_the_rule_gives_it_no_verdict(tmp_path, monkeypatch, 
     assert not any("cleared" in line or "frozen rule: met" in line for line in verdicts)
 
 
+@pytest.mark.parametrize("flag", ["--loop", "--second", "--trained"])
+def test_k0_gets_no_verdict_however_it_is_called(tmp_path, monkeypatch, capsys, flag):
+    lost = "u00 v00 w00"
+    rows = _cells(K0="u11 v11 w11", K1=lost, M9=lost, A=lost, T=lost, R=lost)     # six wins and no loss would clear the rule at either bar
+    tasks = {compare.we.TASKS_FRESH: [], compare.we.TASKS_UNSEEN: ["u", "v", "w"], None: []}
+    monkeypatch.setattr(compare.c, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(compare, "saved", lambda root: rows)
+    monkeypatch.setattr(compare.we, "R3_HELD", ())
+    monkeypatch.setattr(compare.we, "load_tasks", lambda path=None: [type("Task", (), {"id": t}) for t in tasks[path]])
+    compare.main([flag, "K0"])
+    lines = [line for line in capsys.readouterr().out.splitlines() if "frozen rule" in line]
+    assert not any("frozen rule: met" in line for line in lines)
+    assert any("frozen rule: not applied, exploratory" in line for line in lines)
+
+
 def test_k0_is_never_what_decides_which_bugs_finished(tmp_path, monkeypatch, capsys):
     _main(monkeypatch, tmp_path, _cells(K1="u11", M9="u11", A="u00", T="u00", R="u00"))
     lines = capsys.readouterr().out.splitlines()
