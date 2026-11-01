@@ -246,19 +246,21 @@ def _main(monkeypatch, tmp_path, rows, *argv):
 
 def test_k1_is_judged_in_sections_of_its_own_and_never_pooled_with_m9(tmp_path, monkeypatch, capsys):
     wins, none = "f11 u11 t11 h11111", "f00 u00 t00 h00000"
-    _main(monkeypatch, tmp_path, _cells(K1=wins, M9=none, L9=none, A=none, T=none))
+    _main(monkeypatch, tmp_path, _cells(K1=wins, M9=none, L9=none, A=none, T=none, R=none))
     lines = capsys.readouterr().out.splitlines()
     for section in ("K1, stage 1, all eleven", "K1, stage 1, determined 7", "K1, stage 2, new repos", "K1, held-out, second look",
                     "K1, training, tuned"):
         assert any(line.startswith(section) for line in lines), section
     judged = [line for line in lines if " uplift " in line and "report only" not in line]
+    assert len(judged) == 36      # each primary: four sections against A and T, one tuned against A, on two scores
     assert all(" K1 " in line for line in judged if line.startswith("K1, "))
     assert not any(" K1 " in line for line in judged if not line.startswith("K1, "))
     for section, shown in (("K1, stage 1, all eleven", "K1   2/2"), ("K1, stage 2, new repos", "K1   2/2"),
                            ("K1, held-out, second look", "K1   5/5"), ("K1, training, tuned", "K1   2/2"),
                            ("stage 1, all eleven", "M9   0/2"), ("stage 2, new repos", "M9   0/2"),
                            ("held-out, second look", "M9   0/5"), ("training, tuned", "L9   0/2")):
-        assert all(shown in line for line in judged if line.startswith(section)), section
+        picked = [line for line in judged if line.startswith(section)]
+        assert picked and all(shown in line for line in picked), section
 
 
 def test_the_rule_gives_no_verdict_on_bugs_an_arm_was_tuned_on(tmp_path, monkeypatch, capsys):
@@ -277,11 +279,61 @@ def test_m9_is_only_a_report_in_k1s_sections(tmp_path, monkeypatch, capsys):
 
 
 def test_stage_3_is_judged_against_k1_its_parent_as_well_as_a_and_t(tmp_path, monkeypatch, capsys):
-    rows = _cells(P1="u11", K1="u00", A="u00", T="u00")
+    rows = _cells(P1="u11", K1="u00", M9="u00", A="u00", T="u00", R="u00")
     _main(monkeypatch, tmp_path, rows, "--trained", "P1")
-    judged = [line for line in capsys.readouterr().out.splitlines() if line.startswith("stage 3, new repos") and " uplift " in line]
+    judged = [line for line in capsys.readouterr().out.splitlines()
+              if line.startswith("stage 3, new repos") and " uplift " in line and "report only" not in line]
     assert sum(" P1 " in line for line in judged) == 6 and sum(" K1 " in line for line in judged) == 2
     assert not any(" M9 " in line for line in judged)
+
+
+FROZEN = ("M9", "K1", "A", "T", "R")
+
+
+def test_the_bugs_that_finished_are_read_in_the_frozen_order_and_stop_at_the_first_that_did_not():
+    rows = _cells(**{arm: "a11 b11 d11" for arm in FROZEN})
+    assert compare.finished(rows, "abcd", FROZEN, (1, 2)) == ["a", "b"]
+    assert compare.finished({}, "abcd", FROZEN, (1, 2)) == []
+
+
+def test_a_bug_one_arm_or_one_repeat_did_not_reach_has_not_finished():
+    rows = _cells(**{arm: "a11 b11" for arm in FROZEN})
+    del rows[("R", "b", 2)]
+    assert compare.finished(rows, "ab", FROZEN, (1, 2)) == ["a"]
+
+
+def test_which_bugs_finished_does_not_depend_on_how_they_came_out():
+    won, lost = _cells(**{arm: "a11 b11" for arm in FROZEN}), _cells(**{arm: "a00 b00" for arm in FROZEN})
+    assert compare.finished(won, "ab", FROZEN, (1, 2)) == compare.finished(lost, "ab", FROZEN, (1, 2)) == ["a", "b"]
+
+
+def _stopped(monkeypatch, tmp_path, *argv):
+    """Stage 2 stopped after bug ``u``: ``v`` never started, and ``w`` has runs but comes after it in the frozen order."""
+    cells = {arm: "u00 w00" for arm in ("M9", "A", "T", "R")} | {"K1": "u11 w00", "P1": "u11 w00"}
+    tasks = {compare.we.TASKS_FRESH: [], compare.we.TASKS_UNSEEN: ["u", "v", "w"], None: []}
+    monkeypatch.setattr(compare.c, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(compare, "saved", lambda root: _cells(**cells))
+    monkeypatch.setattr(compare.we, "R3_HELD", ())
+    monkeypatch.setattr(compare.we, "load_tasks", lambda path=None: [type("Task", (), {"id": t}) for t in tasks[path]])
+    compare.main(list(argv))
+
+
+def test_stage_2_reads_only_the_bugs_that_finished_and_says_how_many(tmp_path, monkeypatch, capsys):
+    _stopped(monkeypatch, tmp_path)
+    lines = capsys.readouterr().out.splitlines()
+    assert "stage 2: 1 of 3 bugs finished, in the frozen order" in lines
+    k1 = [line for line in lines if line.startswith("K1, stage 2, new repos") and " uplift " in line and "report only" not in line]
+    assert k1 and all("K1   2/2" in line and "MISSING" not in line for line in k1)
+    m9 = [line for line in lines if line.startswith("stage 2, new repos") and " uplift " in line and "report only" not in line]
+    assert m9 and all("M9   0/2" in line and "MISSING" not in line for line in m9)
+
+
+def test_stage_3_reads_the_stage_2_bugs_that_finished_and_its_arm_reached(tmp_path, monkeypatch, capsys):
+    _stopped(monkeypatch, tmp_path, "--trained", "P1")
+    lines = capsys.readouterr().out.splitlines()
+    assert "stage 3: 1 of 1 bugs finished, in the frozen order" in lines
+    judged = [line for line in lines if line.startswith("stage 3, new repos") and " uplift " in line and "report only" not in line]
+    assert judged and all("P1   2/2" in line and "MISSING" not in line for line in judged)
 
 
 def _archive(root, monkeypatch, *rows):

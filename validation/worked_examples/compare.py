@@ -147,6 +147,17 @@ def trust(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int], sc
     return table
 
 
+def finished(rows: Rows, tasks: Sequence[str], arms: Sequence[str], repeats: Sequence[int]) -> list[str]:
+    """The bugs that finished, in the frozen order: every arm ran every repeat, and the list stops at the first bug that did not. So
+    how far the runs got decides which bugs the rule reads, and how a bug came out never can (PLAN.md, 2026-11-01)."""
+    done: list[str] = []
+    for task in tasks:
+        if not all((arm, task, repeat) in rows for arm in arms for repeat in repeats):
+            break
+        done.append(task)
+    return done
+
+
 def judged(results: Sequence[Mapping[str, Any]], bar: float = 0.05) -> bool:
     """The frozen rule: with no pair missing, more passes than every other arm, and p < 0.05 against each. ``bar``: the same rule at
     another p, for the line beside it."""
@@ -197,18 +208,22 @@ def main(argv: Sequence[str] | None = None) -> None:
     train = [t.id for t in we.load_tasks() if t.id not in we.R3_HELD]
     report(rows, "stage 1, all eleven", fresh, (1, 2), loop_arm=args.loop)
     report(rows, "stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.loop)
-    report(rows, "stage 2, new repos", unseen, (1, 2), loop_arm=args.loop)
+    stage_2 = finished(rows, unseen, (args.loop, args.second, "A", "T", "R"), (1, 2))
+    print(f"stage 2: {len(stage_2)} of {len(unseen)} bugs finished, in the frozen order")
+    report(rows, "stage 2, new repos", stage_2, (1, 2), loop_arm=args.loop)
     report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop)
     report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",), tuned=True)
     second, shown = f"{args.second}, ", ("R", args.loop)
     report(rows, f"{second}stage 1, all eleven", fresh, (1, 2), loop_arm=args.second, control=shown)
     report(rows, f"{second}stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.second, control=shown)
-    report(rows, f"{second}stage 2, new repos", unseen, (1, 2), loop_arm=args.second, control=shown)
+    report(rows, f"{second}stage 2, new repos", stage_2, (1, 2), loop_arm=args.second, control=shown)
     report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown)
     report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",), tuned=True)
     if args.trained:
         others = (args.second, "A", "T")
-        report(rows, "stage 3, new repos", unseen, (1, 2), loop_arm=args.trained, others=others)
+        stage_3 = finished(rows, stage_2, (args.trained,), (1, 2))
+        print(f"stage 3: {len(stage_3)} of {len(stage_2)} bugs finished, in the frozen order")
+        report(rows, "stage 3, new repos", stage_3, (1, 2), loop_arm=args.trained, others=others)
         report(rows, "stage 3, stage 1 bugs", fresh, (1, 2), loop_arm=args.trained, others=others)
 
 
