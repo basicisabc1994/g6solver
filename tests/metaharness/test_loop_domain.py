@@ -6,6 +6,7 @@ import ast
 import dataclasses
 import hashlib
 import importlib.util
+import itertools
 import random
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ import g6
 from g6.core.vault import AccessDenied
 from g6.metaharness import Model, Suite, SuiteCase
 from g6.metaharness.domain import (
+    FEWEST,
     NO_JUDGE,
     NO_SEALED,
     PAID_MODEL,
@@ -23,6 +25,7 @@ from g6.metaharness.domain import (
     Domain,
     FailureRecord,
     Judge,
+    _point,
     cut_pool,
     domain_problems,
     reason_coded,
@@ -180,6 +183,28 @@ def test_the_cut_of_a_small_pool_is_deterministic_and_the_pools_order_does_not_m
 
 def test_a_pool_too_small_to_share_out_is_still_cut_and_is_refused_by_the_loop_not_here():
     assert sum(_sizes(cut_pool(_plain_pool(12), 1))) == 12 and cut_pool((), 1).held_out == ()
+
+
+def _groups_of(sizes, seed: int) -> tuple[SuiteCase, ...]:
+    """Groups of these sizes, in the order ``seed`` walks them."""
+    names = sorted((f"g{i}" for i in range(len(sizes))), key=lambda name: _point(seed, name))
+    return tuple(SuiteCase(f"{name}-{i}", f"{name} input {i}", "x", meta={"group": name})
+                 for name, size in zip(names, sizes) for i in range(size))
+
+
+def test_a_large_group_does_not_empty_a_side_that_intact_groups_can_fill():
+    assert _sizes(cut_pool(_groups_of((25, 30, 10, 21), 7), 7)) == (25, 10, 30, 21)
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_a_grouped_pool_meets_every_minimum_whenever_intact_groups_can(seed):
+    rng = random.Random(seed)
+    sizes = [rng.choice((1, 2, 3, 5, 8, 12, 20, 30, 40)) for _ in range(rng.randint(3, 7))]
+    cut = cut_pool(_groups_of(sizes, seed), seed)
+    least = tuple(FEWEST.values())
+    possible = any(all(sum(size for size, side in zip(sizes, sides) if side == place) >= least[place] for place in range(4))
+                   for sides in itertools.product(range(4), repeat=len(sizes)))
+    assert all(found >= most for found, most in zip(_sizes(cut), least)) == possible, sizes
 
 
 def test_a_failure_record_has_one_cause_per_case_read_from_reason_codes():
