@@ -128,7 +128,7 @@ def test_the_gate_decides_and_a_change_that_helps_nothing_is_not_adopted(tmp_pat
     loop, domain = _enrolled(tmp_path, proposer=domains.proposes({"prompt": "Please be polite."}))
     start = loop.mh._head()
     got = loop.tick()
-    assert got["outcome"] in ("no_winner", "refused") and got["completion_state"] == "blocked-escalated"
+    assert got["outcome"] in ("no_winner", "refused") and got["completion_state"] == "qualified-draft"
     assert loop.mh._head() == start
 
 

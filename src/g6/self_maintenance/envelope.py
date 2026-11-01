@@ -2,39 +2,59 @@
 """The loop's records and what halts it (design 6.1, 6.10), which know nothing of what the work is.
 
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
-came of it, plus each enrolment, pause and resumption. Only a person can enrol a domain or resume a paused loop, so
-the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and removing the file
-resumes it; a stop that cannot be read still stops. A heartbeat is written whole or not at all.
+came of it, plus each enrolment, pause, resumption and start. Only a person can enrol a domain, resume a paused loop or
+start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and
+removing the file resumes it; a stop that cannot be read still stops. A runner ended by a stop needs a person's start
+again, even with the file gone: the records say the last start was stopped. A heartbeat is written whole or not at all, and
+a heartbeat that cannot be written is one missed, never a failed tick.
 
-**The failed streak.** Three failed cycles in a row pause the loop. An adoption or a tick with nothing to do ends a
-streak; an adoption the monitor later undid does not, or adopting and rolling back in turn would never pause.
+**Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
+that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
+
+**The failed streak.** Three failed cycles in a row pause the loop. A failed cycle is a fault: an error, a sealed breach
+or a step that was blocked. The loop seeks failure and learns from it, so a candidate that lost is a result: no winner, no
+constraint, a refusal and a rolled-back adoption each end a streak and never pause. What bounds them is the held-out
+split, which allows five evaluations before a person acts, and the runner, which rests when nothing is left to try.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, ContextManager
 
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import ChainLedger
+from g6.core.ledger import ChainLedger, LedgerError
+from g6.workspace._coordination import Coordination
+from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
+STOPS_FILE = "stops.log"
 HEARTBEAT_FILE = "heartbeat.json"
+CYCLE_LOG = Path("records", "constraint_log.jsonl")
+#: The folder of the lock a runner holds for its whole life.
+RUNNER_LOCK = ".runner"
 MAX_FAILED_CYCLES = 3
-#: Cycles that moved nothing forward. A wait (a stop, the budget, a pause) is not a cycle at all, so it never counts.
-FAILED = ("refused", "no_winner", "blocked", "no_constraint", "rolled_back", "error", "sealed_breach")
-ENDS_A_STREAK = ("adopted", "idle")
+#: Cycles that broke. A wait (a stop, the budget, a pause) is not a cycle at all, so it never counts.
+FAILED = ("blocked", "error", "sealed_breach")
+#: Cycles that ran and reached a result, whichever way it went.
+ENDS_A_STREAK = ("adopted", "idle", "refused", "no_winner", "no_constraint", "rolled_back")
+#: Results that found nothing to try, which the runner rests on: a refusal or a rollback did try something.
+NOTHING_TO_TRY = ("idle", "no_winner", "no_constraint")
+#: What a cycle keeps of what a proposer found, a general research record: a regularity found in the failing cases, what
+#: can be exploited, why it does not hold generally, and the earlier cycles it builds on. Empty when it supplied none.
+FINDINGS = ("structure", "resource", "obstruction", "composed_from")
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
     if kind == "cycle":
         known = body.get("outcome") in (*FAILED, *ENDS_A_STREAK)
         return [] if known else [f"cycle: unknown outcome {body.get('outcome')!r}"]
-    if kind == "paused":
-        return [] if body.get("reason") else ["a pause states its reason"]
-    if kind in ("enrolled", "resumed"):
+    if kind in ("paused", "stopped"):
+        return [] if body.get("reason") else [f"a row of kind {kind} states its reason"]
+    if kind in ("enrolled", "resumed", "started"):
         who = str(body.get("by") or "")
         return [] if who.strip() and not is_automated(who) else [f"{kind}: a person must do this (no empty or auto: name)"]
     return [f"unknown kind {kind!r}"]
@@ -61,7 +81,18 @@ class CycleLog:
         return [body for kind, body in self._rows() if kind == "cycle"]
 
     def cycle(self, row: Mapping[str, Any]) -> dict:
-        return self._append("cycle", {"tick": len(self.cycles()) + 1, **row})
+        empty = {"structure": "", "resource": "", "obstruction": "", "composed_from": []}
+        return self._append("cycle", {"tick": len(self.cycles()) + 1, **empty, **row})
+
+    def generation(self) -> int:
+        """The latest generation a cycle made. Only an adoption or a rollback makes one: any other cycle's ``head_version``
+        is the head it began on, which can be a version of a person's."""
+        return max((c["head_version"] for c in self.cycles() if c["outcome"] in ("adopted", "rolled_back")), default=0)
+
+    def findings(self, last: int = 8) -> list[dict]:
+        """The latest cycles that recorded a finding, each with its tick and what was found: what a next tick reads."""
+        found = [c for c in self.cycles() if any(c.get(name) for name in FINDINGS)]
+        return [{"tick": c["tick"], **{name: c[name] for name in FINDINGS}} for c in found[-last:]]
 
     def enrol(self, by: str, frozen: Mapping[str, str], **fields: Any) -> dict:
         return self._append("enrolled", {"by": by, "frozen": dict(frozen), **fields})
@@ -79,6 +110,20 @@ class CycleLog:
     def resume(self, by: str) -> dict:
         return self._append("resumed", {"by": by})
 
+    def start(self, by: str, **fields: Any) -> dict:
+        return self._append("started", {"by": by, **fields})
+
+    def started(self) -> dict | None:
+        """The last time a person started the runner."""
+        return next((body for kind, body in reversed(self._rows()) if kind == "started"), None)
+
+    def stop(self, reason: str, **fields: Any) -> dict:
+        return self._append("stopped", {"reason": reason, **fields})
+
+    def start_in_force(self) -> bool:
+        """Whether a person's start stands: of the starts and stops on record, the last is a start."""
+        return next((kind == "started" for kind, _ in reversed(self._rows()) if kind in ("started", "stopped")), False)
+
     def paused(self) -> str:
         """Why the loop is paused, or ``""`` when it is not."""
         reason = ""
@@ -93,13 +138,20 @@ class CycleLog:
         return [body for kind, body in rows[start:] if kind == "cycle"]
 
     def failed_streak(self) -> int:
-        cycles = self.since_resumed()
-        undone = {c.get("undoes") for c in cycles if c["outcome"] == "rolled_back"}
         streak = 0
-        for cycle in reversed(cycles):
-            if cycle["outcome"] in ENDS_A_STREAK and cycle.get("head_version") not in undone:
+        for cycle in reversed(self.since_resumed()):
+            if cycle["outcome"] in ENDS_A_STREAK:
                 break
-            streak += cycle["outcome"] in FAILED
+            streak += 1
+        return streak
+
+    def quiet_streak(self) -> int:
+        """How many cycles in a row found nothing to try, since a person last enrolled a domain or lifted a pause."""
+        streak = 0
+        for kind, body in reversed(self._rows()):
+            if kind in ("enrolled", "resumed") or kind == "cycle" and body["outcome"] not in NOTHING_TO_TRY:
+                break
+            streak += kind == "cycle"
         return streak
 
 
@@ -115,19 +167,96 @@ def stop_reason(root: str | Path) -> str:
     return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
 
 
+def file_digest(path: Any) -> str:
+    """A file's SHA-256, or ``""`` when there is no file to read: what a person enrolled is pinned by its bytes."""
+    try:
+        return hashlib.sha256(Path(str(path)).read_bytes()).hexdigest() if path else ""
+    except OSError:
+        return ""
+
+
+def stops_asked(root: str | Path) -> int:
+    """How many stops have been asked for on this folder, from the file ``ask_to_stop`` adds to. A start records this, so
+    any stop after it shows whatever happened to the ``STOP`` file. One that cannot be read is ``-1``, which is no count a
+    start ever recorded."""
+    try:
+        return (Path(root) / STOPS_FILE).read_bytes().count(b"\n")
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return -1
+
+
+def ask_to_stop(root: str | Path, reason: str = "") -> str:
+    """Write the ``STOP`` file, or leave one that is there, so the first reason stands and repeating is safe. It kills
+    nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
+
+    Each stop is counted first, in a file no lock stands in front of, because the records can be held for as long as a
+    tick lasts and a stop may never wait. It is counted before the ``STOP`` file is written, so a start that misses the
+    count cannot have removed that file. The ``STOP`` file is what stops, so a count that cannot be written is left."""
+    said = " ".join(reason.split()) or "stopped through g6_improve_stop"
+    try:
+        with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
+            stops.write(said[:200] + "\n")
+    except OSError:
+        pass
+    path = Path(root) / STOP_FILE
+    if not path.exists():
+        path.write_text(said + "\n", encoding="utf-8")
+    return stop_reason(root)
+
+
+def record_stop(root: str | Path, reason: str, *, at: str) -> None:
+    """Note a stop in the records, so a start no longer stands once the ``STOP`` file is gone. The file is what stops the
+    loop, so this never gets in its way: records that do not read, or a tick holding them, leave the note for later, and
+    a runner notes its own stop as it ends."""
+    path = Path(root) / CYCLE_LOG
+    if not path.is_file():
+        return
+    try:
+        with Coordination(Path(root) / ".tick").mutex(wait=0):
+            log = CycleLog(path)
+            if log.start_in_force():
+                log.stop(reason, at=at)
+    except (OSError, LedgerError, WorkspaceRefused):
+        pass
+
+
+def runner_lock(root: str | Path) -> ContextManager[None]:
+    """The lock a runner holds for its whole life; a second runner on the folder is refused it."""
+    return Coordination(Path(root) / RUNNER_LOCK).mutex()
+
+
+def runner_alive(root: str | Path) -> bool:
+    """Whether a runner holds this folder. A folder no runner ever held has no lock to look at, so nothing is written."""
+    if not (Path(root) / RUNNER_LOCK / "mutex").is_file():
+        return False
+    try:
+        with Coordination(Path(root) / RUNNER_LOCK).mutex(wait=0):
+            return False
+    except WorkspaceRefused:
+        return True
+
+
 def beat(root: str | Path, **fields: Any) -> None:
-    """Write the heartbeat: a reader sees the last whole one, never half of a new one."""
+    """Write the heartbeat: a reader sees the last whole one, never half of a new one. On Windows a reader holding the
+    file can refuse the swap, which only misses this beat."""
     path = Path(root) / HEARTBEAT_FILE
     spare = path.with_suffix(".tmp")
-    spare.write_text(json.dumps(fields, sort_keys=True, ensure_ascii=False), encoding="utf-8")
-    os.replace(spare, path)
+    try:
+        spare.write_text(json.dumps(fields, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+        os.replace(spare, path)
+    except OSError:
+        pass
 
 
 def heartbeat(root: str | Path) -> dict | None:
     try:
         return json.loads((Path(root) / HEARTBEAT_FILE).read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
+    except (OSError, ValueError):
         return None
 
 
-__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "MAX_FAILED_CYCLES", "beat", "heartbeat", "stop_reason"]
+__all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
+           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop",
+           "runner_alive", "runner_lock", "stop_reason", "stops_asked"]

@@ -6,11 +6,13 @@ a profile can change that costs the most cases, through ``self_maintenance.const
 failure records were not independently observed. **Exploit**, by proposing within the meta-harness's editable schema:
 ``method.tune`` runs its usual proposers, with ``FailureTraceStrategy`` shown only the constraint's failures, and races
 them on the selection split. **Gate**: the champion goes to the held-out split and the unchanged gate under
-``EvidencePolicy``. **Record** the cycle in the local constraint log, and **adopt** what the gate recommends in the
-loop's own workspace (``g6.metaharness.shadow``), so the next tick starts from it.
+``EvidencePolicy``, which holds it to ``GATED``. **Record** the cycle in the local constraint log, and **adopt** what the
+gate recommends in the loop's own workspace (``g6.metaharness.shadow``), so the next tick starts from it.
 
 The only person in it is the one who enrols a domain: they confirm what judges the work, once, and the loop runs from
 there. Someone has to say what "better" means, and it cannot be the thing being judged.
+
+``python -P -m g6.metaharness.loop run <folder>`` runs ticks on their own (``g6.metaharness.runner``).
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -52,11 +54,21 @@ from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
-from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow
+from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
-from g6.self_maintenance.envelope import ENDS_A_STREAK, MAX_FAILED_CYCLES, CycleLog, beat, stop_reason
+from g6.self_maintenance.envelope import (
+    CYCLE_LOG,
+    ENDS_A_STREAK,
+    FINDINGS,
+    MAX_FAILED_CYCLES,
+    CycleLog,
+    ask_to_stop,
+    beat,
+    file_digest,
+    stop_reason,
+)
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -82,6 +94,7 @@ BUDGET_WAIT = "G6_E_LOOP_BUDGET_WAIT"
 NO_BUDGET = "G6_E_LOOP_NO_BUDGET"
 BUSY = "G6_E_LOOP_BUSY"
 RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
+CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
@@ -89,11 +102,16 @@ UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 #: with. A test holds every module those files import to this set or that one.
 ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/loop.py",
                      "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
-                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/select.py",
-                     "metaharness/shadow.py", "self_maintenance/constraints.py", "self_maintenance/envelope.py",
-                     "self_maintenance/pacing.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
+                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/runner.py",
+                     "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
+                     "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py",
+                     "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
                      "core/llm.py", "core/vault.py", "integrity/*.py")
 UNKNOWN = "unknown"
+#: What the gate holds this loop's candidates to (the owner's ruling, 2026-11-01). Wall clock is left out: differences of
+#: milliseconds refused real gains on noise, each spending one of the split's evaluations. It is still measured, and reported
+#: as not gated. The gate and ``default_objectives`` are as they were, so a workflow a person runs still holds wall clock.
+GATED = ("success", "model_calls")
 _SOURCE = Path(g6.__file__).resolve().parent
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
@@ -106,6 +124,7 @@ class LoopSettings:
     seed: int = 20261031             # cuts the development pool
     audit_per_tick: int = 10         # monitor cases per tick
     eval_calls: int = 2000           # the most one held-out evaluation may call; the gate's thresholds are not settings
+    provider: str = ""               # the window this folder's calls go to; with one window, that window
     # THE OWNER'S RULING, NOT THE LOOP'S: may a passed gate stand in for a person outside the loop's own workspace?
     # Off until they say otherwise. No profile can reach it, and in this phase turning it on still moves nothing.
     person_free_adoption_outside_shadow: bool = False
@@ -149,21 +168,29 @@ class _OnConstraint:
 
 
 class _Requests:
-    """What a tick has sent to its backends, and the limit it reserved. Past that limit nothing more goes out."""
+    """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
+    nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
+    ``stopped`` says which stopped it."""
 
-    def __init__(self) -> None:
+    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        self.now = now
         self.close()
 
-    def open(self, limit: float) -> None:
-        self.sent, self.limit, self.stopped, self.unseen = 0, limit, False, False
+    def open(self, limit: float, ends: datetime | None = None) -> None:
+        self.sent, self.limit, self.ends, self.stopped, self.unseen = 0, limit, ends, "", False
 
     def close(self) -> None:
         self.open(math.inf)
 
-    def admit(self) -> None:
-        if self.unseen or self.sent >= self.limit:
-            self.stopped = True
-            raise LLMError(f"{TICK_BUDGET_SPENT}: this tick has sent {self.sent} of the {self.limit:g} it reserved")
+    def admit(self, under_way: int = 0) -> None:
+        """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``."""
+        if self.unseen or self.sent + under_way >= self.limit:
+            self.stopped = f"this tick has sent {self.sent + under_way} of the {self.limit:g} it reserved"
+        elif self.ends is not None and self.now() >= self.ends:
+            self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
+        else:
+            return
+        raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
 
 
 class _Counted:
@@ -172,16 +199,27 @@ class _Counted:
     or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
     is added from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
 
+    Each noted request is admitted at that same boundary, before it goes out, so a retry inside a caller stops at what the
+    tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
+    else's request. This one is the gate on that request: it raises before anything is sent or counted, and what it raises
+    is the ``LLMError`` a failed request raises, which every caller here passes on. That file is bound, so its sentence
+    stays until an issuance window.
+
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
-    retries. Only a usage record from the provider can show those, which is the relay of design section 3."""
+    retries. Only a usage record from the provider can show those, which is the relay of design section 3. A ``Retry-After``
+    resend has no boundary either: it is charged, and a call can pass the limit by those, when a server turned it away."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
         self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         self.requests.admit()
-        with counting() as noted, waits() as resent:
+
+        def next_request() -> None:
+            self.requests.admit(noted() + len(resent))
+
+        with counting(before_call=next_request) as noted, waits() as resent:
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             finally:
@@ -199,7 +237,8 @@ def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, requests: _Reque
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
     return Workflow(name=domain.name, task=run.task, checks=run.checks, oracle=judge.verdict, suite=suite,
-                    models=models, policy=EvidencePolicy(max_eval_model_calls=settings.eval_calls),
+                    models=models, objectives=tuple(o for o in default_objectives() if o.name in GATED),
+                    policy=EvidencePolicy(max_eval_model_calls=settings.eval_calls),
                     optional_checks=run.optional_checks, pipeline_steps=run.pipeline_steps, feedback=run.feedback)
 
 
@@ -260,7 +299,7 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
         except LedgerError as exc:
             reply = _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
                              "A person inspects the folder. Nothing runs on records that do not check out.")
-            self._beat(reply["completion_state"], RECORDS_UNREADABLE)
+            self._beat(reply["completion_state"], RECORDS_UNREADABLE, reason=reply["message"])
             return reply
 
     return invoke
@@ -270,21 +309,31 @@ class ShadowLoop:
     def __init__(self, domain: Domain, root: str | Path, settings: LoopSettings, *, proposer: Any,
                  now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  clock: Callable[[], float] = time.monotonic,
-                 read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
-        self.domain, self.settings, self._now = domain, settings, now
-        self.requests = _Requests()
+                 read_account: Callable[[str, datetime], AccountReading | None] | None = None,
+                 domain_file: str | Path | None = None) -> None:
+        self.domain, self.settings, self._now, self.domain_file = domain, settings, now, domain_file
+        self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
+        self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
+        self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
+        self.requests = _Requests(lambda: self._now())
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
         if reach:                                # before anything is written: this folder is all the loop ever writes
             raise ValueError(f"[{EVALUATOR_IN_REACH}] the loop's folder overlaps {', '.join(reach)}: it never writes "
                              "what judges it")
-        self.log = CycleLog(self.root / "records" / "constraint_log.jsonl")
+        self.log = CycleLog(self.root / CYCLE_LOG)
         self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
                                  read_account=read_account)
         self.problems = domain_problems(domain)
         if not settings.windows:
             self.problems.append((NO_BUDGET, "no provider window: an unknown budget stops the loop"))
+        named = tuple(self.meter.windows)
+        self.provider = settings.provider or (named[0] if len(named) == 1 else "")
+        if named and self.provider not in named:     # the callers are the domain's: nothing here can see where they go
+            self.problems.append((NO_BUDGET, f"the windows are for {', '.join(named)} and this folder's calls are stated to "
+                                  f"go to {settings.provider or 'none of them'}: an allowance pays only for its own "
+                                  "provider's requests, so LOOP must name the one they go to"))
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
             self.cut = cut_pool(domain.development(), settings.seed)
@@ -306,9 +355,10 @@ class ShadowLoop:
 
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
-        split. The judge's whole file is digested, since a helper it calls judges too. No profile is in it."""
+        split, and the file that declares it all when a runner opened one. The judge's whole file is digested, since a
+        helper it calls judges too. No profile is in it."""
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
-        return {"envelope": envelope_sha256(),
+        return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
                 "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
@@ -337,7 +387,7 @@ class ShadowLoop:
 
     def _refused(self) -> dict[str, Any] | None:
         """Why this tick is not a cycle. Each is a wait or a refusal: none spends, and none is a failed cycle."""
-        halted = stop_reason(self.root)
+        halted = self.cannot_record or stop_reason(self.root)
         if halted:
             return _blocked(STOPPED, halted, "Remove the STOP file to resume.")
         engaged = stop.engaged()
@@ -346,6 +396,10 @@ class ShadowLoop:
         invalid = self._invalid()
         if invalid is not None:
             return invalid
+        lost = self._lost_generations()
+        if lost:
+            return _blocked(RECORDS_UNREADABLE, lost, "A person inspects the folder. Nothing runs on records that do not "
+                            "check out.")
         paused = self.log.paused() or self._must_stop()
         if paused:
             return _blocked(PAUSED, f"the loop is paused: {paused}", "A person reads why, then loop.resume('<name>').")
@@ -360,6 +414,14 @@ class ShadowLoop:
             return _blocked(HELD_OUT_SPENT, "this held-out split has given all the evaluations it may: the gate needs a "
                             "fresh split, and only a person can confirm one", "A person freezes a fresh split and enrols.")
         return None
+
+    def _lost_generations(self) -> str:
+        """Why the chain of adoptions cannot be the one the log saw, or ``""``. A chain emptied or cut short still opens,
+        and numbers from its length, so the log is what shows it: a generation it saw must be there. A chain ahead of the
+        log is the crash between the two writes. Both cut together leave nothing to compare."""
+        seen, held = self.log.generation(), len(self.mh.adoption_rows())
+        return "" if seen <= held else (f"the log saw generation {seen} and the chain of adoptions holds {held}: a "
+                                        "generation's number must never be used twice")
 
     def _lacking(self) -> dict[str, Any] | None:
         """The domain checked as it is now: a handle's first check says nothing of what has changed since."""
@@ -433,25 +495,37 @@ class ShadowLoop:
         """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
         has died."""
         reply = self._refused() or self._run()
-        self._beat(reply["completion_state"], reply["warning_card"]["code"])
+        self._beat(reply["completion_state"], reply["warning_card"]["code"], reason=reply["message"])
         return reply
 
-    def _beat(self, state: str, code: str) -> None:
-        beat(self.root, domain=self.domain.name, at=self._now().isoformat(), tick=len(self.log.cycles()), state=state,
-             code=code)
+    @_exclusive
+    def fault(self, exc: BaseException) -> dict[str, Any]:
+        """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause."""
+        if self.log.paused():
+            return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
+        return self._record({"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
+                             "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]})
+
+    @_exclusive
+    def quiet(self) -> dict[str, Any]:
+        """How many cycles in a row found nothing to try, and when the last began, from the records as they stand now, so
+        a person's enrolment or resumption elsewhere counts. It runs nothing."""
+        cycles = self.log.cycles()
+        return _envelope("qualified-draft", STATUS, f"{self.log.quiet_streak()} ticks in a row found nothing to try",
+                         quiet=self.log.quiet_streak(), last_at=cycles[-1].get("at", "") if cycles else "")
+
+    def _beat(self, state: str, code: str, **said: Any) -> None:
+        beat(self.root, **{**self.beat_fields, **said}, domain=self.domain.name, at=self._now().isoformat(),
+             tick=len(self.log.cycles()), state=state, code=code)
 
     def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
-        """A provider with room for this tick's worst case, or the wait: the loop never spends anywhere else."""
-        now, worst, waits = self._now(), self.worst_case(), []
-        for provider in self.meter.windows:
-            spend = self.meter.reserve(provider, now, worst)
-            if spend.admitted:
-                return spend, None
-            waits.append(spend)
-        until = [w.wait_until for w in waits if w.wait_until is not None]
-        return None, _blocked(BUDGET_WAIT, "; ".join(f"{w.provider}: {w.reason}" for w in waits),
+        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them."""
+        spend = self.meter.reserve(self.provider, self._now(), self.worst_case())
+        if spend.admitted:
+            return spend, None
+        return None, _blocked(BUDGET_WAIT, f"{spend.provider}: {spend.reason}",
                               "The loop waits; it runs again when a ceiling or a reset allows.",
-                              wait_until=min(until).isoformat() if until else "")
+                              wait_until=spend.wait_until.isoformat() if spend.wait_until else "")
 
     def _run(self) -> dict[str, Any]:
         spend, waiting = self._reserve()
@@ -459,7 +533,7 @@ class ShadowLoop:
             return waiting
         self._beat("running", CYCLE)
         recommended: list[dict[str, Any]] = []
-        self.requests.open(spend.amount)
+        self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
@@ -480,19 +554,41 @@ class ShadowLoop:
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
                               "nothing is adopted, and a person gives it a caller that notes each request"}
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
-            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT,
-                    "reason": f"this tick reached the {spend.amount:g} it reserved and stopped, so nothing is adopted"}
+            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
-            row |= self._adopt(recommended[-1]["decision"])
+            row |= self._adopt(recommended[-1]["decision"], row)
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
-        reply = self._reply(self.log.cycle(row))
+        return self._record(row)
+
+    def _record(self, row: dict[str, Any]) -> dict[str, Any]:
+        try:
+            reply = self._reply(self.log.cycle(row))
+        except (OSError, LedgerError) as exc:
+            return self.lost_cycle(exc)
+        self.lost_cycles = 0
         self._pause_if_failing()
         return reply
 
-    def _adopt(self, decision: Any) -> dict[str, Any]:
-        adopted = self.mh.adopt(decision)
+    def lost_cycle(self, exc: BaseException) -> dict[str, Any]:
+        """A cycle the log would not take. The streak that pauses the loop is read from the log, so these leave it nothing
+        to read and are counted here, for as long as this process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
+        for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
+        should those fail too, this process still spends no more. A cycle that is written starts the count again."""
+        self.lost_cycles += 1
+        why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
+               f"its log ({type(exc).__name__}: {exc})")[:400]
+        if self.lost_cycles >= MAX_FAILED_CYCLES:
+            self.cannot_record = why
+            try:
+                ask_to_stop(self.root, why)
+            except OSError:
+                pass                  # the run still ends on what is held here
+        return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
+
+    def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
+        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row})
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}
@@ -535,9 +631,11 @@ class ShadowLoop:
         row |= {"dev_success": view.dev_success, "dev_cases": len(view.dev)}
         if not view.failures:
             return {**row, "outcome": "idle", "code": IDLE, "reason": measured["message"]}
-        constraint = name_constraint(self.domain.failures(view), len(view.dev))
+        records = self.domain.failures(view)
+        constraint = name_constraint(records, len(view.dev))
         row |= {"constraint": constraint.name, "basis": constraint.basis,
-                "observations": [list(o) for o in constraint.observations]}
+                "observations": [list(o) for o in constraint.observations],
+                "failure_records": dict(Counter(r.cause for r in records))}
         if constraint.name == UNKNOWN:
             return {**row, "outcome": "no_constraint", "code": NO_CONSTRAINT, "reason": constraint.reason}
         return {**row, **self._exploit(constraint, recommended)}
@@ -548,13 +646,14 @@ class ShadowLoop:
         def nobody(decided: dict[str, Any]) -> None:
             recommended.append(decided)              # no name is given: none stands in for a person's
 
-        proposer = _OnConstraint(FailureTraceStrategy(self._proposer), constraint.case_ids)
+        # earlier findings only: which candidate the gate took or refused is the held-out split's, and stays out of it
+        strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
-                   space=self.domain.execution().space, extra=(proposer,))
+                   space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),))
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
-                "recovery": run.recovery}
+                "recovery": run.recovery, **strategy.findings}
 
     @_exclusive
     def leave_shadow(self) -> dict[str, Any]:
@@ -586,9 +685,15 @@ class ShadowLoop:
             return refused
         version, head = self.mh._head()
         return _envelope("qualified-draft", STATUS, f"head version {version} of {self.domain.name}", head_version=version,
-                         head_profile=head.digest(), store_version=self.mh.store.current_approved(), scope=SCOPE,
+                         generation=version, head_profile=head.digest(),
+                         store_version=self.mh.store.current_approved(), scope=SCOPE,
                          paused=self.log.paused(), failed_streak=self.log.failed_streak(),
                          cycles=len(self.log.cycles()), held_out_left=self.mh.held_out_left(), g6_status=STATUS_LINE)
 
 
 __all__ = ["Constraint", "LoopSettings", "ShadowLoop", "name_constraint"]
+
+if __name__ == "__main__":
+    from g6.metaharness.runner import main
+
+    raise SystemExit(main())

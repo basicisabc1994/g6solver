@@ -9,7 +9,9 @@ import importlib.util
 import json
 import mmap
 import os
+import random
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,9 +25,12 @@ from g6.integrity import build_manifest
 from g6.metaharness import JUDGING_PATTERNS, Model, SuiteCase
 from g6.metaharness import domain as sealed_module
 from g6.metaharness.domain import Judge, sealed_closed
-from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
+from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Requests
 from g6.metaharness.method import Method
-from g6.self_maintenance.pacing import ProviderWindow
+from g6.metaharness.schema import Workflow, default_objectives
+from g6.metaharness.shadow import lineage
+from g6.operator.store import OperatorStore
+from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -302,8 +307,8 @@ def test_3_cases_that_are_truly_new_still_enrol(tmp_path):
 
 # Finding 4: the whole enforcement set is pinned, not just the loop's own files --------------------------------------------
 SRC = Path(g6.__file__).resolve().parent
-LOOP_FILES = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/shadow.py", "self_maintenance/envelope.py",
-              "self_maintenance/pacing.py")
+LOOP_FILES = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/runner.py", "metaharness/shadow.py",
+              "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py")
 BEHIND_THEM = ("operator/gates.py", "metaharness/select.py", "metaharness/reflect.py")   # imported by what they import
 
 
@@ -374,9 +379,17 @@ def _second_handle(tmp_path, domain):
     return other
 
 
+def _breaks(domain) -> None:
+    def broken(view):
+        raise RuntimeError("the domain fell over")
+
+    domain.failures = broken
+
+
 def test_5_a_second_handle_does_not_run_after_another_paused_the_loop(tmp_path):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
     other = _second_handle(tmp_path, domain)                   # opened now, so it has seen no failed cycle
+    _breaks(domain)
     for _ in range(3):
         loop.tick()
     assert loop.log.paused()
@@ -403,8 +416,9 @@ def test_5_a_second_handle_counts_the_cycles_another_ran(tmp_path):
 
 
 def test_5_a_person_resumes_from_their_own_handle(tmp_path):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
     person = _second_handle(tmp_path, domain)
+    _breaks(domain)
     for _ in range(3):
         loop.tick()
     assert person.resume("Ada")["completion_state"] == "qualified-draft"
@@ -419,7 +433,8 @@ def test_5_a_second_handle_reports_where_the_loop_stands(tmp_path):
 
 
 def test_6_a_pause_that_could_not_be_written_still_stops_the_fourth_cycle(tmp_path, monkeypatch):
-    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
 
     def full_disk(reason: str) -> None:
         raise OSError("no space left on the device")
@@ -435,7 +450,8 @@ def test_6_a_pause_that_could_not_be_written_still_stops_the_fourth_cycle(tmp_pa
 
 
 def test_6_a_person_can_clear_a_streak_whose_pause_was_never_written(tmp_path, monkeypatch):
-    loop, _ = _enrolled(tmp_path, proposer=domains.proposes(NOTHING_HELPS))
+    loop, domain = _enrolled(tmp_path)
+    _breaks(domain)
     monkeypatch.setattr(loop.log, "pause", lambda reason: (_ for _ in ()).throw(OSError("full")))
     for _ in range(3):
         loop.tick()
@@ -495,3 +511,250 @@ def test_9_a_stale_handle_cannot_accept_a_judge_that_lost_its_independence_by_en
     got = loop.enrol("Ada")
     assert _code(got) == "G6_E_LOOP_NO_INDEPENDENT_JUDGE"
     assert _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED"
+
+# The review of the runner: a retry inside a caller stays within what was reserved ------------------------------------------
+
+def test_a_retry_inside_a_caller_cannot_pass_what_was_reserved():
+    store = OperatorStore(":memory:")
+    meter = BudgetMeter((ProviderWindow("claude", 5, START),), store=store)
+    reservation = meter.reserve("claude", START, 1)
+    assert reservation.admitted and reservation.ceiling == 1
+    requests = _Requests()
+    requests.open(reservation.amount)
+    backend = FakeLLM(default="")
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(EmptyRetry(backend), requests).complete("system", "user")
+    assert len(backend.calls) == 1 and requests.sent == 1 and requests.stopped
+
+
+def test_a_fallback_cannot_pass_what_was_reserved():
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: the first backend is down")
+
+    first, second = FakeLLM(down), FakeLLM()
+    requests = _Requests()
+    requests.open(1)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(FallbackCaller((first, second)), requests).complete("system", "user")
+    assert len(first.calls) == 1 and second.calls == [] and requests.sent == 1 and requests.stopped
+
+
+def test_a_retry_within_what_was_reserved_goes_out_and_is_counted():
+    answers = iter(("", "", "an answer"))
+    backend = FakeLLM(lambda system, user: next(answers))
+    requests = _Requests()
+    requests.open(3)
+    assert _Counted(EmptyRetry(backend), requests).complete("system", "user") == "an answer"
+    assert len(backend.calls) == requests.sent == 3 and not requests.stopped
+
+
+def test_a_tick_of_blank_replies_stops_at_what_it_reserved_retries_and_all(tmp_path, monkeypatch):
+    domain = domains.WordProblems(tmp_path)
+    backend = FakeLLM(default="")
+    _with_model(domain, EmptyRetry(backend))
+    proposer = domains.proposes({"prompt": domains.WORKING})
+    loop, _ = _enrolled(tmp_path, domain=domain, proposer=proposer)
+    start, reserved = loop.mh._head(), 10
+    monkeypatch.setattr(loop, "worst_case", lambda: reserved)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT" and got["outcome"] == "blocked"
+    assert len(backend.calls) + len(proposer.calls) <= reserved and loop.mh._head() == start
+
+# The review of the runner: a generation's number is never used twice --------------------------------------------------------
+
+def _chain(loop) -> Path:
+    return loop.root / "workspace" / "adoptions.jsonl"
+
+
+def test_an_emptied_chain_of_adoptions_stops_the_loop_and_reuses_no_generation(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    first = loop.tick()
+    assert first["outcome"] == "adopted" and first["head_version"] == 1
+    _chain(loop).write_text("", encoding="utf-8")
+    again, _ = _loop(tmp_path, domain=domain, proposer=domains.proposes({"prompt": f"{domains.WORKING} Use careful arithmetic."}))
+    calls = len(domain.llm.calls)
+    got = again.tick()
+    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and got["completion_state"] == "blocked-escalated"
+    assert "generation 1" in got["message"] and len(domain.llm.calls) == calls
+    assert _chain(again).read_text(encoding="utf-8") == "" and len(again.log.cycles()) == 1
+
+
+def test_a_chain_cut_short_stops_the_loop(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=0.6)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.tick()["outcome"] == "adopted"
+    domain.tutor.collapsed = True
+    assert loop.tick()["outcome"] == "rolled_back"
+    _chain(loop).write_text(_chain(loop).read_text(encoding="utf-8").splitlines(keepends=True)[0], encoding="utf-8")
+    again, _ = _loop(tmp_path, domain=domain)
+    got = again.tick()
+    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 2" in got["message"]
+
+
+def test_a_lost_generation_stops_every_tick_until_a_person_acts(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    _chain(loop).write_text("", encoding="utf-8")
+    again, _ = _loop(tmp_path, domain=domain)
+    assert {_code(again.tick()) for _ in range(4)} == {"G6_E_LOOP_RECORDS_UNREADABLE"}
+    assert len(again.log.cycles()) == 1
+
+
+def test_a_chain_ahead_of_the_log_is_a_crash_between_two_writes_and_runs_on(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    lines = loop.log.path.read_text(encoding="utf-8").splitlines(keepends=True)
+    loop.log.path.write_text("".join(lines[:-1]), encoding="utf-8")   # the adoption was written, its cycle was not
+    again, _ = _loop(tmp_path, domain=domain)
+    assert _code(again.tick()) != "G6_E_LOOP_RECORDS_UNREADABLE"
+    assert again.mh._head()[0] >= 1
+
+# The third review: a tick that crosses a weekly reset ---------------------------------------------------------------------
+
+RESET = START + timedelta(days=7)
+
+
+def _crossing_a_reset(tmp_path):
+    """A loop one instant before a reset, whose first answer takes it past. The requests sent after it are in ``late``."""
+    now, late = [RESET - timedelta(milliseconds=1)], []
+    domain = domains.WordProblems(tmp_path)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, max_calls_per_run=1)})
+
+    def answer(system: str, user: str) -> str:
+        if now[0] >= RESET:
+            late.append(user)
+        now[0] = RESET + timedelta(milliseconds=1)
+        return domain.tutor(system, user)
+
+    domain.llm._responder = answer
+    settings = LoopSettings(windows=(ProviderWindow("claude", 20, START),), audit_per_tick=0, eval_calls=1,
+                            method=Method(cycles=1, propose_budget=4, select_budget=1, reflect_calls=1, use_recovery=False,
+                                          use_reflection=False))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=settings, now=lambda: now[0])
+    return loop, late
+
+
+def test_a_tick_crossing_a_reset_sends_nothing_on_the_old_weeks_reservation(tmp_path):
+    loop, late = _crossing_a_reset(tmp_path)
+    head = loop.mh._head()
+    got = loop.tick()
+    assert late == [] and got["outcome"] == "blocked" and _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT"
+    assert "week ended" in got["message"] and loop.mh._head() == head
+
+
+def test_the_next_tick_answers_to_the_new_weeks_ceiling(tmp_path):
+    loop, late = _crossing_a_reset(tmp_path)
+    loop.tick()
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and "day 1's ceiling of 4" in got["message"] and late == []
+
+
+def test_a_retry_inside_a_caller_stops_at_the_reset():
+    now = [RESET - timedelta(seconds=1)]
+
+    def blank_past_the_reset(system: str, user: str) -> str:
+        now[0] = RESET
+        return ""
+
+    backend = FakeLLM(blank_past_the_reset)
+    requests = _Requests(lambda: now[0])
+    requests.open(10, RESET)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(EmptyRetry(backend), requests).complete("system", "user")
+    assert len(backend.calls) == requests.sent == 1 and "week ended" in requests.stopped
+
+
+def test_a_reservation_says_when_its_week_ends():
+    meter = BudgetMeter((ProviderWindow("claude", 5, START),), store=OperatorStore(":memory:"))
+    assert meter.reserve("claude", START + timedelta(hours=1), 1).ends == RESET
+
+# The owner's ruling of 2026-11-01: the loop gates on success and model calls, and only reports wall clock --------------------
+
+class Jittery:
+    """A clock that never steps the same way twice, and whose ``at`` a model's reply can push on."""
+
+    def __init__(self) -> None:
+        self.noise, self.at = random.Random(20261101), 0.0
+
+    def __call__(self) -> float:
+        self.at += self.noise.uniform(0.0, 0.2)
+        return self.at
+
+
+def _on_this_clock(tmp_path, domain, clock):
+    loop = ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}),
+                      now=lambda: NOW, clock=clock)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    return loop.tick()
+
+
+def test_a_planted_gain_is_adopted_on_a_real_clock(tmp_path):
+    got = _on_this_clock(tmp_path, domains.WordProblems(tmp_path), time.monotonic)
+    assert got["outcome"] == "adopted" and got["head_version"] == 1, got["message"]
+
+
+def test_a_planted_gain_is_adopted_on_a_jittery_clock_even_when_it_really_is_slower(tmp_path):
+    clock, domain = Jittery(), domains.WordProblems(tmp_path)
+    tutor = domain.tutor
+
+    def slower_with_the_gain(system: str, user: str) -> str:
+        clock.at += 1.0 if "step by step" in system else 0.0
+        return tutor(system, user)
+
+    domain.llm._responder = slower_with_the_gain
+    got = _on_this_clock(tmp_path, domain, clock)
+    assert got["outcome"] == "adopted" and got["head_version"] == 1, got["message"]
+
+
+def test_the_loop_gates_on_two_objectives_and_a_persons_workflow_still_holds_wall_clock(tmp_path):
+    loop, _ = _loop(tmp_path)
+    assert [(o.name, o.direction, o.tolerance) for o in loop.workflow.objectives] == [("success", "max", 0.05),
+                                                                                      ("model_calls", "min", 0.05)]
+    assert [o.name for o in default_objectives()] == ["success", "model_calls", "wall_clock_s"]
+    assert next(f for f in dataclasses.fields(Workflow) if f.name == "objectives").default_factory is default_objectives
+
+
+def test_wall_clock_still_reaches_the_gates_measurements_and_is_reported_as_not_gated(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path)
+    seen, adopt = [], loop.mh.adopt
+
+    def noting(decision, **kwargs):
+        seen.append(decision)
+        return adopt(decision, **kwargs)
+
+    monkeypatch.setattr(loop.mh, "adopt", noting)
+    assert loop.tick()["outcome"] == "adopted"
+    measured = seen[0].measurements["wall_clock_s"]
+    assert measured["candidate_mean"] > 0
+    assert lineage(loop.root / "workspace")["recent"][-1]["measured"]["not_gated"] == {
+        "wall_clock_s": {"before": measured["base_mean"], "after": measured["candidate_mean"]}}
+
+
+def test_a_gain_past_the_limit_on_model_calls_is_still_refused(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    tutor, blank_next = domain.tutor, set()
+
+    def twice_for_the_gain(system: str, user: str) -> str:
+        if "step by step" in system:
+            blank_next.symmetric_difference_update({(system, user)})
+            if (system, user) in blank_next:
+                return ""
+        return tutor(system, user)
+
+    _with_model(domain, EmptyRetry(FakeLLM(twice_for_the_gain)))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    head = loop.mh._head()
+    got = loop.tick()
+    assert _code(got) == "G6_E_META_OBJECTIVE_REGRESSED" and "model_calls" in got["message"]
+    assert loop.mh._head() == head
+
+
+def test_a_folder_enrolled_under_other_objectives_adopts_nothing_until_it_enrols_again(tmp_path, monkeypatch):
+    with monkeypatch.context() as earlier:
+        earlier.setattr(sys.modules[ShadowLoop.__module__], "GATED", ("success", "model_calls", "wall_clock_s"))
+        _, domain = _enrolled(tmp_path)
+    again, _ = _loop(tmp_path, domain=domain)
+    assert _code(again.tick()) == "G6_E_META_STANDARD_CHANGED" and again.mh._head()[0] == 0
+    assert again.enrol("Ada")["completion_state"] == "qualified-draft"
+    assert again.tick()["outcome"] == "adopted"

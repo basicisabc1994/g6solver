@@ -98,7 +98,7 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
 Six discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_review_patch`;
-`g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission;
+`g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission; three `g6_improve_*` tools for G6's self-improvement loop;
 and thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
@@ -140,6 +140,14 @@ confirms a standard, an agent cannot answer for the person, and there is no term
 client without a dialog leaves the mission unconfirmed, and an unconfirmed mission takes no patch. The name the person
 types is recorded as given; it is not an authenticated identity. Merging is the person's separate decision. An `R3`
 mission's patch approval is not over MCP yet: its status names the terminal command for the person.
+
+`g6_improve_start`, `g6_improve_stop` and `g6_improve_status` control G6's self-improvement loop on a folder a person
+enrolled, at their own terminal. Starting needs `metaharness.improve`, and the person agrees in the client's dialog, as above: it starts a
+process of its own that outlives the session, works within the week's pacing rule and writes a daily digest under the
+folder. Stopping needs no permission and no dialog: it writes a local `STOP` file, kills nothing, and says whether the
+runner has gone yet. Status only reads. What the loop adopts holds in its own workspace: it pushes nothing. The runner's command carries on a
+start the person agreed to and is refused otherwise, and a stop ends that start, so only a new agreement brings it back.
+That is a check and not a boundary: a process with your rights can reach the same code.
 
 ## Choose a model
 

@@ -2,13 +2,23 @@
 """The loop's budget (design 6.6): weekly provider windows, paced, on the operator's one ledger."""
 from __future__ import annotations
 
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from g6.operator.store import OperatorStore
-from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow, ceiling, target
+from g6.self_maintenance.pacing import (
+    SETTINGS_FILE,
+    AccountReading,
+    BudgetMeter,
+    ProviderWindow,
+    ceiling,
+    read_settings,
+    target,
+    windows_from,
+)
 
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 
@@ -231,3 +241,107 @@ def test_8_a_refused_admission_writes_nothing(tmp_path):
     meter = _shared_meters(tmp_path / "operator.db", 1)[0]
     assert not meter.reserve("claude", _day(1), 201).admitted
     assert meter.reading("claude", _day(1)).used == 0
+
+
+# A reading has a date: what was charged after it cannot be in its figure ---------------------------------------------------
+
+def _dated(used: float, hour: int) -> AccountReading:
+    return AccountReading(used=used, read_at=START + timedelta(hours=hour))
+
+
+def test_a_charge_after_a_dated_reading_goes_on_top_of_it():
+    reading = _dated(350, 1)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reading("claude", _day(3)).used == 350
+    meter.settle(meter.reserve("claude", _day(3), 200), 100)
+    assert meter.reading("claude", _day(3)).used == 450
+
+
+def test_a_charge_before_a_dated_reading_may_be_in_it_so_it_does_not_add():
+    readings = [None]
+    meter = _meter(read_account=lambda provider, start: readings[0])
+    meter.settle(meter.reserve("claude", _day(3), 200), 100)
+    readings[0] = _dated(350, 1)
+    assert meter.reading("claude", _day(3)).used == 350
+
+
+def test_a_fresh_reading_takes_over_from_what_was_added_to_the_last():
+    readings = [_dated(350, 1)]
+    meter = _meter(read_account=lambda provider, start: readings[0])
+    meter.reading("claude", _day(3))
+    meter.settle(meter.reserve("claude", _day(3), 100), 100)
+    assert meter.reading("claude", _day(3)).used == 450
+    readings[0] = _dated(470, 2)
+    assert meter.reading("claude", _day(3)).used == 470
+
+
+def test_the_check_inside_the_transaction_counts_a_charge_since_the_reading():
+    reading = _dated(350, 1)
+    meter, rival = _shared_meters_with(reading)
+    assert meter.reading("claude", _day(3)).used == 350
+    rival.settle(rival.reserve("claude", _day(3), 100), 100)         # another handle, on the same ledger
+    assert meter.reading("claude", _day(3)).used == 450
+    assert not meter.reserve("claude", _day(3), 151).admitted        # 450 + 151 is over day three's 600
+    assert meter.reserve("claude", _day(3), 150).admitted
+
+
+def _shared_meters_with(reading: AccountReading) -> list[BudgetMeter]:
+    store = OperatorStore(":memory:")
+    return [BudgetMeter((ProviderWindow("claude", 1000, START),), store=store, read_account=lambda provider, start: reading)
+            for _ in range(2)]
+
+
+# When room comes, and the settings file ----------------------------------------------------------------------------------
+
+def test_the_next_day_of_a_window_is_when_its_ceiling_can_rise():
+    window = ProviderWindow("claude", 1000, START)
+    assert window.next_day(START) == START + timedelta(days=1)
+    assert window.next_day(_day(7)) == START + timedelta(days=7)      # the last day ends the week
+
+
+def test_room_comes_with_the_soonest_rise_of_any_ceiling():
+    windows = (ProviderWindow("claude", 100, START), ProviderWindow("codex", 100, START + timedelta(hours=5)))
+    meter = BudgetMeter(windows, store=OperatorStore(":memory:"))
+    assert meter.next_room(START + timedelta(hours=6)) == START + timedelta(days=1)
+    assert meter.next_room(START + timedelta(hours=25)) == START + timedelta(hours=29)
+
+
+def _settings(tmp_path, **window) -> dict:
+    fields = {"provider": "claude", "allowance": 5000, "week_start": START.isoformat()} | window
+    (tmp_path / SETTINGS_FILE).write_text(json.dumps({"windows": [fields]}), encoding="utf-8")
+    return read_settings(tmp_path)
+
+
+def test_window_settings_come_from_the_file_in_the_loops_folder(tmp_path):
+    [window] = windows_from(_settings(tmp_path, reserve_share=0.3))
+    assert (window.provider, window.allowance, window.week_start, window.reserve_share) == ("claude", 5000, START, 0.3)
+
+
+def test_an_allowance_is_an_estimate_until_the_file_says_it_is_a_real_figure(tmp_path):
+    assert windows_from(_settings(tmp_path))[0].estimated is True
+    assert windows_from(_settings(tmp_path, estimated=False))[0].estimated is False
+
+
+def test_the_owners_reserve_stays_the_default_when_the_file_is_silent(tmp_path):
+    assert windows_from(_settings(tmp_path))[0].reserve_share == 0.2
+
+
+@pytest.mark.parametrize("bad", [
+    {"allowance": 0}, {"allowance": "plenty"}, {"week_start": "soon"}, {"week_start": "2026-10-26T08:00:00"},
+    {"reserve_share": 1.0}, {"provider": ""},
+])
+def test_a_settings_file_that_makes_no_sense_is_refused(tmp_path, bad):
+    with pytest.raises(ValueError):
+        windows_from(_settings(tmp_path, **bad))
+
+
+@pytest.mark.parametrize("text", ["not json", "[]", '{"windows": 3}', '{"windows": [3]}', '{"windows": []}'])
+def test_a_settings_file_that_cannot_be_read_says_so(tmp_path, text):
+    (tmp_path / SETTINGS_FILE).write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError):
+        windows_from(read_settings(tmp_path))
+
+
+def test_a_missing_settings_file_says_so(tmp_path):
+    with pytest.raises(ValueError, match=SETTINGS_FILE):
+        read_settings(tmp_path)
