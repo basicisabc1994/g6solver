@@ -55,7 +55,7 @@ def said_of(root: Path, row: Mapping[str, Any]) -> str:
     """What the system said of its own run: "done" for an arm with no loop, "clean" for a loop that ended with nothing failing, and
     "unsure" for any other end, a missing record included. It never decides the rule; it is how the report asks if "done" can be
     trusted."""
-    if row.get("arm", "")[:1] not in ("L", "M", "R"):
+    if row.get("arm", "")[:1] not in ("K", "L", "M", "R"):
         return "done"
     path = root / str(row.get("run")) / "run.json"
     status = (json.loads(path.read_text("utf-8")).get("repairs") or {}).get("status") if path.is_file() else None
@@ -120,11 +120,16 @@ def judged(results: Sequence[Mapping[str, Any]]) -> bool:
     return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < 0.05 for r in results)
 
 
+def failure_rich(rows: Rows, tasks: Iterable[str], score: str) -> list[str]:
+    """The bugs on which at least one of arm S's own runs failed on this score. A run with no verdict is not a failure."""
+    return [t for t in tasks if any(rows.get(("S", t, r), {}).get(score) is False for r in (1, 2, 3))]
+
+
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
-           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",)) -> None:
+           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",), scores: Sequence[str] = SCORES) -> None:
     """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it."""
     shown = [arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
-    for score in SCORES:
+    for score in scores:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
         for r in [*results, *(compare(rows, loop_arm, other, tasks, repeats, score) for other in shown)]:
             uplift = "n/a" if r["uplift"] is None else f"{r['uplift']:+.1%}"
@@ -147,9 +152,19 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
 
 
+def rich(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str, control: Sequence[str] = ("R",)) -> None:
+    """The same rule on the arms' own runs of the failure-rich bugs alone, score by score (PLAN.md, 2026-11-01), printed beside the
+    result on all the bugs and never in place of it."""
+    for score in SCORES:
+        kept = failure_rich(rows, tasks, score)
+        print(f"{name:22} {score:11} failure-rich: {len(kept)} of {len(tasks)} bugs")
+        report(rows, name, kept, repeats, loop_arm=loop_arm, control=control, scores=(score,))
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--loop", default="M9", help="the frozen loop's arm")
+    ap.add_argument("--critic", default="K1", help="the critic-led arm, reported beside --loop (PLAN.md, 2026-11-01)")
     ap.add_argument("--trained", help="stage 3: the arm G6's training produced, as M<n>, judged against --loop as well")
     args = ap.parse_args(argv)
     root = c.archive_root() / "round3"
@@ -162,6 +177,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     report(rows, "stage 2, new repos", unseen, (1, 2), loop_arm=args.loop)
     report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop)
     report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",))
+    rich(rows, "stage 2, failure-rich", unseen, (1, 2), args.loop)
+    beside = ("R", args.loop)
+    report(rows, f"stage 1, {args.critic} second", fresh, (1, 2), loop_arm=args.critic, control=beside)
+    report(rows, f"held-out, {args.critic}", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.critic, control=beside)
+    report(rows, f"stage 2, {args.critic}", unseen, (1, 2), loop_arm=args.critic, control=beside)
+    rich(rows, f"failure-rich, {args.critic}", unseen, (1, 2), args.critic, control=beside)
+    report(rows, f"training, {args.critic}", train, (1, 2), loop_arm=args.critic, others=("A",), control=("R", f"L{args.loop[1:]}"))
     if args.trained:
         others = (args.loop, "A", "T")
         report(rows, "stage 3, new repos", unseen, (1, 2), loop_arm=args.trained, others=others)
