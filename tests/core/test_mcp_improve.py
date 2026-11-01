@@ -15,6 +15,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,14 +30,16 @@ from g6.core.ledger import digest as digest_of  # noqa: E402
 from g6.mcp import build_server, improve  # noqa: E402
 from g6.metaharness import shadow  # noqa: E402
 from g6.metaharness.shadow import ADOPTIONS  # noqa: E402
-from g6.self_maintenance import digest  # noqa: E402
+from g6.self_maintenance import digest, envelope  # noqa: E402
 from g6.self_maintenance.envelope import (  # noqa: E402
     CYCLE_LOG,
     CycleLog,
+    ask_to_stop,
     beat,
     file_digest,
     runner_lock,
     stop_reason,
+    stops_asked,
 )
 from g6.self_maintenance.pacing import read_settings  # noqa: E402
 
@@ -538,6 +541,61 @@ def test_a_count_that_breaks_during_the_start_stops_it_and_keeps_the_stop(rig, m
     monkeypatch.setattr(CycleLog, "start", broken_then_stopped)
     got = improve.start(rig.root, "Ada")
     assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a newer stop" in stop_reason(rig.root)
+
+
+def test_a_stop_that_cannot_add_to_the_count_during_a_start_survives_it(rig, monkeypatch):
+    """The start's check passed, and then the count went read-only: a stop that said it stopped has to stay."""
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    count = rig.root / "stops.log"
+    count.write_text("an old stop\n", encoding="utf-8")
+    real, stopped = CycleLog.start, []
+
+    def read_only_then_stopped(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        count.chmod(stat.S_IREAD)
+        stopped.append(improve.stop(str(rig.root), "the owner withdrew agreement"))
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", read_only_then_stopped)
+    try:
+        got = improve.start(rig.root, "Ada")
+    finally:
+        count.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert stopped[0]["stopped"] is True and rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED"
+    assert (rig.root / "STOP").is_file() and stop_reason(rig.root)
+    monkeypatch.undo()
+    assert not CycleLog(rig.root / CYCLE_LOG).start_in_force()
+
+
+def test_a_stop_with_no_count_to_write_to_is_counted_in_a_file_of_its_own(rig):
+    rig.enrol()
+    count = rig.root / "stops.log"
+    count.write_text("one\n", encoding="utf-8")
+    count.chmod(stat.S_IREAD)
+    try:
+        ask_to_stop(rig.root, "uncountable")
+        ask_to_stop(rig.root, "and again")
+        assert stops_asked(rig.root) == 3
+    finally:
+        count.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_a_stop_with_nowhere_to_be_counted_does_not_say_it_stopped(rig, monkeypatch):
+    """A full disk takes neither a line nor a file and still lets a start delete one, so this stop could be erased."""
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    count = rig.root / "stops.log"
+    count.write_text("an old stop\n", encoding="utf-8")
+    count.chmod(stat.S_IREAD)
+    (rig.root / "stops.log.taken").mkdir()                               # so the file of its own cannot be written either
+    monkeypatch.setattr(envelope, "uuid4", lambda: SimpleNamespace(hex="taken"))
+    try:
+        got = improve.stop(str(rig.root), "no room for this")
+    finally:
+        count.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert _code(got) == "G6_E_LOOP_STOP_FAILED" and got["completion_state"] == "blocked-escalated"
+    assert (rig.root / "STOP").is_file()
 
 
 def test_no_stop_count_yet_is_no_reason_to_refuse_and_asking_writes_none(rig):

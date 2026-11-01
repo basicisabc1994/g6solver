@@ -242,7 +242,7 @@ def stop(folder: str, reason: str = "") -> dict:
     try:
         why = ask_to_stop(root, reason)
     except OSError as exc:
-        return _blocked(STOP_FAILED, f"the STOP file could not be written: {type(exc).__name__}: {exc}"[:400],
+        return _blocked(STOP_FAILED, f"the stop could not be written: {type(exc).__name__}: {exc}"[:400],
                         running=runner_alive(root), folder=str(root))
     record_stop(root, why, at=datetime.now().astimezone().isoformat())
     running = runner_alive(root)

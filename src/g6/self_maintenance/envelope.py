@@ -24,6 +24,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ContextManager
+from uuid import uuid4
 
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import ChainLedger, LedgerError
@@ -176,11 +177,13 @@ def file_digest(path: Any) -> str:
 
 
 def stops_asked(root: str | Path) -> int:
-    """How many stops have been asked for on this folder, from the file ``ask_to_stop`` adds to. A start records this, so
-    any stop after it shows whatever happened to the ``STOP`` file. One that cannot be read is ``-1``, which is no count a
-    start ever recorded."""
+    """How many stops have been asked for on this folder: the lines of the file ``ask_to_stop`` adds to, and one for each
+    file it left beside that when it could not. A start records this, so any stop after it shows whatever happened to the
+    ``STOP`` file. One that cannot be read is ``-1``, which is no count a start ever recorded."""
+    path = Path(root) / STOPS_FILE
     try:
-        return (Path(root) / STOPS_FILE).read_bytes().count(b"\n")
+        apart = sum(found.name.startswith(f"{STOPS_FILE}.") for found in path.parent.iterdir())
+        return apart + (path.read_bytes().count(b"\n") if path.exists() else 0)
     except FileNotFoundError:
         return 0
     except OSError:
@@ -207,16 +210,24 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
 
     Each stop is counted first, in a file no lock stands in front of, because the records can be held for as long as a
     tick lasts and a stop may never wait. It is counted before the ``STOP`` file is written, so a start that misses the
-    count cannot have removed that file. The ``STOP`` file is what stops, so a count that cannot be written is left."""
+    count cannot have removed that file. A count that will not take it gets a file of the stop's own beside it, which
+    ``stops_asked`` adds, so a stop that says it stopped is still seen. A stop with neither still writes ``STOP``, which is
+    what stops, and then raises ``OSError``, since a start could not see it and might remove that file."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
+    counted = True
     try:
         with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
             stops.write(said[:200] + "\n")
     except OSError:
-        pass
+        try:
+            (Path(root) / f"{STOPS_FILE}.{uuid4().hex}").write_text(said[:200] + "\n", encoding="utf-8")
+        except OSError:
+            counted = False
     path = Path(root) / STOP_FILE
     if not path.exists():
         path.write_text(said + "\n", encoding="utf-8")
+    if not counted:
+        raise OSError("this stop could not be counted, so a start might remove it")
     return stop_reason(root)
 
 
