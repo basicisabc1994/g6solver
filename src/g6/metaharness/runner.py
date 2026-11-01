@@ -24,9 +24,10 @@ first, doubling to ``LONGEST_REST``, and the digest says so. A person enrolling 
 **A folder** holds ``settings.json``: ``windows`` (``g6.self_maintenance.pacing``), ``read_account`` (false leaves the
 meter on its own count) and ``domain_file``, a Python file the person owns, as ``G6_METAHARNESS`` names one. It lies
 outside the folder, since the loop never writes what judges it, and defines ``LOOP = {"domain": ..., "proposer": ...}``,
-with ``method``, ``seed``, ``audit_per_tick`` and ``eval_calls`` where they differ from ``LoopSettings``. Nothing else is
-read from it, so neither file can reach ``person_free_adoption_outside_shadow``. Enrolling pins its digest, so an edit is
-a changed frozen item, and ``g6_improve_start`` refuses it before it could run.
+with ``method``, ``seed``, ``audit_per_tick`` and ``eval_calls`` where they differ from ``LoopSettings``. All of a folder's
+calls are billed to one provider, so with more than one window ``provider`` names the one they go to, and nothing runs
+without it. Nothing else is read from it, so neither file can reach ``person_free_adoption_outside_shadow``. Enrolling pins
+its digest, so an edit is a changed frozen item, and ``g6_improve_start`` refuses it before it could run.
 
 ``enrol`` and ``resume`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's name is
 typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
@@ -89,7 +90,7 @@ SETTINGS_CHANGED = "G6_E_LOOP_SETTINGS_CHANGED"
 #: What a tick is refused for that passes on its own: anything else with no cycle waits for a person.
 _WAITS = (BUDGET_WAIT, BUSY, STOPPED, stop.STOPPED)
 #: What a domain file may set beside its domain and proposer.
-_TUNING = ("method", "seed", "audit_per_tick", "eval_calls")
+_TUNING = ("method", "seed", "audit_per_tick", "eval_calls", "provider")
 _MODULE = "g6_loop_domain"
 
 

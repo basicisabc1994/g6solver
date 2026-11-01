@@ -617,13 +617,17 @@ the Codex read:
 
 ```json
 {"domain_file": "<a Python file outside this folder>",
- "windows": [{"provider": "claude", "allowance": 5000, "week_start": "2026-11-02T00:00:00+00:00"},
-             {"provider": "codex", "allowance": 5000, "week_start": "2026-11-03T04:00:00+00:00"}]}
+ "windows": [{"provider": "claude", "allowance": 5000, "week_start": "2026-11-02T00:00:00+00:00"}]}
 ```
 
 The domain file is the person's own, as `G6_METAHARNESS` names one, and lies outside the folder, which the loop writes and
 what judges it must never be in. It defines `LOOP = {"domain": ..., "proposer": ...}`, with `method`, `seed`,
-`audit_per_tick` and `eval_calls` where they differ from the defaults. Nothing else is read from either file, so neither
+`audit_per_tick` and `eval_calls` where they differ from the defaults. All of a folder's calls, its domain's and its
+proposer's, are billed to one provider, because the callers are the domain's and nothing in the loop can see where they go
+or send them elsewhere. With one window that is the window. With more, `LOOP` names it in `provider`, and without that
+nothing runs (`G6_E_LOOP_NO_BUDGET`). A tick reserves only on that provider and waits at its limit however much another
+window holds, so a second subscription's allowance is used by a second folder whose domain's callers go there. The statement
+is the person's and nothing checks it. Nothing else is read from either file, so neither
 can reach `person_free_adoption_outside_shadow`. Enrolling pins the domain file's digest, so an edit is a changed frozen
 item: `g6_improve_start`, a restart and lifting a pause each refuse it before it can run, and what runs is the bytes that
 were checked. The pin holds that file, not what it imports. Then, at a terminal, a person enrols it and types the domain's

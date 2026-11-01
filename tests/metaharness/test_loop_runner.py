@@ -426,6 +426,23 @@ def test_the_settings_file_cannot_turn_the_owners_ruling_on(tmp_path):
     assert loop.settings.person_free_adoption_outside_shadow is False
 
 
+TWO_WINDOWS = [{"provider": name, "allowance": 1_000_000, "week_start": START.isoformat()} for name in ("claude", "codex")]
+
+
+def test_the_domain_file_says_which_provider_its_calls_go_to(tmp_path):
+    root = _folder(tmp_path, windows=TWO_WINDOWS)
+    file = tmp_path / "domain.py"
+    file.write_text(file.read_text(encoding="utf-8").replace('"audit_per_tick": 60,', '"audit_per_tick": 60, "provider": "codex",'),
+                    encoding="utf-8")
+    loop, _ = open_loop(root, now=lambda: START)
+    assert loop.provider == "codex" and loop.problems == []
+
+
+def test_two_windows_and_no_word_on_which_one_the_calls_go_to_runs_nothing(tmp_path):
+    loop, _ = open_loop(_folder(tmp_path, windows=TWO_WINDOWS), now=lambda: START)
+    assert [code for code, _ in loop.problems] == ["G6_E_LOOP_NO_BUDGET"]
+
+
 def test_an_edit_to_the_domain_file_a_person_enrolled_stops_the_loop(tmp_path):
     root = _folder(tmp_path)
     loop, _ = open_loop(root, now=lambda: START + timedelta(days=2))

@@ -118,6 +118,7 @@ class LoopSettings:
     seed: int = 20261031             # cuts the development pool
     audit_per_tick: int = 10         # monitor cases per tick
     eval_calls: int = 2000           # the most one held-out evaluation may call; the gate's thresholds are not settings
+    provider: str = ""               # the window this folder's calls go to; with one window, that window
     # THE OWNER'S RULING, NOT THE LOOP'S: may a passed gate stand in for a person outside the loop's own workspace?
     # Off until they say otherwise. No profile can reach it, and in this phase turning it on still moves nothing.
     person_free_adoption_outside_shadow: bool = False
@@ -318,6 +319,12 @@ class ShadowLoop:
         self.problems = domain_problems(domain)
         if not settings.windows:
             self.problems.append((NO_BUDGET, "no provider window: an unknown budget stops the loop"))
+        named = tuple(self.meter.windows)
+        self.provider = settings.provider or (named[0] if len(named) == 1 else "")
+        if named and self.provider not in named:     # the callers are the domain's: nothing here can see where they go
+            self.problems.append((NO_BUDGET, f"the windows are for {', '.join(named)} and this folder's calls are stated to "
+                                  f"go to {settings.provider or 'none of them'}: an allowance pays only for its own "
+                                  "provider's requests, so LOOP must name the one they go to"))
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
             self.cut = cut_pool(domain.development(), settings.seed)
@@ -506,17 +513,13 @@ class ShadowLoop:
              tick=len(self.log.cycles()), state=state, code=code)
 
     def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
-        """A provider with room for this tick's worst case, or the wait: the loop never spends anywhere else."""
-        now, worst, waits = self._now(), self.worst_case(), []
-        for provider in self.meter.windows:
-            spend = self.meter.reserve(provider, now, worst)
-            if spend.admitted:
-                return spend, None
-            waits.append(spend)
-        until = [w.wait_until for w in waits if w.wait_until is not None]
-        return None, _blocked(BUDGET_WAIT, "; ".join(f"{w.provider}: {w.reason}" for w in waits),
+        """This tick's worst case on the provider its calls go to, or the wait: room on another pays for none of them."""
+        spend = self.meter.reserve(self.provider, self._now(), self.worst_case())
+        if spend.admitted:
+            return spend, None
+        return None, _blocked(BUDGET_WAIT, f"{spend.provider}: {spend.reason}",
                               "The loop waits; it runs again when a ceiling or a reset allows.",
-                              wait_until=min(until).isoformat() if until else "")
+                              wait_until=spend.wait_until.isoformat() if spend.wait_until else "")
 
     def _run(self) -> dict[str, Any]:
         spend, waiting = self._reserve()

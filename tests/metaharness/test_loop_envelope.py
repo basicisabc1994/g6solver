@@ -18,13 +18,13 @@ from g6.core import stop
 from g6.core.llm import FakeLLM
 from g6.harness import Check
 from g6.integrity import build_manifest
-from g6.metaharness import Profile, SuiteCase
+from g6.metaharness import Model, Profile, SuiteCase
 from g6.metaharness import monitor as drift
 from g6.metaharness.domain import Judge
 from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.self_maintenance.envelope import heartbeat
-from g6.self_maintenance.pacing import ProviderWindow
+from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 from g6.workspace._coordination import Coordination
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -179,10 +179,49 @@ def test_at_a_reported_limit_the_loop_waits_for_the_reset_and_says_when(tmp_path
     assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == reset.isoformat()
 
 
-def test_a_second_provider_takes_over_when_the_first_is_at_its_ceiling(tmp_path):
-    loop, _ = _enrolled(tmp_path, settings=_windows(("claude", 100), ("codex", 1_000_000)))
+def test_a_tick_is_billed_to_the_provider_its_calls_go_to_whatever_the_first_window_holds(tmp_path):
+    settings = dataclasses.replace(_windows(("claude", 100), ("codex", 1_000_000)), provider="codex")
+    loop, _ = _enrolled(tmp_path, settings=settings)
     got = loop.tick()
     assert got["outcome"] == "adopted" and got["budget"]["provider"] == "codex"
+
+
+def _codex_is_full(provider: str, week_start: datetime) -> AccountReading | None:
+    return AccountReading(used=1_000_000, limited_until=START + timedelta(days=7)) if provider == "codex" else None
+
+
+def _routed_to_codex(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"codex": Model(domain.llm)},
+                                                   initial={"routing": {"answer": "codex"}, "prompt": domains.TERSE})
+    return domain
+
+
+def test_another_providers_allowance_cannot_pay_for_calls_when_nothing_says_where_they_go(tmp_path):
+    domain = _routed_to_codex(tmp_path)
+    alone, _ = _enrolled(tmp_path, domain=domain, settings=_windows(("codex", 1_000_000)), read_account=_codex_is_full)
+    assert _code(alone.tick()) == "G6_E_LOOP_BUDGET_WAIT" and domain.llm.calls == []
+    both, _ = _loop(tmp_path, domain=domain, settings=_windows(("codex", 1_000_000), ("claude", 1_000_000)),
+                    read_account=_codex_is_full)
+    got = both.tick()
+    assert _code(got) == "G6_E_LOOP_NO_BUDGET" and "codex, claude" in got["message"] and domain.llm.calls == []
+
+
+def test_a_stated_provider_at_its_limit_waits_however_much_another_window_holds(tmp_path):
+    domain = _routed_to_codex(tmp_path)
+    settings = dataclasses.replace(_windows(("claude", 1_000_000), ("codex", 1_000_000)), provider="codex")
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=settings, read_account=_codex_is_full)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == (START + timedelta(days=7)).isoformat()
+    assert domain.llm.calls == []
+
+
+def test_a_provider_with_no_window_runs_nothing(tmp_path):
+    settings = dataclasses.replace(_windows(("claude", 1_000_000)), provider="codex")
+    loop, domain = _loop(tmp_path, settings=settings)
+    assert _code(loop.enrol("Ada")) == "G6_E_LOOP_NO_BUDGET"
+    assert _code(loop.tick()) == "G6_E_LOOP_NO_BUDGET" and domain.llm.calls == []
 
 
 def test_every_cycle_records_its_use_against_the_pacing_rule(tmp_path):
