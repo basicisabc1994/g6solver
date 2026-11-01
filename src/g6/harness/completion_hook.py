@@ -8,7 +8,7 @@ so a commit the agent makes later cannot move it. With ``G6_LOOP_SCOUTS=before_f
 prompt also runs the scouts (``completion_loop.prepare``) and gives the agent what they found as ``additionalContext``.
 Nothing heavy is imported until a hook has work to do. A prompt after a loop has ended arms a new one (``_again``), so one
 ended loop does not leave the rest of a session unreviewed. Its base is HEAD at that prompt, and it has a folder of its own
-(``current``).
+(``current``). A session's prompts take turns (``_one_prompt``).
 
 ``stop``: ``completion_loop.advance``, for a session with a task; with none, because no prompt hook saw it, the task is read
 from the transcript and HEAD is the base. ``{"decision": "block", "reason": ...}`` hands the repair text back to the agent;
@@ -29,6 +29,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from g6.core.storage import state_path
 
@@ -37,6 +38,8 @@ CHILD = "G6_COMPLETION_LOOP_CHILD"
 #: What a stop says with no repository to test in.
 NO_REPOSITORY = ("G6's completion loop did not run: this folder is not a git repository with a commit, so there is no base to "
                  "test the work against. Nothing was tested.")
+#: How long a prompt waits for another of its session: past this the hook fails, says so, and the prompt goes ahead.
+PROMPT_WAIT = 30.0
 
 
 def folder(session_id: str) -> Path:
@@ -50,6 +53,16 @@ def current(session_id: str, asked: dict) -> Path:
     base, with nothing committed between them, are two runs, and each keeps its rounds and its row."""
     run = asked.get("run", 0)
     return folder(f"{session_id}:{asked['base']}:{run}") if run else folder(session_id)
+
+
+def _one_prompt(session: Path) -> Any:
+    """One prompt hook of a session at a time, held from before it reads ``task.json`` until after it writes: what a prompt does
+    depends on what it reads, so a prompt acting on an earlier read could arm a run another prompt had armed, and wipe what that
+    run found. The lock is the operating system's, so it dies with its process. The scouts run outside it."""
+    from g6.workspace._coordination import Coordination
+
+    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return Coordination(session / ".prompt").mutex(wait=PROMPT_WAIT)
 
 
 def _here(cwd: str) -> tuple[Path, str] | None:
@@ -160,16 +173,17 @@ def on_prompt(event: dict) -> dict:
     task, known = str(event.get("prompt") or "").strip(), session / "task.json"
     if not task:
         return {}
-    if known.exists():
-        asked = json.loads(known.read_text(encoding="utf-8"))
-        path = current(event["session_id"], asked) / "state.json"
-        state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        if state.get("done"):
-            _again(event, asked, state, task)
-        elif "started" not in state:
-            known.write_text(json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}), encoding="utf-8")
-        return {}
-    asked = _record(session, event["cwd"], task)
+    with _one_prompt(session):
+        if known.exists():
+            asked = json.loads(known.read_text(encoding="utf-8"))
+            path = current(event["session_id"], asked) / "state.json"
+            state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            if state.get("done"):
+                _again(event, asked, state, task)
+            elif "started" not in state:
+                known.write_text(json.dumps({**asked, "task": f"{asked['task']}\n\n{task}"}), encoding="utf-8")
+            return {}
+        asked = _record(session, event["cwd"], task)
     if asked is None:
         return {}
     from g6.harness import completion_loop as loop

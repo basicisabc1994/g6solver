@@ -279,6 +279,16 @@ def test_a_prompt_after_a_loop_ended_records_the_new_task_and_base_and_a_run_of_
     assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {}      # that review was of another base
 
 
+def test_a_prompt_that_cannot_get_its_turn_changes_nothing_and_says_so(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
+    before = recorded()
+    monkeypatch.setattr(hook, "PROMPT_WAIT", 0.05)
+    with hook._one_prompt(hook.folder("s1")):
+        code, out, err = hooked(monkeypatch, capsys, "prompt", prompt(repo, "and more"))
+    assert (code, out) == (1, "") and "not tested" in err      # any exit but 2 lets the prompt go ahead
+    assert recorded() == before
+
+
 def test_a_prompt_on_the_same_base_keeps_what_the_ended_loop_read(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
     (hook.folder("s1") / "state.json").write_text(json.dumps({"done": True, "reviews": [{"patch": "the digest"}]}), encoding="utf-8")

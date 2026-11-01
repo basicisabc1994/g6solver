@@ -3381,3 +3381,71 @@ def test_a_new_base_does_not_take_a_review_of_the_same_diff_on_the_old_base(worl
     said = stopped(world)
     assert len(critic.calls) == 2, f"a new base was skipped: {said}"
     assert "keep double within the new limit" in critic.calls[1][1] and sent(critic.calls[0][1]) == sent(critic.calls[1][1])
+
+def two_prompts_at_once(world, monkeypatch, meanwhile=None) -> None:
+    """Two prompts of one session at once, the first held at its read of the repository. ``meanwhile``: what happens if the
+    second gets through while the first is held, which it can only do with nothing holding the two apart."""
+    here, entered, release = hook._here, threading.Event(), threading.Event()
+
+    def held(cwd):
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(30), "the test never released the held prompt"
+        return here(cwd)
+
+    monkeypatch.setattr(hook, "_here", held)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(prompted, world, "the first prompt")
+        assert entered.wait(30)
+        second = pool.submit(prompted, world, "the second prompt")
+        try:
+            second.result(timeout=2)
+            if meanwhile:
+                meanwhile()
+        except TimeoutError:
+            pass      # a prompt that waits its turn is held here
+        finally:
+            release.set()
+        first.result(timeout=30)
+        second.result(timeout=30)
+
+
+def test_a_delayed_prompt_cannot_erase_what_a_live_loop_found(world, monkeypatch):
+    tests = Reviewed(monkeypatch)
+    critic = reviewer("none", "one")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    live = []
+
+    def finds_a_defect() -> None:
+        world.edit(FIXED + "# the next task\n")
+        tests.failing = {"test_critic.py"}
+        assert stopped(world)["decision"] == "block"
+        live.append(hook.current("s1", json.loads((hook.folder("s1") / "task.json").read_text(encoding="utf-8"))))
+        assert len(loop._load(live[0])["reviews"]) == 1
+
+    two_prompts_at_once(world, monkeypatch, finds_a_defect)
+    if not live:
+        finds_a_defect()
+    assert len(loop._load(live[0]).get("reviews", [])) == 1, "a delayed prompt erased the live loop's finding"
+
+
+def test_two_prompts_at_once_arm_one_loop_and_it_holds_both(world, monkeypatch):
+    Reviewed(monkeypatch)
+    approved(monkeypatch, reviewer("none"))
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    two_prompts_at_once(world, monkeypatch)
+    asked = json.loads((hook.folder("s1") / "task.json").read_text(encoding="utf-8"))
+    assert asked["run"] == 1 and "the first prompt" in asked["task"] and "the second prompt" in asked["task"], (
+        "one prompt was lost")
+
+
+def test_two_first_prompts_at_once_lose_neither(world, monkeypatch):
+    Reviewed(monkeypatch)
+    two_prompts_at_once(world, monkeypatch)
+    task = json.loads((hook.folder("s1") / "task.json").read_text(encoding="utf-8"))["task"]
+    assert "the first prompt" in task and "the second prompt" in task, "one prompt was lost"
