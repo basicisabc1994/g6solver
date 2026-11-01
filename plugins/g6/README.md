@@ -78,7 +78,8 @@ This loop is the worked examples' arm K, and it has been measured on seven train
 kept out of training. It also differs from what was measured:
 
 - The reviewer here receives a text pack with no tools: the task, the patch, and the files the patch touches as they were at
-  the base, cut at 120,000 characters. The measured reviewer read a folder holding the whole repository.
+  the base, up to 120,000 characters. Only those files may be cut: a task and patch too long to send whole get no review, and
+  so no clean review. The measured reviewer read a folder holding the whole repository.
 - The Stop hook replays the rounds: each hook is a new process that reads what is done from a file, where the measured runner
   held the session itself. A review repeats if a hook is cut short.
 - G6 runs each review's test alone, so one that will not run hides no other. The measured runner ran them together.

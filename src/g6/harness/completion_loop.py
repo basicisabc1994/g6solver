@@ -123,6 +123,8 @@ NOT_ON = ("G6's completion loop did not run: nothing in your key file approves a
           "G6_LLM_PROVIDER=claude_code turns on the scouts' loop instead. Nothing was tested.")
 NO_TASK = ("G6's completion loop did not run: it could not tell what you asked for, so there was nothing to test the work "
            "against. Nothing was tested.")
+TOO_LONG = (f"the task and the patch are past the {MAX_PACK_CHARS:,} characters a review can read whole, so no reviewer was "
+            "asked")
 STOPPED = {"no_counterexample_in_domain": "no probe failed", "timeout": "the loop's time ran out",
            "counterexample_budget_exhausted": "the stop rule: every repair the loop allows has been sent"}
 #: Where L9's text names its container: its folders, and the sentence that runs the probes there.
@@ -476,6 +478,13 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     return found
 
 
+def _read_whole(change: repo_tests.Change, task: str) -> bool:
+    """Whether the pack holds the whole task and the whole patch. It is cut from its end, so the parent files go first, and a
+    new file ``diff_text`` cuts is past this limit already. A reader of part of either has no clean review to give."""
+    pack = _pack(change, task, f"review {'0' * 32}")
+    return task in pack and repo_tests.diff_text(change) in pack
+
+
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, where: Path, reviews: list[dict],
                  deadline: float) -> tuple[set[str], str]:
     """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
@@ -484,7 +493,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     short repeats its review, and that review's test is the only one with its number."""
     n, results, failing = len(reviews) + 1, {}, set()
     (where / critic_file(n)).unlink(missing_ok=True)
-    said = run_critic(change, task, critic, shipped.critic, where, n)
+    said = (run_critic(change, task, critic, shipped.critic, where, n) if _read_whole(change, task) else
+            {"verdict": "failed", "rule": "", "why": "", "test": "", "error": TOO_LONG})
     for name in [critic_file(i) for i in range(1, n + 1) if (where / critic_file(i)).is_file()]:
         got = run_set(change, where, at_base=False, deadline=deadline, only=name)
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing

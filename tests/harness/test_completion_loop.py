@@ -1321,3 +1321,54 @@ def test_a_call_after_a_stop_with_no_code_has_none(world, monkeypatch):
     critic = reviewer("none", "never")
     world.edit()
     assert not world.advance(critic=critic).code and not world.advance(critic=critic).code
+
+
+def test_a_task_too_long_to_send_with_the_patch_earns_no_clean_review_and_asks_no_reviewer(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    step = world.advance(critic=critic, task="A" * (loop.MAX_PACK_CHARS + 1))
+    assert step.action == loop.STOP and step.code == loop.NO_CLEAN_REVIEW
+    assert loop.CLEAN not in step.text and "No clean review" in step.text and "no reviewer was asked" in step.text
+    assert not critic.calls
+
+
+def test_a_patch_too_long_to_send_earns_no_clean_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit(FIXED + "# " + "x" * loop.MAX_PACK_CHARS + "\n")
+    step = world.advance(critic=critic)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_a_new_file_the_diff_itself_cuts_earns_no_clean_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    (world.repo / "big.py").write_text("x = 1\n" * (repo_tests.DIFF_FILE_CHARS // 6 + 100), encoding="utf-8")
+    step = world.advance(critic=critic)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_a_review_refused_for_its_length_after_a_repair_keeps_the_finding_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# " + "x" * loop.MAX_PACK_CHARS + "\n")
+    step = world.advance(critic=critic)
+    assert step.code == loop.NO_CLEAN_REVIEW and "**Open:** review 1" in step.text and len(critic.calls) == 1
+
+
+def test_the_parent_files_may_be_cut_but_the_task_and_the_patch_never(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    (world.repo / "mod.py").write_text(BASE + "# padding\n" * (loop.MAX_PACK_CHARS // 9), encoding="utf-8")
+    git(world.repo, "add", "mod.py")
+    git(world.repo, "commit", "-qm", "a large file")
+    base = git(world.repo, "rev-parse", "HEAD")
+    (world.repo / "mod.py").write_text(FIXED + "# padding\n" * (loop.MAX_PACK_CHARS // 9), encoding="utf-8")
+    step = loop.advance(world.repo, TASK, base, world.session, critic=critic)
+    pack = critic.calls[0][1]
+    assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
+    assert TASK in pack and repo_tests.diff_text(repo_tests.change(world.repo, base)) in pack
+    assert len(pack) == loop.MAX_PACK_CHARS      # the parent file was cut, and that is all that was
