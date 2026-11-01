@@ -95,7 +95,10 @@ def _generation(row: Mapping[str, Any]) -> str:
     if measured.get("before") is None or measured.get("after") is None:
         return line
     split = str(measured.get("split", "")).replace("_", "-")
-    return f"{line}; measured on {measured.get('cases')} {split} cases, {measured['before']:g} before, {measured['after']:g} after"
+    seconds = (measured.get("not_gated") or {}).get("wall_clock_s")
+    timed = (f"; wall clock per case {seconds['before']:.3g} s before, {seconds['after']:.3g} s after, reported and not gated"
+             if seconds else "")
+    return f"{line}; measured on {measured.get('cases')} {split} cases, {measured['before']:g} before, {measured['after']:g} after{timed}"
 
 
 def _generations(found: Mapping[str, Any]) -> list[str]:

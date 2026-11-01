@@ -702,13 +702,28 @@ repository). The same code adopted a real gain on both, built on it across ticks
 test ran itself. This shows the machinery works end to end. It does not show that G6 improves anything real: the
 weakness was planted and the models are stubs.
 
-**What a real clock showed (2026-11-01, open for the owner).** Those tests run on a clock that steps by a fixed amount. Two
-runs of the real detached runner on the same fake domain used the real clock, and the gate refused the planted gain both
-times on `wall_clock_s`, whose default objective holds the upper bound on the increase to 5% of the base: 0.6 ms against
-0.06 ms with an instant stub, and 1.6 ms against 1.1 ms with a stub taking 20 ms a call. So a gain that cost no more was
-refused on timing noise, and a real model's latency varies more than either. Each refusal spends one of the split's five
-evaluations, so a loop on a real model may well spend its split on noise and then wait for a person, with generation 0.
-The gate was left as it was: changing what it reads is the owner's call, and no setting of the loop's can reach it.
+**The loop gates on success and model calls, and only reports wall clock (the owner's ruling of 2026-11-01).** This replaces
+an item that stood open here. Those tests run on a clock that steps by a fixed amount. Two runs of the real detached runner
+on the same fake domain used the real clock, and the gate refused the planted gain both times on `wall_clock_s`, whose
+default objective holds the upper bound on the increase to 5% of the base: 0.6 ms against 0.06 ms with an instant stub, and
+1.6 ms against 1.1 ms with a stub taking 20 ms a call. So a gain that cost no more was refused on timing noise, and a real
+model's latency varies more than either. Each refusal spends one of the split's five evaluations, so a loop on a real model
+could have spent its split on noise and then waited for a person, with generation 0.
+
+The workflow the loop builds now passes `objectives` holding success and model calls only, and model calls keep their 5%
+limit. `default_objectives`, the gate and the evaluator did not change, so a workflow a person runs still gates on wall
+clock. Wall clock is still measured and still reaches the gate's `measurements`. Each generation carries it under
+`measured.not_gated`, and its line in the digest says "reported and not gated", so a candidate that really is slower can
+be adopted, and a person sees that it was.
+
+The workflow's digest includes its objectives, so it changes, and any folder enrolled before this must enrol again. Until
+it does, a tick there is refused with `G6_E_LOOP_FROZEN_CHANGED`, since the envelope changed too, and the gate would block
+it in any case with `G6_E_META_STANDARD_CHANGED`.
+
+Afterwards a real detached runner on the same domain and stubs reached generation 1 on the real clock, in 2 s and 14 s, on
+82 held-out cases, 0.29 before and 0.93 after. In both of those runs wall clock happened to fall, so they do not show the
+ruling made the difference. The test on a real clock does: it was refused on `wall_clock_s` before the change and adopts
+after it. All of this is a worked example with a planted weakness and stub models, and it says nothing of a real model.
 
 **One runner ended with no explanation (2026-11-01, open).** Of seven real detached runs that day, six ended only when
 asked, one of them after eight minutes with no parent. One ended within 20 seconds of starting: its log was empty, it wrote

@@ -6,8 +6,8 @@ a profile can change that costs the most cases, through ``self_maintenance.const
 failure records were not independently observed. **Exploit**, by proposing within the meta-harness's editable schema:
 ``method.tune`` runs its usual proposers, with ``FailureTraceStrategy`` shown only the constraint's failures, and races
 them on the selection split. **Gate**: the champion goes to the held-out split and the unchanged gate under
-``EvidencePolicy``. **Record** the cycle in the local constraint log, and **adopt** what the gate recommends in the
-loop's own workspace (``g6.metaharness.shadow``), so the next tick starts from it.
+``EvidencePolicy``, which holds it to ``GATED``. **Record** the cycle in the local constraint log, and **adopt** what the
+gate recommends in the loop's own workspace (``g6.metaharness.shadow``), so the next tick starts from it.
 
 The only person in it is the one who enrols a domain: they confirm what judges the work, once, and the loop runs from
 there. Someone has to say what "better" means, and it cannot be the thing being judged.
@@ -54,7 +54,7 @@ from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
-from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow
+from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
@@ -108,6 +108,10 @@ ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py",
                      "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
                      "core/llm.py", "core/vault.py", "integrity/*.py")
 UNKNOWN = "unknown"
+#: What the gate holds this loop's candidates to (the owner's ruling, 2026-11-01). Wall clock is left out: differences of
+#: milliseconds refused real gains on noise, each spending one of the split's evaluations. It is still measured, and reported
+#: as not gated. The gate and ``default_objectives`` are as they were, so a workflow a person runs still holds wall clock.
+GATED = ("success", "model_calls")
 _SOURCE = Path(g6.__file__).resolve().parent
 STATUS_LINE = ("Early alpha. Individual capabilities have been tested; general application-level improvements have not "
                "yet been established.")
@@ -233,7 +237,8 @@ def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, requests: _Reque
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
     return Workflow(name=domain.name, task=run.task, checks=run.checks, oracle=judge.verdict, suite=suite,
-                    models=models, policy=EvidencePolicy(max_eval_model_calls=settings.eval_calls),
+                    models=models, objectives=tuple(o for o in default_objectives() if o.name in GATED),
+                    policy=EvidencePolicy(max_eval_model_calls=settings.eval_calls),
                     optional_checks=run.optional_checks, pipeline_steps=run.pipeline_steps, feedback=run.feedback)
 
 

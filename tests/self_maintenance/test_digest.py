@@ -80,6 +80,14 @@ def test_the_lineage_shows_gains_and_losses_with_what_was_measured():
     assert "Generation 2, from 1 (a rollback): went back to generation 0" in text
 
 
+def test_wall_clock_is_shown_as_reported_and_not_gated():
+    timed = {"split": "held_out", "cases": 80, "before": 0.3, "after": 0.9,
+             "not_gated": {"wall_clock_s": {"before": 0.5, "after": 1.25}}}
+    text = _render(generations={"current": 1, "recent": [{"generation": 1, "parent": 0, "kind": "adopt", "change": "c",
+                                                          "measured": timed}]})
+    assert "0.3 before, 0.9 after; wall clock per case 0.5 s before, 1.25 s after, reported and not gated" in text
+
+
 def test_decisions_and_stops_are_listed_and_absent_ones_say_none():
     assert _render().count("None.") == 2
     text = _render(decisions=["A person gives a fresh split"], stops=["A STOP file is present: maintenance"])

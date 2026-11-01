@@ -9,7 +9,9 @@ import importlib.util
 import json
 import mmap
 import os
+import random
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +27,8 @@ from g6.metaharness import domain as sealed_module
 from g6.metaharness.domain import Judge, sealed_closed
 from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Requests
 from g6.metaharness.method import Method
+from g6.metaharness.schema import Workflow, default_objectives
+from g6.metaharness.shadow import lineage
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
 
@@ -664,3 +668,93 @@ def test_a_retry_inside_a_caller_stops_at_the_reset():
 def test_a_reservation_says_when_its_week_ends():
     meter = BudgetMeter((ProviderWindow("claude", 5, START),), store=OperatorStore(":memory:"))
     assert meter.reserve("claude", START + timedelta(hours=1), 1).ends == RESET
+
+# The owner's ruling of 2026-11-01: the loop gates on success and model calls, and only reports wall clock --------------------
+
+class Jittery:
+    """A clock that never steps the same way twice, and whose ``at`` a model's reply can push on."""
+
+    def __init__(self) -> None:
+        self.noise, self.at = random.Random(20261101), 0.0
+
+    def __call__(self) -> float:
+        self.at += self.noise.uniform(0.0, 0.2)
+        return self.at
+
+
+def _on_this_clock(tmp_path, domain, clock):
+    loop = ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}),
+                      now=lambda: NOW, clock=clock)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    return loop.tick()
+
+
+def test_a_planted_gain_is_adopted_on_a_real_clock(tmp_path):
+    got = _on_this_clock(tmp_path, domains.WordProblems(tmp_path), time.monotonic)
+    assert got["outcome"] == "adopted" and got["head_version"] == 1, got["message"]
+
+
+def test_a_planted_gain_is_adopted_on_a_jittery_clock_even_when_it_really_is_slower(tmp_path):
+    clock, domain = Jittery(), domains.WordProblems(tmp_path)
+    tutor = domain.tutor
+
+    def slower_with_the_gain(system: str, user: str) -> str:
+        clock.at += 1.0 if "step by step" in system else 0.0
+        return tutor(system, user)
+
+    domain.llm._responder = slower_with_the_gain
+    got = _on_this_clock(tmp_path, domain, clock)
+    assert got["outcome"] == "adopted" and got["head_version"] == 1, got["message"]
+
+
+def test_the_loop_gates_on_two_objectives_and_a_persons_workflow_still_holds_wall_clock(tmp_path):
+    loop, _ = _loop(tmp_path)
+    assert [(o.name, o.direction, o.tolerance) for o in loop.workflow.objectives] == [("success", "max", 0.05),
+                                                                                      ("model_calls", "min", 0.05)]
+    assert [o.name for o in default_objectives()] == ["success", "model_calls", "wall_clock_s"]
+    assert next(f for f in dataclasses.fields(Workflow) if f.name == "objectives").default_factory is default_objectives
+
+
+def test_wall_clock_still_reaches_the_gates_measurements_and_is_reported_as_not_gated(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path)
+    seen, adopt = [], loop.mh.adopt
+
+    def noting(decision, **kwargs):
+        seen.append(decision)
+        return adopt(decision, **kwargs)
+
+    monkeypatch.setattr(loop.mh, "adopt", noting)
+    assert loop.tick()["outcome"] == "adopted"
+    measured = seen[0].measurements["wall_clock_s"]
+    assert measured["candidate_mean"] > 0
+    assert lineage(loop.root / "workspace")["recent"][-1]["measured"]["not_gated"] == {
+        "wall_clock_s": {"before": measured["base_mean"], "after": measured["candidate_mean"]}}
+
+
+def test_a_gain_past_the_limit_on_model_calls_is_still_refused(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    tutor, blank_next = domain.tutor, set()
+
+    def twice_for_the_gain(system: str, user: str) -> str:
+        if "step by step" in system:
+            blank_next.symmetric_difference_update({(system, user)})
+            if (system, user) in blank_next:
+                return ""
+        return tutor(system, user)
+
+    _with_model(domain, EmptyRetry(FakeLLM(twice_for_the_gain)))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    head = loop.mh._head()
+    got = loop.tick()
+    assert _code(got) == "G6_E_META_OBJECTIVE_REGRESSED" and "model_calls" in got["message"]
+    assert loop.mh._head() == head
+
+
+def test_a_folder_enrolled_under_other_objectives_adopts_nothing_until_it_enrols_again(tmp_path, monkeypatch):
+    with monkeypatch.context() as earlier:
+        earlier.setattr(sys.modules[ShadowLoop.__module__], "GATED", ("success", "model_calls", "wall_clock_s"))
+        _, domain = _enrolled(tmp_path)
+    again, _ = _loop(tmp_path, domain=domain)
+    assert _code(again.tick()) == "G6_E_META_STANDARD_CHANGED" and again.mh._head()[0] == 0
+    assert again.enrol("Ada")["completion_state"] == "qualified-draft"
+    assert again.tick()["outcome"] == "adopted"
