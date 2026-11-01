@@ -984,6 +984,16 @@ def test_a_failure_that_is_no_limit_is_still_a_failed_case_and_the_tick_runs_on(
     assert _code(got) != "G6_E_LOOP_BUDGET_WAIT" and len(domain.llm.calls) > 1 and len(loop.log.cycles()) == 1
 
 
+def test_a_server_error_that_names_a_limit_in_its_body_is_a_failed_case_not_a_wait(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def broken(system: str, user: str) -> str:
+        raise LLMError("HTTP 500 from https://model: ImportError: cannot import name 'RateLimitError' from 'openai'")
+
+    domain.llm._responder = broken
+    assert _code(loop.tick()) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 1
+
+
 def test_a_sealed_breach_is_recorded_even_when_a_limit_ended_the_tick(tmp_path):
     loop, domain = _enrolled(tmp_path)
     real, sealed = domain.failures, domain.sealed_file

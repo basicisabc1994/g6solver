@@ -713,10 +713,10 @@ first request finds the limit again. The next tick to propose takes up what was 
 tuning run and not beaten in a race race again in its first cycle, and the reservation counts them. They are read from the
 run ledger, so a restart loses none, and they are run again from the start of their race, on the same head only.
 
-A limit is read from the text its request raised (`g6/self_maintenance/usage.py`), because no caller marks one, and
-`g6/core/llm.py` and `g6/core/host_models.py` are bound. The built-in HTTP callers and the Anthropic SDK are read reliably: a
-wait a server asked for is taken as asked, and every other limit is looked at again after 15 minutes, for one refused
-request a look. Claude Code 2.1.316 and Codex 0.165.0 were read from the text of their programs, and neither has been seen
+A limit is read from the start of the text its request raised (`g6/self_maintenance/usage.py`), which is G6's own code or
+status, because no caller marks one, and `g6/core/llm.py` and `g6/core/host_models.py` are bound. A server's body comes after
+that and never decides it. The built-in HTTP callers and the Anthropic SDK are read reliably: a wait a server asked for is
+taken as asked, and every other limit is looked at again after 15 minutes, for one refused request a look. Claude Code 2.1.316 and Codex 0.165.0 were read from the text of their programs, and neither has been seen
 at a real limit. Claude Code's error fields land in the 300 characters its caller keeps only because the program writes them
 after its `usage` record, which no one promises. A version that moves or rewords them reads as a failed case, and three such
 cycles pause the loop as they did before. The repair is a code of its own from those callers, at an issuance window.

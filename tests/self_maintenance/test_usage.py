@@ -49,10 +49,10 @@ def _raised(call) -> str:
     return str(raised.value)
 
 
-def _http(monkeypatch, status: int, headers: dict) -> str:
+def _http(monkeypatch, status: int, headers: dict, body: bytes = b"refused") -> str:
     class Refuses:
         def open(self, request, timeout):
-            raise urllib.error.HTTPError(request.full_url, status, "no", headers, io.BytesIO(b"refused"))
+            raise urllib.error.HTTPError(request.full_url, status, "no", headers, io.BytesIO(body))
 
     monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: Refuses())
     monkeypatch.setattr(llm, "_sleep", lambda seconds: None)
@@ -120,9 +120,37 @@ def test_a_codex_limit_is_read_from_what_it_printed(errors):
     assert limit_ends(_codex(errors), NOW) == NOW + usage.REFRESH
 
 
-def test_a_fallback_that_ran_out_at_a_limit_reads_as_one():
-    said = "every caller failed: first: G6_E_LLM_TIMEOUT: late; second: G6_E_LLM_RATE_LIMITED: HTTP 429 asks for a wait of 90 s"
+def test_a_fallback_of_one_backend_that_met_a_limit_reads_as_one():
+    said = "every caller failed: OllamaCaller(gpt-oss:20b): G6_E_LLM_RATE_LIMITED: HTTP 429 from u asks for a wait of 90 s"
     assert limit_ends(said, NOW) == NOW + timedelta(seconds=90)
+
+
+@pytest.mark.parametrize("body", [b"ImportError: cannot import name 'RateLimitError' from 'openai'", b"You've hit your limit",
+                                  b"usage_limit_reached", b'{"api_error_status":429}', b"HTTP 429", b"429 Too Many Requests",
+                                  b"Rate limit reached for gpt-5.5", b"G6_E_LLM_RATE_LIMITED", b"asks for a wait of 90 s"])
+@pytest.mark.parametrize("status", [400, 500])
+def test_what_a_servers_body_says_never_makes_a_limit(monkeypatch, status, body):
+    assert limit_ends(_http(monkeypatch, status, {}, body), NOW) is None
+
+
+def test_a_wait_is_taken_from_gs_own_words_and_not_from_a_servers_body(monkeypatch):
+    said = _http(monkeypatch, 429, {"Retry-After": "120"}, b"asks for a wait of 9 s")
+    assert limit_ends(said, NOW) == NOW + timedelta(seconds=120)
+    assert limit_ends(_http(monkeypatch, 429, {}, b"asks for a wait of 9 s"), NOW) == NOW + usage.REFRESH
+
+
+def test_an_anthropic_error_is_read_by_its_own_class_and_not_by_what_its_message_says():
+    class APIStatusError(Exception):
+        pass
+
+    class Fails:
+        class beta:
+            class messages:
+                @staticmethod
+                def create(**kwargs):
+                    raise APIStatusError("500 RateLimitError: rate limit reached")
+
+    assert limit_ends(_raised(lambda: llm.AnthropicCaller(client=Fails()).complete("system", "user")), NOW) is None
 
 
 @pytest.mark.parametrize("said", ["G6_E_LLM_TIMEOUT: the reply was still arriving", "HTTP 500 from https://model: broken",

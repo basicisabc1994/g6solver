@@ -20,7 +20,10 @@ reading carries when it was read, so what the loop charges after that goes on to
 lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
 
 **A limit met during a tick** can only be read from the ``LLMError`` the request raised, so ``limit_ends`` reads that text.
-No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet.
+No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet. It
+reads only the start of that text, G6's own code or status. A server's body comes after that, and its words never decide
+this: an HTTP 500 that names ``RateLimitError`` is a failed case. What a host program printed is read after the code of a
+host failure.
 
 * The built-in HTTP callers and the Anthropic SDK are read reliably: ``G6_E_LLM_RATE_LIMITED``, with the wait a server asked
   for, ``HTTP 429`` with none, and the SDK's ``RateLimitError``. A caller of a domain's own is read only if it raises
@@ -66,10 +69,14 @@ _ASKED = ({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "g
           {"id": 2, "method": READ_LIMITS, "params": {"excludeResetCreditDetails": True}})
 # COPY: Why a provider has no account figure.
 NOT_REPORTED = "its tool reports no usage without a model call, so the meter counts model calls"
-#: What a request stopped at a limit raises: see the module docstring for where each comes from.
-_LIMIT = re.compile(r"G6_E_LLM_RATE_LIMITED|\bHTTP 429\b|\bRateLimitError\b|usage_limit_reached|\"api_error_status\":429"
-                    r"|hit your [^\"]{0,40}limit|usage limit reached|rate limit reached|429 Too Many Requests", re.IGNORECASE)
-_ASKED_TO_WAIT = re.compile(r"asks for a wait of ([0-9.]+(?:e[+-]?[0-9]+)?) s")
+#: What a host program prints at a limit: see the module docstring for where each comes from.
+_PRINTED_AT_A_LIMIT = (r"usage_limit_reached|\"api_error_status\":429|hit your [^\"]{0,40}limit|usage limit reached"
+                       r"|rate limit reached|429 Too Many Requests")
+#: The start of what a request raises at a limit, which is G6's own words. A server's body comes after them.
+_LIMIT = re.compile(r"(?:every caller failed: \S+: )?"
+                    r"(?:G6_E_LLM_RATE_LIMITED\b(?:[^;]*? asks for a wait of (?P<seconds>[0-9.]+(?:e[+-]?[0-9]+)?) s)?"
+                    r"|HTTP 429\b|Anthropic request failed: RateLimitError\b"
+                    rf"|G6_E_LLM_HOST_FAILED: .*(?i:{_PRINTED_AT_A_LIMIT}))")
 
 
 class UsageUnavailable(RuntimeError):
@@ -131,10 +138,10 @@ def limit_ends(said: str, now: datetime) -> datetime | None:
     """When the limit a failed request ran into ends, from the text it raised, or ``None`` when that text is no limit. A
     wait a server asked for is taken as asked. Anything else says no time G6 can read, so the limit is looked at again, as
     one with no reset is, and that look costs one refused request."""
-    if not _LIMIT.search(said):
+    limit = _LIMIT.match(said)
+    if limit is None:
         return None
-    asked = _ASKED_TO_WAIT.search(said)
-    seconds = float(asked.group(1)) if asked else 0.0
+    seconds = float(limit["seconds"] or 0)
     return now + (timedelta(minutes=min(seconds / 60, WEEK_MINUTES)) if seconds > 0 else REFRESH)
 
 
