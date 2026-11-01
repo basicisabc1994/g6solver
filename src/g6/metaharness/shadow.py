@@ -40,7 +40,7 @@ from g6.metaharness.api import MetaHarness, _blocked, _envelope, _now, _serializ
 from g6.metaharness.evaluate import EvaluationReport
 from g6.metaharness.executor import ExecutorFactory
 from g6.metaharness.gate import GateDecision
-from g6.metaharness.propose import DevBudget, build_view, dev_run
+from g6.metaharness.propose import DevBudget, ProposerView, Strategy, build_view, dev_run
 from g6.metaharness.schema import STANDARD_CHANGED, Profile, Proposal, SuiteCase, Workflow
 from g6.self_maintenance.envelope import FINDINGS
 
@@ -55,6 +55,8 @@ ADOPTED = "G6_E_LOOP_ADOPTED"
 ROLLED_BACK = "G6_E_LOOP_ROLLED_BACK"
 AUDITED = "G6_E_LOOP_AUDITED"
 MEASURED = "G6_E_LOOP_MEASURED"
+#: What the harness holds a run for when its executor raised, which a failed model call does.
+RUN_FAILED = "G6_E_HARNESS_EXECUTOR_FAILED"
 
 
 def _adopted(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
@@ -119,6 +121,7 @@ class ShadowHarness(MetaHarness):
                  clock: Callable[[], float], problems: list[tuple[str, str]]) -> None:
         super().__init__(workflow, factory, workspace, theories=None, clock=clock, problems=problems)
         self.adoptions = ChainLedger(workspace / ADOPTIONS, validate=_rules) if not problems else None
+        self._measured: tuple[tuple[str, str, int], ProposerView] | None = None
 
     def refresh(self) -> None:
         """Read every ledger again: another handle may have written them. What it wrote decides the head."""
@@ -177,15 +180,37 @@ class ShadowHarness(MetaHarness):
                          next_action="Later ticks run on it; the monitor compares it with the version before.",
                          head_version=number, head_profile=proposal.candidate_digest)
 
+    def _view(self, budget: DevBudget) -> ProposerView:
+        """The head on the tuning cases, run once for each head, case set and budget, so an unchanged head costs nothing
+        however many ticks and proposers read it. A view with a run the model failed is not kept: that measured the
+        provider, not the head. It is held in memory, so a restart measures once more."""
+        _, base = self._head()
+        key = (base.digest(), self.workflow.digest(), budget.limit)
+        if self._measured is not None and self._measured[0] == key:
+            return self._measured[1]
+        view = build_view(self.workflow, self.factory, base, theories=self.theories, clock=self._clock, budget=budget,
+                          artifacts=self.artifacts)
+        if not any(f.code == RUN_FAILED for f in view.failures):
+            self._measured = key, view
+        return view
+
+    @_serialized
+    def propose(self, strategy: Strategy, *, budget: int = 200, max_candidates: int = 3) -> dict[str, Any]:
+        """As ``MetaHarness.propose``, on the view the head already has."""
+        refused = self._refusal()
+        if refused:
+            return refused
+        meter = DevBudget(budget)
+        return self._offer(self._view(meter), strategy, f"auto:{strategy.name}", meter, max_candidates)
+
     @_serialized
     def measure(self, *, budget: int) -> dict[str, Any]:
         """The head on the tuning cases, its failures and their causes: what a proposer sees, and nothing held out."""
         refused = self._refusal()
         if refused:
             return refused
-        version, base = self._head()
-        view = build_view(self.workflow, self.factory, base, theories=self.theories, clock=self._clock,
-                          budget=DevBudget(budget), artifacts=self.artifacts)
+        version, _ = self._head()
+        view = self._view(DevBudget(budget))
         plan = recovery.diagnose(view, self.workflow, self.ledger.rows("decision"))
         return _envelope("qualified-draft", MEASURED, plan.summary, next_action=plan.next_action, view=view,
                          recovery=plan.to_dict(), head_version=version)

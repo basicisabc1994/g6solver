@@ -685,6 +685,13 @@ in the week it was sent in. The tick ends blocked with `G6_E_LOOP_TICK_BUDGET_SP
 reserves under the new week's ceiling. A `Retry-After` resend has no boundary of its own, so one can still go out just
 past a reset, on the old week's bill.
 
+**An unchanged head costs nothing to measure.** The head's run on the tuning cases is kept for each head, case set and
+budget, and every proposer of every cycle reads that one view, so a tick on an unchanged head spends nothing there. A view
+with a run the model failed is not kept, since it measured the provider. The view is held in memory, so a restart measures
+once more. Only the shadow harness keeps one: `api.py`, which `JUDGING_PATTERNS` covers, and `propose.py`, which
+`ENVELOPE_PATTERNS` covers, did not change, so `MetaHarness.propose` and `diagnose` still run the head on each call. A model
+that drifts is seen by the monitor and the gate, which run the head on their own cases, and not by this view.
+
 **A log that will not take a cycle.** The streak that pauses the loop is read from the log, so a cycle the log refuses
 leaves that streak nothing to read. These cycles are counted in memory instead, and one that is written starts the count
 again. Until three in a row, status shows the count under `pause` with `G6_E_LOOP_CANNOT_RECORD`, the digest lists it

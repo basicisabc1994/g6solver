@@ -15,7 +15,7 @@ import pytest
 
 import g6
 from g6.core import stop
-from g6.core.llm import FakeLLM
+from g6.core.llm import FakeLLM, LLMError
 from g6.harness import Check
 from g6.integrity import build_manifest
 from g6.metaharness import Model, Profile, SuiteCase
@@ -23,6 +23,7 @@ from g6.metaharness import monitor as drift
 from g6.metaharness.domain import Judge
 from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
+from g6.metaharness.propose import DevBudget
 from g6.self_maintenance.envelope import heartbeat
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 from g6.workspace._coordination import Coordination
@@ -677,6 +678,73 @@ def test_the_worst_case_counts_every_proposer_the_method_asks_for(tmp_path):
     loop, _ = _enrolled(tmp_path, settings=dataclasses.replace(SETTINGS, method=more))
     fewer, _ = _enrolled(tmp_path / "b", settings=SETTINGS)
     assert loop.worst_case() > fewer.worst_case()
+
+# An unchanged head is not measured again ------------------------------------------------------------------------------
+
+def test_an_unchanged_head_costs_nothing_to_measure_tick_after_tick(tmp_path):
+    loop, domain = _enrolled(tmp_path, domain=domains.WordProblems(tmp_path, weak=1.0))
+    assert loop.tick()["outcome"] == "idle"
+    calls = len(domain.llm.calls)
+    assert calls == len(loop.cut.tune)
+    got = loop.tick()
+    assert got["outcome"] == "idle" and len(domain.llm.calls) == calls and got["budget"]["charged"] == 0
+
+
+def test_a_cycles_proposers_are_shown_the_view_already_measured(tmp_path):
+    method = Method(cycles=2, propose_budget=120, select_budget=400, race_block=12, reflect_calls=1, use_recovery=False,
+                    use_reflection=False)
+    loop, domain = _enrolled(tmp_path, settings=dataclasses.replace(SETTINGS, method=method))
+    loop.tick()
+    tuning = {c.input for c in loop.cut.tune}
+    assert sum(user.rsplit("Problem: ", 1)[-1].strip() in tuning for _, user in domain.llm.calls) == len(tuning)
+
+
+def test_a_new_head_is_measured_once(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    calls = len(domain.llm.calls)
+    view = loop.mh.measure(budget=120)["view"]
+    assert len(domain.llm.calls) == calls + len(loop.cut.tune) and domains.WORKING in view.base["prompt"]
+    assert loop.mh.measure(budget=120)["view"] is view and len(domain.llm.calls) == calls + len(loop.cut.tune)
+
+
+def test_the_same_head_on_other_cases_is_measured_anew(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.mh.measure(budget=120)
+    calls, fewer = len(domain.llm.calls), loop.cut.tune[1:]
+    loop.mh.workflow = dataclasses.replace(loop.mh.workflow, suite=dataclasses.replace(loop.mh.workflow.suite, dev=fewer))
+    assert len(loop.mh._view(DevBudget(120)).dev) == len(fewer) and len(domain.llm.calls) == calls + len(fewer)
+
+
+def test_a_view_short_of_its_budget_is_kept_for_that_budget_only(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    short = loop.mh.measure(budget=5)["view"]
+    assert len(short.ran) == 5 and loop.mh.measure(budget=5)["view"] is short
+    assert len(loop.mh.measure(budget=120)["view"].ran) == len(loop.cut.tune)
+
+
+def test_a_run_the_model_failed_is_not_kept_as_what_the_head_does(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=1.0)
+    tutor, down = domain.tutor, [True]
+
+    def until_it_is_back(system: str, user: str) -> str:
+        if down[0]:
+            raise LLMError("G6_E_LLM_TIMEOUT: no answer in time")
+        return tutor(system, user)
+
+    domain.llm._responder = until_it_is_back
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.mh.measure(budget=120)["view"].failures
+    down[0] = False
+    assert loop.mh.measure(budget=120)["view"].failures == ()
+
+
+def test_a_view_cut_off_at_what_a_tick_reserved_is_not_kept(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path, domain=domains.WordProblems(tmp_path, weak=1.0))
+    with monkeypatch.context() as cut_short:
+        cut_short.setattr(loop, "worst_case", lambda: 5)
+        assert _code(loop.tick()) == "G6_E_LOOP_TICK_BUDGET_SPENT"
+    assert loop.tick()["outcome"] == "idle"
 
 # The envelope is frozen too ------------------------------------------------------------------------------------------
 
