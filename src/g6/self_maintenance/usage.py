@@ -39,10 +39,11 @@ names ``RateLimitError`` is a failed case. Neither do a host's words, whatever t
   there tells its notice from a reply that says the same, and nothing it prints is read. Its limit is the one
   ``account/rateLimits/read`` reports, between ticks.
 
-A limit that does not read as one is a failed case, and the tick runs on as it always has, so three such cycles pause the
-loop. For Codex the reading ends that at the next look, at most ``REFRESH`` later; a limit it does not show, such as a
-passing throttle, stays a failed case. The repair is a code of its own from those callers, which waits for an issuance
-window.
+A limit that does not read as one is a failed case, and the tick runs on as it always has. With every run failing the cycle
+has no winner, which is a result and no failure, so it pauses nothing, and the runner's rest outlasts ``REFRESH``, so
+Codex's reading holds the next tick. What it costs is the record: the cycle says no candidate won, and a limit during an
+evaluation reads as a refusal and spends one of the split's five. A limit the reading does not show, such as a passing
+throttle, goes on like that. The repair is a code of its own from those callers, which waits for an issuance window.
 """
 from __future__ import annotations
 

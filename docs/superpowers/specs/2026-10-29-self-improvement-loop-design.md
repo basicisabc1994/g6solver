@@ -731,9 +731,11 @@ from the text of its program and has not been seen at a real limit. Its `api_err
 characters its caller keeps only because the program writes them after its `usage` record, which no one promises, and a
 notice with neither field reads as a failed case. Codex prints text, so nothing in it tells its notice from a reply that says
 the same, and it is not read. A Codex limit is what `account/rateLimits/read` reports between ticks, so the tick that meets
-one runs on as failed cases, can spend one of the split's five on them, and the next tick to read the account waits. A limit
-that reading does not show stays a failed case, and three such cycles pause the loop as they did before. The repair is a code
-of its own from those callers, at an issuance window.
+one runs on as failed cases. With every run failing it ends with no winner, a result and no failure, so it pauses nothing,
+and the runner's rest outlasts the 15 minutes between reads, so the reading holds the next tick. A limit during an evaluation
+costs more: it reads as a refusal and spends one of the split's five, on a record that says nothing true of the candidate.
+That is the price of not reading Codex's words, and a limit the reading does not show pays it too. The repair is a code of
+its own from those callers, at an issuance window.
 
 **One backend to a model.** A `FallbackCaller` that holds two backends is refused at enrolment, for a declared model or the
 proposer, with `G6_E_LOOP_FALLBACK_MODEL`, seen through `EmptyRetry` and `TimingLLMCaller`. It answers from the next backend

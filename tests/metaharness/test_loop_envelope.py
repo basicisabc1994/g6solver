@@ -1101,6 +1101,35 @@ def test_a_server_error_that_names_a_limit_in_its_body_is_a_failed_case_not_a_wa
     assert _code(loop.tick()) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 1
 
 
+CODEX_AT_A_LIMIT = "G6_E_LLM_HOST_FAILED: codex exited 1: ERROR: You've hit your usage limit."
+
+
+def test_the_limit_of_this_a_limit_codex_only_printed_is_a_cycle_with_no_winner_and_pauses_nothing(tmp_path):
+    """Nothing Codex prints is read, so its account reading is what holds the next tick. Until then this is the record."""
+    loop, domain = _enrolled(tmp_path)
+
+    def at_a_limit(system: str, user: str) -> str:
+        raise LLMError(CODEX_AT_A_LIMIT)
+
+    domain.llm._responder = at_a_limit
+    assert loop.tick()["outcome"] == "no_winner" and loop.log.failed_streak() == 0 and loop.log.paused() == ""
+
+
+def test_the_limit_of_this_a_limit_codex_only_printed_during_an_evaluation_spends_one_of_the_five(tmp_path):
+    """What not reading its words costs: a refusal that says nothing true of the candidate, on a spent evaluation. A limit
+    that reads as one spends none (``test_a_limit_during_the_evaluation_spends_none_of_the_held_out_split``)."""
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(*TWO_OFFERS))
+    held, left, tutor = {c.input for c in loop.cut.held_out[5:]}, loop.mh.held_out_left(), domain.tutor
+
+    def at_a_limit_on_the_held_out_cases(system: str, user: str) -> str:
+        if user.rsplit("Problem: ", 1)[-1].strip() in held:
+            raise LLMError(CODEX_AT_A_LIMIT)
+        return tutor(system, user)
+
+    domain.llm._responder = at_a_limit_on_the_held_out_cases
+    assert loop.tick()["outcome"] == "refused" and loop.mh.held_out_left() == left - 1
+
+
 def test_a_model_writing_of_a_limit_in_a_lost_reply_is_a_failed_case_not_a_wait(tmp_path):
     loop, domain = _enrolled(tmp_path)
 

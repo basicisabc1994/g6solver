@@ -144,7 +144,7 @@ def test_a_claude_failure_ahead_of_a_codex_failure_lends_its_prefix_to_nothing_t
 
 def test_a_claude_code_limit_printed_early_is_lost_with_the_text_the_caller_cuts_and_reads_as_a_failure():
     """The limit of this: the caller keeps the last 300 characters, and its file is bound. A later Claude Code that prints
-    the error ahead of a long usage record reads as an ordinary failed cycle, so three of them pause the loop."""
+    the error ahead of a long usage record reads as failed cases."""
     printed = json.dumps({"type": "result", "is_error": True, "api_error_status": 429, "result": "You've hit your limit",
                           "usage": {f"counter_{i}": 0 for i in range(40)}, "uuid": "1" * 36})
     assert limit_ends(_claude(printed), NOW) is None
