@@ -300,6 +300,48 @@ def test_each_page_holds_only_its_own_days_cycles(tmp_path):
     assert "1 tick on" in second and "adopted" not in second.split("## What ran")[1].split("##")[0]
 
 
+def _a_day_with_no_tick_then_a_tick_past_midnight(tmp_path):
+    midnight = datetime(2026, 10, 26, 0, 0, tzinfo=UTC)
+    settings = LoopSettings(windows=(ProviderWindow("claude", 10_000, midnight),), method=FAST)
+    runner, time, _ = _runner(tmp_path, settings=settings, at=midnight + timedelta(hours=23, minutes=59))
+    runner.step()
+    assert not runner.loop.log.cycles()                                  # day one's ceiling cannot fund one tick
+    yesterday = digest_path(runner.loop.root, midnight.date())
+    assert "Now at generation 0." in yesterday.read_text(encoding="utf-8")
+    time.at += timedelta(minutes=2)
+    runner.step()
+    assert runner.loop.log.cycles()[0]["outcome"] == "adopted"
+    return yesterday.read_text(encoding="utf-8"), digest_path(runner.loop.root, time.at.date()).read_text(encoding="utf-8")
+
+
+def test_a_day_that_has_ended_is_not_told_of_the_next_days_generation(tmp_path):
+    yesterday, today = _a_day_with_no_tick_then_a_tick_past_midnight(tmp_path)
+    assert "No tick ran today" in yesterday
+    assert "Now at generation 0." in yesterday and "Generation 1" not in yesterday
+    assert "Now at generation 1." in today
+
+
+def test_a_day_that_has_ended_is_not_told_of_the_next_days_constraint(tmp_path):
+    yesterday, today = _a_day_with_no_tick_then_a_tick_past_midnight(tmp_path)
+    assert "None named yet." in yesterday and "wrong_answer" not in yesterday
+    assert "wrong_answer" in today
+
+
+def test_a_tick_that_began_before_midnight_stays_on_the_day_it_began(tmp_path):
+    runner, time, _ = _runner(tmp_path, nap=3600, at=datetime(2026, 10, 28, 23, 59, tzinfo=UTC))
+    real = runner.loop.tick
+
+    def across_midnight():
+        got = real()
+        time.at += timedelta(minutes=2)
+        return got
+
+    runner.loop.tick = across_midnight
+    runner.step()
+    assert "1 tick on" in digest_path(runner.loop.root, datetime(2026, 10, 28).date()).read_text(encoding="utf-8")
+    assert "No tick ran today" in digest_path(runner.loop.root, time.at.date()).read_text(encoding="utf-8")
+
+
 def test_a_digest_that_cannot_be_written_does_not_end_the_run(tmp_path, monkeypatch):
     runner, time, _ = _runner(tmp_path)
     monkeypatch.setattr("g6.metaharness.runner.digest.write", lambda *a: (_ for _ in ()).throw(OSError("full")))

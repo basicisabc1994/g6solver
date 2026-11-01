@@ -156,13 +156,13 @@ class Runner:
         if halted:
             self._end(now, halted)
             return None
+        if self.day != now.date():
+            self._digest(now)               # before the tick, so the page of the day that ended holds that day and no more
         due, resting = self._due(now)
         if now >= due:
             self._tick(now)
             now = self.now()
             due, resting = self._due(now)
-            self._digest(now)
-        elif self.day != now.date():
             self._digest(now)
         self._beat(now, "resting" if resting else "waiting", due)
         return min(self.nap, max(LEAST_NAP, (due - now).total_seconds()))
@@ -268,8 +268,9 @@ class Runner:
                              decisions=self._decisions(), stops=self._stops(now, halted))
 
     def _digest(self, now: datetime, halted: str = "") -> None:
-        """Today's page, and the day just ended, whole, when the date has moved on. A page that cannot be written is left
-        for the next pass: it never ends the run."""
+        """Today's page, and the day just ended, whole, when the date has moved on. A pass closes a day before its tick,
+        and only a tick that began on that day can still add to it. A page that cannot be written is left for the next
+        pass: it never ends the run."""
         day = now.date()
         try:
             if self.day is not None and self.day != day:
