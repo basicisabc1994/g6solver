@@ -21,8 +21,8 @@ ends the person's start, so nothing but a new agreement brings the runner back, 
 **Status** only reads: its files, no lock it could hold up and no model. What it shows of each provider's use is the
 runner's last heartbeat, with the time of that heartbeat, because opening the ledger would write to it.
 
-A folder left empty is ``improve`` under G6's state folder. Replies carry the library envelope, and a stop or status never
-imports the tick, so neither can fail for the reasons a tick can.
+A folder left empty is the one beside G6's state folder, ``~/.g6-improve`` by default. Replies carry the library envelope, and
+a stop or status never imports the tick, so neither can fail for the reasons a tick can.
 """
 from __future__ import annotations
 
@@ -103,7 +103,10 @@ def refused() -> dict | None:
 
 
 def _root(folder: str) -> Path:
-    return Path(folder).expanduser().resolve() if folder.strip() else g6_home() / "improve"
+    """The folder named, or the default: beside G6's state folder and not in it, since the server, the completion loop and
+    test runs all write there, and nothing but the loop writes here."""
+    home = g6_home()
+    return Path(folder).expanduser().resolve() if folder.strip() else home.with_name(f"{home.name}-improve")
 
 
 def _is_a_loop(root: Path) -> bool:

@@ -534,7 +534,7 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         return mission.certificate(mission_id)
 
     async def g6_improve_start(ctx: Any, folder: str = "") -> dict:
-        """Start G6's self-improvement loop on a folder (empty: improve under G6's state folder), as a process of its own
+        """Start G6's self-improvement loop on a folder (empty: the one beside G6's state folder), as a process of its own
         that outlives this session and runs until a stop, within the pacing rule. It adopts changes in its own workspace
         only, pushes nothing and starts no engineer. The person is asked in the client's own dialog: you never answer for
         them, and a decline, a cancel or a client without a dialog starts nothing; ask the person, and offer no other way

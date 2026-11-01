@@ -619,8 +619,10 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   first tick. That figure is held in memory, so a restart whose first read fails
   starts on the meter's own count. Claude Code (2.1.316) lists no such command, so Claude's meter stays on model calls.
 
-**How to run it.** A folder holds `settings.json`. An allowance is in the meter's unit, model calls, and counts as an
-estimate until `"estimated": false`. `reserve_share` defaults to the owner's 20%, and `"read_account": false` turns off
+**How to run it.** A folder holds `settings.json`. A tool given no folder uses the one beside G6's state folder, `~/.g6-improve` by
+default, because the MCP server, the completion loop and test runs all write in the state folder and nothing but the loop writes
+here. It stood inside the state folder until 2026-11-02, and no real run had used it: a folder there is now only reached by name,
+stop included. An allowance is in the meter's unit, model calls, and counts as an estimate until `"estimated": false`. `reserve_share` defaults to the owner's 20%, and `"read_account": false` turns off
 the Codex read:
 
 ```json

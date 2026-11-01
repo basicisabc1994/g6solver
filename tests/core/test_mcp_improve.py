@@ -915,11 +915,13 @@ def test_a_stop_file_that_cannot_be_written_is_said(rig, monkeypatch):
     assert _code(got) == "G6_E_LOOP_STOP_FAILED" and got["completion_state"] == "blocked-escalated"
 
 
-def test_a_folder_left_empty_is_the_one_under_g6s_state_folder(rig, tmp_path):
-    home = tmp_path / "home" / "improve"
-    home.mkdir(parents=True)
+def test_a_folder_left_empty_lies_beside_g6s_state_folder_and_not_in_it(rig, tmp_path):
+    """The server, the completion loop and test runs all write in the state folder, and nothing else writes in this one."""
+    home = tmp_path / "home-improve"
+    home.mkdir()
     (home / "settings.json").write_text("{}", encoding="utf-8")
     assert rig.call("g6_improve_stop")["folder"] == str(home) and (home / "STOP").exists()
+    assert not (tmp_path / "home" / "improve").exists()
 
 
 # Status ---------------------------------------------------------------------------------------------------------------
