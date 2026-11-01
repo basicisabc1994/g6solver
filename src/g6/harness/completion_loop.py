@@ -661,32 +661,38 @@ def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path,
             "tree_changed": digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
 
 
-def _has_row(log: str, session: Path) -> bool:
-    """Whether the log holds a whole row of this session. A line a killed hook tore does not parse, so it is no row."""
-    for line in log.split("\n"):
-        try:
-            if json.loads(line).get("session") == session.name:
-                return True
-        except (ValueError, AttributeError):
-            continue
-    return False
+def _row_of(line: str, session: Path) -> bool:
+    """Whether ``line`` is a whole row of this session. A line a killed hook tore does not parse, so it is no row."""
+    try:
+        return json.loads(line).get("session") == session.name
+    except (ValueError, AttributeError):
+        return False
 
 
 def _write_row(session: Path, state: dict) -> None:
-    """``row_due`` added to ``FAILURES``, and taken off the state. A session is one run, so one whole row: a hook cut short
-    after its row adds no second, and one cut short inside it adds the row again. It starts a line of its own after a torn
-    one, which would take it down too. The log has a lock of its own, as an append is not atomic on every platform. A row
-    that cannot be written costs no report: it stays in the state, with why in ``row``, and the session's next call tries
-    again, so a log held for a moment loses nothing."""
+    """``row_due`` added to ``FAILURES``, and taken off the state. A session is one run, so one whole row, and that row says
+    how the run ended: a hook cut short after its row adds no second, one cut short inside it adds the row again, and a run
+    that went on after one has its row replaced, whole, by a new file. A row starts a line of its own after a torn one,
+    which would take it down too. The log has a lock of its own, as an append is not atomic on every platform. A row that
+    cannot be written costs no report: it stays in the state, with why in ``row``, and the session's next call tries again,
+    so a log held for a moment loses nothing."""
     try:
         path = state_path(*FAILURES)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with Coordination(path.with_name(".failures")).mutex():
             log = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
-            if not _has_row(log, session):
+            lines = [line for line in log.split("\n") if line]
+            others = [line for line in lines if not _row_of(line, session)]
+            if len(others) == len(lines):
                 with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8",
                                newline="\n") as out:
                     out.write(("\n" if log and not log.endswith("\n") else "") + state["row_due"] + "\n")
+            elif state["row_due"] not in lines:
+                fresh = path.with_name(f"{path.name}.new")
+                with os.fdopen(os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8",
+                               newline="\n") as out:
+                    out.write("\n".join([*others, state["row_due"]]) + "\n")
+                os.replace(fresh, path)
         del state["row_due"]
         state.pop("row", None)
     except (OSError, ValueError, WorkspaceRefused) as exc:

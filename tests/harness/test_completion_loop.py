@@ -2101,3 +2101,76 @@ def test_a_patch_unchanged_at_the_end_keeps_its_clean_stop(world, monkeypatch):
     world.edit()
     step = world.advance(critic=reviewer("none"))
     assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
+
+
+def killed_at_the_end(world, monkeypatch, critic) -> None:
+    """A step that writes its row and dies before it can mark the run as ended."""
+    real = loop._finish
+    monkeypatch.setattr(loop, "_finish", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic)
+    monkeypatch.setattr(loop, "_finish", real)
+
+
+def test_a_row_describes_the_runs_final_outcome_after_a_killed_finish(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none", "after the restart")
+    world.edit()
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    killed_at_the_end(world, monkeypatch, critic)
+    assert rows(world)[0]["cause"] == loop.FIXED and not world.state().get("done")
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic.py"}
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    ended = world.advance(critic=critic, said="I reject the finding")
+    assert ended.action == loop.STOP and "**Open:**" in ended.text and world.state()["done"]
+    [row] = rows(world)
+    assert row["cause"] == loop.OPEN, "the run ended with a finding open, and its row still says fixed"
+
+
+def test_a_row_replaced_after_a_kill_leaves_every_other_line_as_it_was(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none", "after the restart")
+    log = world.session.parent / "failures.jsonl"
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    log.write_text('{"session": "before"}\n', encoding="utf-8")
+    killed_at_the_end(world, monkeypatch, critic)
+    with log.open("a", encoding="utf-8", newline="\n") as out:
+        out.write('{"session": "after"}\n{"session": "a run that died", "no')
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic.py"}
+    world.advance(critic=critic)
+    world.advance(critic=critic, said="I reject the finding")
+    assert [row["session"] for row in whole_rows(world)] == ["before", "after", world.session.name]
+    assert '{"session": "a run that died", "no\n' in log.read_bytes().decode("utf-8")      # a torn line is left as it was
+    assert not (log.parent / "failures.jsonl.new").exists()
+
+
+def test_a_row_that_cannot_replace_the_stale_one_is_kept_and_written_by_the_next_call(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none", "after the restart")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    killed_at_the_end(world, monkeypatch, critic)
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic.py"}
+    world.advance(critic=critic)
+    real = os.replace
+
+    def held(source, target):      # on Windows a reader of the log makes this fail
+        if Path(target).name == "failures.jsonl":
+            raise PermissionError("another process has the log open")
+        real(source, target)
+
+    with monkeypatch.context() as context:
+        context.setattr(os, "replace", held)
+        ended = world.advance(critic=critic, said="I reject the finding")
+    assert ended.action == loop.STOP and "another process" in world.state()["row"]
+    assert rows(world)[0]["cause"] == loop.FIXED      # it stays what it was until it can be replaced whole
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert row["cause"] == loop.OPEN and "row" not in world.state()
