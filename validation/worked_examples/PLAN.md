@@ -1264,3 +1264,30 @@ The 95% interval by bug on the amended tests against A is -5% to +36% for M9 and
 **Stage 2 stands as frozen.** Its bugs are unseen, and M9, K1, the rule and the order do not change.
 
 **One exploratory arm is added, before any stage 2 run: K0.** It is K1's review loop on arm A's prompt, without the discussion. It tests the hypothesis above, and it is closer to the product, where K reviews whatever a person asked and nobody supplies a discussion. It was chosen after reading this table, so it is report only: never a primary, no verdict of the rule, and it runs last on each bug, so `finished` never waits for it. A good result would be a hypothesis for a fresh test, not a finding.
+
+## 2026-11-02 (morning): a scored bug becomes development for later generations, before any stage 2 run
+
+No recorded result changes here. Stage 1's numbers stand, and M9, K1, K0, the rule and stage 2's order and sealing do not change.
+
+**Why.** The owner: "failure is good as long as we learn from this and don't repeat our mistakes - how else do we get enough signal to learn?" Stage 3's cases were limited on 2026-11-01 to the training bugs and further development bugs. That leaves too little to learn from: on the amended tests L9 and K1 have no failed run on the training bugs. Stage 1 left 118 failed runs on the maintainers' tests and 95 on the amended tests. They were barred so that stage 1 could be a fair test of M9 and K1, and it now has been.
+
+**The change.** A bug whose stage has been scored and recorded is development for every generation that comes after. So stage 1's eleven fresh bugs and three held-out bugs join the training bugs from this entry on, and stage 2's bugs join once stage 3's runs have ended. This replaces "No fresh, held-out or stage 2 bug enters them" in the entry of 2026-11-01 (late), for fresh and held-out bugs only.
+
+**What holds it honest.**
+- **A recorded result is never rewritten.** Stage 1 was the test of M9 and K1 and stays that. Nothing read from these bugs reaches M9, K1 or K0, which are frozen.
+- **What a generation tuned on is never its unseen score.** Stage 3's rule reads stage 2's bugs, as before. If its change read stage 1's failures, then stage 1's bugs are development for it, so `compare.py`'s section "stage 3, stage 1 bugs" gets no verdict of the rule, and is reported beside the stage 2 result as a tuned score.
+- **Stage 2 stays sealed.** No fix, test, run or reply of a stage 2 bug is read to tune anything until stage 3's runs have ended.
+- **No agent that runs a task, reviews a patch or proposes a change sees a maintainers' test or fix, on any bug, ever.** Whatever reads a failed run gets the issue, the patch, the run's own record and the reviewer's replies. Anything drawn from the maintainers' tests or fix reaches those agents only as counts worked out by plain code on the judge's side: passed or failed, how many tests failed, and whether the patch touched the same files as the fix.
+- **Blind labels, as the audits have been since 2026-10-30.** To learn why a patch failed, an auditor who runs no task, reviews no patch and proposes nothing may read the maintainers' tests and fix, and returns labels from closed lists and no text. Only the labels are kept. Plain code turns them into counts. Two raters from different model families label independently, and their agreement is reported beside the counts. A label is a model's opinion and never changes a verdict.
+
+**What it costs.** Stage 1's bugs can no longer be an unseen test of anything built after this entry. They are all from the six training repositories, so stage 2's new repositories were always the stronger test. The next unseen set after stage 2 has to be drawn fresh.
+
+## 2026-11-02 (morning): stage 2's twenty bugs and their audit, before any of their runs
+
+**The bugs, in the frozen order.** `urllib3-5347`, `urllib3-5254`, `charset-normalizer-772`, `charset-normalizer-715`, `setuptools-5362`, `setuptools-5352`, `pygments-3204`, `pygments-3158`, `pluggy-809`, `pluggy-799`, `botocore-3852`, `botocore-3835`, `anyio-1424`, `anyio-1354`, `s3transfer-423`, `python-dotenv-711`, `python-dotenv-700`, `pyjwt-1216`, `pyjwt-1201`, `platformdirs-666`. Every one passed `images`, `validate`, `selfcheck` and `freecheck`. `aiobotocore-1704` failed `validate`, since no test fails on the parent and passes with the fix, so it gave way under the rule. `selection_stage2.md` is the record of how they were reached. No model has run on any of them.
+
+**The audit, labels only.** A blind auditor read each issue and the tests its fix changed, and returned labels and nothing else. All 20 issues report a bug on their own text. Determined by the task, 13: `urllib3-5347`, `urllib3-5254`, `charset-normalizer-772`, `pygments-3204`, `pygments-3158`, `pluggy-809`, `botocore-3852`, `anyio-1424`, `anyio-1354`, `s3transfer-423`, `python-dotenv-700`, `pyjwt-1201`, `platformdirs-666`. Not determined, 7: `charset-normalizer-715`, `setuptools-5362`, `setuptools-5352`, `pluggy-799`, `botocore-3835`, `python-dotenv-711`, `pyjwt-1216`. No bug is dropped. The score on all the bugs that finish is the score, and the score on the determined bugs goes beside it, with the same rule applied to each comparison, as on stage 1. The seven get amendments under the 2026-10-31 rule. An amendment is scored offline with no model, so the runs do not wait for it, and it is written without reading any run.
+
+**The order of the runs.** Arm S three times on every bug first, as the 2026-11-01 entry says. Then, bug by bug in the frozen order, A, T, R, M9 and K1 twice each, and K0 twice last. One stream, floor 6.5 GB, and the stream stops once the whole study has spent $170, which counts Fable's $34.65: `loop.py`'s own stop reads only the runner's tally, so the driver holds the study's figure. At about $2.70 a bug that is about 19 of the 20.
+
+**The credits.** Stage 2 runs on the credits that expire on 2026-11-04. Its bugs stay sealed, and nothing read from its runs reaches the loop until stage 3's runs have ended.

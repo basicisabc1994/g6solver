@@ -277,7 +277,7 @@ def test_k1_is_judged_in_sections_of_its_own_and_never_pooled_with_m9(tmp_path, 
                     "K1, training, tuned"):
         assert any(line.startswith(section) for line in lines), section
     judged = [line for line in lines if " uplift " in line and "report only" not in line]
-    assert len(judged) == 44      # each primary, on two scores: four sections and failure-rich against A and T, one tuned against A
+    assert len(judged) == 52      # each primary, on two scores: five sections and failure-rich against A and T, one tuned against A
     assert all(" K1 " in line for line in judged if line.startswith("K1, "))
     assert not any(" K1 " in line for line in judged if not line.startswith("K1, "))
     for section, shown in (("K1, stage 1, all eleven", "K1   2/2"), ("K1, stage 2, new repos", "K1   2/2"),
@@ -310,6 +310,82 @@ def test_stage_3_is_judged_against_k1_its_parent_as_well_as_a_and_t(tmp_path, mo
               if line.startswith("stage 3, new repos") and " uplift " in line and "report only" not in line]
     assert sum(" P1 " in line for line in judged) == 6 and sum(" K1 " in line for line in judged) == 2
     assert not any(" M9 " in line for line in judged)
+
+
+def test_stage_2s_determined_bugs_are_reported_beside_all_of_them_and_read_the_rule_on_their_own(tmp_path, monkeypatch, capsys):
+    determined, other = compare.DETERMINED_2[0], "charset-normalizer-715"
+    rows = {(arm, task, repeat): {"maintainers": arm == "K1", "amended": arm == "K1"} for arm in ("M9", "K1", "A", "T", "R")
+            for task in (determined, other) for repeat in (1, 2)}
+    tasks = {compare.we.TASKS_FRESH: [], compare.we.TASKS_UNSEEN: [determined, other], None: []}
+    monkeypatch.setattr(compare.c, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(compare, "saved", lambda root: rows)
+    monkeypatch.setattr(compare.we, "R3_HELD", ())
+    monkeypatch.setattr(compare.we, "load_tasks", lambda path=None: [type("Task", (), {"id": t}) for t in tasks[path]])
+    compare.main([])
+    lines = capsys.readouterr().out.splitlines()
+    assert other not in compare.DETERMINED_2
+    assert any(line.startswith("K1, stage 2, determined") and "K1   2/2" in line for line in lines)
+    assert any(line.startswith("K1, stage 2, new repos") and "K1   4/4" in line for line in lines)
+    assert any(line.startswith("stage 2, determined") and "M9   0/2" in line for line in lines)
+
+
+def test_stage_3_gets_no_verdict_on_stage_1_bugs_which_are_development_for_it(tmp_path, monkeypatch, capsys):
+    """PLAN.md, 2026-11-02: a scored bug is development for every later generation, so a win there is a tuned score."""
+    _main(monkeypatch, tmp_path, _cells(P1="u11 f11", K1="u00 f00", M9="u00 f00", A="u00 f00", T="u00 f00", R="u00 f00"), "--trained", "P1")
+    lines = capsys.readouterr().out.splitlines()
+    tuned = [line for line in lines if line.startswith("stage 3, stage 1 bugs") and "frozen rule" in line]
+    assert len(tuned) == 2 and all("frozen rule: not applied, tuned on these bugs" in line for line in tuned)
+    unseen = [line for line in lines if line.startswith("stage 3, new repos") and "frozen rule" in line]
+    assert len(unseen) == 2 and not any("not applied" in line for line in unseen)
+
+
+def test_k0_is_a_report_and_the_rule_gives_it_no_verdict(tmp_path, monkeypatch, capsys):
+    """PLAN.md, 2026-11-02: it was chosen after stage 1 was read, so however well it reads it is a hypothesis for a fresh test."""
+    _main(monkeypatch, tmp_path, _cells(K0="u11", K1="u00", M9="u00", A="u00", T="u00", R="u00"))
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("K0, stage 2, exploratory")]
+    assert sum("K0   2/2" in line for line in lines) == 2 * 5          # against A, T, R, M9 and K1, on two scores
+    verdicts = [line for line in lines if "frozen rule" in line]
+    assert len(verdicts) == 2 and all("frozen rule: not applied, exploratory" in line for line in verdicts)
+    assert not any("cleared" in line or "frozen rule: met" in line for line in verdicts)
+
+
+@pytest.mark.parametrize("flag", ["--loop", "--second", "--trained"])
+def test_k0_is_refused_as_a_primary_so_it_gets_no_verdict_and_chooses_no_bugs(flag, capsys):
+    with pytest.raises(SystemExit):
+        compare.main([flag, "K0"])
+    assert "never a primary" in capsys.readouterr().err
+
+
+def test_k0_gets_no_verdict_from_report_however_it_reads(capsys):
+    lost = "u00 v00 w00"
+    rows = _cells(K0="u11 v11 w11", A=lost, T=lost)      # six wins and no loss would clear the rule at either bar
+    compare.report(rows, "direct", "uvw", (1, 2), loop_arm="K0", scores=("amended",))
+    lines = [line for line in capsys.readouterr().out.splitlines() if "frozen rule" in line]
+    assert len(lines) == 1 and "frozen rule: not applied, exploratory" in lines[0]
+
+
+@pytest.mark.parametrize("flag", ["--loop", "--second"])
+def test_a_later_arm_gets_no_verdict_on_stage_1_bugs_or_held_out_bugs(tmp_path, monkeypatch, capsys, flag):
+    lost = "f00 g00 h00 x00000"
+    rows = _cells(M10="f11 g11 h11 x11111", M9=lost, K1=lost, A=lost, T=lost, R=lost)
+    tasks = {compare.we.TASKS_FRESH: ["f", "g", "h"], compare.we.TASKS_UNSEEN: [], None: ["x"]}
+    monkeypatch.setattr(compare.c, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(compare, "saved", lambda root: rows)
+    monkeypatch.setattr(compare.we, "R3_HELD", ("x",))
+    monkeypatch.setattr(compare.we, "load_tasks", lambda path=None: [type("Task", (), {"id": t}) for t in tasks[path]])
+    compare.main([flag, "M10"])
+    lines = [line for line in capsys.readouterr().out.splitlines() if "frozen rule" in line and "M10" not in line.split("frozen rule")[1]]
+    named = "" if flag == "--loop" else "M10, "
+    for section in ("stage 1, all eleven", "held-out, second look"):
+        picked = [line for line in lines if line.startswith(named + section)]
+        assert len(picked) == 2 and all("frozen rule: not applied, tuned on these bugs" in line for line in picked), section
+
+
+def test_k0_is_never_what_decides_which_bugs_finished(tmp_path, monkeypatch, capsys):
+    _main(monkeypatch, tmp_path, _cells(K1="u11", M9="u11", A="u00", T="u00", R="u00"))
+    lines = capsys.readouterr().out.splitlines()
+    assert "stage 2: 1 of 1 bugs finished, in the frozen order" in lines
+    assert not any(line.startswith("K0, ") for line in lines)
 
 
 FROZEN = ("M9", "K1", "A", "T", "R")
