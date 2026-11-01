@@ -80,14 +80,14 @@ def _again(event: dict, asked: dict, ended: dict, task: str) -> None:
     """A new loop after one that ended. Its base is HEAD now, and its task this prompt, with the earlier task if that base is
     the same, as the patch still holds that work. Its state names the patch the last review read, so a "thanks" spends no
     review on it, unless that loop ended with a stable code: it came to no result, so the next stop may try again. The
-    scouts do not run here, as they do at a session's first prompt: this may be any prompt at all. The ended loop's row goes
-    first if it is still due, as no call reaches that folder after this one. Outside a repository nothing moves, and the stop
-    says so."""
+    scouts do not run here, as they do at a session's first prompt: this may be any prompt at all. A row the ended loop still
+    owes is tried first, and if the log keeps it out it stays owed: the new loop's calls reach it by its mark, as they no
+    longer reach that loop's folder. Outside a repository nothing moves, and the stop says so."""
     session_id, session = event["session_id"], folder(event["session_id"])
     if "row_due" in ended:
         from g6.harness import completion_loop as loop
 
-        loop.advance(asked["repo"], asked["task"], asked["base"], current(session_id, asked))    # an ended run only writes it
+        loop.settle()
     here = _here(event["cwd"])
     if here is None:
         return

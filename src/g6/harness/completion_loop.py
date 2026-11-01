@@ -141,6 +141,8 @@ UNCONFINED, UNASKED, UNAPPROVED = "no_boundary", "no_task", "no_reviewer_approve
 NOT_CHANGEABLE = frozenset({FOUND_NOTHING, UNREACHABLE, UNCONFINED, UNASKED, UNAPPROVED})
 #: Where those rows go, beside the sessions' folders: local, and never pushed.
 FAILURES = ("completion_loop", "failures.jsonl")
+#: An empty file named for each run that owes a row, as what a run owes must outlive that run's own calls (``settle``).
+OWING = ("completion_loop", "owing")
 #: The one requirement the final review assesses: the task's text, which no stated check tests.
 REQUIREMENT = "task"
 RUN_BY_G6 = "G6 runs them for you when you finish, confined, with no network, and sends back what each did"
@@ -746,12 +748,13 @@ def _round_outcome(one: dict) -> str:
     return "test_showed_nothing" if one["results"].get(one["file"]) in SHOWED_NOTHING else "nothing_reproduced"
 
 
-def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> dict:
+def _failure_row(task: str, base: str, session: Path, state: dict, now: str) -> dict:
     """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
     a cause must be a stable code. ``independently_observed`` means only that G6 saw a test fail: it ran another family's test,
     apart from the agent, so a run where none failed observed nothing, whatever else it says. ``session`` names the folder
     beside it that holds each round's patch. ``label`` stays empty here: it is where the maintainers' verdict joins later. A
-    refused run has no reviews."""
+    refused run has no reviews. ``now``: the digest of the patch as the caller read it, "" if it could not. Nothing here reads
+    the repository, which could fail: with no ``now``, ``tree_changed`` is None, unknown, and the run still has its row."""
     reviews = state.get("reviews") or []
     fixed, still = patch_report.findings(reviews)
     cause = _cause(state, fixed, still)
@@ -763,7 +766,7 @@ def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path,
             "reviews": [{**{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")},
                          "outcome": _round_outcome(one), "told": one.get("told", "")} for one in reviews],
             "stop": state["stop"], "left": state.get("left", ""),
-            "tree_changed": bool(reviews) and digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
+            "tree_changed": (now != reviews[0]["patch"] if now else None) if reviews else False}
 
 
 def _row_of(line: str, session: Path) -> bool:
@@ -779,8 +782,8 @@ def _write_row(session: Path, state: dict) -> None:
     how the run ended: a hook cut short after its row adds no second, one cut short inside it adds the row again, and a run
     that went on after one has its row replaced, whole, by a new file. A row starts a line of its own after a torn one,
     which would take it down too. The log has a lock of its own, as an append is not atomic on every platform. A row that
-    cannot be written costs no report: it stays in the state, with why in ``row``, and the session's next call tries again,
-    so a log held for a moment loses nothing."""
+    cannot be written costs no report: it stays in the state, with why in ``row``, and its mark stays, so a later call tries
+    again (``settle``)."""
     try:
         path = state_path(*FAILURES)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -800,19 +803,23 @@ def _write_row(session: Path, state: dict) -> None:
                 os.replace(fresh, path)
         del state["row_due"]
         state.pop("row", None)
+        state_path(*OWING, session.name).unlink(missing_ok=True)
     except (OSError, ValueError, WorkspaceRefused) as exc:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
-def _keep_failures(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> None:
-    """The run's row, built here, while the change is at hand, and kept until it is written. It is JSON in ASCII, so it is
-    one line whatever its text holds."""
+def _owe_row(task: str, base: str, session: Path, state: dict, now: str) -> None:
+    """The run's row, owed from here on: built, marked in ``OWING`` and saved with the state, before anything that can fail, so
+    what follows can delay the row and cannot lose it. ``_write_row`` delivers it. It is JSON in ASCII, so it is one line
+    whatever its text holds. A mark that cannot be made leaves the row to the run's own later calls."""
+    state["row_due"] = json.dumps(_failure_row(task, base, session, state, now))
     try:
-        state["row_due"] = json.dumps(_failure_row(task, base, change, session, state))
-    except (OSError, ValueError) as exc:    # a RepoRefused from reading the final patch is a ValueError
+        mark = state_path(*OWING, session.name)
+        mark.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        mark.touch()
+    except OSError as exc:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
-        return
-    _write_row(session, state)
+    _save(session, state)
 
 
 def _patch_now(root: Path, base: str) -> str:
@@ -848,28 +855,29 @@ def _ending(reason: str, reviews: list[dict]) -> str:
     return "fixed" if fixed else "clean"
 
 
-def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, session: Path, state: dict, reason: str,
-                said: str = "") -> Step:
+def _review_end(root: Path, task: str, base: str, session: Path, state: dict, reason: str, said: str = "") -> Step:
     """The end of the review-until-clean loop: what the reviews found above the patch review, then the row. Only a review that
     was read and reproduced nothing is clean, and running out of repairs or a finding the agent rejected is a result. The
-    state is saved before the patch review, which is slow: a hook cut short there repeats no review, and ends as this would,
+    row is owed and the state saved before the patch review, which is slow and can fail: a hook cut short there repeats no
+    review, leaves the row owed, and ends as this would,
     unless the patch has changed since a clean review read it, which ``_advance`` then has reviewed again. A clean stop holds
     only for the patch there as the loop ends, so that is read last of all, after the slow step. A patch that moved under a
     running step is not reviewed again here: an edit that keeps coming would spend a review each time."""
     state["stop"] = reason
     state["left"] = (" ".join(said.split())[:MAX_CASE_CHARS] or state.get("left") or NO_REASON) if reason == LEFT else ""
     reviews = state.get("reviews") or []
-    _save(session, state)
+    _owe_row(task, base, session, state, _patch_now(root, base))
     review = _final_review(root, task, base)
-    if reason == CLEAN and _patch_now(root, base) != reviews[-1]["patch"]:
+    if reason == CLEAN and (now := _patch_now(root, base)) != reviews[-1]["patch"]:
         reason = state["stop"] = MOVED
+        _owe_row(task, base, session, state, now)
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     ending = _ending(reason, reviews)
     report = patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
-    _keep_failures(task, base, change, session, state)
+    _write_row(session, state)
     return _finish(session, state, report, code, ending)
 
 
@@ -942,6 +950,28 @@ def _held(session: Path) -> Any:
     return Coordination(session / ".step").mutex(wait=0)
 
 
+def settle() -> None:
+    """Every row a run still owes, whichever run owes it. A run's own calls end at the next prompt, and its session may never
+    call again, so what is owed is found by its mark, and any call of any session tries it. A run with a step going on is
+    passed over, as that step has its row in hand, and so is one that cannot be read, which holds up no other. A row the log
+    keeps out stays owed and ends the round: the rest would only wait for the same lock in turn."""
+    owing = state_path(*OWING)
+    for mark in sorted(owing.iterdir()) if owing.is_dir() else ():
+        run = owing.parent / mark.name
+        try:
+            with _held(run):
+                state = _load(run)
+                if "row_due" not in state:
+                    mark.unlink(missing_ok=True)
+                    continue
+                _write_row(run, state)
+                _save(run, state)
+        except (WorkspaceRefused, OSError, ValueError):
+            continue
+        if "row_due" in state:
+            return
+
+
 def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None,
             critic: LLMCaller | None = None, said: str = "", answered: bool = True, agent: str = "") -> Step:
     """One hook of the loop, for the repository's working tree against ``base``: see the module's docstring. ``scout`` and
@@ -958,6 +988,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     that finds another running does nothing, and says ``WAIT``."""
     session = Path(session)
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    settle()
     try:
         with _held(session):
             return _advance(repo, task, base, session, scout, critic, said, answered, agent)
@@ -980,11 +1011,12 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
 
     def refused(text: str, code: str, cause: str) -> Step:
         state.update(stop=text, cause=cause)
-        _keep_failures(task, base, change, session, state)
+        _owe_row(task, base, session, state, _patch_now(root, base))
+        _write_row(session, state)
         return _finish(session, state, text, code, "untested")
 
     if not change.sources:
-        return (_review_end(root, task, base, change, session, state, WITHDRAWN) if state.get("reviews") else
+        return (_review_end(root, task, base, session, state, WITHDRAWN) if state.get("reviews") else
                 Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED, ending="untested"))
     if state.get("reviewed") and "started" not in state and state["reviewed"] == digest(repo_tests.diff_text(change)):
         return Step(STOP, note=ALREADY_READ)
@@ -1060,4 +1092,4 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
     elif got.status == "counterexample_budget_exhausted":
         reason = RAN_OUT
-    return _review_end(root, task, base, change, session, state, reason, said)
+    return _review_end(root, task, base, session, state, reason, said)

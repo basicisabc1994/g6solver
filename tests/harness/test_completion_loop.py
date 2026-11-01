@@ -1251,7 +1251,7 @@ def test_with_no_test_run_the_report_names_no_boundary(world, monkeypatch):
     assert "ran inside" not in world.advance(critic=reviewer("none")).text
 
 
-def test_a_row_that_cannot_be_built_loses_no_report(world, monkeypatch):
+def test_a_final_patch_that_cannot_be_read_costs_neither_the_report_nor_the_row(world, monkeypatch):
     Reviewed(monkeypatch, "test_critic.py")
     critic = reviewer("one")
     world.edit()
@@ -1263,7 +1263,8 @@ def test_a_row_that_cannot_be_built_loses_no_report(world, monkeypatch):
     monkeypatch.setattr(repo_tests, "diff_text", gone)
     step = world.advance(critic=critic)
     assert step.action == loop.STOP and "THE REVIEW" in step.text
-    assert "the repository went away" in world.state()["row"] and not rows(world)
+    [row] = rows(world)
+    assert row["tree_changed"] is None and row["stop"] == loop.LEFT      # what it cannot know it says it does not know
 
 
 def test_end_to_end_the_review_loop_with_real_confined_runs_and_the_real_review(bwrap_backend, tmp_path, monkeypatch):
@@ -2960,3 +2961,248 @@ def test_a_test_that_would_not_run_and_then_passed_is_reported_by_its_latest_run
     ended = world.advance(critic=critic)
     assert not ended.code and "`rule two`; its test passes on the patch" in ended.text
     assert "ImportError" not in ended.text      # what it said once, of a run that is no longer its latest
+
+# --- a row is owed from the moment a run ends, and every run that owes one is retried: one case for each way of failing ---------
+
+def log_held(world):
+    """Another writer holding the failures log."""
+    return _coordination.Coordination(world.session.parent / ".failures").mutex()
+
+
+def owing_past_a_new_prompt(world, monkeypatch, *replies) -> str:
+    """A loop that ended while the log was held, and a new prompt that armed the next with the log still held: which is what a
+    retry at that prompt cannot get past. The ended run's folder's name."""
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    approved(monkeypatch, reviewer("one", *replies))
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    with log_held(world):
+        stopped(world, "They misread the task.")
+        assert loop._load(hook.folder("s1"))["row_due"]
+        prompted(world, "the next task")
+    assert not rows(world)
+    return hook.folder("s1").name
+
+
+def test_a_row_the_log_kept_out_past_a_new_prompt_is_written_by_a_later_stop(world, monkeypatch):
+    ended = owing_past_a_new_prompt(world, monkeypatch, "none")
+    world.edit(FIXED + "# the next task\n")
+    stopped(world)
+    assert ended in [row["session"] for row in rows(world)], "the ended run was abandoned with its row due"
+    assert "row_due" not in loop._load(hook.folder("s1")) and "row" not in loop._load(hook.folder("s1"))
+    assert not list((world.session.parent / "owing").iterdir())
+    stopped(world)
+    assert len(rows(world)) == 2      # a later call writes it no second time
+
+
+def test_a_row_owed_is_written_by_a_stop_that_ran_no_review(world, monkeypatch):
+    ended = owing_past_a_new_prompt(world, monkeypatch, "never")
+    said = stopped(world, "You are welcome.")      # the patch a review read, so no loop runs
+    assert "did not run" in said["systemMessage"] and [row["session"] for row in rows(world)] == [ended]
+
+
+def test_a_row_owed_is_written_by_a_stop_with_no_python_changed(world, monkeypatch):
+    ended = owing_past_a_new_prompt(world, monkeypatch, "never")
+    world.edit(BASE)
+    assert "no Python changed" in stopped(world)["systemMessage"]
+    assert [row["session"] for row in rows(world)] == [ended]
+
+
+def test_every_run_that_owes_a_row_is_retried_not_only_the_one_before(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    approved(monkeypatch, reviewer("none", "none", "none"))
+    prompted(world, "one")
+    with log_held(world):
+        for n in range(2):
+            world.edit(FIXED + f"# {n}\n")
+            stopped(world)
+            prompted(world, f"then {n}")
+    assert not rows(world)
+    world.edit(FIXED + "# the last\n")
+    stopped(world)
+    assert len({row["session"] for row in rows(world)}) == 3
+
+
+def test_a_log_that_stays_unwritable_past_a_new_prompt_takes_the_row_when_it_can(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    approved(monkeypatch, reviewer("one"))
+    prompted(world, "fix double")
+    blocked = world.session.parent / "failures.jsonl"
+    blocked.mkdir()      # a folder where the file goes
+    world.edit()
+    stopped(world)
+    stopped(world, "They misread the task.")
+    prompted(world, "thanks")
+    blocked.rmdir()
+    stopped(world, "You are welcome.")
+    assert [row["session"] for row in rows(world)] == [hook.folder("s1").name]
+
+
+def test_a_stale_row_that_cannot_be_replaced_past_a_new_prompt_is_replaced_when_it_can(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    approved(monkeypatch, reviewer("one", "none", "after the restart"))
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    real = loop._finish
+    monkeypatch.setattr(loop, "_finish", killed)
+    with pytest.raises(KeyboardInterrupt):
+        stopped(world)
+    monkeypatch.setattr(loop, "_finish", real)
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic.py"}
+    assert stopped(world)["decision"] == "block"
+    replace = os.replace
+
+    def refused(source, target):      # on Windows a reader of the log makes this fail
+        if Path(target).name == "failures.jsonl":
+            raise PermissionError("another process has the log open")
+        replace(source, target)
+
+    with monkeypatch.context() as context:
+        context.setattr(os, "replace", refused)
+        stopped(world, "I reject the finding")
+        prompted(world, "thanks")
+    assert rows(world)[0]["cause"] == loop.FIXED
+    stopped(world, "You are welcome.")
+    [row] = rows(world)
+    assert row["cause"] == loop.CONTESTED, "the ended run's row was left stale behind the new prompt"
+
+
+def test_a_retry_killed_inside_the_row_keeps_it_owed_and_it_is_written_whole(world, monkeypatch):
+    ended = owing_past_a_new_prompt(world, monkeypatch, "never")
+    with monkeypatch.context() as context:
+        tears_the_row(context)
+        with pytest.raises(HookKilled):
+            stopped(world, "You are welcome.")
+    stopped(world, "You are welcome.")
+    assert [row["session"] for row in whole_rows(world)] == [ended]
+
+
+def test_a_run_a_step_holds_keeps_its_row_owed_for_a_later_call(world, monkeypatch):
+    ended = owing_past_a_new_prompt(world, monkeypatch, "never")
+    with loop._held(hook.folder("s1")):
+        stopped(world, "You are welcome.")
+    assert not rows(world)
+    stopped(world, "You are welcome.")
+    assert [row["session"] for row in rows(world)] == [ended]
+
+
+def test_a_row_owed_is_written_by_a_call_from_another_session(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.session.parent.mkdir(parents=True)
+    world.edit()
+    with log_held(world):
+        assert world.advance(critic=reviewer("none")).action == loop.STOP
+    assert not rows(world)
+    world.edit(BASE)
+    loop.advance(world.repo, TASK, world.base, world.session.parent / "s2", critic=reviewer("never"))
+    assert [row["session"] for row in rows(world)] == [world.session.name]
+
+
+def test_a_final_patch_that_cannot_be_read_still_leaves_the_runs_row(world, monkeypatch):
+    """The reviewer's case: a run that ended with nothing it could read at the end must not end with no row."""
+    Reviewed(monkeypatch)
+    real = loop._final_review
+
+    def gone(change):
+        raise repo_tests.RepoRefused("G6_E_GIT_REPO_INVALID", "the repository went away")
+
+    def goes_away(root, task, base) -> str:
+        monkeypatch.setattr(repo_tests, "diff_text", gone)
+        return real(root, task, base)
+
+    monkeypatch.setattr(loop, "_final_review", goes_away)
+    world.edit()
+    ended = world.advance(critic=reviewer("none"))
+    assert ended.action == loop.STOP and ended.code == loop.NO_CLEAN_REVIEW and world.state()["done"]
+    [row] = rows(world)
+    assert row["session"] == world.session.name and row["cause"] == "patch_moved"
+
+
+@pytest.mark.parametrize("failure", [KeyboardInterrupt, RuntimeError])
+def test_a_run_that_dies_in_its_final_review_already_owes_its_row(world, monkeypatch, failure):
+    def dies(*args):
+        raise failure("the final review never came back")
+
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    monkeypatch.setattr(loop, "_final_review", dies)
+    with pytest.raises(failure):
+        world.advance(critic=critic, said="They misread the task.")
+    assert not rows(world) and not world.state().get("done")
+    world.edit(BASE)
+    loop.advance(world.repo, TASK, world.base, world.session.parent / "s2", critic=reviewer("never"))
+    [row] = rows(world)      # its own session never called again
+    assert row["session"] == world.session.name and row["left"] == "They misread the task."
+
+
+def test_a_held_log_ends_the_retry_at_its_first_row_as_the_rest_would_only_wait(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.session.parent.mkdir(parents=True)
+    for name in ("s1", "s2"):
+        world.edit(FIXED + f"# {name}\n")
+        with log_held(world):
+            loop.advance(world.repo, TASK, world.base, world.session.parent / name, critic=reviewer("none"))
+    assert not rows(world)
+    tried, real = [], loop._write_row
+
+    def write(session: Path, state: dict) -> None:
+        tried.append(session.name)
+        real(session, state)
+
+    monkeypatch.setattr(loop, "_write_row", write)
+    world.edit(BASE)
+    with log_held(world):
+        loop.advance(world.repo, TASK, world.base, world.session.parent / "s3", critic=reviewer("never"))
+    assert len(tried) == 1, "each owed row would wait out the lock in turn"
+    loop.advance(world.repo, TASK, world.base, world.session.parent / "s3", critic=reviewer("never"))
+    assert sorted(row["session"] for row in rows(world)) == ["s1", "s2"]
+
+
+def test_a_mark_with_nothing_owed_adds_no_row_and_goes(world, monkeypatch):
+    Reviewed(monkeypatch)
+    owing = world.session.parent / "owing"
+    owing.mkdir(parents=True)
+    (owing / "a-run-that-owes-nothing").write_text("", encoding="utf-8")
+    assert world.advance(critic=reviewer("never")).code == loop.NO_PYTHON
+    assert not rows(world) and not list(owing.iterdir())
+
+
+def test_a_mark_that_cannot_be_made_leaves_the_row_owed_by_its_own_run(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.session.parent.mkdir(parents=True)
+    (world.session.parent / "owing").write_text("a file where the folder goes", encoding="utf-8")
+    critic = reviewer("none", "never")
+    world.edit()
+    with log_held(world):
+        assert world.advance(critic=critic).action == loop.STOP
+    assert world.state()["row"] and not rows(world)
+    world.advance(critic=critic)
+    assert [row["session"] for row in rows(world)] == [world.session.name]
+
+
+def test_a_run_that_cannot_be_read_holds_up_no_other_run_and_no_call(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.session.parent.mkdir(parents=True)
+    world.edit()
+    with log_held(world):
+        world.advance(critic=reviewer("none"))
+    broken = world.session.parent / "a-run-first-in-order"
+    broken.mkdir()
+    (broken / "state.json").write_text("not json", encoding="utf-8")
+    (world.session.parent / "owing" / broken.name).write_text("", encoding="utf-8")
+    world.edit(BASE)
+    step = loop.advance(world.repo, TASK, world.base, world.session.parent / "s2", critic=reviewer("never"))
+    assert step.code == loop.NO_PYTHON and [row["session"] for row in rows(world)] == [world.session.name]
