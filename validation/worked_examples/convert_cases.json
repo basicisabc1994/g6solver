@@ -1,0 +1,16 @@
+[
+ {"task": "black-5634", "repeat": 1, "arm": "A", "of": 1, "start": "wrong"},
+ {"task": "black-5634", "repeat": 2, "arm": "A", "of": 2, "start": "wrong"},
+ {"task": "black-5634", "repeat": 3, "arm": "E", "of": 1, "start": "wrong"},
+ {"task": "black-5634", "repeat": 4, "arm": "E", "of": 2, "start": "wrong"},
+ {"task": "black-5634", "repeat": 5, "arm": "G1", "of": 1, "start": "wrong"},
+ {"task": "black-5634", "repeat": 6, "arm": "G1", "of": 2, "start": "wrong"},
+ {"task": "pydantic-14052", "repeat": 1, "arm": "A", "of": 1, "start": "wrong"},
+ {"task": "pydantic-14052", "repeat": 2, "arm": "E", "of": 1, "start": "wrong"},
+ {"task": "pydantic-14052", "repeat": 3, "arm": "E", "of": 2, "start": "wrong"},
+ {"task": "click-3678", "repeat": 1, "arm": "E", "of": 2, "start": "wrong"},
+ {"task": "pydantic-14065", "repeat": 1, "arm": "E", "of": 2, "start": "right"},
+ {"task": "attrs-1593", "repeat": 1, "arm": "G1", "of": 1, "start": "right"},
+ {"task": "click-3678", "repeat": 2, "arm": "A", "of": 1, "start": "right"},
+ {"task": "pydantic-14052", "repeat": 4, "arm": "A", "of": 2, "start": "right"}
+]

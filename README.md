@@ -110,7 +110,7 @@ Not a programmer? Ready-made **bundles** (double-click apps) are described in th
 ## Use it
 
 **From a coding agent (MCP), the main surface:** after `g6 setup`, the agent gets discovery, `g6_compose`,
-`g6_review_patch`, and `metaharness_*` tools for constructing, measuring and revising applications. Long runs return
+`g6_review_patch`, `g6_review_until_clean`, and `metaharness_*` tools for constructing, measuring and revising applications. Long runs return
 job IDs; poll `metaharness_job`. [AGENT_GUIDE.md](AGENT_GUIDE.md) is written for the agent itself.
 
 Most checks need no model. The few steps that do use the model you set in your key file, `~/.g6/.env`, whose values

@@ -109,6 +109,14 @@ def test_the_control_runs_where_claude_code_alone_runs(pools):
     assert we.r3_loop_key((sonnet, we.load_tasks()[1].id, "R", 1)) and not we.r3_loop_key((sonnet, "newrepo-1", "R", 3))
 
 
+@pytest.mark.parametrize("arm", ["A", "T", "R", "L9", "M9", "M10"])
+def test_every_arm_the_stages_run_gets_past_the_runners_gate(monkeypatch, arm):
+    """Arm R passed every other test and was refused at the door, which only a dry run through ``run_task`` showed."""
+    ctx = type("Ctx", (), {"variant": we.ROUND3, "arm": arm, "model": we.R3_MODELS[1], "archive": None})()
+    monkeypatch.setattr(we, "_run_task", lambda ctx, task, **kw: {"status": "ran"})
+    assert we.run_task(ctx, we.load_tasks()[0], dry=True)["status"] == "ran"
+
+
 def test_the_control_is_plain_claude_code_with_the_discussion_and_no_trained_text():
     task = we.load_tasks()[0]
     assert we.prompt(task, "t", "body", "R") == we.prompt(task, "t", "body", "A") and we.gets_thread("R")

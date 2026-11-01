@@ -3,22 +3,31 @@
 sessions and its critic by fakes. No model is called and nothing a model wrote runs."""
 from __future__ import annotations
 
+import dataclasses
 import json
+import os
 import re
 import subprocess
+import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
+from g6.core.ledger import digest
 from g6.core.llm import FakeLLM, LLMError
 from g6.harness import completion_loop as loop
+from g6.harness import patch_report
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
+from g6.metaharness.domain import FailureRecord
 from g6.workforce import repo_tests
+from g6.workspace import _coordination
 
 BASE = "def double(x):\n    return x + 2\n"
 FIXED = "def double(x):\n    return x * 2\n"
@@ -103,8 +112,8 @@ def world(tmp_path, monkeypatch):
         def edit(self, text: str = FIXED) -> None:
             (root / "mod.py").write_text(text, encoding="utf-8")
 
-        def advance(self, scouts=None, critic=None, task=TASK):
-            return loop.advance(root, task, self.base, self.session, scout=scouts or Scouts(), critic=critic)
+        def advance(self, scouts=None, critic=None, task=TASK, said=""):
+            return loop.advance(root, task, self.base, self.session, scout=scouts or Scouts(), critic=critic, said=said)
 
         def prepare(self, scouts=None):
             monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "before_fix"})
@@ -112,6 +121,9 @@ def world(tmp_path, monkeypatch):
 
         def state(self) -> dict:
             return json.loads((self.session / "state.json").read_text(encoding="utf-8"))
+
+        def state_exists(self) -> bool:
+            return (self.session / "state.json").is_file()
 
     return World()
 
@@ -382,10 +394,16 @@ def defect(said_rule: str = "the rule") -> FakeLLM:
     return FakeLLM(reply)
 
 
+def scouts_chosen(monkeypatch) -> None:
+    """The line in the person's key file that keeps the scouts' loop where a critic is approved."""
+    monkeypatch.setattr(keys, "read", lambda: {loop.MODE_LINE: "scouts"})
+
+
 def test_the_critic_reads_the_finished_patch_once_and_its_failing_test_goes_back(world, monkeypatch):
     def now(placed: str) -> dict:
         return ran(placed, {"test_critic": "failed"} if "test_critic.py" in placed else PASSING)
 
+    scouts_chosen(monkeypatch)
     Runs(monkeypatch, now=now)
     critic = defect()
     world.edit()
@@ -404,6 +422,7 @@ def test_a_critics_test_that_will_not_run_says_nothing_of_the_patch(world, monke
     def now(placed: str) -> dict:
         return {"verdict": "collection_error", "said": "no"} if "test_critic.py" in placed else ran(placed, PASSING)
 
+    scouts_chosen(monkeypatch)
     Runs(monkeypatch, now=now)
     world.edit()
     assert world.advance(critic=defect()).action == loop.STOP
@@ -413,6 +432,7 @@ def test_a_critic_that_fails_is_recorded_and_the_loop_goes_on(world, monkeypatch
     def broken(system: str, user: str) -> str:
         raise LLMError("no such program")
 
+    scouts_chosen(monkeypatch)
     Runs(monkeypatch)
     world.edit()
     step = world.advance(critic=FakeLLM(broken))
@@ -715,3 +735,1240 @@ def test_an_unfinished_hook_is_picked_up_where_it_stopped(world, monkeypatch):
         world.advance(host)
     world.advance(host)
     assert len(calls) == 4     # the first scout's work was kept
+
+
+# --- the review-until-clean loop: no scout, no probe, and a fresh review of each repair ------------------------------------
+
+def reviewer(*replies) -> FakeLLM:
+    """The reviews in turn: a word is a defect's rule, "none" finds nothing, and an exception is a review that fails."""
+    left = list(replies)
+
+    def reply(system: str, user: str) -> str:
+        said = left.pop(0)
+        if isinstance(said, Exception):
+            raise said
+        proof = re.search(r"review [0-9a-f]{32}", user)[0]
+        if said == "none":
+            return f"READ: {proof}\nRULE: no rule\nVERDICT: none\nWHY: nothing\n"
+        return (f"READ: {proof}\nRULE: rule {said}\nVERDICT: defect\nWHY: why {said}\n```python\n"
+                f"def test_critic():\n    assert '{said}' == ''\n```\n")
+
+    return FakeLLM(reply)
+
+
+class Reviewed:
+    """Stands for the runs of the reviewers' tests: the files named in ``failing`` fail, and the others pass."""
+
+    def __init__(self, monkeypatch, *failing):
+        self.failing, self.runs = set(failing), Runs(monkeypatch, now=self)
+
+    def __call__(self, placed: str) -> dict:
+        return ran(placed, {"test_critic": "failed" if Path(placed).name in self.failing else "passed"})
+
+    def ran_in_turn(self) -> list[str]:
+        return [Path(call[1]).name for call in self.runs.calls]
+
+
+def rows(world) -> list[dict]:
+    path = world.session.parent / "failures.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
+
+
+def test_a_review_that_reproduces_nothing_ends_the_loop_with_no_scout_and_no_probe(world, monkeypatch):
+    runs, scouts, critic = Runs(monkeypatch), Scouts(), reviewer("none")
+    world.edit()
+    step = world.advance(scouts, critic)
+    assert step.action == loop.STOP and "a review reproduced nothing" in step.text and "THE REVIEW" in step.text
+    assert len(critic.calls) == 1 and not scouts.calls and not runs.calls
+    assert not (world.session / "sets" / "scout").exists()
+
+
+def test_a_critic_in_the_key_file_is_all_the_loop_needs(world, monkeypatch):
+    runs, critic = Runs(monkeypatch), reviewer("none")
+    monkeypatch.setattr(keys, "read", lambda: {loop.CRITIC_LINE: "codex"})    # and no G6_LLM_PROVIDER line
+    monkeypatch.setattr(host_models, "CodexCaller", lambda timeout: critic)
+    world.edit()
+    step = loop.advance(world.repo, TASK, world.base, world.session)
+    assert step.action == loop.STOP and "a review reproduced nothing" in step.text
+    assert len(critic.calls) == 1 and not runs.calls
+
+
+def test_with_no_boundary_no_reviewer_is_asked(world, monkeypatch):
+    critic = reviewer("none")
+    monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    world.edit()
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "no backend here" in step.text and step.code == ISOLATION_UNAVAILABLE
+    assert not critic.calls
+
+
+def test_a_run_refused_for_want_of_a_boundary_stops_the_review_loop_and_says_so(world, monkeypatch):
+    def refused(*args, **kwargs):
+        raise repo_tests.RepoRefused(ISOLATION_UNAVAILABLE, "no boundary now")
+
+    monkeypatch.setattr(vs, "_run_check", refused)
+    world.edit()
+    step = world.advance(critic=reviewer("one"))
+    assert step.action == loop.STOP and "no boundary now" in step.text and step.code == ISOLATION_UNAVAILABLE
+
+
+def test_the_scouts_line_keeps_the_scouts_loop_and_its_one_review(world, monkeypatch):
+    scouts_chosen(monkeypatch)
+    Runs(monkeypatch)
+    scouts, critic = Scouts(), reviewer("none")
+    world.edit()
+    step = world.advance(scouts, critic)
+    assert len(scouts.calls) == 3 and len(critic.calls) == 1
+    assert "What the completion loop tested" in step.text and "read the patch once" in step.text
+
+
+def test_with_no_critic_approved_the_scouts_loop_runs_as_it_did(world, monkeypatch):
+    Runs(monkeypatch)
+    scouts = Scouts()
+    world.edit()
+    assert "What the completion loop tested" in world.advance(scouts).text
+    assert len(scouts.calls) == 3
+
+
+def test_an_agents_environment_chooses_no_loop(world, monkeypatch):
+    runs, critic = Runs(monkeypatch), reviewer("none")
+    monkeypatch.setattr(keys, "read", lambda: {})
+    monkeypatch.setenv(loop.MODE_LINE, "scouts")
+    world.edit()
+    scouts = Scouts()
+    world.advance(scouts, critic)
+    assert not scouts.calls and not runs.calls      # the critic this call passed, and no line of the person's
+
+    monkeypatch.setenv(loop.CRITIC_LINE, "codex")
+    assert loop.critic_host() is None
+
+
+def test_with_nothing_approved_the_report_says_plainly_how_to_turn_the_loop_on(world, monkeypatch):
+    monkeypatch.setattr(keys, "read", lambda: {})
+    runs = Runs(monkeypatch)
+    world.edit()
+    step = loop.advance(world.repo, TASK, world.base, world.session)
+    assert step.action == loop.STOP and "did not run" in step.text and "Nothing was tested" in step.text
+    assert f"{loop.CRITIC_LINE}=codex" in step.text and step.code == keys.KEY_MISSING
+    assert not runs.calls
+
+
+def test_the_scouts_line_with_no_scouts_approved_says_what_it_needs(world, monkeypatch):
+    monkeypatch.setattr(keys, "read", lambda: {loop.MODE_LINE: "scouts", loop.CRITIC_LINE: "codex"})
+    runs = Runs(monkeypatch)
+    world.edit()
+    step = loop.advance(world.repo, TASK, world.base, world.session)
+    assert step.action == loop.STOP and "G6_LLM_PROVIDER=claude_code" in step.text
+    assert not runs.calls
+
+
+def test_a_critic_approved_means_no_scout_runs_before_the_fix(world, monkeypatch):
+    runs, scouts = Runs(monkeypatch), Scouts()
+    monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "before_fix", loop.CRITIC_LINE: "codex"})
+    assert loop.prepare(world.repo, TASK, world.base, world.session, scout=scouts) == ""
+    assert not scouts.calls and not runs.calls
+
+
+def test_the_scouts_line_with_a_critic_still_runs_them_before_the_fix(world, monkeypatch):
+    Runs(monkeypatch)
+    scouts = Scouts()
+    monkeypatch.setattr(keys, "read", lambda: {loop.WHEN_LINE: "before_fix", loop.CRITIC_LINE: "codex",
+                                               loop.MODE_LINE: "scouts"})
+    assert loop.harness().fixer[:40] in loop.prepare(world.repo, TASK, world.base, world.session, scout=scouts)
+    assert len(scouts.calls) == 3
+
+
+def test_a_finding_goes_back_in_the_reviewers_words_and_a_fresh_review_reads_each_repair(world, monkeypatch):
+    tests, scouts, critic = Reviewed(monkeypatch, "test_critic.py"), Scouts(), reviewer("one", "two", "none")
+    shipped = loop.harness()
+    world.edit()
+    first = world.advance(scouts, critic)
+    assert first.action == loop.CONTINUE
+    assert first.text == loop.review_note({"rule": "rule one", "why": "why one", "test": "def test_critic():\n    assert 'one' == ''"},
+                                          shipped)
+    assert first.text.endswith(shipped.review_ask)
+    world.edit(FIXED + "# after one\n")
+    tests.failing = {"test_critic_2.py"}
+    second = world.advance(scouts, critic)
+    assert second.action == loop.CONTINUE and "rule two" in second.text and "rule one" not in second.text
+    world.edit(FIXED + "# after two\n")
+    tests.failing = set()
+    third = world.advance(scouts, critic)
+    assert third.action == loop.STOP and "a review reproduced nothing" in third.text
+    assert [("# after one" in call[1], "# after two" in call[1]) for call in critic.calls] == [(False, False), (True, False),
+                                                                                                (False, True)]
+    assert not scouts.calls
+
+
+def test_a_review_sees_the_task_and_the_patch_and_none_of_the_agents_reasoning(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    world.advance(critic=critic, said="my reasoning, which no reviewer reads")
+    system, user = critic.calls[0]
+    assert system == loop.harness().critic
+    assert TASK in user and "x * 2" in user and "parent/mod.py" in user and "my reasoning" not in user
+
+
+def test_each_review_has_its_own_test_and_the_earlier_ones_keep_running(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "two", "none")
+    world.edit()
+    world.advance(critic=critic)
+    assert tests.ran_in_turn() == ["test_critic.py"]
+    world.edit(FIXED + "# 1\n")
+    world.advance(critic=critic)
+    assert tests.ran_in_turn()[1:] == ["test_critic.py", "test_critic_2.py"]
+    world.edit(FIXED + "# 2\n")
+    tests.failing = set()
+    world.advance(critic=critic)
+    assert tests.ran_in_turn()[3:] == ["test_critic.py", "test_critic_2.py"]     # the third review wrote none
+    where = world.session / "sets" / "critic"
+    assert sorted(path.name for path in where.iterdir()) == ["test_critic.py", "test_critic_2.py"]
+    assert "'one'" in (where / "test_critic.py").read_text(encoding="utf-8")
+
+
+def test_a_repair_that_undoes_an_earlier_fix_goes_back_in_that_reviewers_words(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "two", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = {"test_critic_2.py"}
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic.py"}
+    step = world.advance(critic=critic)      # this review finds nothing, and the first reviewer's test fails again
+    assert step.action == loop.CONTINUE and "rule one" in step.text and "rule two" not in step.text
+
+
+def test_each_round_keeps_its_patch_its_verdict_its_rule_and_its_reasons(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    world.advance(critic=critic)
+    first, second = world.state()["reviews"]
+    assert (first["verdict"], first["rule"], first["why"]) == ("defect", "rule one", "why one")
+    assert (second["verdict"], second["rule"]) == ("none", "no rule")
+    assert first["patch"] != second["patch"] and all(re.fullmatch(r"[0-9a-f]{64}", one["patch"]) for one in (first, second))
+
+
+def test_at_most_four_reviews_and_three_repairs_and_what_is_left_is_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py", "test_critic_2.py", "test_critic_3.py", "test_critic_4.py")
+    critic = reviewer("one", "two", "three", "four", "never")
+    for repair in range(loop.MAX_REPAIRS):
+        world.edit(FIXED + f"# {repair}\n")
+        assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# the last\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and len(critic.calls) == loop.MAX_REPAIRS + 1
+    assert "the repairs ran out with a defect open" in step.text and "**Open:**" in step.text
+    assert "after 4 reviews and 3 of at most 3 repairs" in step.text and not step.code
+
+
+def test_an_agent_that_leaves_the_code_has_rejected_the_finding_and_its_reason_is_kept(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    step = world.advance(critic=critic, said="The task asks\n\nfor the old behaviour.")
+    assert step.action == loop.STOP and "the agent left the code as it was" in step.text
+    assert "The task asks for the old behaviour." in step.text and "**Open:**" in step.text
+    assert world.state()["left"] == "The task asks for the old behaviour."
+    assert len(critic.calls) == 1      # the code is the code that was reviewed, so nothing new is asked
+
+
+def test_an_agent_that_gives_no_reason_is_recorded_as_giving_none(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    step = world.advance(critic=critic)
+    assert world.state()["left"] == loop.NO_REASON and loop.NO_REASON in step.text
+
+
+@pytest.mark.parametrize("critic", [
+    reviewer(LLMError("no such program")),
+    FakeLLM(lambda system, user: "no form at all"),                                   # it never quoted the pack, so it never read it
+    FakeLLM(lambda system, user: f"READ: {re.search(r'review [0-9a-f]{32}', user)[0]}\nVERDICT: maybe\n"),
+])
+def test_a_review_that_fails_or_cannot_be_read_is_no_clean_review(world, monkeypatch, critic):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and step.code == loop.NO_CLEAN_REVIEW
+    assert "a review failed" in step.text and "No clean review" in step.text
+    assert "a review reproduced nothing" not in step.text
+
+
+def test_a_review_that_fails_after_a_repair_ends_the_loop_and_counts_as_no_clean_review(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", LLMError("gone away"))
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and step.code == loop.NO_CLEAN_REVIEW
+    assert "gone away" in step.text and "**Open:**" in step.text      # the first test ran again, and still fails
+    assert tests.ran_in_turn() == ["test_critic.py", "test_critic.py"]
+
+
+def test_a_reviewers_test_that_will_not_run_reproduces_nothing_and_the_report_says_so(world, monkeypatch):
+    Runs(monkeypatch, now=lambda placed: {"verdict": "collection_error", "said": "no such import"})
+    world.edit()
+    step = world.advance(critic=reviewer("one"))
+    assert step.action == loop.STOP and "a review reproduced nothing" in step.text
+    assert "showed no failure" in step.text and "would not run" in step.text and "rule one" in step.text
+
+
+def test_one_test_that_will_not_run_hides_no_other(world, monkeypatch):
+    def now(placed: str) -> dict:
+        return ran(placed, {"test_critic": "failed"}) if placed.endswith("/test_critic.py") else {
+            "verdict": "collection_error", "said": "no"}
+
+    Runs(monkeypatch, now=now)
+    critic = reviewer("one", "two")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.CONTINUE and "rule one" in step.text
+
+
+def test_a_test_that_passes_is_no_finding(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=reviewer("one"))
+    assert step.action == loop.STOP and "a review reproduced nothing" in step.text and "showed no failure" in step.text
+    assert not rows(world)
+
+
+def test_a_test_the_runner_refuses_never_runs_and_is_named(world, monkeypatch):
+    runs = Runs(monkeypatch)
+
+    def plugin(system: str, user: str) -> str:
+        proof = re.search(r"review [0-9a-f]{32}", user)[0]
+        return (f"READ: {proof}\nRULE: r\nVERDICT: defect\nWHY: w\n```python\npytest_plugins = ['evil']\n"
+                "def test_critic():\n    assert False\n```\n")
+
+    world.edit()
+    step = world.advance(critic=FakeLLM(plugin))
+    assert step.action == loop.STOP and not runs.calls and "pytest plugin" in step.text
+
+
+def test_the_reviewers_tests_never_reach_the_review_as_checks(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    world.advance(critic=critic)
+    [asked] = world.reviewed
+    assert asked["requirements"] == [{"id": "task", "text": TASK, "checks": []}]
+    assert not asked.get("proposed_checks") and not asked.get("template_instances")
+
+
+def test_the_loops_time_is_held_across_hooks_and_running_out_is_no_clean_review(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    state = world.state()
+    state["started"] = time.time() - loop.LOOP_S - 1
+    (world.session / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    world.edit(FIXED + "# late\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "time ran out" in step.text and step.code == loop.NO_CLEAN_REVIEW
+    assert len(critic.calls) == 1
+
+
+def test_an_agent_that_takes_its_change_back_ends_the_loop_and_says_so(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(BASE)
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "took its change back" in step.text and "**Open:**" in step.text
+    assert len(critic.calls) == 1 and rows(world)
+
+
+def test_once_it_has_stopped_the_review_loop_is_done_for_the_session(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    world.edit()
+    assert "THE REVIEW" in world.advance(critic=critic).text
+    world.edit(FIXED + "# later\n")
+    step = world.advance(critic=critic)
+    assert (step.action, step.text) == (loop.STOP, "") and len(critic.calls) == 1
+
+
+def test_the_report_leads_with_what_was_found_fixed_and_left_open(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "two")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = {"test_critic_2.py"}
+    world.advance(critic=critic)
+    text = world.advance(critic=critic, said="they are wrong").text
+    assert text.index("**Found:**") < text.index("**Fixed:**") < text.index("**Open:**") < text.index("THE REVIEW")
+    fixed, still = text.split("**Fixed:**")[1].split("**Open:**")
+    assert "rule one" in fixed and "rule two" in still and "rule one" not in still
+
+
+def test_the_report_says_how_many_reviews_read_the_patch(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    text = world.advance(critic=critic).text
+    assert "read the patch twice: `defect`, `none`" in text and "after 2 reviews and 1 of at most 3 repairs" in text
+    assert "read the patch once" not in text
+
+
+def test_the_report_states_its_limits_and_never_says_the_patch_is_right(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    text = world.advance(critic=critic).text
+    flat = " ".join(text.split())
+    assert "seven training bugs only" in flat
+    assert "not evidence the work is right, only that this reviewer found no failure it could show" in flat
+    assert "did not always mean a wrong patch" in flat
+    for word in ("verified", "proved", "proven", "experimental", "correct"):
+        assert word not in text.lower()
+
+
+def test_a_run_with_a_finding_leaves_one_row_a_failure_record_can_be_built_from(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "two")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = {"test_critic_2.py"}
+    world.advance(critic=critic)
+    world.advance(critic=critic, said="they are wrong")
+    [row] = rows(world)
+    assert row["task"] == digest(TASK) and row["base"] == world.base and row["rounds"] == 2
+    assert row["stop"] == "the agent left the code as it was" and row["left"] == "they are wrong"
+    assert [one["verdict"] for one in row["reviews"]] == ["defect", "defect"]
+    assert [one["rule"] for one in row["reviews"]] == ["rule one", "rule two"]
+    assert row["reviews"][1]["why"] == "why two" and "'two'" in row["reviews"][1]["test"]
+    assert row["tree_changed"] is True
+    record = FailureRecord(**{field.name: row[field.name] for field in dataclasses.fields(FailureRecord)})
+    assert record.cause == "review_finding_open" and record.changeable and record.independently_observed
+    assert record.case_id == f"{digest(TASK)[:16]}:{world.base[:12]}" and record.note == "rule two"
+
+
+def test_a_finding_that_was_fixed_is_a_row_too_and_says_so(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert row["cause"] == "review_finding_fixed" and row["stop"] == "a review reproduced nothing" and row["tree_changed"] is True
+
+
+def test_a_finding_the_agent_left_alone_says_the_tree_never_changed(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert row["tree_changed"] is False and row["left"] == loop.NO_REASON
+
+
+@pytest.mark.parametrize("reply", ["none", "one"])
+def test_a_run_with_no_finding_leaves_no_row(world, monkeypatch, reply):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reviewer(reply))
+    assert not rows(world)
+
+
+def test_two_runs_append_and_the_row_stays_in_gs_own_folder(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    for name in ("s1", "s2"):
+        session = world.session.parent / name
+        critic = reviewer("one")
+        world.edit(FIXED + f"# {name}\n")
+        loop.advance(world.repo, TASK, world.base, session, critic=critic)
+        loop.advance(world.repo, TASK, world.base, session, critic=critic)
+    assert len(rows(world)) == 2
+    assert not list(world.repo.rglob("failures.jsonl"))
+
+
+def test_a_row_that_cannot_be_written_loses_no_report(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    (world.session.parent / "failures.jsonl").mkdir(parents=True)     # a folder where the file goes
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "THE REVIEW" in step.text and world.state()["row"]
+
+
+def test_a_review_repeated_after_a_cut_hook_never_takes_a_stale_test_for_its_own(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    where = world.session / "sets" / "critic"
+    where.mkdir(parents=True)
+    (where / "test_critic.py").write_text("def test_critic():\n    assert False\n", encoding="utf-8")   # no state knows of it
+    world.edit()
+    step = world.advance(critic=reviewer("none"))
+    assert step.action == loop.STOP and "a review reproduced nothing" in step.text
+    assert not tests.runs.calls and not (where / "test_critic.py").exists()
+
+
+def test_a_fix_that_stops_an_earlier_test_running_shows_nothing_fixed(world, monkeypatch):
+    def now(placed: str) -> dict:
+        return {"verdict": "collection_error", "said": "gone"} if state["broken"] else ran(placed, {"test_critic": "failed"})
+
+    state = {"broken": False}
+    Runs(monkeypatch, now=now)
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# renamed the thing its test imports\n")
+    state["broken"] = True
+    text = world.advance(critic=critic).text
+    assert "**Open:** review 1" in text and "did not run again" in text and "**Fixed:**" not in text
+
+
+def test_the_report_names_the_boundary_the_reviewers_tests_ran_in(world, monkeypatch):
+    Runs(monkeypatch, now=lambda placed: {**ran(placed, {"test_critic": "passed"}), "isolation": {"backend": "a-boundary"}})
+    world.edit()
+    assert "ran inside `a-boundary`" in world.advance(critic=reviewer("one")).text
+
+
+def test_with_no_test_run_the_report_names_no_boundary(world, monkeypatch):
+    Runs(monkeypatch)
+    world.edit()
+    assert "ran inside" not in world.advance(critic=reviewer("none")).text
+
+
+def test_a_row_that_cannot_be_built_loses_no_report(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+
+    def gone(change):
+        raise repo_tests.RepoRefused("G6_E_GIT_REPO_INVALID", "the repository went away")
+
+    monkeypatch.setattr(repo_tests, "diff_text", gone)
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "THE REVIEW" in step.text
+    assert "the repository went away" in world.state()["row"] and not rows(world)
+
+
+def test_end_to_end_the_review_loop_with_real_confined_runs_and_the_real_review(bwrap_backend, tmp_path, monkeypatch):
+    """Everything real but the reviewer: its tests run confined, a failure goes back, the earlier test keeps running, and a
+    review that reproduces nothing ends in the real review, with no claim for the patch."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return max(x, lo)\n", encoding="utf-8")
+    git(root, "init", "-q")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base, session = git(root, "rev-parse", "HEAD"), tmp_path / "g6" / "completion_loop" / "s1"
+    tests = iter(["from calc import clamp\n\n\ndef test_high():\n    assert clamp(50, 0, 10) == 10\n",
+                  "from calc import clamp\n\n\ndef test_low():\n    assert clamp(-5, 0, 10) == 0\n"])
+
+    def reply(system: str, user: str) -> str:
+        proof = re.search(r"review [0-9a-f]{32}", user)[0]
+        test = next(tests, "")
+        return (f"READ: {proof}\nRULE: the rule\nVERDICT: {'defect' if test else 'none'}\nWHY: because\n"
+                + (f"```python\n{test}```\n" if test else ""))
+
+    critic = FakeLLM(reply)
+    task = "clamp must keep x between lo and hi"
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return max(x, lo) if x < 40 else x\n", encoding="utf-8")
+    first = loop.advance(root, task, base, session, critic=critic)
+    assert first.action == loop.CONTINUE and "def test_high" in first.text
+    assert not list(root.rglob("g6_check_*"))      # the runs were in scratch copies
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return min(max(x, lo), hi)\n", encoding="utf-8")
+    second = loop.advance(root, task, base, session, critic=critic)     # the second review's test passes
+    assert second.action == loop.STOP and "a review reproduced nothing" in second.text
+    assert "**Fixed:** review 1" in second.text and "insufficient_evidence" in second.text
+    assert "ran inside `bubblewrap`" in second.text
+
+
+def test_the_scouts_loop_writes_no_row(world, monkeypatch):
+    Runs(monkeypatch, now=dict(CASES))
+    world.edit()
+    world.advance()
+    world.advance()
+    assert not rows(world)
+
+
+# --- what a review of this loop reproduced: each case failed on the code it was written against ------------------------------
+
+def test_a_call_after_the_end_keeps_the_code_of_the_stop_it_repeats(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer(LLMError("gone away"), "never")
+    world.edit()
+    assert world.advance(critic=critic).code == loop.NO_CLEAN_REVIEW
+    again = world.advance(critic=critic)
+    assert (again.action, again.text, again.code) == (loop.STOP, "", loop.NO_CLEAN_REVIEW)      # a hook repeats nothing
+    assert len(critic.calls) == 1
+
+
+def test_a_call_after_a_refusal_keeps_the_refusals_code(world, monkeypatch):
+    monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    world.edit()
+    assert world.advance(critic=reviewer("never")).code == ISOLATION_UNAVAILABLE
+    assert world.advance(critic=reviewer("never")).code == ISOLATION_UNAVAILABLE
+
+
+def test_a_call_after_a_stop_with_no_code_has_none(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    world.edit()
+    assert not world.advance(critic=critic).code and not world.advance(critic=critic).code
+
+
+def test_a_task_too_long_to_send_with_the_patch_earns_no_clean_review_and_asks_no_reviewer(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    step = world.advance(critic=critic, task="A" * (loop.MAX_PACK_CHARS + 1))
+    assert step.action == loop.STOP and step.code == loop.NO_CLEAN_REVIEW
+    assert loop.CLEAN not in step.text and "No clean review" in step.text and "no reviewer was asked" in step.text
+    assert not critic.calls
+
+
+def test_a_patch_too_long_to_send_earns_no_clean_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit(FIXED + "# " + "x" * loop.MAX_PACK_CHARS + "\n")
+    step = world.advance(critic=critic)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_a_new_file_the_diff_itself_cuts_earns_no_clean_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    (world.repo / "big.py").write_text("x = 1\n" * (repo_tests.DIFF_FILE_CHARS // 6 + 100), encoding="utf-8")
+    step = world.advance(critic=critic)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_a_review_refused_for_its_length_after_a_repair_keeps_the_finding_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "never")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# " + "x" * loop.MAX_PACK_CHARS + "\n")
+    step = world.advance(critic=critic)
+    assert step.code == loop.NO_CLEAN_REVIEW and "**Open:** review 1" in step.text and len(critic.calls) == 1
+
+
+def test_the_parent_files_may_be_cut_but_the_task_and_the_patch_never(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    (world.repo / "mod.py").write_text(BASE + "# padding\n" * (loop.MAX_PACK_CHARS // 9), encoding="utf-8")
+    git(world.repo, "add", "mod.py")
+    git(world.repo, "commit", "-qm", "a large file")
+    base = git(world.repo, "rev-parse", "HEAD")
+    (world.repo / "mod.py").write_text(FIXED + "# padding\n" * (loop.MAX_PACK_CHARS // 9), encoding="utf-8")
+    step = loop.advance(world.repo, TASK, base, world.session, critic=critic)
+    pack = critic.calls[0][1]
+    assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
+    assert TASK in pack and repo_tests.diff_text(repo_tests.change(world.repo, base)) in pack
+    assert len(pack) == loop.MAX_PACK_CHARS      # the parent file was cut, and that is all that was
+
+
+def the_patch(world) -> str:
+    return repo_tests.diff_text(repo_tests.change(world.repo, world.base))
+
+
+def test_a_patch_quoted_in_a_long_task_cannot_hide_that_the_task_was_cut(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    task = "Repair this candidate:\n" + the_patch(world) + "\n" + "context " * loop.MAX_PACK_CHARS + "THE LAST REQUIREMENT"
+    step = world.advance(critic=critic, task=task)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_a_patch_quoted_in_a_task_that_fits_cannot_stand_for_the_patch_itself(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    patch = the_patch(world)
+    task = patch + "a" * (loop.MAX_PACK_CHARS - len(patch) - 50)      # the whole task fits, and the patch's own section does not
+    step = world.advance(critic=critic, task=task)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_the_head_fits_to_the_character_and_the_pack_is_the_same_text_it_was(world, monkeypatch):
+    world.edit()
+    change = repo_tests.change(world.repo, world.base)
+    proof = f"review {'0' * 32}"
+    room = loop.MAX_PACK_CHARS - len(loop._head(change, "", proof))
+    assert loop._read_whole(change, "t" * room) and not loop._read_whole(change, "t" * (room + 1))
+    assert loop._pack(change, "t" * room, proof).endswith(f"candidate.patch:\n{the_patch(world)}")      # to its last character
+    pack = loop._pack(change, TASK, proof)
+    assert pack == (f"issue.txt:\n{proof}\n\n{TASK}\n\ncandidate.patch:\n{the_patch(world)}\n\nparent/mod.py:\n{BASE}")
+
+
+def test_whatever_the_diff_itself_cuts_is_past_what_a_review_can_read():
+    assert loop.MAX_PACK_CHARS < repo_tests.DIFF_FILE_CHARS
+
+
+def test_each_reviewed_patch_stays_recoverable_byte_for_byte_after_the_repairs(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    first = the_patch(world)
+    world.advance(critic=critic)
+    world.edit(FIXED + "# after one\n")
+    second = the_patch(world)
+    tests.failing = set()
+    world.advance(critic=critic)
+    kept = [(world.session / "rounds" / f"round-{n}.patch").read_bytes().decode("utf-8") for n in (1, 2)]
+    assert kept == [first, second]
+    assert [digest(one) for one in kept] == [one["patch"] for one in world.state()["reviews"]]
+
+
+def test_a_patch_is_kept_before_its_review_so_a_review_that_fails_still_leaves_it(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    patch = the_patch(world)
+    world.advance(critic=reviewer(LLMError("gone away")))
+    assert (world.session / "rounds" / "round-1.patch").read_bytes().decode("utf-8") == patch
+
+
+def test_a_row_names_the_session_that_holds_its_patches(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    patch = the_patch(world)
+    world.advance(critic=critic)
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert (world.session.parent / row["session"] / "rounds" / "round-1.patch").read_bytes().decode("utf-8") == patch
+    assert digest(patch) == row["reviews"][0]["patch"]
+
+
+def killed(*args, **kwargs):
+    raise KeyboardInterrupt("the hook was killed")
+
+
+def test_a_hook_killed_in_the_final_review_adds_one_row_and_asks_for_no_second_review(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none", "never")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic)
+    monkeypatch.setattr(loop, "_final_review", real)
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and loop.CLEAN in step.text
+    assert len(rows(world)) == 1 and len(critic.calls) == 2      # the review that was paid for stands
+
+
+def test_a_hook_killed_in_the_final_review_of_a_rejection_keeps_the_agents_reason(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic, said="They misread the task.")
+    monkeypatch.setattr(loop, "_final_review", real)
+    step = world.advance(critic=critic)       # this stop gives no words
+    [row] = rows(world)
+    assert row["left"] == "They misread the task." and "They misread the task." in step.text
+
+
+def test_a_stop_with_no_python_changed_carries_its_code_and_a_hook_stays_silent(world, monkeypatch):
+    runs = Runs(monkeypatch)
+    step = world.advance(critic=reviewer("never"))
+    assert (step.action, step.text, step.code) == (loop.STOP, "", "G6_E_NO_PYTHON_CHANGED")
+    assert not runs.calls and not world.state_exists()
+
+
+def killed_in_the_final_review(world, monkeypatch, critic) -> None:
+    """A clean review of the patch as it stands, whose hook dies before it can report it."""
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic)
+    monkeypatch.setattr(loop, "_final_review", real)
+
+
+def test_a_clean_review_a_killed_hook_never_reported_speaks_only_for_the_patch_it_read(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none")
+    world.edit()
+    killed_in_the_final_review(world, monkeypatch, critic)
+    world.edit(FIXED + "# changed after the review\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and loop.CLEAN in step.text
+    assert len(critic.calls) == 2 and "# changed after the review" in critic.calls[1][1]
+    assert [one["patch"] for one in world.state()["reviews"]] == [digest(the_patch(world))]
+    assert "read the patch once" in step.text
+
+
+def test_a_change_after_a_clean_review_a_hook_never_reported_can_still_be_found_wrong(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("none", "one")
+    world.edit()
+    killed_in_the_final_review(world, monkeypatch, critic)
+    world.edit(FIXED + "# changed after the review\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.CONTINUE and "rule one" in step.text and "stop" not in world.state()
+
+
+def test_a_commit_that_leaves_the_patch_as_it_was_buys_no_second_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    world.edit()
+    patch = the_patch(world)
+    killed_in_the_final_review(world, monkeypatch, critic)
+    git(world.repo, "add", "mod.py")
+    git(world.repo, "commit", "-qm", "the agent's commit")
+    assert the_patch(world) == patch
+    assert loop.CLEAN in world.advance(critic=critic).text and len(critic.calls) == 1
+
+
+def test_a_rejection_a_killed_hook_never_finished_is_gone_once_the_agent_repairs_after_all(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic, said="They misread the task.")
+    monkeypatch.setattr(loop, "_final_review", real)
+    world.edit(FIXED + "# repaired after all\n")
+    tests.failing = set()
+    step = world.advance(critic=critic)
+    assert loop.CLEAN in step.text and "left the code" not in step.text and "misread" not in step.text
+    assert not world.state()["left"]
+
+
+def test_a_hook_killed_between_the_row_and_the_end_adds_no_second_row(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    real = loop._finish
+    monkeypatch.setattr(loop, "_finish", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic)
+    assert len(rows(world)) == 1
+    monkeypatch.setattr(loop, "_finish", real)
+    assert world.advance(critic=critic).action == loop.STOP
+    assert len(rows(world)) == 1
+
+
+def test_no_session_is_ever_marked_ended_with_no_report(world, monkeypatch):
+    Reviewed(monkeypatch)
+    real, seen = loop._save, []
+
+    def save(session: Path, state: dict) -> None:
+        seen.append(not state.get("done") or (session / "report.md").is_file())
+        real(session, state)
+
+    monkeypatch.setattr(loop, "_save", save)
+    world.edit()
+    world.advance(critic=reviewer("none"))
+    assert seen and all(seen)
+
+
+class HookKilled(BaseException):
+    """A killed process: past every handler in the loop."""
+
+
+def tears_the_row(context) -> None:
+    """A writer of the log that dies partway through a row, past its session field."""
+    real = os.fdopen
+
+    def opened(fd, *args, **kwargs):
+        sink = real(fd, *args, **kwargs)
+        if args[:1] != ("a",):
+            return sink
+
+        class Torn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                sink.close()
+
+            def write(self, text):
+                sink.write(text[:text.index('"reviews":')])
+                sink.flush()
+                raise HookKilled
+
+        return Torn()
+
+    context.setattr(os, "fdopen", opened)
+
+
+def whole_rows(world) -> list[dict]:
+    """The rows a reader can use: a line that is not a whole row says nothing."""
+    found = []
+    for line in (world.session.parent / "failures.jsonl").read_text(encoding="utf-8").split("\n"):
+        try:
+            found.append(json.loads(line))
+        except ValueError:
+            pass
+    return found
+
+
+def test_a_row_a_killed_hook_tore_is_written_whole_before_the_run_ends(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    with monkeypatch.context() as context:
+        tears_the_row(context)
+        with pytest.raises(HookKilled):
+            world.advance(critic=critic, said="I reject it.")
+    assert not world.state().get("done")
+    assert world.advance(critic=critic).action == loop.STOP
+    assert world.state()["done"] is True
+    assert [row["session"] for row in whole_rows(world)] == [world.session.name]
+
+
+def test_a_row_after_a_torn_line_stands_on_a_line_of_its_own(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    (world.session.parent / "failures.jsonl").write_text('{"session": "a run that died", "note": "half a ro', encoding="utf-8")
+    world.advance(critic=critic)
+    assert [row["session"] for row in whole_rows(world)] == [world.session.name]
+
+
+def test_a_whole_row_with_no_line_end_takes_nothing_with_it(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    (world.session.parent / "failures.jsonl").write_text('{"session": "another"}', encoding="utf-8")
+    world.advance(critic=critic)
+    assert [row["session"] for row in whole_rows(world)] == ["another", world.session.name]
+
+
+def test_a_rows_text_that_names_a_session_is_not_that_sessions_row(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    (world.session.parent / "failures.jsonl").write_text(
+        json.dumps({"session": "another", "session of": world.session.name, "note": f'"session": "{world.session.name}"'}) + "\n",
+        encoding="utf-8")
+    world.advance(critic=critic)
+    assert [row["session"] for row in whole_rows(world)] == ["another", world.session.name]
+
+
+def test_a_row_stays_one_line_whatever_its_text_holds(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one two\x85three")
+    world.edit()
+    world.advance(critic=critic)
+    world.advance(critic=critic)
+    [row] = rows(world)      # rows reads as any reader would, with splitlines
+    assert row["note"] == "rule one two\x85three"
+
+
+def test_a_log_another_run_holds_is_never_written_over_and_costs_no_report(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    with _coordination.Coordination(world.session.parent / ".failures").mutex():
+        step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "THE REVIEW" in step.text
+    assert "another writer" in world.state()["row"] and not rows(world)
+
+
+@pytest.mark.parametrize("after", [
+    {"test_bug": "skipped", "test_smoke": "passed"},     # a skip closes nothing
+    {"test_smoke": "passed"},                            # uncollected or deselected: it is simply gone
+    {"test_bug_2": "passed", "test_smoke": "passed"},    # renamed: another test's pass is not this one's
+])
+def test_a_finding_closes_only_when_the_case_that_failed_has_passed(world, monkeypatch, after):
+    outcomes = {"test_bug": "failed", "test_smoke": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none")
+    world.edit()
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 1\n")
+    outcomes = after
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and loop.CLEAN in step.text      # the stop is K's: nothing fails on this run
+    fixed, still = patch_report.findings(world.state()["reviews"])
+    assert not fixed and [one["n"] for one in still] == [1]
+    assert "**Fixed:**" not in step.text and "**Open:** review 1" in step.text
+    [row] = rows(world)
+    assert row["cause"] == loop.OPEN
+
+
+def test_a_row_a_held_log_kept_out_is_written_by_the_sessions_next_call(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    with _coordination.Coordination(world.session.parent / ".failures").mutex():
+        ended = world.advance(critic=critic, said="They misread the task.")
+    assert ended.action == loop.STOP and "THE REVIEW" in ended.text and not rows(world)
+    again = world.advance(critic=critic)
+    assert (again.action, again.text) == (loop.STOP, "") and len(critic.calls) == 1      # the run ended: this adds only its row
+    [row] = rows(world)
+    assert (row["session"], row["left"]) == (world.session.name, "They misread the task.")
+    world.advance(critic=critic)
+    assert len(rows(world)) == 1 and "row" not in world.state()
+
+
+def test_a_log_that_stays_unwritable_keeps_the_row_and_why_and_writes_it_when_it_can(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    blocked = world.session.parent / "failures.jsonl"
+    blocked.mkdir(parents=True)      # a folder where the file goes
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    assert "THE REVIEW" in world.advance(critic=critic).text and world.state()["row"]
+    assert world.advance(critic=critic).action == loop.STOP and world.state()["row"]      # still no log: still no harm
+    blocked.rmdir()
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert row["session"] == world.session.name and "row" not in world.state()
+
+
+def test_a_finding_closes_when_the_case_that_failed_passes(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_smoke": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "passed", "test_smoke": "passed"}
+    step = world.advance(critic=critic)
+    assert "**Fixed:** review 1" in step.text and "**Open:**" not in step.text
+    [row] = rows(world)
+    assert row["cause"] == loop.FIXED
+
+
+def test_a_case_a_later_run_skips_stays_open_though_it_passed_in_between(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_smoke": "failed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "passed", "test_smoke": "failed"}
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 2\n")
+    outcomes = {"test_bug": "skipped", "test_smoke": "passed"}
+    assert "**Open:** review 1" in world.advance(critic=critic).text
+
+
+def test_a_case_that_first_failed_in_a_later_round_is_owed_too(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_other": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "passed", "test_other": "failed"}
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 2\n")
+    outcomes = {"test_bug": "passed", "test_other": "skipped"}
+    assert "**Open:** review 1" in world.advance(critic=critic).text
+
+
+def test_a_retained_test_a_later_repair_breaks_is_an_open_finding(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "two", "none")
+    world.edit()
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 1\n")
+    assert world.advance(critic=critic).action == loop.CONTINUE      # review 2's test passes, and review 1's still fails
+    assert world.state()["reviews"][1]["results"]["test_critic_2.py"] == "passed"
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic_2.py"}     # the repair fixes review 1 and breaks review 2's test
+    step = world.advance(critic=critic)
+    assert step.action == loop.CONTINUE and "rule two" in step.text
+    ended = world.advance(critic=critic, said="I reject the second finding.")
+    [row] = rows(world)
+    assert (row["cause"], row["note"]) == (loop.OPEN, "rule two")
+    assert "**Found:** 2 reproduced" in ended.text and "**Fixed:** review 1" in ended.text
+    assert "**Open:** review 2" in ended.text and "showed no failure" not in ended.text
+
+
+def test_a_retained_test_that_failed_once_and_passes_at_the_end_was_found_and_fixed(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "two", "none", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic_2.py"}
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 3\n")
+    tests.failing = set()
+    ended = world.advance(critic=critic)
+    assert ended.action == loop.STOP and "**Found:** 2 reproduced" in ended.text and "**Open:**" not in ended.text
+    assert "**Fixed:** review 2" in ended.text and "showed no failure" not in ended.text
+    [row] = rows(world)
+    assert row["cause"] == loop.FIXED
+
+
+def test_overlapping_calls_cannot_delete_a_pending_test_or_earn_a_clean_stop(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    written, release = threading.Event(), threading.Event()
+    first_critic, second_critic, original = reviewer("one"), reviewer("none"), loop.run_critic
+
+    def pause_after_writing(change, task, caller, system, where, n=1):
+        found = original(change, task, caller, system, where, n)
+        if caller is first_critic:
+            written.set()
+            assert release.wait(30), "the second call never gave way"
+        return found
+
+    monkeypatch.setattr(loop, "run_critic", pause_after_writing)
+    world.edit()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(world.advance, None, first_critic)
+        assert written.wait(30), "the first review never wrote its test"
+        second = pool.submit(world.advance, None, second_critic)
+        try:
+            second.result(timeout=1)
+        except TimeoutError:
+            pass      # a call that waits its turn is held here, and goes on once the first has ended
+        release.set()
+        steps = [first.result(timeout=30), second.result(timeout=30)]
+    assert tests.ran_in_turn() == ["test_critic.py"]      # the first reviewer's test ran, and it ran once
+    assert not any(loop.CLEAN in step.text for step in steps)
+
+
+def test_a_call_while_a_step_runs_says_wait_and_never_reads_that_step_as_a_rejection(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    reviewing, release, contending = threading.Event(), threading.Event(), threading.Event()
+    critic, original, real_sleep = reviewer("one"), loop.run_critic, _coordination.time.sleep
+
+    def paused(*args, **kwargs):
+        reviewing.set()
+        assert release.wait(30)
+        return original(*args, **kwargs)
+
+    def sleep(seconds):
+        if seconds == 0.01:      # the lock sleeps only once the operating system has refused it
+            contending.set()
+        return real_sleep(seconds)
+
+    monkeypatch.setattr(loop, "run_critic", paused)
+    monkeypatch.setattr(_coordination.time, "sleep", sleep)
+    world.edit()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(world.advance, None, critic)
+        assert reviewing.wait(30)
+        second = pool.submit(world.advance, None, critic)
+        second.add_done_callback(lambda _: contending.set())
+        try:
+            assert contending.wait(30), "the second call never met the lock"
+        finally:
+            release.set()
+        steps = [first.result(timeout=30), second.result(timeout=30)]
+    assert steps[0].action == loop.CONTINUE and len(critic.calls) == 1
+    assert (steps[1].action, steps[1].code) == (loop.WAIT, loop.BUSY)
+    assert "stop" not in world.state() and not rows(world)
+
+
+def test_a_call_that_may_not_be_the_agents_reply_sends_the_finding_back_and_decides_nothing(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    first = world.advance(critic=critic)
+    before = world.state()
+    again = loop.advance(world.repo, TASK, world.base, world.session, critic=critic, answered=False)
+    assert (again.action, again.text, again.code) == (loop.CONTINUE, first.text, "")
+    assert world.state() == before and len(critic.calls) == 1 and not rows(world)
+    step = world.advance(critic=critic)      # a Stop hook fires only once the agent has taken its turn
+    assert step.action == loop.STOP and "the agent left the code as it was" in step.text
+
+
+def test_a_changed_tree_is_a_reply_whatever_the_call_says(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    step = loop.advance(world.repo, TASK, world.base, world.session, critic=critic, answered=False)
+    assert step.action == loop.STOP and loop.CLEAN in step.text and len(critic.calls) == 2
+
+
+def test_a_finding_goes_back_the_same_way_on_the_scouts_loop(world, monkeypatch):
+    scouts_chosen(monkeypatch)
+    Runs(monkeypatch, now=dict(CASES))
+    world.edit()
+    first = world.advance()
+    again = loop.advance(world.repo, TASK, world.base, world.session, scout=Scouts(), answered=False)
+    assert again.action == loop.CONTINUE and "assert test_cross[0]" in again.text and "assert test_cross[0]" in first.text
+
+
+def test_a_call_that_finds_another_step_running_does_nothing_and_says_so(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.session.mkdir(parents=True)
+    with loop._held(world.session):
+        step = world.advance(critic=critic)
+    assert (step.action, step.code) == (loop.WAIT, loop.BUSY) and "did nothing" in step.text
+    assert not critic.calls and not (world.session / "state.json").exists() and not rows(world)
+    assert world.advance(critic=critic).action == loop.CONTINUE      # it left nothing behind
+
+
+def test_a_process_killed_holding_a_session_leaves_it_free(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.edit()
+    world.session.mkdir(parents=True)
+    holds = ("import sys, time\nfrom pathlib import Path\nfrom g6.harness.completion_loop import _held\n"
+             "with _held(Path(sys.argv[1])):\n    print('held', flush=True)\n    time.sleep(120)\n")
+    child = subprocess.Popen([sys.executable, "-c", holds, str(world.session)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "held"
+        assert world.advance(critic=reviewer("never")).action == loop.WAIT      # the lock is real, so its release means something
+    finally:
+        child.kill()
+        child.wait(timeout=30)
+        child.stdout.close()
+    step = world.advance(critic=reviewer("none"))
+    assert step.action == loop.STOP and loop.CLEAN in step.text
+
+
+def test_a_step_that_raises_leaves_the_session_free(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=reviewer("none"))
+    with loop._held(world.session):
+        pass
+
+
+def test_two_sessions_never_wait_for_each_other(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.edit()
+    other = world.session.parent / "s2"
+    other.mkdir(parents=True)
+    with loop._held(other):
+        assert world.advance(critic=reviewer("none")).action == loop.STOP

@@ -50,6 +50,7 @@ The outcome is one of: test integrity compromised, defect detected, insufficient
 (every stated requirement passed a stated check the patch did not write; never proof the patch is complete).
 If no check the patch did not write fails at the base commit, the outcome is insufficient evidence.
 Tell the person the result rests on your own tests. Do not rewrite tests to change it.
+Loop: `g6_review_until_clean` (`references/lifecycle.md`).
 
 When what counts as done must be fixed before the work, run a mission instead: `g6_premortem`, `g6_mission_create`,
 `g6_mission_confirm` (the person answers in the client's dialog, never you), `g6_mission_submit`

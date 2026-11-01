@@ -166,7 +166,7 @@ def test_a_repository_with_no_commit_records_nothing(tmp_path, monkeypatch, caps
 def advance_says(monkeypatch, step) -> list:
     calls = []
 
-    def advance(repo, task, base, session):
+    def advance(repo, task, base, session, said=""):
         calls.append((repo, task, base, session))
         if isinstance(step, Exception):
             raise step
@@ -193,12 +193,60 @@ def test_stop_blocks_the_turn_with_the_repair_text(repo, monkeypatch, capsys):
     assert calls == [(str(repo.resolve()), "fix the parser", git(repo, "rev-parse", "HEAD"), hook.folder("s1"))]
 
 
+def said_to_the_loop(monkeypatch) -> list:
+    """What each stop hook hands the loop as the agent's words."""
+    words = []
+
+    def advance(repo, task, base, session, said=""):
+        words.append(said)
+        return loop.Step(loop.STOP)
+
+    monkeypatch.setattr(loop, "advance", advance)
+    return words
+
+
+def test_the_agents_last_words_go_to_the_loop_from_the_hooks_own_field(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    words = said_to_the_loop(monkeypatch)
+    hooked(monkeypatch, capsys, "stop", {**stop(repo), "last_assistant_message": "The reviewer is wrong: é."})
+    assert words == ["The reviewer is wrong: é."]
+
+
+def test_with_no_such_field_the_agents_last_words_come_from_the_transcript(repo, monkeypatch, capsys, tmp_path):
+    lines = [{"type": "assistant", "message": {"content": [{"type": "text", "text": "the first thing it said"}]}},
+             {"type": "user", "message": {"content": "not the agent"}},
+             {"type": "assistant", "message": {"content": [{"type": "text", "text": "the last thing"},
+                                                           {"type": "text", "text": "it said"}]}},
+             {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit"}]}}]
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("\n".join(json.dumps(line) for line in lines) + "\nnot json\n", encoding="utf-8")
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    words = said_to_the_loop(monkeypatch)
+    hooked(monkeypatch, capsys, "stop", {**stop(repo), "transcript_path": str(transcript)})
+    assert words == ["the last thing\nit said"]
+
+
+@pytest.mark.parametrize("more", [{}, {"transcript_path": "absent.jsonl"}, {"last_assistant_message": "   "}])
+def test_a_stop_that_gives_no_words_gives_the_loop_none(repo, monkeypatch, capsys, more):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    words = said_to_the_loop(monkeypatch)
+    hooked(monkeypatch, capsys, "stop", {**stop(repo), **more})
+    assert words == [""]
+
+
 def test_when_the_stop_rule_fires_the_turn_ends_and_the_report_is_shown(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo))
     advance_says(monkeypatch, loop.Step(loop.STOP, "THE REPORT"))
     code, out, _ = hooked(monkeypatch, capsys, "stop", stop(repo))
     assert code == 0
     assert json.loads(out) == {"systemMessage": "THE REPORT"}
+
+
+def test_a_stop_that_found_another_step_running_ends_the_turn_and_says_so(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    advance_says(monkeypatch, loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY))
+    code, out, _ = hooked(monkeypatch, capsys, "stop", stop(repo))
+    assert code == 0 and json.loads(out) == {"systemMessage": loop.ALREADY_RUNNING}
 
 
 def test_with_nothing_to_say_the_turn_just_ends(repo, monkeypatch, capsys):
@@ -304,6 +352,26 @@ def test_the_docs_say_which_loop_has_measurements_behind_it(name):
     text = " ".join((PLUGIN / name).read_text(encoding="utf-8").split())
     assert "G6_LOOP_SCOUTS=before_fix" in text
     assert "the configuration with measurements behind it" in text and "a different, cheaper loop" in text
+
+
+@pytest.mark.parametrize("name", ["README.md", "skills/completion-loop/SKILL.md"])
+def test_the_docs_say_the_review_loop_has_training_measurements_only(name):
+    text = " ".join((PLUGIN / name).read_text(encoding="utf-8").split())
+    assert "G6_LOOP_CRITIC=codex" in text and "G6_LOOP_MODE=scouts" in text
+    assert "measured on seven training bugs only" in text
+    assert "not evidence the work is right, only that this reviewer found no failure it could show" in text
+
+
+def test_the_docs_say_how_the_loop_differs_from_what_was_measured():
+    text = " ".join((PLUGIN / "README.md").read_text(encoding="utf-8").split())
+    assert "receives a text pack with no tools" in text and "The measured reviewer read a folder" in text
+    assert "The Stop hook replays the rounds" in text
+    assert "It has no measurement on a bug kept out of training" in text
+
+
+def test_the_docs_name_the_tool_a_client_without_the_hook_calls():
+    text = " ".join((PLUGIN / "README.md").read_text(encoding="utf-8").split())
+    assert "`g6_review_until_clean`" in text and "`metaharness_job`" in text
 
 
 def test_a_prompt_hook_says_nothing_of_scouts_where_none_may_run():

@@ -13,6 +13,7 @@ from math import comb
 from pathlib import Path
 from typing import Any
 
+import final_review
 import run as we
 import wecommon as c
 from g6.metaharness.method_rca import compare_methods
@@ -44,6 +45,9 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
             same = (kept.get("amendment_sha256"), kept.get("run")) == (c.sha256_file(diff), row.get("run"))
             amended = kept.get("amended_passes") if same else None
         rows[(row["arm"], row["task"], row["repeat"])] = {"maintainers": passes, "amended": amended, "said": said_of(root, row)}
+        review = final_review.said_of(root, row)
+        if review:
+            rows[(row["arm"], row["task"], row["repeat"])]["review"] = review
     return rows
 
 
@@ -97,15 +101,16 @@ def interval(rows: Rows, loop_arm: str, other: str, tasks: Iterable[str], repeat
     return tuple(compare_methods(pairs, clusters=clusters)["ci95"]) if pairs else None
 
 
-def trust(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int], score: str) -> dict[str, dict[str, int]]:
-    """For each thing the arm said of its runs, how often that run was right: the owner's own question, when it says done, is it?"""
+def trust(rows: Rows, arm: str, tasks: Iterable[str], repeats: Iterable[int], score: str, key: str = "said") -> dict[str, dict[str, int]]:
+    """For each thing the arm said of its runs, how often that run was right: the owner's own question, when it says done, is it?
+    ``key``: whose word, the arm's or the final review's; a run the review has not spoken on is left out of its table."""
     table: dict[str, dict[str, int]] = {}
     repeats = list(repeats)
     for task in tasks:
         for repeat in repeats:
             row = rows.get((arm, task, repeat), {})
-            if row.get(score) is not None:
-                cell = table.setdefault(str(row.get("said", "done")), {"right": 0, "wrong": 0})
+            if row.get(score) is not None and (key == "said" or key in row):
+                cell = table.setdefault(str(row.get(key, "done")), {"right": 0, "wrong": 0})
                 cell["right" if row[score] else "wrong"] += 1
     return table
 
@@ -116,10 +121,12 @@ def judged(results: Sequence[Mapping[str, Any]]) -> bool:
 
 
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
-           others: Sequence[str] = ("A", "T")) -> None:
+           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",)) -> None:
+    """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it."""
+    shown = [arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
     for score in SCORES:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
-        for r in results:
+        for r in [*results, *(compare(rows, loop_arm, other, tasks, repeats, score) for other in shown)]:
             uplift = "n/a" if r["uplift"] is None else f"{r['uplift']:+.1%}"
             bugs = by_bug(rows, loop_arm, r["other"], tasks, repeats, score)
             span = interval(rows, loop_arm, r["other"], tasks, repeats, score)
@@ -127,11 +134,14 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
                   f" uplift {uplift:>7}  wins {r['wins']:2} losses {r['losses']:2}  p {r['p']:.4f}"
                   f"  bugs better {bugs['better']} worse {bugs['worse']} same {bugs['same']}"
                   f"  95% by bug {f'{span[0]:+.0%} to {span[1]:+.0%}' if span else 'n/a'}"
-                  + (f"  MISSING {r['missing']}" if r["missing"] else ""))
-        for arm in (loop_arm, *others):
+                  + (f"  MISSING {r['missing']}" if r["missing"] else "") + ("  report only" if r["other"] in shown else ""))
+        for arm in (loop_arm, *others, *shown):
             for said, cell in sorted(trust(rows, arm, tasks, repeats, score).items()):
                 total = cell["right"] + cell["wrong"]
                 print(f"{name:22} {score:11} {arm} said {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
+            for said, cell in sorted(trust(rows, arm, tasks, repeats, score, key="review").items()):
+                total = cell["right"] + cell["wrong"]
+                print(f"{name:22} {score:11} {arm} final review {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
         print(f"{name:22} {score:11} frozen rule: {'met' if judged(results) else 'not shown'}; "
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
