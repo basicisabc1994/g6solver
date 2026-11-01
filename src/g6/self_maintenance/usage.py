@@ -6,8 +6,8 @@ What each tool reports was checked by running it, on 2026-11-01:
 * **Codex (codex-cli 0.165.0) reports it.** ``codex app-server`` answers ``account/rateLimits/read``, which starts no
   thread and calls no model: each limit window's ``usedPercent``, ``windowDurationMins`` and ``resetsAt``, and whether
   ordinary use is allowed. On the account it was tried on there was one window, of 10080 minutes. Codex signs in for
-  itself: G6 reads no sign-in file and hands it nothing, not even its environment beyond ``clean_environment``. The
-  protocol is marked experimental, so a reply that does not read is no reading, and the meter stays on its own count.
+  itself: G6 reads no sign-in file and hands it nothing, not even its environment beyond ``clean_environment``. Codex
+  says this protocol may change, so a reply that does not read is no reading, and the meter stays on its own count.
 * **Claude Code (2.1.316) does not.** ``claude --help``, ``claude auth --help`` and ``claude doctor --help`` list no usage
   or limit command. Its ``/usage`` belongs to a session, and starting one could not be shown to call no model, so it was
   not tried. For Claude the meter stays on model calls.

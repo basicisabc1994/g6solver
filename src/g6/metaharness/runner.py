@@ -18,7 +18,8 @@ first, doubling to ``LONGEST_REST``, and the digest says so. A person enrolling 
 meter on its own count) and ``domain_file``, a Python file the person owns, as ``G6_METAHARNESS`` names one. It lies
 outside the folder, since the loop never writes what judges it, and defines ``LOOP = {"domain": ..., "proposer": ...}``,
 with ``method``, ``seed``, ``audit_per_tick`` and ``eval_calls`` where they differ from ``LoopSettings``. Nothing else is
-read from it, so neither file can reach ``person_free_adoption_outside_shadow``.
+read from it, so neither file can reach ``person_free_adoption_outside_shadow``. Enrolling pins its digest, so an edit is
+a changed frozen item, and ``g6_improve_start`` refuses it before it could run.
 
 ``enrol`` and ``resume`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's name is
 typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
@@ -95,7 +96,8 @@ def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now) -> tuple[
     declared = _domain_file(settings.get("domain_file"))
     reader = AccountReader(windows) if settings.get("read_account", True) is not False else None
     tuned = LoopSettings(windows=windows, **{name: declared[name] for name in _TUNING if name in declared})
-    return ShadowLoop(declared["domain"], root, tuned, proposer=declared["proposer"], now=now, read_account=reader), reader
+    return ShadowLoop(declared["domain"], root, tuned, proposer=declared["proposer"], now=now, read_account=reader,
+                      domain_file=settings["domain_file"]), reader
 
 
 class Runner:
@@ -108,19 +110,34 @@ class Runner:
         loop.beat_fields = {"pid": os.getpid()}
 
     def run(self) -> int:
-        wait = self.step()
-        while wait is not None:
+        while True:
+            try:
+                wait = self.step()
+            except Exception as exc:  # noqa: BLE001 - the bookkeeping around a tick broke: the next pass tries again
+                self._note(state="error", code=CYCLE_FAILED, reason=f"{type(exc).__name__}: {exc}"[:500])
+                wait = self.nap
+            if wait is None:
+                return 0
             self.sleep(wait)
-            wait = self.step()
-        return 0
+
+    def _note(self, **fields: Any) -> None:
+        """A heartbeat that needs nothing else to work."""
+        beat(self.loop.root, **self.loop.beat_fields, **fields, domain=self.loop.domain.name, at=self.now().isoformat())
+
+    def _end(self, now: datetime, halted: str) -> None:
+        """The last page and heartbeat. Neither may keep a stop from ending the run."""
+        try:
+            self._digest(now, halted)
+            self._beat(now, "stopped", now, reason=halted)
+        except Exception:  # noqa: BLE001 - see above: the stop wins
+            self._note(state="stopped", code=STOPPED, reason=halted)
 
     def step(self) -> float | None:
         """One pass. The seconds to sleep, or ``None`` when a stop ended the run."""
         now = self.now()
         halted = stop_reason(self.loop.root)
         if halted:
-            self._digest(now, halted)
-            self._beat(now, "stopped", now, reason=halted)
+            self._end(now, halted)
             return None
         due, resting = self._due(now)
         if now >= due:
@@ -191,8 +208,9 @@ class Runner:
 
     def _beat(self, now: datetime, state: str, due: datetime, **said: Any) -> None:
         code = self.last.get("warning_card", {}).get("code", "")
-        self.loop._beat(state, code, **{"reason": self.last.get("message", ""), "use": self._use(now),
-                                        "next_tick": due.isoformat(), "pause": self._pause(), **said})
+        self.loop.beat_fields["use"] = self._use(now)         # so a heartbeat written during a long tick keeps it
+        self.loop._beat(state, code, **{"reason": self.last.get("message", ""), "next_tick": due.isoformat(),
+                                        "pause": self._pause(), **said})
 
     def _decisions(self) -> list[str]:
         """What only a person can settle."""
@@ -213,8 +231,8 @@ class Runner:
             found.append(pause["reason"])
         quiet, until = self._rest()
         if until is not None and until > now:
-            found.append(f"Backing off: {quiet} ticks in a row found nothing to try, so nothing is spent on them. The next "
-                         f"try is at {until.isoformat(timespec='minutes')}.")
+            found.append(f"Backing off: {quiet} tick{'s' if quiet != 1 else ''} in a row found nothing to try, so nothing more "
+                         f"is spent on it. The next try is at {until.isoformat(timespec='minutes')}.")
         if self.last.get("warning_card", {}).get("code") == BUDGET_WAIT:
             found.append(f"Waiting for the budget: {self.last.get('message', '')}")
         return found

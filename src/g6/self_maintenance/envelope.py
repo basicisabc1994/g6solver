@@ -17,6 +17,7 @@ split, which allows five evaluations before a person acts, and the runner, which
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Mapping
@@ -30,6 +31,7 @@ from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
 HEARTBEAT_FILE = "heartbeat.json"
+CYCLE_LOG = Path("records", "constraint_log.jsonl")
 #: The folder of the lock a runner holds for its whole life.
 RUNNER_LOCK = ".runner"
 MAX_FAILED_CYCLES = 3
@@ -151,6 +153,14 @@ def stop_reason(root: str | Path) -> str:
     return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
 
 
+def file_digest(path: Any) -> str:
+    """A file's SHA-256, or ``""`` when there is no file to read: what a person enrolled is pinned by its bytes."""
+    try:
+        return hashlib.sha256(Path(str(path)).read_bytes()).hexdigest() if path else ""
+    except OSError:
+        return ""
+
+
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
     """Write the ``STOP`` file, or leave one that is there, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped."""
@@ -195,5 +205,6 @@ def heartbeat(root: str | Path) -> dict | None:
         return None
 
 
-__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY", "RUNNER_LOCK",
-           "STOP_FILE", "ask_to_stop", "beat", "heartbeat", "runner_alive", "runner_lock", "stop_reason"]
+__all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
+           "RUNNER_LOCK", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "runner_alive", "runner_lock",
+           "stop_reason"]

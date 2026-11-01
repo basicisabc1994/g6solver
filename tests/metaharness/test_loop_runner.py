@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -127,6 +128,45 @@ def test_a_tick_that_raises_does_not_end_the_run_and_counts_as_a_failed_cycle(tm
     outcomes = [c["outcome"] for c in runner.loop.log.cycles()]
     assert outcomes[0] == "error" and "adopted" in outcomes
     assert "the disk blinked" in runner.loop.log.cycles()[0]["reason"]
+
+
+def test_bookkeeping_that_breaks_around_a_tick_does_not_end_the_run(tmp_path, monkeypatch):
+    runner, time, _ = _runner(tmp_path)
+    real, raised = runner._use, []
+
+    def once(now):
+        if not raised:
+            raised.append(1)
+            raise sqlite3.OperationalError("database is locked")
+        return real(now)
+
+    monkeypatch.setattr(runner, "_use", once)
+    _stopped_after(time, timedelta(minutes=5))
+    assert runner.run() == 0 and raised
+    assert heartbeat(runner.loop.root)["state"] == "stopped"
+
+
+def test_a_stop_ends_the_run_even_when_nothing_can_be_written_about_it(tmp_path, monkeypatch):
+    runner, _, _ = _runner(tmp_path)
+
+    def always(provider, now):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(runner.loop.meter, "reading", always)
+    (runner.loop.root / "STOP").write_text("now\n", encoding="utf-8")
+    assert runner.run() == 0
+    assert heartbeat(runner.loop.root)["state"] == "stopped"
+
+
+def test_a_heartbeat_during_a_tick_keeps_the_last_use_so_status_is_not_blank(tmp_path):
+    runner, _, domain = _runner(tmp_path)
+    runner.step()
+    seen = []
+    real = domain.failures
+    domain.failures = lambda view: seen.append(heartbeat(runner.loop.root)) or real(view)
+    runner.not_before = None
+    runner.loop.tick()
+    assert seen and seen[0]["state"] == "running" and seen[0]["use"][0]["provider"] == "claude"
 
 
 def test_three_ticks_that_raise_pause_the_loop_and_the_runner_lives_on(tmp_path, monkeypatch):
@@ -332,6 +372,16 @@ def test_the_domain_file_cannot_turn_the_owners_ruling_on(tmp_path):
 def test_the_settings_file_cannot_turn_the_owners_ruling_on(tmp_path):
     loop, _ = open_loop(_folder(tmp_path, person_free_adoption_outside_shadow=True), now=lambda: START)
     assert loop.settings.person_free_adoption_outside_shadow is False
+
+
+def test_an_edit_to_the_domain_file_a_person_enrolled_stops_the_loop(tmp_path):
+    root = _folder(tmp_path)
+    loop, _ = open_loop(root, now=lambda: START + timedelta(days=2))
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    path = tmp_path / "domain.py"
+    path.write_text(path.read_text(encoding="utf-8") + "\n# one line more\n", encoding="utf-8")
+    got = loop.tick()
+    assert got["warning_card"]["code"] == "G6_E_LOOP_FROZEN_CHANGED" and "domain_file" in got["message"]
 
 
 def test_a_settings_file_with_no_domain_says_so(tmp_path):

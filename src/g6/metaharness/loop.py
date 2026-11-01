@@ -58,7 +58,16 @@ from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, Suit
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
-from g6.self_maintenance.envelope import ENDS_A_STREAK, FINDINGS, MAX_FAILED_CYCLES, CycleLog, beat, stop_reason
+from g6.self_maintenance.envelope import (
+    CYCLE_LOG,
+    ENDS_A_STREAK,
+    FINDINGS,
+    MAX_FAILED_CYCLES,
+    CycleLog,
+    beat,
+    file_digest,
+    stop_reason,
+)
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -273,8 +282,9 @@ class ShadowLoop:
     def __init__(self, domain: Domain, root: str | Path, settings: LoopSettings, *, proposer: Any,
                  now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  clock: Callable[[], float] = time.monotonic,
-                 read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
-        self.domain, self.settings, self._now = domain, settings, now
+                 read_account: Callable[[str, datetime], AccountReading | None] | None = None,
+                 domain_file: str | Path | None = None) -> None:
+        self.domain, self.settings, self._now, self.domain_file = domain, settings, now, domain_file
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.requests = _Requests()
         self._proposer = _Counted(proposer, self.requests)
@@ -283,7 +293,7 @@ class ShadowLoop:
         if reach:                                # before anything is written: this folder is all the loop ever writes
             raise ValueError(f"[{EVALUATOR_IN_REACH}] the loop's folder overlaps {', '.join(reach)}: it never writes "
                              "what judges it")
-        self.log = CycleLog(self.root / "records" / "constraint_log.jsonl")
+        self.log = CycleLog(self.root / CYCLE_LOG)
         self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
                                  read_account=read_account)
         self.problems = domain_problems(domain)
@@ -310,9 +320,10 @@ class ShadowLoop:
 
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
-        split. The judge's whole file is digested, since a helper it calls judges too. No profile is in it."""
+        split, and the file that declares it all when a runner opened one. The judge's whole file is digested, since a
+        helper it calls judges too. No profile is in it."""
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
-        return {"envelope": envelope_sha256(),
+        return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
                 "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
