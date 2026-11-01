@@ -118,10 +118,12 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
 
 class ShadowHarness(MetaHarness):
     def __init__(self, workflow: Workflow, factory: ExecutorFactory | None, workspace: Path, *,
-                 clock: Callable[[], float], problems: list[tuple[str, str]]) -> None:
+                 clock: Callable[[], float], problems: list[tuple[str, str]],
+                 before_evaluation: Callable[[], None] = lambda: None) -> None:
         super().__init__(workflow, factory, workspace, theories=None, clock=clock, problems=problems)
         self.adoptions = ChainLedger(workspace / ADOPTIONS, validate=_rules) if not problems else None
         self._measured: tuple[tuple[str, str, int], ProposerView] | None = None
+        self._before_evaluation = before_evaluation
 
     def refresh(self) -> None:
         """Read every ledger again: another handle may have written them. What it wrote decides the head."""
@@ -199,6 +201,12 @@ class ShadowHarness(MetaHarness):
                           artifacts=self.artifacts)
         self._measured = key, view
         return view
+
+    def evaluate(self, proposal: Proposal, *, budget: int | None = None) -> dict[str, Any]:
+        """As ``MetaHarness.evaluate``, once ``before_evaluation`` has said it may run. What that raises ends the tick with
+        no report, so the split is not spent."""
+        self._before_evaluation()
+        return super().evaluate(proposal, budget=budget)
 
     def unfinished(self) -> list[Proposal]:
         """The candidates on this head that a run left with no result: proposed since the last tuning run was written, and
@@ -298,8 +306,10 @@ class ShadowHarness(MetaHarness):
 
 
 def adapt_shadow(workflow: Workflow, factory: ExecutorFactory | None = None, *, workspace: str | Path,
-                 clock: Callable[[], float] = time.monotonic) -> ShadowHarness:
-    return ShadowHarness(workflow, factory, Path(workspace).resolve(), clock=clock, problems=workflow.problems())
+                 clock: Callable[[], float] = time.monotonic,
+                 before_evaluation: Callable[[], None] = lambda: None) -> ShadowHarness:
+    return ShadowHarness(workflow, factory, Path(workspace).resolve(), clock=clock, problems=workflow.problems(),
+                         before_evaluation=before_evaluation)
 
 
 __all__ = ["ADOPTED", "ADOPTER", "NOT_ADOPTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY", "ShadowHarness", "adapt_shadow",

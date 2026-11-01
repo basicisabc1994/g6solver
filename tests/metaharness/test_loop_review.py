@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 import g6
-from g6.core import llm, model_calls
+from g6.core import host_models, llm, model_calls
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
@@ -36,6 +36,7 @@ from g6.metaharness.schema import Workflow, default_objectives
 from g6.metaharness.shadow import lineage
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
+from g6.self_maintenance.usage import AccountReader, UsageUnavailable
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -1011,3 +1012,83 @@ def test_a_frozen_file_changed_while_the_adoption_loads_its_report_refuses_it(tm
     got = loop.tick()
     assert got["outcome"] == "blocked" and _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "domain_file" in got["message"]
     assert loop.mh.adoption_rows() == []
+
+# What a limit costs an evaluation, when the account can say first ---------------------------------------------------------
+
+WEEK_END = START + timedelta(days=7)
+
+
+def _account(percent: int) -> dict:
+    return {"rateLimits": {"primary": {"usedPercent": percent, "windowDurationMins": 10080, "resetsAt": WEEK_END.timestamp()}}}
+
+
+def _reading(tmp_path, ask, **kw):
+    """A loop whose account is read just before an evaluation, as ``open_loop`` makes one, and no read otherwise."""
+    reader = AccountReader(SETTINGS.windows, ask={"claude": ask})
+    return _enrolled(tmp_path, read_account=reader, read_now=reader.read_now, **kw)
+
+
+def _held_out_reached_the_model(loop, domain) -> bool:
+    held = {c.input for c in loop.cut.held_out}
+    return any(user.rsplit("Problem: ", 1)[-1].strip() in held for _, user in domain.llm.calls)
+
+
+def test_a_limit_read_just_before_an_evaluation_leaves_the_split_unspent(tmp_path):
+    loop, domain = _reading(tmp_path, lambda: _account(100))
+    before = loop.mh.held_out_left()
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == WEEK_END.isoformat()
+    assert loop.mh.held_out_left() == before and loop.mh.ledger.rows("evaluation") == []
+    assert not _held_out_reached_the_model(loop, domain) and loop.log.cycles() == []
+    assert loop.log.limits()["claude"] == WEEK_END
+
+
+def test_the_candidate_a_limit_held_back_is_evaluated_once_it_ends(tmp_path):
+    now, answers = [NOW], iter((_account(100), _account(5)))
+    loop, _ = _reading(tmp_path, lambda: next(answers), now=lambda: now[0])
+    before = loop.mh.held_out_left()
+    loop.tick()
+    now[0] = WEEK_END + timedelta(seconds=1)
+    assert loop.tick()["outcome"] == "adopted" and loop.mh.held_out_left() == before - 1
+
+
+def test_a_read_that_says_no_limit_lets_the_evaluation_run(tmp_path):
+    loop, _ = _reading(tmp_path, lambda: _account(5))
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_a_read_that_fails_says_nothing_new_so_the_evaluation_runs(tmp_path):
+    def down():
+        raise UsageUnavailable("the tool stopped")
+
+    loop, _ = _reading(tmp_path, down)
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_a_tick_with_nothing_to_evaluate_reads_nothing(tmp_path):
+    asked = []
+    loop, _ = _reading(tmp_path, lambda: asked.append(1) or _account(5), domain=domains.WordProblems(tmp_path, weak=1.1))
+    assert loop.tick()["outcome"] == "idle" and asked == []
+
+
+def test_a_tick_is_read_once_whatever_the_reader_read_just_before_it(tmp_path):
+    asked = []
+    loop, _ = _reading(tmp_path, lambda: asked.append(1) or _account(5))
+    loop.meter._read_account.refresh(NOW)
+    assert loop.tick()["outcome"] == "adopted" and len(asked) == 2
+
+
+def test_the_limit_of_this_a_limit_that_arrives_during_an_evaluation_still_spends_it(tmp_path):
+    """Pinned so nobody takes the read for more than it is. Codex's words are not read, and the callers are bound, so nothing
+    tells this from a failed case until an issuance window gives them a code. The read before it saw no limit."""
+    loop, domain = _reading(tmp_path, lambda: _account(5))
+    held, tutor, host = {c.input for c in loop.cut.held_out}, domain.tutor, host_models.CodexCaller()
+
+    def limited_on_the_held_out_split(system: str, user: str) -> str:
+        if user.rsplit("Problem: ", 1)[-1].strip() in held:
+            host._reply(1, "", "ERROR: You've hit your usage limit.", tmp_path, ())
+        return tutor(system, user)
+
+    domain.llm._responder = limited_on_the_held_out_split
+    before = loop.mh.held_out_left()
+    assert loop.tick()["outcome"] == "refused" and loop.mh.held_out_left() == before - 1

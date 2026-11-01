@@ -518,6 +518,16 @@ def test_the_account_reader_is_on_unless_the_settings_turn_it_off(tmp_path):
     assert open_loop(root, now=lambda: START)[1] is not None
 
 
+def test_a_folder_that_reads_its_account_reads_it_before_an_evaluation_too(tmp_path):
+    loop, reader = open_loop(_folder(tmp_path, read_account=True), now=lambda: START)
+    assert loop._read_now == reader.read_now
+
+
+def test_a_folder_that_turned_the_read_off_has_none_before_an_evaluation_either(tmp_path):
+    loop, reader = open_loop(_folder(tmp_path), now=lambda: START)
+    assert reader is None and loop._read_now is None
+
+
 def test_run_says_why_when_a_folder_cannot_be_opened_and_leaves_a_heartbeat(tmp_path, capsys):
     root = tmp_path / "loop"
     root.mkdir()

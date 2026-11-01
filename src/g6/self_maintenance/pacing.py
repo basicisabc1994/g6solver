@@ -152,7 +152,9 @@ class BudgetMeter:
     def _charged_when_read(self, provider: str, start: datetime, account: AccountReading | None,
                            charged: float) -> float | None:
         """What the ledger had charged when this reading first reached the meter, or ``None`` for an undated one. The
-        runner reads the account between ticks, so nothing is charged between the read and that first look."""
+        account is read between ticks, so nothing is charged between the read and that first look. The one read inside a
+        tick may hold what that tick had sent by then, and the charge goes on top of it until the next reading: high, never
+        low."""
         if account is None or account.read_at is None:
             return None
         known = self._charged_at.get((provider, start))

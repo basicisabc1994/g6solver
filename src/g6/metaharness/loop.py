@@ -377,8 +377,9 @@ class ShadowLoop:
                  now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  clock: Callable[[], float] = time.monotonic,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None,
+                 read_now: Callable[[datetime], None] | None = None,
                  domain_file: str | Path | None = None) -> None:
-        self.domain, self.settings, self._now, self.domain_file = domain, settings, now, domain_file
+        self.domain, self.settings, self._now, self.domain_file, self._read_now = domain, settings, now, domain_file, read_now
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
@@ -418,7 +419,21 @@ class ShadowLoop:
         self.workflow = _workflow(self.domain, self.cut, self.settings, self.requests)
         self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
         self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
-                                                          workspace=self.root / "workspace", clock=self._clock)
+                                                          workspace=self.root / "workspace", clock=self._clock,
+                                                          before_evaluation=self._no_limit_stands)
+
+    def _no_limit_stands(self) -> None:
+        """Read the account once more before a held-out evaluation: a limit reads as a failed case, and an evaluation of
+        failed cases spends one of the split's five on a reason untrue of the candidate. So a run already under a limit ends
+        here, as one met in a request does, with nothing spent. The limit of this: only a read can show a Codex limit, so one
+        that arrives during the evaluation still spends it, until an issuance window gives those callers a code."""
+        if self._read_now is None:
+            return
+        now = self._now()
+        self._read_now(now)
+        seen = self.meter.reading(self.provider, now)
+        if seen.wait_until is not None:
+            raise _AtLimit(seen.wait_until, seen.reason)
 
     def _calls_per_run(self) -> int:
         """The most one run can call: what the models declare, or, on G6's own executor with no step of the domain's, one

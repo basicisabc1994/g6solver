@@ -740,8 +740,11 @@ the same, and it is not read. A Codex limit is what `account/rateLimits/read` re
 one runs on as failed cases. With every run failing it ends with no winner, a result and no failure, so it pauses nothing,
 and the runner's rest outlasts the 15 minutes between reads, so the reading holds the next tick. A limit during an evaluation
 costs more: it reads as a refusal and spends one of the split's five, on a record that says nothing true of the candidate.
-That is the price of not reading Codex's words, and a limit the reading does not show pays it too. The repair is a code of
-its own from those callers, at an issuance window.
+So the account is read once more just before a held-out evaluation, the one read a tick makes, and a limit it shows ends the
+tick there with the split unspent and the candidate carried to the next tick. A read that fails says nothing new, and the
+evaluation runs. This cannot catch a limit that arrives during the evaluation, or one the reading does not show: those still
+spend one of the five. That is the price of not reading Codex's words. The repair is a code of its own from those callers,
+at an issuance window.
 
 **One backend to a model.** A `FallbackCaller` that holds two backends is refused at enrolment, for a declared model or the
 proposer, with `G6_E_LOOP_FALLBACK_MODEL`, seen through `EmptyRetry` and `TimingLLMCaller`. It answers from the next backend

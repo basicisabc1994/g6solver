@@ -139,7 +139,7 @@ def open_loop(root: Path, *, now: Callable[[], datetime] = _local_now, pinned: s
     reader = AccountReader(windows) if settings.get("read_account", True) is not False else None
     tuned = LoopSettings(windows=windows, **{name: declared[name] for name in _TUNING if name in declared})
     return ShadowLoop(declared["domain"], root, tuned, proposer=declared["proposer"], now=now, read_account=reader,
-                      domain_file=settings["domain_file"]), reader
+                      read_now=reader.read_now if reader is not None else None, domain_file=settings["domain_file"]), reader
 
 
 class Runner:

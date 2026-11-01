@@ -342,6 +342,14 @@ def test_the_tool_is_asked_at_most_once_in_a_while():
     assert tool.calls == 2 and reader("codex", START).used == 300.0
 
 
+def test_reading_now_asks_however_lately_the_tool_was_asked():
+    tool = Tool(_limits(25), _limits(30))
+    reader = AccountReader((WINDOW,), ask={"codex": tool})
+    reader.refresh(NOW)
+    reader.read_now(NOW + timedelta(seconds=1))
+    assert tool.calls == 2 and reader("codex", START).used == 300.0
+
+
 def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
     reset = NOW + timedelta(minutes=1)
     tool = Tool(_limits(90, resets=int(reset.timestamp())), _limits(0))

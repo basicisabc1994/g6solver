@@ -15,10 +15,10 @@ What each tool reports was checked by running it, on 2026-11-01:
 A percentage says the same thing whatever the allowance is: use over allowance is what the provider reported. So the
 reading is exact as a share of the week, and only the allowance's unit stays an estimate, which the window says.
 
-The tool is asked between ticks and never inside one, at most once per ``REFRESH`` and once more when a week it reported
-ends, since what it said before says nothing of the next: a tick starts no process. Each reading carries when it was read, so
-what the loop charges after that goes on top of it until the next one. A reading that lags the provider's own count leaves
-the same gap in the other direction, and nothing here can see that.
+The tool is asked between ticks, at most once per ``REFRESH`` and once more when a week it reported ends, since what it said
+before says nothing of the next. Inside a tick it is asked once, just before a held-out evaluation (``read_now``), and at no
+other point. Each reading carries when it was read, so what the loop charges after that goes on top of it until the next one.
+A reading that lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
 
 **A limit met during a tick** can only be read from the ``LLMError`` the request raised, so ``limit_ends`` reads that text.
 No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet. It
@@ -42,9 +42,11 @@ names ``RateLimitError`` is a failed case. Neither do a host's words, whatever t
 
 A limit that does not read as one is a failed case, and the tick runs on as it always has. With every run failing the cycle
 has no winner, which is a result and no failure, so it pauses nothing, and the runner's rest outlasts ``REFRESH``, so
-Codex's reading holds the next tick. What it costs is the record: the cycle says no candidate won, and a limit during an
-evaluation reads as a refusal and spends one of the split's five. A limit the reading does not show, such as a passing
-throttle, goes on like that. The repair is a code of its own from those callers, which waits for an issuance window.
+Codex's reading holds the next tick. What it costs is the record: the cycle says no candidate won. The account is read just
+before a held-out evaluation, so a limit already there leaves the split unspent. A limit that arrives during the evaluation
+is not caught by that: it reads as a refusal, and spends one of the split's five on a reason untrue of the candidate. A limit
+the reading does not show, such as a passing throttle, goes on like that too. The repair is a code of its own from those
+callers, which waits for an issuance window.
 """
 from __future__ import annotations
 
@@ -248,6 +250,11 @@ class AccountReader:
                 continue
             self.readings[provider] = replace(found, read_at=now)
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
+
+    def read_now(self, now: datetime) -> None:
+        """Ask the tool whenever it was last asked: the one read a tick makes, just before a held-out evaluation."""
+        self._asked = None
+        self.refresh(now)
 
     def _no_reading(self, provider: str, now: datetime, why: str) -> None:
         """What the last good reading said stands while it holds. ``read_at`` stays as it was, so the meter goes on adding
