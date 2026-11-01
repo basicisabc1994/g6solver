@@ -1487,6 +1487,50 @@ def test_a_hook_killed_in_the_final_review_of_a_rejection_keeps_the_agents_reaso
     assert row["left"] == "They misread the task." and "They misread the task." in step.text
 
 
+def killed_in_the_final_review(world, monkeypatch, critic) -> None:
+    """A clean review of the patch as it stands, whose hook dies before it can report it."""
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic)
+    monkeypatch.setattr(loop, "_final_review", real)
+
+
+def test_a_clean_review_a_killed_hook_never_reported_speaks_only_for_the_patch_it_read(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none")
+    world.edit()
+    killed_in_the_final_review(world, monkeypatch, critic)
+    world.edit(FIXED + "# changed after the review\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and loop.CLEAN in step.text
+    assert len(critic.calls) == 2 and "# changed after the review" in critic.calls[1][1]
+    assert [one["patch"] for one in world.state()["reviews"]] == [digest(the_patch(world))]
+    assert "read the patch once" in step.text
+
+
+def test_a_change_after_a_clean_review_a_hook_never_reported_can_still_be_found_wrong(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("none", "one")
+    world.edit()
+    killed_in_the_final_review(world, monkeypatch, critic)
+    world.edit(FIXED + "# changed after the review\n")
+    step = world.advance(critic=critic)
+    assert step.action == loop.CONTINUE and "rule one" in step.text and "stop" not in world.state()
+
+
+def test_a_commit_that_leaves_the_patch_as_it_was_buys_no_second_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    world.edit()
+    patch = the_patch(world)
+    killed_in_the_final_review(world, monkeypatch, critic)
+    git(world.repo, "add", "mod.py")
+    git(world.repo, "commit", "-qm", "the agent's commit")
+    assert the_patch(world) == patch
+    assert loop.CLEAN in world.advance(critic=critic).text and len(critic.calls) == 1
+
+
 def test_a_rejection_a_killed_hook_never_finished_is_gone_once_the_agent_repairs_after_all(world, monkeypatch):
     tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
     world.edit()

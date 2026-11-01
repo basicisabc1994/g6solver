@@ -687,7 +687,8 @@ def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, ses
                 said: str = "") -> Step:
     """The end of the review-until-clean loop: what the reviews found above the patch review, then the row. Only a review that
     was read and reproduced nothing is clean, and running out of repairs or a finding the agent rejected is a result. The
-    state is saved before the patch review, which is slow: a hook cut short there repeats no review, and ends as this would."""
+    state is saved before the patch review, which is slow: a hook cut short there repeats no review, and ends as this would,
+    unless the patch has changed since a clean review read it, which ``_advance`` then has reviewed again."""
     state["stop"] = reason
     state["left"] = (" ".join(said.split())[:MAX_CASE_CHARS] or state.get("left") or NO_REASON) if reason == LEFT else ""
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
@@ -823,6 +824,8 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     state.setdefault("started", time.time())
     state.setdefault("sets", {})
     rounds, reviews = state.setdefault("rounds", []), state.setdefault("reviews", [])
+    if state.get("stop") == CLEAN and reviews[-1]["patch"] != digest(repo_tests.diff_text(change)):
+        del rounds[-1], reviews[-1], state["stop"]      # a clean stop no report carried speaks only for the patch it read
     ends = _clock() + STOP_S - REVIEW_S
 
     def reviewed() -> tuple[set[str], str]:
