@@ -125,6 +125,7 @@ class Admission:
     venture: str = ""
     reservation: str = ""
     amount: float = 0.0
+    ends: datetime | None = None     # when the week this reservation is in ends; it covers nothing sent after that
 
 
 def _used(booked: float, pending: float, account: AccountReading | None,
@@ -210,7 +211,8 @@ class BudgetMeter:
                                              admit=over_the_ceiling)
         except BudgetRefused as exc:
             return replace(seen, reason=str(exc))
-        return replace(seen, admitted=True, reservation=reservation, amount=float(worst_case))
+        return replace(seen, admitted=True, reservation=reservation, amount=float(worst_case),
+                       ends=self.windows[provider].week_end(now))
 
     def settle(self, admission: Admission, used: float) -> float:
         """Charge what the host counted, up or down; a tick that never settles stays charged in full."""

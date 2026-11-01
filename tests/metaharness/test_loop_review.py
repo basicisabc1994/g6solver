@@ -604,3 +604,63 @@ def test_a_chain_ahead_of_the_log_is_a_crash_between_two_writes_and_runs_on(tmp_
     again, _ = _loop(tmp_path, domain=domain)
     assert _code(again.tick()) != "G6_E_LOOP_RECORDS_UNREADABLE"
     assert again.mh._head()[0] >= 1
+
+# The third review: a tick that crosses a weekly reset ---------------------------------------------------------------------
+
+RESET = START + timedelta(days=7)
+
+
+def _crossing_a_reset(tmp_path):
+    """A loop one instant before a reset, whose first answer takes it past. The requests sent after it are in ``late``."""
+    now, late = [RESET - timedelta(milliseconds=1)], []
+    domain = domains.WordProblems(tmp_path)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, max_calls_per_run=1)})
+
+    def answer(system: str, user: str) -> str:
+        if now[0] >= RESET:
+            late.append(user)
+        now[0] = RESET + timedelta(milliseconds=1)
+        return domain.tutor(system, user)
+
+    domain.llm._responder = answer
+    settings = LoopSettings(windows=(ProviderWindow("claude", 20, START),), audit_per_tick=0, eval_calls=1,
+                            method=Method(cycles=1, propose_budget=4, select_budget=1, reflect_calls=1, use_recovery=False,
+                                          use_reflection=False))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=settings, now=lambda: now[0])
+    return loop, late
+
+
+def test_a_tick_crossing_a_reset_sends_nothing_on_the_old_weeks_reservation(tmp_path):
+    loop, late = _crossing_a_reset(tmp_path)
+    head = loop.mh._head()
+    got = loop.tick()
+    assert late == [] and got["outcome"] == "blocked" and _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT"
+    assert "week ended" in got["message"] and loop.mh._head() == head
+
+
+def test_the_next_tick_answers_to_the_new_weeks_ceiling(tmp_path):
+    loop, late = _crossing_a_reset(tmp_path)
+    loop.tick()
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and "day 1's ceiling of 4" in got["message"] and late == []
+
+
+def test_a_retry_inside_a_caller_stops_at_the_reset():
+    now = [RESET - timedelta(seconds=1)]
+
+    def blank_past_the_reset(system: str, user: str) -> str:
+        now[0] = RESET
+        return ""
+
+    backend = FakeLLM(blank_past_the_reset)
+    requests = _Requests(lambda: now[0])
+    requests.open(10, RESET)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(EmptyRetry(backend), requests).complete("system", "user")
+    assert len(backend.calls) == requests.sent == 1 and "week ended" in requests.stopped
+
+
+def test_a_reservation_says_when_its_week_ends():
+    meter = BudgetMeter((ProviderWindow("claude", 5, START),), store=OperatorStore(":memory:"))
+    assert meter.reserve("claude", START + timedelta(hours=1), 1).ends == RESET

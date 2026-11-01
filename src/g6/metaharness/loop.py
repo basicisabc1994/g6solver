@@ -161,13 +161,16 @@ class _OnConstraint:
 
 
 class _Requests:
-    """What a tick has sent to its backends, and the limit it reserved. Past that limit nothing more goes out."""
+    """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
+    nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
+    ``stopped`` says which stopped it."""
 
-    def __init__(self) -> None:
+    def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        self.now = now
         self.close()
 
-    def open(self, limit: float) -> None:
-        self.sent, self.limit, self.stopped, self.unseen = 0, limit, False, False
+    def open(self, limit: float, ends: datetime | None = None) -> None:
+        self.sent, self.limit, self.ends, self.stopped, self.unseen = 0, limit, ends, "", False
 
     def close(self) -> None:
         self.open(math.inf)
@@ -175,9 +178,12 @@ class _Requests:
     def admit(self, under_way: int = 0) -> None:
         """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``."""
         if self.unseen or self.sent + under_way >= self.limit:
-            self.stopped = True
-            raise LLMError(f"{TICK_BUDGET_SPENT}: this tick has sent {self.sent + under_way} of the {self.limit:g} it "
-                           "reserved")
+            self.stopped = f"this tick has sent {self.sent + under_way} of the {self.limit:g} it reserved"
+        elif self.ends is not None and self.now() >= self.ends:
+            self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
+        else:
+            return
+        raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
 
 
 class _Counted:
@@ -299,7 +305,7 @@ class ShadowLoop:
                  domain_file: str | Path | None = None) -> None:
         self.domain, self.settings, self._now, self.domain_file = domain, settings, now, domain_file
         self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
-        self.requests = _Requests()
+        self.requests = _Requests(lambda: self._now())
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
@@ -518,7 +524,7 @@ class ShadowLoop:
             return waiting
         self._beat("running", CYCLE)
         recommended: list[dict[str, Any]] = []
-        self.requests.open(spend.amount)
+        self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
@@ -539,8 +545,7 @@ class ShadowLoop:
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
                               "nothing is adopted, and a person gives it a caller that notes each request"}
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
-            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT,
-                    "reason": f"this tick reached the {spend.amount:g} it reserved and stopped, so nothing is adopted"}
+            row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"], row)
         seen = self.meter.reading(spend.provider, self._now())
