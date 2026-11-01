@@ -497,6 +497,12 @@ def _read_whole(change: repo_tests.Change, task: str) -> bool:
     return len(_head(change, task, f"review {'0' * 32}")) <= MAX_PACK_CHARS
 
 
+def _unrun(got: ProbeRun) -> str:
+    """Why a run showed nothing, in its own words: what stopped it, then what each case with no result said."""
+    said = [text for case, text in got.texts.items() if got.results.get(case, "unknown") == "unknown"]
+    return "\n".join(part for part in (got.tail, *said) if part)[-MAX_CASE_CHARS:] or "no case of it ran to a result"
+
+
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],
                  deadline: float) -> tuple[set[str], str]:
     """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
@@ -520,10 +526,11 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         failed[name] = sorted(case.removeprefix("critic:") for case in found)
         owed = {case for one in reviews for case in one["failed"].get(name, ())}
         results[name] = ("failed" if found else "did not run" if not got.usable else
-                         "passed" if all(got.results.get(case) == "passed" for case in owed) else patch_report.NOT_PASSED)
+                         patch_report.NOT_PASSED if any(got.results.get(case) != "passed" for case in owed) else
+                         patch_report.NOT_JUDGED if "unknown" in got.results.values() else "passed")
         said["boundary"] = got.boundary or said.get("boundary", "")
-        if name == critic_file(n) and not got.usable:
-            said["unrun"] = got.tail[-300:]
+        if name == critic_file(n) and results[name] in ("did not run", patch_report.NOT_JUDGED):
+            said["unrun"] = _unrun(got)
     said.update(n=n, patch=digest(patch), file=critic_file(n), results=results, failed=failed)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:

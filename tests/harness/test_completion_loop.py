@@ -1972,3 +1972,41 @@ def test_two_sessions_never_wait_for_each_other(world, monkeypatch):
     other.mkdir(parents=True)
     with loop._held(other):
         assert world.advance(critic=reviewer("none")).action == loop.STOP
+
+
+# --- the second review of this loop: each case failed on the code it was written against, for the reason its name gives -------
+
+def refused_access(placed: str, cases: dict[str, str]) -> dict:
+    """A run in which the operating system refused the access ``test_bug`` needs: pytest's own count calls it a failure."""
+    return {**ran(placed, cases), "os_errors": [f"{placed}::test_bug"],
+            "failure_messages": {f"{placed}::test_bug": "PermissionError: [Errno 13] the boundary refused this"}}
+
+
+def test_a_test_with_an_unknown_case_is_not_reported_as_passing(world, monkeypatch):
+    Runs(monkeypatch, now=lambda placed: refused_access(placed, {"test_bug": "failed", "test_smoke": "passed"}))
+    world.edit()
+    step = world.advance(critic=reviewer("one", "one"))
+    assert step.action == loop.STOP
+    assert "its test passes on the patch" not in step.text and "PermissionError" in step.text
+    assert world.state()["reviews"][0]["results"]["test_critic.py"] == patch_report.NOT_JUDGED
+
+
+def test_a_test_whose_every_case_is_unknown_is_not_reported_as_passing(world, monkeypatch):
+    Runs(monkeypatch, now=lambda placed: refused_access(placed, {"test_bug": "failed"}))
+    world.edit()
+    step = world.advance(critic=reviewer("one", "one"))
+    assert "its test passes on the patch" not in step.text and "PermissionError" in step.text
+
+
+def test_a_finding_whose_case_passed_is_not_fixed_while_another_case_is_unknown(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_smoke": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "passed", "test_smoke": "failed"}
+    Runs(monkeypatch, now=lambda placed: {**ran(placed, dict(outcomes)), "os_errors": [f"{placed}::test_smoke"]})
+    step = world.advance(critic=critic)
+    assert "**Fixed:**" not in step.text and "**Open:** review 1" in step.text
+    assert "a case could not be judged" in step.text

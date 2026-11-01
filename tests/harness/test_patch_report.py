@@ -512,6 +512,17 @@ def test_a_review_with_no_failure_to_show_is_named_and_is_no_finding():
     assert "Review 3 named a defect but showed no failure: `rule 3`; it wrote no test." in text
 
 
+def test_a_test_with_a_case_not_judged_is_never_said_to_pass():
+    judged = "ran, but a case could not be judged"
+    reviews = [review(1, results={"test_critic_1.py": judged}, unrun="PermissionError"),
+               review(2, results={"test_critic_2.py": "did not run"})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "its test passes on the patch" not in text and "`PermissionError`" in text
+    assert "Review 1 named a defect but showed no failure: `rule 1`; a case of its test could not be judged" in text
+    assert "Review 2 named a defect but showed no failure: `rule 2`; its test showed nothing" in text
+    assert patch_report.NOT_JUDGED == judged
+
+
 def test_the_review_loops_report_names_its_boundary_only_when_a_test_ran():
     assert "ran inside `a-boundary`" in patch_report.completion_report({**CLEAN, "boundary": "a-boundary"}, "R")
     assert "ran inside" not in patch_report.completion_report({**CLEAN, "boundary": "", "reviews": [review(1, "none")]}, "R")
