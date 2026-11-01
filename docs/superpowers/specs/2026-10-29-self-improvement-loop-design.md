@@ -703,6 +703,21 @@ so it waits with `G6_E_LOOP_BUDGET_WAIT` until it declares less, a smaller `meth
 at what it reserved. Retries inside a caller are not foreseen in this figure, so blank replies or `Retry-After` resends can
 end a tick there. On `FakeLLM`, a week of one-call ticks on 86 cases at that allowance used 4402 of the 5000.
 
+**A provider's limit is a wait.** A request that fails at a limit ends the tick there. The tick charges what it sent, gives
+the rest of its reservation back and replies `G6_E_LOOP_BUDGET_WAIT` with the reset in `wait_until`. It is no cycle, so it
+writes no result and never counts towards the pause, and an evaluation it cut off is not one of the split's five, since
+nothing read it. The next tick waits for the reset, spending nothing. The reset is held in memory, so after a restart the
+first request finds the limit again. A candidate proposed before the limit stays in the run ledger, so that same profile is
+not offered again.
+
+A limit is read from the text its request raised (`g6/self_maintenance/usage.py`), because no caller marks one, and
+`g6/core/llm.py` and `g6/core/host_models.py` are bound. The built-in HTTP callers and the Anthropic SDK are read reliably: a
+wait a server asked for is taken as asked, and every other limit is looked at again after 15 minutes, for one refused
+request a look. Claude Code 2.1.316 and Codex 0.165.0 were read from the text of their programs, and neither has been seen
+at a real limit. Claude Code's error fields land in the 300 characters its caller keeps only because the program writes them
+after its `usage` record, which no one promises. A version that moves or rewords them reads as a failed case, and three such
+cycles pause the loop as they did before. The repair is a code of its own from those callers, at an issuance window.
+
 **A log that will not take a cycle.** The streak that pauses the loop is read from the log, so a cycle the log refuses
 leaves that streak nothing to read. These cycles are counted in memory instead, and one that is written starts the count
 again. Until three in a row, status shows the count under `pause` with `G6_E_LOOP_CANNOT_RECORD`, the digest lists it

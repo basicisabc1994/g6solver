@@ -18,11 +18,30 @@ reading is exact as a share of the week, and only the allowance's unit stays an 
 The tool is asked between ticks and never inside one, and at most once per ``REFRESH``: a tick starts no process. Each
 reading carries when it was read, so what the loop charges after that goes on top of it until the next one. A reading that
 lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
+
+**A limit met during a tick** can only be read from the ``LLMError`` the request raised, so ``limit_ends`` reads that text.
+No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet.
+
+* The built-in HTTP callers and the Anthropic SDK are read reliably: ``G6_E_LLM_RATE_LIMITED``, with the wait a server asked
+  for, ``HTTP 429`` with none, and the SDK's ``RateLimitError``. A caller of a domain's own is read only if it raises
+  ``LLMError`` with such words.
+* Claude Code (2.1.316) was read from the text of its program, on 2026-11-01, and never seen at a limit. A result with
+  ``is_error`` is an ``LLMError``, and the program writes the error fields after its long ``usage`` record, with a few short
+  fields behind them: ``api_error_status`` of 429, ``api_error`` of ``usage_limit_reached``, and a ``result`` that says
+  "You've hit your limit". So they fit in the 300 characters the caller keeps. That order is no promise: a version that
+  writes them earlier loses them. A 429 is also what a passing throttle or an organisation's policy sends, and each of
+  those waits as a limit does.
+* Codex (0.165.0) was read the same way and never seen at a limit: "You've hit your usage limit", and "exceeded retry limit,
+  last status: 429 Too Many Requests". How far from the end of its output those land was not seen.
+
+A limit that does not read as one is a failed case, and the tick runs on as it always has, so three such cycles pause the
+loop. The repair is a code of its own from those callers, which waits for an issuance window.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -47,6 +66,10 @@ _ASKED = ({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "g
           {"id": 2, "method": READ_LIMITS, "params": {"excludeResetCreditDetails": True}})
 # COPY: Why a provider has no account figure.
 NOT_REPORTED = "its tool reports no usage without a model call, so the meter counts model calls"
+#: What a request stopped at a limit raises: see the module docstring for where each comes from.
+_LIMIT = re.compile(r"G6_E_LLM_RATE_LIMITED|\bHTTP 429\b|\bRateLimitError\b|usage_limit_reached|\"api_error_status\":429"
+                    r"|hit your [^\"]{0,40}limit|usage limit reached|rate limit reached|429 Too Many Requests", re.IGNORECASE)
+_ASKED_TO_WAIT = re.compile(r"asks for a wait of ([0-9.]+(?:e[+-]?[0-9]+)?) s")
 
 
 class UsageUnavailable(RuntimeError):
@@ -102,6 +125,17 @@ def codex_limits() -> dict[str, Any]:
     if not where:
         raise UsageUnavailable("no codex program")
     return read_limits([where, "app-server", "--listen", "stdio://"])
+
+
+def limit_ends(said: str, now: datetime) -> datetime | None:
+    """When the limit a failed request ran into ends, from the text it raised, or ``None`` when that text is no limit. A
+    wait a server asked for is taken as asked. Anything else says no time G6 can read, so the limit is looked at again, as
+    one with no reset is, and that look costs one refused request."""
+    if not _LIMIT.search(said):
+        return None
+    asked = _ASKED_TO_WAIT.search(said)
+    seconds = float(asked.group(1)) if asked else 0.0
+    return now + (timedelta(minutes=min(seconds / 60, WEEK_MINUTES)) if seconds > 0 else REFRESH)
 
 
 def _number(value: Any) -> bool:
@@ -208,4 +242,5 @@ class AccountReader:
         return self.readings.get(provider)
 
 
-__all__ = ["AccountReader", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "codex_limits", "limits_reading", "read_limits"]
+__all__ = ["AccountReader", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "codex_limits", "limit_ends", "limits_reading",
+           "read_limits"]

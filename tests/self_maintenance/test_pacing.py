@@ -115,6 +115,33 @@ def test_at_a_reported_limit_the_loop_waits_for_the_reset():
     assert meter.reserve("claude", reset, 1).admitted
 
 
+def test_a_limit_a_request_ran_into_stands_as_a_reported_one_does():
+    reset = _day(2) + timedelta(hours=4)
+    meter = _meter()
+    meter.limit_reached("claude", reset)
+    refused = meter.reserve("claude", _day(2), 1)
+    assert not refused.admitted and refused.wait_until == reset and "reported limit" in refused.reason
+    assert meter.reading("claude", _day(2)).wait_until == reset
+    assert meter.reserve("claude", reset, 1).admitted
+
+
+def test_the_later_of_a_reported_limit_and_one_met_stands():
+    soon, late = _day(2) + timedelta(hours=1), _day(2) + timedelta(hours=4)
+    meter = _meter(read_account=lambda provider, start: AccountReading(limited_until=late))
+    meter.limit_reached("claude", soon)
+    assert meter.reserve("claude", _day(2), 1).wait_until == late
+    meter = _meter(read_account=lambda provider, start: AccountReading(limited_until=soon))
+    meter.limit_reached("claude", late)
+    assert meter.reserve("claude", _day(2), 1).wait_until == late
+
+
+def test_a_limit_met_on_one_provider_holds_no_other():
+    meter = BudgetMeter((ProviderWindow("claude", 1000, START), ProviderWindow("codex", 1000, START)),
+                        store=OperatorStore(":memory:"))
+    meter.limit_reached("claude", _day(5))
+    assert meter.reserve("codex", _day(2), 1).admitted
+
+
 def test_a_new_week_starts_empty():
     meter = _meter()
     assert meter.reserve("claude", _day(5), 800).admitted

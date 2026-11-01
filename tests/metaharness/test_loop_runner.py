@@ -18,6 +18,7 @@ import pytest
 
 import g6
 from g6.core.ledger import LedgerError, digest
+from g6.core.llm import LLMError
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
@@ -33,6 +34,7 @@ from g6.self_maintenance.envelope import (
     stops_asked,
 )
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow, read_settings
+from g6.self_maintenance.usage import REFRESH
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -123,6 +125,27 @@ def test_at_a_reported_limit_it_waits_for_the_reset_or_the_next_rise_of_a_ceilin
     runner, _, _ = _runner(tmp_path, read_account=lambda provider, start: AccountReading(limited_until=reset))
     runner.step()
     assert runner.not_before == reset
+
+
+def test_a_limit_met_during_a_tick_is_waited_out_and_the_days_page_says_so(tmp_path):
+    runner, time, domain = _runner(tmp_path, proposer=domains.proposes({"prompt": domains.WORKING}))
+    answers = domain.llm._responder
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_HOST_FAILED: codex exited 1: You've hit your usage limit.")
+
+    domain.llm._responder = refuses
+    first = time.at
+    runner.step()
+    assert runner.not_before == first + REFRESH and runner.last["warning_card"]["code"] == "G6_E_LOOP_BUDGET_WAIT"
+    page = digest_path(runner.loop.root, first.date()).read_text(encoding="utf-8")
+    assert "Waiting for the budget" in page and "hit your usage limit" in page
+    assert heartbeat(runner.loop.root)["pause"] is None and runner.loop.log.cycles() == []
+    domain.llm._responder = answers
+    _stopped_after(time, REFRESH + timedelta(minutes=2))
+    assert runner.run() == 0
+    assert runner.loop.log.cycles()[0]["outcome"] == "adopted"
+    assert datetime.fromisoformat(runner.loop.log.cycles()[0]["at"]) >= first + REFRESH
 
 
 def test_a_tick_that_raises_does_not_end_the_run_and_counts_as_a_failed_cycle(tmp_path, monkeypatch):
@@ -314,7 +337,7 @@ def test_each_page_holds_only_its_own_days_cycles(tmp_path):
 
 def _a_day_with_no_tick_then_a_tick_past_midnight(tmp_path):
     midnight = datetime(2026, 10, 26, 0, 0, tzinfo=UTC)
-    settings = LoopSettings(windows=(ProviderWindow("claude", 10_000, midnight),), method=FAST)
+    settings = LoopSettings(windows=(ProviderWindow("claude", 5000, midnight),), method=FAST)
     runner, time, _ = _runner(tmp_path, settings=settings, at=midnight + timedelta(hours=23, minutes=59))
     runner.step()
     assert not runner.loop.log.cycles()                                  # day one's ceiling cannot fund one tick

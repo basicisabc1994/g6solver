@@ -71,6 +71,7 @@ from g6.self_maintenance.envelope import (
     stop_reason,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
+from g6.self_maintenance.usage import limit_ends
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -168,6 +169,17 @@ class _OnConstraint:
         return self.inner.propose(replace(view, failures=shown), runner)
 
 
+class _AtLimit(BaseException):
+    """A provider's limit, met during a tick, on its way out of it. It is no ``Exception`` so that it passes every
+    ``except Exception`` between a model call and the tick, where the harness would score a failed case and each layer
+    carry on. So nothing from the run it cut off is written: no report, so the held-out split is not spent, no decision and
+    no cycle."""
+
+    def __init__(self, until: datetime, said: str) -> None:
+        super().__init__(said)
+        self.until, self.said = until, said
+
+
 class _Requests:
     """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
     nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
@@ -192,6 +204,12 @@ class _Requests:
         else:
             return
         raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
+
+    def at_a_limit(self, failed: LLMError) -> None:
+        """End the tick when a request failed at a provider's limit. Outside a tick there is none to end."""
+        until = limit_ends(str(failed), self.now())
+        if until is not None and self.limit != math.inf:
+            raise _AtLimit(until, str(failed)[:300]) from failed
 
 
 class _Counted:
@@ -223,6 +241,9 @@ class _Counted:
         with counting(before_call=next_request) as noted, waits() as resent:
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
+            except LLMError as failed:
+                self.requests.at_a_limit(failed)
+                raise
             finally:
                 self.requests.sent += noted() + len(resent)
             if not noted():
@@ -558,10 +579,13 @@ class ShadowLoop:
             return waiting
         self._beat("running", CYCLE)
         recommended: list[dict[str, Any]] = []
+        limit: _AtLimit | None = None
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
+            except _AtLimit as reached:
+                row, limit = self._row(), reached
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
@@ -578,6 +602,12 @@ class ShadowLoop:
             row |= {"outcome": "error", "code": UNMETERED_CALLER,
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
                               "nothing is adopted, and a person gives it a caller that notes each request"}
+        elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
+            self.meter.limit_reached(spend.provider, limit.until)
+            return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
+                            f"and waits until {limit.until.isoformat()}: {limit.said}",
+                            "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
+                            charged=charged)
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:

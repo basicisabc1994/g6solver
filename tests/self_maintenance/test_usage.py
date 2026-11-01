@@ -2,16 +2,21 @@
 """What a provider's own tool reports of the account's week: read between ticks, with no model call and no real tool."""
 from __future__ import annotations
 
+import io
+import json
 import sys
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from g6.core import host_models, llm
+from g6.core.llm import LLMError
 from g6.operator.store import OperatorStore
 from g6.self_maintenance import usage
 from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import AccountReader, limits_reading, read_limits
+from g6.self_maintenance.usage import AccountReader, limit_ends, limits_reading, read_limits
 
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 NOW = START + timedelta(days=2)
@@ -22,6 +27,111 @@ RESET = int((START + timedelta(days=7)).timestamp())
 def _limits(percent: int, *, minutes=10080, resets=RESET, allowed=True, secondary=None) -> dict:
     return {"ordinaryUsageAllowed": allowed, "rateLimits": {
         "primary": {"usedPercent": percent, "windowDurationMins": minutes, "resetsAt": resets}, "secondary": secondary}}
+
+
+# A limit read from what a failed request raised ------------------------------------------------------------------------
+
+def _claude_printed(**result) -> str:
+    """Claude Code's JSON result in the key order of 2.1.316's own source: what it reports of the run first, and the result
+    with its error fields last. Read from the program's text: no limit was ever reached to see this."""
+    return json.dumps({"duration_api_ms": 0, "stop_reason": "stop_sequence", "session_id": "0" * 36, "total_cost_usd": 0,
+                       "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                                 "output_tokens": 0, "server_tool_use": {"web_search_requests": 0, "web_fetch_requests": 0},
+                                 "service_tier": None, "cache_creation": {"ephemeral_1h_input_tokens": 0,
+                                                                          "ephemeral_5m_input_tokens": 0}},
+                       "modelUsage": {}, "permission_denials": [], "is_error": True, "num_turns": 1, "subtype": "success",
+                       **result, "type": "result", "duration_ms": 812, "uuid": "1" * 36}, separators=(",", ":"))
+
+
+def _raised(call) -> str:
+    with pytest.raises(LLMError) as raised:
+        call()
+    return str(raised.value)
+
+
+def _http(monkeypatch, status: int, headers: dict) -> str:
+    class Refuses:
+        def open(self, request, timeout):
+            raise urllib.error.HTTPError(request.full_url, status, "no", headers, io.BytesIO(b"refused"))
+
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: Refuses())
+    monkeypatch.setattr(llm, "_sleep", lambda seconds: None)
+    caller = llm.OpenAICompatibleCaller("test", base_url="https://unused.invalid/v1", api_key=None)
+    return _raised(lambda: caller.complete("system", "user"))
+
+
+def _claude(printed: str, code: int = 1) -> str:
+    return _raised(lambda: host_models.ClaudeCodeCaller()._reply(code, printed, "", Path("."), ("system", "user")))
+
+
+def _codex(errors: str) -> str:
+    return _raised(lambda: host_models.CodexCaller()._reply(1, "", errors, Path("."), ("system", "user")))
+
+
+def test_a_refusal_that_says_how_long_to_wait_is_a_limit_that_long(monkeypatch):
+    said = _http(monkeypatch, 429, {"Retry-After": "120"})
+    assert llm.RATE_LIMITED in said and limit_ends(said, NOW) == NOW + timedelta(seconds=120)
+
+
+def test_a_wait_too_long_to_write_as_a_time_is_held_to_a_week(monkeypatch):
+    assert limit_ends(_http(monkeypatch, 429, {"Retry-After": "1e40"}), NOW) == NOW + timedelta(days=7)
+
+
+def test_a_refusal_with_no_hint_is_a_limit_looked_at_again_as_one_with_no_reset(monkeypatch):
+    assert limit_ends(_http(monkeypatch, 429, {}), NOW) == NOW + usage.REFRESH
+
+
+def test_an_anthropic_rate_limit_is_read_from_the_sdks_own_error_name():
+    class RateLimitError(Exception):
+        pass
+
+    class Refuses:
+        class beta:
+            class messages:
+                @staticmethod
+                def create(**kwargs):
+                    raise RateLimitError("429 rate_limit_error")
+
+    said = _raised(lambda: llm.AnthropicCaller(client=Refuses()).complete("system", "user"))
+    assert limit_ends(said, NOW) == NOW + usage.REFRESH
+
+
+@pytest.mark.parametrize("fields", [{"api_error_status": 429, "api_error": "usage_limit_reached", "result": "You've hit your limit"},
+                                    {"api_error_status": 429, "result": "API Error: rate limited"},
+                                    {"api_error_status": None, "result": "You've hit your session limit · resets 3pm (UTC)"}])
+def test_a_claude_code_limit_is_read_from_the_end_of_what_it_printed(fields):
+    said = _claude(_claude_printed(**fields))
+    assert host_models.HOST_FAILED in said and limit_ends(said, NOW) == NOW + usage.REFRESH
+
+
+def test_a_claude_code_limit_printed_early_is_lost_with_the_text_the_caller_cuts_and_reads_as_a_failure():
+    """The limit of this: the caller keeps the last 300 characters, and its file is bound. A later Claude Code that prints
+    the error ahead of a long usage record reads as an ordinary failed cycle, so three of them pause the loop."""
+    printed = json.dumps({"type": "result", "is_error": True, "api_error_status": 429, "result": "You've hit your limit",
+                          "usage": {f"counter_{i}": 0 for i in range(40)}, "uuid": "1" * 36})
+    assert limit_ends(_claude(printed), NOW) is None
+
+
+@pytest.mark.parametrize("errors", ["ERROR: You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro).",
+                                    "ERROR: You've hit your usage limit. Try again later.",
+                                    "ERROR: exceeded retry limit, last status: 429 Too Many Requests",
+                                    "ERROR: Rate limit reached for gpt-5.5. Please try again in 11.054s."])
+def test_a_codex_limit_is_read_from_what_it_printed(errors):
+    assert limit_ends(_codex(errors), NOW) == NOW + usage.REFRESH
+
+
+def test_a_fallback_that_ran_out_at_a_limit_reads_as_one():
+    said = "every caller failed: first: G6_E_LLM_TIMEOUT: late; second: G6_E_LLM_RATE_LIMITED: HTTP 429 asks for a wait of 90 s"
+    assert limit_ends(said, NOW) == NOW + timedelta(seconds=90)
+
+
+@pytest.mark.parametrize("said", ["G6_E_LLM_TIMEOUT: the reply was still arriving", "HTTP 500 from https://model: broken",
+                                  "HTTP 503 from https://model: overloaded", "empty completion on 4 attempts (last max_tokens=8192)",
+                                  "G6_E_LLM_HOST_FAILED: claude exited 1 and printed no result: not logged in",
+                                  "G6_E_LLM_HOST_FAILED: codex exited 2: unexpected argument", "G6_E_MODEL_REFUSED: refusal",
+                                  "G6_E_LOOP_TICK_BUDGET_SPENT: this tick has sent 5 of the 5 it reserved", ""])
+def test_any_other_failure_is_no_limit(said):
+    assert limit_ends(said, NOW) is None
 
 
 # Reading what the tool says ----------------------------------------------------------------------------------------

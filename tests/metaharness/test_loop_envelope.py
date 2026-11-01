@@ -16,17 +16,19 @@ import pytest
 import g6
 from g6.core import stop
 from g6.core.llm import EmptyRetry, FakeLLM, LLMError
+from g6.core.vault import AccessDenied
 from g6.harness import Check
 from g6.integrity import build_manifest
 from g6.metaharness import Model, Profile, SuiteCase
 from g6.metaharness import monitor as drift
 from g6.metaharness.domain import Judge
-from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
+from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Requests
 from g6.metaharness.method import Method
 from g6.metaharness.propose import DevBudget
 from g6.metaharness.select import race, race_calls
 from g6.self_maintenance.envelope import heartbeat
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
+from g6.self_maintenance.usage import REFRESH
 from g6.workspace._coordination import Coordination
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -873,6 +875,141 @@ def test_a_race_never_takes_more_runs_than_its_bound(tmp_path):
     candidates = [base.model_copy(update={"prompt": f"{domains.WORKING} {i}"}) for i in range(7)]
     ran = race(loop.workflow, loop.mh.factory, base, candidates, block=10, keep=0.5, budget=10 ** 6, clock=domains.Clock())
     assert ran.calls_used <= race_calls(len(loop.cut.selection), len(candidates), 10, 0.5)
+
+# A provider's limit is a wait --------------------------------------------------------------------------------------------
+AT_A_LIMIT = "G6_E_LLM_HOST_FAILED: codex exited 1: ERROR: You've hit your usage limit. Try again later."
+TWO_OFFERS = ({"prompt": domains.WORKING}, {"prompt": f"{domains.WORKING} Show each step."})
+
+
+class Limited:
+    """The domain's model, which answers until ``reached(problem)`` and refuses at its limit from then until ``lifted``."""
+
+    def __init__(self, domain, reached) -> None:
+        self.tutor, self.reached, self.refused, self.lifted = domain.tutor, reached, 0, False
+        domain.llm._responder = self
+
+    def __call__(self, system: str, user: str) -> str:
+        if not self.lifted and self.reached(user.rsplit("Problem: ", 1)[-1].strip()):
+            self.refused += 1
+            raise LLMError(AT_A_LIMIT)
+        return self.tutor(system, user)
+
+
+def _nothing_counted(loop) -> None:
+    assert loop.log.cycles() == [] and loop.log.failed_streak() == 0 and loop.log.paused() == ""
+
+
+def test_a_limit_ends_the_tick_at_once_as_a_budget_wait_and_scores_nothing(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    limited, head = Limited(domain, lambda problem: True), loop.mh._head()
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["completion_state"] == "blocked-escalated"
+    assert got["wait_until"] == (NOW + REFRESH).isoformat() and "hit your usage limit" in got["message"]
+    assert limited.refused == 1 and loop.mh._head() == head and "outcome" not in got
+    _nothing_counted(loop)
+
+
+def test_what_a_tick_sent_before_a_limit_is_charged_and_the_rest_of_its_reservation_is_given_back(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    late = {c.input for c in loop.cut.tune[10:]}
+    Limited(domain, late.__contains__)
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["charged"] == len(domain.llm.calls) - calls
+    assert loop.meter.reading("claude", NOW).used == got["charged"] < loop.worst_case()
+
+
+def test_a_limit_during_the_evaluation_spends_none_of_the_held_out_split(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(*TWO_OFFERS))
+    held, left = {c.input for c in loop.cut.held_out[5:]}, loop.mh.held_out_left()
+    limited = Limited(domain, held.__contains__)
+    head = loop.mh._head()
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT" and limited.refused == 1
+    assert loop.mh.held_out_left() == left and loop.mh._head() == head
+    assert not any(loop.mh.ledger.rows(kind) for kind in ("evaluation", "report", "decision", "tuning_run"))
+    _nothing_counted(loop)
+
+
+def test_the_next_tick_waits_for_the_reset_spending_nothing_and_then_runs(tmp_path):
+    days = [NOW]
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS))
+    limited = Limited(domain, lambda problem: True)
+    reset = datetime.fromisoformat(loop.tick()["wait_until"])
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == reset.isoformat() and len(domain.llm.calls) == calls
+    days[0], limited.lifted = reset, True
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_limits_in_a_row_never_pause_the_loop(tmp_path):
+    days = [NOW]
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0])
+    Limited(domain, lambda problem: True)
+    for _ in range(5):
+        got = loop.tick()
+        assert _code(got) == "G6_E_LOOP_BUDGET_WAIT"
+        days[0] = datetime.fromisoformat(got["wait_until"])
+    _nothing_counted(loop)
+
+
+def test_a_limit_a_proposer_meets_ends_the_tick_as_well(tmp_path):
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(AT_A_LIMIT)
+
+    loop, domain = _enrolled(tmp_path, proposer=FakeLLM(refuses))
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == (NOW + REFRESH).isoformat()
+    _nothing_counted(loop)
+
+
+def test_a_wait_a_server_asked_for_is_that_long(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_RATE_LIMITED: HTTP 429 from https://model asks for a wait of 120 s; with 0 s waited already")
+
+    domain.llm._responder = refuses
+    assert loop.tick()["wait_until"] == (NOW + timedelta(seconds=120)).isoformat()
+
+
+def test_a_failure_that_is_no_limit_is_still_a_failed_case_and_the_tick_runs_on(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: no answer in time")
+
+    domain.llm._responder = down
+    got = loop.tick()
+    assert _code(got) != "G6_E_LOOP_BUDGET_WAIT" and len(domain.llm.calls) > 1 and len(loop.log.cycles()) == 1
+
+
+def test_a_sealed_breach_is_recorded_even_when_a_limit_ended_the_tick(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    real, sealed = domain.failures, domain.sealed_file
+
+    def looks_at_the_sealed_split(view):
+        try:
+            sealed.read_text(encoding="utf-8")
+        except AccessDenied:
+            pass
+        return real(view)
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(AT_A_LIMIT)
+
+    domain.failures = looks_at_the_sealed_split
+    loop._proposer.inner = FakeLLM(refuses)
+    got = loop.tick()
+    assert got["outcome"] == "sealed_breach" and _code(got) == "G6_E_LOOP_SEALED_BREACH"
+
+
+def test_outside_a_tick_a_limit_is_the_error_it_always_was():
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(AT_A_LIMIT)
+
+    with pytest.raises(LLMError, match="hit your usage limit"):
+        _Counted(FakeLLM(refuses), _Requests()).complete("system", "user")
 
 # The envelope is frozen too ------------------------------------------------------------------------------------------
 
