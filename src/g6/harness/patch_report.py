@@ -416,6 +416,9 @@ def _review_lines(loop: dict) -> list[str]:
         lines.append(f"- A reviewer from another model family read the patch {_times(len(reviews))}: "
                      + ", ".join(code(one.get("verdict")) for one in reviews) + ".")
     for one in reviews:
+        if one.get("told"):
+            lines.append(f"- Review {one['n']} first named a defect, {code(one['claimed'], 200)}, but its test would not run: "
+                         f"{code(one['told'], 200)}. The reviewer was told once, and answered again.")
         if one.get("verdict") == "defect" and one not in (*fixed, *still):
             said = one["results"].get(one["file"])
             why = (f"a case of its test could not be judged: {code(one['unrun'], 200)}" if said == NOT_JUDGED else

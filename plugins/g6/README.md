@@ -49,13 +49,15 @@ below runs instead. With neither, nothing is tested, and the report says which l
 2. When the agent finishes and Python files have changed, a reviewer from another model family reads the task, the patch and
    the files it touches, as they were at the base. It sees none of the agent's reasoning. It must state a rule, its reasons
    and a test, and it may find nothing.
-3. G6 runs that test on the patch, inside an operating-system boundary, with no network. A test that will not run says
-   nothing of the patch.
+3. G6 runs that test on the patch, inside an operating-system boundary, with no network. A test that will not run goes back
+   to the reviewer once, with the error. If it still will not run, the loop ends with no clean review: a defect was claimed
+   and could not be reproduced.
 4. If the test fails, the rule, the reasons and the test go back to the agent in the same session. The agent may reject the
    finding: the reviewer can be wrong. A fresh review then reads the new patch, at most three repairs and so four reviews.
    Each review's test stays and keeps running, to catch a repair that undoes it.
 5. The loop ends when a review reproduces nothing, when the agent leaves the code as it was, when the repairs run out, or when
-   a review fails or cannot be read. That last one is reported as no clean review, and never counts as clean.
+   a review fails or cannot be read. That last one is reported as no clean review, and never counts as clean. Neither does a
+   review of a patch that changed after it was read.
 6. The turn ends and you see the report, which is also saved beside the session's state.
 
 If no hook saw your prompt, the task is read from the session's transcript and the base is the commit you are on then. The
@@ -84,6 +86,8 @@ kept out of training. It also differs from what was measured:
 - The Stop hook replays the rounds: each hook is a new process that reads what is done from a file, where the measured runner
   held the session itself. A review repeats if a hook is cut short.
 - G6 runs each review's test alone, so one that will not run hides no other. The measured runner ran them together.
+- A test that will not run goes back to its reviewer once, and a defect no test could show ends with no clean review. The
+  measured runner said nothing of such a test, and counted that review as clean.
 - Earlier reviewers' tests run even when the latest review wrote none, and a failing one goes back in its own reviewer's words.
   The measured runner ran them only with a new test, and sent the latest reviewer's words.
 - The agent has this plugin and G6's server. The measured agent was plain Claude Code. A patch review of the task's text sits

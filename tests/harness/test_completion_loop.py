@@ -1013,11 +1013,11 @@ def test_a_review_that_fails_after_a_repair_ends_the_loop_and_counts_as_no_clean
     assert tests.ran_in_turn() == ["test_critic.py", "test_critic.py"]
 
 
-def test_a_reviewers_test_that_will_not_run_reproduces_nothing_and_the_report_says_so(world, monkeypatch):
+def test_a_reviewers_test_that_will_not_run_is_no_clean_review_and_the_report_says_so(world, monkeypatch):
     Runs(monkeypatch, now=lambda placed: {"verdict": "collection_error", "said": "no such import"})
     world.edit()
-    step = world.advance(critic=reviewer("one"))
-    assert step.action == loop.STOP and "a review reproduced nothing" in step.text
+    step = world.advance(critic=reviewer("one", "one"))
+    assert step.action == loop.STOP and step.code == loop.NOT_REPRODUCED and loop.UNREPRODUCED in step.text
     assert "showed no failure" in step.text and "would not run" in step.text and "rule one" in step.text
 
 
@@ -2209,3 +2209,97 @@ def test_a_call_with_no_python_changed_ended_no_run_and_leaves_no_row(world, mon
     Runs(monkeypatch)
     assert world.advance(critic=reviewer("never")).code == loop.NO_PYTHON
     assert not rows(world)
+
+def will_not_run(placed: str = "") -> dict:
+    """A run of a reviewer's test that never reached a case: pytest's own error is in its failure messages."""
+    return {"verdict": "collection_error", "said": "the tests could not be collected",
+            "failure_messages": {"test_critic.py": "ImportError: cannot import name 'nope' from 'mod'"}}
+
+
+def test_a_defect_whose_test_cannot_run_goes_back_to_the_reviewer_once_with_pytests_error(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    critic = reviewer("one", "one", "never")
+    world.edit()
+    step = world.advance(critic=critic)
+    assert len(critic.calls) == 2, "the reviewer was never told its test would not run"
+    assert "ImportError: cannot import name 'nope'" in critic.calls[1][1]
+    assert "ImportError" not in critic.calls[0][1]
+    assert re.search(r"review [0-9a-f]{32}", critic.calls[0][1])[0] != re.search(r"review [0-9a-f]{32}", critic.calls[1][1])[0]
+    assert step.action == loop.STOP
+
+
+def test_a_defect_still_unrunnable_ends_blocked_with_a_stable_code_and_says_so(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    world.edit()
+    step = world.advance(critic=reviewer("one", "one"))
+    assert loop.CLEAN not in step.text and step.code, "a defect that could not be reproduced ended clean"
+    assert step.code == loop.NOT_REPRODUCED and world.state()["stop"] == loop.UNREPRODUCED
+    assert "a defect was claimed and could not be reproduced" in step.text and "**No clean review:**" in step.text
+    assert "ImportError" in step.text and "THE REVIEW" in step.text
+
+
+def test_a_rewritten_test_that_fails_goes_to_the_agent_and_spends_no_repair(world, monkeypatch):
+    runs = [will_not_run()]
+    Runs(monkeypatch, now=lambda placed: runs.pop() if runs else ran(placed, {"test_critic": "failed"}))
+    critic = reviewer("one", "two")
+    world.edit()
+    step = world.advance(critic=critic)
+    assert len(critic.calls) == 2 and step.action == loop.CONTINUE and "rule two" in step.text
+    assert len(world.state()["reviews"]) == 1 and world.state()["reviews"][0]["told"]
+
+
+def test_a_rewritten_test_that_passes_is_no_finding_and_the_first_claim_stays_on_the_record(world, monkeypatch):
+    runs = [will_not_run()]
+    Runs(monkeypatch, now=lambda placed: runs.pop() if runs else ran(placed, {"test_critic": "passed"}))
+    critic = reviewer("one", "two")
+    world.edit()
+    step = world.advance(critic=critic)
+    assert len(critic.calls) == 2 and step.action == loop.STOP and not step.code
+    assert "`rule one`" in step.text and "ImportError" in step.text and "told once" in step.text
+    assert "its test passes on the patch" in step.text
+
+
+def test_a_reviewer_told_of_the_error_may_withdraw_its_claim_and_the_report_says_it_did(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    critic = reviewer("one", "none")
+    world.edit()
+    step = world.advance(critic=critic)
+    assert len(critic.calls) == 2 and step.action == loop.STOP and not step.code and loop.CLEAN in step.text
+    assert "`rule one`" in step.text and "told once" in step.text
+
+
+def test_a_review_that_fails_when_told_of_the_error_is_no_clean_review(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    critic = reviewer("one", LLMError("gone away"))
+    world.edit()
+    step = world.advance(critic=critic)
+    assert len(critic.calls) == 2 and step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text
+
+
+def test_an_unknown_case_goes_back_as_an_error_too(world, monkeypatch):
+    Runs(monkeypatch, now=lambda placed: refused_access(placed, {"test_bug": "failed", "test_smoke": "passed"}))
+    critic = reviewer("one", "one")
+    world.edit()
+    step = world.advance(critic=critic)
+    assert len(critic.calls) == 2 and "PermissionError" in critic.calls[1][1]
+    assert step.code == loop.NOT_REPRODUCED and loop.CLEAN not in step.text
+
+
+def test_a_test_that_will_not_run_beside_a_failing_one_is_not_retried_and_later_blocks_the_clean_end(world, monkeypatch):
+    def now(placed: str) -> dict:
+        if placed.endswith("/test_critic.py"):
+            return ran(placed, {"test_critic": outcome[0]})
+        return will_not_run()
+
+    outcome = ["failed"]
+    Runs(monkeypatch, now=now)
+    critic = reviewer("one", "two", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    assert len(critic.calls) == 2      # what failed went back, so nothing here could end clean, and no reviewer was asked again
+    world.edit(FIXED + "# 2\n")
+    outcome[0] = "passed"
+    step = world.advance(critic=critic)
+    assert len(critic.calls) == 3 and loop.CLEAN not in step.text and step.code == loop.NOT_REPRODUCED

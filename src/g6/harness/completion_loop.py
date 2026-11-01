@@ -8,7 +8,8 @@ agent's reasoning, and must state a rule, reasons and a test. If that test fails
 session, and a fresh review reads the new patch, up to ``MAX_REPAIRS`` repairs. The agent may reject a finding by leaving the
 code as it was. No scout and no probe: ``advance`` needs the boundary and the critic and nothing else, and a review that fails
 or cannot be read ends the loop with no clean review. Each review's test stays beside the earlier ones (``critic_file``) to
-catch a repair that undoes it, and runs alone, so one that will not run hides no other. A run that ends leaves a row in
+catch a repair that undoes it, and runs alone, so one that will not run hides no other. Its reviewer is told why once, and a
+defect no test could show ends the loop with no clean review, where K calls it clean. A run that ends leaves a row in
 ``FAILURES`` for the next cycle of the self-improvement loop.
 
 ``MODE_LINE`` in the person's key file, or no critic, gives the other loop, described from here on.
@@ -106,9 +107,19 @@ CLEAN, NO_REVIEW, RAN_OUT = "a review reproduced nothing", "a review failed", "t
 LEFT, WITHDRAWN, READ_VERDICTS = "the agent left the code as it was", "the agent took its change back", ("none", "defect")
 #: A clean review of a patch that is no longer the patch: what it says of the code that is there is nothing.
 MOVED = "the patch changed after the review that read it"
+#: A reviewer named a defect, its test would not run even once it had been told why, and K has no such end: it says nothing of
+#: such a test, so its review stands as clean. A named defect that nothing could show is not clean, and it is not a finding.
+UNREPRODUCED = "a defect was claimed and could not be reproduced"
+#: What goes back to that reviewer, once, after the pack: the pack's own limit is for what a reviewer must read whole.
+WOULD_NOT_RUN = ("\n\nThe test in your last reply would not run, so it showed nothing. G6 ran it and got:\n{error}\n\nAnswer again "
+                 "in the same form: a test that runs, or VERDICT: none if you no longer find a defect.")
+#: What a file of a reviewer's test says when it showed nothing.
+SHOWED_NOTHING = ("did not run", patch_report.NOT_JUDGED)
 NO_REASON = "no reason was given"
 #: A stop that leaves the patch with no review that came back clean, whatever earlier reviews said.
 NO_CLEAN_REVIEW = "G6_E_NO_CLEAN_REVIEW"
+#: A stop on a defect a reviewer named and no test could show (``UNREPRODUCED``).
+NOT_REPRODUCED = "G6_E_DEFECT_NOT_REPRODUCED"
 #: A call with no Python changed against the base, so nothing was tested, and no loop began.
 NO_PYTHON = "G6_E_NO_PYTHON_CHANGED"
 #: A call that found another step of its session running: the code the self-improvement loop gives the same refusal.
@@ -378,6 +389,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         if elsewhere or verdict not in repo_tests.RAN:
             code = None
             tail.append(vs.LOADED_ELSEWHERE.format(elsewhere) if elsewhere else f"{verdict}: {ran.get('said') or ''}")
+            texts.update(ran.get("failure_messages") or {})     # pytest's own words: they name no case, so no reader of cases sees them
             continue
         code = None if code is None else max(code, int(verdict == repo_tests.FAILED))
         full, refused = _in_repository(ran), set(ran.get("os_errors") or ())
@@ -477,13 +489,15 @@ def critic_file(n: int) -> str:
     return "test_critic.py" if n == 1 else f"test_critic_{n}.py"
 
 
-def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path, n: int = 1) -> dict:
+def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path, n: int = 1,
+               told: str = "") -> dict:
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
-    recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes."""
+    recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
+    pack, for a reviewer sent back."""
     found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
     try:
-        found = critic_report(caller.complete(system, _pack(change, task, proof)), proof=proof)
+        found = critic_report(caller.complete(system, _pack(change, task, proof) + told), proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if found["test"]:
@@ -513,27 +527,42 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     short repeats its review, and that review's test is the only one with its number. The patch itself is kept first, byte
     for byte, as ``run.py`` keeps ``round-n.patch``: a later repair must not lose what a finding was about. A file counts as
     passed only if each case that ever failed in it has passed by its own id: a skip, a rename or a case no longer collected
-    fixes nothing. This decides what the report may call fixed, and what fails, and so what goes back, is as it was."""
+    fixes nothing. This decides what the report may call fixed, and what fails, and so what goes back, is as it was.
+
+    Here the loop parts from K. A review that names a defect whose test shows nothing is told why once, in this round, so no
+    repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
-    patch, kept = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch"
+    patch, kept, mine = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_bytes(patch.encode("utf-8"))
-    (where / critic_file(n)).unlink(missing_ok=True)
+    (where / mine).unlink(missing_ok=True)
     said = (run_critic(change, task, critic, shipped.critic, where, n) if _read_whole(change, task) else
             {"verdict": "failed", "rule": "", "why": "", "test": "", "error": TOO_LONG})
-    for name in [critic_file(i) for i in range(1, n + 1) if (where / critic_file(i)).is_file()]:
+
+    def run(name: str) -> None:
         got = run_set(change, where, at_base=False, deadline=deadline, only=name)
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
-        failing |= found
+        failing.update(found)
         failed[name] = sorted(case.removeprefix("critic:") for case in found)
         owed = {case for one in reviews for case in one["failed"].get(name, ())}
         results[name] = ("failed" if found else "did not run" if not got.usable else
                          patch_report.NOT_PASSED if any(got.results.get(case) != "passed" for case in owed) else
                          patch_report.NOT_JUDGED if "unknown" in got.results.values() else "passed")
         said["boundary"] = got.boundary or said.get("boundary", "")
-        if name == critic_file(n) and results[name] in ("did not run", patch_report.NOT_JUDGED):
+        if name == mine and results[name] in SHOWED_NOTHING:
             said["unrun"] = _unrun(got)
-    said.update(n=n, patch=digest(patch), file=critic_file(n), results=results, failed=failed)
+
+    for name in [critic_file(i) for i in range(1, n + 1) if (where / critic_file(i)).is_file()]:
+        run(name)
+    if said.get("unrun") and said["verdict"] == "defect" and not failing:
+        told, claimed = said.pop("unrun"), said["rule"]
+        (where / mine).unlink(missing_ok=True)
+        del results[mine], failed[mine]
+        said.update(run_critic(change, task, critic, shipped.critic, where, n, told=WOULD_NOT_RUN.format(error=told)),
+                    told=told, claimed=claimed)
+        if (where / mine).is_file():
+            run(mine)
+    said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""
@@ -720,6 +749,14 @@ def _patch_now(root: Path, base: str) -> str:
         return ""
 
 
+def _unreproduced(reviews: list[dict]) -> bool:
+    """Whether a review named a defect that nothing shows as the loop ends: no case of its test ever failed, so it is no
+    finding, and on the last run the test showed nothing. A defect with no test at all is K's: it asked nothing of G6."""
+    last, found = reviews[-1]["results"], patch_report.findings(reviews)
+    return any(one["verdict"] == "defect" and one not in (*found[0], *found[1]) and last.get(one["file"]) in SHOWED_NOTHING
+               for one in reviews)
+
+
 def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, session: Path, state: dict, reason: str,
                 said: str = "") -> Step:
     """The end of the review-until-clean loop: what the reviews found above the patch review, then the row. Only a review that
@@ -735,7 +772,7 @@ def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, ses
     review = _final_review(root, task, base)
     if reason == CLEAN and _patch_now(root, base) != reviews[-1]["patch"]:
         reason = state["stop"] = MOVED
-    code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
+    code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     report = patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code),
@@ -919,7 +956,7 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     if not reviewing:
         return _finish(session, state, _report(root, task, base, state, reason))
     if got.status == "no_counterexample_in_domain":
-        reason = CLEAN if reviews[-1]["verdict"] in READ_VERDICTS else NO_REVIEW
+        reason = (NO_REVIEW if reviews[-1]["verdict"] not in READ_VERDICTS else UNREPRODUCED if _unreproduced(reviews) else CLEAN)
     elif got.status == "counterexample_budget_exhausted":
         reason = RAN_OUT
     return _review_end(root, task, base, change, session, state, reason, said)

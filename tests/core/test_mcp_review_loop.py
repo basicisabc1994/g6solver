@@ -203,6 +203,19 @@ def test_a_review_that_fails_is_blocked_and_says_so_and_carries_the_report(rig):
     enveloped(got)
 
 
+def test_a_defect_that_could_not_be_reproduced_is_blocked_and_says_so_and_carries_the_report(rig, monkeypatch):
+    critic = reviewer("one", "one")
+    rig.approve(critic)
+    monkeypatch.setattr(vs, "_run_check", lambda *args, **more: {"verdict": "collection_error", "said": "no such import"})
+    rig.edit()
+    got = rig.step()
+    assert len(critic.calls) == 2 and got["ok"] is False and got["action"] == "stop"
+    assert got["completion_state"] == "blocked-escalated" and got["warning_card"]["code"] == loop.NOT_REPRODUCED
+    assert "a defect was claimed and could not be reproduced" in got["warning_card"]["message"]
+    assert "**No clean review:**" in got["report"]
+    enveloped(got)
+
+
 def test_nothing_approved_is_blocked_with_how_to_turn_it_on(rig, monkeypatch):
     monkeypatch.setattr(keys, "read", lambda: {})
     rig.edit()
