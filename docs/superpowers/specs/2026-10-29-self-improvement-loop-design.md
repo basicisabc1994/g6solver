@@ -625,8 +625,9 @@ The domain file is the person's own, as `G6_METAHARNESS` names one, and lies out
 what judges it must never be in. It defines `LOOP = {"domain": ..., "proposer": ...}`, with `method`, `seed`,
 `audit_per_tick` and `eval_calls` where they differ from the defaults. Nothing else is read from either file, so neither
 can reach `person_free_adoption_outside_shadow`. Enrolling pins the domain file's digest, so an edit is a changed frozen
-item, and `g6_improve_start` refuses it before it could run. Then, at a terminal, a person enrols it and types the
-domain's name back:
+item: `g6_improve_start`, a restart and lifting a pause each refuse it before it can run, and what runs is the bytes that
+were checked. The pin holds that file, not what it imports. Then, at a terminal, a person enrols it and types the domain's
+name back:
 
 ```
 python -P -m g6.metaharness.loop enrol <folder> --as "Your name"
@@ -636,9 +637,17 @@ python -P -m g6.metaharness.loop enrol <folder> --as "Your name"
 
 **Only a person's start lets it run.** `run` carries on a start that stands: of the starts and stops on record, the last is
 a start a person agreed to in the client's dialog. With none it is refused, with `G6_E_LOOP_NOT_STARTED`, before any of the
-folder's code runs, so a shell is no way round the dialog. A stop ends the start for good: the stop tool records it, and a
-runner records it as it ends, so a restart or removing the `STOP` file by hand brings nothing back until a person agrees
-again. This is a check and not a boundary. A process with the owner's rights can reach this code or write the records, which
+folder's code runs, so a shell is no way round the dialog. A stop ends the start for good: every stop through the tool is
+counted in `stops.log`, a file no lock stands in front of, before its `STOP` file is written, and a start records the count
+it saw, so a restart or removing the `STOP` file by hand brings nothing back until a person agrees again.
+
+An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, any stop, the count of stops and
+any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. The start records
+the settings it agreed to, and a restart refuses others with `G6_E_LOOP_SETTINGS_CHANGED`, so changing `settings.json`, a
+real allowance included, needs a new `g6_improve_start` even with no stop in between. A runner already alive keeps what it
+read.
+
+All of this is a check and not a boundary. A process with the owner's rights can reach this code or write the records, which
 are hash-chained and not signed.
 
 **Restart after a reboot.** The owner runs this once, in their own terminal, with the Python that has G6 installed and the
@@ -718,8 +727,8 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 | Re-enrolment refuses held-out cases that proposers saw or a spent split held, known by id and by a hash of the input. This is stricter than the meta-harness, whose limit counts per digest | A small domain can run out of cases, and a person must find new ones. A reworded input is a new hash, and a case of a bug already seen (`meta["group"]`) is not checked |
 | The envelope digest covers the loop's files and what they use to spend, seal, pin and propose, and a test holds their imports to it | It is a tripwire, not custody: the code that compares it is covered by it, so an edit there can skip the comparison. The read-only checkout of 6.5 is what would hold |
 | `OperatorStore.settle` gained `metered`: the host's count sets the charge, up or down. A run's report still cannot lower one | If a domain's executor bypasses the declared model callers, its calls go uncounted and the ledger undercharges |
-| A tick is metered at `g6.core.model_calls`, plus `Retry-After` resends, and stops at what it reserved: each noted request is admitted at the boundary where it goes out, so a built-in retry or fallback cannot pass the reservation. A caller that answers with no request noted is refused and charged the tick's worst case | A caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own retries. Only a provider's usage record shows those, which is O1's relay. A `Retry-After` resend has no boundary, so it is charged and can pass the limit, after a server turned the request away. The gate on a request is an observer of `counting`, whose docstring says observers do not raise: that file is bound, so the sentence stays until an issuance window |
-| An account reading carries when it was read. What the loop charges after that goes on top of it until the next reading, and a charge before it may be in it. A reading with no date is read as the larger of the two figures | A figure that lags the provider's own count leaves a gap nothing here can see. A read that fails leaves the meter on its own count until the next one, 15 minutes at most |
+| A tick is metered at `g6.core.model_calls`, plus `Retry-After` resends, and stops at what it reserved: each noted request is admitted at the boundary where it goes out, so a built-in retry or fallback cannot pass the reservation. A caller that answers with no request noted is refused and charged the tick's worst case | A caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own retries. Only a provider's usage record shows those, which is O1's relay. A `Retry-After` resend has no boundary, so it is charged and can pass the limit by up to three a call, after a server turned the request away. Only `OllamaCaller` and `OpenAICompatibleCaller` reach it; the Claude Code and Codex callers run their programs and never do. The repair is a note per attempt in `g6/core/llm.py`, which is bound, so it waits for an issuance window. The gate on a request is an observer of `counting`, whose docstring says observers do not raise: that file is bound, so the sentence stays until an issuance window |
+| An account reading carries when it was read. What the loop charges after that goes on top of it until the next reading, and a charge before it may be in it. A reading with no date is read as the larger of the two figures | A figure that lags the provider's own count leaves a gap nothing here can see. A read that fails keeps a limit still ahead, in memory only, so a restart whose first read fails has forgotten it. It forgets a figure short of a limit, and the meter is on its own count until the next read, 15 minutes at most |
 | The ceiling is checked inside the reserving transaction, on the ledger as it stands, and pending reservations go on top of the account's figure | The account's figure is read just before that transaction, so use elsewhere in between is unseen until the next tick |
 | A tick charges one provider: the first with room | Real work may split across providers. Harmless until O1 |
 | `BudgetBook` stays for now, on the person-approved `run_one_cycle` only. The loop does not use it | Two ledgers exist until it merges, against section 6.6 |
@@ -727,7 +736,7 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 | A person enrols and lifts a pause at a terminal, by typing the domain's name back, as in `g6.workforce.decide`. It is a convenience check, not proof, and there is no MCP tool for either | An agent with a console can type. The same is true of `decide`, and of a Python call |
 | Start removes a `STOP` file, once the person has agreed and been shown its reason. A reboot does not | A stop someone else set is lifted by whoever agrees in the dialog, and the log keeps who |
 | A tick compares the log with the chain of adoptions, and refuses with the records code when the log saw a generation the chain does not hold. Only adoptions and rollbacks count, and a chain ahead of the log is the crash between the two writes | Both files cut together leave nothing to compare. The check keeps a number from being used twice; it does not bring a lost generation back, and a person must inspect the folder |
-| A stop is noted in the records as well as by its file, best effort: a tick holding the records, or records that do not read, leave it to the runner or to no one | A stop noted by no one still stops while its file is there. Once that file is gone by hand, a restart could carry on the old start. A person's stop through the tool on a dead runner with sound records does not have this gap |
+| A stop through the tool is counted in `stops.log`, with no lock, before its file is written, and a start records the count it saw. It is also noted in the records, best effort | A count that cannot be written leaves only the `STOP` file. A `STOP` file written by hand is not counted: it stops while it is there, and is noted when a runner or a restart sees it, so one written and removed with nothing running leaves no trace. Deleting `stops.log` closes the start rather than opening it |
 | Refusals do not rest the runner, since a refusal tried something. No winner, no constraint and idle do | A run of refusals is bounded only by the split's five evaluations |
 | Status shows use from the runner's last heartbeat, with its time, because opening the ledger would write to it | With no runner alive the figures are as old as that heartbeat, and with none ever there are none |
 | Each provider's day is its own, and the runner wakes for the next rise of any ceiling, or the end of a reported limit. It wakes even if the rise is too small for a tick | One refused tick a day, which spends nothing |
