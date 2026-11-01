@@ -185,6 +185,20 @@ def test_a_k_run_with_no_record_says_so_and_no_other_arm_has_an_end(tmp_path):
     assert compare.end_of(tmp_path, {"arm": "M9", "run": "missing"}) is None
 
 
+def test_a_run_record_a_killed_run_cut_short_is_no_record_and_says_unsure(tmp_path):
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "run.json").write_text('{"repairs": {"sta', "utf-8")
+    assert compare.end_of(tmp_path, {"arm": "K1", "run": "run"}) == "no record"
+    assert compare.said_of(tmp_path, {"arm": "K1", "run": "run"}) == "unsure"
+    assert compare.said_of(tmp_path, {"arm": "M9", "run": "run"}) == "unsure"
+
+
+def test_a_test_record_a_killed_run_cut_short_is_no_record(tmp_path):
+    row = _k_run(tmp_path, ["defect"])
+    (tmp_path / "run" / "repair_check_1_critic.json").write_text('{"exit": 0, "re', "utf-8")
+    assert compare.end_of(tmp_path, row) == "no record"
+
+
 def test_a_saved_k_run_carries_its_end_and_no_other_arm_gains_a_field(tmp_path, monkeypatch):
     _archive(tmp_path, monkeypatch, {"arm": "K1", "task": "y-1", "passes": True, "run": "run"}, {"arm": "A", "task": "y-1", "passes": True})
     (tmp_path / "run").mkdir()
@@ -232,7 +246,7 @@ def _main(monkeypatch, tmp_path, rows, *argv):
 
 def test_k1_is_judged_in_sections_of_its_own_and_never_pooled_with_m9(tmp_path, monkeypatch, capsys):
     wins, none = "f11 u11 t11 h11111", "f00 u00 t00 h00000"
-    _main(monkeypatch, tmp_path, _cells(M9=wins, K1=wins, L9=wins, A=none, T=none))
+    _main(monkeypatch, tmp_path, _cells(K1=wins, M9=none, L9=none, A=none, T=none))
     lines = capsys.readouterr().out.splitlines()
     for section in ("K1, stage 1, all eleven", "K1, stage 1, determined 7", "K1, stage 2, new repos", "K1, held-out, second look",
                     "K1, training, tuned"):
@@ -240,6 +254,19 @@ def test_k1_is_judged_in_sections_of_its_own_and_never_pooled_with_m9(tmp_path, 
     judged = [line for line in lines if " uplift " in line and "report only" not in line]
     assert all(" K1 " in line for line in judged if line.startswith("K1, "))
     assert not any(" K1 " in line for line in judged if not line.startswith("K1, "))
+    for section, shown in (("K1, stage 1, all eleven", "K1   2/2"), ("K1, stage 2, new repos", "K1   2/2"),
+                           ("K1, held-out, second look", "K1   5/5"), ("K1, training, tuned", "K1   2/2"),
+                           ("stage 1, all eleven", "M9   0/2"), ("stage 2, new repos", "M9   0/2"),
+                           ("held-out, second look", "M9   0/5"), ("training, tuned", "L9   0/2")):
+        assert all(shown in line for line in judged if line.startswith(section)), section
+
+
+def test_the_rule_gives_no_verdict_on_bugs_an_arm_was_tuned_on(tmp_path, monkeypatch, capsys):
+    """Seen bugs are development: however well a tuned section reads, it is no result of the rule."""
+    _main(monkeypatch, tmp_path, _cells(K1="t11", L9="t11", A="t00", T="t00"))
+    lines = [line for line in capsys.readouterr().out.splitlines() if "training, tuned" in line and "frozen rule" in line]
+    assert len(lines) == 4 and all("frozen rule: not applied, tuned on these bugs" in line for line in lines)
+    assert not any("cleared" in line or "frozen rule: met" in line for line in lines)
 
 
 def test_m9_is_only_a_report_in_k1s_sections(tmp_path, monkeypatch, capsys):

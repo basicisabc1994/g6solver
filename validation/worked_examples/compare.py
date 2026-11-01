@@ -55,14 +55,21 @@ def saved(root: Path) -> dict[tuple[str, str, int], dict[str, bool | None]]:
     return rows
 
 
+def record(path: Path) -> dict[str, Any]:
+    """A saved run's record, or nothing when it is missing or a killed run cut it short."""
+    try:
+        return json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def said_of(root: Path, row: Mapping[str, Any]) -> str:
     """What the system said of its own run: "done" for an arm with no loop, "clean" for a loop that ended with nothing failing, and
     "unsure" for any other end, a missing record included. It never decides the rule; it is how the report asks if "done" can be
     trusted."""
     if row.get("arm", "")[:1] not in ("K", "L", "M", "R"):
         return "done"
-    path = root / str(row.get("run")) / "run.json"
-    status = (json.loads(path.read_text("utf-8")).get("repairs") or {}).get("status") if path.is_file() else None
+    status = (record(root / str(row.get("run")) / "run.json").get("repairs") or {}).get("status")
     return "clean" if status == CLEAN else "unsure"
 
 
@@ -72,7 +79,7 @@ def end_of(root: Path, row: Mapping[str, Any]) -> str | None:
     if row.get("arm", "")[:1] != "K":
         return None
     run = root / str(row.get("run"))
-    repairs = (json.loads((run / "run.json").read_text("utf-8")).get("repairs") or {}) if (run / "run.json").is_file() else {}
+    repairs = record(run / "run.json").get("repairs") or {}
     if repairs.get("status") != CLEAN:
         return str(repairs.get("reason") or "no record")
     if (repairs.get("critic") or {}).get("verdicts", [""])[-1] != "defect":
@@ -80,7 +87,9 @@ def end_of(root: Path, row: Mapping[str, Any]) -> str | None:
     check = run / f"repair_check_{repairs.get('rounds')}_critic.json"
     if not check.is_file():
         return "a defect with no test"
-    got = json.loads(check.read_text("utf-8"))
+    got = record(check)
+    if not got:
+        return "no record"
     return "a defect whose test found nothing" if we.ProbeRun(got.get("exit"), got.get("results") or {}, {}).usable \
         else "a defect whose test would not run"
 
@@ -145,8 +154,9 @@ def judged(results: Sequence[Mapping[str, Any]], bar: float = 0.05) -> bool:
 
 
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
-           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",)) -> None:
-    """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it."""
+           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",), tuned: bool = False) -> None:
+    """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it.
+    ``tuned``: bugs this arm was tuned on, which are development, so they get no verdict of the rule, however they read."""
     shown = [arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
     for score in SCORES:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
@@ -168,9 +178,10 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
                     total = cell["right"] + cell["wrong"]
                     print(f"{name:22} {score:11} {arm} {whose} {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
-        print(f"{name:22} {score:11} frozen rule: {'met' if judged(results) else 'not shown'}; "
-              f"at {TWO_PRIMARIES}: {'cleared' if judged(results, TWO_PRIMARIES) else 'not cleared'}; "
-              f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
+        verdict = "not applied, tuned on these bugs" if tuned else (
+            f"{'met' if judged(results) else 'not shown'}; at {TWO_PRIMARIES}: {'cleared' if judged(results, TWO_PRIMARIES) else 'not cleared'}")
+        print(f"{name:22} {score:11} frozen rule: {verdict}; "
+              f"95% target:{'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -188,13 +199,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     report(rows, "stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.loop)
     report(rows, "stage 2, new repos", unseen, (1, 2), loop_arm=args.loop)
     report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop)
-    report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",))
+    report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",), tuned=True)
     second, shown = f"{args.second}, ", ("R", args.loop)
     report(rows, f"{second}stage 1, all eleven", fresh, (1, 2), loop_arm=args.second, control=shown)
     report(rows, f"{second}stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.second, control=shown)
     report(rows, f"{second}stage 2, new repos", unseen, (1, 2), loop_arm=args.second, control=shown)
     report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown)
-    report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",))
+    report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",), tuned=True)
     if args.trained:
         others = (args.second, "A", "T")
         report(rows, "stage 3, new repos", unseen, (1, 2), loop_arm=args.trained, others=others)
