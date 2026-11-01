@@ -2,13 +2,16 @@
 """The loop's records and what halts it (design 6.10): none of it knows what the work is."""
 from __future__ import annotations
 
+import builtins
 import json
+import os
 import time
 from pathlib import Path
 
 import pytest
 
 from g6.core.ledger import LedgerCorrupt, LedgerError
+from g6.self_maintenance import envelope
 from g6.self_maintenance.envelope import (
     FINDINGS,
     STOPS_FILE,
@@ -188,7 +191,7 @@ def test_a_heartbeat_that_cannot_be_written_is_only_a_missed_beat(tmp_path, monk
 def test_asking_to_stop_writes_the_file_and_repeating_keeps_the_first_reason(tmp_path):
     assert "owner's review" in ask_to_stop(tmp_path, "owner's review\nsecond line")
     assert "owner's review" in ask_to_stop(tmp_path, "something later")
-    assert (tmp_path / "STOP").read_text(encoding="utf-8") == "owner's review second line\n"
+    assert (tmp_path / "STOP").read_text(encoding="utf-8").splitlines()[0] == "owner's review second line"
 
 
 def test_asking_to_stop_with_no_reason_still_says_where_it_came_from(tmp_path):
@@ -199,20 +202,135 @@ def test_every_stop_asked_for_is_counted_even_with_one_already_there(tmp_path):
     assert stops_asked(tmp_path) == 0
     ask_to_stop(tmp_path, "first")
     ask_to_stop(tmp_path, "second")
-    assert stops_asked(tmp_path) == 2 and (tmp_path / "STOP").read_text(encoding="utf-8") == "first\n"
+    assert stops_asked(tmp_path) == 2 and (tmp_path / "STOP").read_text(encoding="utf-8").splitlines()[0] == "first"
 
 
 def test_a_stop_is_counted_before_its_file_is_written(tmp_path, monkeypatch):
     seen = []
-    real = Path.write_text
+    real = builtins.open
 
-    def noted(self, *args, **kwargs):
-        seen.append(stops_asked(tmp_path))
-        return real(self, *args, **kwargs)
+    def noted(path, *args, **kwargs):
+        if Path(path).name == "STOP":
+            seen.append(stops_asked(tmp_path))
+        return real(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "write_text", noted)
+    monkeypatch.setattr(builtins, "open", noted)
     ask_to_stop(tmp_path, "why")
     assert seen == [1]
+
+
+def test_no_two_stops_leave_the_same_bytes_whatever_they_say(tmp_path):
+    ask_to_stop(tmp_path, "the same reason")
+    first = (tmp_path / "STOP").read_bytes()
+    (tmp_path / "STOP").unlink()
+    ask_to_stop(tmp_path, "the same reason")
+    assert (tmp_path / "STOP").read_bytes() != first
+
+
+def test_each_stop_changes_the_file_even_with_one_already_there(tmp_path):
+    ask_to_stop(tmp_path, "first")
+    before = envelope.file_digest(tmp_path / "STOP")
+    ask_to_stop(tmp_path, "second")
+    assert envelope.file_digest(tmp_path / "STOP") != before
+
+
+def test_a_stop_whose_file_is_taken_as_it_writes_writes_it_again(tmp_path, monkeypatch):
+    real, taken = builtins.open, []
+
+    class Taken:
+        """What a start moving the file aside does to a writer on a system that lets it."""
+
+        def __init__(self, handle) -> None:
+            self.handle = handle
+
+        def __enter__(self):
+            return self.handle
+
+        def __exit__(self, *exc) -> None:
+            self.handle.close()
+            (tmp_path / "STOP").unlink()
+
+    def once(path, *args, **kwargs):
+        handle = real(path, *args, **kwargs)
+        if Path(path).name == "STOP" and not taken:
+            taken.append(path)
+            return Taken(handle)
+        return handle
+
+    monkeypatch.setattr(builtins, "open", once)
+    assert "why" in ask_to_stop(tmp_path, "why") and (tmp_path / "STOP").is_file()
+
+
+# A start clears only what a person agreed to --------------------------------------------------------------------------
+
+def _stop_files(folder) -> list[str]:
+    return [found.name for found in folder.iterdir() if found.name.startswith("STOP")]
+
+
+def test_a_start_clears_the_bytes_it_agreed_to(tmp_path):
+    ask_to_stop(tmp_path, "agreed")
+    assert envelope.clear_stop(tmp_path, envelope.file_digest(tmp_path / "STOP")) == ""
+    assert _stop_files(tmp_path) == []
+
+
+def test_a_stop_nobody_agreed_to_clear_stands(tmp_path):
+    ask_to_stop(tmp_path, "first")
+    agreed = envelope.file_digest(tmp_path / "STOP")
+    ask_to_stop(tmp_path, "second")
+    assert "first" in envelope.clear_stop(tmp_path, agreed) and (tmp_path / "STOP").is_file()
+
+
+def test_with_nothing_agreed_a_stop_stands(tmp_path):
+    ask_to_stop(tmp_path, "new")
+    assert "new" in envelope.clear_stop(tmp_path, "") and (tmp_path / "STOP").is_file()
+
+
+def test_with_nothing_there_nothing_stands(tmp_path):
+    assert envelope.clear_stop(tmp_path, "") == "" and envelope.clear_stop(tmp_path, "gone") == ""
+
+
+def test_a_stop_landing_between_the_check_and_the_move_is_put_back(tmp_path, monkeypatch):
+    ask_to_stop(tmp_path, "agreed")
+    agreed = envelope.file_digest(tmp_path / "STOP")
+    real, reads = envelope.file_digest, []
+
+    def a_stop_after_the_check(path):
+        found = real(path)
+        reads.append(path)
+        if len(reads) == 1:
+            ask_to_stop(tmp_path, "a late stop")
+        return found
+
+    monkeypatch.setattr(envelope, "file_digest", a_stop_after_the_check)
+    assert "agreed" in envelope.clear_stop(tmp_path, agreed)
+    assert "a late stop" in (tmp_path / "STOP").read_text(encoding="utf-8") and _stop_files(tmp_path) == ["STOP"]
+
+
+def test_a_stop_landing_after_the_move_stands_in_a_file_of_its_own(tmp_path, monkeypatch):
+    ask_to_stop(tmp_path, "agreed")
+    agreed = envelope.file_digest(tmp_path / "STOP")
+    real = os.replace
+
+    def then_a_stop(source, target):
+        real(source, target)
+        if Path(target).name != "STOP":
+            ask_to_stop(tmp_path, "a late stop")
+
+    monkeypatch.setattr(envelope.os, "replace", then_a_stop)
+    assert "a late stop" in envelope.clear_stop(tmp_path, agreed) and _stop_files(tmp_path) == ["STOP"]
+
+
+def test_a_file_a_stop_holds_open_is_not_cleared_and_says_so(tmp_path, monkeypatch):
+    ask_to_stop(tmp_path, "agreed")
+    agreed = envelope.file_digest(tmp_path / "STOP")
+
+    def held(source, target):
+        raise PermissionError("another process holds this file")
+
+    monkeypatch.setattr(envelope.os, "replace", held)
+    with pytest.raises(OSError, match="holds this file"):
+        envelope.clear_stop(tmp_path, agreed)
+    assert (tmp_path / "STOP").is_file()
 
 
 def test_a_count_that_cannot_be_read_is_no_count_a_start_recorded(tmp_path):

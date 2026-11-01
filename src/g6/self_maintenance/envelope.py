@@ -177,13 +177,11 @@ def file_digest(path: Any) -> str:
 
 
 def stops_asked(root: str | Path) -> int:
-    """How many stops have been asked for on this folder: the lines of the file ``ask_to_stop`` adds to, and one for each
-    file it left beside that when it could not. A start records this, so any stop after it shows whatever happened to the
-    ``STOP`` file. One that cannot be read is ``-1``, which is no count a start ever recorded."""
-    path = Path(root) / STOPS_FILE
+    """How many stops have been asked for on this folder, from the file ``ask_to_stop`` adds to. A start records this, so a
+    restart sees any stop after it, even with the ``STOP`` file gone. One that cannot be read is ``-1``, which is no count a
+    start ever recorded."""
     try:
-        apart = sum(found.name.startswith(f"{STOPS_FILE}.") for found in path.parent.iterdir())
-        return apart + (path.read_bytes().count(b"\n") if path.exists() else 0)
+        return (Path(root) / STOPS_FILE).read_bytes().count(b"\n")
     except FileNotFoundError:
         return 0
     except OSError:
@@ -191,9 +189,8 @@ def stops_asked(root: str | Path) -> int:
 
 
 def stops_countable(root: str | Path) -> bool:
-    """Whether a stop asked for now would be counted, and the count read. A start stands on that count, so it refuses a
-    folder where it would not: there a stop leaves no sign a start can see, and the start would remove its ``STOP`` file.
-    It writes nothing, and no count yet is a count of none."""
+    """Whether a stop asked for now would be counted, and the count read. A restart stands on that count, so a start
+    refuses a folder where it would not. It writes nothing, and no count yet is a count of none."""
     path = Path(root) / STOPS_FILE
     try:
         if path.exists():
@@ -205,29 +202,44 @@ def stops_countable(root: str | Path) -> bool:
 
 
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
-    """Write the ``STOP`` file, or leave one that is there, so the first reason stands and repeating is safe. It kills
+    """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
 
-    Each stop is counted first, in a file no lock stands in front of, because the records can be held for as long as a
-    tick lasts and a stop may never wait. It is counted before the ``STOP`` file is written, so a start that misses the
-    count cannot have removed that file. A count that will not take it gets a file of the stop's own beside it, which
-    ``stops_asked`` adds, so a stop that says it stopped is still seen. A stop with neither still writes ``STOP``, which is
-    what stops, and then raises ``OSError``, since a start could not see it and might remove that file."""
+    Each stop writes a token of its own there, so no two stops leave the same bytes, and that is what keeps a stop: a start
+    clears only the bytes a person agreed to (``clear_stop``), so it needs no record to know a new stop when it sees one.
+    A stop that cannot change the file raises, because a start could clear it.
+
+    It is also counted, first and in a file no lock stands in front of, because the records can be held for as long as a
+    tick lasts and a stop may never wait. The count serves a restart, which sees a stop by it after the file has gone. A
+    count that cannot be written is left, and only that restart loses by it."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
-    counted = True
     try:
         with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
             stops.write(said[:200] + "\n")
     except OSError:
-        try:
-            (Path(root) / f"{STOPS_FILE}.{uuid4().hex}").write_text(said[:200] + "\n", encoding="utf-8")
-        except OSError:
-            counted = False
+        pass
     path = Path(root) / STOP_FILE
-    if not path.exists():
-        path.write_text(said + "\n", encoding="utf-8")
-    if not counted:
-        raise OSError("this stop could not be counted, so a start might remove it")
+    for _ in range(2):                            # the second is for a start that took the file as this wrote to it
+        with open(path, "a", encoding="utf-8") as stop:
+            stop.write(f"{said}\n{uuid4().hex}\n")
+        if path.exists():
+            break
+    return stop_reason(root)
+
+
+def clear_stop(root: str | Path, agreed: str) -> str:
+    """Remove the ``STOP`` file only if it is still the bytes a person agreed to clear, whose digest is ``agreed``, and say
+    why the folder is stopped, or ``""``. Any other ``STOP`` stands, whatever any record says. The file is moved aside before
+    its last read, so nothing can add to what is removed, and a stop that comes then makes a new one. Where a stop holds it
+    open, the move raises and it stays."""
+    path = Path(root) / STOP_FILE
+    if agreed and file_digest(path) == agreed:
+        aside = path.with_name(f"{STOP_FILE}.{uuid4().hex}")
+        os.replace(path, aside)
+        if file_digest(aside) == agreed or path.exists():
+            aside.unlink()
+        else:
+            os.replace(aside, path)
     return stop_reason(root)
 
 
@@ -283,5 +295,5 @@ def heartbeat(root: str | Path) -> dict | None:
 
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop",
-           "runner_alive", "runner_lock", "stop_reason", "stops_asked", "stops_countable"]
+           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "clear_stop", "file_digest", "heartbeat",
+           "record_stop", "runner_alive", "runner_lock", "stop_reason", "stops_asked", "stops_countable"]
