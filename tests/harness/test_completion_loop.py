@@ -3573,3 +3573,45 @@ def test_a_comment_turned_into_code_under_a_review_leaves_no_clean_stop(world, m
     step = world.advance(critic=critic)
     assert step.code == loop.NO_CLEAN_REVIEW, f"a comment became code under the review, and it ended {step.ending!r}"
     assert "+# comment\u2028value = 'unsafe'\n" in critic.calls[0][1]      # and the reviewer was shown one comment, as it was
+
+def test_a_row_names_the_model_that_read_the_patch_not_the_one_set_now(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    first, replacement = reviewer("one"), reviewer("never")
+    first.model, replacement.model = "the-model-that-read-it", "a-model-never-called"
+    world.edit()
+    assert world.advance(critic=first).action == loop.CONTINUE
+    world.advance(critic=replacement, said="They misread the task.")      # a replay: nothing here reads the patch
+    assert not replacement.calls
+    assert the_row(world)["models"]["reviewer"] == "the-model-that-read-it", "the row names a model that never ran"
+
+
+def test_each_review_in_a_row_names_the_model_that_ran_it(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    first, second = reviewer("one"), reviewer("none")
+    first.model, second.model = "the-first", "the-second"
+    world.edit()
+    world.advance(critic=first)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    world.advance(critic=second)
+    row = the_row(world)
+    assert [one["reviewer"] for one in row["reviews"]] == ["the-first", "the-second"]
+    assert row["models"]["reviewer"] == "the-second"
+
+
+def test_a_review_no_reviewer_was_asked_for_names_none(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("never")
+    critic.model = "a-model-never-called"
+    world.edit()
+    world.advance(critic=critic, task="A" * (loop.MAX_PACK_CHARS + 1))
+    assert not critic.calls and the_row(world)["models"]["reviewer"] == "", "the row names a model that was never asked"
+
+
+def test_a_review_that_failed_still_names_the_model_it_called(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer(LLMError("gone away"))
+    critic.model = "the-model-called"
+    world.edit()
+    world.advance(critic=critic)
+    assert the_row(world)["models"]["reviewer"] == "the-model-called"

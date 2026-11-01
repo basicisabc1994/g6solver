@@ -537,7 +537,8 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
                told: str = "", *, patch: str) -> dict:
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
-    pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it."""
+    pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it. What it gives names the model called,
+    here where the call is made: who is approved may change, and a later step calls no one."""
     found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
     try:
@@ -547,7 +548,7 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     if found["test"]:
         where.mkdir(parents=True, exist_ok=True)
         (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
-    return found
+    return {**found, "reviewer": _named(caller)}
 
 
 def _read_whole(patch: str, task: str) -> bool:
@@ -771,10 +772,12 @@ def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cau
     return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": cause, "changeable": cause not in NOT_CHANGEABLE,
             "note": (still or fixed)[0]["rule"] if still or fixed else state["stop"],
             "independently_observed": bool(fixed or still), "task": digest(task), "base": base, "label": "",
-            "models": {"agent": state.get("agent", ""), "reviewer": state.get("reviewer", "")},
+            "models": {"agent": state.get("agent", ""),
+                       "reviewer": next((one["reviewer"] for one in reversed(reviews) if one.get("reviewer")), "")},
             "session": session.name, "rounds": len(reviews),
             "reviews": [{**{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")},
-                         "outcome": _round_outcome(one), "told": one.get("told", "")} for one in reviews],
+                         "outcome": _round_outcome(one), "told": one.get("told", ""), "reviewer": one.get("reviewer", "")}
+                        for one in reviews],
             "stop": state["stop"], "left": state.get("left", ""),
             "tree_changed": (now != reviews[0]["patch"] if now else None) if reviews else False}
 
@@ -1042,7 +1045,6 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         return refused(NO_BOUNDARY.format(why=why), ISOLATION_UNAVAILABLE, UNCONFINED)
     critic = critic or critic_host()
     reviewing = critic is not None and not _scouts_chosen()
-    state["reviewer"] = _named(critic) if reviewing else ""
     if not reviewing:
         scout = scout or scout_host()
         if scout is None:
