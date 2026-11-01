@@ -718,6 +718,9 @@ at a real limit. Claude Code's error fields land in the 300 characters its calle
 after its `usage` record, which no one promises. A version that moves or rewords them reads as a failed case, and three such
 cycles pause the loop as they did before. The repair is a code of its own from those callers, at an issuance window.
 
+These repairs changed files under `ENVELOPE_PATTERNS`, so a folder enrolled before them is refused with
+`G6_E_LOOP_FROZEN_CHANGED` until a person enrols again.
+
 **A log that will not take a cycle.** The streak that pauses the loop is read from the log, so a cycle the log refuses
 leaves that streak nothing to read. These cycles are counted in memory instead, and one that is written starts the count
 again. Until three in a row, status shows the count under `pause` with `G6_E_LOOP_CANNOT_RECORD`, the digest lists it
