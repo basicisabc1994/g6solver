@@ -792,3 +792,20 @@ def test_a_sealed_file_changed_during_a_cycle_refuses_its_adoption_too(tmp_path)
     loop, _ = _enrolled(tmp_path, domain=domain)
     got = loop.tick()
     assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "sealed" in got["message"] and loop.mh.adoption_rows() == []
+
+
+def test_a_frozen_file_changed_while_the_adoption_loads_its_report_refuses_it(tmp_path, monkeypatch):
+    enrolled = tmp_path / "domain.py"
+    enrolled.write_text("# the declaration a person enrolled\n", encoding="utf-8")
+    loop, _ = _enrolled(tmp_path, domain_file=enrolled)
+    real = loop.mh._recorded
+
+    def saved_meanwhile(kind: str, ident: str):
+        if kind == "report":
+            enrolled.write_text("# saved by an editor as the adoption was being written\n", encoding="utf-8")
+        return real(kind, ident)
+
+    monkeypatch.setattr(loop.mh, "_recorded", saved_meanwhile)
+    got = loop.tick()
+    assert got["outcome"] == "blocked" and _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "domain_file" in got["message"]
+    assert loop.mh.adoption_rows() == []

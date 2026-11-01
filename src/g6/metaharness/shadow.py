@@ -150,9 +150,11 @@ class ShadowHarness(MetaHarness):
         return self.workflow.policy.max_evaluations - used
 
     @_serialized
-    def adopt(self, decision: GateDecision, *, findings: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def adopt(self, decision: GateDecision, *, findings: Mapping[str, Any] | None = None,
+              last_check: Callable[[], dict[str, Any] | None] = lambda: None) -> dict[str, Any]:
         """Make ``decision``'s candidate the loop's head and its next generation, with what its proposer ``findings``.
-        Only a recommendation this harness issued, on this head."""
+        Only a recommendation this harness issued, on this head. ``last_check`` runs just before the row is written, and a
+        refusal from it stands in place of the adoption."""
         refused = self._refusal()
         if refused:
             return refused
@@ -169,6 +171,9 @@ class ShadowHarness(MetaHarness):
         report, why = self._recorded("report", decision.report_digest)
         if report is None:
             return _blocked(NOT_ADOPTABLE, why)
+        stopped = last_check()
+        if stopped:
+            return stopped
         number = len(self.adoption_rows()) + 1
         self.adoptions.append("adopt", str(number), {
             "kind": "adopt", "version": number, "base_version": version, "by": ADOPTER, "scope": SCOPE, "at": _now(),

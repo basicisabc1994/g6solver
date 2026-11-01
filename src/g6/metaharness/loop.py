@@ -643,11 +643,13 @@ class ShadowLoop:
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
-        changed = self._changed()     # the tick's first check came before all it measured
-        if changed:
-            return {"outcome": "blocked", "code": FROZEN_CHANGED, "reason": f"changed during this cycle: {', '.join(changed)}. "
-                    "What it measured is not what a person enrolled, so nothing is adopted"}
-        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row})
+        def still_frozen() -> dict[str, Any] | None:      # the tick's first check came before all it measured
+            changed = self._changed()
+            return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what "
+                            "a person enrolled, so nothing is adopted") if changed else None
+
+        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row},
+                                last_check=still_frozen)
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}
