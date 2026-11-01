@@ -376,6 +376,8 @@ class ShadowLoop:
         self.log = CycleLog(self.root / CYCLE_LOG)
         self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
                                  read_account=read_account)
+        for provider, until in self.log.limits().items():
+            self.meter.limit_reached(provider, until)
         self.problems = domain_problems(domain)
         if backends(proposer) > 1:
             self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
@@ -641,6 +643,10 @@ class ShadowLoop:
                               "nothing is adopted, and a person gives it a caller that notes each request"}
         elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
             self.meter.limit_reached(spend.provider, limit.until)
+            try:
+                self.log.limit(spend.provider, limit.until.isoformat())
+            except (OSError, LedgerError):
+                pass                  # this process still waits; after a restart the first request finds the limit again
             return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),

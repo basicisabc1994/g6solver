@@ -171,7 +171,7 @@ class BudgetMeter:
 
     def limit_reached(self, provider: str, until: datetime) -> None:
         """A limit a request ran into, which the account's figure may not show yet: it stands as a reported one does. It
-        is held in memory, so after a restart the first request finds it again, for the cost of that request."""
+        is held in memory, and the loop's records hand it back after a restart."""
         self._limits[provider] = until
 
     def next_room(self, now: datetime) -> datetime:

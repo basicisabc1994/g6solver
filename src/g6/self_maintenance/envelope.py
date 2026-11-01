@@ -2,8 +2,8 @@
 """The loop's records and what halts it (design 6.1, 6.10), which know nothing of what the work is.
 
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
-came of it, plus each enrolment, pause, resumption and start. Only a person can enrol a domain, resume a paused loop or
-start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and
+came of it, plus each enrolment, pause, resumption, start and provider's limit. Only a person can enrol a domain, resume a
+paused loop or start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and
 removing the file resumes it; a stop that cannot be read still stops. A runner ended by a stop needs a person's start
 again, even with the file gone: the records say the last start was stopped. A heartbeat is written whole or not at all, and
 a heartbeat that cannot be written is one missed, never a failed tick.
@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ContextManager
 from uuid import uuid4
@@ -58,7 +59,17 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
     if kind in ("enrolled", "resumed", "started"):
         who = str(body.get("by") or "")
         return [] if who.strip() and not is_automated(who) else [f"{kind}: a person must do this (no empty or auto: name)"]
+    if kind == "limited":
+        return [] if body.get("provider") and _on_a_clock(body.get("until")) else ["limited: states a provider and when it ends"]
     return [f"unknown kind {kind!r}"]
+
+
+def _on_a_clock(text: Any) -> bool:
+    """Whether ``text`` is a moment with a time zone, which is all a meter can compare with ``now``."""
+    try:
+        return datetime.fromisoformat(text).tzinfo is not None
+    except (TypeError, ValueError):
+        return False
 
 
 class CycleLog:
@@ -120,6 +131,13 @@ class CycleLog:
 
     def stop(self, reason: str, **fields: Any) -> dict:
         return self._append("stopped", {"reason": reason, **fields})
+
+    def limit(self, provider: str, until: str) -> dict:
+        return self._append("limited", {"provider": provider, "until": until})
+
+    def limits(self) -> dict[str, datetime]:
+        """When each provider's latest limit ends, so that a restart waits it out. No cycle: it never counts in a streak."""
+        return {body["provider"]: datetime.fromisoformat(body["until"]) for kind, body in self._rows() if kind == "limited"}
 
     def start_in_force(self) -> bool:
         """Whether a person's start stands: of the starts and stops on record, the last is a start."""

@@ -709,8 +709,9 @@ tick there. On `FakeLLM`, a week of one-call ticks on 86 cases at that allowance
 **A provider's limit is a wait.** A request that fails at a limit ends the tick there. The tick charges what it sent, gives
 the rest of its reservation back and replies `G6_E_LOOP_BUDGET_WAIT` with the reset in `wait_until`. It is no cycle, so it
 writes no result and never counts towards the pause, and an evaluation it cut off is not one of the split's five, since
-nothing read it. The next tick waits for the reset, spending nothing. The reset is held in memory, so after a restart the
-first request finds the limit again. The next tick to propose takes up what was left: the candidates proposed since the last
+nothing read it. The next tick waits for the reset, spending nothing. The reset is written to the constraint log as a row of
+its own, no cycle, so a restart waits it out too and sends nothing; only if that row cannot be written does a restart's first
+request find the limit again. The next tick to propose takes up what was left: the candidates proposed since the last
 tuning run and not beaten in a race race again in its first cycle, and the reservation counts them. They are read from the
 run ledger, so a restart loses none, and they are run again from the start of their race, on the same head only.
 

@@ -15,6 +15,7 @@ import pytest
 
 import g6
 from g6.core import stop
+from g6.core.ledger import LedgerError
 from g6.core.llm import EmptyRetry, FakeLLM, LLMError
 from g6.core.vault import AccessDenied
 from g6.harness import Check
@@ -908,6 +909,60 @@ def test_a_limit_ends_the_tick_at_once_as_a_budget_wait_and_scores_nothing(tmp_p
     assert got["wait_until"] == (NOW + REFRESH).isoformat() and "hit your usage limit" in got["message"]
     assert limited.refused == 1 and loop.mh._head() == head and "outcome" not in got
     _nothing_counted(loop)
+
+
+def _reopened(tmp_path, domain, now=lambda: NOW):
+    return ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}), now=now,
+                      clock=domains.Clock())
+
+
+def test_a_restart_before_a_limit_ends_sends_nothing_until_it_does(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    limited = Limited(domain, lambda problem: True)
+    until = loop.tick()["wait_until"]
+    sent, refused = len(domain.llm.calls), limited.refused
+    again = _reopened(tmp_path, domain)
+    got = again.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == until
+    assert len(domain.llm.calls) == sent and limited.refused == refused
+    _nothing_counted(again)
+
+
+def test_a_restart_after_a_limit_ended_runs(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    limited = Limited(domain, lambda problem: True)
+    until = datetime.fromisoformat(loop.tick()["wait_until"])
+    limited.lifted = True
+    got = _reopened(tmp_path, domain, now=lambda: until).tick()
+    assert _code(got) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 0 and got["outcome"]
+
+
+def test_the_latest_limit_of_a_provider_is_the_one_a_restart_holds(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.log.limit("claude", (NOW + timedelta(hours=5)).isoformat())
+    loop.log.limit("claude", (NOW + timedelta(hours=2)).isoformat())
+    assert _reopened(tmp_path, domain).tick()["wait_until"] == (NOW + timedelta(hours=2)).isoformat()
+
+
+def test_a_limit_the_records_would_not_take_is_still_waited_out_by_this_process(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    Limited(domain, lambda problem: True)
+
+    def refuses(*args):
+        raise PermissionError("held open")
+
+    monkeypatch.setattr(loop.log, "limit", refuses)
+    until = loop.tick()["wait_until"]
+    sent = len(domain.llm.calls)
+    assert loop.tick()["wait_until"] == until and len(domain.llm.calls) == sent
+
+
+@pytest.mark.parametrize("fields", [{}, {"provider": "claude"}, {"provider": "claude", "until": "soon"},
+                                    {"provider": "claude", "until": "2026-10-28T08:00:00"}, {"until": NOW.isoformat()}])
+def test_a_limit_row_with_no_provider_or_no_time_on_a_clock_is_refused(tmp_path, fields):
+    loop, _ = _enrolled(tmp_path)
+    with pytest.raises(LedgerError, match="limited"):
+        loop.log._append("limited", fields)
 
 
 def test_what_a_tick_sent_before_a_limit_is_charged_and_the_rest_of_its_reservation_is_given_back(tmp_path):
