@@ -17,6 +17,13 @@ The monitor reads a split the gate never saw. Each audit runs the adopted versio
 takes the judge's verdict on both, and ``monitor.assess`` decides over the pairs that disagree: under no change a
 disagreement goes either way, so ties add nothing and leaving them out keeps its bound. It may only move back, one
 version, as the meta-harness's monitor does.
+
+**The generations.** Each row of ``adoptions.jsonl`` is a numbered generation, in this one chain: an adoption, or a
+rollback, so the lineage shows losses as well as gains. A row's ``version`` is its number and ``base_version`` its parent.
+It carries the profile's digest, the change in plain words, what the proposer found, and what was measured: the held-out
+split's figures before and after, as the gate read them, and for a rollback the same figures the other way with what the
+monitor saw. They are measurements on those splits, nothing stronger. These are the loop's own numbers, which have nothing
+to do with G6's version, its tags or its releases: those stay the owner's.
 """
 from __future__ import annotations
 
@@ -30,14 +37,17 @@ from g6.core.ledger import ChainLedger
 from g6.metaharness import monitor as drift
 from g6.metaharness import recovery
 from g6.metaharness.api import MetaHarness, _blocked, _envelope, _now, _serialized
+from g6.metaharness.evaluate import EvaluationReport
 from g6.metaharness.executor import ExecutorFactory
 from g6.metaharness.gate import GateDecision
 from g6.metaharness.propose import DevBudget, build_view, dev_run
-from g6.metaharness.schema import STANDARD_CHANGED, Profile, SuiteCase, Workflow
+from g6.metaharness.schema import STANDARD_CHANGED, Profile, Proposal, SuiteCase, Workflow
+from g6.self_maintenance.envelope import FINDINGS
 
 #: The name on every row. An ``auto:`` name is one the store's rules and ``activate`` refuse, so it can never pass for
 #: a person's.
 ADOPTER = "auto:loop"
+ADOPTIONS = "adoptions.jsonl"
 SCOPE = "shadow"
 SHADOW_ONLY = "G6_E_LOOP_SHADOW_ONLY"
 NOT_ADOPTABLE = "G6_E_LOOP_NOT_ADOPTABLE"
@@ -53,6 +63,33 @@ def _adopted(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
     while row is not None and row["kind"] == "rollback":
         row = rows[row["target_version"] - 1] if row["target_version"] else None
     return row
+
+
+def _change(proposal: Proposal) -> str:
+    """The change in plain words: who proposed it and what it moved. The row's ``diff`` holds the values."""
+    return f"{proposal.proposer} changed {', '.join(name.replace('_', ' ') for name in sorted(proposal.diff)) or 'nothing'}"
+
+
+def _measured(report: EvaluationReport) -> dict[str, Any]:
+    """The held-out figures an adoption stands on, as the gate read them: before is the head, after the candidate."""
+    success = report.estimates["success"]
+    return {"split": report.split, "cases": report.n, "before": success["base_mean"], "after": success["candidate_mean"],
+            "wins": report.success["wins"], "losses": report.success["losses"]}
+
+
+def _generation(row: Mapping[str, Any]) -> dict[str, Any]:
+    """A row of the chain as the lineage reads it."""
+    undoing = {"undoes": row["undoes"], "restores": row["target_version"]} if row["kind"] == "rollback" else {}
+    return {"generation": row["version"], "parent": row.get("base_version"), "kind": row["kind"], "at": row["at"],
+            "profile_digest": row["profile_digest"], "change": row.get("change", ""), "measured": row.get("measured", {}),
+            **undoing, **{name: row.get(name, [] if name == "composed_from" else "") for name in FINDINGS}}
+
+
+def lineage(workspace: str | Path, *, last: int = 8) -> dict[str, Any]:
+    """The current generation and the ``last`` before it, read from the chain and written nowhere. Generation 0 is what a
+    person confirmed. A chain that does not check out raises, as it does for the loop."""
+    rows = [entry["body"] for entry in ChainLedger(Path(workspace) / ADOPTIONS, validate=_rules).entries()]
+    return {"current": rows[-1]["version"] if rows else 0, "recent": [_generation(row) for row in rows[-last:]]}
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -79,7 +116,7 @@ class ShadowHarness(MetaHarness):
     def __init__(self, workflow: Workflow, factory: ExecutorFactory | None, workspace: Path, *,
                  clock: Callable[[], float], problems: list[tuple[str, str]]) -> None:
         super().__init__(workflow, factory, workspace, theories=None, clock=clock, problems=problems)
-        self.adoptions = ChainLedger(workspace / "adoptions.jsonl", validate=_rules) if not problems else None
+        self.adoptions = ChainLedger(workspace / ADOPTIONS, validate=_rules) if not problems else None
 
     def refresh(self) -> None:
         """Read every ledger again: another handle may have written them. What it wrote decides the head."""
@@ -108,8 +145,9 @@ class ShadowHarness(MetaHarness):
         return self.workflow.policy.max_evaluations - used
 
     @_serialized
-    def adopt(self, decision: GateDecision) -> dict[str, Any]:
-        """Make ``decision``'s candidate the loop's head. Only a recommendation this harness issued, on this head."""
+    def adopt(self, decision: GateDecision, *, findings: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Make ``decision``'s candidate the loop's head and its next generation, with what its proposer ``findings``.
+        Only a recommendation this harness issued, on this head."""
         refused = self._refusal()
         if refused:
             return refused
@@ -123,12 +161,16 @@ class ShadowHarness(MetaHarness):
         proposal, why = self._recorded("proposal", decision.proposal_digest)
         if proposal is None:
             return _blocked(NOT_ADOPTABLE, why)
+        report, why = self._recorded("report", decision.report_digest)
+        if report is None:
+            return _blocked(NOT_ADOPTABLE, why)
         number = len(self.adoption_rows()) + 1
         self.adoptions.append("adopt", str(number), {
             "kind": "adopt", "version": number, "base_version": version, "by": ADOPTER, "scope": SCOPE, "at": _now(),
             "decision_digest": decision.digest(), "report_digest": decision.report_digest,
             "profile_digest": proposal.candidate_digest, "profile": proposal.candidate.model_dump(mode="json"),
-            "proposer": decision.proposer, "diff": dict(proposal.diff)})
+            "proposer": decision.proposer, "diff": dict(proposal.diff), "change": _change(proposal),
+            "measured": _measured(report), **{name: value for name, value in (findings or {}).items() if name in FINDINGS}})
         return _envelope("qualified-draft", ADOPTED, f"version {number} is the loop's head, in its own workspace only",
                          next_action="Later ticks run on it; the monitor compares it with the version before.",
                          head_version=number, head_profile=proposal.candidate_digest)
@@ -178,10 +220,15 @@ class ShadowHarness(MetaHarness):
         if not verdict.demote:
             return _envelope("qualified-draft", AUDITED, f"{len(fresh)} audited, no sign it got worse", **said)
         number = len(self.adoption_rows()) + 1
+        gate = adopted.get("measured", {})
         self.adoptions.append("rollback", str(number), {
-            "kind": "rollback", "version": number, "target_version": adopted["base_version"], "by": ADOPTER,
-            "scope": SCOPE, "at": _now(), "undoes": version, "audit": said,
-            "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest()})
+            "kind": "rollback", "version": number, "base_version": number - 1, "target_version": adopted["base_version"],
+            "by": ADOPTER, "scope": SCOPE, "at": _now(), "undoes": version, "audit": said,
+            "profile": previous.model_dump(mode="json"), "profile_digest": previous.digest(),
+            "change": f"went back to generation {adopted['base_version']} after generation {version} fell behind it",
+            "measured": {"split": gate.get("split"), "cases": gate.get("cases"), "before": gate.get("after"),
+                         "after": gate.get("before"),
+                         "monitor": {key: said[key] for key in ("audited", "pairs", "mean_difference")}}})
         self.ledger.append("ticket", f"ticket-{number}", {"kind": "re-evaluate", "demoted_version": version,
                                                           "now_version": number, "audit": said})
         return _blocked(ROLLED_BACK, f"version {version} fell behind the version before it on {verdict.pairs} audited "
@@ -210,4 +257,5 @@ def adapt_shadow(workflow: Workflow, factory: ExecutorFactory | None = None, *, 
     return ShadowHarness(workflow, factory, Path(workspace).resolve(), clock=clock, problems=workflow.problems())
 
 
-__all__ = ["ADOPTED", "ADOPTER", "NOT_ADOPTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY", "ShadowHarness", "adapt_shadow"]
+__all__ = ["ADOPTED", "ADOPTER", "NOT_ADOPTABLE", "ROLLED_BACK", "SCOPE", "SHADOW_ONLY", "ShadowHarness", "adapt_shadow",
+           "lineage"]

@@ -31,6 +31,9 @@ FAILED = ("blocked", "error", "sealed_breach")
 ENDS_A_STREAK = ("adopted", "idle", "refused", "no_winner", "no_constraint", "rolled_back")
 #: Results that found nothing to try, which the runner rests on: a refusal or a rollback did try something.
 NOTHING_TO_TRY = ("idle", "no_winner", "no_constraint")
+#: What a cycle keeps of what a proposer found, a general research record: a regularity found in the failing cases, what
+#: can be exploited, why it does not hold generally, and the earlier cycles it builds on. Empty when it supplied none.
+FINDINGS = ("structure", "resource", "obstruction", "composed_from")
 
 
 def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dict]) -> list[str]:
@@ -66,7 +69,13 @@ class CycleLog:
         return [body for kind, body in self._rows() if kind == "cycle"]
 
     def cycle(self, row: Mapping[str, Any]) -> dict:
-        return self._append("cycle", {"tick": len(self.cycles()) + 1, **row})
+        empty = {"structure": "", "resource": "", "obstruction": "", "composed_from": []}
+        return self._append("cycle", {"tick": len(self.cycles()) + 1, **empty, **row})
+
+    def findings(self, last: int = 8) -> list[dict]:
+        """The latest cycles that recorded a finding, each with its tick and what was found: what a next tick reads."""
+        found = [c for c in self.cycles() if any(c.get(name) for name in FINDINGS)]
+        return [{"tick": c["tick"], **{name: c[name] for name in FINDINGS}} for c in found[-last:]]
 
     def enrol(self, by: str, frozen: Mapping[str, str], **fields: Any) -> dict:
         return self._append("enrolled", {"by": by, "frozen": dict(frozen), **fields})
@@ -142,5 +151,5 @@ def heartbeat(root: str | Path) -> dict | None:
         return None
 
 
-__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY", "beat", "heartbeat",
+__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY", "beat", "heartbeat",
            "stop_reason"]

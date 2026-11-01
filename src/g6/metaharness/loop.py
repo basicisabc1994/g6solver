@@ -56,7 +56,7 @@ from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, Suit
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
-from g6.self_maintenance.envelope import ENDS_A_STREAK, MAX_FAILED_CYCLES, CycleLog, beat, stop_reason
+from g6.self_maintenance.envelope import ENDS_A_STREAK, FINDINGS, MAX_FAILED_CYCLES, CycleLog, beat, stop_reason
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -483,7 +483,7 @@ class ShadowLoop:
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT,
                     "reason": f"this tick reached the {spend.amount:g} it reserved and stopped, so nothing is adopted"}
         elif recommended:
-            row |= self._adopt(recommended[-1]["decision"])
+            row |= self._adopt(recommended[-1]["decision"], row)
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
@@ -491,8 +491,8 @@ class ShadowLoop:
         self._pause_if_failing()
         return reply
 
-    def _adopt(self, decision: Any) -> dict[str, Any]:
-        adopted = self.mh.adopt(decision)
+    def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
+        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row})
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}
@@ -548,13 +548,14 @@ class ShadowLoop:
         def nobody(decided: dict[str, Any]) -> None:
             recommended.append(decided)              # no name is given: none stands in for a person's
 
-        proposer = _OnConstraint(FailureTraceStrategy(self._proposer), constraint.case_ids)
+        # earlier findings only: which candidate the gate took or refused is the held-out split's, and stays out of it
+        strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
-                   space=self.domain.execution().space, extra=(proposer,))
+                   space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),))
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
-                "recovery": run.recovery}
+                "recovery": run.recovery, **strategy.findings}
 
     @_exclusive
     def leave_shadow(self) -> dict[str, Any]:
@@ -586,7 +587,8 @@ class ShadowLoop:
             return refused
         version, head = self.mh._head()
         return _envelope("qualified-draft", STATUS, f"head version {version} of {self.domain.name}", head_version=version,
-                         head_profile=head.digest(), store_version=self.mh.store.current_approved(), scope=SCOPE,
+                         generation=version, head_profile=head.digest(),
+                         store_version=self.mh.store.current_approved(), scope=SCOPE,
                          paused=self.log.paused(), failed_streak=self.log.failed_streak(),
                          cycles=len(self.log.cycles()), held_out_left=self.mh.held_out_left(), g6_status=STATUS_LINE)
 
