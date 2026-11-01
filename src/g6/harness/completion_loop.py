@@ -452,10 +452,15 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             "left_out": "" if usable else failed or "it exercised nothing on the base commit"}
 
 
+def _head(change: repo_tests.Change, task: str, proof: str) -> str:
+    """The start of the pack, what a review must read whole: the issue, then the patch."""
+    return f"issue.txt:\n{proof}\n\n{task}\n\ncandidate.patch:\n{repo_tests.diff_text(change)}"
+
+
 def _pack(change: repo_tests.Change, task: str, proof: str) -> str:
     """What L9's critic reads in its folder, as text, since it has no tools: the issue, the patch, and of the base commit
     the files the patch touches."""
-    parts = [f"issue.txt:\n{proof}\n\n{task}", f"candidate.patch:\n{repo_tests.diff_text(change)}"]
+    parts = [_head(change, task, proof)]
     for rel in change.files:
         text = repo_tests.read_at(change.repo, change.base_commit, rel)
         if text is not None:
@@ -484,10 +489,10 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
 
 
 def _read_whole(change: repo_tests.Change, task: str) -> bool:
-    """Whether the pack holds the whole task and the whole patch. It is cut from its end with the task before the patch, so a
-    whole patch means a whole task, the parent files go first, and a new file ``diff_text`` cuts is past this limit already.
-    A reader of part of either has no clean review to give."""
-    return repo_tests.diff_text(change) in _pack(change, task, f"review {'0' * 32}")
+    """Whether the pack holds the whole task and the whole patch: that its head fits. This is a length and never a search of
+    the text, as a task may quote the patch. The pack is cut from its end, so the parent files go first, and a new file
+    ``diff_text`` cuts is past this limit already. A reader of part of either has no clean review to give."""
+    return len(_head(change, task, f"review {'0' * 32}")) <= MAX_PACK_CHARS
 
 
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],

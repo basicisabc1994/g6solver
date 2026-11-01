@@ -1382,6 +1382,40 @@ def the_patch(world) -> str:
     return repo_tests.diff_text(repo_tests.change(world.repo, world.base))
 
 
+def test_a_patch_quoted_in_a_long_task_cannot_hide_that_the_task_was_cut(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    task = "Repair this candidate:\n" + the_patch(world) + "\n" + "context " * loop.MAX_PACK_CHARS + "THE LAST REQUIREMENT"
+    step = world.advance(critic=critic, task=task)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_a_patch_quoted_in_a_task_that_fits_cannot_stand_for_the_patch_itself(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    patch = the_patch(world)
+    task = patch + "a" * (loop.MAX_PACK_CHARS - len(patch) - 50)      # the whole task fits, and the patch's own section does not
+    step = world.advance(critic=critic, task=task)
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and not critic.calls
+
+
+def test_the_head_fits_to_the_character_and_the_pack_is_the_same_text_it_was(world, monkeypatch):
+    world.edit()
+    change = repo_tests.change(world.repo, world.base)
+    proof = f"review {'0' * 32}"
+    room = loop.MAX_PACK_CHARS - len(loop._head(change, "", proof))
+    assert loop._read_whole(change, "t" * room) and not loop._read_whole(change, "t" * (room + 1))
+    assert loop._pack(change, "t" * room, proof).endswith(f"candidate.patch:\n{the_patch(world)}")      # to its last character
+    pack = loop._pack(change, TASK, proof)
+    assert pack == (f"issue.txt:\n{proof}\n\n{TASK}\n\ncandidate.patch:\n{the_patch(world)}\n\nparent/mod.py:\n{BASE}")
+
+
+def test_whatever_the_diff_itself_cuts_is_past_what_a_review_can_read():
+    assert loop.MAX_PACK_CHARS < repo_tests.DIFF_FILE_CHARS
+
+
 def test_each_reviewed_patch_stays_recoverable_byte_for_byte_after_the_repairs(world, monkeypatch):
     tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
     world.edit()
