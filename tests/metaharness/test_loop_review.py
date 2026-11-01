@@ -1414,3 +1414,38 @@ def test_the_third_of_three_requests_under_a_limit_of_two_never_goes_out():
     with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
         _Counted(caller, requests).complete("system", "user")
     assert caller.sent == 2 and requests.sent == 2 and requests.stopped
+
+
+# A tick cut off at its own reservation is no fault -------------------------------------------------------------------------------
+
+def test_ticks_cut_off_at_their_reservation_pause_nothing_and_each_is_still_on_the_record(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    monkeypatch.setattr(loop, "worst_case", lambda: 40)
+    for _ in range(4):
+        assert _code(loop.tick()) == "G6_E_LOOP_TICK_BUDGET_SPENT"
+    assert loop.log.paused() == "" and loop.log.failed_streak() == 0
+    assert [c["outcome"] for c in loop.log.cycles()] == ["blocked"] * 4 and loop.mh.adoption_rows() == []
+
+
+def test_a_tick_cut_off_at_the_week_is_no_fault_either(tmp_path):
+    loop, _ = _crossing_a_reset(tmp_path)
+    assert _code(loop.tick()) == "G6_E_LOOP_TICK_BUDGET_SPENT" and loop.log.failed_streak() == 0
+
+
+def test_real_faults_on_either_side_of_a_cut_off_tick_still_pause_and_say_which(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    real = domain.failures
+
+    def broken(view):
+        raise RuntimeError("the domain fell over")
+
+    domain.failures = broken
+    loop.tick()
+    loop.tick()
+    domain.failures = real
+    with monkeypatch.context() as tight:
+        tight.setattr(loop, "worst_case", lambda: 40)
+        assert _code(loop.tick()) == "G6_E_LOOP_TICK_BUDGET_SPENT"
+    domain.failures = broken
+    loop.tick()
+    assert "three failed cycles" in loop.log.paused() and loop.log.paused().count("the domain fell over") == 3

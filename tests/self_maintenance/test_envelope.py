@@ -16,6 +16,7 @@ from g6.self_maintenance import envelope
 from g6.self_maintenance.envelope import (
     FINDINGS,
     STOPS_FILE,
+    TICK_BUDGET_SPENT,
     CycleLog,
     ask_to_stop,
     beat,
@@ -84,6 +85,25 @@ def test_any_result_ends_the_streak_since_a_candidate_that_lost_is_a_result_not_
     for outcome in ("error", ending, "blocked"):
         _cycle(log, outcome)
     assert log.failed_streak() == 1
+
+
+def test_a_tick_cut_off_at_its_own_reservation_is_no_fault(tmp_path):
+    """It stopped where the loop told it to. Nothing broke, and three of them must not stop a week."""
+    log = _log(tmp_path)
+    for _ in range(4):
+        _cycle(log, "blocked", code=TICK_BUDGET_SPENT)
+    assert log.failed_streak() == 0
+
+
+def test_a_cut_off_tick_neither_counts_in_a_streak_nor_ends_one(tmp_path):
+    """It is no result either: it compared nothing, so the faults on each side of it are still in a row."""
+    log = _log(tmp_path)
+    _cycle(log, "error")
+    _cycle(log, "blocked", code=TICK_BUDGET_SPENT)
+    _cycle(log, "blocked", code="G6_E_LOOP_FROZEN_CHANGED")
+    _cycle(log, "blocked", code=TICK_BUDGET_SPENT)
+    _cycle(log, "error")
+    assert log.failed_streak() == 3 and [c["outcome"] for c in log.failed_run()] == ["error", "blocked", "error"]
 
 
 def test_results_alone_are_never_a_streak(tmp_path):

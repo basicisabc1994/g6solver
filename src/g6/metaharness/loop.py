@@ -70,6 +70,7 @@ from g6.self_maintenance.envelope import (
     ENDS_A_STREAK,
     FINDINGS,
     MAX_FAILED_CYCLES,
+    TICK_BUDGET_SPENT,
     CycleLog,
     ask_to_stop,
     beat,
@@ -104,7 +105,6 @@ BUSY = "G6_E_LOOP_BUSY"
 RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
 CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
-TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
@@ -619,11 +619,11 @@ class ShadowLoop:
         for cycle in reversed(cycles):
             if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP):
                 return cycle["reason"]
-        streak = self.log.failed_streak()
-        if streak < MAX_FAILED_CYCLES:
+        streak = self.log.failed_run()
+        if len(streak) < MAX_FAILED_CYCLES:
             return ""
         return "three failed cycles in a row: " + "; ".join(
-            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in cycles[-streak:])
+            f"tick {c['tick']} {c['outcome']} ({str(c.get('reason', ''))[:160]})" for c in streak)
 
     @_exclusive
     def enrol(self, confirmed_by: str) -> dict[str, Any]:

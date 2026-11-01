@@ -16,7 +16,8 @@ that rebooted, never reads as alive, and no process number can be mistaken for i
 **The failed streak.** Three failed cycles in a row pause the loop. A failed cycle is a fault: an error, a sealed breach
 or a step that was blocked. The loop seeks failure and learns from it, so a candidate that lost is a result: no winner, no
 constraint, a refusal and a rolled-back adoption each end a streak and never pause. What bounds them is the held-out
-split, which allows five evaluations before a person acts, and the runner, which rests when nothing is left to try.
+split, which allows five evaluations before a person acts, and the runner, which rests when nothing is left to try. A tick
+cut off at its own reservation is blocked and on the record, and in no streak: the pacing rule is what bounds those.
 """
 from __future__ import annotations
 
@@ -46,6 +47,8 @@ RUNNER_LOCK = ".runner"
 MAX_FAILED_CYCLES = 3
 #: Cycles that broke. A wait (a stop, the budget, a pause) is not a cycle at all, so it never counts.
 FAILED = ("blocked", "error", "sealed_breach")
+#: A cycle that was cut off at what its tick reserved, or at the end of the week it reserved in: blocked, and no fault.
+TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 #: Cycles that ran and reached a result, whichever way it went.
 ENDS_A_STREAK = ("adopted", "idle", "refused", "no_winner", "no_constraint", "rolled_back")
 #: Results that found nothing to try, which the runner rests on: a refusal or a rollback did try something.
@@ -164,13 +167,19 @@ class CycleLog:
         start = max((i for i, (kind, _) in enumerate(rows) if kind == "resumed"), default=-1) + 1
         return [body for kind, body in rows[start:] if kind == "cycle"]
 
-    def failed_streak(self) -> int:
-        streak = 0
+    def failed_run(self) -> list[dict]:
+        """The failed cycles in a row, oldest first. A tick cut off at its own reservation is not among them, and does not
+        break them: it stopped where the loop told it to, which is no fault, and it compared nothing, which is no result."""
+        found = []
         for cycle in reversed(self.since_resumed()):
             if cycle["outcome"] in ENDS_A_STREAK:
                 break
-            streak += 1
-        return streak
+            if cycle.get("code") != TICK_BUDGET_SPENT:
+                found.append(cycle)
+        return found[::-1]
+
+    def failed_streak(self) -> int:
+        return len(self.failed_run())
 
     def quiet_streak(self) -> int:
         """How many cycles in a row found nothing to try, since a person last enrolled a domain, lifted a pause or took a
@@ -324,5 +333,6 @@ def heartbeat(root: str | Path) -> dict | None:
 
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop",
+           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest", "heartbeat",
+           "record_stop",
            "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]
