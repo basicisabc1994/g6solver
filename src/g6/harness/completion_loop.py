@@ -107,6 +107,8 @@ LEFT, WITHDRAWN, READ_VERDICTS = "the agent left the code as it was", "the agent
 NO_REASON = "no reason was given"
 #: A stop that leaves the patch with no review that came back clean, whatever earlier reviews said.
 NO_CLEAN_REVIEW = "G6_E_NO_CLEAN_REVIEW"
+#: A call with no Python changed against the base, so nothing was tested, and no loop began.
+NO_PYTHON = "G6_E_NO_PYTHON_CHANGED"
 #: A call that found another step of its session running: the code the self-improvement loop gives the same refusal.
 BUSY = "G6_E_LOOP_BUSY"
 ALREADY_RUNNING = "Another step of G6's completion loop is running for this session, so this one did nothing."
@@ -808,7 +810,8 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         return _finish(session, state, text, code)
 
     if not change.sources:
-        return _review_end(root, task, base, change, session, state, WITHDRAWN) if state.get("reviews") else Step(STOP)
+        return (_review_end(root, task, base, change, session, state, WITHDRAWN) if state.get("reviews") else
+                Step(STOP, code=NO_PYTHON))
     if not task.strip():
         return refused(NO_TASK, "G6_E_INPUT_VALIDATION")
     why = proposer.boundary(root)

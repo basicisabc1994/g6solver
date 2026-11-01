@@ -26,8 +26,8 @@ SENDS_BACK = ("A reviewer's test fails on the patch. It is a finding you may rej
               "Repair the cause and call again, or leave the code as it was and call again with your reason in one line.")
 ENDED = ("The loop has ended. A review that reproduces nothing is not evidence the work is right, only that this reviewer "
          "found no failure it could show.", "Show the report as it is. Merging is the person's own decision.")
-NOTHING = ("No Python changed against the base commit, so nothing was tested and nothing was spent.",
-           "Call again once the session has changed Python.")
+NOTHING = ("No Python changed against the base commit, so nothing was tested and nothing was spent. Call again once the "
+           "session has changed Python.")
 
 
 def _asked(repo: str, task: str, base: str, session: Path) -> dict:
@@ -89,9 +89,9 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     text = done.text or (saved.read_text(encoding="utf-8") if saved.is_file() else "")
     said = {"action": done.action, "text" if done.action == loop.CONTINUE else "report": text}
     if done.code:
-        refused = blocked_reply(f"[{done.code}] {state.get('stop') or text}"[:600], request_id=request_id)
+        refused = blocked_reply(f"[{done.code}] {state.get('stop') or text or NOTHING}"[:600], request_id=request_id)
         return {**refused, "run_id": folder.name, "evidence": evidence, **said}
-    card = SENDS_BACK if done.action == loop.CONTINUE else ENDED if text else NOTHING
+    card = SENDS_BACK if done.action == loop.CONTINUE else ENDED
     return {"ok": True, **said, **envelope_fields(
         reliability_label="qualified-draft", warning_card=warning_card(CODE, *card), evidence=evidence, request_id=request_id,
         run_id=folder.name, degradation_reason=card[0][:300])}

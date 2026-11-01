@@ -232,6 +232,18 @@ def test_with_no_python_changed_nothing_is_tested_and_nothing_is_spent(rig):
     enveloped(got)
 
 
+def test_a_stop_that_ran_nothing_is_blocked_with_its_stable_code_and_ends_nothing(rig):
+    critic = reviewer("one")
+    rig.approve(critic)
+    got = rig.step()
+    assert got["completion_state"] == "blocked-escalated" and got["ok"] is False and got["action"] == "stop"
+    assert got["warning_card"]["code"] == "G6_E_NO_PYTHON_CHANGED" and "nothing was tested" in got["warning_card"]["message"]
+    assert got["report"] == "" and got["evidence"] == [] and not critic.calls
+    enveloped(got)
+    rig.edit()
+    assert rig.step()["action"] == "continue"      # no loop had started, so the session is free to start one
+
+
 def test_a_call_after_the_loop_ended_gives_the_same_report_and_spends_nothing(rig):
     critic = reviewer("none", "never")
     rig.approve(critic)

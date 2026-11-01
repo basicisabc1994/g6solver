@@ -122,6 +122,9 @@ def world(tmp_path, monkeypatch):
         def state(self) -> dict:
             return json.loads((self.session / "state.json").read_text(encoding="utf-8"))
 
+        def state_exists(self) -> bool:
+            return (self.session / "state.json").is_file()
+
     return World()
 
 
@@ -1485,6 +1488,13 @@ def test_a_hook_killed_in_the_final_review_of_a_rejection_keeps_the_agents_reaso
     step = world.advance(critic=critic)       # this stop gives no words
     [row] = rows(world)
     assert row["left"] == "They misread the task." and "They misread the task." in step.text
+
+
+def test_a_stop_with_no_python_changed_carries_its_code_and_a_hook_stays_silent(world, monkeypatch):
+    runs = Runs(monkeypatch)
+    step = world.advance(critic=reviewer("never"))
+    assert (step.action, step.text, step.code) == (loop.STOP, "", "G6_E_NO_PYTHON_CHANGED")
+    assert not runs.calls and not world.state_exists()
 
 
 def killed_in_the_final_review(world, monkeypatch, critic) -> None:
