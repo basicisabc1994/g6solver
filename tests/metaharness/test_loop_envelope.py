@@ -15,7 +15,7 @@ import pytest
 
 import g6
 from g6.core import stop
-from g6.core.llm import FakeLLM, LLMError
+from g6.core.llm import EmptyRetry, FakeLLM, LLMError
 from g6.harness import Check
 from g6.integrity import build_manifest
 from g6.metaharness import Model, Profile, SuiteCase
@@ -24,6 +24,7 @@ from g6.metaharness.domain import Judge
 from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.propose import DevBudget
+from g6.metaharness.select import race, race_calls
 from g6.self_maintenance.envelope import heartbeat
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 from g6.workspace._coordination import Coordination
@@ -739,12 +740,139 @@ def test_a_run_the_model_failed_is_not_kept_as_what_the_head_does(tmp_path):
     assert loop.mh.measure(budget=120)["view"].failures == ()
 
 
+def test_a_failed_view_is_read_by_the_cycles_proposers_and_not_run_again_for_each(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: no answer in time")
+
+    domain.llm._responder = down
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=dataclasses.replace(SETTINGS, audit_per_tick=0))
+    assert loop.mh.measure(budget=120)["view"].failures
+    calls = len(domain.llm.calls)
+    assert loop.mh._view(DevBudget(120)).failures and len(domain.llm.calls) == calls
+
+
 def test_a_view_cut_off_at_what_a_tick_reserved_is_not_kept(tmp_path, monkeypatch):
     loop, _ = _enrolled(tmp_path, domain=domains.WordProblems(tmp_path, weak=1.0))
     with monkeypatch.context() as cut_short:
         cut_short.setattr(loop, "worst_case", lambda: 5)
         assert _code(loop.tick()) == "G6_E_LOOP_TICK_BUDGET_SPENT"
     assert loop.tick()["outcome"] == "idle"
+
+# What a tick reserves, at the design's example allowance ---------------------------------------------------------------
+EXAMPLE = LoopSettings(windows=(ProviderWindow("claude", 5000, START),))        # 20% kept back, and Method's defaults
+DAY_ONE, DAY_TWO = START + timedelta(hours=1), START + timedelta(days=1, hours=1)
+
+
+def _one_call(tmp_path, *, pool=86):
+    """A domain whose every run is one model call, which is all it declares."""
+    domain = domains.WordProblems(tmp_path, pool=pool)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, max_calls_per_run=1)})
+    return domain
+
+
+def test_a_one_call_domain_on_a_small_pool_is_admitted_on_day_one_at_the_example_allowance(tmp_path):
+    loop, _ = _enrolled(tmp_path, domain=_one_call(tmp_path), settings=EXAMPLE, now=lambda: DAY_ONE)
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_a_one_call_domain_on_a_larger_pool_is_admitted_on_day_two_at_the_example_allowance(tmp_path):
+    days = [DAY_ONE]
+    loop, _ = _enrolled(tmp_path, domain=_one_call(tmp_path, pool=240), settings=EXAMPLE, now=lambda: days[0])
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and "day 1's ceiling of 1000" in got["message"]
+    days[0] = DAY_TWO
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_the_one_call_executor_is_not_held_to_the_cap_a_model_declares_by_default(tmp_path):
+    """``Model`` caps a run at 8 calls, and a run of G6's own executor is one call and a retry of an empty answer."""
+    domain = domains.WordProblems(tmp_path, pool=86)
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=EXAMPLE, now=lambda: DAY_TWO)
+    assert domain.execution().models["local"].max_calls_per_run == 8 and loop._calls_per_run() == 2
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_a_real_week_at_the_example_allowance_runs_tick_after_tick_and_stays_under_the_ceiling(tmp_path):
+    days = [START]
+    domain = _one_call(tmp_path)
+    proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=EXAMPLE, proposer=proposer, now=lambda: days[0])
+    for hour in range(0, 7 * 24, 6):
+        days[0] = START + timedelta(hours=hour, minutes=1)
+        assert _code(loop.tick()) != "G6_E_LOOP_TICK_BUDGET_SPENT"
+        seen = loop.meter.reading("claude", days[0])
+        assert seen.used <= seen.ceiling
+    assert seen.used >= 3000 and len(loop.log.cycles()) >= 7
+
+
+def test_the_evaluation_is_sized_by_the_cases_it_has_not_by_what_it_may_call(tmp_path):
+    def worst(folder, **changes) -> int:
+        loop, _ = _loop(tmp_path / folder, domain=_one_call(tmp_path / folder), settings=dataclasses.replace(EXAMPLE, **changes))
+        return loop.worst_case()
+
+    assert worst("a", eval_calls=2000) == worst("b", eval_calls=9000)    # 30 cases cannot call 2000 times, whatever is allowed
+    assert worst("c", eval_calls=20) < worst("a", eval_calls=2000)       # a smaller limit still lowers it
+
+
+def _every_call(ctx):
+    """A domain's own executor that spends all its run may: what a one-call rule cannot see."""
+
+    def execute(contract):
+        caller = ctx.caller("answer")
+        prompt = ctx.profile.prompt or ""
+        return [caller.complete(prompt, contract.task) for _ in range(caller.budget.max_model_calls)][-1]
+
+    return execute
+
+
+def test_a_larger_pool_reserves_more_and_so_does_a_factory_of_the_domains_own(tmp_path):
+    def worst(folder, domain) -> int:
+        return _loop(tmp_path / folder, domain=domain, settings=EXAMPLE)[0].worst_case()
+
+    small = worst("a", domains.WordProblems(tmp_path / "a", pool=86))
+    assert small < worst("b", domains.WordProblems(tmp_path / "b", pool=240))
+    own = domains.WordProblems(tmp_path / "c", pool=86)
+    run = own.execution()
+    own.execution = lambda: dataclasses.replace(run, factory=_every_call)
+    assert small < worst("c", own)
+
+
+@pytest.mark.parametrize(("per_run", "pool", "allowance"), [(1, 86, 5000), (3, 86, 50_000), (8, 120, 200_000)])
+def test_no_tick_spends_past_what_it_reserved_when_all_it_may_do_is_done(tmp_path, per_run, pool, allowance):
+    domain = domains.WordProblems(tmp_path, pool=pool)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, factory=_every_call, models={
+        "local": Model(domain.llm, max_calls_per_run=per_run)})
+    proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))
+    settings = LoopSettings(windows=(ProviderWindow("claude", allowance, START),))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=settings, proposer=proposer, now=lambda: START + timedelta(days=6, hours=1))
+    for _ in range(4):
+        worst = loop.worst_case()
+        got = loop.tick()
+        assert _code(got) != "G6_E_LOOP_TICK_BUDGET_SPENT" and got["budget"]["charged"] <= worst, got["message"]
+
+
+def test_a_caller_that_retries_past_the_estimate_still_stops_at_what_was_reserved(tmp_path):
+    domain = _one_call(tmp_path)
+    backend = FakeLLM(default="")
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(EmptyRetry(backend), max_calls_per_run=1)})
+    proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=EXAMPLE, proposer=proposer, now=lambda: DAY_TWO)
+    worst = loop.worst_case()
+    got = loop.tick()
+    assert got["budget"]["charged"] <= worst and len(backend.calls) + len(proposer.calls) <= worst
+
+
+def test_a_race_never_takes_more_runs_than_its_bound(tmp_path):
+    loop, domain = _enrolled(tmp_path, domain=_one_call(tmp_path), settings=EXAMPLE)
+    base = loop.mh._head()[1]
+    candidates = [base.model_copy(update={"prompt": f"{domains.WORKING} {i}"}) for i in range(7)]
+    ran = race(loop.workflow, loop.mh.factory, base, candidates, block=10, keep=0.5, budget=10 ** 6, clock=domains.Clock())
+    assert ran.calls_used <= race_calls(len(loop.cut.selection), len(candidates), 10, 0.5)
 
 # The envelope is frozen too ------------------------------------------------------------------------------------------
 

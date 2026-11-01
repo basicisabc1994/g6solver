@@ -33,6 +33,15 @@ class Race:
     blocks: list[int] = field(default_factory=list)      # the live candidates after each completed block
 
 
+def race_calls(cases: int, candidates: int, block: int, keep: float) -> int:
+    """The most runs a race of ``candidates`` on ``cases`` can take: the base once per case and each candidate still live."""
+    runs = 0
+    for start in range(0, cases, block):
+        runs += min(block, cases - start) * (1 + candidates)
+        candidates = max(1, math.ceil(keep * candidates))
+    return runs
+
+
 def race(workflow: Workflow, factory: ExecutorFactory, base: Profile, candidates: Sequence[Profile], *, block: int = 10,
          keep: float = 0.5, budget: int, theories: TheoryStore | None = None,
          clock: Callable[[], float] = time.monotonic, artifacts: Any = None) -> Race:

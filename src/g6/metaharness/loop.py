@@ -55,6 +55,7 @@ from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
+from g6.metaharness.select import race_calls
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
@@ -343,15 +344,39 @@ class ShadowLoop:
             self.mh = adapt_shadow(self.workflow, domain.execution().factory, workspace=self.root / "workspace",
                                    clock=clock)
 
+    def _calls_per_run(self) -> int:
+        """The most one run can call: what the models declare, or, on G6's own executor with no step of the domain's, one
+        call and a retry of an empty answer for each a profile can hold (``RecoveryStrategy`` adds one)."""
+        run, method = self.domain.execution(), self.settings.method
+        declared = max(m.max_calls_per_run for m in self.workflow.models.values())
+        if run.factory is not None or run.pipeline_steps:
+            return declared
+        return min(declared, 1 + max(method.use_recovery, *run.space.space.get("retries", ()),
+                                     (run.initial or {}).get("retries", 0)))
+
     def worst_case(self) -> int:
-        """The most one tick can call, from the limits it runs under: a measurement, the audits, each proposer and race
-        of each cycle, and one evaluation. Each limit is checked before a run, so each can be passed by one run."""
-        method, per_run = self.settings.method, max(m.max_calls_per_run for m in self.workflow.models.values())
-        proposers = 1 + method.use_recovery + method.use_reflection + method.use_edits   # failure traces always run
-        proposing = proposers * (method.propose_budget + per_run + method.reflect_calls + 1)
-        racing = method.select_budget + per_run
-        return (method.propose_budget + per_run + 2 * self.settings.audit_per_tick * per_run
-                + method.cycles * (proposing + racing) + self.settings.eval_calls + per_run * (per_run + 2))
+        """The most one tick can call: what its limits allow, and no more than the pool gives them to spend on. That is the
+        audits, a measurement, each proposer and race of each cycle, and one evaluation. Each limit is checked before a
+        run, so each can be passed by one run. A retry inside a caller is not foreseen here, and a tick stops at what it
+        reserved all the same."""
+        method, per_run, cut = self.settings.method, self._calls_per_run(), self.cut
+        most, tries = method.candidates_per_cycle, method.reflect_calls
+        remedies = 2 + len(self.workflow.pipeline_steps)     # a step or an example, and a retry: what recovery can offer
+        one_profile = len(cut.tune) * per_run                # on every tuning case
+        spent = method.propose_budget + per_run              # where one proposer's dev budget stops it
+
+        def on_dev(profiles: int) -> int:
+            return min(spent, profiles * one_profile)
+
+        # a proposer reads the view the tick measured, so the head runs once, and failure traces ask one call of the proposer
+        proposing = (1 + method.use_recovery * on_dev(remedies + (remedies > most) * most)
+                     + method.use_reflection * (on_dev(tries) + tries) + method.use_edits * on_dev(tries))
+        racers = 2 + method.use_recovery * min(most, remedies) + (method.use_reflection + method.use_edits) * min(most, tries)
+        racing = min(method.select_budget + per_run,         # failure traces offer one, and a champion races again
+                     per_run * race_calls(len(cut.selection), racers, method.race_block, method.race_keep))
+        one_case = per_run * (per_run + 2)                   # base, candidate and a control matched to the candidate's calls
+        return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1)
+                + method.cycles * (proposing + racing) + min(self.settings.eval_calls + one_case, len(cut.held_out) * one_case))
 
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed

@@ -687,10 +687,21 @@ past a reset, on the old week's bill.
 
 **An unchanged head costs nothing to measure.** The head's run on the tuning cases is kept for each head, case set and
 budget, and every proposer of every cycle reads that one view, so a tick on an unchanged head spends nothing there. A view
-with a run the model failed is not kept, since it measured the provider. The view is held in memory, so a restart measures
-once more. Only the shadow harness keeps one: `api.py`, which `JUDGING_PATTERNS` covers, and `propose.py`, which
-`ENVELOPE_PATTERNS` covers, did not change, so `MetaHarness.propose` and `diagnose` still run the head on each call. A model
-that drifts is seen by the monitor and the gate, which run the head on their own cases, and not by this view.
+with a run the model failed measured the provider, so the next tick measures again. The view is held in memory, so a
+restart measures once more. Only the shadow harness keeps one: `api.py`, which `JUDGING_PATTERNS` covers, and `propose.py`,
+which `ENVELOPE_PATTERNS` covers, did not change, so `MetaHarness.propose` and `diagnose` still run the head on each call. A
+model that drifts is seen by the monitor and the gate, which run the head on their own cases, and not by this view.
+
+**What a tick reserves.** The most it can call, sized by what the pool gives its limits to spend on: the audits, one
+measurement, the profiles each proposer can try on the tuning cases up to its dev budget, a race on the selection cases, and
+an evaluation of the held-out cases up to `eval_calls`. A run's calls are what the models declare, or, on G6's own executor
+with no step of the domain's, one call and the retries a profile can hold. At the example allowance of 5000 with the 20%
+reserve and `Method`'s defaults, a domain that declares one call a run reserves 818 on a pool of 86, so it can start on day
+1, and 1876 on a pool of 240, day 2. One that leaves a retry in its space reserves 1684 and 3166, days 2 and 4. A domain with
+its own factory and `Model`'s default of eight calls a run reserves 6548 on a pool of 86, which no day of that week allows,
+so it waits with `G6_E_LOOP_BUDGET_WAIT` until it declares less, a smaller `method` or a larger allowance. A tick still stops
+at what it reserved. Retries inside a caller are not foreseen in this figure, so blank replies or `Retry-After` resends can
+end a tick there. On `FakeLLM`, a week of one-call ticks on 86 cases at that allowance used 4402 of the 5000.
 
 **A log that will not take a cycle.** The streak that pauses the loop is read from the log, so a cycle the log refuses
 leaves that streak nothing to read. These cycles are counted in memory instead, and one that is written starts the count
@@ -769,7 +780,7 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 | One workspace for all adoptions, so held-out uses carry over | None found. A fresh workspace per adoption would have let a split be spent for ever |
 | "Sealed" means section 6.3's pool. The gate scores a seeded cut of the development pool, as 6.5 says | If the owner meant the gate to score the sealed split, one line changes, and the study's pool would be spent |
 | "Independent" means four checkable facts: answers not by the caller or a model, not a model's opinion, a source file a digest can pin, and a non-answer rejected | `answers_by` is a declaration. A dishonest adapter can claim it. The adapter is host code, not something a candidate can change |
-| Shares of the pool: 25% tuning, 15% selection, 35% held-out, 25% monitor, by a seeded hash per case or group, so a case keeps its side as the pool changes and a fresh split can stand beside what proposers saw. A hash that would leave a side under its minimum (30 held-out, 18 monitor, one each for the others) gives way to counts along the same seeded order, so a pool of 86 gives held-out at least 30 whatever the seed | A pool under 85 cases can be refused, by seed. A pool cut by counts can move a case at the edge of a side when it changes, so a person refreshing a small split may be refused with `G6_E_LOOP_SPLIT_REUSED` and need more new cases. Other shares may suit real work better; changing them is a re-cut a person must accept |
+| Shares of the pool: 25% tuning, 15% selection, 35% held-out, 25% monitor, by a seeded hash per case or group, so a case keeps its side as the pool changes and a fresh split can stand beside what proposers saw. A hash that would leave a side under its minimum (30 held-out, 5 monitor, one each for the others) gives way to counts along the same seeded order, so a pool of 86 gives held-out at least 30 whatever the seed | A pool under 85 cases can be refused, by seed. A pool cut by counts can move a case at the edge of a side when it changes, so a person refreshing a small split may be refused with `G6_E_LOOP_SPLIT_REUSED` and need more new cases. Other shares may suit real work better; changing them is a re-cut a person must accept |
 | The monitor uses its own split, the judge's verdict on both versions, the pairs that disagree, and each case once per adoption | It needs at least 18 disagreeing pairs. It catches a collapse, not a modest regression: a change 10% worse stays. The gate remains the main defence |
 | **The owner, 2026-11-01:** a failed cycle is a fault: blocked, error or sealed breach. A candidate that lost is a result, so no winner, no constraint, a refusal and a rolled-back adoption never pause. Unreadable records and a changed frozen item still stop every tick until a person acts. Waits are not cycles | Adopting and rolling back in turn no longer pauses. Each round uses a held-out evaluation, so five rounds stop it until a person gives a fresh split, and the budget it spends in between is charged like any other. Results with nothing to try rest instead: see the runner below |
 | A sealed breach pauses at once, and a tick that finds a sealed file already held open does not start | One resume per sign. See the guard's limit below |

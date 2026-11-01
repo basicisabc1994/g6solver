@@ -180,18 +180,19 @@ class ShadowHarness(MetaHarness):
                          next_action="Later ticks run on it; the monitor compares it with the version before.",
                          head_version=number, head_profile=proposal.candidate_digest)
 
-    def _view(self, budget: DevBudget) -> ProposerView:
+    def _view(self, budget: DevBudget, *, measuring: bool = False) -> ProposerView:
         """The head on the tuning cases, run once for each head, case set and budget, so an unchanged head costs nothing
-        however many ticks and proposers read it. A view with a run the model failed is not kept: that measured the
-        provider, not the head. It is held in memory, so a restart measures once more."""
+        however many ticks and proposers read it. A run the model failed measured the provider and not the head, so the
+        next measurement runs such a view again, and until then the proposers read it. It is held in memory, so a restart
+        measures once more."""
         _, base = self._head()
         key = (base.digest(), self.workflow.digest(), budget.limit)
-        if self._measured is not None and self._measured[0] == key:
-            return self._measured[1]
+        kept = self._measured
+        if kept is not None and kept[0] == key and not (measuring and any(f.code == RUN_FAILED for f in kept[1].failures)):
+            return kept[1]
         view = build_view(self.workflow, self.factory, base, theories=self.theories, clock=self._clock, budget=budget,
                           artifacts=self.artifacts)
-        if not any(f.code == RUN_FAILED for f in view.failures):
-            self._measured = key, view
+        self._measured = key, view
         return view
 
     @_serialized
@@ -210,7 +211,7 @@ class ShadowHarness(MetaHarness):
         if refused:
             return refused
         version, _ = self._head()
-        view = self._view(DevBudget(budget))
+        view = self._view(DevBudget(budget), measuring=True)
         plan = recovery.diagnose(view, self.workflow, self.ledger.rows("decision"))
         return _envelope("qualified-draft", MEASURED, plan.summary, next_action=plan.next_action, view=view,
                          recovery=plan.to_dict(), head_version=version)
