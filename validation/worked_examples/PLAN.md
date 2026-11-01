@@ -1068,3 +1068,109 @@ public and search would break the rule that agents never see the maintainers' te
 
 **The loop in G6.** The design approved on 2026-10-29 stands, and its next phase, the local shadow loop, is being built on its own branch with a
 domain-neutral seam. `evolve.py` stays here for stage 3 until that loop can replace it. Nothing built there changes these runs.
+
+### 2026-10-31 (late): the final review, and a feed of labelled patches (before any M9 run and before stage 2's bugs are judged)
+
+**Why.** The trust measure above shows that nothing G6 says yet separates good patches from bad. The approved loop design rests its gate decisions
+on replays of recorded patches, and none exist for coding. `final_review.py` starts both.
+
+**What it is.** After a run has ended, another model family reads the finished patch, with L8's reviewer text unchanged, and its test, if it wrote
+one, runs on the parent and on the patch, in a container with no network from the agent's image. The reviewer gets the issue with its discussion,
+the parent and the patch. It gets no maintainers' test or fix, and is not told the arm or any verdict. Each distinct patch is reviewed once, in
+the order of the patches' digests.
+
+**What it may say.** "Reproduced": its own test ran and failed on the patch. "Opinion": it says defect, with no such test. "None": it found
+nothing. "Failed": there was no review, which is no verdict, and it is made again. Each is reported as right or wrong on both scores, beside what
+the run said of itself.
+
+**What it does not do.** It changes no run, no verdict, no repair and no rule. L9 and M9 are unchanged, and no agent ever reads a review. The
+frozen comparison stays M9 against A and T.
+
+**When.** On the training bugs' saved patches now, as development: 79 distinct patches, 60 right and 19 wrong on the amended tests. On a stage's
+bugs only after all of that stage's runs have ended, and nothing read from those is used to tune anything.
+
+**The limit, stated before any result.** 14 of the 19 wrong training patches come from one bug, black-5634, and the other five from two more. The
+effective sample is about three bugs, not 79 patches. A result on it is a lead for the loop to test on unseen bugs, not a measure, and it is
+reported bug by bug. Reviews use the owner's Codex sign-in, outside the budget, and are reported apart.
+
+### 2026-11-01: L9 frozen, the replay's result, and stage 2's size (before any M9 run and before stage 2's bugs are judged)
+
+**L9 is frozen.** On the seven training bugs, tuned: 12 of 14 on the maintainers' tests and 14 of 14 on the amended tests, against arm A's 9 and 11. Mean cost $0.59 a run, highest $1.11, against about $0.06 for arm A. These are scores on bugs it was tuned on, and they are reported beside the held-out scores, never in place of them. M9 runs L9's text unchanged on G6 c53d310.
+
+**The final review on the training patches.** 79 distinct patches, no failed review. It found nothing on 34, and all 34 were right. It reproduced a defect on 45, of which 19 were wrong and 26 right. So it flagged all 19 wrong patches, and a flag meant wrong 42% of the time. This is development data, the wrong patches sit on three bugs, and attrs-1593 alone gave 9 false alarms. It says nothing yet about unseen bugs, where it runs report-only after each stage's runs have ended.
+
+**Closures.** Four runs killed before they ended are closed at their streams' measured cost with the runner's 5% margin, $1.32 in all, in place of a $10.50 hold each: black-5634 arm G1, arm L7 and arm L9, and black-5144 arm A. None gave a result and none is counted.
+
+**Stage 2's size.** The rule with arm R added, taking $0.20 a run for R as an upper estimate until R has run: 0.59 × (75 + 4n) + 8 + 0.24n + 0.20 × (37 + 2n) ≤ what is left of $170, about $132. That holds at n = 24, so stage 2 takes the plan's upper limit, 20 bugs.
+
+### 2026-11-01 (later): where the loop's gain comes from, and arms X1 and X2 (before any X run)
+
+**Why now.** The owner asked where exactly the bottleneck is, whether the research code should be switched on, and whether the bugs should change. Stage 1 goes on unchanged from its own worktree: nothing here touches M9, T, R or A on a stage's bugs, or the comparison rule. Everything below reads the seven training bugs only.
+
+**The first patch decides the run.** `check` scores each round's patch, so the first can be set against the last. In 70 saved runs of E, G1 and L2 to L9, the first patch's verdict on the maintainers' tests was the final verdict every time: no failing patch became a passing one, and no passing one a failing one. So L9's gain over arm A on training came before its first review, from the scouts and the discussion. Its critic and repairs added nothing the score can see. That does not show they cannot: L9's only failures are `click-3678`, which the maintainers' tests put out of honest reach, so the critic has never had a wrong patch it could fix. A repair of a defect the maintainers' tests do not cover also scores nothing.
+
+**Detection is not the bottleneck.** On all 14 wrong `black-5634` patches the final review states the same rule, and it is the failure the maintainers' tests catch; on the three wrong `pydantic-14052` patches it does the same. It saw neither test. Its text names no bug, so it is the likeliest part of the loop to carry to unseen bugs. Two fixable bugs are few, and it also flagged 26 right patches.
+
+**Fresh draws and a selector help less than hoped.** On saved patches, keeping the first patch the review finds nothing in lifts `pydantic-14052` from 0.80 to 1.00 by four draws and leaves `black-5634` at 0.38 from 0.26, because a clean review of black is rare. Choosing among candidates by each other's probes lifts `black-5634` from 0.08 to 0.16 and `pydantic-14052` not at all: attempts on black fail alike, so more of them adds little.
+
+**The research code is not the missing piece.** ECHA, CSIR and AHI record, certify and gate evidence. Nothing outside `g6.research` imports them, and none of them outputs anything that changes what an agent does next, so switching them on would change no score. AHI's funnel is the right question to ask of a run, and the table above is that funnel by hand. `coding_learning`'s probes fire only on the same function of the same repository, so never on an unseen bug.
+
+**What "trained" has meant so far.** Four of the seven training bugs pass in every arm, and `click-3678` cannot pass, so two bugs carry all the signal. The changes from L1 to L9 were written by hand in session, mostly from one of them, and the plan has said so. A harness tuned on two bugs has no reason to generalise, whatever it is called. Metacognition generalises only if what is learned changes what gets observed on a new bug, and only if there are many failures to learn from. This is the case for a larger failure-rich training pool, which stage 2's preparation can supply, and it is reported as a limit of L9, whatever M9 scores.
+
+**The one link never measured: a right finding, then a right fix.** Three arms, Sonnet, no G6, no scout, with the issue's discussion. All are development, on training bugs:
+
+- **X1:** a fresh session on a saved wrong patch, told the saved review's rule, reasons and test.
+- **X2:** a fresh session on the parent, told the same, and told the attempt was thrown away. If anchoring on the first idea stops a repair, X2 beats X1.
+- **R** on `black-5634`, `pydantic-14052` and `click-3678`, twice each: the same-session repair, with its patch from before the review now kept so `check` scores it. This changes nothing an agent sees, and stage 1's R runs, on the earlier code, do not have it.
+
+The cases are fixed by rule in `convert_cases.json`, before any run: every distinct patch from a no-scout arm (A, E, G1) that the review reproduced a defect on and that is wrong on the amended tests, ten in all, six of them black. The controls are four such patches that are right: the first four by digest, one per bug first. They measure harm. X1 and X2 use the saved reviews, so they make no Codex call. About $4 of the $180.
+
+**How it will be read.** Conversion is the share of wrong starts whose final patch passes, on both scores, by bug, and it is ten starts on three bugs: a lead, not a measure. At least half converting on black or pydantic means the critic can carry a loop, and the next generation is a critic-led one, reviewing again after each repair until it finds nothing, with no scout. Under a quarter on both means repair is the limit, and what is tried next is a stronger fixer or a better statement of the behaviour. Between the two, it is judged by which of X1 and X2 did better. A next generation is judged on stage 2's bugs, beside M9, never on a bug it was shaped on.
+
+**Disclosure.** Reading the end of stage 1's log while checking on it, I saw three arm T outcomes on fresh bugs, as I had seen arm A's last rows before. They were used for nothing, and stage 1's progress is now read by line count only.
+
+### 2026-11-01 (later still): X's first result, and arm K, reviewed until nothing reproduces (before any K run)
+
+**What X showed so far.** `pydantic-14052`: all 6 wrong starts converted, X1 and X2 alike, at about $0.05 a run. `black-5634`: 0 of 12. Starting from the parent changed nothing there, so anchoring on the first idea is not what stopped them. In 5 of the 6 X1 runs the agent agreed with the reviewer and fixed the case it reported, with the repository's suite passing, and in one it declined. The maintainers' tests failed because they need `# fmt: off` inside an indented block, and the review had reported a trailing comment at the top level. Its rule was right and its test was one layer of the defect, so the repair stopped at that layer. The review's rules on three scout-arm patches, which had dealt with the top level, do name the indented block. Those are the only sign that a second look reaches it, and that is what arm K tests. The rule above, at least half on either bug, sends the next generation to a critic-led loop.
+
+**Arm K.** Plain Claude Code on Sonnet with the issue's discussion, as in arm T, with no G6, no scout and no probes. When it finishes, Codex reviews the patch as in arm R. If its test fails on the patch, the agent gets the rule, reasons and test in the same session. Then a fresh Codex review reads the new patch, and so on, up to `MAX_REPAIRS` repairs, three, so four reviews at most. It ends when a review reproduces nothing, when the agent leaves the code as it was (it may reject a finding), or when the repairs run out. Earlier reviewers' tests stay in place. Each review's patch is kept for `check`. A failed review ends the loop and is recorded as no clean review. Nothing a review says scores a run.
+
+**How it is judged.** `K1` first runs twice on the seven training bugs, as development, and a fault it shows may be fixed before it freezes. Its design comes only from training bugs, and it was fixed before any stage 1 result was read. Once frozen it runs twice on the eleven fresh bugs, five times on the held-out bugs and twice on stage 2's, by the comparison rule against A and T, on both scores. M9 stays stage 1's frozen primary, so K on stage 1's bugs is a second look, and it is reported as one. Stage 2 is the first test of K on repositories nobody has tuned on. K was written in session, so it can never count for stage 3. A cost of about $0.20 a run keeps the three stages inside the $170 stop; Codex's reviews are outside the budget and are reported apart.
+
+### 2026-11-01 (morning): X's whole result, K's first eight runs, and a second stop (before any K run on a bug kept for measurement)
+
+**X as it ended.** Of 20 wrong starts, 8 converted on the amended tests: all 6 on `pydantic-14052`, both on `click-3678` (the maintainers' tests still fail there, as they must), and none of the 12 on `black-5634`. X1 and X2 did the same. None of the 8 control runs lost a right patch.
+
+**R on the training bugs.** `R-pydantic-14052-2` is the first run in the archive whose first patch failed and whose final patch passed, for $0.06. Both R runs on black stayed wrong after their one repair, as X had.
+
+**K1's first eight runs, on four training bugs.** All of these are development.
+
+| On these four bugs, two runs each | Maintainers' tests | Amended tests | Mean cost |
+|---|---|---|---|
+| A | 3 of 8 | 5 of 8 | about $0.06 |
+| L9 | 6 of 8 | 8 of 8 | $0.58 |
+| K1 | 6 of 8 | 8 of 8 | $0.15 |
+
+Four runs went from a failing first patch to a passing final one: both `pydantic-14052` runs at the second patch, and on `black-5634` at the third patch in one run and the fourth in the other. In the 70 earlier runs that happened never. So the second look reached what the first did not, as the three scout-arm rules suggested. This says the mechanism works, on these bugs, and does not say it generalises: the idea for K came from reading black's failure, and it is scored here on black. Four conversions on two bugs are few. `click-3678` stays failing on the maintainers' tests, as it must.
+
+**What K does not do yet.** The reviewer does not know when to stop. Four of the eight runs ended at the cap with a defect open and a patch that passes the amended tests, and a fifth (`click-3678`) ended with the agent declining a finding, so "defect open" does not mean wrong. `attrs-1593` repeat 2 was right from the first patch and was repaired three times, with no harm the tests can see and $0.08 spent. That is K's false-alarm cost. K's text does not change for this: a change now would be tuned on these eight runs.
+
+**The second stop.** Claude Code's memory reaper stopped stage 1 and K at about 08:30, at the start of stage 1's M9 runs on fresh bugs, after 8 of K's 14 training runs. No host process survived, so their containers were orphans and were removed. Two runs that gave no result are closed at their measured cost and will be remade, and that is disclosed: M9 on `pydantic-13243` repeat 1, $0.89, and K1 on `fastapi-15077` repeat 1, $0.05. Spend stands at $49.63. The cause was mine: I ran two streams together, with a lower memory floor for the second, after recording that doing so caused the first stop.
+
+**From here, one stream at a time, never two.** K1's six remaining training runs; then stage 1 as frozen; then K1, unchanged unless a remaining run shows a fault, on the fresh bugs and the held-out bugs. No result of stage 1 is read before K1 runs on those bugs, so K's freeze stays independent of them. Codex's quota is a risk here: stage 1 and K together ask for about 160 more reviews, and a review that fails leaves a run as plain Claude Code, recorded as such.
+
+### 2026-11-01 (morning, later): failure-rich bugs, for stage 2 and for G6's own training (before stage 2's bugs are judged)
+
+**Why.** The owner asked whether the bugs should change. In part they should. A harness can only gain on runs Claude Code alone fails, and to clear the comparison rule it needs at least 5 wins and no losses on the runs that differ. A bug arm A always passes adds a pair that cannot differ in the harness's favour, and four of the seven training bugs were of that kind, which is why so little could be learned from them.
+
+**What does not change.** Stage 2's draw, its 20 bugs, its arms, its audit and the comparison rule. The comparison on all 20 stays the primary result. No bug is dropped, and no bug is chosen by how a harness did on it.
+
+**What is added.** Before any comparison run, arm S runs three times on each stage 2 bug. S is plain Claude Code, exactly as arm A, about $4 in all. S's runs are never rows of the comparison: arms A, T, R, M9 and K make their own runs afterwards. If S's failures chose the bugs and A's two runs were those same failures, a bug's bad luck in screening would flatter every harness. Fresh A runs remove that. A bug is failure-rich on a score if at least one S run fails on that score.
+
+**How it is read.** The same rule, on the same fresh runs, is applied to the failure-rich bugs alone, on each score, and reported beside the result on all 20, as a second analysis fixed here before any S run. It answers a narrower question, bugs Claude Code alone gets wrong at least sometimes, and it is never reported without the result on all 20. The count of failure-rich bugs is reported, and if it is too small to clear the rule, that is the finding.
+
+**G6's own training.** Stage 3's development pool takes its bugs the same way, with one difference: it is development, so a candidate that S passes three times in three gives way to the next one, and the record says so. G6's training then has failures to learn from, which L1 to L9 mostly did not. The pool stays disjoint from stage 2 by repository.
+
+### 2026-11-01 (midday): K1 frozen (before any K run on a bug kept for measurement)
+
+K1's six remaining training runs all passed at their first patch and showed no fault, so K1 freezes as it stands: the code of commit ea1e491, three repairs at most, and no text of its own. On the seven training bugs it scored 12 of 14 on the maintainers' tests and 14 of 14 on the amended tests, at a mean of $0.11 a run, beside L9's 12 and 14 at $0.59 and arm A's 9 and 11 at about $0.06. These are training scores, and K's idea came from one of these bugs, so they are reported beside the held-out scores and never in place of them. No stage 1 result had been read when it froze.
