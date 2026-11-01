@@ -758,3 +758,37 @@ def test_a_folder_enrolled_under_other_objectives_adopts_nothing_until_it_enrols
     assert _code(again.tick()) == "G6_E_META_STANDARD_CHANGED" and again.mh._head()[0] == 0
     assert again.enrol("Ada")["completion_state"] == "qualified-draft"
     assert again.tick()["outcome"] == "adopted"
+
+# What changes during a cycle ---------------------------------------------------------------------------------------------
+
+def test_a_frozen_file_changed_during_a_cycle_refuses_its_adoption(tmp_path):
+    enrolled = tmp_path / "domain.py"
+    enrolled.write_text("# the declaration a person enrolled\n", encoding="utf-8")
+
+    def edited_meanwhile(system: str, user: str) -> str:
+        enrolled.write_text("# saved by an editor after the tick's first check\n", encoding="utf-8")
+        return json.dumps({"prompt": domains.WORKING})
+
+    loop, _ = _enrolled(tmp_path, proposer=FakeLLM(edited_meanwhile), domain_file=enrolled)
+    head = loop.mh._head()
+    got = loop.tick()
+    assert got["outcome"] == "blocked" and _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "domain_file" in got["message"]
+    assert loop.mh.adoption_rows() == [] and loop.mh._head() == head
+    assert _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED" and len(loop.log.cycles()) == 1
+
+
+def test_a_sealed_file_changed_during_a_cycle_refuses_its_adoption_too(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    real = domain.failures
+
+    def failures_then_a_sealed_edit(view):
+        with sealed_module._LOCK:                                      # the guard is open-only: this stands for another process
+            entries, sealed_module._GUARDED[:] = list(sealed_module._GUARDED), []
+        domain.sealed_file.write_text("edited\n", encoding="utf-8")
+        sealed_module._GUARDED[:] = entries
+        return real(view)
+
+    domain.failures = failures_then_a_sealed_edit
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "sealed" in got["message"] and loop.mh.adoption_rows() == []

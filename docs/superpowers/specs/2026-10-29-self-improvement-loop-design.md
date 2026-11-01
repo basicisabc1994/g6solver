@@ -581,8 +581,9 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   hash-chained file.
 - **The envelope**, in code: a paced week per provider on the operator's ledger, the owner's reserve and the whole
   account counted (`pacing.py`); a `STOP` file, a heartbeat and a pause after three failed cycles (`envelope.py`); one
-  tick at a time; refusal when the evaluator, the envelope's own code, a frozen case or a sealed byte changed; a
-  sealed-split guard inside the process (limits below); a loop folder that may not overlap what judges it.
+  tick at a time; refusal when the evaluator, the envelope's own code, a frozen case or a sealed byte changed, as a tick
+  starts and again before it adopts; a sealed-split guard inside the process (limits below); a loop folder that may not
+  overlap what judges it.
 - **Adoption with no person, in shadow only** (`g6/metaharness/shadow.py`). What the gate recommends becomes the loop's
   head in a separate ledger, so the loop compounds, and the monitor rolls it back if it gets worse. A person's profile
   store never moves, `activate` and live runs are refused, and each row carries the loop's `auto:` name. Nothing goes
