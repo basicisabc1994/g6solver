@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import g6
-from g6.core import host_models, llm
+from g6.core import llm
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
@@ -591,38 +591,81 @@ def test_a_resend_behind_a_retry_is_held_to_what_was_reserved_too(tmp_path, monk
     assert loop.tick()["budget"]["charged"] == len(busy.sent) + len(proposer.calls) <= reserved
 
 
-def test_a_caller_that_can_resend_needs_room_for_it_and_one_that_cannot_does_not(monkeypatch):
+def _http_caller() -> llm.OpenAICompatibleCaller:
+    return llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None)
+
+
+def test_a_resend_goes_out_only_while_what_was_reserved_has_room_for_it(monkeypatch):
     busy = Busy(lambda system, user: "an answer")
     monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
     requests = _Requests()
     requests.open(3)
-    resending = _Counted(llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None), requests)
+    resending = _Counted(_http_caller(), requests)
     with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
         resending.complete("system", "user")
-    assert busy.sent == []                                     # three cannot hold a request and its three resends
+    assert len(busy.sent) == requests.sent == 3 and requests.stopped
+    busy.sent.clear()
     requests.open(4)
     assert resending.complete("system", "user") == "an answer" and len(busy.sent) == requests.sent == 4
-    requests.open(1)
-    assert _Counted(FakeLLM(default="an answer"), requests).complete("system", "user") == "an answer"
 
 
-@pytest.mark.parametrize(("caller", "resends"), [
-    (llm.OllamaCaller(), llm.MAX_RATE_LIMIT_WAITS),
-    (llm.OpenAICompatibleCaller("m", base_url="https://unused.invalid", api_key=None), llm.MAX_RATE_LIMIT_WAITS),
-    (EmptyRetry(llm.OllamaCaller()), llm.MAX_RATE_LIMIT_WAITS),
-    (FallbackCaller((FakeLLM(), EmptyRetry(llm.OllamaCaller()))), llm.MAX_RATE_LIMIT_WAITS),
-    (FakeLLM(), 0),
-    (EmptyRetry(FakeLLM()), 0),
-    (host_models.ClaudeCodeCaller(), 0),
-    (host_models.CodexCaller(), 0),
-])
-def test_which_callers_can_resend_is_read_through_what_wraps_them(caller, resends):
-    assert _Counted(caller, _Requests()).resends == resends
+class Own:
+    """A caller of a domain's own, holding an HTTP caller under a name of its own."""
+
+    def __init__(self, held) -> None:
+        self.held = held
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        return self.held.complete(system, user, max_tokens=max_tokens)
 
 
-def test_room_for_resends_is_in_the_reservation_so_a_clean_tick_is_not_cut_short(tmp_path, monkeypatch):
+def test_a_resend_is_held_whatever_holds_the_caller_that_sends_it(monkeypatch):
+    busy = Busy(lambda system, user: "an answer")
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    requests = _Requests()
+    requests.open(2)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(Own(_http_caller()), requests).complete("system", "user")
+    assert len(busy.sent) == requests.sent == 2
+
+
+def test_no_resend_goes_out_at_or_past_the_end_of_the_week_it_reserved_in(monkeypatch):
+    now, sent = [RESET - timedelta(seconds=1)], []
+
+    class Slow:
+        def open(self, request, timeout):
+            sent.append(now[0])
+            now[0] = RESET
+            raise urllib.error.HTTPError(request.full_url, 429, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
+
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: Slow())
+    requests = _Requests(lambda: now[0])
+    requests.open(10, RESET)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(_http_caller(), requests).complete("system", "user")
+    assert len(sent) == requests.sent == 1 and "week ended" in requests.stopped
+
+
+def test_a_wait_that_would_reach_the_end_of_the_week_is_not_taken(monkeypatch):
+    slept, sent = [], []
+
+    class AsksForTen:
+        def open(self, request, timeout):
+            sent.append(request)
+            raise urllib.error.HTTPError(request.full_url, 429, "busy", {"Retry-After": "10"}, io.BytesIO(b"busy"))
+
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: AsksForTen())
+    monkeypatch.setattr(llm, "_sleep", slept.append)
+    requests = _Requests(lambda: RESET - timedelta(seconds=5))
+    requests.open(10, RESET)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(_http_caller(), requests).complete("system", "user")
+    assert len(sent) == 1 and slept == []
+
+
+def test_a_clean_tick_on_an_http_caller_reserves_what_any_other_does(tmp_path, monkeypatch):
     domain = domains.WordProblems(tmp_path)
-    caller = llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None)
+    caller = _http_caller()
 
     def answers(system: str, user: str, *, max_tokens: int = 1024) -> str:
         llm._start_model_call()
@@ -632,7 +675,7 @@ def test_room_for_resends_is_in_the_reservation_so_a_clean_tick_is_not_cut_short
     plain, _ = _loop(tmp_path / "plain", domain=domains.WordProblems(tmp_path / "plain"))
     _with_model(domain, caller)
     loop, _ = _enrolled(tmp_path, domain=domain)
-    assert loop.worst_case() == plain.worst_case() + llm.MAX_RATE_LIMIT_WAITS
+    assert loop.worst_case() == plain.worst_case()
     assert loop.tick()["outcome"] == "adopted"
 
 

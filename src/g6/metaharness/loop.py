@@ -25,9 +25,10 @@ import math
 import os
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
-from g6.core.llm import DEFAULT_MAX_TOKENS, MAX_RATE_LIMIT_WAITS, LLMError, OllamaCaller, OpenAICompatibleCaller, waits
+from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
@@ -197,12 +198,12 @@ class _Requests:
     def close(self) -> None:
         self.open(math.inf)
 
-    def admit(self, under_way: int = 0, resends: int = 0) -> None:
+    def admit(self, under_way: int = 0, wait: float = 0.0) -> None:
         """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``.
-        ``resends``: how often this request could be sent again, which it needs room for now, since no boundary stops one."""
-        if self.unseen or self.sent + under_way + resends >= self.limit:
+        ``wait``: the seconds a server asked for before this one goes out."""
+        if self.unseen or self.sent + under_way >= self.limit:
             self.stopped = f"this tick has sent {self.sent + under_way} of the {self.limit:g} it reserved"
-        elif self.ends is not None and self.now() >= self.ends:
+        elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
             self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
         else:
             return
@@ -215,14 +216,29 @@ class _Requests:
             raise _AtLimit(until, str(failed)[:300]) from failed
 
 
-def _resends(caller: Any) -> int:
-    """How often a server can have one request through ``caller`` sent again. ``g6.core.llm`` does that for its HTTP callers
-    and nothing here can stop it, so a tick keeps room for it. It looks through the wrappers ``g6.core.llm`` has: a caller of
-    a domain's own that holds an HTTP caller under another name is not seen, and its resends are charged after they go."""
-    if isinstance(caller, OllamaCaller | OpenAICompatibleCaller):
-        return MAX_RATE_LIMIT_WAITS
-    held = (getattr(caller, "_inner", None), *getattr(caller, "_callers", ()))
-    return max((_resends(inner) for inner in held if inner is not None), default=0)
+class _Resends(list):
+    """The resends of one call. ``g6.core.llm`` adds each to the open records of ``waits`` just before it waits and sends
+    again, which is the only boundary a resend has, so adding to this record is the gate on it, as ``counting``'s observer
+    is on a request. What ``admit`` raises stops the resend, and leaves the caller as a failed request's ``LLMError``."""
+
+    def __init__(self, admit: Callable[[int, float], None], under_way: Callable[[], int]) -> None:
+        super().__init__()
+        self.admit, self.under_way = admit, under_way
+
+    def append(self, wait: dict[str, Any]) -> None:
+        self.admit(self.under_way() + len(self), wait["retry_after_s"])
+        super().append(wait)
+
+
+@contextmanager
+def _gating_resends(admit: Callable[[int, float], None], under_way: Callable[[], int]) -> Iterator[_Resends]:
+    """As ``g6.core.llm.waits``, whose record is a plain list, with a record that is the gate above."""
+    resent = _Resends(admit, under_way)
+    token = _WAITS.set((*_WAITS.get(), resent))
+    try:
+        yield resent
+    finally:
+        _WAITS.reset(token)
 
 
 class _Counted:
@@ -240,19 +256,18 @@ class _Counted:
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
     retries. Only a usage record from the provider can show those, which is the relay of design section 3. A ``Retry-After``
-    resend has no boundary either, and ``g6.core.llm`` is bound, so a request through a caller that can resend goes out only
-    with room left for every resend it could need (``_resends``)."""
+    resend is admitted as a request is, at its own boundary (``_Resends``), whichever caller sent it."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
-        self.inner, self.requests, self.resends = inner, requests, _resends(inner)
+        self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        self.requests.admit(0, self.resends)
+        self.requests.admit()
 
         def next_request() -> None:
-            self.requests.admit(noted() + len(resent), self.resends)
+            self.requests.admit(noted() + len(resent))
 
-        with counting(before_call=next_request) as noted, waits() as resent:
+        with counting(before_call=next_request) as noted, _gating_resends(self.requests.admit, noted) as resent:
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
@@ -416,8 +431,7 @@ class ShadowLoop:
                        per_run * race_calls(len(cut.selection), entered, method.race_block, method.race_keep))
 
         one_case = per_run * (per_run + 2)                   # base, candidate and a control matched to the candidate's calls
-        room = max(caller.resends for caller in (self._proposer, *(m.caller for m in self.workflow.models.values())))
-        return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1) + room
+        return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1)
                 + method.cycles * proposing + (method.cycles - 1) * racing(racers)
                 + racing(racers + len(self.mh.unfinished()))
                 + min(self.settings.eval_calls + one_case, len(cut.held_out) * one_case))
