@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -27,6 +28,8 @@ from g6.self_maintenance.envelope import (
 )
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
+
+LONG_AGO = 1_000_000_000_000_000_000                                     # in nanoseconds, in 2001, whole on any file system
 
 
 def _log(tmp_path) -> CycleLog:
@@ -242,8 +245,14 @@ def _stop_files(folder) -> list[str]:
 
 def _started_lifting(folder, **fields) -> None:
     """A person's start on the ``STOP`` file as it stands, as ``g6_improve_start`` records it."""
-    held = (folder / "STOP").read_bytes()
-    _log(folder).start("Ada", lifted=hashlib.sha256(held).hexdigest(), lifted_bytes=len(held), **fields)
+    _log(folder).start("Ada", **envelope.stop_to_lift(folder), **fields)
+
+
+def _lifted_long_ago(folder, text: str = "stop\n") -> None:
+    """A start on a file with an old time, so a real write after it lands on another time however coarse the clock is."""
+    (folder / "STOP").write_text(text, encoding="utf-8")
+    os.utime(folder / "STOP", ns=(LONG_AGO, LONG_AGO))
+    _started_lifting(folder)
 
 
 def test_a_stop_a_start_lifted_no_longer_stops_and_stays_where_it_is(tmp_path):
@@ -333,20 +342,89 @@ def test_a_stop_during_a_start_outlives_a_crash_with_no_count_and_no_note(tmp_pa
     assert stops_asked(tmp_path) == 0 and "a new stop" in stop_reason(tmp_path) and _stop_files(tmp_path) == ["STOP"]
 
 
-def test_the_limit_of_this_the_very_bytes_that_were_lifted_written_again_by_hand_do_not_stop(tmp_path):
-    """What a start lifts is bytes. A stop through the tool writes a token, so it never repeats them. A person who writes
-    the same bytes over the file, or only touches it, changes nothing, so a hand-written stop must say something else or
-    go in a new file."""
+def test_the_same_bytes_written_over_a_lifted_stop_by_hand_stand(tmp_path):
+    """``echo stop > STOP``. This file once pinned the opposite as a limit: bytes alone cannot say a person wrote again."""
+    _lifted_long_ago(tmp_path)
+    assert stop_reason(tmp_path) == ""
+    (tmp_path / "STOP").write_text("stop\n", encoding="utf-8")
+    assert stop_reason(tmp_path) == "a STOP file is present: stop"
+
+
+def test_a_touch_on_a_lifted_stop_stands(tmp_path):
+    _lifted_long_ago(tmp_path)
+    (tmp_path / "STOP").touch()
+    assert stop_reason(tmp_path) == "a STOP file is present: stop"
+
+
+def test_a_lifted_stop_deleted_and_made_again_the_same_stands(tmp_path):
+    _lifted_long_ago(tmp_path)
+    (tmp_path / "STOP").unlink()
+    (tmp_path / "STOP").write_text("stop\n", encoding="utf-8")
+    assert stop_reason(tmp_path) == "a STOP file is present: stop"
+
+
+def test_a_lifted_file_nobody_changed_still_does_not_stop_across_a_reopen(tmp_path):
     (tmp_path / "STOP").write_text("stop\n", encoding="utf-8")
     _started_lifting(tmp_path)
+    (tmp_path / "STOP").read_bytes()                                     # reading it is no write
+    assert _log(tmp_path).started()["lifted"] and stop_reason(tmp_path) == ""
+
+
+def test_a_stop_arriving_between_the_time_and_the_bytes_stands(tmp_path, monkeypatch):
+    """The time is taken first, so a write between the two leaves an old time beside new bytes."""
+    (tmp_path / "STOP").write_text("agreed\n", encoding="utf-8")
+    os.utime(tmp_path / "STOP", ns=(LONG_AGO, LONG_AGO))
+    real, fired = Path.read_bytes, []
+
+    def a_stop_just_before_the_read(path):
+        if path.name == "STOP" and not fired:
+            fired.append(path)
+            ask_to_stop(tmp_path, "a late stop")
+        return real(path)
+
+    with monkeypatch.context() as hooked:
+        hooked.setattr(Path, "read_bytes", a_stop_just_before_the_read)
+        agreed = envelope.stop_to_lift(tmp_path)
+    _log(tmp_path).start("Ada", **agreed)
+    assert fired and stop_reason(tmp_path)
+
+
+def test_a_start_row_with_no_time_on_it_stands_rather_than_lifts(tmp_path):
     (tmp_path / "STOP").write_text("stop\n", encoding="utf-8")
+    held = (tmp_path / "STOP").read_bytes()
+    _log(tmp_path).start("Ada", lifted=hashlib.sha256(held).hexdigest(), lifted_bytes=len(held))
+    assert stop_reason(tmp_path) == "a STOP file is present: stop"
+
+
+def test_a_stop_whose_time_cannot_be_read_stands_and_gives_a_start_nothing_to_lift(tmp_path, monkeypatch):
+    ask_to_stop(tmp_path, "agreed")
+    _started_lifting(tmp_path)
+    real = Path.stat
+
+    def refused(path, **kwargs):
+        if path.name == "STOP":
+            raise PermissionError("the file cannot be looked at")
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", refused)
+    assert "could not be read" in stop_reason(tmp_path) and envelope.stop_to_lift(tmp_path) == {}
+
+
+def test_the_limit_of_this_a_writer_that_puts_the_old_time_back_is_not_seen(tmp_path):
+    """What is left of the limit, and a file system whose time is coarse enough for a rewrite to land on the same tick is
+    the same case. It takes the very bytes and the very time, so only that or a deliberate hand gets here."""
+    _lifted_long_ago(tmp_path)
+    (tmp_path / "STOP").write_text("stop\n", encoding="utf-8")
+    os.utime(tmp_path / "STOP", ns=(LONG_AGO, LONG_AGO))
     assert stop_reason(tmp_path) == ""
 
 
 def test_what_a_start_lifts_is_the_file_as_it_stands(tmp_path):
     assert envelope.stop_to_lift(tmp_path) == {}
     (tmp_path / "STOP").write_bytes(b"why\n")
-    assert envelope.stop_to_lift(tmp_path) == {"lifted": hashlib.sha256(b"why\n").hexdigest(), "lifted_bytes": 4}
+    os.utime(tmp_path / "STOP", ns=(LONG_AGO, LONG_AGO))
+    assert envelope.stop_to_lift(tmp_path) == {"lifted": hashlib.sha256(b"why\n").hexdigest(), "lifted_bytes": 4,
+                                               "lifted_mtime_ns": LONG_AGO}
 
 
 def test_a_stop_that_cannot_be_read_gives_a_start_nothing_to_lift(tmp_path):

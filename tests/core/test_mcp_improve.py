@@ -452,6 +452,23 @@ def test_a_stop_arriving_while_the_dialog_is_open_starts_nothing_and_stands(rig)
     assert "the owner said no" in stop_reason(rig.root)
 
 
+def test_a_stop_rewritten_the_same_while_the_dialog_is_open_is_asked_about_again(rig):
+    """The start would record the new time, and so lift a write nobody was shown."""
+    rig.enrol()
+    path, long_ago = rig.root / "STOP", 1_000_000_000_000_000_000
+    path.write_text("an older stop\n", encoding="utf-8")
+    os.utime(path, ns=(long_ago, long_ago))
+    got = rig.start(_while_the_dialog_is_open(lambda: path.write_text("an older stop\n", encoding="utf-8")))
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_TERMS_CHANGED" and stop_reason(rig.root)
+
+
+def test_the_dialog_says_a_lifted_stop_ends_at_the_next_write_to_its_file(rig):
+    rig.enrol()
+    (rig.root / "STOP").write_text("the owner's review\n", encoding="utf-8")
+    rig.start(declined)
+    assert "any write to it after that stops the loop again" in " ".join(rig.asked[0].split())
+
+
 def test_a_second_stop_while_the_dialog_is_open_is_not_lost_with_the_first(rig):
     rig.enrol()
     (rig.root / "STOP").write_text("an older stop\n", encoding="utf-8")

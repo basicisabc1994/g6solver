@@ -4,10 +4,10 @@
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
 came of it, plus each enrolment, pause, resumption, start and provider's limit. Only a person can enrol a domain, resume a
 paused loop or start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its
-next tick, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the bytes a
-person agreed to lift, and any other bytes stand, so a stop has no moment in which it can be lost. A runner ended by a stop
-needs a person's start again, even with the file gone: the records say the last start was stopped. A heartbeat is written
-whole or not at all, and a heartbeat that cannot be written is one missed, never a failed tick.
+next tick, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the file a
+person agreed to lift, and anything else, or any later write, stands, so a stop has no moment in which it can be lost. A
+runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped. A
+heartbeat is written whole or not at all, and a heartbeat that cannot be written is one missed, never a failed tick.
 
 **Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
 that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
@@ -176,34 +176,45 @@ class CycleLog:
 
 
 def stop_reason(root: str | Path) -> str:
-    """Why the ``STOP`` file in the loop's folder halts it, or ``""``. It stands unless its bytes are exactly those the last
-    start lifted. What was added after them is the stop in force, and any other change leaves the whole file standing. One
-    that cannot be read, or that records which cannot be read might have lifted, still stops."""
+    """Why the ``STOP`` file in the loop's folder halts it, or ``""``. It stands unless it is the very file the last start
+    lifted: the same digest, length and modification time, since bytes alone cannot say a person wrote again. What was added
+    after those bytes is the stop in force, and any other change leaves the whole file standing. One that cannot be read, or
+    that records which cannot be read might have lifted, still stops."""
     path, log = Path(root) / STOP_FILE, Path(root) / CYCLE_LOG
-    if not path.exists():
-        return ""
     try:
-        held = path.read_bytes()
+        written, held = path.stat().st_mtime_ns, path.read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        return ""
+    except OSError as exc:
+        return _unreadable(exc)
+    try:
         start = (CycleLog(log).started() or {}) if log.is_file() else {}
     except (OSError, LedgerError) as exc:
-        return f"a STOP file is present and could not be read ({type(exc).__name__})"
+        return _unreadable(exc)
     lifted = start.get("lifted_bytes", 0)
     if start.get("lifted") and hashlib.sha256(held[:lifted]).hexdigest() == start["lifted"]:
-        if len(held) == lifted:
+        if len(held) > lifted:
+            held = held[lifted:]
+        elif written == start.get("lifted_mtime_ns"):
             return ""
-        held = held[lifted:]
     text = held.decode("utf-8", "replace").strip()
     return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
+
+
+def _unreadable(exc: Exception) -> str:
+    return f"a STOP file is present and could not be read ({type(exc).__name__})"
 
 
 def stop_to_lift(root: str | Path) -> dict[str, Any]:
     """The ``STOP`` file as it stands, for a start to record what a person agreed to lift, or nothing when there is none
     to read. No start moves or deletes the file: this record is all that lifting is."""
+    path = Path(root) / STOP_FILE
     try:
-        held = (Path(root) / STOP_FILE).read_bytes()
+        written = path.stat().st_mtime_ns     # before the read: a write between them leaves an old time, so the stop stands
+        held = path.read_bytes()
     except OSError:
         return {}
-    return {"lifted": hashlib.sha256(held).hexdigest(), "lifted_bytes": len(held)}
+    return {"lifted": hashlib.sha256(held).hexdigest(), "lifted_bytes": len(held), "lifted_mtime_ns": written}
 
 
 def file_digest(path: Any) -> str:
@@ -231,8 +242,8 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
 
     Each stop writes a token of its own there, so no two stops leave the same bytes, and that is what keeps a stop: a start
-    lifts only the bytes a person agreed to, so it needs no record to know a new stop when it sees one. A stop that cannot
-    change the file raises, because the bytes it could not change may be lifted.
+    lifts only the file a person agreed to, so it needs no record to know a new stop when it sees one. A stop that cannot
+    change the file raises, because the file it could not change may be lifted.
 
     It is also counted, first and in a file no lock stands in front of, because the records can be held for as long as a
     tick lasts and a stop may never wait. The count serves a restart after a person has removed the file, when no note of

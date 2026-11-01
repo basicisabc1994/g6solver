@@ -10,8 +10,8 @@ it starts does, and the dialog names it.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
 settings file needs a new agreement even with no stop in between. It never moves or deletes a ``STOP`` file. It records the
-exact bytes the person agreed to lift, and any other bytes stand, so a stop it was not shown survives it, whatever became of
-any count or record.
+file the person agreed to lift, by digest, length and modification time, and anything else stands, so a stop it was not shown
+survives it, whatever became of any count or record.
 
 **Stop** always works and asks nobody: it adds to the local ``STOP`` file, which is safe to repeat and works when the runner
 is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. The runner
@@ -43,7 +43,6 @@ from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     FINDINGS,
     RUNNER_LOCK,
-    STOP_FILE,
     STOPS_FILE,
     CycleLog,
     ask_to_stop,
@@ -149,9 +148,9 @@ def _cannot_start(root: Path) -> dict | None:
     return None
 
 
-def _terms(root: Path, settings: dict[str, Any], standing: str) -> str:
-    """A digest of all a dialog shows or stands on: the whole settings file, the Python file, who enrolled it, the exact
-    bytes of any stop in place, whose digest is ``standing``, and any pause. Each stop changes those bytes."""
+def _terms(root: Path, settings: dict[str, Any], standing: dict[str, Any]) -> str:
+    """A digest of all a dialog shows or stands on: the whole settings file, the Python file, who enrolled it, any stop in
+    place as ``stop_to_lift`` reads it, which is ``standing``, and any pause. Any write to the stop changes that."""
     log = _log(root)
     return digest_of({"settings": settings, "domain_file": file_digest(settings.get("domain_file")),
                       "enrolled": log.enrolled(), "stop": standing, "paused": log.paused()})
@@ -166,7 +165,7 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
     if cannot is not None:
         return cannot
     settings, log = read_settings(root), _log(root)
-    terms = _terms(root, settings, file_digest(root / STOP_FILE))
+    terms = _terms(root, settings, stop_to_lift(root))
     enrolled = log.enrolled()
     use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
            "you until the week's last day" for w in windows_from(settings)]
@@ -174,8 +173,8 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
                 f"Python file: {settings.get('domain_file')}, as enrolled by {enrolled['by']} (the name they gave).", *use,
                 f"Settings digest: {digest_of(settings)}.", RUNS]
     if stop_reason(root):
-        question.append(f"Starting lifts the stop now in place ({stop_reason(root)}). Its file stays, and from then on only a "
-                        "change to it stops the loop: g6_improve_stop makes one.")
+        question.append(f"Starting lifts the stop now in place ({stop_reason(root)}). Its file stays, and any write to it after "
+                        "that stops the loop again.")
     if log.paused():
         question.append(f"The loop is paused, so it will spend nothing until you lift that: {log.paused()}"[:300])
     return root, "\n".join([*question, NAME]), terms
@@ -209,8 +208,8 @@ def _watch(root: Path, process: Any) -> dict:
 def start(root: Path, who: str, shown: str | None = None) -> dict:
     """Record who started it and start the runner. What the person read may have moved while the dialog was up, so
     ``shown``, the terms ``asked`` gave, must still be what stands, and a change asks them again. The start records what
-    it stands on, so a restart holds to the same settings and any stop since closes it. It lifts only the ``STOP`` bytes
-    those terms cover, by recording them: any other stop stands, and nothing starts."""
+    it stands on, so a restart holds to the same settings and any stop since closes it. It lifts only the ``STOP`` file
+    those terms cover, by recording it: any other stop stands, and nothing starts."""
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
@@ -218,7 +217,7 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
     try:
         if stops < 0:
             raise OSError(f"{STOPS_FILE} cannot be read")      # a restart would read two unreadable counts as one
-        if shown is not None and _terms(root, settings, agreed.get("lifted", "")) != shown:
+        if shown is not None and _terms(root, settings, agreed) != shown:
             return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                             ASK_AGAIN, running=False, folder=str(root))
         with Coordination(root / ".tick").mutex():
