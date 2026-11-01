@@ -2,13 +2,23 @@
 """The loop's budget (design 6.6): weekly provider windows, paced, on the operator's one ledger."""
 from __future__ import annotations
 
+import json
 import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from g6.operator.store import OperatorStore
-from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow, ceiling, target
+from g6.self_maintenance.pacing import (
+    SETTINGS_FILE,
+    AccountReading,
+    BudgetMeter,
+    ProviderWindow,
+    ceiling,
+    read_settings,
+    target,
+    windows_from,
+)
 
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 
@@ -231,3 +241,59 @@ def test_8_a_refused_admission_writes_nothing(tmp_path):
     meter = _shared_meters(tmp_path / "operator.db", 1)[0]
     assert not meter.reserve("claude", _day(1), 201).admitted
     assert meter.reading("claude", _day(1)).used == 0
+
+
+# When room comes, and the settings file ----------------------------------------------------------------------------------
+
+def test_the_next_day_of_a_window_is_when_its_ceiling_can_rise():
+    window = ProviderWindow("claude", 1000, START)
+    assert window.next_day(START) == START + timedelta(days=1)
+    assert window.next_day(_day(7)) == START + timedelta(days=7)      # the last day ends the week
+
+
+def test_room_comes_with_the_soonest_rise_of_any_ceiling():
+    windows = (ProviderWindow("claude", 100, START), ProviderWindow("codex", 100, START + timedelta(hours=5)))
+    meter = BudgetMeter(windows, store=OperatorStore(":memory:"))
+    assert meter.next_room(START + timedelta(hours=6)) == START + timedelta(days=1)
+    assert meter.next_room(START + timedelta(hours=25)) == START + timedelta(hours=29)
+
+
+def _settings(tmp_path, **window) -> dict:
+    fields = {"provider": "claude", "allowance": 5000, "week_start": START.isoformat()} | window
+    (tmp_path / SETTINGS_FILE).write_text(json.dumps({"windows": [fields]}), encoding="utf-8")
+    return read_settings(tmp_path)
+
+
+def test_window_settings_come_from_the_file_in_the_loops_folder(tmp_path):
+    [window] = windows_from(_settings(tmp_path, reserve_share=0.3))
+    assert (window.provider, window.allowance, window.week_start, window.reserve_share) == ("claude", 5000, START, 0.3)
+
+
+def test_an_allowance_is_an_estimate_until_the_file_says_it_is_a_real_figure(tmp_path):
+    assert windows_from(_settings(tmp_path))[0].estimated is True
+    assert windows_from(_settings(tmp_path, estimated=False))[0].estimated is False
+
+
+def test_the_owners_reserve_stays_the_default_when_the_file_is_silent(tmp_path):
+    assert windows_from(_settings(tmp_path))[0].reserve_share == 0.2
+
+
+@pytest.mark.parametrize("bad", [
+    {"allowance": 0}, {"allowance": "plenty"}, {"week_start": "soon"}, {"week_start": "2026-10-26T08:00:00"},
+    {"reserve_share": 1.0}, {"provider": ""},
+])
+def test_a_settings_file_that_makes_no_sense_is_refused(tmp_path, bad):
+    with pytest.raises(ValueError):
+        windows_from(_settings(tmp_path, **bad))
+
+
+@pytest.mark.parametrize("text", ["not json", "[]", '{"windows": 3}', '{"windows": [3]}', '{"windows": []}'])
+def test_a_settings_file_that_cannot_be_read_says_so(tmp_path, text):
+    (tmp_path / SETTINGS_FILE).write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError):
+        windows_from(read_settings(tmp_path))
+
+
+def test_a_missing_settings_file_says_so(tmp_path):
+    with pytest.raises(ValueError, match=SETTINGS_FILE):
+        read_settings(tmp_path)

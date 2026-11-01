@@ -10,17 +10,24 @@ as its month: a reservation counts in full until it is settled, so a tick that c
 unit is whatever the caller counts: model calls until the relay of design section 3 can read tokens from session
 records. ``read_account`` reports the whole account's use, the owner's own sessions included, and the loop gives way to
 it; an allowance or a reading that is an estimate says so.
+
+The windows come from ``settings.json`` in the loop's folder. An allowance there is an estimate until the file says
+``"estimated": false``, which it should only once a real figure exists.
 """
 from __future__ import annotations
 
+import json
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 from g6.operator.store import BudgetRefused, OperatorStore
 
 OWNER = "g6-loop"
+SETTINGS_FILE = "settings.json"
 _ACCOUNT = "model"
 _WEEK = timedelta(days=7)
 _DAY = timedelta(days=1)
@@ -48,6 +55,38 @@ class ProviderWindow:
         elapsed = now - self.week_start
         start = self.week_start + _WEEK * (elapsed // _WEEK)
         return start, (now - start) // _DAY + 1
+
+    def next_day(self, now: datetime) -> datetime:
+        """When this provider's next day begins, which is when its ceiling can rise."""
+        start, day = self.place(now)
+        return start + _DAY * day
+
+
+def read_settings(root: str | Path) -> dict[str, Any]:
+    """The settings file in the loop's folder. A ``ValueError`` says what is wrong with it."""
+    path = Path(root) / SETTINGS_FILE
+    try:
+        found = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"{SETTINGS_FILE} cannot be read in {root} ({type(exc).__name__})") from None
+    except ValueError as exc:
+        raise ValueError(f"{SETTINGS_FILE} is not JSON: {exc}") from None
+    if not isinstance(found, dict):
+        raise ValueError(f"{SETTINGS_FILE} is not a JSON object")
+    return found
+
+
+def windows_from(settings: Mapping[str, Any]) -> tuple[ProviderWindow, ...]:
+    """The provider windows a settings file declares; a ``ValueError`` when there are none, or one makes no sense."""
+    rows = settings.get("windows")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"{SETTINGS_FILE} needs windows: a list of at least one provider's week")
+    try:
+        return tuple(ProviderWindow(str(row["provider"]), float(row["allowance"]), datetime.fromisoformat(row["week_start"]),
+                                    float(row.get("reserve_share", 0.2)), row.get("estimated", True) is not False)
+                     for row in rows)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(f"{SETTINGS_FILE}: a window needs provider, allowance and week_start ({exc!r})") from None
 
 
 def target(allowance: float, day: int) -> float:
@@ -106,6 +145,10 @@ class BudgetMeter:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
         return self._look(provider, now)[0]
 
+    def next_room(self, now: datetime) -> datetime:
+        """The next time any ceiling can rise: the soonest a tick refused for its budget could be admitted."""
+        return min(window.next_day(now) for window in self.windows.values())
+
     def _look(self, provider: str, now: datetime) -> tuple[Admission, AccountReading | None]:
         window = self.windows.get(provider)
         if window is None:
@@ -150,4 +193,5 @@ class BudgetMeter:
         return self.scope.settle(admission.venture, admission.reservation, metered=used)
 
 
-__all__ = ["AccountReading", "Admission", "BudgetMeter", "ProviderWindow", "ceiling", "target"]
+__all__ = ["AccountReading", "Admission", "BudgetMeter", "ProviderWindow", "SETTINGS_FILE", "ceiling", "read_settings",
+           "target", "windows_from"]
