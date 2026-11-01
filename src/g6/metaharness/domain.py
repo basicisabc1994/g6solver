@@ -12,8 +12,9 @@ judge is right: the loop assumes that, and ``ShadowLoop`` reports it as assumed.
 
 **Three separations.** The development cases are cut by a seeded hash of each case's id (``cut_pool``, design 6.5): the
 cases proposers tune on, the cases candidates race on, the held-out cases the gate scores, and the cases the monitor
-audits. A case keeps its side however the pool grows. The sealed split is a different pool (design 6.3), and the loop
-holds only its vault and its cases' hashes.
+audits. A case keeps its side however the pool grows, unless the hash would leave a side under its minimum: a pool that
+small is cut by counts along the same seeded order. The sealed split is a different pool (design 6.3), and the loop holds
+only its vault and its cases' hashes.
 
 **What the sealed guard is, and is not.** ``sealed_closed`` is a check inside one process, as ``g6.core.vault`` says of
 itself. While the loop develops it refuses a Python-level open or memory map of anything the vault covers, by path or by
@@ -33,9 +34,11 @@ import inspect
 import os
 import sys
 import threading
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from itertools import accumulate, product
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -43,20 +46,25 @@ from g6.core.ledger import digest
 from g6.core.vault import AccessDenied, Vault
 from g6.harness import Check
 from g6.metaharness.executor import ExecutorFactory
+from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.pool import EditSpace
 from g6.metaharness.propose import ProposerView
 from g6.metaharness.recovery import INTAKE_BLOCKED, ORACLE_SILENT, partition
-from g6.metaharness.schema import Model, PipelineStep, SuiteCase
+from g6.metaharness.schema import EvidencePolicy, Model, PipelineStep, SuiteCase
 
 NO_JUDGE = "G6_E_LOOP_NO_INDEPENDENT_JUDGE"
 NO_SEALED = "G6_E_LOOP_NO_SEALED_SPLIT"
 SEALED_OVERLAP = "G6_E_LOOP_SEALED_OVERLAP"
 PAID_MODEL = "G6_E_LOOP_PAID_MODEL"
+FALLBACK_MODEL = "G6_E_LOOP_FALLBACK_MODEL"
 INDEPENDENT = "independent"
 #: Causes no profile can change: only a person can (recovery says who acts on each).
 PERSON_ONLY = (INTAKE_BLOCKED, ORACLE_SILENT)
 #: Shares of the development pool, in the order the seeded hash walks them.
 SHARES = (("tune", 0.25), ("selection", 0.15), ("held_out", 0.35), ("monitor", 0.25))
+_ENDS = tuple(zip((name for name, _ in SHARES), accumulate(share for _, share in SHARES)))
+#: The fewest cases a side can work with, which the loop refuses a pool for.
+FEWEST = {"tune": 1, "selection": 1, "held_out": EvidencePolicy().min_cases, "monitor": MIN_PAIRS}
 _NON_ANSWERS = ("", "this is not an answer")   # no digit or label in it: a judge may fairly read those as answers
 
 
@@ -142,19 +150,72 @@ class Cut:
         return digest({name: [c.ref() for c in getattr(self, name)] for name, _ in SHARES})
 
 
+def _point(seed: int, key: str) -> float:
+    return int.from_bytes(hashlib.sha256(f"{seed}:{key}".encode()).digest()[:8], "big") / 2 ** 64
+
+
+def _by_hash(points: Mapping[str, float]) -> dict[str, str]:
+    return {key: next((name for name, end in _ENDS if point < end), SHARES[-1][0]) for key, point in points.items()}
+
+
+def _by_counts(order: Sequence[str], sizes: Mapping[str, int]) -> dict[str, str]:
+    """The same order, divided by counts. A group goes where its first case falls, unless any of it falls in held-out's
+    share: that side has the minimum no person can lower, so a group on either of its edges never leaves it short."""
+    total = sum(sizes.values())
+    ends = [(name, round(end * total)) for name, end in _ENDS]
+    (_, held_from), (_, held_to) = ends[1], ends[2]
+    sides: dict[str, str] = {}
+    walked = 0
+    for key in order:
+        first, walked = walked, walked + sizes[key]
+        sides[key] = "held_out" if first < held_to and walked > held_from else next(name for name, end in ends if first < end)
+    return sides
+
+
+def _covering(order: Sequence[str], sizes: Mapping[str, int], sides: Mapping[str, str]) -> dict[str, str]:
+    """``sides`` moved no further than ``FEWEST`` needs. Each group in turn keeps its side if the groups after it can still
+    meet what is left, and otherwise takes the first side that lets them. When intact groups cannot meet every minimum,
+    ``sides`` stands, and the loop refuses the pool. What is left is a small table, so this is exact, not a search."""
+    names, least = tuple(FEWEST), tuple(FEWEST.values())
+
+    def less(need: tuple[int, ...], side: str, size: int) -> tuple[int, ...]:
+        return tuple(max(0, left - size) if name == side else left for name, left in zip(names, need))
+
+    every = tuple(product(*(range(most + 1) for most in least)))
+    met = [{(0,) * len(names)}]                       # what the groups from each one on can meet, built from the last
+    for key in reversed(order):
+        met.append({need for need in every if any(less(need, name, sizes[key]) in met[-1] for name in names)})
+    met.reverse()
+    if least not in met[0]:
+        return dict(sides)
+    covered: dict[str, str] = {}
+    need = least
+    for index, key in enumerate(order):
+        covered[key] = next(name for name in (sides[key], *names) if less(need, name, sizes[key]) in met[index + 1])
+        need = less(need, covered[key], sizes[key])
+    return covered
+
+
 def cut_pool(cases: Sequence[SuiteCase], seed: int) -> Cut:
-    """Each case goes to a side by a seeded hash of its id, so it keeps that side whatever else joins the pool. Cases that are not
-    independent name a ``meta["group"]``, which is hashed in place of the id, so a group stays on one side."""
+    """Each case goes to a side by a seeded hash of its id, so it keeps that side whatever else joins the pool. Re-enrolling
+    with a fresh split stands on that: what proposers saw stays out of held-out. Cases that are not independent name a
+    ``meta["group"]``, which is hashed in place of the id, so a group stays on one side.
+
+    A hash is only near the shares, so a small pool can leave a side under its minimum (``FEWEST``). Such a pool is cut by
+    counts instead, along the same seeded order, and a pool of 86 gives held-out 30, with groups moved only as far as every
+    minimum needs. Its cases can then change sides as the pool changes, and enrolling refuses a held-out case that proposers
+    saw."""
+    keys = [case.meta.get("group") or case.case_id for case in cases]
+    sizes = Counter(keys)
+    points = {key: _point(seed, key) for key in sizes}
+    sides = _by_hash(points)
+    counted = Counter(sides[key] for key in keys)
+    if any(counted[name] < least for name, least in FEWEST.items()):
+        order = sorted(points, key=points.__getitem__)
+        sides = _covering(order, sizes, _by_counts(order, sizes))
     parts: dict[str, list[SuiteCase]] = {name: [] for name, _ in SHARES}
-    for case in cases:
-        point = int.from_bytes(hashlib.sha256(f"{seed}:{case.meta.get('group') or case.case_id}".encode()).digest()[:8], "big") / 2 ** 64
-        for name, share in SHARES:
-            if point < share:
-                parts[name].append(case)
-                break
-            point -= share
-        else:
-            parts[SHARES[-1][0]].append(case)
+    for key, case in zip(keys, cases):
+        parts[sides[key]].append(case)
     return Cut(**{name: tuple(found) for name, found in parts.items()})
 
 
@@ -189,6 +250,14 @@ def _judge_problems(judge: Judge | None, cases: Sequence[SuiteCase]) -> list[str
     return found
 
 
+def backends(caller: Any) -> int:
+    """How many models can answer through ``caller``, seen through the wrappers ``g6.core.llm`` has. A wrapper of a domain's
+    own that holds a fallback under another name is not seen."""
+    if hasattr(caller, "_callers"):
+        return sum(backends(inner) for inner in caller._callers)
+    return backends(caller._inner) if hasattr(caller, "_inner") else 1
+
+
 def domain_problems(domain: Domain) -> list[tuple[str, str]]:
     """Why the loop will not run on this domain, each with its stable code; empty when it will."""
     cases, sealed = domain.development(), domain.sealed()
@@ -204,6 +273,10 @@ def domain_problems(domain: Domain) -> list[tuple[str, str]]:
     paid = sorted(name for name, model in domain.execution().models.items() if model.paid)
     if paid:
         found.append((PAID_MODEL, f"the loop never spends API credits, and these declared models are paid: {paid}"))
+    mixed = sorted(name for name, model in domain.execution().models.items() if backends(model.caller) > 1)
+    if mixed:
+        found.append((FALLBACK_MODEL, f"these declared models can answer from more than one backend: {mixed}. A paired "
+                                      "comparison would compare backends, and a limit on one would pass unseen"))
     return found
 
 
@@ -272,6 +345,6 @@ def sealed_closed(vault: Vault) -> Iterator[list[str]]:
         breaches.extend(_held_open(vault))
 
 
-__all__ = ["Cut", "Domain", "Execution", "FailureRecord", "Judge", "NO_JUDGE", "NO_SEALED", "PAID_MODEL",
-           "PERSON_ONLY", "SEALED_OVERLAP", "SHARES", "SealedSplit", "cut_pool", "domain_problems", "judge_source",
-           "reason_coded", "sealed_closed"]
+__all__ = ["Cut", "Domain", "Execution", "FALLBACK_MODEL", "FEWEST", "FailureRecord", "Judge", "NO_JUDGE", "NO_SEALED",
+           "PAID_MODEL", "PERSON_ONLY", "SEALED_OVERLAP", "SHARES", "SealedSplit", "backends", "cut_pool", "domain_problems",
+           "judge_source", "reason_coded", "sealed_closed"]

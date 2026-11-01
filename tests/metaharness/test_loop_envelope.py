@@ -15,16 +15,21 @@ import pytest
 
 import g6
 from g6.core import stop
-from g6.core.llm import FakeLLM
+from g6.core.ledger import LedgerError
+from g6.core.llm import EmptyRetry, FakeLLM, LLMError
+from g6.core.vault import AccessDenied
 from g6.harness import Check
 from g6.integrity import build_manifest
 from g6.metaharness import Model, Profile, SuiteCase
 from g6.metaharness import monitor as drift
 from g6.metaharness.domain import Judge
-from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
+from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Requests
 from g6.metaharness.method import Method
+from g6.metaharness.propose import DevBudget
+from g6.metaharness.select import race, race_calls
 from g6.self_maintenance.envelope import heartbeat
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
+from g6.self_maintenance.usage import REFRESH
 from g6.workspace._coordination import Coordination
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -648,6 +653,57 @@ def test_a_truly_fresh_split_resets_the_count_and_the_head_carries_over(tmp_path
     assert again.mh._head() == head and not spent & _in_held_out(again)
 
 
+def _with_answer(domain, case_id: str, answer: str) -> None:
+    domain.pool[:] = [dataclasses.replace(c, expected=answer) if c.case_id == case_id else c for c in domain.pool]
+
+
+def test_enrolling_again_on_an_open_handle_shows_proposers_the_cases_it_froze(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.mh.measure(budget=120)["view"].dev
+    changed = loop.cut.tune[0].case_id
+    _with_answer(domain, changed, "999999")
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    assert loop._changed() == []
+    shown = loop.mh.measure(budget=120)["view"].dev
+    assert next(case["expected"] for case in shown if case["case_id"] == changed) == "999999"
+
+
+def test_enrolling_again_on_an_open_handle_runs_the_split_it_recorded(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    spent = _in_held_out(loop)
+    domain.pool[:] = [c for c in domain.pool if c.case_id not in spent] + _fresh_cases(5000, 240)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    row, fresh = loop.log.enrolled(), _loop(tmp_path, domain=domain)[0]
+    assert row["held_out_digest"] == loop.workflow.suite.digest("held_out") == fresh.workflow.suite.digest("held_out")
+    assert row["held_out"] == sorted(_in_held_out(fresh)) and not spent & _in_held_out(loop)
+    assert loop.mh.held_out_left() == loop.workflow.policy.max_evaluations
+    assert _code(loop.tick()) != "G6_E_LOOP_FROZEN_CHANGED"
+
+
+def test_a_spent_split_is_seen_on_an_open_handle_as_on_a_fresh_one(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    domain.pool.extend(_fresh_cases(5000, 40))
+    got = loop.enrol("Ada")
+    assert _code(got) == "G6_E_LOOP_SPLIT_REUSED" and _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED"
+
+
+def test_cases_that_no_longer_fill_the_splits_refuse_enrolling_again_and_write_nothing(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    rows = len(loop.log.enrolments())
+    domain.pool[:] = domain.pool[:10]
+    assert _code(loop.enrol("Ada")) == "G6_E_LOOP_POOL_TOO_SMALL" and len(loop.log.enrolments()) == rows
+    assert _code(loop.tick()) == "G6_E_LOOP_POOL_TOO_SMALL"
+
+
+def test_enrolling_again_keeps_what_the_handle_counts_with(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    Limited(domain, lambda problem: True)
+    loop.enrol("Ada")
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT"             # it went through this handle's count of requests
+
+
 def test_a_new_seed_cannot_move_cases_proposers_saw_into_the_held_out_split(tmp_path):
     loop, domain = _enrolled(tmp_path)
     moved = dataclasses.replace(SETTINGS, seed=SETTINGS.seed + 1)
@@ -677,6 +733,505 @@ def test_the_worst_case_counts_every_proposer_the_method_asks_for(tmp_path):
     loop, _ = _enrolled(tmp_path, settings=dataclasses.replace(SETTINGS, method=more))
     fewer, _ = _enrolled(tmp_path / "b", settings=SETTINGS)
     assert loop.worst_case() > fewer.worst_case()
+
+# An unchanged head is not measured again ------------------------------------------------------------------------------
+
+def test_an_unchanged_head_costs_nothing_to_measure_tick_after_tick(tmp_path):
+    loop, domain = _enrolled(tmp_path, domain=domains.WordProblems(tmp_path, weak=1.0))
+    assert loop.tick()["outcome"] == "idle"
+    calls = len(domain.llm.calls)
+    assert calls == len(loop.cut.tune)
+    got = loop.tick()
+    assert got["outcome"] == "idle" and len(domain.llm.calls) == calls and got["budget"]["charged"] == 0
+
+
+def test_a_cycles_proposers_are_shown_the_view_already_measured(tmp_path):
+    method = Method(cycles=2, propose_budget=120, select_budget=400, race_block=12, reflect_calls=1, use_recovery=False,
+                    use_reflection=False)
+    loop, domain = _enrolled(tmp_path, settings=dataclasses.replace(SETTINGS, method=method))
+    loop.tick()
+    tuning = {c.input for c in loop.cut.tune}
+    assert sum(user.rsplit("Problem: ", 1)[-1].strip() in tuning for _, user in domain.llm.calls) == len(tuning)
+
+
+def test_a_new_head_is_measured_once(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    calls = len(domain.llm.calls)
+    view = loop.mh.measure(budget=120)["view"]
+    assert len(domain.llm.calls) == calls + len(loop.cut.tune) and domains.WORKING in view.base["prompt"]
+    assert loop.mh.measure(budget=120)["view"] is view and len(domain.llm.calls) == calls + len(loop.cut.tune)
+
+
+def test_the_same_head_on_other_cases_is_measured_anew(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.mh.measure(budget=120)
+    calls, fewer = len(domain.llm.calls), loop.cut.tune[1:]
+    loop.mh.workflow = dataclasses.replace(loop.mh.workflow, suite=dataclasses.replace(loop.mh.workflow.suite, dev=fewer))
+    assert len(loop.mh._view(DevBudget(120)).dev) == len(fewer) and len(domain.llm.calls) == calls + len(fewer)
+
+
+def test_a_view_short_of_its_budget_is_kept_for_that_budget_only(tmp_path):
+    loop, _ = _enrolled(tmp_path)
+    short = loop.mh.measure(budget=5)["view"]
+    assert len(short.ran) == 5 and loop.mh.measure(budget=5)["view"] is short
+    assert len(loop.mh.measure(budget=120)["view"].ran) == len(loop.cut.tune)
+
+
+def test_a_run_the_model_failed_is_not_kept_as_what_the_head_does(tmp_path):
+    domain = domains.WordProblems(tmp_path, weak=1.0)
+    tutor, down = domain.tutor, [True]
+
+    def until_it_is_back(system: str, user: str) -> str:
+        if down[0]:
+            raise LLMError("G6_E_LLM_TIMEOUT: no answer in time")
+        return tutor(system, user)
+
+    domain.llm._responder = until_it_is_back
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.mh.measure(budget=120)["view"].failures
+    down[0] = False
+    assert loop.mh.measure(budget=120)["view"].failures == ()
+
+
+def test_a_failed_view_is_read_by_the_cycles_proposers_and_not_run_again_for_each(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: no answer in time")
+
+    domain.llm._responder = down
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=dataclasses.replace(SETTINGS, audit_per_tick=0))
+    assert loop.mh.measure(budget=120)["view"].failures
+    calls = len(domain.llm.calls)
+    assert loop.mh._view(DevBudget(120)).failures and len(domain.llm.calls) == calls
+
+
+def test_a_view_cut_off_at_what_a_tick_reserved_is_not_kept(tmp_path, monkeypatch):
+    loop, _ = _enrolled(tmp_path, domain=domains.WordProblems(tmp_path, weak=1.0))
+    with monkeypatch.context() as cut_short:
+        cut_short.setattr(loop, "worst_case", lambda: 5)
+        assert _code(loop.tick()) == "G6_E_LOOP_TICK_BUDGET_SPENT"
+    assert loop.tick()["outcome"] == "idle"
+
+# What a tick reserves, at the design's example allowance ---------------------------------------------------------------
+EXAMPLE = LoopSettings(windows=(ProviderWindow("claude", 5000, START),))        # 20% kept back, and Method's defaults
+DAY_ONE, DAY_TWO = START + timedelta(hours=1), START + timedelta(days=1, hours=1)
+
+
+def _one_call(tmp_path, *, pool=86):
+    """A domain whose every run is one model call, which is all it declares."""
+    domain = domains.WordProblems(tmp_path, pool=pool)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, max_calls_per_run=1)})
+    return domain
+
+
+def test_a_one_call_domain_on_a_small_pool_is_admitted_on_day_one_at_the_example_allowance(tmp_path):
+    loop, _ = _enrolled(tmp_path, domain=_one_call(tmp_path), settings=EXAMPLE, now=lambda: DAY_ONE)
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_a_one_call_domain_on_a_larger_pool_is_admitted_on_day_two_at_the_example_allowance(tmp_path):
+    days = [DAY_ONE]
+    loop, _ = _enrolled(tmp_path, domain=_one_call(tmp_path, pool=240), settings=EXAMPLE, now=lambda: days[0])
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and "day 1's ceiling of 1000" in got["message"]
+    days[0] = DAY_TWO
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_the_one_call_executor_is_not_held_to_the_cap_a_model_declares_by_default(tmp_path):
+    """``Model`` caps a run at 8 calls, and a run of G6's own executor is one call and a retry of an empty answer."""
+    domain = domains.WordProblems(tmp_path, pool=86)
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=EXAMPLE, now=lambda: DAY_TWO)
+    assert domain.execution().models["local"].max_calls_per_run == 8 and loop._calls_per_run() == 2
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_a_real_week_at_the_example_allowance_runs_tick_after_tick_and_stays_under_the_ceiling(tmp_path):
+    days = [START]
+    domain = _one_call(tmp_path)
+    proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=EXAMPLE, proposer=proposer, now=lambda: days[0])
+    for hour in range(0, 7 * 24, 6):
+        days[0] = START + timedelta(hours=hour, minutes=1)
+        assert _code(loop.tick()) != "G6_E_LOOP_TICK_BUDGET_SPENT"
+        seen = loop.meter.reading("claude", days[0])
+        assert seen.used <= seen.ceiling
+    assert seen.used >= 3000 and len(loop.log.cycles()) >= 7
+
+
+def test_the_evaluation_is_sized_by_the_cases_it_has_not_by_what_it_may_call(tmp_path):
+    def worst(folder, **changes) -> int:
+        loop, _ = _loop(tmp_path / folder, domain=_one_call(tmp_path / folder), settings=dataclasses.replace(EXAMPLE, **changes))
+        return loop.worst_case()
+
+    assert worst("a", eval_calls=2000) == worst("b", eval_calls=9000)    # 30 cases cannot call 2000 times, whatever is allowed
+    assert worst("c", eval_calls=20) < worst("a", eval_calls=2000)       # a smaller limit still lowers it
+
+
+def _every_call(ctx):
+    """A domain's own executor that spends all its run may: what a one-call rule cannot see."""
+
+    def execute(contract):
+        caller = ctx.caller("answer")
+        prompt = ctx.profile.prompt or ""
+        return [caller.complete(prompt, contract.task) for _ in range(caller.budget.max_model_calls)][-1]
+
+    return execute
+
+
+def test_a_larger_pool_reserves_more_and_so_does_a_factory_of_the_domains_own(tmp_path):
+    def worst(folder, domain) -> int:
+        return _loop(tmp_path / folder, domain=domain, settings=EXAMPLE)[0].worst_case()
+
+    small = worst("a", domains.WordProblems(tmp_path / "a", pool=86))
+    assert small < worst("b", domains.WordProblems(tmp_path / "b", pool=240))
+    own = domains.WordProblems(tmp_path / "c", pool=86)
+    run = own.execution()
+    own.execution = lambda: dataclasses.replace(run, factory=_every_call)
+    assert small < worst("c", own)
+
+
+@pytest.mark.parametrize(("per_run", "pool", "allowance"), [(1, 86, 5000), (3, 86, 50_000), (8, 120, 200_000)])
+def test_no_tick_spends_past_what_it_reserved_when_all_it_may_do_is_done(tmp_path, per_run, pool, allowance):
+    domain = domains.WordProblems(tmp_path, pool=pool)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, factory=_every_call, models={
+        "local": Model(domain.llm, max_calls_per_run=per_run)})
+    proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))
+    settings = LoopSettings(windows=(ProviderWindow("claude", allowance, START),))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=settings, proposer=proposer, now=lambda: START + timedelta(days=6, hours=1))
+    for _ in range(4):
+        worst = loop.worst_case()
+        got = loop.tick()
+        assert _code(got) != "G6_E_LOOP_TICK_BUDGET_SPENT" and got["budget"]["charged"] <= worst, got["message"]
+
+
+def test_a_caller_that_retries_past_the_estimate_still_stops_at_what_was_reserved(tmp_path):
+    domain = _one_call(tmp_path)
+    backend = FakeLLM(default="")
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(EmptyRetry(backend), max_calls_per_run=1)})
+    proposer = FakeLLM(lambda system, user: json.dumps({"prompt": f"{domains.WORKING} Try {len(proposer.calls)}."}))
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=EXAMPLE, proposer=proposer, now=lambda: DAY_TWO)
+    worst = loop.worst_case()
+    got = loop.tick()
+    assert got["budget"]["charged"] <= worst and len(backend.calls) + len(proposer.calls) <= worst
+
+
+def test_a_race_never_takes_more_runs_than_its_bound(tmp_path):
+    loop, domain = _enrolled(tmp_path, domain=_one_call(tmp_path), settings=EXAMPLE)
+    base = loop.mh._head()[1]
+    candidates = [base.model_copy(update={"prompt": f"{domains.WORKING} {i}"}) for i in range(7)]
+    ran = race(loop.workflow, loop.mh.factory, base, candidates, block=10, keep=0.5, budget=10 ** 6, clock=domains.Clock())
+    assert ran.calls_used <= race_calls(len(loop.cut.selection), len(candidates), 10, 0.5)
+
+# A provider's limit is a wait --------------------------------------------------------------------------------------------
+AT_A_LIMIT = ("G6_E_LLM_HOST_FAILED: claude exited 1 and gave an error result: "
+              '{"api_error_status":429,"result":"You\'ve hit your usage limit"}')
+TWO_OFFERS = ({"prompt": domains.WORKING}, {"prompt": f"{domains.WORKING} Show each step."})
+
+
+class Limited:
+    """The domain's model, which answers until ``reached(problem)`` and refuses at its limit from then until ``lifted``."""
+
+    def __init__(self, domain, reached) -> None:
+        self.tutor, self.reached, self.refused, self.lifted = domain.tutor, reached, 0, False
+        domain.llm._responder = self
+
+    def __call__(self, system: str, user: str) -> str:
+        if not self.lifted and self.reached(user.rsplit("Problem: ", 1)[-1].strip()):
+            self.refused += 1
+            raise LLMError(AT_A_LIMIT)
+        return self.tutor(system, user)
+
+
+def _nothing_counted(loop) -> None:
+    assert loop.log.cycles() == [] and loop.log.failed_streak() == 0 and loop.log.paused() == ""
+
+
+def test_a_limit_ends_the_tick_at_once_as_a_budget_wait_and_scores_nothing(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    limited, head = Limited(domain, lambda problem: True), loop.mh._head()
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["completion_state"] == "blocked-escalated"
+    assert got["wait_until"] == (NOW + REFRESH).isoformat() and "hit your usage limit" in got["message"]
+    assert limited.refused == 1 and loop.mh._head() == head and "outcome" not in got
+    _nothing_counted(loop)
+
+
+def _reopened(tmp_path, domain, now=lambda: NOW):
+    return ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}), now=now,
+                      clock=domains.Clock())
+
+
+def test_a_restart_before_a_limit_ends_sends_nothing_until_it_does(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    limited = Limited(domain, lambda problem: True)
+    until = loop.tick()["wait_until"]
+    sent, refused = len(domain.llm.calls), limited.refused
+    again = _reopened(tmp_path, domain)
+    got = again.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == until
+    assert len(domain.llm.calls) == sent and limited.refused == refused
+    _nothing_counted(again)
+
+
+def test_a_restart_after_a_limit_ended_runs(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    limited = Limited(domain, lambda problem: True)
+    until = datetime.fromisoformat(loop.tick()["wait_until"])
+    limited.lifted = True
+    got = _reopened(tmp_path, domain, now=lambda: until).tick()
+    assert _code(got) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 0 and got["outcome"]
+
+
+def test_the_latest_limit_of_a_provider_is_the_one_a_restart_holds(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    loop.log.limit("claude", (NOW + timedelta(hours=5)).isoformat())
+    loop.log.limit("claude", (NOW + timedelta(hours=2)).isoformat())
+    assert _reopened(tmp_path, domain).tick()["wait_until"] == (NOW + timedelta(hours=2)).isoformat()
+
+
+def test_a_limit_the_records_would_not_take_is_still_waited_out_by_this_process(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    Limited(domain, lambda problem: True)
+
+    def refuses(*args):
+        raise PermissionError("held open")
+
+    monkeypatch.setattr(loop.log, "limit", refuses)
+    until = loop.tick()["wait_until"]
+    sent = len(domain.llm.calls)
+    assert loop.tick()["wait_until"] == until and len(domain.llm.calls) == sent
+
+
+@pytest.mark.parametrize("fields", [{}, {"provider": "claude"}, {"provider": "claude", "until": "soon"},
+                                    {"provider": "claude", "until": "2026-10-28T08:00:00"}, {"until": NOW.isoformat()}])
+def test_a_limit_row_with_no_provider_or_no_time_on_a_clock_is_refused(tmp_path, fields):
+    loop, _ = _enrolled(tmp_path)
+    with pytest.raises(LedgerError, match="limited"):
+        loop.log._append("limited", fields)
+
+
+def test_what_a_tick_sent_before_a_limit_is_charged_and_the_rest_of_its_reservation_is_given_back(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    late = {c.input for c in loop.cut.tune[10:]}
+    Limited(domain, late.__contains__)
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["charged"] == len(domain.llm.calls) - calls
+    assert loop.meter.reading("claude", NOW).used == got["charged"] < loop.worst_case()
+
+
+def test_a_limit_during_the_evaluation_spends_none_of_the_held_out_split(tmp_path):
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(*TWO_OFFERS))
+    held, left = {c.input for c in loop.cut.held_out[5:]}, loop.mh.held_out_left()
+    limited = Limited(domain, held.__contains__)
+    head = loop.mh._head()
+    assert _code(loop.tick()) == "G6_E_LOOP_BUDGET_WAIT" and limited.refused == 1
+    assert loop.mh.held_out_left() == left and loop.mh._head() == head
+    assert not any(loop.mh.ledger.rows(kind) for kind in ("evaluation", "report", "decision", "tuning_run"))
+    _nothing_counted(loop)
+
+
+def test_the_next_tick_waits_for_the_reset_spending_nothing_and_then_runs(tmp_path):
+    days = [NOW]
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS))
+    limited = Limited(domain, lambda problem: True)
+    reset = datetime.fromisoformat(loop.tick()["wait_until"])
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == reset.isoformat() and len(domain.llm.calls) == calls
+    days[0], limited.lifted = reset, True
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_limits_in_a_row_never_pause_the_loop(tmp_path):
+    days = [NOW]
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0])
+    Limited(domain, lambda problem: True)
+    for _ in range(5):
+        got = loop.tick()
+        assert _code(got) == "G6_E_LOOP_BUDGET_WAIT"
+        days[0] = datetime.fromisoformat(got["wait_until"])
+    _nothing_counted(loop)
+
+
+def test_a_limit_a_proposer_meets_ends_the_tick_as_well(tmp_path):
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(AT_A_LIMIT)
+
+    loop, domain = _enrolled(tmp_path, proposer=FakeLLM(refuses))
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_BUDGET_WAIT" and got["wait_until"] == (NOW + REFRESH).isoformat()
+    _nothing_counted(loop)
+
+
+def test_a_wait_a_server_asked_for_is_that_long(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_RATE_LIMITED: HTTP 429 from https://model asks for a wait of 120 s; with 0 s waited already")
+
+    domain.llm._responder = refuses
+    assert loop.tick()["wait_until"] == (NOW + timedelta(seconds=120)).isoformat()
+
+
+def test_a_failure_that_is_no_limit_is_still_a_failed_case_and_the_tick_runs_on(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: no answer in time")
+
+    domain.llm._responder = down
+    got = loop.tick()
+    assert _code(got) != "G6_E_LOOP_BUDGET_WAIT" and len(domain.llm.calls) > 1 and len(loop.log.cycles()) == 1
+
+
+def test_a_server_error_that_names_a_limit_in_its_body_is_a_failed_case_not_a_wait(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def broken(system: str, user: str) -> str:
+        raise LLMError("HTTP 500 from https://model: ImportError: cannot import name 'RateLimitError' from 'openai'")
+
+    domain.llm._responder = broken
+    assert _code(loop.tick()) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 1
+
+
+CODEX_AT_A_LIMIT = "G6_E_LLM_HOST_FAILED: codex exited 1: ERROR: You've hit your usage limit."
+
+
+def test_the_limit_of_this_a_limit_codex_only_printed_is_a_cycle_with_no_winner_and_pauses_nothing(tmp_path):
+    """Nothing Codex prints is read, so its account reading is what holds the next tick. Until then this is the record."""
+    loop, domain = _enrolled(tmp_path)
+
+    def at_a_limit(system: str, user: str) -> str:
+        raise LLMError(CODEX_AT_A_LIMIT)
+
+    domain.llm._responder = at_a_limit
+    assert loop.tick()["outcome"] == "no_winner" and loop.log.failed_streak() == 0 and loop.log.paused() == ""
+
+
+def test_the_limit_of_this_a_limit_codex_only_printed_during_an_evaluation_spends_one_of_the_five(tmp_path):
+    """What not reading its words costs: a refusal that says nothing true of the candidate, on a spent evaluation. A limit
+    that reads as one spends none (``test_a_limit_during_the_evaluation_spends_none_of_the_held_out_split``)."""
+    loop, domain = _enrolled(tmp_path, proposer=domains.proposes(*TWO_OFFERS))
+    held, left, tutor = {c.input for c in loop.cut.held_out[5:]}, loop.mh.held_out_left(), domain.tutor
+
+    def at_a_limit_on_the_held_out_cases(system: str, user: str) -> str:
+        if user.rsplit("Problem: ", 1)[-1].strip() in held:
+            raise LLMError(CODEX_AT_A_LIMIT)
+        return tutor(system, user)
+
+    domain.llm._responder = at_a_limit_on_the_held_out_cases
+    assert loop.tick()["outcome"] == "refused" and loop.mh.held_out_left() == left - 1
+
+
+def test_a_model_writing_of_a_limit_in_a_lost_reply_is_a_failed_case_not_a_wait(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def lost(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_HOST_FAILED: codex exited 0 but wrote no last message: assistant: You've hit your usage limit")
+
+    domain.llm._responder = lost
+    assert _code(loop.tick()) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 1
+
+
+def test_a_sealed_breach_is_recorded_even_when_a_limit_ended_the_tick(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    real, sealed = domain.failures, domain.sealed_file
+
+    def looks_at_the_sealed_split(view):
+        try:
+            sealed.read_text(encoding="utf-8")
+        except AccessDenied:
+            pass
+        return real(view)
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(AT_A_LIMIT)
+
+    domain.failures = looks_at_the_sealed_split
+    loop._proposer.inner = FakeLLM(refuses)
+    got = loop.tick()
+    assert got["outcome"] == "sealed_breach" and _code(got) == "G6_E_LOOP_SEALED_BREACH"
+
+
+def _cut_off_at_the_evaluation(tmp_path, days, proposer):
+    """A loop whose first tick met a limit in the held-out evaluation, with its race won. Lifted, it is past the reset."""
+    loop, domain = _enrolled(tmp_path, proposer=proposer, now=lambda: days[0])
+    held = {c.input for c in loop.cut.held_out[5:]}
+    limited = Limited(domain, held.__contains__)
+    days[0] = datetime.fromisoformat(loop.tick()["wait_until"])
+    limited.lifted = True
+    return loop, domain
+
+
+def test_the_candidate_a_limit_cut_off_is_finished_after_the_reset_and_adopted(tmp_path):
+    days = [NOW]
+    loop, _ = _cut_off_at_the_evaluation(tmp_path, days, domains.proposes(*TWO_OFFERS))
+    won = next(row["winner"] for row in loop.mh.ledger.rows("selection"))
+    got = loop.tick()
+    assert got["outcome"] == "adopted" and got["champion"] == won
+    assert loop.mh.ledger.rows("evaluation") and len(loop.mh.ledger.rows("tuning_run")) == 1
+
+
+def test_a_restart_during_the_wait_loses_no_candidate(tmp_path):
+    days = [NOW]
+    proposer = domains.proposes(*TWO_OFFERS)
+    first, domain = _cut_off_at_the_evaluation(tmp_path, days, proposer)
+    again = ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=proposer, now=lambda: days[0], clock=domains.Clock())
+    assert again.tick()["outcome"] == "adopted"
+
+
+def test_only_what_is_unfinished_comes_back(tmp_path):
+    """The race's loser has its result, and a tick that finished leaves nothing behind."""
+    days = [NOW]
+    loop, _ = _cut_off_at_the_evaluation(tmp_path, days, domains.proposes(*TWO_OFFERS))
+    won = next(row["winner"] for row in loop.mh.ledger.rows("selection"))
+    assert [p.candidate_digest for p in loop.mh.unfinished()] == [won]
+    assert loop.tick()["outcome"] == "adopted" and loop.mh.unfinished() == []
+
+
+def test_candidates_a_limit_stopped_before_their_race_race_after_the_reset(tmp_path):
+    days = [NOW]
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS))
+    selection = {c.input for c in loop.cut.selection}
+    limited = Limited(domain, selection.__contains__)
+    days[0] = datetime.fromisoformat(loop.tick()["wait_until"])
+    limited.lifted = True
+    assert len(loop.mh.unfinished()) == 2 and loop.mh.ledger.rows("selection") == []
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_what_came_back_from_a_limit_is_in_the_reservation(tmp_path):
+    days = [NOW]
+    fresh, _ = _loop(tmp_path / "fresh", domain=domains.WordProblems(tmp_path / "fresh"))
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS))
+    selection = {c.input for c in loop.cut.selection}
+    Limited(domain, selection.__contains__)
+    loop.tick()
+    assert loop.worst_case() > fresh.worst_case()
+
+
+def test_candidates_made_on_another_head_do_not_come_back(tmp_path):
+    days = [NOW]
+    loop, domain = _cut_off_at_the_evaluation(tmp_path, days, domains.proposes(*TWO_OFFERS))
+    assert loop.mh.unfinished()
+    other = loop.mh._head()[1].model_copy(update={"prompt": "another head"})
+    loop.mh._head = lambda: (0, other)
+    assert loop.mh.unfinished() == []
+
+
+def test_outside_a_tick_a_limit_is_the_error_it_always_was():
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(AT_A_LIMIT)
+
+    with pytest.raises(LLMError, match="hit your usage limit"):
+        _Counted(FakeLLM(refuses), _Requests()).complete("system", "user")
 
 # The envelope is frozen too ------------------------------------------------------------------------------------------
 

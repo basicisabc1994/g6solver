@@ -18,11 +18,38 @@ reading is exact as a share of the week, and only the allowance's unit stays an 
 The tool is asked between ticks and never inside one, and at most once per ``REFRESH``: a tick starts no process. Each
 reading carries when it was read, so what the loop charges after that goes on top of it until the next one. A reading that
 lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
+
+**A limit met during a tick** can only be read from the ``LLMError`` the request raised, so ``limit_ends`` reads that text.
+No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet. It
+reads only what a model cannot write: G6's own code or status at the start of that text, and the fields a host program
+writes around a model's words. A server's body comes after the start, and its words never decide this: an HTTP 500 that
+names ``RateLimitError`` is a failed case. Neither do a host's words, whatever they say, since a reply can say the same.
+
+* The built-in HTTP callers and the Anthropic SDK are read reliably: ``G6_E_LLM_RATE_LIMITED``, with the wait a server asked
+  for, ``HTTP 429`` with none, and the SDK's ``RateLimitError``. A caller of a domain's own is read only if it raises
+  ``LLMError`` with such words.
+* Claude Code (2.1.316) was read from the text of its program, on 2026-11-01, and never seen at a limit. A result with
+  ``is_error`` is an ``LLMError``, and the program writes the error fields after its long ``usage`` record, with a few short
+  fields behind them, so they fit in the 300 characters the caller keeps: ``api_error_status`` of 429 and ``api_error`` of
+  ``usage_limit_reached``. Those are read as JSON fields, and a model's words sit inside the JSON string ``result``, where
+  every quote is escaped, so they cannot read as a field. That order is no promise: a version that writes them earlier
+  loses them. A notice with neither field, such as a session limit reported in ``result`` alone, is no limit here. A 429 is
+  also what a passing throttle or an organisation's policy sends, and each of those waits as a limit does.
+* Codex (0.165.0) prints text. The caller keeps the flattened end of its output with what went to stdout last, so nothing
+  there tells its notice from a reply that says the same, and nothing it prints is read. Its limit is the one
+  ``account/rateLimits/read`` reports, between ticks.
+
+A limit that does not read as one is a failed case, and the tick runs on as it always has. With every run failing the cycle
+has no winner, which is a result and no failure, so it pauses nothing, and the runner's rest outlasts ``REFRESH``, so
+Codex's reading holds the next tick. What it costs is the record: the cycle says no candidate won, and a limit during an
+evaluation reads as a refusal and spends one of the split's five. A limit the reading does not show, such as a passing
+throttle, goes on like that. The repair is a code of its own from those callers, which waits for an issuance window.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -47,6 +74,14 @@ _ASKED = ({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "g
           {"id": 2, "method": READ_LIMITS, "params": {"excludeResetCreditDetails": True}})
 # COPY: Why a provider has no account figure.
 NOT_REPORTED = "its tool reports no usage without a model call, so the meter counts model calls"
+#: The start of what a request raises at a limit, which is G6's own words. A server's body comes after them. Of what a host
+#: program prints, only the two JSON fields of a Claude Code error result: see the module docstring for why. The search for
+#: them ends at the next caller's failure, whose text a model may have written.
+_LIMIT = re.compile(r"(?:every caller failed: \S+: )?"
+                    r"(?:G6_E_LLM_RATE_LIMITED\b(?:[^;]*? asks for a wait of (?P<seconds>[0-9.]+(?:e[+-]?[0-9]+)?) s)?"
+                    r"|HTTP 429\b|Anthropic request failed: RateLimitError\b"
+                    r"|G6_E_LLM_HOST_FAILED: claude exited -?\d+ and gave an error result: "
+                    r"[^;]*\"(?:api_error_status\": ?429\b|api_error\": ?\"usage_limit_reached\"))")
 
 
 class UsageUnavailable(RuntimeError):
@@ -104,6 +139,17 @@ def codex_limits() -> dict[str, Any]:
     return read_limits([where, "app-server", "--listen", "stdio://"])
 
 
+def limit_ends(said: str, now: datetime) -> datetime | None:
+    """When the limit a failed request ran into ends, from the text it raised, or ``None`` when that text is no limit. A
+    wait a server asked for is taken as asked. Anything else says no time G6 can read, so the limit is looked at again, as
+    one with no reset is, and that look costs one refused request."""
+    limit = _LIMIT.match(said)
+    if limit is None:
+        return None
+    seconds = float(limit["seconds"] or 0)
+    return now + (timedelta(minutes=min(seconds / 60, WEEK_MINUTES)) if seconds > 0 else REFRESH)
+
+
 def _number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
@@ -126,6 +172,14 @@ def _reads(window: Any) -> bool:
             and (reset is None or _time(reset) is not None))
 
 
+def _reset(window: Mapping[str, Any], now: datetime) -> datetime | None:
+    """When a window resets: ahead of ``now`` and no further than the window is long, or a week where it does not say. Any
+    other figure is no reset: a limit that outlasts its own window cannot be believed."""
+    at = _time(window.get("resetsAt"))
+    longest = (window.get("windowDurationMins") or WEEK_MINUTES) * 60
+    return at if at is not None and 0 < (at - now).total_seconds() <= longest else None
+
+
 def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datetime) -> AccountReading | None:
     """``limits`` as the meter reads them, or ``None`` when they do not read: use in the meter's own unit from the
     week's percentage, and a limit when a window is full or the provider says ordinary use is not allowed. One field that
@@ -139,13 +193,12 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
         return None
     week = next((w for w in seen if w.get("windowDurationMins") == WEEK_MINUTES), None)
     full = [w for w in seen if w["usedPercent"] >= FULL]
-    resets = [at for w in (full or seen) if (at := _time(w.get("resetsAt"))) is not None and at > now]
+    resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
     if week is None:
         return AccountReading(limited_until=until)
-    reset = _time(week.get("resetsAt"))
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
-                          resets_at=reset if reset is not None and reset > now else window.week_end(now))
+                          resets_at=_reset(week, now) or window.week_end(now))
 
 
 def _stands(reading: AccountReading | None, now: datetime) -> bool:
@@ -208,4 +261,5 @@ class AccountReader:
         return self.readings.get(provider)
 
 
-__all__ = ["AccountReader", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "codex_limits", "limits_reading", "read_limits"]
+__all__ = ["AccountReader", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "codex_limits", "limit_ends", "limits_reading",
+           "read_limits"]

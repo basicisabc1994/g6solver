@@ -3,22 +3,27 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import dataclasses
 import glob
 import importlib.util
+import io
 import json
 import mmap
 import os
 import random
 import sys
+import threading
 import time
+import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 import g6
-from g6.core import llm
+from g6.core import llm, model_calls
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
@@ -93,19 +98,17 @@ def test_1_a_retry_a_caller_notes_is_charged(tmp_path):
     assert loop.meter.reading("claude", NOW).used == len(backend.calls) + len(proposer.calls)
 
 
-def test_1_each_attempt_of_a_fallback_is_charged(tmp_path):
-    domain = domains.WordProblems(tmp_path)
+def test_1_each_attempt_of_a_fallback_is_charged():
+    """The loop refuses a model with a fallback, so this is the caller alone: it is still charged attempt by attempt."""
 
     def down(system: str, user: str) -> str:
         raise LLMError("G6_E_LLM_TIMEOUT: the first backend is down")
 
-    first, second = FakeLLM(down), FakeLLM(domain.tutor)
-    _with_model(domain, FallbackCaller((first, second)))
-    proposer = domains.proposes({"prompt": domains.WORKING})
-    loop, _ = _enrolled(tmp_path, domain=domain, proposer=proposer)
-    loop.tick()
-    assert len(first.calls) > 0
-    assert loop.meter.reading("claude", NOW).used == len(first.calls) + len(second.calls) + len(proposer.calls)
+    first, second = FakeLLM(down), FakeLLM()
+    requests = _Requests()
+    requests.open(10)
+    _Counted(FallbackCaller((first, second)), requests).complete("system", "user")
+    assert len(first.calls) > 0 and requests.sent == len(first.calls) + len(second.calls)
 
 
 def test_1_a_resend_after_retry_after_is_charged(tmp_path):
@@ -548,6 +551,205 @@ def test_a_retry_within_what_was_reserved_goes_out_and_is_counted():
     assert len(backend.calls) == requests.sent == 3 and not requests.stopped
 
 
+def _at_once(caller, times: int) -> int:
+    """``times`` calls of ``caller`` on as many threads, and how many were refused at the tick's budget."""
+    with ThreadPoolExecutor(max_workers=times) as workers:
+        pending = [workers.submit(caller.complete, "system", str(i)) for i in range(times)]
+    refused = [f.exception() for f in pending if f.exception() is not None]
+    assert all("G6_E_LOOP_TICK_BUDGET_SPENT" in str(failed) for failed in refused)
+    return len(refused)
+
+
+def test_two_requests_at_once_cannot_both_have_the_last_of_what_was_reserved():
+    both_in_the_backend = threading.Barrier(2)
+
+    def backend(system: str, user: str) -> str:
+        with contextlib.suppress(threading.BrokenBarrierError):
+            both_in_the_backend.wait(timeout=0.5)
+        return "an answer"
+
+    llm_ = FakeLLM(backend)
+    requests = _Requests()
+    requests.open(1)
+    assert _at_once(_Counted(llm_, requests), 2) == 1
+    assert len(llm_.calls) == requests.sent == 1
+
+
+def test_requests_at_once_stop_at_what_was_reserved_and_each_refused_one_takes_no_place():
+    def backend(system: str, user: str) -> str:
+        time.sleep(0.05)
+        return "an answer"
+
+    llm_ = FakeLLM(backend)
+    requests = _Requests()
+    requests.open(3)
+    assert _at_once(_Counted(llm_, requests), 8) == 5
+    assert len(llm_.calls) == requests.sent == 3 and requests.stopped
+
+
+def test_a_request_holds_its_place_from_before_it_goes_out():
+    requests, seen = _Requests(), []
+    requests.open(2)
+    llm_ = FakeLLM(lambda system, user: seen.append(requests.sent) or "an answer")
+    _Counted(llm_, requests).complete("system", "user")
+    assert seen == [1] and requests.sent == 1
+
+
+def test_a_request_that_failed_keeps_its_place():
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: down")
+
+    requests = _Requests()
+    requests.open(2)
+    with pytest.raises(LLMError, match="down"):
+        _Counted(FakeLLM(down), requests).complete("system", "user")
+    assert requests.sent == 1
+
+
+def test_a_childs_requests_which_have_no_boundary_are_counted_as_it_reports_them():
+    class Child:
+        def complete(self, system: str, user: str, *, max_tokens: int = 0) -> str:
+            model_calls.note_model_call()
+            model_calls.note_child_model_calls(scoped=2, process=2)
+            return "an answer"
+
+    requests = _Requests()
+    requests.open(10)
+    _Counted(Child(), requests).complete("system", "user")
+    assert requests.sent == 3
+
+
+class Busy:
+    """An endpoint that turns each request away three times, asking for no wait, and answers the fourth."""
+
+    def __init__(self, answer) -> None:
+        self.answer, self.sent = answer, []
+
+    def open(self, request, timeout):
+        self.sent.append(request)
+        if len(self.sent) % 4:
+            raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
+        messages = json.loads(request.data)["messages"]
+        reply = {"choices": [{"message": {"content": self.answer(messages[0]["content"], messages[1]["content"])}}]}
+        return io.BytesIO(json.dumps(reply).encode())
+
+
+def _on_a_busy_endpoint(tmp_path, monkeypatch, wrap=lambda caller: caller):
+    domain = domains.WordProblems(tmp_path, pool=86, weak=0.0)
+    busy = Busy(domain.tutor)
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    caller = wrap(llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None))
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(caller, max_calls_per_run=1)})
+    settings = LoopSettings(windows=(ProviderWindow("claude", 500, START),), audit_per_tick=0, eval_calls=1, method=Method(
+        cycles=1, propose_budget=4, select_budget=8, use_recovery=False, use_reflection=False))
+    proposer = domains.proposes({"prompt": domains.WORKING})
+    loop, _ = _enrolled(tmp_path, domain=domain, settings=settings, proposer=proposer, now=lambda: START + timedelta(hours=1))
+    return loop, busy, proposer
+
+
+def test_no_resend_of_a_busy_endpoint_passes_what_a_tick_reserved(tmp_path, monkeypatch):
+    loop, busy, proposer = _on_a_busy_endpoint(tmp_path, monkeypatch)
+    reserved = loop.worst_case()
+    got = loop.tick()
+    assert got["budget"]["charged"] == len(busy.sent) + len(proposer.calls) <= reserved
+    assert _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT" and got["outcome"] == "blocked"
+
+
+def test_a_resend_behind_a_retry_is_held_to_what_was_reserved_too(tmp_path, monkeypatch):
+    loop, busy, proposer = _on_a_busy_endpoint(tmp_path, monkeypatch, wrap=EmptyRetry)
+    reserved = loop.worst_case()
+    assert loop.tick()["budget"]["charged"] == len(busy.sent) + len(proposer.calls) <= reserved
+
+
+def _http_caller() -> llm.OpenAICompatibleCaller:
+    return llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None)
+
+
+def test_a_resend_goes_out_only_while_what_was_reserved_has_room_for_it(monkeypatch):
+    busy = Busy(lambda system, user: "an answer")
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    requests = _Requests()
+    requests.open(3)
+    resending = _Counted(_http_caller(), requests)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        resending.complete("system", "user")
+    assert len(busy.sent) == requests.sent == 3 and requests.stopped
+    busy.sent.clear()
+    requests.open(4)
+    assert resending.complete("system", "user") == "an answer" and len(busy.sent) == requests.sent == 4
+
+
+class Own:
+    """A caller of a domain's own, holding an HTTP caller under a name of its own."""
+
+    def __init__(self, held) -> None:
+        self.held = held
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        return self.held.complete(system, user, max_tokens=max_tokens)
+
+
+def test_a_resend_is_held_whatever_holds_the_caller_that_sends_it(monkeypatch):
+    busy = Busy(lambda system, user: "an answer")
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
+    requests = _Requests()
+    requests.open(2)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(Own(_http_caller()), requests).complete("system", "user")
+    assert len(busy.sent) == requests.sent == 2
+
+
+def test_no_resend_goes_out_at_or_past_the_end_of_the_week_it_reserved_in(monkeypatch):
+    now, sent = [RESET - timedelta(seconds=1)], []
+
+    class Slow:
+        def open(self, request, timeout):
+            sent.append(now[0])
+            now[0] = RESET
+            raise urllib.error.HTTPError(request.full_url, 429, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
+
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: Slow())
+    requests = _Requests(lambda: now[0])
+    requests.open(10, RESET)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(_http_caller(), requests).complete("system", "user")
+    assert len(sent) == requests.sent == 1 and "week ended" in requests.stopped
+
+
+def test_a_wait_that_would_reach_the_end_of_the_week_is_not_taken(monkeypatch):
+    slept, sent = [], []
+
+    class AsksForTen:
+        def open(self, request, timeout):
+            sent.append(request)
+            raise urllib.error.HTTPError(request.full_url, 429, "busy", {"Retry-After": "10"}, io.BytesIO(b"busy"))
+
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: AsksForTen())
+    monkeypatch.setattr(llm, "_sleep", slept.append)
+    requests = _Requests(lambda: RESET - timedelta(seconds=5))
+    requests.open(10, RESET)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(_http_caller(), requests).complete("system", "user")
+    assert len(sent) == 1 and slept == []
+
+
+def test_a_clean_tick_on_an_http_caller_reserves_what_any_other_does(tmp_path, monkeypatch):
+    domain = domains.WordProblems(tmp_path)
+    caller = _http_caller()
+
+    def answers(system: str, user: str, *, max_tokens: int = 1024) -> str:
+        llm._start_model_call()
+        return domain.tutor(system, user)
+
+    monkeypatch.setattr(caller, "complete", answers)
+    plain, _ = _loop(tmp_path / "plain", domain=domains.WordProblems(tmp_path / "plain"))
+    _with_model(domain, caller)
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.worst_case() == plain.worst_case()
+    assert loop.tick()["outcome"] == "adopted"
+
+
 def test_a_tick_of_blank_replies_stops_at_what_it_reserved_retries_and_all(tmp_path, monkeypatch):
     domain = domains.WordProblems(tmp_path)
     backend = FakeLLM(default="")
@@ -758,3 +960,54 @@ def test_a_folder_enrolled_under_other_objectives_adopts_nothing_until_it_enrols
     assert _code(again.tick()) == "G6_E_META_STANDARD_CHANGED" and again.mh._head()[0] == 0
     assert again.enrol("Ada")["completion_state"] == "qualified-draft"
     assert again.tick()["outcome"] == "adopted"
+
+# What changes during a cycle ---------------------------------------------------------------------------------------------
+
+def test_a_frozen_file_changed_during_a_cycle_refuses_its_adoption(tmp_path):
+    enrolled = tmp_path / "domain.py"
+    enrolled.write_text("# the declaration a person enrolled\n", encoding="utf-8")
+
+    def edited_meanwhile(system: str, user: str) -> str:
+        enrolled.write_text("# saved by an editor after the tick's first check\n", encoding="utf-8")
+        return json.dumps({"prompt": domains.WORKING})
+
+    loop, _ = _enrolled(tmp_path, proposer=FakeLLM(edited_meanwhile), domain_file=enrolled)
+    head = loop.mh._head()
+    got = loop.tick()
+    assert got["outcome"] == "blocked" and _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "domain_file" in got["message"]
+    assert loop.mh.adoption_rows() == [] and loop.mh._head() == head
+    assert _code(loop.tick()) == "G6_E_LOOP_FROZEN_CHANGED" and len(loop.log.cycles()) == 1
+
+
+def test_a_sealed_file_changed_during_a_cycle_refuses_its_adoption_too(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    real = domain.failures
+
+    def failures_then_a_sealed_edit(view):
+        with sealed_module._LOCK:                                      # the guard is open-only: this stands for another process
+            entries, sealed_module._GUARDED[:] = list(sealed_module._GUARDED), []
+        domain.sealed_file.write_text("edited\n", encoding="utf-8")
+        sealed_module._GUARDED[:] = entries
+        return real(view)
+
+    domain.failures = failures_then_a_sealed_edit
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "sealed" in got["message"] and loop.mh.adoption_rows() == []
+
+
+def test_a_frozen_file_changed_while_the_adoption_loads_its_report_refuses_it(tmp_path, monkeypatch):
+    enrolled = tmp_path / "domain.py"
+    enrolled.write_text("# the declaration a person enrolled\n", encoding="utf-8")
+    loop, _ = _enrolled(tmp_path, domain_file=enrolled)
+    real = loop.mh._recorded
+
+    def saved_meanwhile(kind: str, ident: str):
+        if kind == "report":
+            enrolled.write_text("# saved by an editor as the adoption was being written\n", encoding="utf-8")
+        return real(kind, ident)
+
+    monkeypatch.setattr(loop.mh, "_recorded", saved_meanwhile)
+    got = loop.tick()
+    assert got["outcome"] == "blocked" and _code(got) == "G6_E_LOOP_FROZEN_CHANGED" and "domain_file" in got["message"]
+    assert loop.mh.adoption_rows() == []

@@ -2,11 +2,12 @@
 """The loop's records and what halts it (design 6.1, 6.10), which know nothing of what the work is.
 
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
-came of it, plus each enrolment, pause, resumption and start. Only a person can enrol a domain, resume a paused loop or
-start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and
-removing the file resumes it; a stop that cannot be read still stops. A runner ended by a stop needs a person's start
-again, even with the file gone: the records say the last start was stopped. A heartbeat is written whole or not at all, and
-a heartbeat that cannot be written is one missed, never a failed tick.
+came of it, plus each enrolment, pause, resumption, start and provider's limit. Only a person can enrol a domain, resume a
+paused loop or start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its
+next tick, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the file a
+person agreed to lift, and anything else, or any later write, stands, so a stop has no moment in which it can be lost. A
+runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped. A
+heartbeat is written whole or not at all, and a heartbeat that cannot be written is one missed, never a failed tick.
 
 **Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
 that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
@@ -22,8 +23,10 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ContextManager
+from uuid import uuid4
 
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import ChainLedger, LedgerError
@@ -57,7 +60,17 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
     if kind in ("enrolled", "resumed", "started"):
         who = str(body.get("by") or "")
         return [] if who.strip() and not is_automated(who) else [f"{kind}: a person must do this (no empty or auto: name)"]
+    if kind == "limited":
+        return [] if body.get("provider") and _on_a_clock(body.get("until")) else ["limited: states a provider and when it ends"]
     return [f"unknown kind {kind!r}"]
+
+
+def _on_a_clock(text: Any) -> bool:
+    """Whether ``text`` is a moment with a time zone, which is all a meter can compare with ``now``."""
+    try:
+        return datetime.fromisoformat(text).tzinfo is not None
+    except (TypeError, ValueError):
+        return False
 
 
 class CycleLog:
@@ -120,6 +133,13 @@ class CycleLog:
     def stop(self, reason: str, **fields: Any) -> dict:
         return self._append("stopped", {"reason": reason, **fields})
 
+    def limit(self, provider: str, until: str) -> dict:
+        return self._append("limited", {"provider": provider, "until": until})
+
+    def limits(self) -> dict[str, datetime]:
+        """When each provider's latest limit ends, so that a restart waits it out. No cycle: it never counts in a streak."""
+        return {body["provider"]: datetime.fromisoformat(body["until"]) for kind, body in self._rows() if kind == "limited"}
+
     def start_in_force(self) -> bool:
         """Whether a person's start stands: of the starts and stops on record, the last is a start."""
         return next((kind == "started" for kind, _ in reversed(self._rows()) if kind in ("started", "stopped")), False)
@@ -156,15 +176,45 @@ class CycleLog:
 
 
 def stop_reason(root: str | Path) -> str:
-    """Why the ``STOP`` file in the loop's folder halts it, or ``""``. One that cannot be read still stops."""
-    path = Path(root) / STOP_FILE
-    if not path.exists():
-        return ""
+    """Why the ``STOP`` file in the loop's folder halts it, or ``""``. It stands unless it is the very file the last start
+    lifted: the same digest, length and modification time, since bytes alone cannot say a person wrote again. What was added
+    after those bytes is the stop in force, and any other change leaves the whole file standing. One that cannot be read, or
+    that records which cannot be read might have lifted, still stops."""
+    path, log = Path(root) / STOP_FILE, Path(root) / CYCLE_LOG
     try:
-        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        written, held = path.stat().st_mtime_ns, path.read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        return ""
     except OSError as exc:
-        return f"a STOP file is present and could not be read ({type(exc).__name__})"
+        return _unreadable(exc)
+    try:
+        start = (CycleLog(log).started() or {}) if log.is_file() else {}
+    except (OSError, LedgerError) as exc:
+        return _unreadable(exc)
+    lifted = start.get("lifted_bytes", 0)
+    if start.get("lifted") and hashlib.sha256(held[:lifted]).hexdigest() == start["lifted"]:
+        if len(held) > lifted:
+            held = held[lifted:]
+        elif written == start.get("lifted_mtime_ns"):
+            return ""
+    text = held.decode("utf-8", "replace").strip()
     return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
+
+
+def _unreadable(exc: Exception) -> str:
+    return f"a STOP file is present and could not be read ({type(exc).__name__})"
+
+
+def stop_to_lift(root: str | Path) -> dict[str, Any]:
+    """The ``STOP`` file as it stands, for a start to record what a person agreed to lift, or nothing when there is none
+    to read. No start moves or deletes the file: this record is all that lifting is."""
+    path = Path(root) / STOP_FILE
+    try:
+        written = path.stat().st_mtime_ns     # before the read: a write between them leaves an old time, so the stop stands
+        held = path.read_bytes()
+    except OSError:
+        return {}
+    return {"lifted": hashlib.sha256(held).hexdigest(), "lifted_bytes": len(held), "lifted_mtime_ns": written}
 
 
 def file_digest(path: Any) -> str:
@@ -176,8 +226,8 @@ def file_digest(path: Any) -> str:
 
 
 def stops_asked(root: str | Path) -> int:
-    """How many stops have been asked for on this folder, from the file ``ask_to_stop`` adds to. A start records this, so
-    any stop after it shows whatever happened to the ``STOP`` file. One that cannot be read is ``-1``, which is no count a
+    """How many stops have been asked for on this folder, from the file ``ask_to_stop`` adds to. A start records this, so a
+    restart sees any stop after it, even with the ``STOP`` file gone. One that cannot be read is ``-1``, which is no count a
     start ever recorded."""
     try:
         return (Path(root) / STOPS_FILE).read_bytes().count(b"\n")
@@ -188,21 +238,24 @@ def stops_asked(root: str | Path) -> int:
 
 
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
-    """Write the ``STOP`` file, or leave one that is there, so the first reason stands and repeating is safe. It kills
+    """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
 
-    Each stop is counted first, in a file no lock stands in front of, because the records can be held for as long as a
-    tick lasts and a stop may never wait. It is counted before the ``STOP`` file is written, so a start that misses the
-    count cannot have removed that file. The ``STOP`` file is what stops, so a count that cannot be written is left."""
+    Each stop writes a token of its own there, so no two stops leave the same bytes, and that is what keeps a stop: a start
+    lifts only the file a person agreed to, so it needs no record to know a new stop when it sees one. A stop that cannot
+    change the file raises, because the file it could not change may be lifted.
+
+    It is also counted, first and in a file no lock stands in front of, because the records can be held for as long as a
+    tick lasts and a stop may never wait. The count serves a restart after a person has removed the file, when no note of
+    the stop reached the records. A count that cannot be written is left, and only that restart loses by it."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
     try:
         with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
             stops.write(said[:200] + "\n")
     except OSError:
         pass
-    path = Path(root) / STOP_FILE
-    if not path.exists():
-        path.write_text(said + "\n", encoding="utf-8")
+    with open(Path(root) / STOP_FILE, "a", encoding="utf-8") as stop:
+        stop.write(f"{said}\n{uuid4().hex}\n")
     return stop_reason(root)
 
 
@@ -259,4 +312,4 @@ def heartbeat(root: str | Path) -> dict | None:
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
            "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop",
-           "runner_alive", "runner_lock", "stop_reason", "stops_asked"]
+           "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]

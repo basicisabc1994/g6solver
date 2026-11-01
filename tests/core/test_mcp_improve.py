@@ -7,9 +7,11 @@ the only model anywhere here, and no test reaches a provider."""
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
 import os
 import socket
+import stat
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -28,7 +30,7 @@ from g6.core.ledger import digest as digest_of  # noqa: E402
 from g6.mcp import build_server, improve  # noqa: E402
 from g6.metaharness import shadow  # noqa: E402
 from g6.metaharness.shadow import ADOPTIONS  # noqa: E402
-from g6.self_maintenance import digest  # noqa: E402
+from g6.self_maintenance import digest, envelope  # noqa: E402
 from g6.self_maintenance.envelope import (  # noqa: E402
     CYCLE_LOG,
     CycleLog,
@@ -36,6 +38,7 @@ from g6.self_maintenance.envelope import (  # noqa: E402
     file_digest,
     runner_lock,
     stop_reason,
+    stops_asked,
 )
 from g6.self_maintenance.pacing import read_settings  # noqa: E402
 
@@ -264,13 +267,41 @@ def test_a_runner_that_came_alive_while_the_dialog_was_up_starts_nothing_more(ri
     assert _code(got) == "G6_E_LOOP_RUNNER_ALIVE" and rig.spawned == []
 
 
-def test_a_stop_in_place_is_named_in_the_dialog_and_removed_only_once_the_person_agrees(rig):
+def test_a_stop_in_place_is_named_in_the_dialog_and_lifted_only_once_the_person_agrees(rig):
     rig.enrol()
     (rig.root / "STOP").write_text("the owner's review\n", encoding="utf-8")
     rig.start(declined)
-    assert (rig.root / "STOP").exists() and "the owner's review" in rig.asked[0]
+    assert stop_reason(rig.root) and "the owner's review" in rig.asked[0]
     rig.start()
-    assert not (rig.root / "STOP").exists() and rig.spawned == [rig.root]
+    assert stop_reason(rig.root) == "" and rig.spawned == [rig.root]
+
+
+def test_a_start_moves_and_deletes_no_stop(rig):
+    rig.enrol()
+    (rig.root / "STOP").write_text("the owner's review\n", encoding="utf-8")
+    before = (rig.root / "STOP").read_bytes()
+    rig.start()
+    assert (rig.root / "STOP").read_bytes() == before
+    assert [found.name for found in rig.root.iterdir() if found.name.startswith("STOP.")] == []
+
+
+def test_the_dialog_after_a_lifted_stop_names_the_new_stop_and_a_person_agrees_to_that(rig):
+    rig.enrol()
+    (rig.root / "STOP").write_text("the owner's review\n", encoding="utf-8")
+    rig.start()
+    improve.stop(str(rig.root), "a newer stop")
+    rig.spawned.clear()
+    rig.start()
+    assert "a newer stop" in rig.asked[-1] and "the owner's review" not in rig.asked[-1]
+    assert stop_reason(rig.root) == "" and rig.spawned == [rig.root]
+
+
+def test_a_lifted_stop_left_on_disk_is_not_put_to_a_person_again(rig):
+    rig.enrol()
+    (rig.root / "STOP").write_text("the owner's review\n", encoding="utf-8")
+    rig.start()
+    rig.start()
+    assert "the owner's review" not in rig.asked[-1]
 
 
 def test_a_pause_is_named_in_the_dialog(rig):
@@ -341,14 +372,14 @@ def test_the_runner_is_detached_so_it_outlives_the_session(rig, monkeypatch):
 def test_stop_needs_no_dialog_and_no_permission(rig, monkeypatch):
     monkeypatch.delenv("G6_MCP_SENSITIVE", raising=False)
     got = rig.call("g6_improve_stop", folder=str(rig.root), reason="owner's review")
-    assert (rig.root / "STOP").read_text(encoding="utf-8") == "owner's review\n"
+    assert (rig.root / "STOP").read_text(encoding="utf-8").splitlines()[0] == "owner's review"
     assert _code(got) == "G6_E_LOOP_STOP_ASKED" and check_envelope(got) == [] and rig.asked == []
 
 
 def test_stop_is_safe_to_repeat_and_the_first_reason_stands(rig):
     rig.call("g6_improve_stop", folder=str(rig.root), reason="first")
     got = rig.call("g6_improve_stop", folder=str(rig.root), reason="second")
-    assert (rig.root / "STOP").read_text(encoding="utf-8") == "first\n" and "first" in got["stop"]
+    assert (rig.root / "STOP").read_text(encoding="utf-8").splitlines()[0] == "first" and "first" in got["stop"]
     assert got["completion_state"] == "qualified-draft"
 
 
@@ -421,6 +452,23 @@ def test_a_stop_arriving_while_the_dialog_is_open_starts_nothing_and_stands(rig)
     assert "the owner said no" in stop_reason(rig.root)
 
 
+def test_a_stop_rewritten_the_same_while_the_dialog_is_open_is_asked_about_again(rig):
+    """The start would record the new time, and so lift a write nobody was shown."""
+    rig.enrol()
+    path, long_ago = rig.root / "STOP", 1_000_000_000_000_000_000
+    path.write_text("an older stop\n", encoding="utf-8")
+    os.utime(path, ns=(long_ago, long_ago))
+    got = rig.start(_while_the_dialog_is_open(lambda: path.write_text("an older stop\n", encoding="utf-8")))
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_TERMS_CHANGED" and stop_reason(rig.root)
+
+
+def test_the_dialog_says_a_lifted_stop_ends_at_the_next_write_to_its_file(rig):
+    rig.enrol()
+    (rig.root / "STOP").write_text("the owner's review\n", encoding="utf-8")
+    rig.start(declined)
+    assert "any write to it after that stops the loop again" in " ".join(rig.asked[0].split())
+
+
 def test_a_second_stop_while_the_dialog_is_open_is_not_lost_with_the_first(rig):
     rig.enrol()
     (rig.root / "STOP").write_text("an older stop\n", encoding="utf-8")
@@ -460,21 +508,190 @@ def test_a_stop_arriving_while_a_start_is_recorded_wins_over_it(rig, monkeypatch
     assert not CycleLog(rig.root / CYCLE_LOG).start_in_force()
 
 
-def test_a_stop_arriving_just_as_an_old_stop_is_removed_still_wins(rig, monkeypatch):
+def test_a_stop_arriving_just_after_a_start_read_an_old_stop_still_wins(rig, monkeypatch):
     rig.enrol()
     (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
-    real, reads = improve.stops_asked, []
+    real = envelope.stop_to_lift
 
-    def a_stop_after_the_check(root):
+    def a_stop_after_the_read(root):
         found = real(root)
-        reads.append(found)
-        if len(reads) == 2:                                              # read, then a stop, then the file goes
-            improve.stop(str(rig.root), "a late stop")
+        improve.stop(str(rig.root), "a late stop")
         return found
 
-    monkeypatch.setattr(improve, "stops_asked", a_stop_after_the_check)
+    monkeypatch.setattr(improve, "stop_to_lift", a_stop_after_the_read)
     got = improve.start(rig.root, "Ada")
-    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and (rig.root / "STOP").is_file()
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a late stop" in stop_reason(rig.root)
+
+
+def _while_the_start_is_recorded(rig, monkeypatch, act) -> None:
+    real = CycleLog.start
+
+    def interleaved(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        act()
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", interleaved)
+
+
+def test_a_stop_file_written_by_hand_during_a_start_survives_it(rig, monkeypatch):
+    """It is in no count and no record: what keeps it is that nobody agreed to clear it."""
+    rig.enrol()
+    _while_the_start_is_recorded(rig, monkeypatch, lambda: (rig.root / "STOP").write_text("by hand\n", encoding="utf-8"))
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "by hand" in stop_reason(rig.root)
+    monkeypatch.undo()
+    assert not CycleLog(rig.root / CYCLE_LOG).start_in_force()
+
+
+def test_a_stop_file_changed_by_hand_during_a_start_survives_it(rig, monkeypatch):
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    _while_the_start_is_recorded(rig, monkeypatch, lambda: (rig.root / "STOP").write_text("a new one\n", encoding="utf-8"))
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a new one" in stop_reason(rig.root)
+
+
+def test_a_stop_that_no_record_took_survives_a_start_and_says_it_stopped(rig, monkeypatch):
+    rig.enrol()
+    real_open, stopped = builtins.open, []
+
+    def no_count(path, *args, **kwargs):
+        if Path(path).name == "stops.log":
+            raise PermissionError("the count cannot be added to")
+        return real_open(path, *args, **kwargs)
+
+    def stopped_with_no_count():
+        with monkeypatch.context() as broken:
+            broken.setattr(builtins, "open", no_count)
+            stopped.append(improve.stop(str(rig.root), "the owner said no"))
+
+    _while_the_start_is_recorded(rig, monkeypatch, stopped_with_no_count)
+    got = improve.start(rig.root, "Ada")
+    assert stopped[0]["warning_card"]["code"] == improve.STOP_ASKED and stops_asked(rig.root) == 0
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "the owner said no" in stop_reason(rig.root)
+
+
+def test_a_start_lifts_the_stop_it_agreed_to_with_no_count_to_read(rig, monkeypatch):
+    rig.enrol()
+    improve.stop(str(rig.root), "the owner's review")
+    monkeypatch.setattr(improve, "stops_asked", lambda root: 7)          # whatever a count says, it is not what decides
+    assert _code(improve.start(rig.root, "Ada")) != "G6_E_LOOP_START_STOPPED" and stop_reason(rig.root) == ""
+
+
+def _a_stop_while_it_is_recorded(rig, monkeypatch) -> None:
+    real = CycleLog.start
+
+    def interleaved(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        improve.stop(str(rig.root), "a newer stop")
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", interleaved)
+
+
+def test_a_stop_count_that_cannot_be_read_refuses_the_start(rig, monkeypatch):
+    rig.enrol()
+    (rig.root / "stops.log").mkdir()                                     # a broken record, whatever this machine's rights
+    _a_stop_while_it_is_recorded(rig, monkeypatch)
+    offered = improve.asked(str(rig.root))
+    got = improve.start(rig.root, "Ada")
+    assert isinstance(offered, dict) and _code(offered) == "G6_E_LOOP_RECORDS_UNREADABLE"
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and got["completion_state"] == "blocked-escalated"
+    monkeypatch.undo()
+    assert CycleLog(rig.root / CYCLE_LOG).started() is None
+
+
+def test_a_stop_that_cannot_be_counted_is_no_stop_lost_so_a_read_only_count_refuses_nothing(rig, monkeypatch):
+    """The ``STOP`` file holds a stop by itself now, so the count need not be written for the stop to stand."""
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    count = rig.root / "stops.log"
+    count.write_text("an old stop\n", encoding="utf-8")
+    count.chmod(stat.S_IREAD)
+    _a_stop_while_it_is_recorded(rig, monkeypatch)
+    try:
+        got = improve.start(rig.root, "Ada")
+    finally:
+        count.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a newer stop" in stop_reason(rig.root)
+
+
+def test_a_count_that_breaks_after_the_check_is_never_recorded_as_what_a_start_saw(rig, monkeypatch):
+    rig.enrol()
+    monkeypatch.setattr(improve, "stops_asked", lambda root: -1)
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and got["completion_state"] == "blocked-escalated"
+    monkeypatch.undo()
+    assert CycleLog(rig.root / CYCLE_LOG).started() is None
+
+
+def test_a_count_that_breaks_during_the_start_stops_it_and_keeps_the_stop(rig, monkeypatch):
+    rig.enrol()
+    real = CycleLog.start
+
+    def broken_then_stopped(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        (rig.root / "stops.log").mkdir()
+        improve.stop(str(rig.root), "a newer stop")
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", broken_then_stopped)
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and "a newer stop" in stop_reason(rig.root)
+
+
+def test_a_stop_that_cannot_add_to_the_count_during_a_start_survives_it(rig, monkeypatch):
+    """The start's check passed, and then the count went read-only: a stop that said it stopped has to stay."""
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    count = rig.root / "stops.log"
+    count.write_text("an old stop\n", encoding="utf-8")
+    real, stopped = CycleLog.start, []
+
+    def read_only_then_stopped(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        count.chmod(stat.S_IREAD)
+        stopped.append(improve.stop(str(rig.root), "the owner withdrew agreement"))
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", read_only_then_stopped)
+    try:
+        got = improve.start(rig.root, "Ada")
+    finally:
+        count.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert stopped[0]["stopped"] is True and rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED"
+    assert (rig.root / "STOP").is_file() and stop_reason(rig.root)
+    monkeypatch.undo()
+    assert not CycleLog(rig.root / CYCLE_LOG).start_in_force()
+
+
+def test_a_stop_with_no_count_to_write_to_still_stops_and_says_so(rig):
+    rig.enrol()
+    count = rig.root / "stops.log"
+    count.write_text("one\n", encoding="utf-8")
+    count.chmod(stat.S_IREAD)
+    try:
+        got = improve.stop(str(rig.root), "uncountable")
+    finally:
+        count.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert _code(got) == improve.STOP_ASKED and "uncountable" in got["stop"] and stops_asked(rig.root) == 1
+
+
+def test_a_stop_that_cannot_change_a_stop_file_says_it_failed_since_a_start_could_clear_it(rig):
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    (rig.root / "STOP").chmod(stat.S_IREAD)
+    try:
+        got = improve.stop(str(rig.root), "no room for this")
+    finally:
+        (rig.root / "STOP").chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert _code(got) == "G6_E_LOOP_STOP_FAILED" and got["completion_state"] == "blocked-escalated"
+
+
+def test_no_stop_count_yet_is_no_reason_to_refuse_and_asking_writes_none(rig):
+    rig.enrol()
+    assert not isinstance(improve.asked(str(rig.root)), dict) and not (rig.root / "stops.log").exists()
 
 
 def test_stop_ends_the_start_so_only_a_new_agreement_brings_it_back(rig):
@@ -496,7 +713,7 @@ def test_stop_reaches_a_live_runner_whose_settings_and_records_are_gone(rig):
         (rig.root / "settings.json").unlink()
         (rig.root / CYCLE_LOG).unlink()
         got = rig.call("g6_improve_stop", folder=str(rig.root), reason="stop despite damaged records")
-        assert (rig.root / "STOP").read_text(encoding="utf-8") == "stop despite damaged records\n"
+        assert (rig.root / "STOP").read_text(encoding="utf-8").splitlines()[0] == "stop despite damaged records"
         assert _code(got) == "G6_E_LOOP_STOP_ASKED" and got["running"] is True and got["stopped"] is False
 
 

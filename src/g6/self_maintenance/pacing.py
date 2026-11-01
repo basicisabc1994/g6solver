@@ -147,6 +147,7 @@ class BudgetMeter:
         self.scope = store.for_owner(OWNER)
         self._read_account = read_account
         self._charged_at: dict[tuple[str, datetime], tuple[datetime, float]] = {}
+        self._limits: dict[str, datetime] = {}
 
     def _charged_when_read(self, provider: str, start: datetime, account: AccountReading | None,
                            charged: float) -> float | None:
@@ -168,6 +169,11 @@ class BudgetMeter:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
         return self._look(provider, now)[0]
 
+    def limit_reached(self, provider: str, until: datetime) -> None:
+        """A limit a request ran into, which the account's figure may not show yet: it stands as a reported one does. It
+        is held in memory, and the loop's records hand it back after a restart."""
+        self._limits[provider] = until
+
     def next_room(self, now: datetime) -> datetime:
         """The next time any ceiling can rise: the soonest a tick refused for its budget could be admitted."""
         return min(window.next_day(now) for window in self.windows.values())
@@ -183,7 +189,8 @@ class BudgetMeter:
         pending = self.scope.outstanding(venture, start.isoformat()).get(_ACCOUNT, 0.0)
         charged_when_read = self._charged_when_read(provider, start, account, booked - pending)
         used, above = _used(booked, pending, account, charged_when_read)
-        wait = account.limited_until if account is not None and account.limited_until is not None else None
+        reported = account.limited_until if account is not None else None
+        wait = max((at for at in (reported, self._limits.get(provider)) if at is not None), default=None)
         limited = wait is not None and now < wait
         return Admission(provider, day, used, target(window.allowance, day),
                          ceiling(window.allowance, day, window.reserve_share),

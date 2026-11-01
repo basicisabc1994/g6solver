@@ -23,11 +23,13 @@ import dataclasses
 import hashlib
 import math
 import os
+import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -36,15 +38,17 @@ import g6
 from g6.core import stop
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
-from g6.core.llm import DEFAULT_MAX_TOKENS, LLMError, waits
+from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
+    FALLBACK_MODEL,
     Cut,
     Domain,
     FailureRecord,
     Judge,
+    backends,
     cut_pool,
     domain_problems,
     judge_source,
@@ -55,6 +59,7 @@ from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
+from g6.metaharness.select import race_calls
 from g6.metaharness.shadow import SCOPE, adapt_shadow
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
@@ -70,6 +75,7 @@ from g6.self_maintenance.envelope import (
     stop_reason,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
+from g6.self_maintenance.usage import limit_ends
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -167,13 +173,26 @@ class _OnConstraint:
         return self.inner.propose(replace(view, failures=shown), runner)
 
 
+class _AtLimit(BaseException):
+    """A provider's limit, met during a tick, on its way out of it. It is no ``Exception`` so that it passes every
+    ``except Exception`` between a model call and the tick, where the harness would score a failed case and each layer
+    carry on. So nothing from the run it cut off is written: no report, so the held-out split is not spent, no decision and
+    no cycle."""
+
+    def __init__(self, until: datetime, said: str) -> None:
+        super().__init__(said)
+        self.until, self.said = until, said
+
+
 class _Requests:
     """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
     nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
-    ``stopped`` says which stopped it."""
+    ``stopped`` says which stopped it. A request takes its place in ``sent`` before it goes out, under one lock, so requests
+    running at once can never pass the limit between them."""
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self.now = now
+        self._lock = threading.Lock()
         self.close()
 
     def open(self, limit: float, ends: datetime | None = None) -> None:
@@ -182,25 +201,68 @@ class _Requests:
     def close(self) -> None:
         self.open(math.inf)
 
-    def admit(self, under_way: int = 0) -> None:
-        """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``."""
-        if self.unseen or self.sent + under_way >= self.limit:
-            self.stopped = f"this tick has sent {self.sent + under_way} of the {self.limit:g} it reserved"
-        elif self.ends is not None and self.now() >= self.ends:
-            self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
-        else:
-            return
+    def admit(self, wait: float = 0.0, *, places: int = 0) -> None:
+        """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
+        server asked for before this one goes out."""
+        with self._lock:
+            if self.unseen or self.sent >= self.limit:
+                self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
+            elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
+                self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
+            else:
+                self.sent += places
+                return
         raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
+
+    def take(self, wait: float = 0.0) -> None:
+        """A request about to go out. It keeps its place whatever becomes of it: a failed one may have reached the model."""
+        self.admit(wait, places=1)
+
+    def count(self, requests: int) -> None:
+        """Requests that had no boundary to take a place at."""
+        with self._lock:
+            self.sent += requests
+
+    def at_a_limit(self, failed: LLMError) -> None:
+        """End the tick when a request failed at a provider's limit. Outside a tick there is none to end."""
+        until = limit_ends(str(failed), self.now())
+        if until is not None and self.limit != math.inf:
+            raise _AtLimit(until, str(failed)[:300]) from failed
+
+
+class _Resends(list):
+    """The resends of one call. ``g6.core.llm`` adds each to the open records of ``waits`` just before it waits and sends
+    again, which is the only boundary a resend has, so adding to this record is the gate on it, as ``counting``'s observer
+    is on a request. What ``take`` raises stops the resend, and leaves the caller as a failed request's ``LLMError``. That
+    boundary comes before the wait and nothing marks its end, so a wakeup that runs late is not seen."""
+
+    def __init__(self, take: Callable[[float], None]) -> None:
+        super().__init__()
+        self.take = take
+
+    def append(self, wait: dict[str, Any]) -> None:
+        self.take(wait["retry_after_s"])
+        super().append(wait)
+
+
+@contextmanager
+def _gating_resends(take: Callable[[float], None]) -> Iterator[None]:
+    """As ``g6.core.llm.waits``, whose record is a plain list, with a record that is the gate above."""
+    token = _WAITS.set((*_WAITS.get(), _Resends(take)))
+    try:
+        yield
+    finally:
+        _WAITS.reset(token)
 
 
 class _Counted:
     """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
     backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so an ``EmptyRetry``
     or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
-    is added from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
+    takes its place from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
 
-    Each noted request is admitted at that same boundary, before it goes out, so a retry inside a caller stops at what the
-    tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
+    Each noted request takes its place at that same boundary, before it goes out, so a retry inside a caller stops at what
+    the tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
     else's request. This one is the gate on that request: it raises before anything is sent or counted, and what it raises
     is the ``LLMError`` a failed request raises, which every caller here passes on. That file is bound, so its sentence
     stays until an issuance window.
@@ -208,22 +270,27 @@ class _Counted:
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
     retries. Only a usage record from the provider can show those, which is the relay of design section 3. A ``Retry-After``
-    resend has no boundary either: it is charged, and a call can pass the limit by those, when a server turned it away."""
+    resend is admitted as a request is, at its own boundary (``_Resends``), whichever caller sent it."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
         self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         self.requests.admit()
+        took: list[None] = []
 
         def next_request() -> None:
-            self.requests.admit(noted() + len(resent))
+            self.requests.take()
+            took.append(None)
 
-        with counting(before_call=next_request) as noted, waits() as resent:
+        with counting(before_call=next_request) as noted, _gating_resends(self.requests.take):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
+            except LLMError as failed:
+                self.requests.at_a_limit(failed)
+                raise
             finally:
-                self.requests.sent += noted() + len(resent)
+                self.requests.count(noted() - len(took))     # a child's totals have no boundary
             if not noted():
                 self.requests.unseen = True
                 raise LLMError(f"{UNMETERED_CALLER}: a model caller answered with no request noted")
@@ -325,7 +392,12 @@ class ShadowLoop:
         self.log = CycleLog(self.root / CYCLE_LOG)
         self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
                                  read_account=read_account)
+        for provider, until in self.log.limits().items():
+            self.meter.limit_reached(provider, until)
         self.problems = domain_problems(domain)
+        if backends(proposer) > 1:
+            self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
+                                  "pass unseen and its calls could go where no window covers"))
         if not settings.windows:
             self.problems.append((NO_BUDGET, "no provider window: an unknown budget stops the loop"))
         named = tuple(self.meter.windows)
@@ -334,24 +406,58 @@ class ShadowLoop:
             self.problems.append((NO_BUDGET, f"the windows are for {', '.join(named)} and this folder's calls are stated to "
                                   f"go to {settings.provider or 'none of them'}: an allowance pays only for its own "
                                   "provider's requests, so LOOP must name the one they go to"))
+        self._clock = clock
         self.cut, self.workflow, self.mh = None, None, None
         if not self.problems:
-            self.cut = cut_pool(domain.development(), settings.seed)
-            self.workflow = _workflow(domain, self.cut, settings, self.requests)
-            self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
-        if not self.problems:
-            self.mh = adapt_shadow(self.workflow, domain.execution().factory, workspace=self.root / "workspace",
-                                   clock=clock)
+            self._bind()
+
+    def _bind(self) -> None:
+        """What this handle runs: the domain's cases as they stand, cut, and a harness on them with nothing kept from
+        before. An enrolment does this again, so what a person froze is what runs, on this handle as on a new one."""
+        self.cut = cut_pool(self.domain.development(), self.settings.seed)
+        self.workflow = _workflow(self.domain, self.cut, self.settings, self.requests)
+        self.problems = _pool_problems(self.cut, self.workflow.policy) + self.workflow.problems()
+        self.mh = None if self.problems else adapt_shadow(self.workflow, self.domain.execution().factory,
+                                                          workspace=self.root / "workspace", clock=self._clock)
+
+    def _calls_per_run(self) -> int:
+        """The most one run can call: what the models declare, or, on G6's own executor with no step of the domain's, one
+        call and a retry of an empty answer for each a profile can hold (``RecoveryStrategy`` adds one)."""
+        run, method = self.domain.execution(), self.settings.method
+        declared = max(m.max_calls_per_run for m in self.workflow.models.values())
+        if run.factory is not None or run.pipeline_steps:
+            return declared
+        return min(declared, 1 + max(method.use_recovery, *run.space.space.get("retries", ()),
+                                     (run.initial or {}).get("retries", 0)))
 
     def worst_case(self) -> int:
-        """The most one tick can call, from the limits it runs under: a measurement, the audits, each proposer and race
-        of each cycle, and one evaluation. Each limit is checked before a run, so each can be passed by one run."""
-        method, per_run = self.settings.method, max(m.max_calls_per_run for m in self.workflow.models.values())
-        proposers = 1 + method.use_recovery + method.use_reflection + method.use_edits   # failure traces always run
-        proposing = proposers * (method.propose_budget + per_run + method.reflect_calls + 1)
-        racing = method.select_budget + per_run
-        return (method.propose_budget + per_run + 2 * self.settings.audit_per_tick * per_run
-                + method.cycles * (proposing + racing) + self.settings.eval_calls + per_run * (per_run + 2))
+        """The most one tick can call: what its limits allow, and no more than the pool gives them to spend on. That is the
+        audits, a measurement, each proposer and race of each cycle, and one evaluation. Each limit is checked before a
+        run, so each can be passed by one run. A retry inside a caller is not foreseen here, and a tick stops at what it
+        reserved all the same."""
+        method, per_run, cut = self.settings.method, self._calls_per_run(), self.cut
+        most, tries = method.candidates_per_cycle, method.reflect_calls
+        remedies = 2 + len(self.workflow.pipeline_steps)     # a step or an example, and a retry: what recovery can offer
+        one_profile = len(cut.tune) * per_run                # on every tuning case
+        spent = method.propose_budget + per_run              # where one proposer's dev budget stops it
+
+        def on_dev(profiles: int) -> int:
+            return min(spent, profiles * one_profile)
+
+        # a proposer reads the view the tick measured, so the head runs once, and failure traces ask one call of the proposer
+        proposing = (1 + method.use_recovery * on_dev(remedies + (remedies > most) * most)
+                     + method.use_reflection * (on_dev(tries) + tries) + method.use_edits * on_dev(tries))
+        racers = 2 + method.use_recovery * min(most, remedies) + (method.use_reflection + method.use_edits) * min(most, tries)
+
+        def racing(entered: int) -> int:                     # failure traces offer one, and a champion races again
+            return min(method.select_budget + per_run,
+                       per_run * race_calls(len(cut.selection), entered, method.race_block, method.race_keep))
+
+        one_case = per_run * (per_run + 2)                   # base, candidate and a control matched to the candidate's calls
+        return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1)
+                + method.cycles * proposing + (method.cycles - 1) * racing(racers)
+                + racing(racers + len(self.mh.unfinished()))
+                + min(self.settings.eval_calls + one_case, len(cut.held_out) * one_case))
 
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
@@ -446,7 +552,7 @@ class ShadowLoop:
 
     @_exclusive
     def enrol(self, confirmed_by: str) -> dict[str, Any]:
-        """A person confirms what judges this domain. It happens once, and it is the one step the loop cannot do."""
+        """A person confirms what judges this domain, as it stands now. It is the one step the loop cannot do."""
         if self.problems:
             return self._invalid()
         who = confirmed_by.strip()
@@ -455,6 +561,9 @@ class ShadowLoop:
         lacking = self._lacking()
         if lacking is not None:
             return lacking
+        self._bind()
+        if self.problems:
+            return self._invalid()
         reused = self._reused()
         if reused:
             return _blocked(SPLIT_REUSED, f"{len(reused)} held-out cases were already seen by proposers or spent by an "
@@ -533,10 +642,13 @@ class ShadowLoop:
             return waiting
         self._beat("running", CYCLE)
         recommended: list[dict[str, Any]] = []
+        limit: _AtLimit | None = None
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
+            except _AtLimit as reached:
+                row, limit = self._row(), reached
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
@@ -553,6 +665,16 @@ class ShadowLoop:
             row |= {"outcome": "error", "code": UNMETERED_CALLER,
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
                               "nothing is adopted, and a person gives it a caller that notes each request"}
+        elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
+            self.meter.limit_reached(spend.provider, limit.until)
+            try:
+                self.log.limit(spend.provider, limit.until.isoformat())
+            except (OSError, LedgerError):
+                pass                  # this process still waits; after a restart the first request finds the limit again
+            return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
+                            f"and waits until {limit.until.isoformat()}: {limit.said}",
+                            "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
+                            charged=charged)
         elif stopped:                 # runs cut off mid-tick compared nothing: no gate result stands on them
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
@@ -588,7 +710,13 @@ class ShadowLoop:
         return _blocked(CANNOT_RECORD, why, "A person frees the log, then starts the loop again with g6_improve_start.")
 
     def _adopt(self, decision: Any, row: dict[str, Any]) -> dict[str, Any]:
-        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row})
+        def still_frozen() -> dict[str, Any] | None:      # the tick's first check came before all it measured
+            changed = self._changed()
+            return _blocked(FROZEN_CHANGED, f"changed during this cycle: {', '.join(changed)}. What it measured is not what "
+                            "a person enrolled, so nothing is adopted") if changed else None
+
+        adopted = self.mh.adopt(decision, findings={name: row[name] for name in FINDINGS if name in row},
+                                last_check=still_frozen)
         said = {"code": adopted["warning_card"]["code"], "reason": adopted["message"]}
         if adopted["completion_state"] == "blocked-escalated":
             return {**said, "outcome": "blocked"}
@@ -649,7 +777,8 @@ class ShadowLoop:
         # earlier findings only: which candidate the gate took or refused is the held-out split's, and stays out of it
         strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
-                   space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),))
+                   space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
+                   carried=self.mh.unfinished())
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),

@@ -88,9 +88,10 @@ def strategies_for(method: Method, workflow: Any, *, reflector: Any = None, spac
 
 
 def tune(mh: Any, method: Method, *, approve: Callable[[dict[str, Any]], str | None], reflector: Any = None,
-         space: EditSpace | None = None, extra: Sequence[Strategy] = ()) -> TuningRun:
+         space: EditSpace | None = None, extra: Sequence[Strategy] = (), carried: Sequence[Any] = ()) -> TuningRun:
     """One tuning run of ``mh`` under ``method``; see the module docstring. ``approve`` gets the gate's recommendation
-    (its card and decision) and returns the name of the person who accepts it, or ``None``."""
+    (its card and decision) and returns the name of the person who accepts it, or ``None``. ``carried``: proposals an
+    earlier run made and could not finish, which race in the first cycle."""
     refused = mh._refusal()
     if refused is None and not mh.workflow.suite.selection:
         refused = {"warning_card": {"code": NO_SELECTION_SPLIT},
@@ -113,7 +114,7 @@ def tune(mh: Any, method: Method, *, approve: Callable[[dict[str, Any]], str | N
             stats[strategy.name] = {"proposed": len(got), "code": reply["warning_card"]["code"],
                                     "attempts": getattr(strategy, "made", None),
                                     "duplicates": getattr(strategy, "duplicates", None)}
-        racers = proposals + ([champion] if champion is not None else [])
+        racers = [*(carried if cycle == 1 else ()), *proposals, *([champion] if champion is not None else [])]
         record: dict[str, Any] = {"cycle": cycle, "strategies": stats, "raced": [], "winner": None,
                                   "new_champion": False, "selection_calls": 0, "stopped": "", "select_code": ""}
         if racers:

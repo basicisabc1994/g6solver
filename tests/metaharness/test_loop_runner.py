@@ -18,6 +18,7 @@ import pytest
 
 import g6
 from g6.core.ledger import LedgerError, digest
+from g6.core.llm import LLMError
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
@@ -30,9 +31,11 @@ from g6.self_maintenance.envelope import (
     runner_alive,
     runner_lock,
     stop_reason,
+    stop_to_lift,
     stops_asked,
 )
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow, read_settings
+from g6.self_maintenance.usage import REFRESH
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -123,6 +126,27 @@ def test_at_a_reported_limit_it_waits_for_the_reset_or_the_next_rise_of_a_ceilin
     runner, _, _ = _runner(tmp_path, read_account=lambda provider, start: AccountReading(limited_until=reset))
     runner.step()
     assert runner.not_before == reset
+
+
+def test_a_limit_met_during_a_tick_is_waited_out_and_the_days_page_says_so(tmp_path):
+    runner, time, domain = _runner(tmp_path, proposer=domains.proposes({"prompt": domains.WORKING}))
+    answers = domain.llm._responder
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_RATE_LIMITED: HTTP 429 from u: You've hit your usage limit")
+
+    domain.llm._responder = refuses
+    first = time.at
+    runner.step()
+    assert runner.not_before == first + REFRESH and runner.last["warning_card"]["code"] == "G6_E_LOOP_BUDGET_WAIT"
+    page = digest_path(runner.loop.root, first.date()).read_text(encoding="utf-8")
+    assert "Waiting for the budget" in page and "hit your usage limit" in page
+    assert heartbeat(runner.loop.root)["pause"] is None and runner.loop.log.cycles() == []
+    domain.llm._responder = answers
+    _stopped_after(time, REFRESH + timedelta(minutes=2))
+    assert runner.run() == 0
+    assert runner.loop.log.cycles()[0]["outcome"] == "adopted"
+    assert datetime.fromisoformat(runner.loop.log.cycles()[0]["at"]) >= first + REFRESH
 
 
 def test_a_tick_that_raises_does_not_end_the_run_and_counts_as_a_failed_cycle(tmp_path, monkeypatch):
@@ -314,7 +338,7 @@ def test_each_page_holds_only_its_own_days_cycles(tmp_path):
 
 def _a_day_with_no_tick_then_a_tick_past_midnight(tmp_path):
     midnight = datetime(2026, 10, 26, 0, 0, tzinfo=UTC)
-    settings = LoopSettings(windows=(ProviderWindow("claude", 10_000, midnight),), method=FAST)
+    settings = LoopSettings(windows=(ProviderWindow("claude", 5000, midnight),), method=FAST)
     runner, time, _ = _runner(tmp_path, settings=settings, at=midnight + timedelta(hours=23, minutes=59))
     runner.step()
     assert not runner.loop.log.cycles()                                  # day one's ceiling cannot fund one tick
@@ -625,7 +649,7 @@ def test_a_stop_since_the_start_refuses_a_restart_even_with_its_file_gone(tmp_pa
 def test_a_stop_counted_since_the_start_closes_the_gate_with_its_file_gone(tmp_path, capsys):
     root, _ = _enrolled_folder(tmp_path)
     ask_to_stop(root, "asked while a tick held the records")
-    (root / "STOP").unlink()                                             # the start's own removal can do this
+    (root / "STOP").unlink()                                             # by hand, with no note of the stop written
     assert CycleLog(root / CYCLE_LOG).start_in_force()                   # nothing in the records says it stopped
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
     assert CycleLog(root / CYCLE_LOG).cycles() == []
@@ -666,6 +690,19 @@ def test_a_run_uses_the_settings_it_checked_not_a_later_write(tmp_path, monkeypa
     assert run(root, now=lambda: START + timedelta(days=2), sleep=lambda seconds: (seen.append(heartbeat(root)),
                                                                                    _then_stop(root)(seconds))) == 0
     assert seen[0]["use"][0]["ceiling"] < 1_000_000
+
+
+def test_a_lifted_stop_left_on_disk_lets_a_restart_run_and_any_stop_after_it_ends_the_run(tmp_path):
+    root, loop = _enrolled_folder(tmp_path, started=False)
+    (root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    loop.log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root),
+                   **stop_to_lift(root))
+
+    def a_stop_after_a_tick(seconds: float) -> None:
+        ask_to_stop(root, "a newer stop")
+
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=a_stop_after_a_tick) == 0
+    assert len(CycleLog(root / CYCLE_LOG).cycles()) == 1 and "a newer stop" in stop_reason(root)
 
 
 def test_a_stop_file_a_restart_finds_ends_the_start_too(tmp_path):
