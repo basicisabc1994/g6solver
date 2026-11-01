@@ -388,6 +388,70 @@ def test_the_room_a_tick_waits_for_follows_the_providers_days():
     assert meter.next_room(START + timedelta(hours=1)) == OFF_THE_GRID - timedelta(days=3)
 
 
+# The open week keeps its book when the provider's own week is learned ------------------------------------------------------
+
+def _learns_the_week(reset=OFF_THE_GRID):
+    """A meter on its typed week, and what hands it a reading part way through: ``readings[0]`` is what the tool has said."""
+    readings: list[AccountReading | None] = [None]
+    return _meter(read_account=lambda provider, start: readings[0]), readings
+
+
+def _reading(used: float, at: datetime, reset: datetime = OFF_THE_GRID) -> AccountReading:
+    return AccountReading(used=used, estimated=False, read_at=at, resets_at=reset)
+
+
+def test_a_tick_that_learns_the_providers_week_keeps_its_whole_charge_against_the_ceiling():
+    meter, readings = _learns_the_week()
+    now = _day(3)
+    tick = meter.reserve("claude", now, 100)
+    readings[0] = _reading(20, now + timedelta(seconds=1))
+    assert meter.reading("claude", now + timedelta(seconds=1)).used >= 20
+    assert meter.settle(tick, 50) == 50
+    assert meter.reading("claude", now + timedelta(seconds=2)).used >= 50
+    later = OFF_THE_GRID - timedelta(days=3, hours=1)                    # still day 3 of the provider's week
+    assert meter.reading("claude", later).ceiling == 600
+    assert not meter.reserve("claude", later, 570).admitted
+
+
+def test_what_was_charged_before_the_week_moved_still_counts():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(3), 150), 150)
+    readings[0] = _reading(0, _day(3))
+    assert meter.reading("claude", _day(3) + timedelta(seconds=1)).used == 150
+
+
+def test_a_reservation_still_open_when_the_week_moves_stays_on_the_ceiling():
+    meter, readings = _learns_the_week()
+    meter.reserve("claude", _day(3), 150)
+    readings[0] = _reading(0, _day(3))
+    assert meter.reading("claude", _day(3) + timedelta(seconds=1)).used == 150
+
+
+def test_a_second_move_of_the_same_week_keeps_the_same_book():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(3), 150), 150)
+    readings[0] = _reading(0, _day(3))
+    meter.reading("claude", _day(3))
+    readings[0] = _reading(0, _day(3), reset=OFF_THE_GRID + timedelta(hours=2))
+    assert meter.reading("claude", _day(3) + timedelta(seconds=1)).used == 150
+
+
+def test_the_week_after_a_move_opens_a_book_of_its_own():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(3), 150), 150)
+    readings[0] = _reading(0, _day(3))
+    meter.reading("claude", _day(3))
+    readings[0] = None
+    assert meter.reading("claude", OFF_THE_GRID + timedelta(hours=1)).used == 0
+
+
+def test_a_reset_already_gone_opens_the_new_week_and_carries_nothing_over():
+    meter, readings = _learns_the_week()
+    meter.settle(meter.reserve("claude", _day(4), 150), 150)
+    readings[0] = _reading(900, OFF_THE_GRID - timedelta(hours=1))
+    assert meter.reading("claude", OFF_THE_GRID + timedelta(minutes=1)).used == 0
+
+
 # When room comes, and the settings file ----------------------------------------------------------------------------------
 
 def test_the_next_day_of_a_window_is_when_its_ceiling_can_rise():

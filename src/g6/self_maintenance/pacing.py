@@ -154,6 +154,7 @@ class BudgetMeter:
         self._read_account = read_account
         self._charged_at: dict[tuple[str, datetime], tuple[datetime, float]] = {}
         self._limits: dict[str, datetime] = {}
+        self._books: dict[tuple[str, datetime], datetime] = {}
 
     def _charged_when_read(self, provider: str, start: datetime, account: AccountReading | None,
                            charged: float) -> float | None:
@@ -172,6 +173,20 @@ class BudgetMeter:
         """The ledger's venture for this provider week; its cap is the allowance that held when the week began."""
         return self.scope.venture_named(f"{window.provider}@{start.isoformat()}",
                                         caps={_ACCOUNT: window.allowance, "cash": 0})
+
+    def _book(self, window: ProviderWindow, now: datetime) -> datetime:
+        """The start the week ``now`` falls in is booked under: its own, or the one it had when its end moved."""
+        start = window.place(now)[0]
+        return self._books.get((window.provider, start), start)
+
+    def _on_the_providers_week(self, window: ProviderWindow, reset: datetime, now: datetime) -> ProviderWindow:
+        """``window`` moved to the week its provider reports. The week still open keeps its book, or what was charged in it,
+        and what a tick reserved there and settles there, would stop counting against the ceiling. A week already over keeps
+        nothing: the week it gives way to is a new one."""
+        moved = self.windows[window.provider] = window.aligned(reset)
+        if moved is not window and reset > now:
+            self._books[(window.provider, moved.place(now)[0])] = self._book(window, now)
+        return moved
 
     def reading(self, provider: str, now: datetime) -> Admission:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
@@ -192,14 +207,14 @@ class BudgetMeter:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, None
         account = self._read_account(provider, window.place(now)[0]) if self._read_account is not None else None
         if account is not None and account.resets_at is not None:
-            window = self.windows[provider] = window.aligned(account.resets_at)    # it stays so, should the reading go
+            window = self._on_the_providers_week(window, account.resets_at, now)     # it stays so, should the reading go
             if account.resets_at <= now:
                 account = replace(account, used=0.0, read_at=None)  # its figure is of a week that has ended; a limit may not be
-        start, day = window.place(now)
-        venture = self._venture(window, start)
-        booked = self.scope.committed(venture, start.isoformat()).get(_ACCOUNT, 0.0)
-        pending = self.scope.outstanding(venture, start.isoformat()).get(_ACCOUNT, 0.0)
-        charged_when_read = self._charged_when_read(provider, start, account, booked - pending)
+        day, book = window.place(now)[1], self._book(window, now)
+        venture = self._venture(window, book)
+        booked = self.scope.committed(venture, book.isoformat()).get(_ACCOUNT, 0.0)
+        pending = self.scope.outstanding(venture, book.isoformat()).get(_ACCOUNT, 0.0)
+        charged_when_read = self._charged_when_read(provider, book, account, booked - pending)
         used, above = _used(booked, pending, account, charged_when_read)
         reported = account.limited_until if account is not None else None
         wait = max((at for at in (reported, self._limits.get(provider)) if at is not None), default=None)
@@ -224,10 +239,9 @@ class BudgetMeter:
                 return ""
             return f"{used:g} used plus a worst case of {worst_case:g} is over day {seen.day}'s ceiling of {seen.ceiling:g}"
 
-        start, _ = self.windows[provider].place(now)
         try:
-            reservation = self.scope.reserve(seen.venture, month=start.isoformat(), account=_ACCOUNT, amount=worst_case,
-                                             admit=over_the_ceiling)
+            reservation = self.scope.reserve(seen.venture, month=self._book(self.windows[provider], now).isoformat(),
+                                             account=_ACCOUNT, amount=worst_case, admit=over_the_ceiling)
         except BudgetRefused as exc:
             return replace(seen, reason=str(exc))
         return replace(seen, admitted=True, reservation=reservation, amount=float(worst_case),
