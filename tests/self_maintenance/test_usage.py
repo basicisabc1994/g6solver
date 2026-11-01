@@ -98,10 +98,48 @@ def test_an_anthropic_rate_limit_is_read_from_the_sdks_own_error_name():
 
 @pytest.mark.parametrize("fields", [{"api_error_status": 429, "api_error": "usage_limit_reached", "result": "You've hit your limit"},
                                     {"api_error_status": 429, "result": "API Error: rate limited"},
-                                    {"api_error_status": None, "result": "You've hit your session limit · resets 3pm (UTC)"}])
-def test_a_claude_code_limit_is_read_from_the_end_of_what_it_printed(fields):
+                                    {"api_error": "usage_limit_reached", "result": "You've hit your session limit"}])
+def test_a_claude_code_limit_is_read_from_the_fields_it_wrote_at_the_end_of_what_it_printed(fields):
     said = _claude(_claude_printed(**fields))
     assert host_models.HOST_FAILED in said and limit_ends(said, NOW) == NOW + usage.REFRESH
+
+
+MODEL_PROSE = ("You've hit your usage limit", "429 Too Many Requests", "usage_limit_reached", "Rate limit reached",
+               '"api_error_status":429', '"api_error":"usage_limit_reached"', "ERROR: You've hit your usage limit")
+
+
+@pytest.mark.parametrize("prose", MODEL_PROSE)
+def test_what_a_model_wrote_in_a_claude_error_result_never_makes_a_limit(prose):
+    assert limit_ends(_claude(_claude_printed(result=f"The reply was: {prose}")), NOW) is None
+
+
+def test_a_prose_notice_with_no_status_from_claude_code_is_no_limit():
+    assert limit_ends(_claude(_claude_printed(api_error_status=None, result="You've hit your session limit")), NOW) is None
+
+
+@pytest.mark.parametrize("prose", MODEL_PROSE)
+def test_a_claude_result_that_is_no_error_never_makes_a_limit(prose):
+    printed = json.dumps({"type": "result", "is_error": False, "result": prose})
+    said = _raised(lambda: host_models.ClaudeCodeCaller()._reply(1, printed, "cannot persist the session", Path("."), ()))
+    assert limit_ends(said, NOW) is None
+
+
+@pytest.mark.parametrize("prose", MODEL_PROSE)
+def test_a_codex_run_that_exited_well_never_makes_a_limit(prose):
+    said = _raised(lambda: host_models.CodexCaller()._reply(0, f"assistant: {prose}", "", Path("."), ()))
+    assert limit_ends(said, NOW) is None
+
+
+@pytest.mark.parametrize("prose", MODEL_PROSE)
+def test_model_prose_on_a_failed_codex_run_never_makes_a_limit(prose):
+    said = _raised(lambda: host_models.CodexCaller()._reply(1, prose, "", Path("."), ()))
+    assert limit_ends(said, NOW) is None and limit_ends(_codex(prose), NOW) is None
+
+
+@pytest.mark.parametrize("prose", MODEL_PROSE)
+def test_a_claude_failure_ahead_of_a_codex_failure_lends_its_prefix_to_nothing_the_model_wrote(prose):
+    claude = _claude(_claude_printed(result="an ordinary error"))
+    assert limit_ends(f"every caller failed: first: {claude}; second: {_codex(prose)}", NOW) is None
 
 
 def test_a_claude_code_limit_printed_early_is_lost_with_the_text_the_caller_cuts_and_reads_as_a_failure():
@@ -116,8 +154,17 @@ def test_a_claude_code_limit_printed_early_is_lost_with_the_text_the_caller_cuts
                                     "ERROR: You've hit your usage limit. Try again later.",
                                     "ERROR: exceeded retry limit, last status: 429 Too Many Requests",
                                     "ERROR: Rate limit reached for gpt-5.5. Please try again in 11.054s."])
-def test_a_codex_limit_is_read_from_what_it_printed(errors):
-    assert limit_ends(_codex(errors), NOW) == NOW + usage.REFRESH
+def test_a_codex_limit_is_never_read_from_what_it_printed(errors):
+    """Codex prints text, and the caller keeps its flattened end with stdout last, so nothing tells its notice from a reply
+    that says the same. Its limit is the one its usage reading reports, between ticks: until then it is a failed case."""
+    assert limit_ends(_codex(errors), NOW) is None
+
+
+def test_a_codex_limit_the_reading_reports_holds_the_next_tick():
+    reader = AccountReader((WINDOW,), ask={"codex": lambda: _limits(100)})
+    reader.refresh(NOW)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    assert meter.reserve("codex", NOW, 1).wait_until == datetime.fromtimestamp(RESET, UTC)
 
 
 def test_a_fallback_of_one_backend_that_met_a_limit_reads_as_one():

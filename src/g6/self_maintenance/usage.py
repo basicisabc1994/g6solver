@@ -21,24 +21,28 @@ lags the provider's own count leaves the same gap in the other direction, and no
 
 **A limit met during a tick** can only be read from the ``LLMError`` the request raised, so ``limit_ends`` reads that text.
 No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet. It
-reads only the start of that text, G6's own code or status. A server's body comes after that, and its words never decide
-this: an HTTP 500 that names ``RateLimitError`` is a failed case. What a host program printed is read after the code of a
-host failure.
+reads only what a model cannot write: G6's own code or status at the start of that text, and the fields a host program
+writes around a model's words. A server's body comes after the start, and its words never decide this: an HTTP 500 that
+names ``RateLimitError`` is a failed case. Neither do a host's words, whatever they say, since a reply can say the same.
 
 * The built-in HTTP callers and the Anthropic SDK are read reliably: ``G6_E_LLM_RATE_LIMITED``, with the wait a server asked
   for, ``HTTP 429`` with none, and the SDK's ``RateLimitError``. A caller of a domain's own is read only if it raises
   ``LLMError`` with such words.
 * Claude Code (2.1.316) was read from the text of its program, on 2026-11-01, and never seen at a limit. A result with
   ``is_error`` is an ``LLMError``, and the program writes the error fields after its long ``usage`` record, with a few short
-  fields behind them: ``api_error_status`` of 429, ``api_error`` of ``usage_limit_reached``, and a ``result`` that says
-  "You've hit your limit". So they fit in the 300 characters the caller keeps. That order is no promise: a version that
-  writes them earlier loses them. A 429 is also what a passing throttle or an organisation's policy sends, and each of
-  those waits as a limit does.
-* Codex (0.165.0) was read the same way and never seen at a limit: "You've hit your usage limit", and "exceeded retry limit,
-  last status: 429 Too Many Requests". How far from the end of its output those land was not seen.
+  fields behind them, so they fit in the 300 characters the caller keeps: ``api_error_status`` of 429 and ``api_error`` of
+  ``usage_limit_reached``. Those are read as JSON fields, and a model's words sit inside the JSON string ``result``, where
+  every quote is escaped, so they cannot read as a field. That order is no promise: a version that writes them earlier
+  loses them. A notice with neither field, such as a session limit reported in ``result`` alone, is no limit here. A 429 is
+  also what a passing throttle or an organisation's policy sends, and each of those waits as a limit does.
+* Codex (0.165.0) prints text. The caller keeps the flattened end of its output with what went to stdout last, so nothing
+  there tells its notice from a reply that says the same, and nothing it prints is read. Its limit is the one
+  ``account/rateLimits/read`` reports, between ticks.
 
 A limit that does not read as one is a failed case, and the tick runs on as it always has, so three such cycles pause the
-loop. The repair is a code of its own from those callers, which waits for an issuance window.
+loop. For Codex the reading ends that at the next look, at most ``REFRESH`` later; a limit it does not show, such as a
+passing throttle, stays a failed case. The repair is a code of its own from those callers, which waits for an issuance
+window.
 """
 from __future__ import annotations
 
@@ -69,14 +73,14 @@ _ASKED = ({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "g
           {"id": 2, "method": READ_LIMITS, "params": {"excludeResetCreditDetails": True}})
 # COPY: Why a provider has no account figure.
 NOT_REPORTED = "its tool reports no usage without a model call, so the meter counts model calls"
-#: What a host program prints at a limit: see the module docstring for where each comes from.
-_PRINTED_AT_A_LIMIT = (r"usage_limit_reached|\"api_error_status\":429|hit your [^\"]{0,40}limit|usage limit reached"
-                       r"|rate limit reached|429 Too Many Requests")
-#: The start of what a request raises at a limit, which is G6's own words. A server's body comes after them.
+#: The start of what a request raises at a limit, which is G6's own words. A server's body comes after them. Of what a host
+#: program prints, only the two JSON fields of a Claude Code error result: see the module docstring for why. The search for
+#: them ends at the next caller's failure, whose text a model may have written.
 _LIMIT = re.compile(r"(?:every caller failed: \S+: )?"
                     r"(?:G6_E_LLM_RATE_LIMITED\b(?:[^;]*? asks for a wait of (?P<seconds>[0-9.]+(?:e[+-]?[0-9]+)?) s)?"
                     r"|HTTP 429\b|Anthropic request failed: RateLimitError\b"
-                    rf"|G6_E_LLM_HOST_FAILED: .*(?i:{_PRINTED_AT_A_LIMIT}))")
+                    r"|G6_E_LLM_HOST_FAILED: claude exited -?\d+ and gave an error result: "
+                    r"[^;]*\"(?:api_error_status\": ?429\b|api_error\": ?\"usage_limit_reached\"))")
 
 
 class UsageUnavailable(RuntimeError):

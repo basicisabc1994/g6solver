@@ -877,7 +877,8 @@ def test_a_race_never_takes_more_runs_than_its_bound(tmp_path):
     assert ran.calls_used <= race_calls(len(loop.cut.selection), len(candidates), 10, 0.5)
 
 # A provider's limit is a wait --------------------------------------------------------------------------------------------
-AT_A_LIMIT = "G6_E_LLM_HOST_FAILED: codex exited 1: ERROR: You've hit your usage limit. Try again later."
+AT_A_LIMIT = ("G6_E_LLM_HOST_FAILED: claude exited 1 and gave an error result: "
+              '{"api_error_status":429,"result":"You\'ve hit your usage limit"}')
 TWO_OFFERS = ({"prompt": domains.WORKING}, {"prompt": f"{domains.WORKING} Show each step."})
 
 
@@ -991,6 +992,16 @@ def test_a_server_error_that_names_a_limit_in_its_body_is_a_failed_case_not_a_wa
         raise LLMError("HTTP 500 from https://model: ImportError: cannot import name 'RateLimitError' from 'openai'")
 
     domain.llm._responder = broken
+    assert _code(loop.tick()) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 1
+
+
+def test_a_model_writing_of_a_limit_in_a_lost_reply_is_a_failed_case_not_a_wait(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def lost(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_HOST_FAILED: codex exited 0 but wrote no last message: assistant: You've hit your usage limit")
+
+    domain.llm._responder = lost
     assert _code(loop.tick()) != "G6_E_LOOP_BUDGET_WAIT" and len(loop.log.cycles()) == 1
 
 

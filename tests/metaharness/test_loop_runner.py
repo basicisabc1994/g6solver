@@ -132,7 +132,7 @@ def test_a_limit_met_during_a_tick_is_waited_out_and_the_days_page_says_so(tmp_p
     answers = domain.llm._responder
 
     def refuses(system: str, user: str) -> str:
-        raise LLMError("G6_E_LLM_HOST_FAILED: codex exited 1: You've hit your usage limit.")
+        raise LLMError("G6_E_LLM_RATE_LIMITED: HTTP 429 from u: You've hit your usage limit")
 
     domain.llm._responder = refuses
     first = time.at
