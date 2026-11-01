@@ -1410,12 +1410,12 @@ def test_a_patch_quoted_in_a_task_that_fits_cannot_stand_for_the_patch_itself(wo
 
 def test_the_head_fits_to_the_character_and_the_pack_is_the_same_text_it_was(world, monkeypatch):
     world.edit()
-    change = repo_tests.change(world.repo, world.base)
+    change, patch = repo_tests.change(world.repo, world.base), the_patch(world)
     proof = f"review {'0' * 32}"
-    room = loop.MAX_PACK_CHARS - len(loop._head(change, "", proof))
-    assert loop._read_whole(change, "t" * room) and not loop._read_whole(change, "t" * (room + 1))
-    assert loop._pack(change, "t" * room, proof).endswith(f"candidate.patch:\n{the_patch(world)}")      # to its last character
-    pack = loop._pack(change, TASK, proof)
+    room = loop.MAX_PACK_CHARS - len(loop._head(patch, "", proof))
+    assert loop._read_whole(patch, "t" * room) and not loop._read_whole(patch, "t" * (room + 1))
+    assert loop._pack(change, patch, "t" * room, proof).endswith(f"candidate.patch:\n{the_patch(world)}")      # to its last character
+    pack = loop._pack(change, patch, TASK, proof)
     assert pack == (f"issue.txt:\n{proof}\n\n{TASK}\n\ncandidate.patch:\n{the_patch(world)}\n\nparent/mod.py:\n{BASE}")
 
 
@@ -1835,8 +1835,8 @@ def test_overlapping_calls_cannot_delete_a_pending_test_or_earn_a_clean_stop(wor
     written, release = threading.Event(), threading.Event()
     first_critic, second_critic, original = reviewer("one"), reviewer("none"), loop.run_critic
 
-    def pause_after_writing(change, task, caller, system, where, n=1):
-        found = original(change, task, caller, system, where, n)
+    def pause_after_writing(change, task, caller, system, where, n=1, **more):
+        found = original(change, task, caller, system, where, n, **more)
         if caller is first_critic:
             written.set()
             assert release.wait(30), "the second call never gave way"
@@ -3296,3 +3296,72 @@ def test_a_refusal_the_log_kept_out_keeps_its_cause_in_the_row_it_owes_and_nowhe
     assert "cause" not in world.state(), "a fact of one ending is kept where it outlives that ending"
     world.advance(critic=reviewer("never"))
     assert the_row(world)["cause"] == loop.UNCONFINED
+
+def sent(user: str) -> str:
+    """The patch a reviewer was sent, cut from its pack."""
+    return user.split("candidate.patch:\n", 1)[1].split("\n\nparent/", 1)[0]
+
+
+def saved_after_the_first_read(world, monkeypatch, text: str) -> list[str]:
+    """An editor that saves once, the moment the round's first read of the patch is done. What each read gave."""
+    real, reads = repo_tests.diff_text, []
+
+    def diff(change) -> str:
+        found = real(change)
+        reads.append(found)
+        if len(reads) == 1:
+            world.edit(text)
+        return found
+
+    monkeypatch.setattr(repo_tests, "diff_text", diff)
+    return reads
+
+
+def test_the_patch_a_review_is_recorded_for_is_the_patch_its_reader_was_sent(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    saved_after_the_first_read(world, monkeypatch, FIXED + "# saved after the first read\n")
+    world.advance(critic=critic)
+    assert digest(sent(critic.calls[0][1])) == world.state()["reviews"][0]["patch"], "the reader was sent another patch"
+
+
+def test_a_round_reads_the_patch_once_before_its_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    seen = []
+    world.edit()
+    reads = saved_after_the_first_read(world, monkeypatch, FIXED)
+    world.advance(critic=reads_then(lambda: seen.append(len(reads))))
+    assert seen == [1], "with a second read there is a second patch"
+
+
+def test_a_save_undone_during_the_review_leaves_a_clean_stop_that_is_true(world, monkeypatch):
+    """The reader was sent the one read, and the tree is that patch again at the end, so a clean stop is about what it read."""
+    Reviewed(monkeypatch)
+    world.edit()
+    saved_after_the_first_read(world, monkeypatch, FIXED + "# saved, then undone\n")
+    critic = reads_then(world.edit)
+    step = world.advance(critic=critic)
+    assert "# saved, then undone" not in critic.calls[0][1], "the reader was sent a patch the record does not name"
+    assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
+    assert digest(sent(critic.calls[0][1])) == world.state()["reviews"][0]["patch"] == digest(the_patch(world))
+
+
+def test_a_save_that_stays_leaves_no_clean_stop_for_the_patch_that_was_read(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none")
+    world.edit()
+    saved_after_the_first_read(world, monkeypatch, FIXED + "# saved, and it stays\n")
+    step = world.advance(critic=critic)
+    assert "# saved, and it stays" not in critic.calls[0][1], "the reader was sent a patch the record does not name"
+    assert step.code == loop.NO_CLEAN_REVIEW and world.state()["stop"] == loop.MOVED
+
+
+def test_a_reviewer_told_of_the_error_reads_the_patch_the_round_recorded(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    critic = reviewer("one", "one")
+    world.edit()
+    saved_after_the_first_read(world, monkeypatch, FIXED + "# saved after the first read\n")
+    world.advance(critic=critic)
+    first, second = (sent(call[1]) for call in critic.calls)
+    assert first == second and digest(first) == world.state()["reviews"][0]["patch"]

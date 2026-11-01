@@ -504,15 +504,15 @@ def _scout(change: repo_tests.Change, task: str, text: str, where: Path, host: H
             "left_out": "" if usable else failed or "it exercised nothing on the base commit"}
 
 
-def _head(change: repo_tests.Change, task: str, proof: str) -> str:
+def _head(patch: str, task: str, proof: str) -> str:
     """The start of the pack, what a review must read whole: the issue, then the patch."""
-    return f"issue.txt:\n{proof}\n\n{task}\n\ncandidate.patch:\n{repo_tests.diff_text(change)}"
+    return f"issue.txt:\n{proof}\n\n{task}\n\ncandidate.patch:\n{patch}"
 
 
-def _pack(change: repo_tests.Change, task: str, proof: str) -> str:
+def _pack(change: repo_tests.Change, patch: str, task: str, proof: str) -> str:
     """What L9's critic reads in its folder, as text, since it has no tools: the issue, the patch, and of the base commit
-    the files the patch touches."""
-    parts = [_head(change, task, proof)]
+    the files the patch touches. ``patch`` is the caller's read: reading it here would make a second patch."""
+    parts = [_head(patch, task, proof)]
     for rel in change.files:
         text = repo_tests.read_at(change.repo, change.base_commit, rel)
         if text is not None:
@@ -526,14 +526,14 @@ def critic_file(n: int) -> str:
 
 
 def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: str, where: Path, n: int = 1,
-               told: str = "") -> dict:
+               told: str = "", *, patch: str) -> dict:
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
-    pack, for a reviewer sent back."""
+    pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it."""
     found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
     try:
-        found = critic_report(caller.complete(system, _pack(change, task, proof) + told), proof=proof)
+        found = critic_report(caller.complete(system, _pack(change, patch, task, proof) + told), proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if found["test"]:
@@ -542,11 +542,11 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     return found
 
 
-def _read_whole(change: repo_tests.Change, task: str) -> bool:
+def _read_whole(patch: str, task: str) -> bool:
     """Whether the pack holds the whole task and the whole patch: that its head fits. This is a length and never a search of
     the text, as a task may quote the patch. The pack is cut from its end, so the parent files go first, and a new file
     ``diff_text`` cuts is past this limit already. A reader of part of either has no clean review to give."""
-    return len(_head(change, task, f"review {'0' * 32}")) <= MAX_PACK_CHARS
+    return len(_head(patch, task, f"review {'0' * 32}")) <= MAX_PACK_CHARS
 
 
 def _unrun(got: ProbeRun) -> str:
@@ -562,8 +562,10 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
     review's test, each alone. It gives what fails and the words of the latest review whose test fails. A review that failed
     ends the loop whatever fails, as the patch it should have read was not read, so it gives nothing to send back. A hook cut
-    short repeats its review, and that review's test is the only one with its number. The patch itself is kept first, byte
-    for byte, as ``run.py`` keeps ``round-n.patch``: a later repair must not lose what a finding was about. A file counts as
+    short repeats its review, and that review's test is the only one with its number. The patch is read once, here: what is
+    kept, what the reviewer is sent and the digest the loop's end compares are that one read, so a clean stop is about what
+    the reviewer read, with no second read to differ from it. It is kept first, byte for byte, as ``run.py`` keeps
+    ``round-n.patch``: a later repair must not lose what a finding was about. A file counts as
     passed only if each case that ever failed in it has passed by its own id: a skip, a rename or a case no longer collected
     fixes nothing. This decides what the report may call fixed, and what fails, and so what goes back, is as it was.
 
@@ -575,7 +577,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_bytes(patch.encode("utf-8"))
     (where / mine).unlink(missing_ok=True)
-    said = (run_critic(change, task, critic, shipped.critic, where, n) if _read_whole(change, task) else
+    said = (run_critic(change, task, critic, shipped.critic, where, n, patch=patch) if _read_whole(patch, task) else
             {"verdict": "failed", "rule": "", "why": "", "test": "", "error": TOO_LONG})
 
     def run(name: str) -> None:
@@ -600,8 +602,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         told, claimed = said.pop("unrun"), said["rule"]
         (where / mine).unlink(missing_ok=True)
         del results[mine], failed[mine]
-        said.update(run_critic(change, task, critic, shipped.critic, where, n, told=WOULD_NOT_RUN.format(error=told)),
-                    told=told, claimed=claimed)
+        said.update(run_critic(change, task, critic, shipped.critic, where, n, told=WOULD_NOT_RUN.format(error=told),
+                               patch=patch), told=told, claimed=claimed)
         if (where / mine).is_file():
             run(mine)
     said.update(n=n, patch=digest(patch), file=mine, results=results, failed=failed)
@@ -1050,7 +1052,8 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
-            state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic")
+            state["critic"] = run_critic(change, task, critic, shipped.critic, session / "sets" / "critic",
+                                         patch=repo_tests.diff_text(change))
         seen = []
         state["ran"] = {}
         for label, one in state["sets"].items():
