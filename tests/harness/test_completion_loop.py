@@ -3264,3 +3264,35 @@ def test_a_patch_that_moves_while_a_held_log_refuses_the_row_leaves_no_clean_end
     assert ended.code == loop.NO_CLEAN_REVIEW and not rows(world)
     world.advance(critic=reviewer("never"))
     assert the_row(world)["cause"] == "patch_moved"
+
+# --- the second Codex review: each case failed on the code it was written against ------------------------------------------------
+
+@pytest.mark.parametrize("critic, cause", [(FakeLLM(lambda system, user: "no form at all"), "reviewer_unreadable"),
+                                           (reviewer(LLMError("gone away")), "reviewer_unreachable"),
+                                           (reviewer("none"), "review_found_nothing")])
+def test_a_refusal_a_killed_hook_left_names_no_cause_for_the_run_that_went_on(world, monkeypatch, critic, cause):
+    Reviewed(monkeypatch)
+    monkeypatch.setattr(proposer, "boundary", lambda root: "not here for now")
+    real = loop._finish
+    monkeypatch.setattr(loop, "_finish", killed)
+    world.edit()
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=reviewer("never"))
+    assert rows(world)[0]["cause"] == loop.UNCONFINED
+    monkeypatch.setattr(loop, "_finish", real)
+    monkeypatch.setattr(proposer, "boundary", lambda root: "")
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert row["cause"] == cause, f"the final row kept the refusal's cause {row['cause']!r}"
+
+
+def test_a_refusal_the_log_kept_out_keeps_its_cause_in_the_row_it_owes_and_nowhere_else(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    monkeypatch.setattr(proposer, "boundary", lambda root: "not here")
+    world.session.parent.mkdir(parents=True)
+    world.edit()
+    with log_held(world):
+        world.advance(critic=reviewer("never"))
+    assert "cause" not in world.state(), "a fact of one ending is kept where it outlives that ending"
+    world.advance(critic=reviewer("never"))
+    assert the_row(world)["cause"] == loop.UNCONFINED

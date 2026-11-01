@@ -730,10 +730,8 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
 
 def _cause(state: dict, fixed: list[dict], still: list[dict]) -> str:
     """Why a run ended, from what stopped it, so a review that failed with a finding open is a failed review: the findings speak
-    only where nothing else ended the loop. A refusal has named its own."""
+    only where nothing else ended the loop."""
     stop, last = state["stop"], (state.get("reviews") or [{}])[-1]
-    if "cause" in state:
-        return state["cause"]
     if stop == NO_REVIEW:
         return OVERSIZE if last.get("error") == TOO_LONG else UNREACHABLE if last.get("verdict") == "failed" else UNREADABLE
     return CAUSES.get(stop) or (OPEN if still else FIXED if fixed else FOUND_NOTHING)
@@ -748,16 +746,18 @@ def _round_outcome(one: dict) -> str:
     return "test_showed_nothing" if one["results"].get(one["file"]) in SHOWED_NOTHING else "nothing_reproduced"
 
 
-def _failure_row(task: str, base: str, session: Path, state: dict, now: str) -> dict:
+def _failure_row(task: str, base: str, session: Path, state: dict, now: str, cause: str = "") -> dict:
     """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
     a cause must be a stable code. ``independently_observed`` means only that G6 saw a test fail: it ran another family's test,
     apart from the agent, so a run where none failed observed nothing, whatever else it says. ``session`` names the folder
     beside it that holds each round's patch. ``label`` stays empty here: it is where the maintainers' verdict joins later. A
     refused run has no reviews. ``now``: the digest of the patch as the caller read it, "" if it could not. Nothing here reads
-    the repository, which could fail: with no ``now``, ``tree_changed`` is None, unknown, and the run still has its row."""
+    the repository, which could fail: with no ``now``, ``tree_changed`` is None, unknown, and the run still has its row.
+    ``cause``: a refusal's own, for this row alone. It is no part of the state, which a killed hook leaves for a run that goes
+    on, and that run's row must say how that run ended."""
     reviews = state.get("reviews") or []
     fixed, still = patch_report.findings(reviews)
-    cause = _cause(state, fixed, still)
+    cause = cause or _cause(state, fixed, still)
     return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": cause, "changeable": cause not in NOT_CHANGEABLE,
             "note": (still or fixed)[0]["rule"] if still or fixed else state["stop"],
             "independently_observed": bool(fixed or still), "task": digest(task), "base": base, "label": "",
@@ -808,11 +808,11 @@ def _write_row(session: Path, state: dict) -> None:
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
-def _owe_row(task: str, base: str, session: Path, state: dict, now: str) -> None:
+def _owe_row(task: str, base: str, session: Path, state: dict, now: str, cause: str = "") -> None:
     """The run's row, owed from here on: built, marked in ``OWING`` and saved with the state, before anything that can fail, so
     what follows can delay the row and cannot lose it. ``_write_row`` delivers it. It is JSON in ASCII, so it is one line
     whatever its text holds. A mark that cannot be made leaves the row to the run's own later calls."""
-    state["row_due"] = json.dumps(_failure_row(task, base, session, state, now))
+    state["row_due"] = json.dumps(_failure_row(task, base, session, state, now, cause))
     try:
         mark = state_path(*OWING, session.name)
         mark.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1015,8 +1015,8 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
     change = repo_tests.change(root, base)
 
     def refused(text: str, code: str, cause: str) -> Step:
-        state.update(stop=text, cause=cause)
-        _owe_row(task, base, session, state, _patch_now(root, base))
+        state["stop"] = text
+        _owe_row(task, base, session, state, _patch_now(root, base), cause)
         _write_row(session, state)
         return _finish(session, state, text, code, "untested")
 
