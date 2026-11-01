@@ -111,7 +111,7 @@ repository, the task, a session name and the base commit, and returns a job to p
 continue, with the text for the agent, or stop, with the report. The first call fixes the session's repository, task and
 base, and a call for another repository or task is refused. A session takes one step at a time: a call that finds another
 running does nothing, and says wait. Over this tool only a stated reason rejects a finding, so a client that repeats a call
-gets the same finding back, and nothing is spent.
+gets the same finding back, and nothing is spent. A reason that ends on a question rejects nothing, and also says wait.
 
 ## The scouts' loop
 

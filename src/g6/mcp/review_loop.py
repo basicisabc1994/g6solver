@@ -10,7 +10,8 @@ best, as a review that reproduces nothing is not evidence the work is right. Not
 
 A client may repeat a call whose reply it lost, and a server's jobs run one at a time, so that repeat runs just after the call
 it repeats, with no overlap for a lock to see. So only a call with a ``reason`` rejects a finding: with the code unchanged and
-no reason, the same finding goes back, and nothing is spent.
+no reason, the same finding goes back, and nothing is spent. A reason that ends on a question rejects nothing either: the step
+says wait, for the person's answer.
 """
 from __future__ import annotations
 

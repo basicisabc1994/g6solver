@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.cegis import InputDomain, SearchResult, cegis
+from g6.context.redact import mask_paths, scrub
 from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
@@ -422,7 +423,7 @@ def _read(change: repo_tests.Change, runs: Iterable[dict]) -> ProbeRun:
         if elsewhere or verdict not in repo_tests.RAN:
             code = None
             tail.append(vs.LOADED_ELSEWHERE.format(elsewhere) if elsewhere else f"{verdict}: {ran.get('said') or ''}")
-            texts.update(ran.get("failure_messages") or {})     # pytest's own words: they name no case, so no reader of cases sees them
+            texts.update(ran.get("failure_messages") or {})     # pytest's own words: no case has them, so only ``_unrun`` reads them
             continue
         code = None if code is None else max(code, int(verdict == repo_tests.FAILED))
         full, refused = _in_repository(ran), set(ran.get("os_errors") or ())
@@ -547,9 +548,11 @@ def _read_whole(change: repo_tests.Change, task: str) -> bool:
 
 
 def _unrun(got: ProbeRun) -> str:
-    """Why a run showed nothing, in its own words: what stopped it, then what each case with no result said."""
+    """Why a run showed nothing, in its own words: what stopped it, then what each case with no result said. This text goes to
+    the reviewer, who is told nothing else of this machine, so it leaves with no secret and no home folder in it."""
     said = [text for case, text in got.texts.items() if got.results.get(case, "unknown") == "unknown"]
-    return "\n".join(part for part in (got.tail, *said) if part)[-MAX_CASE_CHARS:] or "no case of it ran to a result"
+    text = "\n".join(part for part in (got.tail, *said) if part)
+    return mask_paths(scrub(text))[-MAX_CASE_CHARS:] or "no case of it ran to a result"
 
 
 def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],
@@ -768,7 +771,7 @@ def _row_of(line: str, session: Path) -> bool:
 
 
 def _write_row(session: Path, state: dict) -> None:
-    """``row_due`` added to ``FAILURES``, and taken off the state. A session is one run, so one whole row, and that row says
+    """``row_due`` added to ``FAILURES``, and taken off the state. A folder is one run, so one whole row, and that row says
     how the run ended: a hook cut short after its row adds no second, one cut short inside it adds the row again, and a run
     that went on after one has its row replaced, whole, by a new file. A row starts a line of its own after a torn one,
     which would take it down too. The log has a lock of its own, as an append is not atomic on every platform. A row that

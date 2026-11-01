@@ -2894,3 +2894,14 @@ def test_a_row_with_no_finding_still_builds_a_failure_record(world, monkeypatch)
     row = the_row(world)
     record = FailureRecord(**{field.name: row[field.name] for field in dataclasses.fields(FailureRecord)})
     assert record.cause == "review_found_nothing" and not record.changeable and not record.independently_observed
+
+def test_what_goes_back_to_a_reviewer_carries_no_home_folder_and_no_secret(world, monkeypatch):
+    home = str(Path.home())
+    Runs(monkeypatch, now=lambda placed: {"verdict": "collection_error", "said": "no", "failure_messages": {
+        "test_critic.py": f"ImportError in {home}{os.sep}project{os.sep}settings.py: api_key = 'abcd1234efgh5678'"}})
+    critic = reviewer("one", "one")
+    world.edit()
+    world.advance(critic=critic)
+    told = critic.calls[1][1]
+    assert "settings.py" in told, "the error never went back"
+    assert home not in told and "abcd1234efgh5678" not in told
