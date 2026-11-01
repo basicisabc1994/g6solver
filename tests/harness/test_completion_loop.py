@@ -1530,6 +1530,42 @@ def test_no_session_is_ever_marked_ended_with_no_report(world, monkeypatch):
     assert seen and all(seen)
 
 
+def test_a_retained_test_a_later_repair_breaks_is_an_open_finding(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "two", "none")
+    world.edit()
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 1\n")
+    assert world.advance(critic=critic).action == loop.CONTINUE      # review 2's test passes, and review 1's still fails
+    assert world.state()["reviews"][1]["results"]["test_critic_2.py"] == "passed"
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic_2.py"}     # the repair fixes review 1 and breaks review 2's test
+    step = world.advance(critic=critic)
+    assert step.action == loop.CONTINUE and "rule two" in step.text
+    ended = world.advance(critic=critic, said="I reject the second finding.")
+    [row] = rows(world)
+    assert (row["cause"], row["note"]) == (loop.OPEN, "rule two")
+    assert "**Found:** 2 reproduced" in ended.text and "**Fixed:** review 1" in ended.text
+    assert "**Open:** review 2" in ended.text and "showed no failure" not in ended.text
+
+
+def test_a_retained_test_that_failed_once_and_passes_at_the_end_was_found_and_fixed(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "two", "none", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 2\n")
+    tests.failing = {"test_critic_2.py"}
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 3\n")
+    tests.failing = set()
+    ended = world.advance(critic=critic)
+    assert ended.action == loop.STOP and "**Found:** 2 reproduced" in ended.text and "**Open:**" not in ended.text
+    assert "**Fixed:** review 2" in ended.text and "showed no failure" not in ended.text
+    [row] = rows(world)
+    assert row["cause"] == loop.FIXED
+
+
 def test_overlapping_calls_cannot_delete_a_pending_test_or_earn_a_clean_stop(world, monkeypatch):
     tests = Reviewed(monkeypatch, "test_critic.py")
     written, release = threading.Event(), threading.Event()

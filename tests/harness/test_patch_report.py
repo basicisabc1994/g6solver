@@ -478,6 +478,22 @@ def test_a_test_that_did_not_run_again_stays_open():
     assert "`test_critic_1.py` did not run again, so nothing shows it is fixed." in text and "`test_critic_1.py` fails" not in text
 
 
+def test_a_test_that_first_fails_after_a_later_repair_is_a_finding_and_stays_open():
+    reviews = [review(1, results={"test_critic_1.py": "failed"}),
+               review(2, results={"test_critic_1.py": "failed", "test_critic_2.py": "passed"}),
+               review(3, "none", {"test_critic_1.py": "passed", "test_critic_2.py": "failed"})]
+    text = patch_report.completion_report({**CLEAN, "reason": "the agent left the code as it was", "reviews": reviews}, "R")
+    assert "**Found:** 2 reproduced" in text and "**Fixed:** review 1" in text
+    assert "**Open:** review 2: `rule 2`; its test `test_critic_2.py` fails." in text
+    assert "showed no failure" not in text
+    assert [[one["n"] for one in side] for side in patch_report.findings(reviews)] == [[1], [2]]
+
+
+def test_a_test_that_never_failed_in_any_run_is_no_finding():
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {"test_critic_1.py": "passed"})]
+    assert patch_report.findings(reviews) == ([], [])
+
+
 def test_a_review_with_no_failure_to_show_is_named_and_is_no_finding():
     reviews = [review(1, results={"test_critic_1.py": "did not run"}, unrun="no such import"),
                review(2, results={"test_critic_1.py": "did not run", "test_critic_2.py": "passed"}),

@@ -373,10 +373,11 @@ def _times(count: int) -> str:
 
 
 def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
-    """The reviews whose own test failed when they wrote it, fixed (it passed on the last run) and open (anything else: a
-    test that did not run again says nothing, so it fixes nothing)."""
+    """The reviews whose test failed on the patch in any run, as a repair can break a test that passed when it was written:
+    fixed (it passed on the last run) and open (anything else: a test that did not run again says nothing, so it fixes
+    nothing)."""
     last = reviews[-1]["results"] if reviews else {}
-    found = [one for one in reviews if one["results"].get(one["file"]) == "failed"]
+    found = [one for one in reviews if any(run["results"].get(one["file"]) == "failed" for run in reviews)]
     return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
 
 
@@ -408,7 +409,7 @@ def _review_lines(loop: dict) -> list[str]:
         lines.append(f"- A reviewer from another model family read the patch {_times(len(reviews))}: "
                      + ", ".join(code(one.get("verdict")) for one in reviews) + ".")
     for one in reviews:
-        if one.get("verdict") == "defect" and one["results"].get(one["file"]) != "failed":
+        if one.get("verdict") == "defect" and one not in (*fixed, *still):
             why = (f"its test would not run: {code(one['unrun'], 200)}" if one.get("unrun") else
                    "its test passes on the patch" if one["file"] in one["results"] else "it wrote no test")
             lines.append(f"- Review {one['n']} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
