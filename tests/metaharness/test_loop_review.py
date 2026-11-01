@@ -933,6 +933,25 @@ def test_what_a_gain_cost_still_reaches_the_gates_measurements_and_is_reported_a
     reported = lineage(loop.root / "workspace")["recent"][-1]["measured"]["not_gated"]
     assert reported["wall_clock_s"] == {"before": seconds["base_mean"], "after": seconds["candidate_mean"]}
     assert reported["model_calls"]["after"] > 0
+    assert reported["cost_usd"] == {"before": None, "after": None}, "dollars nobody measured read as unknown, not as absent or zero"
+
+
+def test_a_known_cost_survives_beside_a_missing_one_in_the_record(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    receipt, tutor = {}, domain.tutor
+
+    def respond(system: str, user: str) -> str:
+        receipt.clear()
+        if "step by step" not in system:
+            receipt["cost_usd"] = 1.0
+        return tutor(system, user)
+
+    domain.llm._responder = respond
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, usage=lambda: dict(receipt))})
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert loop.tick()["outcome"] == "adopted"
+    assert lineage(loop.root / "workspace")["recent"][-1]["measured"]["not_gated"]["cost_usd"] == {"before": 1.0, "after": None}
 
 
 def test_a_gain_that_costs_more_model_calls_is_adopted(tmp_path):

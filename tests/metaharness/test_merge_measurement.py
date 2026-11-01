@@ -5,6 +5,7 @@ from g6.metaharness.schema import EvidencePolicy
 
 import importlib.util
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,7 @@ def test_the_default_cost_margin_leaves_every_workflows_digest_as_it_was():
     assert schema._policy_fields(EvidencePolicy(cost_margin=None))["cost_margin"] is None
 
 
-@pytest.mark.parametrize("margin", [-0.1, float("nan"), True])
+@pytest.mark.parametrize("margin", [-0.1, float("nan"), True, Decimal("0.05"), "0.05"])
 def test_a_cost_margin_that_is_no_margin_is_refused(margin):
     with pytest.raises(ValueError, match="cost_margin"):
         EvidencePolicy(cost_margin=margin)

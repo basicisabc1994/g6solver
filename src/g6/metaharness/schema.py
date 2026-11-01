@@ -118,7 +118,7 @@ class EvidencePolicy:
     cost_margin: float | None = 0.05    # a share of the base's measured cost; None measures and reports it and refuses nothing for it
 
     def __post_init__(self) -> None:
-        if self.cost_margin is not None and (isinstance(self.cost_margin, bool) or not math.isfinite(self.cost_margin) or self.cost_margin < 0):
+        if self.cost_margin is not None and (type(self.cost_margin) not in (int, float) or not math.isfinite(self.cost_margin) or self.cost_margin < 0):
             raise ValueError("cost_margin must be None or a finite share of at least 0")
         if self.min_cases < 1 or self.min_discordant < 1 or self.max_evaluations < 1 or self.max_eval_model_calls < 1:
             raise ValueError("min_cases, min_discordant, max_evaluations and max_eval_model_calls must be >= 1")

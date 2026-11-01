@@ -80,6 +80,11 @@ def test_a_lesson_with_nothing_to_check_it_by_is_refused(field, value, why):
         Lesson(**fields)
 
 
+def test_a_single_text_is_not_a_list_of_cases_so_one_case_cannot_match_inside_another():
+    with pytest.raises(ValueError, match="case_ids"):
+        _lesson(cases="case-10")
+
+
 def test_a_mistake_counts_as_repeated_only_after_its_lesson():
     seen = [(1, "verification_gap", "c1"), (2, "verification_gap", "c2"), (2, "bad_remediation", "c3"), (3, "verification_gap", "c1")]
     got = repeats([_lesson(generation=1)], seen)
@@ -110,6 +115,17 @@ def test_a_prediction_is_scored_in_the_direction_it_named(before, expected, obse
 def test_a_prediction_with_no_direction_is_refused():
     with pytest.raises(ValueError, match="direction"):
         Prediction("p1", "false alarms", 0.5, 0.5)
+
+
+@pytest.mark.parametrize("before,expected", [(float("nan"), 0.5), (0.5, float("nan")), (float("inf"), 0.5), (0.5, float("-inf"))])
+def test_a_prediction_that_is_not_a_number_is_refused(before, expected):
+    with pytest.raises(ValueError, match="finite"):
+        Prediction("p1", "false alarms", before, expected)
+
+
+@pytest.mark.parametrize("observed", [float("nan"), float("inf")])
+def test_an_outcome_that_is_not_a_number_decides_nothing(observed):
+    assert score(Prediction("p1", "false alarms", 0.5, 0.7), observed) == "open"
 
 
 def test_a_prediction_with_no_outcome_yet_is_open_and_is_not_a_miss():

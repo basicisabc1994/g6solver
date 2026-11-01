@@ -76,10 +76,16 @@ def _measured(report: EvaluationReport) -> dict[str, Any]:
     """The held-out figures an adoption stands on, as the gate read them: before is the head, after the candidate. What the
     gain cost is beside them and under ``not_gated``, since no adoption here stands on it."""
     success = report.estimates["success"]
+
+    def dollars(side: str) -> float | None:
+        known = [row[side].get("cost_usd") for row in report.cases]
+        return sum(known) / len(known) if known and None not in known else None     # a missing receipt reads as unknown, never as zero
+
     return {"split": report.split, "cases": report.n, "before": success["base_mean"], "after": success["candidate_mean"],
             "wins": report.success["wins"], "losses": report.success["losses"],
-            "not_gated": {name: {"before": report.estimates[name]["base_mean"], "after": report.estimates[name]["candidate_mean"]}
-                          for name in ("wall_clock_s", "model_calls", "cost_usd") if name in report.estimates}}
+            "not_gated": {**{name: {"before": report.estimates[name]["base_mean"], "after": report.estimates[name]["candidate_mean"]}
+                             for name in ("wall_clock_s", "model_calls")},
+                          "cost_usd": {"before": dollars("base"), "after": dollars("candidate")}}}
 
 
 def _generation(row: Mapping[str, Any]) -> dict[str, Any]:

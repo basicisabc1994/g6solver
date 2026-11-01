@@ -7,6 +7,7 @@ one. Nothing here is stored: a cycle's row holds its lessons, so the loop's own 
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -90,10 +91,13 @@ class Lesson:
     def __post_init__(self) -> None:
         if self.root_cause not in ROOT_CAUSES:
             raise ValueError(f"root_cause must be one of {', '.join(ROOT_CAUSES)}")
-        for name in ("lesson_id", "hypothesis", "check", "scope", "case_ids", "alternatives"):
-            value = getattr(self, name)
-            if not (value.strip() if isinstance(value, str) else value):
+        for name in ("lesson_id", "hypothesis", "check", "scope"):
+            if not getattr(self, name).strip():
                 raise ValueError(f"{name} is required")
+        for name in ("case_ids", "alternatives"):
+            value = getattr(self, name)
+            if isinstance(value, str) or not value or not all(isinstance(x, str) and x.strip() for x in value):
+                raise ValueError(f"{name} must be a non-empty collection of texts")
 
 
 def repeats(lessons: Iterable[Lesson], seen: Iterable[tuple[int, str, str]]) -> dict[str, dict[str, int]]:
@@ -125,13 +129,15 @@ class Prediction:
     expected: float
 
     def __post_init__(self) -> None:
+        if not (math.isfinite(self.before) and math.isfinite(self.expected)):
+            raise ValueError("a prediction needs finite numbers")
         if self.expected == self.before:
             raise ValueError("a prediction needs a direction: expected equals before")
 
 
 def score(prediction: Prediction, observed: float | None) -> str:
-    """``held``, ``failed``, or ``open`` while the outcome is not in."""
-    if observed is None:
+    """``held``, ``failed``, or ``open`` while no usable outcome is in."""
+    if observed is None or not math.isfinite(observed):
         return OPEN
     rising = prediction.expected > prediction.before
     return HELD if (observed >= prediction.expected if rising else observed <= prediction.expected) else FAILED
