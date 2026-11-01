@@ -1192,3 +1192,13 @@ The owner named K1 a second primary on 2026-11-01, before any stage 1 score was 
 - **K1 on stage 1 bugs is still a second look,** since its method was tuned on those repositories. Stage 2 is its first test on untuned repositories. K1 can never count for stage 3.
 
 **The credits.** The owner confirmed that the API credits expire on 2026-11-04, and the work carries on. Stage 2 therefore runs whole bugs in the frozen order, with every arm on a bug before the next bug starts, so no pair is missing. If time runs out, the rule is applied to the bugs that finished, the number is stated, and no bug is dropped or chosen after its results are seen.
+
+## 2026-11-01 (late): stage 3 becomes the loop's own tick
+
+No stage 3 run has started and no stage 1 score has been read. Stage 3 asks whether G6 can propose a change to itself from its own failure records, with no change written in session. As written, `evolve.py` is started from a session, so a person still chooses when it runs and what it is shown, and "nothing yet shows G6 designing itself" would stay true after it.
+
+- **The change.** The self-improvement loop's own tick proposes the change, on a domain that tunes the reviewer: it writes a test, G6 runs it, and an exact judge compares that with the maintainers' verdict. The reviewer never sees the fix.
+- **Its cases.** Recorded patches from the training bugs and from further development bugs. No fresh, held-out or stage 2 bug enters them.
+- **Its comparison.** The winner is a change to the reviewer, so its parent is K1. It runs twice on each stage 2 bug that finished, as a new arm, against K1, A and T, under the same rule, with both scores, and is described as recommended and tested, never promoted. K1 itself still cannot count for stage 3: only the change the loop made can.
+- **If the loop adopts nothing,** stage 3 reports that. "Not shown" is a valid ending, and no change is written by hand to fill the place.
+- **Timing.** That domain is not built yet, and it lands after the API credits expire on 2026-11-04, so stage 3's runs need new credit, which is the owner's decision. `evolve.py` stays in the repository, unused for this stage.
