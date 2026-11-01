@@ -148,12 +148,13 @@ def _cannot_start(root: Path) -> dict | None:
     return None
 
 
-def _terms(root: Path, settings: dict[str, Any], standing: dict[str, Any]) -> str:
+def _terms(root: Path, settings: dict[str, Any], standing: dict[str, Any], stops: int) -> str:
     """A digest of all a dialog shows or stands on: the whole settings file, the Python file, who enrolled it, any stop in
-    place as ``stop_to_lift`` reads it, which is ``standing``, and any pause. Any write to the stop changes that."""
+    place as ``stop_to_lift`` reads it, which is ``standing``, the count of stops, and any pause. Any write to the stop
+    changes that. So does a stop that died between its two writes, which only the count shows."""
     log = _log(root)
     return digest_of({"settings": settings, "domain_file": file_digest(settings.get("domain_file")),
-                      "enrolled": log.enrolled(), "stop": standing, "paused": log.paused()})
+                      "enrolled": log.enrolled(), "stop": standing, "stops": stops, "paused": log.paused()})
 
 
 def asked(folder: str) -> tuple[Path, str, str] | dict:
@@ -164,8 +165,8 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
-    settings, log = read_settings(root), _log(root)
-    terms = _terms(root, settings, stop_to_lift(root))
+    settings, log, stops = read_settings(root), _log(root), stops_asked(root)
+    terms = _terms(root, settings, stop_to_lift(root), stops)
     enrolled = log.enrolled()
     use = [f"{w.provider}: {w.allowance:g} a week{' (an estimate)' if w.estimated else ''}, keeping {w.reserve_share:.0%} for "
            "you until the week's last day" for w in windows_from(settings)]
@@ -175,6 +176,9 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
     if stop_reason(root):
         question.append(f"Starting lifts the stop now in place ({stop_reason(root)}). Its file stays, and any write to it after "
                         "that stops the loop again.")
+    elif stops > (log.started() or {}).get("stops", 0):
+        question.append(f"A stop was asked for since the last start and no STOP file stands for it: {STOPS_FILE} in the folder "
+                        "says why. Starting goes past it.")
     if log.paused():
         question.append(f"The loop is paused, so it will spend nothing until you lift that: {log.paused()}"[:300])
     return root, "\n".join([*question, NAME]), terms
@@ -217,7 +221,7 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
     try:
         if stops < 0:
             raise OSError(f"{STOPS_FILE} cannot be read")      # a restart would read two unreadable counts as one
-        if shown is not None and _terms(root, settings, agreed) != shown:
+        if shown is not None and _terms(root, settings, agreed, stops) != shown:
             return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                             ASK_AGAIN, running=False, folder=str(root))
         with Coordination(root / ".tick").mutex():

@@ -651,8 +651,10 @@ folder's code runs, so a shell is no way round the dialog. A stop ends the start
 counted in `stops.log`, a file no lock stands in front of, before its `STOP` file is written, and a start records the count
 it saw, so a restart or removing the `STOP` file by hand brings nothing back until a person agrees again.
 
-An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, any `STOP` file as it stands, and
-any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A start never moves
+An agreement binds what the dialog showed: the settings, the Python file, who enrolled it, any `STOP` file as it stands, the
+count of stops, and any pause. If any of that moves while the dialog is open, nothing starts and the person is asked again. A
+stop that dies between its two writes leaves only the count, so the count is bound too, and the next dialog says a stop stands
+in `stops.log` with no file for it, rather than a start taking in a stop nobody read. A start never moves
 or deletes `STOP`. It records the digest, the length and the modification time of the file the person agreed to lift, the time
 first, and `STOP` stands unless all three still match, since bytes alone cannot say a person wrote again. So a stop has no
 moment in which it can be lost: a crash at any point leaves the file as it was, or with the new stop in it. What was added

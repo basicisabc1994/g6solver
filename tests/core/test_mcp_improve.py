@@ -678,6 +678,52 @@ def test_a_stop_with_no_count_to_write_to_still_stops_and_says_so(rig):
     assert _code(got) == improve.STOP_ASKED and "uncountable" in got["stop"] and stops_asked(rig.root) == 1
 
 
+def _a_stop_cut_off_before_its_file(rig: Rig, monkeypatch) -> None:
+    """A stop that dies between its two writes: the count went in, and the file never did."""
+    real = builtins.open
+
+    class Killed(BaseException):
+        pass
+
+    def killed_at_the_file(path, *args, **kwargs):
+        if Path(path).name == "STOP":
+            raise Killed
+        return real(path, *args, **kwargs)
+
+    with monkeypatch.context() as dying:
+        dying.setattr(builtins, "open", killed_at_the_file)
+        with pytest.raises(Killed):
+            envelope.ask_to_stop(rig.root, "the owner said no")
+    assert stops_asked(rig.root) == 1 and not (rig.root / "STOP").exists()
+
+
+def test_a_stop_cut_off_before_its_file_while_the_dialog_is_open_is_asked_about_again(rig, monkeypatch):
+    """Nothing but the count shows it, and a start records the count it sees, so it would absorb a stop nobody read."""
+    rig.enrol()
+    _, _, shown = improve.asked(str(rig.root))
+    _a_stop_cut_off_before_its_file(rig, monkeypatch)
+    got = improve.start(rig.root, "Ada", shown)
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_TERMS_CHANGED" and got["completion_state"] == "blocked-escalated"
+    assert CycleLog(rig.root / CYCLE_LOG).started() is None
+
+
+def test_the_dialog_names_a_stop_the_count_holds_with_no_file_standing_for_it(rig, monkeypatch):
+    rig.enrol()
+    _a_stop_cut_off_before_its_file(rig, monkeypatch)
+    rig.start(declined)
+    assert "no STOP file stands for it" in rig.asked[0] and "stops.log" in rig.asked[0]
+    rig.start()
+    assert rig.spawned == [rig.root] and CycleLog(rig.root / CYCLE_LOG).started()["stops"] == 1
+
+
+def test_a_stop_the_last_start_already_saw_is_not_named_again(rig):
+    rig.enrol()
+    rig.call("g6_improve_stop", folder=str(rig.root), reason="an old stop")
+    rig.start()
+    rig.start(declined)
+    assert "no STOP file stands for it" not in rig.asked[-1]
+
+
 def test_a_stop_that_cannot_change_a_stop_file_says_it_failed_since_a_start_could_clear_it(rig):
     rig.enrol()
     (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
