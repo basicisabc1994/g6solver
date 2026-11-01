@@ -8,8 +8,8 @@ agent's reasoning, and must state a rule, reasons and a test. If that test fails
 session, and a fresh review reads the new patch, up to ``MAX_REPAIRS`` repairs. The agent may reject a finding by leaving the
 code as it was. No scout and no probe: ``advance`` needs the boundary and the critic and nothing else, and a review that fails
 or cannot be read ends the loop with no clean review. Each review's test stays beside the earlier ones (``critic_file``) to
-catch a repair that undoes it, and runs alone, so one that will not run says nothing of the patch and hides no other. A run
-that reproduced a finding leaves a row in ``FAILURES`` for the next cycle of the self-improvement loop.
+catch a repair that undoes it, and runs alone, so one that will not run hides no other. A run that ends leaves a row in
+``FAILURES`` for the next cycle of the self-improvement loop.
 
 ``MODE_LINE`` in the person's key file, or no critic, gives the other loop, described from here on.
 
@@ -114,8 +114,8 @@ NO_PYTHON = "G6_E_NO_PYTHON_CHANGED"
 #: A call that found another step of its session running: the code the self-improvement loop gives the same refusal.
 BUSY = "G6_E_LOOP_BUSY"
 ALREADY_RUNNING = "Another step of G6's completion loop is running for this session, so this one did nothing."
-#: A finding reproduced in a run: the row's stable cause, for ``metaharness.domain.FailureRecord``.
-OPEN, FIXED = "review_finding_open", "review_finding_fixed"
+#: What a run came to: the row's stable cause, for ``metaharness.domain.FailureRecord``.
+OPEN, FIXED, FOUND_NOTHING = "review_finding_open", "review_finding_fixed", "review_found_nothing"
 #: Where those rows go, beside the sessions' folders: local, and never pushed.
 FAILURES = ("completion_loop", "failures.jsonl")
 #: The one requirement the final review assesses: the task's text, which no stated check tests.
@@ -650,15 +650,16 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
 def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> dict:
     """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
     a cause must be a stable code, and a reproduced finding is observed apart from the agent: G6 ran another family's test.
-    ``session`` names the folder beside it that holds each round's patch."""
-    reviews = state["reviews"]
+    ``session`` names the folder beside it that holds each round's patch. A refused run has no reviews."""
+    reviews = state.get("reviews") or []
     fixed, still = patch_report.findings(reviews)
-    return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": OPEN if still else FIXED, "changeable": True,
-            "note": (still or fixed)[0]["rule"], "independently_observed": True, "task": digest(task), "base": base,
+    return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": OPEN if still else FIXED if fixed else FOUND_NOTHING,
+            "changeable": True, "note": (still or fixed)[0]["rule"] if still or fixed else state["stop"],
+            "independently_observed": True, "task": digest(task), "base": base,
             "session": session.name, "rounds": len(reviews), "reviews": [{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")}
                                                 for one in reviews],
             "stop": state["stop"], "left": state.get("left", ""),
-            "tree_changed": digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
+            "tree_changed": bool(reviews) and digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
 
 
 def _row_of(line: str, session: Path) -> bool:
@@ -700,10 +701,8 @@ def _write_row(session: Path, state: dict) -> None:
 
 
 def _keep_failures(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> None:
-    """The run's row when it reproduced a finding, built here, while the change is at hand, and kept until it is written. It
-    is JSON in ASCII, so it is one line whatever its text holds."""
-    if not any(patch_report.findings(state.get("reviews") or [])):
-        return
+    """The run's row, built here, while the change is at hand, and kept until it is written. It is JSON in ASCII, so it is
+    one line whatever its text holds."""
     try:
         state["row_due"] = json.dumps(_failure_row(task, base, change, session, state))
     except (OSError, ValueError) as exc:    # a RepoRefused from reading the final patch is a ValueError

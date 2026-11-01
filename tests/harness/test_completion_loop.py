@@ -1040,7 +1040,7 @@ def test_a_test_that_passes_is_no_finding(world, monkeypatch):
     world.edit()
     step = world.advance(critic=reviewer("one"))
     assert step.action == loop.STOP and "a review reproduced nothing" in step.text and "showed no failure" in step.text
-    assert not rows(world)
+    assert patch_report.findings(world.state()["reviews"]) == ([], []) and len(rows(world)) == 1
 
 
 def test_a_test_the_runner_refuses_never_runs_and_is_named(world, monkeypatch):
@@ -1183,11 +1183,11 @@ def test_a_finding_the_agent_left_alone_says_the_tree_never_changed(world, monke
 
 
 @pytest.mark.parametrize("reply", ["none", "one"])
-def test_a_run_with_no_finding_leaves_no_row(world, monkeypatch, reply):
+def test_a_run_with_no_finding_leaves_a_row_too(world, monkeypatch, reply):
     Reviewed(monkeypatch)
     world.edit()
     world.advance(critic=reviewer(reply))
-    assert not rows(world)
+    assert len(rows(world)) == 1 and world.state()["done"]
 
 
 def test_two_runs_append_and_the_row_stays_in_gs_own_folder(world, monkeypatch):
@@ -2174,3 +2174,38 @@ def test_a_row_that_cannot_replace_the_stale_one_is_kept_and_written_by_the_next
     world.advance(critic=critic)
     [row] = rows(world)
     assert row["cause"] == loop.OPEN and "row" not in world.state()
+
+def test_a_failed_review_leaves_a_row_for_the_next_cycle(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=reviewer(LLMError("the reviewer exited unsuccessfully")))
+    assert step.action == loop.STOP and step.code == loop.NO_CLEAN_REVIEW and world.state()["done"]
+    assert len(rows(world)) == 1, "a run that ended on a failed review left no row"
+
+
+def test_a_review_that_cannot_be_read_leaves_a_row(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=FakeLLM(lambda system, user: "no form at all"))
+    assert len(rows(world)) == 1
+
+
+def test_a_task_too_long_to_send_leaves_a_row(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    world.advance(critic=reviewer("never"), task="A" * (loop.MAX_PACK_CHARS + 1))
+    assert len(rows(world)) == 1
+
+
+def test_a_refused_run_leaves_a_row(world, monkeypatch):
+    monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    world.edit()
+    assert world.advance(critic=reviewer("never")).code == ISOLATION_UNAVAILABLE
+    [row] = rows(world)
+    assert row["rounds"] == 0 and row["reviews"] == [] and row["session"] == world.session.name
+
+
+def test_a_call_with_no_python_changed_ended_no_run_and_leaves_no_row(world, monkeypatch):
+    Runs(monkeypatch)
+    assert world.advance(critic=reviewer("never")).code == loop.NO_PYTHON
+    assert not rows(world)
