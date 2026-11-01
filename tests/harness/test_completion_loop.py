@@ -1451,6 +1451,22 @@ def test_a_hook_killed_in_the_final_review_of_a_rejection_keeps_the_agents_reaso
     assert row["left"] == "They misread the task." and "They misread the task." in step.text
 
 
+def test_a_rejection_a_killed_hook_never_finished_is_gone_once_the_agent_repairs_after_all(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic, said="They misread the task.")
+    monkeypatch.setattr(loop, "_final_review", real)
+    world.edit(FIXED + "# repaired after all\n")
+    tests.failing = set()
+    step = world.advance(critic=critic)
+    assert loop.CLEAN in step.text and "left the code" not in step.text and "misread" not in step.text
+    assert not world.state()["left"]
+
+
 def test_a_hook_killed_between_the_row_and_the_end_adds_no_second_row(world, monkeypatch):
     Reviewed(monkeypatch, "test_critic.py")
     critic = reviewer("one")

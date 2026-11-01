@@ -657,8 +657,7 @@ def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, ses
     was read and reproduced nothing is clean, and running out of repairs or a finding the agent rejected is a result. The
     state is saved before the patch review, which is slow: a hook cut short there repeats no review, and ends as this would."""
     state["stop"] = reason
-    if reason == LEFT:
-        state["left"] = " ".join(said.split())[:MAX_CASE_CHARS] or state.get("left") or NO_REASON
+    state["left"] = (" ".join(said.split())[:MAX_CASE_CHARS] or state.get("left") or NO_REASON) if reason == LEFT else ""
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
     reviews = state.get("reviews") or []
     _save(session, state)
