@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
 from g6.core.ledger import LedgerCorrupt, LedgerError
-from g6.self_maintenance.envelope import CycleLog, beat, heartbeat, stop_reason
+from g6.self_maintenance.envelope import (
+    FINDINGS,
+    CycleLog,
+    ask_to_stop,
+    beat,
+    heartbeat,
+    runner_alive,
+    runner_lock,
+    stop_reason,
+)
+from g6.workspace._envelope import WorkspaceRefused
 
 
 def _log(tmp_path) -> CycleLog:
@@ -157,3 +168,84 @@ def test_a_heartbeat_is_whole_or_absent(tmp_path):
     assert heartbeat(tmp_path) == {"tick": 4, "state": "waiting"}
     assert json.loads((tmp_path / "heartbeat.json").read_text(encoding="utf-8"))["tick"] == 4
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_a_heartbeat_that_cannot_be_written_is_only_a_missed_beat(tmp_path, monkeypatch):
+    def refused(*args):
+        raise PermissionError("a reader holds the file")
+
+    beat(tmp_path, tick=1)
+    monkeypatch.setattr("g6.self_maintenance.envelope.os.replace", refused)
+    beat(tmp_path, tick=2)
+    assert heartbeat(tmp_path) == {"tick": 1}
+
+
+def test_asking_to_stop_writes_the_file_and_repeating_keeps_the_first_reason(tmp_path):
+    assert "owner's review" in ask_to_stop(tmp_path, "owner's review\nsecond line")
+    assert "owner's review" in ask_to_stop(tmp_path, "something later")
+    assert (tmp_path / "STOP").read_text(encoding="utf-8") == "owner's review second line\n"
+
+
+def test_asking_to_stop_with_no_reason_still_says_where_it_came_from(tmp_path):
+    assert "g6_improve_stop" in ask_to_stop(tmp_path)
+
+
+# Is a runner alive? ----------------------------------------------------------------------------------------------------
+
+def test_a_folder_no_runner_ever_held_is_not_alive_and_looking_writes_nothing(tmp_path):
+    assert not runner_alive(tmp_path) and list(tmp_path.iterdir()) == []
+
+
+def test_a_runner_is_alive_while_it_holds_the_lock_and_not_after(tmp_path):
+    with runner_lock(tmp_path):
+        assert runner_alive(tmp_path)
+    assert not runner_alive(tmp_path)
+
+
+def test_a_second_runner_is_refused_the_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr("g6.workspace._coordination.MUTEX_WAIT", 0.05)
+    with runner_lock(tmp_path), pytest.raises(WorkspaceRefused):
+        with runner_lock(tmp_path):
+            pass
+
+
+def test_looking_is_immediate_while_a_runner_lives(tmp_path):
+    with runner_lock(tmp_path):
+        started = time.monotonic()
+        assert runner_alive(tmp_path)
+        assert time.monotonic() - started < 2
+
+
+# Who started it --------------------------------------------------------------------------------------------------------
+
+def test_a_person_starts_the_runner_and_the_log_keeps_who(tmp_path):
+    log = _log(tmp_path)
+    assert log.started() is None
+    log.start("Ada", at="noon")
+    assert log.started() == {"by": "Ada", "at": "noon"}
+
+
+@pytest.mark.parametrize("name", ["", "   ", "auto:loop"])
+def test_no_agent_name_can_start_it(tmp_path, name):
+    with pytest.raises(LedgerError, match="a person"):
+        _log(tmp_path).start(name)
+
+
+# What a proposer found -------------------------------------------------------------------------------------------------
+
+def test_a_cycle_has_the_four_fields_and_they_stay_empty_with_none_given(tmp_path):
+    log = _log(tmp_path)
+    _cycle(log, "idle")
+    row = log.cycles()[0]
+    assert {name: row[name] for name in FINDINGS} == {"structure": "", "resource": "", "obstruction": "", "composed_from": []}
+    assert log.findings() == []
+
+
+def test_the_log_gives_a_next_tick_the_latest_findings_and_nothing_else(tmp_path):
+    log = _log(tmp_path)
+    _cycle(log, "idle")
+    _cycle(log, "refused", structure="a regularity", constraint="wrong_answer")
+    assert log.findings() == [{"tick": 2, "structure": "a regularity", "resource": "", "obstruction": "", "composed_from": []}]
+    for _ in range(12):
+        _cycle(log, "refused", resource="r")
+    assert [f["tick"] for f in log.findings(last=3)] == [12, 13, 14]

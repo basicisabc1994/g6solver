@@ -12,6 +12,8 @@ loop's own workspace (``g6.metaharness.shadow``), so the next tick starts from i
 The only person in it is the one who enrols a domain: they confirm what judges the work, once, and the loop runs from
 there. Someone has to say what "better" means, and it cannot be the thing being judged.
 
+``python -P -m g6.metaharness.loop run <folder>`` runs ticks on their own (``g6.metaharness.runner``).
+
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
 """
@@ -89,9 +91,10 @@ UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 #: with. A test holds every module those files import to this set or that one.
 ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/loop.py",
                      "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
-                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/select.py",
-                     "metaharness/shadow.py", "self_maintenance/constraints.py", "self_maintenance/envelope.py",
-                     "self_maintenance/pacing.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
+                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/runner.py",
+                     "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
+                     "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py",
+                     "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
                      "core/llm.py", "core/vault.py", "integrity/*.py")
 UNKNOWN = "unknown"
 _SOURCE = Path(g6.__file__).resolve().parent
@@ -260,7 +263,7 @@ def _exclusive(method: Callable[..., dict[str, Any]]) -> Callable[..., dict[str,
         except LedgerError as exc:
             reply = _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
                              "A person inspects the folder. Nothing runs on records that do not check out.")
-            self._beat(reply["completion_state"], RECORDS_UNREADABLE)
+            self._beat(reply["completion_state"], RECORDS_UNREADABLE, reason=reply["message"])
             return reply
 
     return invoke
@@ -272,6 +275,7 @@ class ShadowLoop:
                  clock: Callable[[], float] = time.monotonic,
                  read_account: Callable[[str, datetime], AccountReading | None] | None = None) -> None:
         self.domain, self.settings, self._now = domain, settings, now
+        self.beat_fields: dict[str, Any] = {}     # what a runner adds to every heartbeat
         self.requests = _Requests()
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
@@ -433,12 +437,31 @@ class ShadowLoop:
         """One cycle. A heartbeat follows every tick, so someone watching can tell a loop that is waiting from one that
         has died."""
         reply = self._refused() or self._run()
-        self._beat(reply["completion_state"], reply["warning_card"]["code"])
+        self._beat(reply["completion_state"], reply["warning_card"]["code"], reason=reply["message"])
         return reply
 
-    def _beat(self, state: str, code: str) -> None:
-        beat(self.root, domain=self.domain.name, at=self._now().isoformat(), tick=len(self.log.cycles()), state=state,
-             code=code)
+    @_exclusive
+    def fault(self, exc: BaseException) -> dict[str, Any]:
+        """A tick that raised past its own guard is a failed cycle like any other, so three in a row still pause."""
+        if self.log.paused():
+            return _blocked(PAUSED, f"the loop is paused: {self.log.paused()}", "A person reads why, then lifts it.")
+        row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error", "code": CYCLE_FAILED,
+               "reason": f"{type(exc).__name__}: {exc}"[:500]}
+        reply = self._reply(self.log.cycle(row))
+        self._pause_if_failing()
+        return reply
+
+    @_exclusive
+    def quiet(self) -> dict[str, Any]:
+        """How many cycles in a row found nothing to try, and when the last began, from the records as they stand now, so
+        a person's enrolment or resumption elsewhere counts. It runs nothing."""
+        cycles = self.log.cycles()
+        return _envelope("qualified-draft", STATUS, f"{self.log.quiet_streak()} ticks in a row found nothing to try",
+                         quiet=self.log.quiet_streak(), last_at=cycles[-1].get("at", "") if cycles else "")
+
+    def _beat(self, state: str, code: str, **said: Any) -> None:
+        beat(self.root, **{**self.beat_fields, **said}, domain=self.domain.name, at=self._now().isoformat(),
+             tick=len(self.log.cycles()), state=state, code=code)
 
     def _reserve(self) -> tuple[Admission | None, dict[str, Any] | None]:
         """A provider with room for this tick's worst case, or the wait: the loop never spends anywhere else."""
@@ -535,9 +558,11 @@ class ShadowLoop:
         row |= {"dev_success": view.dev_success, "dev_cases": len(view.dev)}
         if not view.failures:
             return {**row, "outcome": "idle", "code": IDLE, "reason": measured["message"]}
-        constraint = name_constraint(self.domain.failures(view), len(view.dev))
+        records = self.domain.failures(view)
+        constraint = name_constraint(records, len(view.dev))
         row |= {"constraint": constraint.name, "basis": constraint.basis,
-                "observations": [list(o) for o in constraint.observations]}
+                "observations": [list(o) for o in constraint.observations],
+                "failure_records": dict(Counter(r.cause for r in records))}
         if constraint.name == UNKNOWN:
             return {**row, "outcome": "no_constraint", "code": NO_CONSTRAINT, "reason": constraint.reason}
         return {**row, **self._exploit(constraint, recommended)}
@@ -594,3 +619,8 @@ class ShadowLoop:
 
 
 __all__ = ["Constraint", "LoopSettings", "ShadowLoop", "name_constraint"]
+
+if __name__ == "__main__":
+    from g6.metaharness.runner import main
+
+    raise SystemExit(main())

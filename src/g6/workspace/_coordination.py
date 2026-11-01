@@ -109,8 +109,9 @@ class Coordination:
         return bookkeeping_path(self._folder)
 
     @contextlib.contextmanager
-    def mutex(self) -> Iterator[None]:
-        """Hold an OS lock; age never permits takeover, and death releases the handle's lock."""
+    def mutex(self, wait: float | None = None) -> Iterator[None]:
+        """Hold an OS lock; age never permits takeover, and death releases the handle's lock. ``wait``: how long to wait
+        for it, ``MUTEX_WAIT`` when left out."""
         folder = bookkeeping_path(self._folder, create=True)
         path = bookkeeping_path(folder, "mutex")
         handle = _open_mutex(path)
@@ -120,7 +121,7 @@ class Coordination:
             opened = os.fstat(handle)
             if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
                 raise WorkspaceRefused(BUSY, "the mutex file changed while it was opened")
-            deadline = time.monotonic() + MUTEX_WAIT
+            deadline = time.monotonic() + (MUTEX_WAIT if wait is None else wait)
             while True:
                 try:
                     if os.name == "nt":

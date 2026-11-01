@@ -2,9 +2,13 @@
 """The loop's records and what halts it (design 6.1, 6.10), which know nothing of what the work is.
 
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
-came of it, plus each enrolment, pause and resumption. Only a person can enrol a domain or resume a paused loop, so
-the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and removing the file
-resumes it; a stop that cannot be read still stops. A heartbeat is written whole or not at all.
+came of it, plus each enrolment, pause, resumption and start. Only a person can enrol a domain, resume a paused loop or
+start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and
+removing the file resumes it; a stop that cannot be read still stops. A heartbeat is written whole or not at all, and a
+heartbeat that cannot be written is one missed, never a failed tick.
+
+**Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
+that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
 
 **The failed streak.** Three failed cycles in a row pause the loop. A failed cycle is a fault: an error, a sealed breach
 or a step that was blocked. The loop seeks failure and learns from it, so a candidate that lost is a result: no winner, no
@@ -17,13 +21,17 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, ContextManager
 
 from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import ChainLedger
+from g6.workspace._coordination import Coordination
+from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
 HEARTBEAT_FILE = "heartbeat.json"
+#: The folder of the lock a runner holds for its whole life.
+RUNNER_LOCK = ".runner"
 MAX_FAILED_CYCLES = 3
 #: Cycles that broke. A wait (a stop, the budget, a pause) is not a cycle at all, so it never counts.
 FAILED = ("blocked", "error", "sealed_breach")
@@ -42,7 +50,7 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
         return [] if known else [f"cycle: unknown outcome {body.get('outcome')!r}"]
     if kind == "paused":
         return [] if body.get("reason") else ["a pause states its reason"]
-    if kind in ("enrolled", "resumed"):
+    if kind in ("enrolled", "resumed", "started"):
         who = str(body.get("by") or "")
         return [] if who.strip() and not is_automated(who) else [f"{kind}: a person must do this (no empty or auto: name)"]
     return [f"unknown kind {kind!r}"]
@@ -93,6 +101,13 @@ class CycleLog:
     def resume(self, by: str) -> dict:
         return self._append("resumed", {"by": by})
 
+    def start(self, by: str, **fields: Any) -> dict:
+        return self._append("started", {"by": by, **fields})
+
+    def started(self) -> dict | None:
+        """The last time a person started the runner."""
+        return next((body for kind, body in reversed(self._rows()) if kind == "started"), None)
+
     def paused(self) -> str:
         """Why the loop is paused, or ``""`` when it is not."""
         reason = ""
@@ -136,20 +151,49 @@ def stop_reason(root: str | Path) -> str:
     return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
 
 
+def ask_to_stop(root: str | Path, reason: str = "") -> str:
+    """Write the ``STOP`` file, or leave one that is there, so the first reason stands and repeating is safe. It kills
+    nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped."""
+    path = Path(root) / STOP_FILE
+    if not path.exists():
+        path.write_text((" ".join(reason.split()) or "stopped through g6_improve_stop") + "\n", encoding="utf-8")
+    return stop_reason(root)
+
+
+def runner_lock(root: str | Path) -> ContextManager[None]:
+    """The lock a runner holds for its whole life; a second runner on the folder is refused it."""
+    return Coordination(Path(root) / RUNNER_LOCK).mutex()
+
+
+def runner_alive(root: str | Path) -> bool:
+    """Whether a runner holds this folder. A folder no runner ever held has no lock to look at, so nothing is written."""
+    if not (Path(root) / RUNNER_LOCK / "mutex").is_file():
+        return False
+    try:
+        with Coordination(Path(root) / RUNNER_LOCK).mutex(wait=0):
+            return False
+    except WorkspaceRefused:
+        return True
+
+
 def beat(root: str | Path, **fields: Any) -> None:
-    """Write the heartbeat: a reader sees the last whole one, never half of a new one."""
+    """Write the heartbeat: a reader sees the last whole one, never half of a new one. On Windows a reader holding the
+    file can refuse the swap, which only misses this beat."""
     path = Path(root) / HEARTBEAT_FILE
     spare = path.with_suffix(".tmp")
-    spare.write_text(json.dumps(fields, sort_keys=True, ensure_ascii=False), encoding="utf-8")
-    os.replace(spare, path)
+    try:
+        spare.write_text(json.dumps(fields, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+        os.replace(spare, path)
+    except OSError:
+        pass
 
 
 def heartbeat(root: str | Path) -> dict | None:
     try:
         return json.loads((Path(root) / HEARTBEAT_FILE).read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
+    except (OSError, ValueError):
         return None
 
 
-__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY", "beat", "heartbeat",
-           "stop_reason"]
+__all__ = ["CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY", "RUNNER_LOCK",
+           "STOP_FILE", "ask_to_stop", "beat", "heartbeat", "runner_alive", "runner_lock", "stop_reason"]
