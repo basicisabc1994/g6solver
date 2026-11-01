@@ -683,8 +683,9 @@ def scout_again(args: Sequence[str]) -> list[str]:
 
 
 def gets_thread(arm: str) -> bool:
-    """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31)."""
-    return re.fullmatch(r"T|R|[KX]\d+|[LM]\d+", arm) is not None
+    """Whether a run's issue carries its discussion: arm L, and arm T, the comparison for it (PLAN.md, 2026-10-31). K0 is K1's
+    loop without it (PLAN.md, 2026-11-02)."""
+    return re.fullmatch(r"T|R|K[1-9]\d*|X\d+|[LM]\d+", arm) is not None
 
 
 def convert_cases() -> list[dict[str, Any]]:

@@ -174,9 +174,10 @@ def failure_rich(rows: Rows, tasks: Iterable[str], score: str) -> list[str]:
 
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
            others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",), tuned: bool = False,
-           scores: Sequence[str] = SCORES) -> None:
+           scores: Sequence[str] = SCORES, exploratory: bool = False) -> None:
     """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it.
-    ``tuned``: bugs this arm was tuned on, which are development, so they get no verdict of the rule, however they read."""
+    ``tuned``: bugs this arm was tuned on, which are development, so they get no verdict of the rule, however they read.
+    ``exploratory``: an arm chosen after a result was read, which gets no verdict either (PLAN.md, 2026-11-02)."""
     shown =[arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
     for score in scores:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
@@ -198,7 +199,7 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
                     total = cell["right"] + cell["wrong"]
                     print(f"{name:22} {score:11} {arm} {whose} {said}: right {cell['right']} wrong {cell['wrong']} ({cell['right'] / total:.0%})")
         rate = results[0]["loop_passed"] / results[0]["pairs"] if results[0]["pairs"] else 0.0
-        verdict = "not applied, tuned on these bugs" if tuned else (
+        verdict = "not applied, tuned on these bugs" if tuned else "not applied, exploratory" if exploratory else (
             f"{'met' if judged(results) else 'not shown'}; at {TWO_PRIMARIES}: {'cleared' if judged(results, TWO_PRIMARIES) else 'not cleared'}")
         print(f"{name:22} {score:11} frozen rule: {verdict}; "
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
@@ -239,12 +240,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     rich(rows, f"{second}stage 2, failure-rich", stage_2, (1, 2), args.second, control=shown)
     report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown)
     report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",), tuned=True)
+    if any(key[0] == "K0" for key in rows):
+        report(rows, "K0, stage 2, exploratory", stage_2, (1, 2), loop_arm="K0", control=("R", args.loop, args.second), exploratory=True)
     if args.trained:
         others = (args.second, "A", "T")
         stage_3 = finished(rows, stage_2, (args.trained,), (1, 2))
         print(f"stage 3: {len(stage_3)} of {len(stage_2)} bugs finished, in the frozen order")
         report(rows, "stage 3, new repos", stage_3, (1, 2), loop_arm=args.trained, others=others)
-        report(rows, "stage 3, stage 1 bugs", fresh, (1, 2), loop_arm=args.trained, others=others)
+        report(rows, "stage 3, stage 1 bugs", fresh, (1, 2), loop_arm=args.trained, others=others, tuned=True)
 
 
 if __name__ == "__main__":

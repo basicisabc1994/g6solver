@@ -122,6 +122,18 @@ def test_arm_k_is_plain_claude_code_with_the_issues_discussion_and_no_trained_te
     assert we.prompt(task, "t", "body", arm) == we.prompt(task, "t", "body", "A") and we.gets_thread(arm) and we.trained(arm) == {}
 
 
+def test_k0_is_k1s_review_loop_on_arm_as_own_prompt_with_no_discussion():
+    """PLAN.md, 2026-11-02: it tests whether the discussion is what cost the thread arms ``starlette-3718``."""
+    task = we.load_tasks()[1]
+    assert we.prompt(task, "t", "body", "K0") == we.prompt(task, "t", "body", "A")
+    assert not we.gets_thread("K0") and we.gets_thread("K1") and we.gets_thread("K10") and we.gets_thread("X1")
+    assert we.trained("K0") == {}
+
+
+def test_k0_runs_on_unseen_bugs_twice_as_the_other_arms_do():
+    assert we.r3_loop_key((SONNET, "newrepo-1", "K0", 2)) and not we.r3_loop_key((SONNET, "newrepo-1", "K0", 3))
+
+
 def test_arm_k_runs_on_training_held_out_and_unseen_bugs_with_their_repeats():
     assert we.r3_loop_key((SONNET, "black-5634", "K1", 2)) and not we.r3_loop_key((SONNET, "black-5634", "K1", 3))
     assert we.r3_loop_key((SONNET, we.R3_HELD[0], "K1", 5)) and not we.r3_loop_key((SONNET, we.R3_HELD[0], "K1", 6))

@@ -312,6 +312,33 @@ def test_stage_3_is_judged_against_k1_its_parent_as_well_as_a_and_t(tmp_path, mo
     assert not any(" M9 " in line for line in judged)
 
 
+def test_stage_3_gets_no_verdict_on_stage_1_bugs_which_are_development_for_it(tmp_path, monkeypatch, capsys):
+    """PLAN.md, 2026-11-02: a scored bug is development for every later generation, so a win there is a tuned score."""
+    _main(monkeypatch, tmp_path, _cells(P1="u11 f11", K1="u00 f00", M9="u00 f00", A="u00 f00", T="u00 f00", R="u00 f00"), "--trained", "P1")
+    lines = capsys.readouterr().out.splitlines()
+    tuned = [line for line in lines if line.startswith("stage 3, stage 1 bugs") and "frozen rule" in line]
+    assert len(tuned) == 2 and all("frozen rule: not applied, tuned on these bugs" in line for line in tuned)
+    unseen = [line for line in lines if line.startswith("stage 3, new repos") and "frozen rule" in line]
+    assert len(unseen) == 2 and not any("not applied" in line for line in unseen)
+
+
+def test_k0_is_a_report_and_the_rule_gives_it_no_verdict(tmp_path, monkeypatch, capsys):
+    """PLAN.md, 2026-11-02: it was chosen after stage 1 was read, so however well it reads it is a hypothesis for a fresh test."""
+    _main(monkeypatch, tmp_path, _cells(K0="u11", K1="u00", M9="u00", A="u00", T="u00", R="u00"))
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("K0, stage 2, exploratory")]
+    assert sum("K0   2/2" in line for line in lines) == 2 * 5          # against A, T, R, M9 and K1, on two scores
+    verdicts = [line for line in lines if "frozen rule" in line]
+    assert len(verdicts) == 2 and all("frozen rule: not applied, exploratory" in line for line in verdicts)
+    assert not any("cleared" in line or "frozen rule: met" in line for line in verdicts)
+
+
+def test_k0_is_never_what_decides_which_bugs_finished(tmp_path, monkeypatch, capsys):
+    _main(monkeypatch, tmp_path, _cells(K1="u11", M9="u11", A="u00", T="u00", R="u00"))
+    lines = capsys.readouterr().out.splitlines()
+    assert "stage 2: 1 of 1 bugs finished, in the frozen order" in lines
+    assert not any(line.startswith("K0, ") for line in lines)
+
+
 FROZEN = ("M9", "K1", "A", "T", "R")
 
 

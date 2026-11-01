@@ -1264,3 +1264,19 @@ The 95% interval by bug on the amended tests against A is -5% to +36% for M9 and
 **Stage 2 stands as frozen.** Its bugs are unseen, and M9, K1, the rule and the order do not change.
 
 **One exploratory arm is added, before any stage 2 run: K0.** It is K1's review loop on arm A's prompt, without the discussion. It tests the hypothesis above, and it is closer to the product, where K reviews whatever a person asked and nobody supplies a discussion. It was chosen after reading this table, so it is report only: never a primary, no verdict of the rule, and it runs last on each bug, so `finished` never waits for it. A good result would be a hypothesis for a fresh test, not a finding.
+
+## 2026-11-02 (morning): a scored bug becomes development for later generations, before any stage 2 run
+
+No recorded result changes here. Stage 1's numbers stand, and M9, K1, K0, the rule and stage 2's order and sealing do not change.
+
+**Why.** The owner: "failure is good as long as we learn from this and don't repeat our mistakes - how else do we get enough signal to learn?" Stage 3's cases were limited on 2026-11-01 to the training bugs and further development bugs. That leaves too little to learn from: on the amended tests L9 and K1 have no failed run on the training bugs. Stage 1 left 118 failed runs on the maintainers' tests and 95 on the amended tests. They were barred so that stage 1 could be a fair test of M9 and K1, and it now has been.
+
+**The change.** A bug whose stage has been scored and recorded is development for every generation that comes after. So stage 1's eleven fresh bugs and three held-out bugs join the training bugs from this entry on, and stage 2's bugs join once stage 3's runs have ended. This replaces "No fresh, held-out or stage 2 bug enters them" in the entry of 2026-11-01 (late), for fresh and held-out bugs only.
+
+**What holds it honest.**
+- **A recorded result is never rewritten.** Stage 1 was the test of M9 and K1 and stays that. Nothing read from these bugs reaches M9, K1 or K0, which are frozen.
+- **What a generation tuned on is never its unseen score.** Stage 3's rule reads stage 2's bugs, as before. If its change read stage 1's failures, then stage 1's bugs are development for it, so `compare.py`'s section "stage 3, stage 1 bugs" gets no verdict of the rule, and is reported beside the stage 2 result as a tuned score.
+- **Stage 2 stays sealed.** No fix, test, run or reply of a stage 2 bug is read to tune anything until stage 3's runs have ended.
+- **No agent sees a maintainers' test or fix, on any bug, ever.** That covers whatever reads a failed run and whatever proposes a change. Those get the issue, the patch, the run's own record and the reviewer's replies. Anything drawn from the maintainers' tests or fix reaches them only as counts worked out by plain code on the judge's side: passed or failed, how many tests failed, and whether the patch touched the same files as the fix.
+
+**What it costs.** Stage 1's bugs can no longer be an unseen test of anything built after this entry. They are all from the six training repositories, so stage 2's new repositories were always the stronger test. The next unseen set after stage 2 has to be drawn fresh.
