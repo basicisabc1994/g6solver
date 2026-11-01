@@ -1718,6 +1718,38 @@ def test_a_finding_closes_only_when_the_case_that_failed_has_passed(world, monke
     assert row["cause"] == loop.OPEN
 
 
+def test_a_row_a_held_log_kept_out_is_written_by_the_sessions_next_call(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    with _coordination.Coordination(world.session.parent / ".failures").mutex():
+        ended = world.advance(critic=critic, said="They misread the task.")
+    assert ended.action == loop.STOP and "THE REVIEW" in ended.text and not rows(world)
+    again = world.advance(critic=critic)
+    assert (again.action, again.text) == (loop.STOP, "") and len(critic.calls) == 1      # the run ended: this adds only its row
+    [row] = rows(world)
+    assert (row["session"], row["left"]) == (world.session.name, "They misread the task.")
+    world.advance(critic=critic)
+    assert len(rows(world)) == 1 and "row" not in world.state()
+
+
+def test_a_log_that_stays_unwritable_keeps_the_row_and_why_and_writes_it_when_it_can(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    blocked = world.session.parent / "failures.jsonl"
+    blocked.mkdir(parents=True)      # a folder where the file goes
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    assert "THE REVIEW" in world.advance(critic=critic).text and world.state()["row"]
+    assert world.advance(critic=critic).action == loop.STOP and world.state()["row"]      # still no log: still no harm
+    blocked.rmdir()
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert row["session"] == world.session.name and "row" not in world.state()
+
+
 def test_a_finding_closes_when_the_case_that_failed_passes(world, monkeypatch):
     outcomes = {"test_bug": "failed", "test_smoke": "passed"}
     Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
@@ -1743,6 +1775,20 @@ def test_a_case_a_later_run_skips_stays_open_though_it_passed_in_between(world, 
     assert world.advance(critic=critic).action == loop.CONTINUE
     world.edit(FIXED + "# 2\n")
     outcomes = {"test_bug": "skipped", "test_smoke": "passed"}
+    assert "**Open:** review 1" in world.advance(critic=critic).text
+
+
+def test_a_case_that_first_failed_in_a_later_round_is_owed_too(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_other": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "passed", "test_other": "failed"}
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 2\n")
+    outcomes = {"test_bug": "passed", "test_other": "skipped"}
     assert "**Open:** review 1" in world.advance(critic=critic).text
 
 
