@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import importlib.util
 import json
 import os
@@ -648,7 +649,7 @@ def test_a_stop_since_the_start_refuses_a_restart_even_with_its_file_gone(tmp_pa
 def test_a_stop_counted_since_the_start_closes_the_gate_with_its_file_gone(tmp_path, capsys):
     root, _ = _enrolled_folder(tmp_path)
     ask_to_stop(root, "asked while a tick held the records")
-    (root / "STOP").unlink()                                             # the start's own removal can do this
+    (root / "STOP").unlink()                                             # by hand, with no note of the stop written
     assert CycleLog(root / CYCLE_LOG).start_in_force()                   # nothing in the records says it stopped
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
     assert CycleLog(root / CYCLE_LOG).cycles() == []
@@ -689,6 +690,20 @@ def test_a_run_uses_the_settings_it_checked_not_a_later_write(tmp_path, monkeypa
     assert run(root, now=lambda: START + timedelta(days=2), sleep=lambda seconds: (seen.append(heartbeat(root)),
                                                                                    _then_stop(root)(seconds))) == 0
     assert seen[0]["use"][0]["ceiling"] < 1_000_000
+
+
+def test_a_lifted_stop_left_on_disk_lets_a_restart_run_and_any_stop_after_it_ends_the_run(tmp_path):
+    root, loop = _enrolled_folder(tmp_path, started=False)
+    (root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    held = (root / "STOP").read_bytes()
+    loop.log.start("Ada", at=START.isoformat(), settings=digest(read_settings(root)), stops=stops_asked(root),
+                   lifted=hashlib.sha256(held).hexdigest(), lifted_bytes=len(held))
+
+    def a_stop_after_a_tick(seconds: float) -> None:
+        ask_to_stop(root, "a newer stop")
+
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=a_stop_after_a_tick) == 0
+    assert len(CycleLog(root / CYCLE_LOG).cycles()) == 1 and "a newer stop" in stop_reason(root)
 
 
 def test_a_stop_file_a_restart_finds_ends_the_start_too(tmp_path):

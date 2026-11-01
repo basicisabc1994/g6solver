@@ -5,12 +5,13 @@
 ``G6_MCP_SENSITIVE``), and the person then answers in the client's own dialog (``g6.mcp.consent``). There is no terminal
 fallback and no agent answer: a decline, a cancel or a client with no dialog starts nothing. It starts the runner as a
 process of its own, which outlives the session that asked, and refuses when a runner is alive, no person has enrolled a
-domain in the folder or a stop could not be counted there. This module never runs the domain's code: only the runner it
-starts does, and the dialog names it.
+domain in the folder or the count of stops cannot be read there. This module never runs the domain's code: only the runner
+it starts does, and the dialog names it.
 An agreement binds what the dialog showed: if any of it moved while the dialog was up, nothing starts and the person is
 asked again. The start records the settings it agreed to, and the runner holds to them on every restart, so a changed
-settings file needs a new agreement even with no stop in between. It clears a ``STOP`` file only if that is still the exact
-bytes the person agreed to, so a stop it was not shown survives it, whatever became of any count or record.
+settings file needs a new agreement even with no stop in between. It never moves or deletes a ``STOP`` file. It records the
+exact bytes the person agreed to lift, and any other bytes stand, so a stop it was not shown survives it, whatever became of
+any count or record.
 
 **Stop** always works and asks nobody: it adds to the local ``STOP`` file, which is safe to repeat and works when the runner
 is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. The runner
@@ -46,14 +47,13 @@ from g6.self_maintenance.envelope import (
     STOPS_FILE,
     CycleLog,
     ask_to_stop,
-    clear_stop,
     file_digest,
     heartbeat,
     record_stop,
     runner_alive,
     stop_reason,
+    stop_to_lift,
     stops_asked,
-    stops_countable,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.workspace._coordination import Coordination
@@ -136,8 +136,8 @@ def _cannot_start(root: Path) -> dict | None:
     except LedgerError as exc:
         return _blocked(RECORDS_UNREADABLE, f"the loop's records cannot be trusted: {exc}"[:400],
                         "A person inspects the folder; nothing was started.")
-    if not stops_countable(root):
-        return _blocked(RECORDS_UNREADABLE, "the count of stops cannot be read and added to, so a restart could miss a stop "
+    if stops_asked(root) < 0:
+        return _blocked(RECORDS_UNREADABLE, "the count of stops cannot be read, so a restart would have nothing to stand on "
                         "and nothing was started", f"A person frees {STOPS_FILE} in {root}.")
     enrol = (f'A person enrols it at their own terminal: python -P -m g6.metaharness.loop enrol "{root}" --as "Your name". '
              "An agent cannot do that step.")
@@ -174,7 +174,8 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
                 f"Python file: {settings.get('domain_file')}, as enrolled by {enrolled['by']} (the name they gave).", *use,
                 f"Settings digest: {digest_of(settings)}.", RUNS]
     if stop_reason(root):
-        question.append(f"Starting removes the stop now in place ({stop_reason(root)}).")
+        question.append(f"Starting lifts the stop now in place ({stop_reason(root)}). Its file stays, and from then on only a "
+                        "change to it stops the loop: g6_improve_stop makes one.")
     if log.paused():
         question.append(f"The loop is paused, so it will spend nothing until you lift that: {log.paused()}"[:300])
     return root, "\n".join([*question, NAME]), terms
@@ -208,22 +209,22 @@ def _watch(root: Path, process: Any) -> dict:
 def start(root: Path, who: str, shown: str | None = None) -> dict:
     """Record who started it and start the runner. What the person read may have moved while the dialog was up, so
     ``shown``, the terms ``asked`` gave, must still be what stands, and a change asks them again. The start records what
-    it stands on, so a restart holds to the same settings and any stop since closes it. It clears only the ``STOP`` bytes
-    those terms cover: any other stop stands, and nothing starts."""
+    it stands on, so a restart holds to the same settings and any stop since closes it. It lifts only the ``STOP`` bytes
+    those terms cover, by recording them: any other stop stands, and nothing starts."""
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
-    settings, stops, standing = read_settings(root), stops_asked(root), file_digest(root / STOP_FILE)
+    settings, stops, agreed = read_settings(root), stops_asked(root), stop_to_lift(root)
     try:
         if stops < 0:
             raise OSError(f"{STOPS_FILE} cannot be read")      # a restart would read two unreadable counts as one
-        if shown is not None and _terms(root, settings, standing) != shown:
+        if shown is not None and _terms(root, settings, agreed.get("lifted", "")) != shown:
             return _blocked(TERMS_CHANGED, "what the person read is no longer what would start, so nothing was started",
                             ASK_AGAIN, running=False, folder=str(root))
         with Coordination(root / ".tick").mutex():
             CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), settings=digest_of(settings),
-                                             stops=stops)
-        why = clear_stop(root, standing)
+                                             stops=stops, **agreed)
+        why = stop_reason(root)
         if why:
             record_stop(root, why, at=datetime.now().astimezone().isoformat())
             return _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: {why}"
@@ -250,7 +251,7 @@ def stop(folder: str, reason: str = "") -> dict:
             "its current tick ending" if running else "the STOP file is in place and no runner is alive")
     return _envelope("qualified-draft", STOP_ASKED, said, running=running, stopped=not running, stop=why, folder=str(root),
                      next_action="g6_improve_status says when it has gone." if running else
-                     "g6_improve_start starts it again, and removes the STOP file once the person agrees.")
+                     "g6_improve_start starts it again, and lifts the stop once the person agrees.")
 
 
 def _shown(cycle: dict[str, Any]) -> dict[str, Any]:

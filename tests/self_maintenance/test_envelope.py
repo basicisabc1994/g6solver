@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
-import os
 import time
 from pathlib import Path
 
@@ -234,103 +234,124 @@ def test_each_stop_changes_the_file_even_with_one_already_there(tmp_path):
     assert envelope.file_digest(tmp_path / "STOP") != before
 
 
-def test_a_stop_whose_file_is_taken_as_it_writes_writes_it_again(tmp_path, monkeypatch):
-    real, taken = builtins.open, []
-
-    class Taken:
-        """What a start moving the file aside does to a writer on a system that lets it."""
-
-        def __init__(self, handle) -> None:
-            self.handle = handle
-
-        def __enter__(self):
-            return self.handle
-
-        def __exit__(self, *exc) -> None:
-            self.handle.close()
-            (tmp_path / "STOP").unlink()
-
-    def once(path, *args, **kwargs):
-        handle = real(path, *args, **kwargs)
-        if Path(path).name == "STOP" and not taken:
-            taken.append(path)
-            return Taken(handle)
-        return handle
-
-    monkeypatch.setattr(builtins, "open", once)
-    assert "why" in ask_to_stop(tmp_path, "why") and (tmp_path / "STOP").is_file()
-
-
-# A start clears only what a person agreed to --------------------------------------------------------------------------
+# A start lifts only what a person agreed to, and moves nothing ------------------------------------------------------------
 
 def _stop_files(folder) -> list[str]:
     return [found.name for found in folder.iterdir() if found.name.startswith("STOP")]
 
 
-def test_a_start_clears_the_bytes_it_agreed_to(tmp_path):
+def _started_lifting(folder, **fields) -> None:
+    """A person's start on the ``STOP`` file as it stands, as ``g6_improve_start`` records it."""
+    held = (folder / "STOP").read_bytes()
+    _log(folder).start("Ada", lifted=hashlib.sha256(held).hexdigest(), lifted_bytes=len(held), **fields)
+
+
+def test_a_stop_a_start_lifted_no_longer_stops_and_stays_where_it_is(tmp_path):
     ask_to_stop(tmp_path, "agreed")
-    assert envelope.clear_stop(tmp_path, envelope.file_digest(tmp_path / "STOP")) == ""
-    assert _stop_files(tmp_path) == []
+    before = (tmp_path / "STOP").read_bytes()
+    _started_lifting(tmp_path)
+    assert stop_reason(tmp_path) == "" and _stop_files(tmp_path) == ["STOP"]
+    assert (tmp_path / "STOP").read_bytes() == before
 
 
-def test_a_stop_nobody_agreed_to_clear_stands(tmp_path):
-    ask_to_stop(tmp_path, "first")
-    agreed = envelope.file_digest(tmp_path / "STOP")
-    ask_to_stop(tmp_path, "second")
-    assert "first" in envelope.clear_stop(tmp_path, agreed) and (tmp_path / "STOP").is_file()
+def test_a_stop_after_a_lifted_one_stands_and_names_itself(tmp_path):
+    ask_to_stop(tmp_path, "agreed")
+    _started_lifting(tmp_path)
+    assert "a newer stop" in ask_to_stop(tmp_path, "a newer stop") and "agreed" not in stop_reason(tmp_path)
 
 
-def test_with_nothing_agreed_a_stop_stands(tmp_path):
+def test_with_nothing_lifted_a_stop_stands(tmp_path):
     ask_to_stop(tmp_path, "new")
-    assert "new" in envelope.clear_stop(tmp_path, "") and (tmp_path / "STOP").is_file()
+    _log(tmp_path).start("Ada", lifted="", lifted_bytes=0)
+    assert "new" in stop_reason(tmp_path)
 
 
-def test_with_nothing_there_nothing_stands(tmp_path):
-    assert envelope.clear_stop(tmp_path, "") == "" and envelope.clear_stop(tmp_path, "gone") == ""
+def test_a_start_that_recorded_no_lifting_lifts_nothing(tmp_path):
+    ask_to_stop(tmp_path, "new")
+    _log(tmp_path).start("Ada", stops=1)
+    assert "new" in stop_reason(tmp_path)
 
 
-def test_a_stop_landing_between_the_check_and_the_move_is_put_back(tmp_path, monkeypatch):
+def test_a_stop_with_no_records_stands_and_reading_it_writes_nothing(tmp_path):
+    ask_to_stop(tmp_path, "new")
+    names = sorted(found.name for found in tmp_path.iterdir())
+    assert "new" in stop_reason(tmp_path) and sorted(found.name for found in tmp_path.iterdir()) == names
+
+
+@pytest.mark.parametrize("written", [lambda held: held + b"\n", lambda held: held[:-1], lambda held: b"",
+                                     lambda held: b"X" + held[1:]])
+def test_any_change_to_a_lifted_stop_makes_it_stand(tmp_path, written):
     ask_to_stop(tmp_path, "agreed")
-    agreed = envelope.file_digest(tmp_path / "STOP")
-    real, reads = envelope.file_digest, []
-
-    def a_stop_after_the_check(path):
-        found = real(path)
-        reads.append(path)
-        if len(reads) == 1:
-            ask_to_stop(tmp_path, "a late stop")
-        return found
-
-    monkeypatch.setattr(envelope, "file_digest", a_stop_after_the_check)
-    assert "agreed" in envelope.clear_stop(tmp_path, agreed)
-    assert "a late stop" in (tmp_path / "STOP").read_text(encoding="utf-8") and _stop_files(tmp_path) == ["STOP"]
+    _started_lifting(tmp_path)
+    (tmp_path / "STOP").write_bytes(written((tmp_path / "STOP").read_bytes()))
+    assert stop_reason(tmp_path)
 
 
-def test_a_stop_landing_after_the_move_stands_in_a_file_of_its_own(tmp_path, monkeypatch):
+def test_a_person_clears_a_stale_stop_by_deleting_it_and_the_next_stop_stands_whatever_it_says(tmp_path):
+    ask_to_stop(tmp_path, "the same reason")
+    _started_lifting(tmp_path)
+    (tmp_path / "STOP").unlink()
+    assert stop_reason(tmp_path) == "" and "the same reason" in ask_to_stop(tmp_path, "the same reason")
+
+
+def test_a_stop_stands_when_the_records_that_could_lift_it_do_not_check_out(tmp_path):
     ask_to_stop(tmp_path, "agreed")
-    agreed = envelope.file_digest(tmp_path / "STOP")
-    real = os.replace
-
-    def then_a_stop(source, target):
-        real(source, target)
-        if Path(target).name != "STOP":
-            ask_to_stop(tmp_path, "a late stop")
-
-    monkeypatch.setattr(envelope.os, "replace", then_a_stop)
-    assert "a late stop" in envelope.clear_stop(tmp_path, agreed) and _stop_files(tmp_path) == ["STOP"]
+    _started_lifting(tmp_path)
+    path = tmp_path / "records" / "constraint_log.jsonl"
+    path.write_text(path.read_text(encoding="utf-8").replace("Ada", "Bo"), encoding="utf-8")
+    assert stop_reason(tmp_path)
 
 
-def test_a_file_a_stop_holds_open_is_not_cleared_and_says_so(tmp_path, monkeypatch):
-    ask_to_stop(tmp_path, "agreed")
-    agreed = envelope.file_digest(tmp_path / "STOP")
-
-    def held(source, target):
+def test_a_stop_stands_when_the_records_that_could_lift_it_cannot_be_opened(tmp_path, monkeypatch):
+    def held(path):
         raise PermissionError("another process holds this file")
 
-    monkeypatch.setattr(envelope.os, "replace", held)
-    with pytest.raises(OSError, match="holds this file"):
-        envelope.clear_stop(tmp_path, agreed)
-    assert (tmp_path / "STOP").is_file()
+    ask_to_stop(tmp_path, "agreed")
+    _started_lifting(tmp_path)
+    monkeypatch.setattr(envelope, "CycleLog", held)
+    assert stop_reason(tmp_path)
+
+
+def test_a_stop_during_a_start_outlives_a_crash_with_no_count_and_no_note(tmp_path, monkeypatch):
+    """Nothing moved, so nothing can be lost: what the stop wrote is what a restart reads."""
+    (tmp_path / "STOP").write_text("an old stop\n", encoding="utf-8")
+    _started_lifting(tmp_path, stops=0)
+    real = builtins.open
+
+    def no_count(path, mode="r", *args, **kwargs):
+        if Path(path).name == STOPS_FILE:
+            raise PermissionError("the count cannot be added to")
+        return real(path, mode, *args, **kwargs)
+
+    def no_note(*args, **kwargs):
+        raise PermissionError("the log cannot be written")
+
+    with monkeypatch.context() as broken:
+        broken.setattr(builtins, "open", no_count)
+        broken.setattr(CycleLog, "stop", no_note)
+        record_stop(tmp_path, ask_to_stop(tmp_path, "a new stop"), at="noon")
+    assert stops_asked(tmp_path) == 0 and "a new stop" in stop_reason(tmp_path) and _stop_files(tmp_path) == ["STOP"]
+
+
+def test_the_limit_of_this_the_very_bytes_that_were_lifted_written_again_by_hand_do_not_stop(tmp_path):
+    """What a start lifts is bytes. A stop through the tool writes a token, so it never repeats them. A person who writes
+    the same bytes over the file, or only touches it, changes nothing, so a hand-written stop must say something else or
+    go in a new file."""
+    (tmp_path / "STOP").write_text("stop\n", encoding="utf-8")
+    _started_lifting(tmp_path)
+    (tmp_path / "STOP").write_text("stop\n", encoding="utf-8")
+    assert stop_reason(tmp_path) == ""
+
+
+def test_what_a_start_lifts_is_the_file_as_it_stands(tmp_path):
+    assert envelope.stop_to_lift(tmp_path) == {}
+    (tmp_path / "STOP").write_bytes(b"why\n")
+    assert envelope.stop_to_lift(tmp_path) == {"lifted": hashlib.sha256(b"why\n").hexdigest(), "lifted_bytes": 4}
+
+
+def test_a_stop_that_cannot_be_read_gives_a_start_nothing_to_lift(tmp_path):
+    (tmp_path / "STOP").mkdir()
+    assert envelope.stop_to_lift(tmp_path) == {}
 
 
 def test_a_count_that_cannot_be_read_is_no_count_a_start_recorded(tmp_path):

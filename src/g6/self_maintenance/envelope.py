@@ -3,10 +3,11 @@
 
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
 came of it, plus each enrolment, pause, resumption, start and provider's limit. Only a person can enrol a domain, resume a
-paused loop or start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and
-removing the file resumes it; a stop that cannot be read still stops. A runner ended by a stop needs a person's start
-again, even with the file gone: the records say the last start was stopped. A heartbeat is written whole or not at all, and
-a heartbeat that cannot be written is one missed, never a failed tick.
+paused loop or start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its
+next tick, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the bytes a
+person agreed to lift, and any other bytes stand, so a stop has no moment in which it can be lost. A runner ended by a stop
+needs a person's start again, even with the file gone: the records say the last start was stopped. A heartbeat is written
+whole or not at all, and a heartbeat that cannot be written is one missed, never a failed tick.
 
 **Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
 that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
@@ -175,15 +176,34 @@ class CycleLog:
 
 
 def stop_reason(root: str | Path) -> str:
-    """Why the ``STOP`` file in the loop's folder halts it, or ``""``. One that cannot be read still stops."""
-    path = Path(root) / STOP_FILE
+    """Why the ``STOP`` file in the loop's folder halts it, or ``""``. It stands unless its bytes are exactly those the last
+    start lifted. What was added after them is the stop in force, and any other change leaves the whole file standing. One
+    that cannot be read, or that records which cannot be read might have lifted, still stops."""
+    path, log = Path(root) / STOP_FILE, Path(root) / CYCLE_LOG
     if not path.exists():
         return ""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError as exc:
+        held = path.read_bytes()
+        start = (CycleLog(log).started() or {}) if log.is_file() else {}
+    except (OSError, LedgerError) as exc:
         return f"a STOP file is present and could not be read ({type(exc).__name__})"
+    lifted = start.get("lifted_bytes", 0)
+    if start.get("lifted") and hashlib.sha256(held[:lifted]).hexdigest() == start["lifted"]:
+        if len(held) == lifted:
+            return ""
+        held = held[lifted:]
+    text = held.decode("utf-8", "replace").strip()
     return f"a STOP file is present: {text.splitlines()[0]}" if text else "a STOP file is present"
+
+
+def stop_to_lift(root: str | Path) -> dict[str, Any]:
+    """The ``STOP`` file as it stands, for a start to record what a person agreed to lift, or nothing when there is none
+    to read. No start moves or deletes the file: this record is all that lifting is."""
+    try:
+        held = (Path(root) / STOP_FILE).read_bytes()
+    except OSError:
+        return {}
+    return {"lifted": hashlib.sha256(held).hexdigest(), "lifted_bytes": len(held)}
 
 
 def file_digest(path: Any) -> str:
@@ -206,58 +226,25 @@ def stops_asked(root: str | Path) -> int:
         return -1
 
 
-def stops_countable(root: str | Path) -> bool:
-    """Whether a stop asked for now would be counted, and the count read. A restart stands on that count, so a start
-    refuses a folder where it would not. It writes nothing, and no count yet is a count of none."""
-    path = Path(root) / STOPS_FILE
-    try:
-        if path.exists():
-            with open(path, "ab"):
-                pass
-    except OSError:
-        return False
-    return stops_asked(root) >= 0
-
-
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
     """Add this stop to the ``STOP`` file, making it if need be, so the first reason stands and repeating is safe. It kills
     nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
 
     Each stop writes a token of its own there, so no two stops leave the same bytes, and that is what keeps a stop: a start
-    clears only the bytes a person agreed to (``clear_stop``), so it needs no record to know a new stop when it sees one.
-    A stop that cannot change the file raises, because a start could clear it.
+    lifts only the bytes a person agreed to, so it needs no record to know a new stop when it sees one. A stop that cannot
+    change the file raises, because the bytes it could not change may be lifted.
 
     It is also counted, first and in a file no lock stands in front of, because the records can be held for as long as a
-    tick lasts and a stop may never wait. The count serves a restart, which sees a stop by it after the file has gone. A
-    count that cannot be written is left, and only that restart loses by it."""
+    tick lasts and a stop may never wait. The count serves a restart after a person has removed the file, when no note of
+    the stop reached the records. A count that cannot be written is left, and only that restart loses by it."""
     said = " ".join(reason.split()) or "stopped through g6_improve_stop"
     try:
         with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
             stops.write(said[:200] + "\n")
     except OSError:
         pass
-    path = Path(root) / STOP_FILE
-    for _ in range(2):                            # the second is for a start that took the file as this wrote to it
-        with open(path, "a", encoding="utf-8") as stop:
-            stop.write(f"{said}\n{uuid4().hex}\n")
-        if path.exists():
-            break
-    return stop_reason(root)
-
-
-def clear_stop(root: str | Path, agreed: str) -> str:
-    """Remove the ``STOP`` file only if it is still the bytes a person agreed to clear, whose digest is ``agreed``, and say
-    why the folder is stopped, or ``""``. Any other ``STOP`` stands, whatever any record says. The file is moved aside before
-    its last read, so nothing can add to what is removed, and a stop that comes then makes a new one. Where a stop holds it
-    open, the move raises and it stays."""
-    path = Path(root) / STOP_FILE
-    if agreed and file_digest(path) == agreed:
-        aside = path.with_name(f"{STOP_FILE}.{uuid4().hex}")
-        os.replace(path, aside)
-        if file_digest(aside) == agreed or path.exists():
-            aside.unlink()
-        else:
-            os.replace(aside, path)
+    with open(Path(root) / STOP_FILE, "a", encoding="utf-8") as stop:
+        stop.write(f"{said}\n{uuid4().hex}\n")
     return stop_reason(root)
 
 
@@ -313,5 +300,5 @@ def heartbeat(root: str | Path) -> dict | None:
 
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "clear_stop", "file_digest", "heartbeat",
-           "record_stop", "runner_alive", "runner_lock", "stop_reason", "stops_asked", "stops_countable"]
+           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop",
+           "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]
