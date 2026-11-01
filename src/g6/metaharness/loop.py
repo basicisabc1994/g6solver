@@ -78,6 +78,8 @@ from g6.self_maintenance.envelope import (
     ask_to_stop,
     beat,
     file_digest,
+    note_refusal,
+    refused_requests,
     stop_reason,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
@@ -229,12 +231,14 @@ class _Requests:
     running at once can never pass the limit between them. During a tick each request looks at ``halted`` first, so a stop
     lands at the next model call: a request already sent comes back first, since nothing here can end one. ``barring`` is what
     a request's real sender is held to. After a refusal nothing more goes out that tick, and ``refused`` holds each request ever
-    refused here, which never goes out again."""
+    refused here, which never goes out again. It only grows, and ``keeping`` is told of each as it happens, before any record
+    of the tick is written, so no failure of those records can send one twice."""
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  halted: Callable[[], _Halted | None] = lambda: None,
-                 barring: Callable[[Any], _Halted | None] = lambda sender: None) -> None:
-        self.now, self.halted, self.barring = now, halted, barring
+                 barring: Callable[[Any], _Halted | None] = lambda sender: None,
+                 keeping: Callable[[str, str], None] = lambda request, said: None) -> None:
+        self.now, self.halted, self.barring, self.keeping = now, halted, barring, keeping
         self.refused: set[str] = set()
         self._lock = threading.Lock()
         self.close()
@@ -290,6 +294,8 @@ class _Requests:
         said = refused_by(str(failed))
         if said and self.limit != math.inf:
             self.refusal = {"said": said, "request": request}
+            self.refused.add(request)
+            self.keeping(request, said)
             raise _Refused(said)
 
 
@@ -457,7 +463,8 @@ class ShadowLoop:
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self.evaluating = False                   # this tick has begun its held-out evaluation
-        self.requests = _Requests(lambda: self._now(), self._halted, self._barred)
+        self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
+                                  lambda request, said: note_refusal(self.root, request, said))
         self._proposer = _Counted(proposer, self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
@@ -746,6 +753,8 @@ class ShadowLoop:
                               wait_until=spend.wait_until.isoformat() if spend.wait_until else "")
 
     def _run(self) -> dict[str, Any]:
+        self.requests.refused |= refused_requests(self.root) | {c["classifier_stop"]["request"] for c in self.log.cycles()
+                                                                if c.get("classifier_stop")}
         spend, waiting = self._reserve()
         if waiting is not None:
             return waiting
@@ -755,7 +764,6 @@ class ShadowLoop:
         halted: _Halted | None = None
         self.evaluating = False
         self.requests.open(spend.amount, spend.ends)
-        self.requests.refused = {c["classifier_stop"]["request"] for c in self.log.cycles() if c.get("classifier_stop")}
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
@@ -827,20 +835,24 @@ class ShadowLoop:
         try:
             reply = self._reply(self.log.cycle(row))
         except (OSError, LedgerError) as exc:
-            return self.lost_cycle(exc)
+            return self.lost_cycle(exc, refusal=row.get("classifier_stop"))
         self.lost_cycles = 0
         self._pause_if_failing()
         return reply
 
-    def lost_cycle(self, exc: BaseException) -> dict[str, Any]:
+    def lost_cycle(self, exc: BaseException, *, refusal: dict[str, str] | None = None) -> dict[str, Any]:
         """A cycle the log would not take. The streak that pauses the loop is read from the log, so these leave it nothing
         to read and are counted here, for as long as this process lives. At ``MAX_FAILED_CYCLES`` in a row the loop stops
         for good: ``STOP`` and ``stops.log`` are other files, so a restart stays closed until a person starts it again, and
-        should those fail too, this process still spends no more. A cycle that is written starts the count again."""
+        should those fail too, this process still spends no more. A cycle that is written starts the count again. A cycle
+        that holds a ``refusal`` stops the loop at the first, since the pause a person must read would have stood on it."""
         self.lost_cycles += 1
         why = (f"{self.lost_cycles} of the {MAX_FAILED_CYCLES} cycles in a row that stop the loop could not be written to "
                f"its log ({type(exc).__name__}: {exc})")[:400]
-        if self.lost_cycles >= MAX_FAILED_CYCLES:
+        if refusal is not None:
+            why = (f"a classifier or a permission stopped a request ({refusal['said']}) and the log would not take that cycle "
+                   f"({type(exc).__name__}: {exc})")[:400]
+        if refusal is not None or self.lost_cycles >= MAX_FAILED_CYCLES:
             self.cannot_record = why
             try:
                 ask_to_stop(self.root, why)

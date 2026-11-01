@@ -837,6 +837,14 @@ tick would rephrase it: a proposer's next prompt on the same case is a new reque
 never sent again, across restarts, and reads as a failed case. Only the exact request is known: a changed prompt is a new one,
 and only the pause stands between a refusal and that.
 
+No failure of the records can undo this. A refused request is kept as it happens, by digest, in `refused.log`, a file no lock stands
+in front of, before any record of the tick is written, and this process holds it too, for good. So a crash before its cycle is
+written, or a log that will not take that cycle, cannot send it again. A cycle lost that way cannot carry the pause, so it ends the
+run at the first, as three lost cycles do: `STOP` and `stops.log` hold it, the reason says what was refused, and only a person's
+start goes on. If `refused.log`, the log and `STOP` all refuse a write, this process still sends nothing more, and a restart then
+has nothing to go on. A `refused.log` that cannot be read stops the tick with `G6_E_LOOP_RECORDS_UNREADABLE`, before anything is
+reserved, since nothing could say what must not be sent.
+
 What can read one is limited. `G6_E_MODEL_REFUSED` at the start of an error is G6's own code. For Claude Code, `host_models` keeps
 only the last 300 characters of what was printed, and a refusal's `stop_reason` is written ahead of the long `usage` record, so
 nothing in that error can show one. So the Claude Code caller really sending a request, whatever holds it, becomes a `WatchedClaude`

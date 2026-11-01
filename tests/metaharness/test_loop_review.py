@@ -44,7 +44,7 @@ from g6.metaharness.method import Method
 from g6.metaharness.schema import Workflow, default_objectives
 from g6.metaharness.shadow import lineage
 from g6.operator.store import OperatorStore
-from g6.self_maintenance.envelope import ask_to_stop, stop_to_lift
+from g6.self_maintenance.envelope import ask_to_stop, stop_reason, stop_to_lift
 from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import AccountReader, UsageUnavailable, WatchedClaude
 
@@ -1636,3 +1636,100 @@ def test_a_host_caller_goes_on_answering_once_it_is_watched(monkeypatch):
     assert _Counted(Delegates(claude), requests).complete("system", "user") == "an answer"
     assert isinstance(claude, ClaudeOfItsOwn) and isinstance(claude, WatchedClaude)
     assert (claude.model, claude.timeout) == ("a-model", 7.0)
+
+
+# A refusal is kept before its cycle is written, so no failure of the log can send it again -------------------------------------
+
+def _log_refuses_a_cycle(monkeypatch, loop) -> None:
+    def full(row):
+        raise OSError("the log cannot be written")
+
+    monkeypatch.setattr(loop.log, "cycle", full)
+
+
+def _answers_again(domain, seen) -> None:
+    domain.llm._responder = lambda system, user: seen.append((system, user)) or domain.tutor(system, user)
+
+
+def test_a_refusal_the_log_would_not_take_holds_the_run_and_sends_nothing_more(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+    with monkeypatch.context() as broken:
+        _log_refuses_a_cycle(broken, loop)
+        got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_CANNOT_RECORD" and "stopped a request" in got["message"] and REFUSED in got["message"]
+    assert "stopped a request" in stop_reason(loop.root)
+    _answers_again(domain, seen)
+    calls = len(seen)
+    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(seen) == calls
+
+
+def test_a_refusal_the_log_would_not_take_is_not_sent_after_a_restart_either(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+    with monkeypatch.context() as broken:
+        _log_refuses_a_cycle(broken, loop)
+        loop.tick()
+    refused = seen[-1]
+    _answers_again(domain, seen)
+    again, _ = _loop(tmp_path, domain=domain)
+    again.log.start("Ada", **stop_to_lift(again.root))
+    again.tick()
+    assert seen.count(refused) == 1 and len(seen) > 3
+
+
+def test_a_refusal_is_kept_before_anything_is_written_so_a_crash_cannot_lose_it(tmp_path, monkeypatch):
+    class Killed(BaseException):
+        pass
+
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+
+    def killed(row):
+        raise Killed
+
+    with monkeypatch.context() as dying:
+        dying.setattr(loop.log, "cycle", killed)
+        with pytest.raises(Killed):
+            loop.tick()
+    refused = seen[-1]
+    _answers_again(domain, seen)
+    again, _ = _loop(tmp_path, domain=domain)
+    again.tick()
+    assert seen.count(refused) == 1
+
+
+def test_a_refusal_no_file_would_take_still_holds_this_process(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+    module = sys.modules[ShadowLoop.__module__]
+    with monkeypatch.context() as broken:
+        _log_refuses_a_cycle(broken, loop)
+        broken.setattr(module, "note_refusal", lambda *args: None)      # as the file taking no write: note_refusal says nothing
+        broken.setattr(module, "ask_to_stop", lambda *args: (_ for _ in ()).throw(OSError("full")))
+        loop.tick()
+    _answers_again(domain, seen)
+    calls = len(seen)
+    assert _code(loop.tick()) == "G6_E_LOOP_STOPPED" and len(seen) == calls
+
+
+def test_refusals_that_cannot_be_read_stop_the_tick_since_nothing_could_say_what_is_barred(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    (loop.root / "refused.log").mkdir()
+    calls = len(domain.llm.calls)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_RECORDS_UNREADABLE" and len(domain.llm.calls) == calls
+    assert loop.meter.reading("claude", NOW).used == 0                  # refused before anything was reserved
+
+
+def test_a_refused_request_stays_barred_in_this_process_whatever_the_records_say(tmp_path, monkeypatch):
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+    loop.tick()
+    refused = seen[-1]
+    (loop.root / "refused.log").unlink()
+    _answers_again(domain, seen)
+    assert loop.resume("Ada")["completion_state"] == "qualified-draft"
+    monkeypatch.setattr(loop.log, "cycles", lambda: [])                  # nothing on disk says it was refused
+    loop.tick()
+    assert seen.count(refused) == 1

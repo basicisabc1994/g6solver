@@ -21,7 +21,9 @@ from g6.self_maintenance.envelope import (
     ask_to_stop,
     beat,
     heartbeat,
+    note_refusal,
     record_stop,
+    refused_requests,
     runner_alive,
     runner_lock,
     stop_reason,
@@ -477,6 +479,35 @@ def test_a_count_that_cannot_be_read_is_no_count_a_start_recorded(tmp_path):
 def test_a_stop_that_cannot_be_counted_still_stops(tmp_path):
     (tmp_path / STOPS_FILE).mkdir()
     assert "why" in ask_to_stop(tmp_path, "why") and (tmp_path / "STOP").is_file()
+
+
+# What was refused --------------------------------------------------------------------------------------------------------
+
+DIGEST = "a" * 64
+
+
+def test_a_refusal_is_kept_with_no_records_needed_and_reading_it_changes_nothing(tmp_path):
+    assert refused_requests(tmp_path) == set() and list(tmp_path.iterdir()) == []
+    note_refusal(tmp_path, DIGEST, "G6_E_MODEL_REFUSED: cyber\nand a second line")
+    assert refused_requests(tmp_path) == {DIGEST} and len((tmp_path / "refused.log").read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_a_refusal_that_cannot_be_kept_raises_nothing(tmp_path):
+    (tmp_path / "refused.log").mkdir()
+    note_refusal(tmp_path, DIGEST, "said")
+
+
+def test_a_line_a_crash_cut_short_is_no_digest(tmp_path):
+    note_refusal(tmp_path, DIGEST, "said")
+    with open(tmp_path / "refused.log", "a", encoding="utf-8") as cut:
+        cut.write("abc")
+    assert refused_requests(tmp_path) == {DIGEST}
+
+
+def test_refusals_that_cannot_be_read_are_refused_as_records_are(tmp_path):
+    (tmp_path / "refused.log").mkdir()
+    with pytest.raises(LedgerError, match="refused.log"):
+        refused_requests(tmp_path)
 
 
 # Is a runner alive? ----------------------------------------------------------------------------------------------------

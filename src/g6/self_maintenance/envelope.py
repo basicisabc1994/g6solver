@@ -38,6 +38,8 @@ from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
 STOPS_FILE = "stops.log"
+REFUSED_FILE = "refused.log"
+DIGEST_LENGTH = 64                      # of a SHA-256, in hex
 HEARTBEAT_FILE = "heartbeat.json"
 BEAT_TRIES = 5                          # how often to try a swap a reader holds up
 BEAT_GAP = 0.02                         # the seconds between those tries
@@ -276,6 +278,29 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     return stop_reason(root)
 
 
+def note_refusal(root: str | Path, request: str, said: str) -> None:
+    """Keep what a classifier or a permission refused, first and in a file no lock stands in front of, because a refused
+    request is never sent again whether or not its cycle reaches the log. ``request``: a digest, never its text. One that
+    cannot be written is left: this process still holds it, and the cycle may yet be written."""
+    try:
+        with open(Path(root) / REFUSED_FILE, "a", encoding="utf-8") as kept:
+            kept.write(f"{request} {' '.join(said.split())}\n")
+    except OSError:
+        pass
+
+
+def refused_requests(root: str | Path) -> set[str]:
+    """The digest of each request ``note_refusal`` kept. A line a crash cut short is no digest. A file that cannot be read
+    raises as records that do not check out do, since nothing could then say what must not be sent."""
+    try:
+        text = (Path(root) / REFUSED_FILE).read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return set()
+    except OSError as exc:
+        raise LedgerError(f"{REFUSED_FILE} cannot be read ({type(exc).__name__})") from exc
+    return {found for found in (line.split(" ", 1)[0] for line in text.splitlines()) if len(found) == DIGEST_LENGTH}
+
+
 def record_stop(root: str | Path, reason: str, *, at: str) -> None:
     """Note a stop in the records, so a start no longer stands once the ``STOP`` file is gone. The file is what stops the
     loop, so this never gets in its way: records that do not read, or a tick holding them, leave the note for later, and
@@ -333,6 +358,6 @@ def heartbeat(root: str | Path) -> dict | None:
 
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest", "heartbeat",
-           "record_stop",
+           "REFUSED_FILE", "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "TICK_BUDGET_SPENT", "ask_to_stop", "beat", "file_digest",
+           "heartbeat", "note_refusal", "record_stop", "refused_requests",
            "runner_alive", "runner_lock", "stop_reason", "stop_to_lift", "stops_asked"]
