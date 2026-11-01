@@ -822,10 +822,11 @@ def _patch_now(root: Path, base: str) -> str:
 
 def _unreproduced(reviews: list[dict]) -> bool:
     """Whether a review named a defect that nothing shows as the loop ends: no case of its test ever failed, so it is no
-    finding, and on the last run the test showed nothing. A defect with no test at all is K's: it asked nothing of G6."""
+    finding, and on the last run the test showed nothing, or its reviewer, told why, kept the claim and gave no test. A defect
+    that never had a test is K's: it asked nothing of G6."""
     last, found = reviews[-1]["results"], patch_report.findings(reviews)
-    return any(one["verdict"] == "defect" and one not in (*found[0], *found[1]) and last.get(one["file"]) in SHOWED_NOTHING
-               for one in reviews)
+    return any(one["verdict"] == "defect" and one not in (*found[0], *found[1])
+               and (last.get(one["file"]) in SHOWED_NOTHING or (one.get("told") and one["file"] not in last)) for one in reviews)
 
 
 def _ending(reason: str, reviews: list[dict]) -> str:

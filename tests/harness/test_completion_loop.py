@@ -2905,3 +2905,17 @@ def test_what_goes_back_to_a_reviewer_carries_no_home_folder_and_no_secret(world
     told = critic.calls[1][1]
     assert "settings.py" in told, "the error never went back"
     assert home not in told and "abcd1234efgh5678" not in told
+
+def test_a_reviewer_told_of_the_error_that_keeps_its_claim_with_no_test_never_ends_clean(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    first = reviewer("one")
+
+    def reply(system: str, user: str) -> str:
+        if first.calls:      # told of the error, it holds to the defect and offers no test
+            proof = re.search(r"review [0-9a-f]{32}", user)[0]
+            return f"READ: {proof}\nRULE: rule one\nVERDICT: defect\nWHY: I cannot write one that runs here\n"
+        return first.complete(system, user)
+
+    world.edit()
+    step = world.advance(critic=FakeLLM(reply))
+    assert loop.CLEAN not in step.text and step.code == loop.NOT_REPRODUCED and step.ending == "untested"
