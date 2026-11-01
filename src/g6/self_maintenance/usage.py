@@ -127,7 +127,8 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
 class AccountReader:
     """The ``read_account`` of a ``BudgetMeter``. Calling it only hands back what ``refresh`` last read, which the runner
     calls between ticks. A provider whose tool reports nothing, or whose read failed, has no reading, and ``said`` says
-    why: the meter then stays on its own count."""
+    why: the meter then stays on its own count. The exception is a limit still ahead, which a failed read keeps. This is
+    held in memory, so a restart whose first read fails has forgotten it."""
 
     def __init__(self, windows: Sequence[ProviderWindow],
                  ask: Mapping[str, Callable[[], Mapping[str, Any] | None]] | None = None) -> None:
@@ -142,17 +143,26 @@ class AccountReader:
             return
         self._asked = now
         for provider in set(self.windows) & set(self.ask):
-            self.readings.pop(provider, None)
             try:
                 found = limits_reading(self.ask[provider]() or {}, self.windows[provider], now)
             except (OSError, UsageUnavailable) as exc:
-                self.said[provider] = f"its usage could not be read ({str(exc)[:120]}), so the meter counts model calls"
+                self._no_reading(provider, now, f"its usage could not be read ({str(exc)[:120]})")
                 continue
             if found is None:
-                self.said[provider] = "its reply could not be read, so the meter counts model calls"
+                self._no_reading(provider, now, "its reply could not be read")
                 continue
             self.readings[provider] = replace(found, read_at=now)
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
+
+    def _no_reading(self, provider: str, now: datetime, why: str) -> None:
+        """A read that gave nothing says nothing of a limit still ahead, so that stands until its reset. Anything else
+        the last reading said goes, and the meter stays on its own count."""
+        known = self.readings.get(provider)
+        if known is not None and known.limited_until is not None and known.limited_until > now:
+            self.said[provider] = f"{why}; the limit it last reported stands until {known.limited_until.isoformat()}"
+            return
+        self.readings.pop(provider, None)
+        self.said[provider] = f"{why}, so the meter counts model calls"
 
     def __call__(self, provider: str, start: datetime) -> AccountReading | None:
         return self.readings.get(provider)

@@ -118,6 +118,55 @@ def test_a_read_that_fails_leaves_the_meter_on_its_own_count_and_says_why(failur
     assert reader("codex", START) is None and "model calls" in reader.said["codex"]
 
 
+def _at_the_limit(until: datetime) -> dict:
+    return _limits(100, resets=int(until.timestamp()), allowed=False)
+
+
+@pytest.mark.parametrize("failure", [usage.UsageUnavailable("the transport failed"), OSError("no such program"), {}])
+def test_a_read_that_fails_keeps_a_limit_still_ahead(failure):
+    reset = START + timedelta(days=7)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), failure)})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    before = meter.reserve("codex", NOW, 10)
+    assert not before.admitted and before.wait_until == reset
+    later = NOW + usage.REFRESH
+    reader.refresh(later)
+    after = meter.reserve("codex", later, 10)
+    assert not after.admitted and after.wait_until == reset
+    assert "stands until" in reader.said["codex"] and "model calls" not in reader.said["codex"]
+
+
+def test_a_limit_kept_through_a_failure_lifts_at_the_first_read_past_its_reset():
+    reset = NOW + usage.REFRESH + timedelta(minutes=5)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), usage.UsageUnavailable("down"))})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    assert reader("codex", START) is not None
+    assert not meter.reserve("codex", reset, 10).admitted                # its figure still stands until a read replaces it
+    past = reset + usage.REFRESH
+    reader.refresh(past)
+    assert meter.reserve("codex", past, 10).admitted
+
+
+def test_a_failed_read_past_the_limits_reset_forgets_it():
+    reset = NOW + timedelta(minutes=1)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), usage.UsageUnavailable("down"))})
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    assert reader("codex", START) is None and "model calls" in reader.said["codex"]
+
+
+def test_a_good_read_lifts_a_limit_kept_through_a_failure():
+    reset = START + timedelta(days=7)
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_at_the_limit(reset), usage.UsageUnavailable("down"), _limits(10))})
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    reader.refresh(NOW + usage.REFRESH * 2)
+    assert reader("codex", START).limited_until is None and reader("codex", START).used == 100.0
+
+
 def test_a_reading_reaches_the_meter_and_the_loop_gives_way():
     reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(55))})
     reader.refresh(NOW)
