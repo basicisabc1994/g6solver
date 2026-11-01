@@ -31,6 +31,7 @@ from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
 STOP_FILE = "STOP"
+STOPS_FILE = "stops.log"
 HEARTBEAT_FILE = "heartbeat.json"
 CYCLE_LOG = Path("records", "constraint_log.jsonl")
 #: The folder of the lock a runner holds for its whole life.
@@ -174,12 +175,34 @@ def file_digest(path: Any) -> str:
         return ""
 
 
+def stops_asked(root: str | Path) -> int:
+    """How many stops have been asked for on this folder, from the file ``ask_to_stop`` adds to. A start records this, so
+    any stop after it shows whatever happened to the ``STOP`` file. One that cannot be read is ``-1``, which is no count a
+    start ever recorded."""
+    try:
+        return (Path(root) / STOPS_FILE).read_bytes().count(b"\n")
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return -1
+
+
 def ask_to_stop(root: str | Path, reason: str = "") -> str:
     """Write the ``STOP`` file, or leave one that is there, so the first reason stands and repeating is safe. It kills
-    nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped."""
+    nothing: the runner reads the file between ticks and ends itself. It returns why the folder is stopped.
+
+    Each stop is counted first, in a file no lock stands in front of, because the records can be held for as long as a
+    tick lasts and a stop may never wait. It is counted before the ``STOP`` file is written, so a start that misses the
+    count cannot have removed that file. The ``STOP`` file is what stops, so a count that cannot be written is left."""
+    said = " ".join(reason.split()) or "stopped through g6_improve_stop"
+    try:
+        with open(Path(root) / STOPS_FILE, "a", encoding="utf-8") as stops:
+            stops.write(said[:200] + "\n")
+    except OSError:
+        pass
     path = Path(root) / STOP_FILE
     if not path.exists():
-        path.write_text((" ".join(reason.split()) or "stopped through g6_improve_stop") + "\n", encoding="utf-8")
+        path.write_text(said + "\n", encoding="utf-8")
     return stop_reason(root)
 
 
@@ -235,5 +258,5 @@ def heartbeat(root: str | Path) -> dict | None:
 
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "RUNNER_LOCK", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop", "runner_alive",
-           "runner_lock", "stop_reason"]
+           "RUNNER_LOCK", "STOPS_FILE", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop",
+           "runner_alive", "runner_lock", "stop_reason", "stops_asked"]

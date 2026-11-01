@@ -28,7 +28,14 @@ from g6.mcp import build_server, improve  # noqa: E402
 from g6.metaharness import shadow  # noqa: E402
 from g6.metaharness.shadow import ADOPTIONS  # noqa: E402
 from g6.self_maintenance import digest  # noqa: E402
-from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, beat, file_digest, runner_lock  # noqa: E402
+from g6.self_maintenance.envelope import (  # noqa: E402
+    CYCLE_LOG,
+    CycleLog,
+    beat,
+    file_digest,
+    runner_lock,
+    stop_reason,
+)
 
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 NOW = START + timedelta(days=2)
@@ -371,6 +378,41 @@ def test_stop_still_works_with_a_broken_settings_file_and_broken_records(rig):
     path = rig.root / CYCLE_LOG
     path.write_text(path.read_text(encoding="utf-8").replace(ENROLLED_BY, "Cy"), encoding="utf-8")
     assert rig.call("g6_improve_stop", folder=str(rig.root))["stopped"] is True and (rig.root / "STOP").exists()
+
+
+def test_a_stop_arriving_while_a_start_is_recorded_wins_over_it(rig, monkeypatch):
+    rig.enrol()
+    stopped = []
+    real = CycleLog.start
+
+    def interleaved(self, *args, **kwargs):
+        recorded = real(self, *args, **kwargs)
+        stopped.append(improve.stop(str(rig.root), "the owner changed their mind"))
+        return recorded
+
+    monkeypatch.setattr(CycleLog, "start", interleaved)
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and got["completion_state"] == "blocked-escalated"
+    assert stopped[0]["stopped"] is True and "the owner changed their mind" in stop_reason(rig.root)
+    monkeypatch.undo()
+    assert not CycleLog(rig.root / CYCLE_LOG).start_in_force()
+
+
+def test_a_stop_arriving_just_as_an_old_stop_is_removed_still_wins(rig, monkeypatch):
+    rig.enrol()
+    (rig.root / "STOP").write_text("an old stop\n", encoding="utf-8")
+    real, reads = improve.stops_asked, []
+
+    def a_stop_after_the_check(root):
+        found = real(root)
+        reads.append(found)
+        if len(reads) == 2:                                              # read, then a stop, then the file goes
+            improve.stop(str(rig.root), "a late stop")
+        return found
+
+    monkeypatch.setattr(improve, "stops_asked", a_stop_after_the_check)
+    got = improve.start(rig.root, "Ada")
+    assert rig.spawned == [] and _code(got) == "G6_E_LOOP_START_STOPPED" and (rig.root / "STOP").is_file()
 
 
 def test_stop_ends_the_start_so_only_a_new_agreement_brings_it_back(rig):

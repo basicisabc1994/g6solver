@@ -45,6 +45,7 @@ from g6.self_maintenance.envelope import (
     record_stop,
     runner_alive,
     stop_reason,
+    stops_asked,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.workspace._coordination import Coordination
@@ -60,6 +61,7 @@ NOT_ENROLLED = "G6_E_LOOP_NOT_ENROLLED"
 FROZEN_CHANGED = "G6_E_LOOP_FROZEN_CHANGED"
 RECORDS_UNREADABLE = "G6_E_LOOP_RECORDS_UNREADABLE"
 START_FAILED = "G6_E_LOOP_START_FAILED"
+START_STOPPED = "G6_E_LOOP_START_STOPPED"
 STARTED = "G6_E_LOOP_STARTED"
 STOP_ASKED = "G6_E_LOOP_STOP_ASKED"
 STOP_FAILED = "G6_E_LOOP_STOP_FAILED"
@@ -185,10 +187,17 @@ def start(root: Path, who: str) -> dict:
     cannot = _cannot_start(root)
     if cannot is not None:
         return cannot
+    stops = stops_asked(root)
     try:
         with Coordination(root / ".tick").mutex():
-            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat())
-        (root / STOP_FILE).unlink(missing_ok=True)
+            CycleLog(root / CYCLE_LOG).start(who, at=datetime.now().astimezone().isoformat(), stops=stops)
+        if stops_asked(root) == stops:
+            (root / STOP_FILE).unlink(missing_ok=True)
+        if stops_asked(root) != stops:            # asked for since: it stands, and the removal above may have taken its file
+            why = ask_to_stop(root, "a stop arrived while the runner was starting")
+            record_stop(root, why, at=datetime.now().astimezone().isoformat())
+            return _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: {why}"
+                            [:500], NOT_ASKED, running=False, folder=str(root))
         return {**_watch(root, _spawn(root)), "started_by": who}
     except (OSError, LedgerError, WorkspaceRefused) as exc:
         return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,

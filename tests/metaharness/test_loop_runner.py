@@ -19,7 +19,15 @@ from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
 from g6.self_maintenance.digest import digest_path, latest
-from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, heartbeat, runner_alive, runner_lock
+from g6.self_maintenance.envelope import (
+    CYCLE_LOG,
+    CycleLog,
+    ask_to_stop,
+    heartbeat,
+    runner_alive,
+    runner_lock,
+    stops_asked,
+)
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -469,12 +477,17 @@ def test_a_second_runner_on_a_folder_does_nothing(tmp_path, capsys, monkeypatch)
     assert "already" in capsys.readouterr().err
 
 
+def _agreed(root: Path, log: CycleLog) -> None:
+    """A person's start as ``g6_improve_start`` records it."""
+    log.start("Ada", at=START.isoformat(), stops=stops_asked(root))
+
+
 def _enrolled_folder(tmp_path: Path, *, started: bool = True) -> tuple[Path, ShadowLoop]:
     root = _folder(tmp_path)
     loop, _ = open_loop(root, now=lambda: START)
     assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
     if started:
-        loop.log.start("Ada", at=START.isoformat())
+        _agreed(root, loop.log)
     return root, loop
 
 
@@ -581,6 +594,23 @@ def test_a_stop_since_the_start_refuses_a_restart_even_with_its_file_gone(tmp_pa
     assert len(CycleLog(root / CYCLE_LOG).cycles()) == ran and "g6_improve_start" in capsys.readouterr().err
 
 
+def test_a_stop_counted_since_the_start_closes_the_gate_with_its_file_gone(tmp_path, capsys):
+    root, _ = _enrolled_folder(tmp_path)
+    ask_to_stop(root, "asked while a tick held the records")
+    (root / "STOP").unlink()                                             # the start's own removal can do this
+    assert CycleLog(root / CYCLE_LOG).start_in_force()                   # nothing in the records says it stopped
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
+    assert CycleLog(root / CYCLE_LOG).cycles() == []
+    assert "a stop" in capsys.readouterr().err and heartbeat(root)["code"] == "G6_E_LOOP_NOT_STARTED"
+
+
+def test_a_start_with_no_stop_count_stands_on_nothing(tmp_path, capsys):
+    root, loop = _enrolled_folder(tmp_path, started=False)
+    loop.log.start("Ada", at=START.isoformat())
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
+    assert CycleLog(root / CYCLE_LOG).cycles() == []
+
+
 def test_a_stop_file_a_restart_finds_ends_the_start_too(tmp_path):
     root, _ = _enrolled_folder(tmp_path)
     (root / "STOP").write_text("set by hand\n", encoding="utf-8")
@@ -593,7 +623,7 @@ def test_a_new_start_after_a_stop_lets_it_run_again(tmp_path):
     root, _ = _enrolled_folder(tmp_path)
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
     (root / "STOP").unlink()
-    CycleLog(root / CYCLE_LOG).start("Ada", at=START.isoformat())
+    _agreed(root, CycleLog(root / CYCLE_LOG))
     assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
 
 
@@ -608,7 +638,7 @@ def test_a_run_holds_the_lock_while_it_lives(tmp_path):
     root = _folder(tmp_path)
     loop, _ = open_loop(root, now=lambda: START)
     assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
-    loop.log.start("Ada", at=START.isoformat())       # a run needs a start that stands
+    _agreed(root, loop.log)                           # a run needs a start that stands
     seen = []
 
     def sleep(seconds: float) -> None:

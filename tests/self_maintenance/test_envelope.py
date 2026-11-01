@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 
 from g6.core.ledger import LedgerCorrupt, LedgerError
 from g6.self_maintenance.envelope import (
     FINDINGS,
+    STOPS_FILE,
     CycleLog,
     ask_to_stop,
     beat,
@@ -18,6 +20,7 @@ from g6.self_maintenance.envelope import (
     runner_alive,
     runner_lock,
     stop_reason,
+    stops_asked,
 )
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
@@ -190,6 +193,36 @@ def test_asking_to_stop_writes_the_file_and_repeating_keeps_the_first_reason(tmp
 
 def test_asking_to_stop_with_no_reason_still_says_where_it_came_from(tmp_path):
     assert "g6_improve_stop" in ask_to_stop(tmp_path)
+
+
+def test_every_stop_asked_for_is_counted_even_with_one_already_there(tmp_path):
+    assert stops_asked(tmp_path) == 0
+    ask_to_stop(tmp_path, "first")
+    ask_to_stop(tmp_path, "second")
+    assert stops_asked(tmp_path) == 2 and (tmp_path / "STOP").read_text(encoding="utf-8") == "first\n"
+
+
+def test_a_stop_is_counted_before_its_file_is_written(tmp_path, monkeypatch):
+    seen = []
+    real = Path.write_text
+
+    def noted(self, *args, **kwargs):
+        seen.append(stops_asked(tmp_path))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", noted)
+    ask_to_stop(tmp_path, "why")
+    assert seen == [1]
+
+
+def test_a_count_that_cannot_be_read_is_no_count_a_start_recorded(tmp_path):
+    (tmp_path / STOPS_FILE).mkdir()
+    assert stops_asked(tmp_path) == -1
+
+
+def test_a_stop_that_cannot_be_counted_still_stops(tmp_path):
+    (tmp_path / STOPS_FILE).mkdir()
+    assert "why" in ask_to_stop(tmp_path, "why") and (tmp_path / "STOP").is_file()
 
 
 # Is a runner alive? ----------------------------------------------------------------------------------------------------

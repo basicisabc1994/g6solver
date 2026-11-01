@@ -9,8 +9,9 @@ a crashed tick is charged its worst case, a rest is read back from the log, and 
 **Who may start it.** It runs only on a start that stands: of the starts and stops on record, the last is a start a person
 agreed to in the client's dialog (``g6_improve_start``). So ``run`` from a shell starts nothing of its own, and it is
 refused before any of the folder's code runs. A scheduled restart carries on a start until a stop ends it, and a stop ends
-it for good, even if its file is later removed. This is a check and not a boundary: a process with the owner's rights can
-reach this code, or write the records, which are hash-chained and not signed.
+it for good, even if its file is later removed: a start records how many stops had been asked for, and any stop since
+closes it, whether or not the records could be written at the time. This is a check and not a boundary: a process with the
+owner's rights can reach this code, or write the records, which are hash-chained and not signed.
 
 **What it never does.** It starts no engineer, pushes nothing, and spends only within the pacing rule. A pause, a changed
 frozen item, records that do not check out or a spent held-out split stop the ticks until a person acts, and the runner
@@ -70,6 +71,7 @@ from g6.self_maintenance.envelope import (
     record_stop,
     runner_lock,
     stop_reason,
+    stops_asked,
 )
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.self_maintenance.usage import AccountReader
@@ -306,12 +308,16 @@ def _not_started(root: Path) -> str:
     """Why no person's start stands on this folder, or ``""`` when one does. It reads the records and runs nothing."""
     path = root / CYCLE_LOG
     try:
-        if path.is_file() and CycleLog(path).start_in_force():
-            return ""
+        log = CycleLog(path) if path.is_file() else None
+        start = log.started() if log is not None and log.start_in_force() else None
     except LedgerError as exc:
         return f"the loop's records cannot be trusted, so nothing ran: {exc}"[:400]
-    return ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's dialog, through "
-            "g6_improve_start; after that a restart carries on until a stop")
+    if start is None:
+        return ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's dialog, "
+                "through g6_improve_start; after that a restart carries on until a stop")
+    if start.get("stops") != stops_asked(root):
+        return "a stop has been asked for since the last start, so nothing ran: only a new g6_improve_start undoes that"
+    return ""
 
 
 def _refuse(root: Path, code: str, why: str, now: Callable[[], datetime]) -> int:
