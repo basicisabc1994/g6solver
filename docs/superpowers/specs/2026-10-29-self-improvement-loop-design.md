@@ -721,6 +721,12 @@ at a real limit. Claude Code's error fields land in the 300 characters its calle
 after its `usage` record, which no one promises. A version that moves or rewords them reads as a failed case, and three such
 cycles pause the loop as they did before. The repair is a code of its own from those callers, at an issuance window.
 
+**One backend to a model.** A `FallbackCaller` that holds two backends is refused at enrolment, for a declared model or the
+proposer, with `G6_E_LOOP_FALLBACK_MODEL`, seen through `EmptyRetry` and `TimingLLMCaller`. It answers from the next backend
+when one fails, for any reason, so a scored run could say nothing of which model answered, a paired comparison would compare
+backends, and a limit on one would pass unseen. A wrapper of a domain's own that holds a fallback under another name is not
+seen.
+
 These repairs changed files under `ENVELOPE_PATTERNS`, so a folder enrolled before them is refused with
 `G6_E_LOOP_FROZEN_CHANGED` until a person enrols again.
 

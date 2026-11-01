@@ -56,6 +56,7 @@ NO_JUDGE = "G6_E_LOOP_NO_INDEPENDENT_JUDGE"
 NO_SEALED = "G6_E_LOOP_NO_SEALED_SPLIT"
 SEALED_OVERLAP = "G6_E_LOOP_SEALED_OVERLAP"
 PAID_MODEL = "G6_E_LOOP_PAID_MODEL"
+FALLBACK_MODEL = "G6_E_LOOP_FALLBACK_MODEL"
 INDEPENDENT = "independent"
 #: Causes no profile can change: only a person can (recovery says who acts on each).
 PERSON_ONLY = (INTAKE_BLOCKED, ORACLE_SILENT)
@@ -249,6 +250,14 @@ def _judge_problems(judge: Judge | None, cases: Sequence[SuiteCase]) -> list[str
     return found
 
 
+def backends(caller: Any) -> int:
+    """How many models can answer through ``caller``, seen through the wrappers ``g6.core.llm`` has. A wrapper of a domain's
+    own that holds a fallback under another name is not seen."""
+    if hasattr(caller, "_callers"):
+        return sum(backends(inner) for inner in caller._callers)
+    return backends(caller._inner) if hasattr(caller, "_inner") else 1
+
+
 def domain_problems(domain: Domain) -> list[tuple[str, str]]:
     """Why the loop will not run on this domain, each with its stable code; empty when it will."""
     cases, sealed = domain.development(), domain.sealed()
@@ -264,6 +273,10 @@ def domain_problems(domain: Domain) -> list[tuple[str, str]]:
     paid = sorted(name for name, model in domain.execution().models.items() if model.paid)
     if paid:
         found.append((PAID_MODEL, f"the loop never spends API credits, and these declared models are paid: {paid}"))
+    mixed = sorted(name for name, model in domain.execution().models.items() if backends(model.caller) > 1)
+    if mixed:
+        found.append((FALLBACK_MODEL, f"these declared models can answer from more than one backend: {mixed}. A paired "
+                                      "comparison would compare backends, and a limit on one would pass unseen"))
     return found
 
 
@@ -332,6 +345,6 @@ def sealed_closed(vault: Vault) -> Iterator[list[str]]:
         breaches.extend(_held_open(vault))
 
 
-__all__ = ["Cut", "Domain", "Execution", "FEWEST", "FailureRecord", "Judge", "NO_JUDGE", "NO_SEALED", "PAID_MODEL",
-           "PERSON_ONLY", "SEALED_OVERLAP", "SHARES", "SealedSplit", "cut_pool", "domain_problems", "judge_source",
-           "reason_coded", "sealed_closed"]
+__all__ = ["Cut", "Domain", "Execution", "FALLBACK_MODEL", "FEWEST", "FailureRecord", "Judge", "NO_JUDGE", "NO_SEALED",
+           "PAID_MODEL", "PERSON_ONLY", "SEALED_OVERLAP", "SHARES", "SealedSplit", "backends", "cut_pool", "domain_problems",
+           "judge_source", "reason_coded", "sealed_closed"]

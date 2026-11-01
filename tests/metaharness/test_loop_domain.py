@@ -9,14 +9,17 @@ import importlib.util
 import itertools
 import random
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 import g6
+from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, TimingLLMCaller
 from g6.core.vault import AccessDenied
 from g6.metaharness import Model, Suite, SuiteCase
 from g6.metaharness.domain import (
+    FALLBACK_MODEL,
     FEWEST,
     NO_JUDGE,
     NO_SEALED,
@@ -26,14 +29,17 @@ from g6.metaharness.domain import (
     FailureRecord,
     Judge,
     _point,
+    backends,
     cut_pool,
     domain_problems,
     reason_coded,
     sealed_closed,
 )
+from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevFailure, ProposerView
 from g6.metaharness.recovery import partition
+from g6.self_maintenance.pacing import ProviderWindow
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -100,6 +106,39 @@ def test_a_paid_model_is_refused_because_the_loop_never_spends_api_credits(tmp_p
     free = domain.execution()
     domain.execution = lambda: dataclasses.replace(free, models={"local": Model(domain.llm, paid=True)})
     assert PAID_MODEL in _codes(domain)
+
+
+def _two_backends(domain) -> FallbackCaller:
+    return FallbackCaller((domain.llm, FakeLLM()))
+
+
+@pytest.mark.parametrize("wrap", [lambda caller: caller, EmptyRetry, lambda caller: TimingLLMCaller(caller, print),
+                                  lambda caller: EmptyRetry(FallbackCaller((caller,)))])
+def test_a_model_with_a_fallback_is_refused_since_a_comparison_would_mix_backends(tmp_path, wrap):
+    domain = domains.WordProblems(tmp_path)
+    free = domain.execution()
+    domain.execution = lambda: dataclasses.replace(free, models={"local": Model(wrap(_two_backends(domain)))})
+    assert FALLBACK_MODEL in _codes(domain)
+
+
+@pytest.mark.parametrize("wrap", [lambda caller: caller, EmptyRetry, lambda caller: FallbackCaller((caller,))])
+def test_one_backend_behind_a_wrapper_is_one_backend(tmp_path, wrap):
+    domain = domains.WordProblems(tmp_path)
+    assert backends(wrap(domain.llm)) == 1
+
+
+def test_a_loop_with_a_fallback_model_or_proposer_enrols_nothing_and_runs_nothing(tmp_path):
+    domain = domains.WordProblems(tmp_path / "a")
+    free = domain.execution()
+    domain.execution = lambda: dataclasses.replace(free, models={"local": Model(_two_backends(domain))})
+    settings = LoopSettings(windows=(ProviderWindow("claude", 1000, datetime(2026, 10, 26, tzinfo=UTC)),))
+    loop = ShadowLoop(domain, tmp_path / "a" / "loop", settings, proposer=domains.proposes({"prompt": domains.WORKING}))
+    got = loop.enrol("Ada")
+    assert got["warning_card"]["code"] == FALLBACK_MODEL and got["completion_state"] == "blocked-escalated"
+    assert loop.tick()["warning_card"]["code"] == FALLBACK_MODEL and domain.llm.calls == []
+    plain = domains.WordProblems(tmp_path / "b")
+    proposer = ShadowLoop(plain, tmp_path / "b" / "loop", settings, proposer=_two_backends(plain))
+    assert proposer.enrol("Ada")["warning_card"]["code"] == FALLBACK_MODEL
 
 
 def test_the_cut_is_seeded_disjoint_and_complete():

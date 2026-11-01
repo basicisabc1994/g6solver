@@ -95,19 +95,17 @@ def test_1_a_retry_a_caller_notes_is_charged(tmp_path):
     assert loop.meter.reading("claude", NOW).used == len(backend.calls) + len(proposer.calls)
 
 
-def test_1_each_attempt_of_a_fallback_is_charged(tmp_path):
-    domain = domains.WordProblems(tmp_path)
+def test_1_each_attempt_of_a_fallback_is_charged():
+    """The loop refuses a model with a fallback, so this is the caller alone: it is still charged attempt by attempt."""
 
     def down(system: str, user: str) -> str:
         raise LLMError("G6_E_LLM_TIMEOUT: the first backend is down")
 
-    first, second = FakeLLM(down), FakeLLM(domain.tutor)
-    _with_model(domain, FallbackCaller((first, second)))
-    proposer = domains.proposes({"prompt": domains.WORKING})
-    loop, _ = _enrolled(tmp_path, domain=domain, proposer=proposer)
-    loop.tick()
-    assert len(first.calls) > 0
-    assert loop.meter.reading("claude", NOW).used == len(first.calls) + len(second.calls) + len(proposer.calls)
+    first, second = FakeLLM(down), FakeLLM()
+    requests = _Requests()
+    requests.open(10)
+    _Counted(FallbackCaller((first, second)), requests).complete("system", "user")
+    assert len(first.calls) > 0 and requests.sent == len(first.calls) + len(second.calls)
 
 
 def test_1_a_resend_after_retry_after_is_charged(tmp_path):

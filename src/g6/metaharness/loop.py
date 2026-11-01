@@ -41,10 +41,12 @@ from g6.core.model_calls import counting
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
+    FALLBACK_MODEL,
     Cut,
     Domain,
     FailureRecord,
     Judge,
+    backends,
     cut_pool,
     domain_problems,
     judge_source,
@@ -360,6 +362,9 @@ class ShadowLoop:
         self.meter = BudgetMeter(settings.windows, store=OperatorStore(self.root / "operator.db"),
                                  read_account=read_account)
         self.problems = domain_problems(domain)
+        if backends(proposer) > 1:
+            self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
+                                  "pass unseen and its calls could go where no window covers"))
         if not settings.windows:
             self.problems.append((NO_BUDGET, "no provider window: an unknown budget stops the loop"))
         named = tuple(self.meter.windows)
