@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1528,6 +1529,116 @@ def test_no_session_is_ever_marked_ended_with_no_report(world, monkeypatch):
     world.edit()
     world.advance(critic=reviewer("none"))
     assert seen and all(seen)
+
+
+class HookKilled(BaseException):
+    """A killed process: past every handler in the loop."""
+
+
+def tears_the_row(context) -> None:
+    """A writer of the log that dies partway through a row, past its session field."""
+    real = os.fdopen
+
+    def opened(fd, *args, **kwargs):
+        sink = real(fd, *args, **kwargs)
+        if args[:1] != ("a",):
+            return sink
+
+        class Torn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                sink.close()
+
+            def write(self, text):
+                sink.write(text[:text.index('"reviews":')])
+                sink.flush()
+                raise HookKilled
+
+        return Torn()
+
+    context.setattr(os, "fdopen", opened)
+
+
+def whole_rows(world) -> list[dict]:
+    """The rows a reader can use: a line that is not a whole row says nothing."""
+    found = []
+    for line in (world.session.parent / "failures.jsonl").read_text(encoding="utf-8").split("\n"):
+        try:
+            found.append(json.loads(line))
+        except ValueError:
+            pass
+    return found
+
+
+def test_a_row_a_killed_hook_tore_is_written_whole_before_the_run_ends(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    with monkeypatch.context() as context:
+        tears_the_row(context)
+        with pytest.raises(HookKilled):
+            world.advance(critic=critic, said="I reject it.")
+    assert not world.state().get("done")
+    assert world.advance(critic=critic).action == loop.STOP
+    assert world.state()["done"] is True
+    assert [row["session"] for row in whole_rows(world)] == [world.session.name]
+
+
+def test_a_row_after_a_torn_line_stands_on_a_line_of_its_own(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    (world.session.parent / "failures.jsonl").write_text('{"session": "a run that died", "note": "half a ro', encoding="utf-8")
+    world.advance(critic=critic)
+    assert [row["session"] for row in whole_rows(world)] == [world.session.name]
+
+
+def test_a_whole_row_with_no_line_end_takes_nothing_with_it(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    (world.session.parent / "failures.jsonl").write_text('{"session": "another"}', encoding="utf-8")
+    world.advance(critic=critic)
+    assert [row["session"] for row in whole_rows(world)] == ["another", world.session.name]
+
+
+def test_a_rows_text_that_names_a_session_is_not_that_sessions_row(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    (world.session.parent / "failures.jsonl").write_text(
+        json.dumps({"session": "another", "session of": world.session.name, "note": f'"session": "{world.session.name}"'}) + "\n",
+        encoding="utf-8")
+    world.advance(critic=critic)
+    assert [row["session"] for row in whole_rows(world)] == ["another", world.session.name]
+
+
+def test_a_row_stays_one_line_whatever_its_text_holds(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one two\x85three")
+    world.edit()
+    world.advance(critic=critic)
+    world.advance(critic=critic)
+    [row] = rows(world)      # rows reads as any reader would, with splitlines
+    assert row["note"] == "rule one two\x85three"
+
+
+def test_a_log_another_run_holds_is_never_written_over_and_costs_no_report(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    with _coordination.Coordination(world.session.parent / ".failures").mutex():
+        step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "THE REVIEW" in step.text
+    assert "another writer" in world.state()["row"] and not rows(world)
 
 
 def test_a_retained_test_a_later_repair_breaks_is_an_open_finding(world, monkeypatch):

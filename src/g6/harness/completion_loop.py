@@ -639,20 +639,36 @@ def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path,
             "tree_changed": digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
 
 
+def _has_row(log: str, session: Path) -> bool:
+    """Whether the log holds a whole row of this session. A line a killed hook tore does not parse, so it is no row."""
+    for line in log.split("\n"):
+        try:
+            if json.loads(line).get("session") == session.name:
+                return True
+        except (ValueError, AttributeError):
+            continue
+    return False
+
+
 def _keep_failures(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> None:
-    """The run's row, added to ``FAILURES``, when it reproduced a finding. A session is one run, so a hook cut short after its
-    row adds no second, and a row that cannot be written costs no report."""
+    """The run's row, added to ``FAILURES``, when it reproduced a finding. A session is one run, so one whole row: a hook cut
+    short after its row adds no second, and one cut short inside it adds the row again. The row is JSON in ASCII, so it is
+    one line whatever its text holds, and it starts a line of its own after a torn one, which would take it down too. The
+    log has a lock of its own, as an append is not atomic on every platform, and a row that cannot be written costs no
+    report."""
     if not any(patch_report.findings(state.get("reviews") or [])):
         return
     try:
         path = state_path(*FAILURES)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        row = json.dumps(_failure_row(task, base, change, session, state), ensure_ascii=False)
-        if f'"session": "{session.name}"' in (path.read_text(encoding="utf-8") if path.is_file() else ""):
-            return      # a quotation mark in a row's text is escaped, so only a row's own field can match
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8", newline="\n") as out:
-            out.write(row + "\n")
-    except (OSError, ValueError) as exc:    # a RepoRefused from reading the final patch is a ValueError too
+        row = json.dumps(_failure_row(task, base, change, session, state))
+        with Coordination(path.with_name(".failures")).mutex():
+            log = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+            if _has_row(log, session):
+                return
+            with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8", newline="\n") as out:
+                out.write(("\n" if log and not log.endswith("\n") else "") + row + "\n")
+    except (OSError, ValueError, WorkspaceRefused) as exc:    # a RepoRefused from reading the final patch is a ValueError too
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
