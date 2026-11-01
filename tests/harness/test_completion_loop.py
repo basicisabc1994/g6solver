@@ -1295,3 +1295,29 @@ def test_the_scouts_loop_writes_no_row(world, monkeypatch):
     world.advance()
     world.advance()
     assert not rows(world)
+
+
+# --- what a review of this loop reproduced: each case failed on the code it was written against ------------------------------
+
+def test_a_call_after_the_end_keeps_the_code_of_the_stop_it_repeats(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer(LLMError("gone away"), "never")
+    world.edit()
+    assert world.advance(critic=critic).code == loop.NO_CLEAN_REVIEW
+    again = world.advance(critic=critic)
+    assert (again.action, again.text, again.code) == (loop.STOP, "", loop.NO_CLEAN_REVIEW)      # a hook repeats nothing
+    assert len(critic.calls) == 1
+
+
+def test_a_call_after_a_refusal_keeps_the_refusals_code(world, monkeypatch):
+    monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    world.edit()
+    assert world.advance(critic=reviewer("never")).code == ISOLATION_UNAVAILABLE
+    assert world.advance(critic=reviewer("never")).code == ISOLATION_UNAVAILABLE
+
+
+def test_a_call_after_a_stop_with_no_code_has_none(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    world.edit()
+    assert not world.advance(critic=critic).code and not world.advance(critic=critic).code

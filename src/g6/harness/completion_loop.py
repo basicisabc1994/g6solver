@@ -560,8 +560,8 @@ def _save(session: Path, state: dict) -> None:
 
 
 def _finish(session: Path, state: dict, report: str, code: str = "") -> Step:
-    """The end of the loop for this session: the report, which is kept beside the state."""
-    state["done"] = True
+    """The end of the loop for this session: the report, which is kept beside the state, and the code a later call repeats."""
+    state.update(done=True, code=code)
     _save(session, state)
     (session / "report.md").write_text(report, encoding="utf-8")
     if state.get("visible"):
@@ -711,7 +711,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     session = Path(session)
     state = _load(session)
     if state.get("done"):
-        return Step(STOP)
+        return Step(STOP, code=state.get("code", ""))
     root = repo_tests.checked_repo(repo)
     change = repo_tests.change(root, base)
 

@@ -237,6 +237,38 @@ def test_a_call_after_the_loop_ended_gives_the_same_report_and_spends_nothing(ri
     assert again["report"] == first["report"] and len(critic.calls) == 1
 
 
+def test_repeating_a_failed_review_keeps_its_state_and_its_stable_code(rig):
+    rig.approve(reviewer(LLMError("no such program"), "never"))
+    rig.edit()
+    first = rig.step()
+    again = rig.step()
+    assert again["report"] == first["report"]
+    assert (again["ok"], again["completion_state"], again["warning_card"]["code"]) == (
+        False, "blocked-escalated", "G6_E_NO_CLEAN_REVIEW")
+    enveloped(again)
+
+
+def test_repeating_a_refused_step_keeps_its_state_and_its_stable_code(rig, monkeypatch):
+    monkeypatch.setattr(keys, "read", lambda: {})
+    rig.edit()
+    rig.step()
+    again = rig.step()
+    assert (again["ok"], again["completion_state"], again["warning_card"]["code"]) == (
+        False, "blocked-escalated", keys.KEY_MISSING)
+    assert "G6_LOOP_CRITIC=codex" in again["report"]
+
+
+def test_repeating_a_stop_with_a_finding_left_open_stays_a_draft(rig):
+    rig.approve(reviewer("one"))
+    rig.edit()
+    rig.step()
+    first = rig.step(reason="They misread the task.")
+    again = rig.step()
+    assert again["report"] == first["report"]
+    assert (again["ok"], again["completion_state"], again["warning_card"]["code"]) == (
+        True, "qualified-draft", "G6_E_REVIEW_UNTIL_CLEAN")
+
+
 def test_the_first_call_fixes_the_base_so_a_commit_cannot_move_it(rig):
     critic = reviewer("one", "none")
     rig.approve(critic)
