@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import hashlib
 import importlib.util
+import random
 import sys
 from pathlib import Path
 
@@ -26,6 +28,7 @@ from g6.metaharness.domain import (
     reason_coded,
     sealed_closed,
 )
+from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevFailure, ProposerView
 from g6.metaharness.recovery import partition
 
@@ -109,6 +112,74 @@ def test_a_case_keeps_its_side_when_the_pool_grows():
     cases = tuple(SuiteCase(f"c{i}", f"input {i}", "x") for i in range(200))
     before, after = cut_pool(cases, seed=1), cut_pool((*cases, SuiteCase("new", "new", "x")), seed=1)
     assert set(c.case_id for c in before.held_out) <= set(c.case_id for c in after.held_out)
+
+
+def _sizes(cut) -> tuple[int, ...]:
+    return len(cut.tune), len(cut.selection), len(cut.held_out), len(cut.monitor)
+
+
+def _plain_pool(count: int) -> tuple[SuiteCase, ...]:
+    return tuple(SuiteCase(f"c{i}", f"input {i}", "x") for i in range(count))
+
+
+def _grouped_pool(count: int) -> tuple[SuiteCase, ...]:
+    """Groups of one to five cases, as a bug's patches are, adding up to ``count``."""
+    rng, cases = random.Random(7), []
+    while len(cases) < count:
+        group = f"g{len(cases)}"
+        cases += [SuiteCase(f"{group}-{i}", f"{group} input {i}", "x", meta={"group": group})
+                  for i in range(min(rng.randint(1, 5), count - len(cases)))]
+    return tuple(cases)
+
+
+@pytest.mark.parametrize("seed", range(200))
+def test_a_pool_of_86_meets_every_minimum_whatever_the_seed(seed):
+    tune, selection, held_out, monitor = _sizes(cut_pool(_plain_pool(86), seed))
+    assert held_out >= 30 and monitor >= MIN_PAIRS and tune >= 1 and selection >= 1
+
+
+def _by_hash(case: SuiteCase, seed: int) -> str:
+    """The side a case's own hash gives it, whatever else is in the pool."""
+    point = int.from_bytes(hashlib.sha256(f"{seed}:{case.case_id}".encode()).digest()[:8], "big") / 2 ** 64
+    return next(name for name, end in (("tune", 0.25), ("selection", 0.40), ("held_out", 0.75), ("monitor", 2)) if point < end)
+
+
+def test_a_small_pool_short_of_a_minimum_is_cut_by_counts_along_the_same_seeded_order():
+    cases = _plain_pool(86)
+    short = next(seed for seed in range(50) if sum(_by_hash(c, seed) == "held_out" for c in cases) < 30)
+    assert _sizes(cut_pool(cases, short)) == (22, 12, 30, 22)
+
+
+def test_a_pool_that_meets_its_minimums_keeps_the_cut_it_always_had():
+    """A case keeps its side whatever joins the pool, and re-enrolling with a fresh split stands on that."""
+    cases, names = _plain_pool(240), ("tune", "selection", "held_out", "monitor")
+    cut = cut_pool(cases, 3)
+    assert {name: [c.case_id for c in getattr(cut, name)] for name in names} == {
+        name: [c.case_id for c in cases if _by_hash(c, 3) == name] for name in names}
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_a_group_stays_on_one_side_of_a_small_pool_and_it_still_meets_its_minimum(seed):
+    cases = _grouped_pool(86)
+    cut = cut_pool(cases, seed)
+    sides = [{c.meta["group"] for c in part} for part in (cut.tune, cut.selection, cut.held_out, cut.monitor)]
+    assert sum(len(side) for side in sides) == len(set().union(*sides)) == len({c.meta["group"] for c in cases})
+    assert sum(_sizes(cut)) == 86 and len(cut.held_out) >= 30
+
+
+@pytest.mark.parametrize("make", [_plain_pool, _grouped_pool])
+def test_the_cut_of_a_small_pool_is_deterministic_and_the_pools_order_does_not_move_a_case(make):
+    cases = make(86)
+    shuffled = random.Random(1).sample(cases, len(cases))
+    for seed in range(40):
+        cut, again = cut_pool(cases, seed), cut_pool(shuffled, seed)
+        assert cut == cut_pool(cases, seed)
+        for name in ("tune", "selection", "held_out", "monitor"):
+            assert {c.case_id for c in getattr(cut, name)} == {c.case_id for c in getattr(again, name)}
+
+
+def test_a_pool_too_small_to_share_out_is_still_cut_and_is_refused_by_the_loop_not_here():
+    assert sum(_sizes(cut_pool(_plain_pool(12), 1))) == 12 and cut_pool((), 1).held_out == ()
 
 
 def test_a_failure_record_has_one_cause_per_case_read_from_reason_codes():
