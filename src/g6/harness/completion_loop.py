@@ -570,8 +570,9 @@ class Repairs:
 
 @dataclass(frozen=True)
 class Step:
-    """What comes next: ``CONTINUE``, with the text for the agent, or ``STOP``, with the report ("" when there is none).
-    ``code``: the stable code of a stop that tested nothing or left no clean review, for a surface with G6's envelope."""
+    """What comes next: ``CONTINUE``, with the text for the agent; ``STOP``, with the report ("" when there is none); or
+    ``WAIT``, when another step of the session was running and this one did nothing. ``code``: the stable code of a call
+    that tested nothing or left no clean review, for a surface with G6's envelope."""
     action: str
     text: str = ""
     code: str = ""
