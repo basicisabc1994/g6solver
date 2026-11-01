@@ -1410,3 +1410,67 @@ def test_a_row_names_the_session_that_holds_its_patches(world, monkeypatch):
     [row] = rows(world)
     assert (world.session.parent / row["session"] / "rounds" / "round-1.patch").read_bytes().decode("utf-8") == patch
     assert digest(patch) == row["reviews"][0]["patch"]
+
+
+def killed(*args, **kwargs):
+    raise KeyboardInterrupt("the hook was killed")
+
+
+def test_a_hook_killed_in_the_final_review_adds_one_row_and_asks_for_no_second_review(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none", "never")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic)
+    monkeypatch.setattr(loop, "_final_review", real)
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and loop.CLEAN in step.text
+    assert len(rows(world)) == 1 and len(critic.calls) == 2      # the review that was paid for stands
+
+
+def test_a_hook_killed_in_the_final_review_of_a_rejection_keeps_the_agents_reason(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    real = loop._final_review
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic, said="They misread the task.")
+    monkeypatch.setattr(loop, "_final_review", real)
+    step = world.advance(critic=critic)       # this stop gives no words
+    [row] = rows(world)
+    assert row["left"] == "They misread the task." and "They misread the task." in step.text
+
+
+def test_a_hook_killed_between_the_row_and_the_end_adds_no_second_row(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    real = loop._finish
+    monkeypatch.setattr(loop, "_finish", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=critic)
+    assert len(rows(world)) == 1
+    monkeypatch.setattr(loop, "_finish", real)
+    assert world.advance(critic=critic).action == loop.STOP
+    assert len(rows(world)) == 1
+
+
+def test_no_session_is_ever_marked_ended_with_no_report(world, monkeypatch):
+    Reviewed(monkeypatch)
+    real, seen = loop._save, []
+
+    def save(session: Path, state: dict) -> None:
+        seen.append(not state.get("done") or (session / "report.md").is_file())
+        real(session, state)
+
+    monkeypatch.setattr(loop, "_save", save)
+    world.edit()
+    world.advance(critic=reviewer("none"))
+    assert seen and all(seen)

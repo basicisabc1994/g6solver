@@ -574,10 +574,12 @@ def _save(session: Path, state: dict) -> None:
 
 
 def _finish(session: Path, state: dict, report: str, code: str = "") -> Step:
-    """The end of the loop for this session: the report, which is kept beside the state, and the code a later call repeats."""
+    """The end of the loop for this session: the report, which is kept beside the state, then the state that says so, with
+    the code a later call repeats. A hook cut short between them ends the loop again, so no session ends with no report."""
+    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (session / "report.md").write_text(report, encoding="utf-8")
     state.update(done=True, code=code)
     _save(session, state)
-    (session / "report.md").write_text(report, encoding="utf-8")
     if state.get("visible"):
         shutil.rmtree(state["visible"], ignore_errors=True)
     return Step(STOP, report, code)
@@ -628,33 +630,40 @@ def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path,
 
 
 def _keep_failures(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> None:
-    """The run's row, added to ``FAILURES``, when it reproduced a finding. A row that cannot be written costs no report."""
+    """The run's row, added to ``FAILURES``, when it reproduced a finding. A session is one run, so a hook cut short after its
+    row adds no second, and a row that cannot be written costs no report."""
     if not any(patch_report.findings(state.get("reviews") or [])):
         return
     try:
         path = state_path(*FAILURES)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        row = json.dumps(_failure_row(task, base, change, session, state), ensure_ascii=False)
+        if f'"session": "{session.name}"' in (path.read_text(encoding="utf-8") if path.is_file() else ""):
+            return      # a quotation mark in a row's text is escaped, so only a row's own field can match
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8", newline="\n") as out:
-            out.write(json.dumps(_failure_row(task, base, change, session, state), ensure_ascii=False) + "\n")
+            out.write(row + "\n")
     except (OSError, ValueError) as exc:    # a RepoRefused from reading the final patch is a ValueError too
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
 def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, session: Path, state: dict, reason: str,
                 said: str = "") -> Step:
-    """The end of the review-until-clean loop: the row, then what the reviews found above the patch review. Only a review that
-    was read and reproduced nothing is clean, and running out of repairs or a finding the agent rejected is a result."""
+    """The end of the review-until-clean loop: what the reviews found above the patch review, then the row. Only a review that
+    was read and reproduced nothing is clean, and running out of repairs or a finding the agent rejected is a result. The
+    state is saved before the patch review, which is slow: a hook cut short there repeats no review, and ends as this would."""
     state["stop"] = reason
     if reason == LEFT:
-        state["left"] = " ".join(said.split())[:MAX_CASE_CHARS] or NO_REASON
+        state["left"] = " ".join(said.split())[:MAX_CASE_CHARS] or state.get("left") or NO_REASON
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
-    _keep_failures(task, base, change, session, state)
     reviews = state.get("reviews") or []
-    return _finish(session, state, patch_report.completion_report({
+    _save(session, state)
+    report = patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code),
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")},
-        _final_review(root, task, base)), code)
+        _final_review(root, task, base))
+    _keep_failures(task, base, change, session, state)
+    return _finish(session, state, report, code)
 
 
 def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, shipped: Harness, host: Host,
