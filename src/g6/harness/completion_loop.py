@@ -861,23 +861,28 @@ def _review_end(root: Path, task: str, base: str, session: Path, state: dict, re
     row is owed and the state saved before the patch review, which is slow and can fail: a hook cut short there repeats no
     review, leaves the row owed, and ends as this would,
     unless the patch has changed since a clean review read it, which ``_advance`` then has reviewed again. A clean stop holds
-    only for the patch there as the loop ends, so that is read last of all, after the slow step. A patch that moved under a
+    only for the patch there as the loop ends, so that is read last of all, after every wait. A patch that moved under a
     running step is not reviewed again here: an edit that keeps coming would spend a review each time."""
     state["stop"] = reason
     state["left"] = (" ".join(said.split())[:MAX_CASE_CHARS] or state.get("left") or NO_REASON) if reason == LEFT else ""
     reviews = state.get("reviews") or []
     _owe_row(task, base, session, state, _patch_now(root, base))
     review = _final_review(root, task, base)
+    _write_row(session, state)
+    # The last read of the patch: nothing this step does waits between here and the clean result, as the slow review and the
+    # log's lock are behind it. It promises only that the patch at this read is the one the last review read. It does not hold
+    # the tree still: an edit a moment later is in no report, and no check can rule that out. The session's next loop reads such
+    # an edit, as it is another patch.
     if reason == CLEAN and (now := _patch_now(root, base)) != reviews[-1]["patch"]:
         reason = state["stop"] = MOVED
         _owe_row(task, base, session, state, now)
+        _write_row(session, state)      # this wait protects no clean stop: there is none left to protect
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     ending = _ending(reason, reviews)
     report = patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
-    _write_row(session, state)
     return _finish(session, state, report, code, ending)
 
 

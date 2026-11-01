@@ -3206,3 +3206,61 @@ def test_a_run_that_cannot_be_read_holds_up_no_other_run_and_no_call(world, monk
     world.edit(BASE)
     step = loop.advance(world.repo, TASK, world.base, world.session.parent / "s2", critic=reviewer("never"))
     assert step.code == loop.NO_PYTHON and [row["session"] for row in rows(world)] == [world.session.name]
+
+
+# --- the last read of the patch comes after every wait this step takes, and says only what it can --------------------------------
+
+def test_a_patch_that_moves_while_the_row_waits_for_the_log_cannot_end_clean(world, monkeypatch):
+    """The reviewer's case: an editor changes the patch after a check, while the step still waits for the log's lock."""
+    Reviewed(monkeypatch)
+    checked, real = threading.Event(), loop._patch_now
+
+    def observed(root, base) -> str:
+        found = real(root, base)
+        checked.set()
+        return found
+
+    monkeypatch.setattr(loop, "_patch_now", observed)
+    world.session.parent.mkdir(parents=True)
+    world.edit()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with log_held(world):
+            running = pool.submit(world.advance, None, reviewer("none"))
+            assert checked.wait(30), "the patch was never read"
+            world.edit(FIXED + "# changed while the row waited\n")
+        ended = running.result(timeout=30)
+    assert ended.code == loop.NO_CLEAN_REVIEW, f"it ended {ended.ending!r} with code {ended.code!r}"
+    assert world.state()["stop"] == loop.MOVED
+
+
+def edits_as_the_row_is_written(world, monkeypatch) -> None:
+    """An edit that lands during the step's wait for the log, however that wait ends: with no thread, so it always lands there."""
+    real = loop._write_row
+
+    def write(session: Path, state: dict) -> None:
+        world.edit(FIXED + "# changed while the row was written\n")
+        real(session, state)
+
+    monkeypatch.setattr(loop, "_write_row", write)
+
+
+def test_a_patch_that_moves_as_the_row_is_written_leaves_no_clean_end_and_the_row_says_so(world, monkeypatch):
+    Reviewed(monkeypatch)
+    edits_as_the_row_is_written(world, monkeypatch)
+    world.edit()
+    ended = world.advance(critic=reviewer("none"))
+    assert ended.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in ended.text and ended.ending == "untested"
+    assert the_row(world)["cause"] == "patch_moved"      # the clean row it replaced is gone
+
+
+def test_a_patch_that_moves_while_a_held_log_refuses_the_row_leaves_no_clean_end(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    edits_as_the_row_is_written(world, monkeypatch)
+    world.session.parent.mkdir(parents=True)
+    world.edit()
+    with log_held(world):
+        ended = world.advance(critic=reviewer("none"))
+    assert ended.code == loop.NO_CLEAN_REVIEW and not rows(world)
+    world.advance(critic=reviewer("never"))
+    assert the_row(world)["cause"] == "patch_moved"
