@@ -242,6 +242,13 @@ def test_when_the_stop_rule_fires_the_turn_ends_and_the_report_is_shown(repo, mo
     assert json.loads(out) == {"systemMessage": "THE REPORT"}
 
 
+def test_a_stop_that_found_another_step_running_ends_the_turn_and_says_so(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    advance_says(monkeypatch, loop.Step(loop.WAIT, loop.ALREADY_RUNNING, loop.BUSY))
+    code, out, _ = hooked(monkeypatch, capsys, "stop", stop(repo))
+    assert code == 0 and json.loads(out) == {"systemMessage": loop.ALREADY_RUNNING}
+
+
 def test_with_nothing_to_say_the_turn_just_ends(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo))
     advance_says(monkeypatch, loop.Step(loop.STOP))

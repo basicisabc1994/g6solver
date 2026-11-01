@@ -18,6 +18,7 @@ from g6.harness import completion_loop as loop
 from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.invariants import check_envelope
+from g6.workspace import _coordination
 
 fastmcp = pytest.importorskip("fastmcp")
 from fastmcp import Client  # noqa: E402
@@ -267,6 +268,22 @@ def test_repeating_a_stop_with_a_finding_left_open_stays_a_draft(rig):
     assert again["report"] == first["report"]
     assert (again["ok"], again["completion_state"], again["warning_card"]["code"]) == (
         True, "qualified-draft", "G6_E_REVIEW_UNTIL_CLEAN")
+
+
+def test_a_call_that_finds_another_step_running_is_refused_and_starts_nothing(rig, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    critic = reviewer("one")
+    rig.approve(critic)
+    rig.edit()
+    folder = hook.folder("mcp:one")
+    folder.mkdir(parents=True)
+    with loop._held(folder):
+        got = rig.step()
+    assert got["ok"] is False and got["action"] == loop.WAIT and got["completion_state"] == "blocked-escalated"
+    assert got["warning_card"]["code"] == loop.BUSY and "did nothing" in got["warning_card"]["message"]
+    assert not critic.calls
+    enveloped(got)
+    assert rig.step()["action"] == "continue"      # the session was left as it was
 
 
 def test_the_first_call_fixes_the_base_so_a_commit_cannot_move_it(rig):

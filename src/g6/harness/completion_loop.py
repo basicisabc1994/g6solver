@@ -70,11 +70,13 @@ from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.harness.patch_review import _in_repository, _loaded_elsewhere, review_patch
 from g6.workforce import repo_tests
+from g6.workspace._coordination import Coordination
+from g6.workspace._envelope import WorkspaceRefused
 
 HARNESS = Path(__file__).with_name("data") / "completion_harness.json"
 #: The parts of the loop harness training can add to: never the sets, the scoring, the reply forms or the stop rule.
 TRAINED = ("fixer", "scout", "repair", "critic")
-CONTINUE, STOP = "continue", "stop"
+CONTINUE, STOP, WAIT = "continue", "stop", "wait"
 MAX_REPAIRS, MAX_CROSS, MIN_RANDOM, MAX_SHOWN, MAX_CASE_CHARS = 3, 200, 300, 12, 900
 SCOUT_CAP_USD, CRITIC_SECONDS = 2.0, 1500
 #: One scout's session, its turns, one probe file's run, the final review and the critic's pack.
@@ -105,6 +107,9 @@ LEFT, WITHDRAWN, READ_VERDICTS = "the agent left the code as it was", "the agent
 NO_REASON = "no reason was given"
 #: A stop that leaves the patch with no review that came back clean, whatever earlier reviews said.
 NO_CLEAN_REVIEW = "G6_E_NO_CLEAN_REVIEW"
+#: A call that found another step of its session running: the code the self-improvement loop gives the same refusal.
+BUSY = "G6_E_LOOP_BUSY"
+ALREADY_RUNNING = "Another step of G6's completion loop is running for this session, so this one did nothing."
 #: A finding reproduced in a run: the row's stable cause, for ``metaharness.domain.FailureRecord``.
 OPEN, FIXED = "review_finding_open", "review_finding_fixed"
 #: Where those rows go, beside the sessions' folders: local, and never pushed.
@@ -727,12 +732,33 @@ def prepare(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     return told
 
 
+def _held(session: Path) -> Any:
+    """One step of a session at a time. The lock is the operating system's, so it dies with its process, and a hook that is
+    killed leaves no session stuck; a call that cannot take it in a few seconds is refused (``WorkspaceRefused``)."""
+    return Coordination(session / ".step").mutex()
+
+
 def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scout: Host | None = None,
             critic: LLMCaller | None = None, said: str = "") -> Step:
     """One hook of the loop, for the repository's working tree against ``base``: see the module's docstring. ``scout`` and
     ``critic``: the sessions to use, else the ones the person's key file approves. ``said``: the agent's words as it stopped,
-    kept as its reason if it left the code as it was."""
+    kept as its reason if it left the code as it was.
+
+    A step reads its round from the state and then writes that round's files, so two at once would undo each other: a call
+    that finds another running does nothing, and says ``WAIT``. It does not queue, as the agent has not answered the step
+    before it yet, and a tree it has not touched would read as a finding it rejected."""
     session = Path(session)
+    session.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        with _held(session):
+            return _advance(repo, task, base, session, scout, critic, said)
+    except WorkspaceRefused:
+        return Step(WAIT, ALREADY_RUNNING, BUSY)
+
+
+def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host | None, critic: LLMCaller | None,
+             said: str) -> Step:
+    """One step, with the session held: the state is read here, so a step sees what the one before it wrote."""
     state = _load(session)
     if state.get("done"):
         return Step(STOP, code=state.get("code", ""))

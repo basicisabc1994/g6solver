@@ -280,7 +280,8 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         reproduces nothing, when you leave the code as it was, when the repairs run out, or when a review fails. A stop
         with no clean review, or one that tested nothing, is blocked-escalated with its code and any other is
         qualified-draft: a review that reproduces nothing is not evidence the work is right, only that this reviewer found
-        no failure it could show. This loop has been measured on seven training bugs only.
+        no failure it could show. This loop has been measured on seven training bugs only. Action "wait" means another
+        step of this session is running and this call did nothing: wait for that step's result before you call again.
 
         Use one session name for one task: the first call fixes its task and base commit, so a commit you make later does
         not move the base, and a later call's task and base are not read. Needs a boundary (g6 doctor says what this

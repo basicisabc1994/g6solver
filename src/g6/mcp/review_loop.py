@@ -65,6 +65,9 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
         done = loop.advance(asked["repo"], asked["task"], asked["base"], folder, said=reason)
     except repo_tests.RepoRefused as exc:
         return blocked_reply(f"[{exc.code}] {exc}", request_id=request_id)
+    if done.action == loop.WAIT:      # the step that is running owns the state, so nothing of it is read here
+        return {**blocked_reply(f"[{done.code}] {done.text}", request_id=request_id), "run_id": folder.name,
+                "action": done.action}
     state = loop._load(folder)
     evidence, saved = _evidence(state, asked["base"]), folder / "report.md"
     text = done.text or (saved.read_text(encoding="utf-8") if saved.is_file() else "")

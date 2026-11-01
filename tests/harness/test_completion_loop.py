@@ -7,8 +7,11 @@ import dataclasses
 import json
 import re
 import subprocess
+import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -22,6 +25,7 @@ from g6.harness import verification_proposer as proposer
 from g6.harness import verification_search as vs
 from g6.metaharness.domain import FailureRecord
 from g6.workforce import repo_tests
+from g6.workspace import _coordination
 
 BASE = "def double(x):\n    return x + 2\n"
 FIXED = "def double(x):\n    return x * 2\n"
@@ -1474,3 +1478,83 @@ def test_no_session_is_ever_marked_ended_with_no_report(world, monkeypatch):
     world.edit()
     world.advance(critic=reviewer("none"))
     assert seen and all(seen)
+
+
+def test_overlapping_calls_cannot_delete_a_pending_test_or_earn_a_clean_stop(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    written, release = threading.Event(), threading.Event()
+    first_critic, second_critic, original = reviewer("one"), reviewer("none"), loop.run_critic
+
+    def pause_after_writing(change, task, caller, system, where, n=1):
+        found = original(change, task, caller, system, where, n)
+        if caller is first_critic:
+            written.set()
+            assert release.wait(30), "the second call never gave way"
+        return found
+
+    monkeypatch.setattr(loop, "run_critic", pause_after_writing)
+    world.edit()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(world.advance, None, first_critic)
+        assert written.wait(30), "the first review never wrote its test"
+        second = pool.submit(world.advance, None, second_critic)
+        try:
+            second.result(timeout=1)
+        except TimeoutError:
+            pass      # a call that waits its turn is held here, and goes on once the first has ended
+        release.set()
+        steps = [first.result(timeout=30), second.result(timeout=30)]
+    assert tests.ran_in_turn() == ["test_critic.py"]      # the first reviewer's test ran, and it ran once
+    assert not any(loop.CLEAN in step.text for step in steps)
+
+
+def test_a_call_that_finds_another_step_running_does_nothing_and_says_so(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.session.mkdir(parents=True)
+    with loop._held(world.session):
+        step = world.advance(critic=critic)
+    assert (step.action, step.code) == (loop.WAIT, loop.BUSY) and "did nothing" in step.text
+    assert not critic.calls and not (world.session / "state.json").exists() and not rows(world)
+    assert world.advance(critic=critic).action == loop.CONTINUE      # it left nothing behind
+
+
+def test_a_process_killed_holding_a_session_leaves_it_free(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.edit()
+    world.session.mkdir(parents=True)
+    holds = ("import sys, time\nfrom pathlib import Path\nfrom g6.harness.completion_loop import _held\n"
+             "with _held(Path(sys.argv[1])):\n    print('held', flush=True)\n    time.sleep(120)\n")
+    child = subprocess.Popen([sys.executable, "-c", holds, str(world.session)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "held"
+        assert world.advance(critic=reviewer("never")).action == loop.WAIT      # the lock is real, so its release means something
+    finally:
+        child.kill()
+        child.wait(timeout=30)
+        child.stdout.close()
+    step = world.advance(critic=reviewer("none"))
+    assert step.action == loop.STOP and loop.CLEAN in step.text
+
+
+def test_a_step_that_raises_leaves_the_session_free(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    monkeypatch.setattr(loop, "_final_review", killed)
+    with pytest.raises(KeyboardInterrupt):
+        world.advance(critic=reviewer("none"))
+    with loop._held(world.session):
+        pass
+
+
+def test_two_sessions_never_wait_for_each_other(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch)
+    world.edit()
+    other = world.session.parent / "s2"
+    other.mkdir(parents=True)
+    with loop._held(other):
+        assert world.advance(critic=reviewer("none")).action == loop.STOP
