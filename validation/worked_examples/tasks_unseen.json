@@ -1,4 +1,63 @@
 {
  "about": "Stage 2: bugs in repositories never used in training, drawn by the rule in PLAN.md, 2026-10-31 evening. Nothing here is used to tune the loop.",
- "tasks": []
+ "tasks": [
+  {
+   "id": "urllib3-5347",
+   "project": "urllib3/urllib3",
+   "full_name": "urllib3/urllib3",
+   "licence": "MIT",
+   "pr": 5347,
+   "issue": 5346,
+   "merge_commit": "2aa7e9c35234a90a1ce09b84dc7b706a6d604674",
+   "parent": "5feb993421a48a508bc70c78e745337cc6415265",
+   "merged_at": "2026-10-29T17:19:14Z",
+   "test_modules": [
+    "test/test_collections.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[brotli,zstd,socks,h2]\" --group dev"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2.8.0"
+   }
+  },
+  {
+   "id": "urllib3-5254",
+   "project": "urllib3/urllib3",
+   "full_name": "urllib3/urllib3",
+   "licence": "MIT",
+   "pr": 5254,
+   "issue": 5206,
+   "merge_commit": "a164d79c8cf760f222daa2dc7f67d0e1ca7fb17c",
+   "parent": "089176c179a8173188bda92ab5eef796b12f57fc",
+   "merged_at": "2026-10-03T21:01:03Z",
+   "test_modules": [
+    "test/test_http2_probe.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e \".[brotli,zstd,socks,h2]\" --group dev"
+   ],
+   "env": {
+    "SETUPTOOLS_SCM_PRETEND_VERSION": "2.8.0"
+   }
+  },
+  {
+   "id": "charset-normalizer-772",
+   "project": "jawah/charset_normalizer",
+   "full_name": "jawah/charset_normalizer",
+   "licence": "MIT",
+   "pr": 772,
+   "issue": 771,
+   "merge_commit": "cc6840753f17f00dea4e339ce37507747217e916",
+   "parent": "be252d70c9f45846f0e851cc4d1829328540c825",
+   "merged_at": "2026-07-07T12:59:52Z",
+   "test_modules": [
+    "tests/test_edge_case.py"
+   ],
+   "install": [
+    "uv pip install -q --python .venv/bin/python -e . --group dev"
+   ],
+   "env": {}
+  }
+ ]
 }
