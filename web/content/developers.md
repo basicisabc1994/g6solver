@@ -98,7 +98,7 @@ packages in the project's folder never replace G6's own, installs the `using-g6`
 For another client, register `g6-mcp` and give it `G6_MCP_SENSITIVE=patch_review.review` in its environment.
 
 Six discovery tools: `g6_help`, `g6_components`, `g6_find`, `g6_describe`, `g6_invoke` and `g6_compose`; `g6_review_patch`;
-`g6_premortem` and six `g6_mission_*` tools for a coding mission;
+`g6_review_until_clean`; `g6_premortem` and six `g6_mission_*` tools for a coding mission;
 and thirteen `metaharness_*` tools for [tuning](#tune-g6-to-your-workflow). The agent finds a component
 by describing its task, reads what the component can do and how mature it is, then calls one op. Every reply carries
 `completion_state`, a `warning_card` with a `G6_E_*` code, `evidence`, `request_id` and `run_id`. An op a component
@@ -113,6 +113,14 @@ its own evidence, and merging always needs a separate approval. It returns a job
 then what is not established, then what the person decides. The reply is compact; its `full_assessment` names the file
 in G6's state folder that holds every field, and `metaharness_job` with `detail="full"` returns them all. The `using-g6` skill tells the agent to fix what G6
 reproduced, add each earlier reproduction as a stated check, and review again, for at most three rounds.
+
+`g6_review_until_clean` (allowed the same way) runs one step of G6's completion loop, for a client the plugin's Stop hook
+cannot reach. It also needs `G6_LOOP_CRITIC=codex` in the person's key file, as it spends their Codex sign-in. Another model
+family reads the patch without the agent's reasoning and must state a rule, reasons and a test. If that test fails, the reply
+says continue, with the text for the agent, which may reject the finding. A fresh review reads each repair, at most three
+repairs. Otherwise the reply says stop, with the report: what was found, what was fixed and what stayed open. It returns a
+job: poll `metaharness_job`. A review that reproduces nothing is not evidence the work is right, only that this reviewer found
+no failure it could show, and the loop has been measured on seven training bugs only.
 
 A coding mission holds a change to a standard fixed before the work. `g6_premortem` proposes it, with no model call and
 nothing run: the intent contract, the requirements with their stated checks or marked not established, the competing

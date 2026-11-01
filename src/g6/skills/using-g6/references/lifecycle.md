@@ -38,6 +38,17 @@ the tools that change it return a job, so poll `metaharness_job`. An `R3` missio
 its status names the terminal command for the person. The tools that run code need host permission workforce.mission,
 which the person grants; never change permissions yourself.
 
+## The review-until-clean loop, over MCP
+
+Claude Code's plugin runs this loop from its Stop hook. With no such hook, and with `G6_LOOP_CRITIC=codex` in the person's key
+file, call `g6_review_until_clean` when you finish, with the folder, the task and one session name for the task, then poll
+`metaharness_job`. It needs the host permission `patch_review.review`. Another model family reads your patch without your
+reasoning, and must state a rule, reasons and a test. `continue` gives that finding when its test fails on your patch: check
+it against the task, then repair the cause, or leave the code as it was, and call again, with `reason` in one line if you
+leave it. A fresh review reads each repair, at most 3 repairs. `stop` gives the report: show it as it is. A review that
+reproduces nothing is not evidence the work is right, only that this reviewer found no failure it could show, and this loop
+has been measured on seven training bugs only.
+
 ## Rules that hold at every stage
 
 1. **The producer never certifies its own output.** That holds for the agent, a model and a G6 component alike. A

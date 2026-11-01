@@ -347,6 +347,26 @@ def test_the_docs_say_which_loop_has_measurements_behind_it(name):
     assert "the configuration with measurements behind it" in text and "a different, cheaper loop" in text
 
 
+@pytest.mark.parametrize("name", ["README.md", "skills/completion-loop/SKILL.md"])
+def test_the_docs_say_the_review_loop_has_training_measurements_only(name):
+    text = " ".join((PLUGIN / name).read_text(encoding="utf-8").split())
+    assert "G6_LOOP_CRITIC=codex" in text and "G6_LOOP_MODE=scouts" in text
+    assert "measured on seven training bugs only" in text
+    assert "not evidence the work is right, only that this reviewer found no failure it could show" in text
+
+
+def test_the_docs_say_how_the_loop_differs_from_what_was_measured():
+    text = " ".join((PLUGIN / "README.md").read_text(encoding="utf-8").split())
+    assert "receives a text pack with no tools" in text and "The measured reviewer read a folder" in text
+    assert "The Stop hook replays the rounds" in text
+    assert "It has no measurement on a bug kept out of training" in text
+
+
+def test_the_docs_name_the_tool_a_client_without_the_hook_calls():
+    text = " ".join((PLUGIN / "README.md").read_text(encoding="utf-8").split())
+    assert "`g6_review_until_clean`" in text and "`metaharness_job`" in text
+
+
 def test_a_prompt_hook_says_nothing_of_scouts_where_none_may_run():
     [[one]] = [entry["hooks"] for entry in hooks()["UserPromptSubmit"]]
     assert "scout" not in one["statusMessage"].lower()      # it shows at every prompt, and by default none runs there
