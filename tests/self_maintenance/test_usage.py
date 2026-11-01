@@ -184,6 +184,37 @@ def test_a_full_session_window_is_a_limit_until_it_resets():
     assert got.used == 400.0 and got.limited_until == datetime.fromtimestamp(soon, UTC)
 
 
+FAR_OFF = int(datetime(2050, 1, 1, tzinfo=UTC).timestamp())
+
+
+def test_a_reset_past_the_end_of_its_own_window_is_no_reset():
+    got = limits_reading(_limits(100, resets=FAR_OFF), WINDOW, NOW)
+    assert got.limited_until == NOW + usage.REFRESH and got.resets_at == WINDOW.week_end(NOW)
+
+
+def test_a_reset_with_no_stated_window_is_held_to_a_week():
+    assert limits_reading(_limits(100, minutes=None, resets=FAR_OFF), WINDOW, NOW).limited_until == NOW + usage.REFRESH
+
+
+def test_a_limit_with_a_reset_past_its_window_holds_no_folder_for_decades():
+    reader = AccountReader((WINDOW,), ask={"codex": lambda: _limits(100, resets=FAR_OFF)})
+    reader.refresh(NOW)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    assert meter.reserve("codex", NOW, 1).wait_until == NOW + usage.REFRESH
+
+
+def test_a_figure_with_a_reset_past_its_window_stands_no_longer_than_the_week():
+    reader = AccountReader((WINDOW,), ask={"codex": lambda: _limits(40, resets=FAR_OFF)})
+    reader.refresh(NOW)
+    assert reader.readings["codex"].resets_at == WINDOW.week_end(NOW)
+
+
+def test_a_reset_as_long_as_its_window_is_taken():
+    at = int((NOW + timedelta(minutes=300)).timestamp())
+    full = {"usedPercent": 100, "windowDurationMins": 300, "resetsAt": at}
+    assert limits_reading({"rateLimits": {"primary": full, "secondary": None}}, WINDOW, NOW).limited_until == datetime.fromtimestamp(at, UTC)
+
+
 def test_a_full_week_is_a_limit_until_the_week_resets():
     assert limits_reading(_limits(100), WINDOW, NOW).limited_until == datetime.fromtimestamp(RESET, UTC)
 

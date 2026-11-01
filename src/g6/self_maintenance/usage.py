@@ -167,6 +167,14 @@ def _reads(window: Any) -> bool:
             and (reset is None or _time(reset) is not None))
 
 
+def _reset(window: Mapping[str, Any], now: datetime) -> datetime | None:
+    """When a window resets: ahead of ``now`` and no further than the window is long, or a week where it does not say. Any
+    other figure is no reset: a limit that outlasts its own window cannot be believed."""
+    at = _time(window.get("resetsAt"))
+    longest = (window.get("windowDurationMins") or WEEK_MINUTES) * 60
+    return at if at is not None and 0 < (at - now).total_seconds() <= longest else None
+
+
 def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datetime) -> AccountReading | None:
     """``limits`` as the meter reads them, or ``None`` when they do not read: use in the meter's own unit from the
     week's percentage, and a limit when a window is full or the provider says ordinary use is not allowed. One field that
@@ -180,13 +188,12 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
         return None
     week = next((w for w in seen if w.get("windowDurationMins") == WEEK_MINUTES), None)
     full = [w for w in seen if w["usedPercent"] >= FULL]
-    resets = [at for w in (full or seen) if (at := _time(w.get("resetsAt"))) is not None and at > now]
+    resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
     if week is None:
         return AccountReading(limited_until=until)
-    reset = _time(week.get("resetsAt"))
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
-                          resets_at=reset if reset is not None and reset > now else window.week_end(now))
+                          resets_at=_reset(week, now) or window.week_end(now))
 
 
 def _stands(reading: AccountReading | None, now: datetime) -> bool:
