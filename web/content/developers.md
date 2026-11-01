@@ -137,7 +137,9 @@ mission's patch approval is not over MCP yet: its status names the terminal comm
 enrolled, at their own terminal. Starting needs `metaharness.improve`, and the person agrees in the client's dialog, as above: it starts a
 process of its own that outlives the session, works within the week's pacing rule and writes a daily digest under the
 folder. Stopping needs no permission and no dialog: it writes a local `STOP` file, kills nothing, and says whether the
-runner has gone yet. Status only reads. What the loop adopts holds in its own workspace: it pushes nothing.
+runner has gone yet. Status only reads. What the loop adopts holds in its own workspace: it pushes nothing. The runner's command carries on a
+start the person agreed to and is refused otherwise, and a stop ends that start, so only a new agreement brings it back.
+That is a check and not a boundary: a process with your rights can reach the same code.
 
 ## Choose a model
 

@@ -422,7 +422,8 @@ The owner decided that the loop reads issues, answers them publicly and works on
 
 **Kill switch and health (designer's call):**
 - A `STOP` file on `main`, which the loop's identity cannot change under the ruleset, or a `STOP` file in the loop's
-  local folder, halts the loop at its next tick. Removing it resumes the loop. A `loop:stop` label on the pinned
+  local folder, halts the loop at its next tick. Removing it resumes the loop, except that a runner it ended needs a
+  person's start again (section 11). A `loop:stop` label on the pinned
   status issue also halts it, and the loop never removes that label itself.
 - Three failed cycles in a row pause the loop and post a status comment saying why. A failed cycle is a fault, not a
   candidate that lost (section 11).
@@ -633,6 +634,13 @@ python -P -m g6.metaharness.loop enrol <folder> --as "Your name"
 
 `g6_improve_start` then starts the runner; lifting a pause is `resume`, with the same arguments, also at a terminal.
 
+**Only a person's start lets it run.** `run` carries on a start that stands: of the starts and stops on record, the last is
+a start a person agreed to in the client's dialog. With none it is refused, with `G6_E_LOOP_NOT_STARTED`, before any of the
+folder's code runs, so a shell is no way round the dialog. A stop ends the start for good: the stop tool records it, and a
+runner records it as it ends, so a restart or removing the `STOP` file by hand brings nothing back until a person agrees
+again. This is a check and not a boundary. A process with the owner's rights can reach this code or write the records, which
+are hash-chained and not signed.
+
 **Restart after a reboot.** The owner runs this once, in their own terminal, with the Python that has G6 installed and the
 loop's folder (`pythonw.exe`, so no console window opens that could be closed by accident). `/SC ONLOGON` runs as the owner
 when they sign in, with no stored password:
@@ -645,7 +653,8 @@ To take it away: `schtasks /Delete /TN "G6 improvement loop" /F`. A `STOP` file 
 ends at once until a person removes the stop through `g6_improve_start`. A second runner on the folder is refused, so the
 task and the tool cannot both hold it.
 
-That task covers a reboot and nothing else. To also bring back a runner that ended some other way (see below), use this in
+The task only carries on a start a person agreed to, so before the first `g6_improve_start`, and after any stop, it does
+nothing. That task covers a reboot and nothing else. To also bring back a runner that ended some other way (see below), use this in
 its place, at the cost of a Python start every 15 minutes that does nothing while a runner is alive:
 
 ```
@@ -709,13 +718,16 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 | Re-enrolment refuses held-out cases that proposers saw or a spent split held, known by id and by a hash of the input. This is stricter than the meta-harness, whose limit counts per digest | A small domain can run out of cases, and a person must find new ones. A reworded input is a new hash, and a case of a bug already seen (`meta["group"]`) is not checked |
 | The envelope digest covers the loop's files and what they use to spend, seal, pin and propose, and a test holds their imports to it | It is a tripwire, not custody: the code that compares it is covered by it, so an edit there can skip the comparison. The read-only checkout of 6.5 is what would hold |
 | `OperatorStore.settle` gained `metered`: the host's count sets the charge, up or down. A run's report still cannot lower one | If a domain's executor bypasses the declared model callers, its calls go uncounted and the ledger undercharges |
-| A tick is metered at `g6.core.model_calls`, plus `Retry-After` resends, and stops at what it reserved. A caller that answers with no request noted is refused and charged the tick's worst case | A caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own retries. Only a provider's usage record shows those, which is O1's relay |
+| A tick is metered at `g6.core.model_calls`, plus `Retry-After` resends, and stops at what it reserved: each noted request is admitted at the boundary where it goes out, so a built-in retry or fallback cannot pass the reservation. A caller that answers with no request noted is refused and charged the tick's worst case | A caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own retries. Only a provider's usage record shows those, which is O1's relay. A `Retry-After` resend has no boundary, so it is charged and can pass the limit, after a server turned the request away. The gate on a request is an observer of `counting`, whose docstring says observers do not raise: that file is bound, so the sentence stays until an issuance window |
+| An account reading carries when it was read. What the loop charges after that goes on top of it until the next reading, and a charge before it may be in it. A reading with no date is read as the larger of the two figures | A figure that lags the provider's own count leaves a gap nothing here can see. A read that fails leaves the meter on its own count until the next one, 15 minutes at most |
 | The ceiling is checked inside the reserving transaction, on the ledger as it stands, and pending reservations go on top of the account's figure | The account's figure is read just before that transaction, so use elsewhere in between is unseen until the next tick |
 | A tick charges one provider: the first with room | Real work may split across providers. Harmless until O1 |
 | `BudgetBook` stays for now, on the person-approved `run_one_cycle` only. The loop does not use it | Two ledgers exist until it merges, against section 6.6 |
 | `g6_improve_start` asks for `metaharness.improve`, so a host that lists `metaharness` allows it too, and the dialog still asks | A host that allowed `metaharness` for workflows has allowed this at the host's level. The dialog is what stands between. Cheap to split into a component of its own |
 | A person enrols and lifts a pause at a terminal, by typing the domain's name back, as in `g6.workforce.decide`. It is a convenience check, not proof, and there is no MCP tool for either | An agent with a console can type. The same is true of `decide`, and of a Python call |
 | Start removes a `STOP` file, once the person has agreed and been shown its reason. A reboot does not | A stop someone else set is lifted by whoever agrees in the dialog, and the log keeps who |
+| A tick compares the log with the chain of adoptions, and refuses with the records code when the log saw a generation the chain does not hold. Only adoptions and rollbacks count, and a chain ahead of the log is the crash between the two writes | Both files cut together leave nothing to compare. The check keeps a number from being used twice; it does not bring a lost generation back, and a person must inspect the folder |
+| A stop is noted in the records as well as by its file, best effort: a tick holding the records, or records that do not read, leave it to the runner or to no one | A stop noted by no one still stops while its file is there. Once that file is gone by hand, a restart could carry on the old start. A person's stop through the tool on a dead runner with sound records does not have this gap |
 | Refusals do not rest the runner, since a refusal tried something. No winner, no constraint and idle do | A run of refusals is bounded only by the split's five evaluations |
 | Status shows use from the runner's last heartbeat, with its time, because opening the ledger would write to it | With no runner alive the figures are as old as that heartbeat, and with none ever there are none |
 | Each provider's day is its own, and the runner wakes for the next rise of any ceiling, or the end of a reported limit. It wakes even if the rise is too small for a tick | One refused tick a day, which spends nothing |
