@@ -14,10 +14,12 @@ from g6.self_maintenance.envelope import (
     ask_to_stop,
     beat,
     heartbeat,
+    record_stop,
     runner_alive,
     runner_lock,
     stop_reason,
 )
+from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
 
@@ -229,6 +231,60 @@ def test_a_person_starts_the_runner_and_the_log_keeps_who(tmp_path):
 def test_no_agent_name_can_start_it(tmp_path, name):
     with pytest.raises(LedgerError, match="a person"):
         _log(tmp_path).start(name)
+
+
+# A start in force ------------------------------------------------------------------------------------------------------
+
+def test_no_start_is_in_force_until_a_person_gives_one(tmp_path):
+    log = _log(tmp_path)
+    log.enrol("Ada", {"evaluator": "a"})
+    assert not log.start_in_force()
+    log.start("Ada", at="noon")
+    assert log.start_in_force()
+
+
+def test_a_stop_ends_a_start_and_only_a_new_start_brings_it_back(tmp_path):
+    log = _log(tmp_path)
+    log.start("Ada", at="noon")
+    log.stop("the owner's review", at="one")
+    assert not log.start_in_force() and log.started()["by"] == "Ada"
+    log.start("Ada", at="two")
+    assert log.start_in_force()
+
+
+def test_a_stop_on_record_states_its_reason(tmp_path):
+    with pytest.raises(LedgerError, match="states its reason"):
+        _log(tmp_path).stop("")
+
+
+def test_a_recorded_stop_goes_in_the_log_once(tmp_path):
+    log = _log(tmp_path)
+    log.start("Ada", at="noon")
+    for _ in range(2):
+        record_stop(tmp_path, "the owner's review", at="one")
+    log.reload()
+    assert not log.start_in_force() and sum(kind == "stopped" for kind, _ in log._rows()) == 1
+
+
+def test_recording_a_stop_with_no_records_makes_nothing(tmp_path):
+    record_stop(tmp_path, "why", at="one")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_records_that_do_not_read_never_get_in_a_stops_way(tmp_path):
+    log = _log(tmp_path)
+    log.start("Ada", at="noon")
+    log.path.write_text(log.path.read_text(encoding="utf-8").replace("Ada", "Bo"), encoding="utf-8")
+    record_stop(tmp_path, "why", at="one")
+
+
+def test_a_tick_holding_the_records_leaves_the_stop_for_the_runner_to_note(tmp_path):
+    log = _log(tmp_path)
+    log.start("Ada", at="noon")
+    with Coordination(tmp_path / ".tick").mutex():
+        record_stop(tmp_path, "why", at="one")
+    log.reload()
+    assert log.start_in_force()
 
 
 # What a proposer found -------------------------------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time as clock
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
 from g6.self_maintenance.digest import digest_path, latest
-from g6.self_maintenance.envelope import heartbeat, runner_alive, runner_lock
+from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, heartbeat, runner_alive, runner_lock
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -426,10 +427,96 @@ def test_a_second_runner_on_a_folder_does_nothing(tmp_path, capsys, monkeypatch)
     assert "already" in capsys.readouterr().err
 
 
+def _enrolled_folder(tmp_path: Path, *, started: bool = True) -> tuple[Path, ShadowLoop]:
+    root = _folder(tmp_path)
+    loop, _ = open_loop(root, now=lambda: START)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    if started:
+        loop.log.start("Ada", at=START.isoformat())
+    return root, loop
+
+
+def _then_stop(root: Path):
+    def sleep(seconds: float) -> None:
+        (root / "STOP").write_text("done\n", encoding="utf-8")
+
+    return sleep
+
+
+def test_the_command_line_runs_no_tick_on_an_enrolled_folder_no_person_started(tmp_path):
+    root, loop = _enrolled_folder(tmp_path, started=False)
+    env = {**os.environ, "PYTHONPATH": str(Path(g6.__file__).resolve().parents[1])}   # one G6_HOME: it holds the enrolment
+    child = subprocess.Popen([sys.executable, "-P", "-m", "g6.metaharness.loop", "run", str(root)], cwd=root, env=env,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = clock.monotonic() + 25
+        while child.poll() is None and clock.monotonic() < deadline:
+            if (heartbeat(root) or {}).get("tick", 0) >= 1:
+                break
+            clock.sleep(0.05)
+    finally:
+        (root / "STOP").write_text("the test is over\n", encoding="utf-8")
+        try:
+            _, err = child.communicate(timeout=65)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            _, err = child.communicate(timeout=10)
+    log = CycleLog(root / CYCLE_LOG)
+    assert log.started() is None and log.cycles() == [], f"ran {len(log.cycles())} ticks with no start: exit {child.returncode}"
+    assert child.returncode == 1 and "g6_improve_start" in err
+    assert heartbeat(root)["code"] == "G6_E_LOOP_NOT_STARTED" and heartbeat(root)["state"] == "not-running"
+
+
+def test_nothing_of_the_folders_runs_before_the_start_is_checked(tmp_path):
+    root, _ = _enrolled_folder(tmp_path, started=False)
+    marker = tmp_path / "ran"
+    (tmp_path / "domain.py").write_text(f"open({str(marker)!r}, 'w').close()\n", encoding="utf-8")
+    assert run(root) == 1 and not marker.exists()
+
+
+def test_a_start_the_person_agreed_to_lets_a_restart_run(tmp_path):
+    root, _ = _enrolled_folder(tmp_path)
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
+    assert CycleLog(root / CYCLE_LOG).cycles()
+
+
+def test_a_stop_since_the_start_refuses_a_restart_even_with_its_file_gone(tmp_path, capsys):
+    root, _ = _enrolled_folder(tmp_path)
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
+    ran = len(CycleLog(root / CYCLE_LOG).cycles())
+    (root / "STOP").unlink()
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 1
+    assert len(CycleLog(root / CYCLE_LOG).cycles()) == ran and "g6_improve_start" in capsys.readouterr().err
+
+
+def test_a_stop_file_a_restart_finds_ends_the_start_too(tmp_path):
+    root, _ = _enrolled_folder(tmp_path)
+    (root / "STOP").write_text("set by hand\n", encoding="utf-8")
+    assert run(root) == 0
+    (root / "STOP").unlink()
+    assert run(root) == 1 and CycleLog(root / CYCLE_LOG).cycles() == []
+
+
+def test_a_new_start_after_a_stop_lets_it_run_again(tmp_path):
+    root, _ = _enrolled_folder(tmp_path)
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
+    (root / "STOP").unlink()
+    CycleLog(root / CYCLE_LOG).start("Ada", at=START.isoformat())
+    assert run(root, now=lambda: START + timedelta(days=2), sleep=_then_stop(root)) == 0
+
+
+def test_records_that_do_not_check_out_start_nothing(tmp_path, capsys):
+    root, _ = _enrolled_folder(tmp_path)
+    path = root / CYCLE_LOG
+    path.write_text(path.read_text(encoding="utf-8").replace("Ada", "Bo"), encoding="utf-8")
+    assert run(root) == 1 and "cannot be trusted" in capsys.readouterr().err
+
+
 def test_a_run_holds_the_lock_while_it_lives(tmp_path):
     root = _folder(tmp_path)
     loop, _ = open_loop(root, now=lambda: START)
     assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    loop.log.start("Ada", at=START.isoformat())       # a run needs a start that stands
     seen = []
 
     def sleep(seconds: float) -> None:

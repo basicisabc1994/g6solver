@@ -9,7 +9,8 @@ domain in the folder. This module never runs the domain's code: only the runner 
 
 **Stop** always works and asks nobody: it writes the local ``STOP`` file, which is safe to repeat and works when the runner
 is already dead. It kills nothing and touches no container, so it reports whether the runner has stopped yet. The runner
-sees the file between ticks, so a tick under way finishes first.
+sees the file between ticks, so a tick under way finishes first. It also ends the person's start, so nothing but a new
+agreement brings the runner back, not a restart and not the file's removal.
 
 **Status** only reads: its files, no lock it could hold up and no model. What it shows of each provider's use is the
 runner's last heartbeat, with the time of that heartbeat, because opening the ledger would write to it.
@@ -41,6 +42,7 @@ from g6.self_maintenance.envelope import (
     ask_to_stop,
     file_digest,
     heartbeat,
+    record_stop,
     runner_alive,
     stop_reason,
 )
@@ -203,6 +205,7 @@ def stop(folder: str, reason: str = "") -> dict:
     except OSError as exc:
         return _blocked(STOP_FAILED, f"the STOP file could not be written: {type(exc).__name__}: {exc}"[:400],
                         running=runner_alive(root), folder=str(root))
+    record_stop(root, why, at=datetime.now().astimezone().isoformat())
     running = runner_alive(root)
     said = ("the runner has been asked to stop and is still alive: it ends once it sees the STOP file, within a minute of "
             "its current tick ending" if running else "the STOP file is in place and no runner is alive")

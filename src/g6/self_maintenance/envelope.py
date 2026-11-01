@@ -4,8 +4,9 @@
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
 came of it, plus each enrolment, pause, resumption and start. Only a person can enrol a domain, resume a paused loop or
 start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its next tick and
-removing the file resumes it; a stop that cannot be read still stops. A heartbeat is written whole or not at all, and a
-heartbeat that cannot be written is one missed, never a failed tick.
+removing the file resumes it; a stop that cannot be read still stops. A runner ended by a stop needs a person's start
+again, even with the file gone: the records say the last start was stopped. A heartbeat is written whole or not at all, and
+a heartbeat that cannot be written is one missed, never a failed tick.
 
 **Is a runner alive?** A runner holds an operating-system lock for as long as it lives, so one that crashed, or a machine
 that rebooted, never reads as alive, and no process number can be mistaken for it. Looking writes nothing.
@@ -25,7 +26,7 @@ from pathlib import Path
 from typing import Any, ContextManager
 
 from g6.core.adaptation_gate import is_automated
-from g6.core.ledger import ChainLedger
+from g6.core.ledger import ChainLedger, LedgerError
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -50,8 +51,8 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
     if kind == "cycle":
         known = body.get("outcome") in (*FAILED, *ENDS_A_STREAK)
         return [] if known else [f"cycle: unknown outcome {body.get('outcome')!r}"]
-    if kind == "paused":
-        return [] if body.get("reason") else ["a pause states its reason"]
+    if kind in ("paused", "stopped"):
+        return [] if body.get("reason") else [f"a row of kind {kind} states its reason"]
     if kind in ("enrolled", "resumed", "started"):
         who = str(body.get("by") or "")
         return [] if who.strip() and not is_automated(who) else [f"{kind}: a person must do this (no empty or auto: name)"]
@@ -109,6 +110,13 @@ class CycleLog:
     def started(self) -> dict | None:
         """The last time a person started the runner."""
         return next((body for kind, body in reversed(self._rows()) if kind == "started"), None)
+
+    def stop(self, reason: str, **fields: Any) -> dict:
+        return self._append("stopped", {"reason": reason, **fields})
+
+    def start_in_force(self) -> bool:
+        """Whether a person's start stands: of the starts and stops on record, the last is a start."""
+        return next((kind == "started" for kind, _ in reversed(self._rows()) if kind in ("started", "stopped")), False)
 
     def paused(self) -> str:
         """Why the loop is paused, or ``""`` when it is not."""
@@ -170,6 +178,22 @@ def ask_to_stop(root: str | Path, reason: str = "") -> str:
     return stop_reason(root)
 
 
+def record_stop(root: str | Path, reason: str, *, at: str) -> None:
+    """Note a stop in the records, so a start no longer stands once the ``STOP`` file is gone. The file is what stops the
+    loop, so this never gets in its way: records that do not read, or a tick holding them, leave the note for later, and
+    a runner notes its own stop as it ends."""
+    path = Path(root) / CYCLE_LOG
+    if not path.is_file():
+        return
+    try:
+        with Coordination(Path(root) / ".tick").mutex(wait=0):
+            log = CycleLog(path)
+            if log.start_in_force():
+                log.stop(reason, at=at)
+    except (OSError, LedgerError, WorkspaceRefused):
+        pass
+
+
 def runner_lock(root: str | Path) -> ContextManager[None]:
     """The lock a runner holds for its whole life; a second runner on the folder is refused it."""
     return Coordination(Path(root) / RUNNER_LOCK).mutex()
@@ -206,5 +230,5 @@ def heartbeat(root: str | Path) -> dict | None:
 
 
 __all__ = ["CYCLE_LOG", "CycleLog", "ENDS_A_STREAK", "FAILED", "FINDINGS", "MAX_FAILED_CYCLES", "NOTHING_TO_TRY",
-           "RUNNER_LOCK", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "runner_alive", "runner_lock",
-           "stop_reason"]
+           "RUNNER_LOCK", "STOP_FILE", "ask_to_stop", "beat", "file_digest", "heartbeat", "record_stop", "runner_alive",
+           "runner_lock", "stop_reason"]

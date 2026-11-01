@@ -370,6 +370,19 @@ def test_stop_still_works_with_a_broken_settings_file_and_broken_records(rig):
     assert rig.call("g6_improve_stop", folder=str(rig.root))["stopped"] is True and (rig.root / "STOP").exists()
 
 
+def test_stop_ends_the_start_so_only_a_new_agreement_brings_it_back(rig):
+    rig.enrol()
+    rig.start()
+    rig.log.reload()
+    assert rig.log.start_in_force()
+    rig.call("g6_improve_stop", folder=str(rig.root), reason="the owner's review")
+    rig.log.reload()
+    assert not rig.log.start_in_force()
+    rig.start()
+    rig.log.reload()
+    assert rig.log.start_in_force()
+
+
 def test_stop_reaches_a_live_runner_whose_settings_and_records_are_gone(rig):
     rig.enrol()
     with runner_lock(rig.root):

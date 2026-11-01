@@ -6,6 +6,12 @@ No sleep is longer than ``NAP``, so a ``STOP`` is seen within a minute of a tick
 ``sleep``, so a week can pass in a test. Everything it needs to carry on is in the folder's records, so it restarts safely:
 a crashed tick is charged its worst case, a rest is read back from the log, and only one runner can hold a folder.
 
+**Who may start it.** It runs only on a start that stands: of the starts and stops on record, the last is a start a person
+agreed to in the client's dialog (``g6_improve_start``). So ``run`` from a shell starts nothing of its own, and it is
+refused before any of the folder's code runs. A scheduled restart carries on a start until a stop ends it, and a stop ends
+it for good, even if its file is later removed. This is a check and not a boundary: a process with the owner's rights can
+reach this code, or write the records, which are hash-chained and not signed.
+
 **What it never does.** It starts no engineer, pushes nothing, and spends only within the pacing rule. A pause, a changed
 frozen item, records that do not check out or a spent held-out split stop the ticks until a person acts, and the runner
 stays up, spends nothing and says so. A failed tick is recorded and the run goes on, so three in a row pause as they would
@@ -41,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.core import stop
+from g6.core.ledger import LedgerError
 from g6.metaharness.api import _blocked
 from g6.metaharness.loop import (
     BUDGET_WAIT,
@@ -53,7 +60,15 @@ from g6.metaharness.loop import (
 )
 from g6.metaharness.shadow import lineage
 from g6.self_maintenance import digest
-from g6.self_maintenance.envelope import ENDS_A_STREAK, beat, runner_lock, stop_reason
+from g6.self_maintenance.envelope import (
+    CYCLE_LOG,
+    ENDS_A_STREAK,
+    CycleLog,
+    beat,
+    record_stop,
+    runner_lock,
+    stop_reason,
+)
 from g6.self_maintenance.pacing import SETTINGS_FILE, read_settings, windows_from
 from g6.self_maintenance.usage import AccountReader
 from g6.workspace._envelope import WorkspaceRefused
@@ -65,6 +80,7 @@ LONGEST_REST = timedelta(hours=24)
 AGAIN = timedelta(minutes=5)            # how soon to look again when only a person can move things on
 BUSY_AGAIN = timedelta(seconds=30)
 CANNOT_OPEN = "G6_E_LOOP_CANNOT_OPEN"
+NOT_STARTED = "G6_E_LOOP_NOT_STARTED"
 #: What a tick is refused for that passes on its own: anything else with no cycle waits for a person.
 _WAITS = (BUDGET_WAIT, BUSY, STOPPED, stop.STOPPED)
 #: What a domain file may set beside its domain and proposer.
@@ -125,7 +141,8 @@ class Runner:
         beat(self.loop.root, **self.loop.beat_fields, **fields, domain=self.loop.domain.name, at=self.now().isoformat())
 
     def _end(self, now: datetime, halted: str) -> None:
-        """The last page and heartbeat. Neither may keep a stop from ending the run."""
+        """The last page and heartbeat, and the stop in the records. None of them may keep a stop from ending the run."""
+        record_stop(self.loop.root, halted, at=now.isoformat())
         try:
             self._digest(now, halted)
             self._beat(now, "stopped", now, reason=halted)
@@ -263,23 +280,44 @@ class Runner:
         self.day = day
 
 
+def _not_started(root: Path) -> str:
+    """Why no person's start stands on this folder, or ``""`` when one does. It reads the records and runs nothing."""
+    path = root / CYCLE_LOG
+    try:
+        if path.is_file() and CycleLog(path).start_in_force():
+            return ""
+    except LedgerError as exc:
+        return f"the loop's records cannot be trusted, so nothing ran: {exc}"[:400]
+    return ("no start stands on this folder, so nothing ran. Only a person starts the loop, in the client's dialog, through "
+            "g6_improve_start; after that a restart carries on until a stop")
+
+
+def _refuse(root: Path, code: str, why: str, now: Callable[[], datetime]) -> int:
+    print(why, file=sys.stderr)
+    beat(root, state="not-running", code=code, reason=why, at=now().isoformat())
+    return 1
+
+
 def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable[[float], None] = time.sleep) -> int:
     """Hold the folder and run until a stop. A stop already there ends it before anything is opened, so a restart after
-    a reboot honours it."""
+    a reboot honours it, and a folder with no start in force is refused before any of its code runs."""
     if not root.is_dir():
         print(f"{root} is not a folder", file=sys.stderr)
         return 1
-    if stop_reason(root):
+    halted = stop_reason(root)
+    if halted:
+        record_stop(root, halted, at=now().isoformat())
         return 0
     try:
         with runner_lock(root):
             try:
+                read_settings(root)
+                refused = _not_started(root)
+                if refused:
+                    return _refuse(root, NOT_STARTED, refused, now)
                 loop, reader = open_loop(root, now=now)
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why, and leave word
-                why = f"{type(exc).__name__}: {exc}"[:500]
-                print(f"The loop could not be opened: {why}", file=sys.stderr)
-                beat(root, state="not-running", code=CANNOT_OPEN, reason=why, at=now().isoformat())
-                return 1
+                return _refuse(root, CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500], now)
             return Runner(loop, now=now, sleep=sleep, reader=reader).run()
     except WorkspaceRefused:
         print("A runner is already alive on this folder; this one did nothing.", file=sys.stderr)
