@@ -70,7 +70,12 @@ you get one line saying what did not run and why.
 
 ## What the report says, and what it does not
 
-The report leads with reproduced findings: what was found, what was fixed, and what stayed open. A finding is fixed only when
+The report starts with how the run ended, in one word: `clean`, when a review of this patch reproduced nothing and no
+reviewer's test failed on it; `fixed`, when each test that failed now passes and a fresh review reproduced nothing;
+`contested`, when a test fails and the agent left the code as it was; `open`, when a test that failed has not been shown to
+pass; `untested`, when nothing tested this patch to a result. A tool's reply gives the same word as `ending`.
+
+Then come the reproduced findings: what was found, what was fixed, and what stayed open. A finding is fixed only when
 the case that failed has passed: a skip or a rename fixes nothing. It is open when the repairs ran out with its test still
 failing, or when the agent rejected it, with the agent's reason if it gave one. On the training bugs an open finding did not
 always mean a wrong patch, so read it as a question for you.

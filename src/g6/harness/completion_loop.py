@@ -642,11 +642,13 @@ class Step:
     """What comes next: ``CONTINUE``, with the text for the agent; ``STOP``, with the report ("" when there is none); or
     ``WAIT``, when this step did nothing, as another of the session was running or the person must answer first. ``code``: the
     stable code of a call that tested nothing or left no clean review, for a surface with G6's envelope. ``note``: with no
-    report, the line a hook shows the person in its place, as a tool's reply has its own words for what did not run."""
+    report, the line a hook shows the person in its place, as a tool's reply has its own words for what did not run.
+    ``ending``: on a stop, how the run ended, one of ``patch_report.ENDINGS``."""
     action: str
     text: str = ""
     code: str = ""
     note: str = ""
+    ending: str = ""
 
 
 def _load(session: Path) -> dict:
@@ -660,16 +662,17 @@ def _save(session: Path, state: dict) -> None:
     os.replace(session / "state.json.new", session / "state.json")
 
 
-def _finish(session: Path, state: dict, report: str, code: str = "") -> Step:
+def _finish(session: Path, state: dict, report: str, code: str = "", ending: str = "") -> Step:
     """The end of the loop for this session: the report, which is kept beside the state, then the state that says so, with
-    the code a later call repeats. A hook cut short between them ends the loop again, so no session ends with no report."""
+    the code and the ending a later call repeats. A hook cut short between them ends the loop again, so no session ends with
+    no report."""
     session.mkdir(parents=True, exist_ok=True, mode=0o700)
     (session / "report.md").write_text(report, encoding="utf-8")
-    state.update(done=True, code=code)
+    state.update(done=True, code=code, ending=ending)
     _save(session, state)
     if state.get("visible"):
         shutil.rmtree(state["visible"], ignore_errors=True)
-    return Step(STOP, report, code)
+    return Step(STOP, report, code, ending=ending)
 
 
 def _before_fix() -> bool:
@@ -783,6 +786,21 @@ def _unreproduced(reviews: list[dict]) -> bool:
                for one in reviews)
 
 
+def _ending(reason: str, reviews: list[dict]) -> str:
+    """How a run ended, as the reply and the report label it. ``reason`` says what stopped the loop, and K's words for that stay
+    as they are; this says where it left the patch. A finding the agent rejected is contested, and one with no shown pass is
+    open, whatever stopped the loop. Any other stop but a clean one came to no result. So did a review that named a defect
+    and wrote no test, though K's stop for it reads clean: its reply has a claim in it, and nothing tested the claim."""
+    fixed, still = patch_report.findings(reviews)
+    if reason == LEFT:
+        return "contested"
+    if still:
+        return "open"
+    if reason != CLEAN or (reviews[-1]["verdict"] == "defect" and reviews[-1]["file"] not in reviews[-1]["results"]):
+        return "untested"
+    return "fixed" if fixed else "clean"
+
+
 def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, session: Path, state: dict, reason: str,
                 said: str = "") -> Step:
     """The end of the review-until-clean loop: what the reviews found above the patch review, then the row. Only a review that
@@ -799,12 +817,13 @@ def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, ses
     if reason == CLEAN and _patch_now(root, base) != reviews[-1]["patch"]:
         reason = state["stop"] = MOVED
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
+    ending = _ending(reason, reviews)
     report = patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
-        "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code),
+        "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
     _keep_failures(task, base, change, session, state)
-    return _finish(session, state, report, code)
+    return _finish(session, state, report, code, ending)
 
 
 def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, shipped: Harness, host: Host,
@@ -907,18 +926,18 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         if "row_due" in state:
             _write_row(session, state)
             _save(session, state)
-        return Step(STOP, code=state.get("code", ""), note=ALREADY_ENDED)
+        return Step(STOP, code=state.get("code", ""), note=ALREADY_ENDED, ending=state.get("ending", ""))
     root = repo_tests.checked_repo(repo)
     change = repo_tests.change(root, base)
 
     def refused(text: str, code: str) -> Step:
         state["stop"] = text
         _keep_failures(task, base, change, session, state)
-        return _finish(session, state, text, code)
+        return _finish(session, state, text, code, "untested")
 
     if not change.sources:
         return (_review_end(root, task, base, change, session, state, WITHDRAWN) if state.get("reviews") else
-                Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED))
+                Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED, ending="untested"))
     if state.get("reviewed") and "started" not in state and state["reviewed"] == digest(repo_tests.diff_text(change)):
         return Step(STOP, note=ALREADY_READ)
     if not task.strip():

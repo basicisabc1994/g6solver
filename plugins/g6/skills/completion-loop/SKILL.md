@@ -68,8 +68,9 @@ failures stay in the report.
 
 Show the person the report as it is. Merging is their decision.
 
-The review-until-clean report leads with what was found, what was fixed and what stayed open. A review that reproduces
-nothing is not evidence the work is right, only that this reviewer found no failure it could show.
+The review-until-clean report starts with how the run ended: `clean`, `fixed`, `contested`, `open` or `untested`. Then comes
+what was found, what was fixed and what stayed open. A review that reproduces nothing is not evidence the work is right, only
+that this reviewer found no failure it could show.
 
 "No counterexample found in N probes" says only that those probes did not refute the patch. It does not show the patch is
 right.

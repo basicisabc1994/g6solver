@@ -231,6 +231,39 @@ def test_a_defect_that_could_not_be_reproduced_is_blocked_and_says_so_and_carrie
     enveloped(got)
 
 
+def test_a_stop_names_its_ending_beside_the_three_states(rig, monkeypatch):
+    rig.approve(reviewer("none"))
+    rig.failing = set()
+    rig.edit()
+    got = rig.step()
+    assert "**Ending:** `clean`" in got["report"] and got["ending"] == "clean" and got["completion_state"] == "qualified-draft"
+    enveloped(got)
+
+
+def test_a_rejected_finding_ends_contested_and_stays_a_draft(rig):
+    rig.approve(reviewer("one"))
+    rig.edit()
+    rig.step()
+    got = rig.step(reason="They misread the task.")
+    assert got["ending"] == "contested" and got["completion_state"] == "qualified-draft"
+    assert rig.step()["ending"] == "contested"      # a repeat says the same
+    enveloped(got)
+
+
+def test_a_stop_that_tested_nothing_ends_untested_and_stays_blocked(rig):
+    rig.approve(reviewer(LLMError("no such program")))
+    rig.edit()
+    got = rig.step()
+    assert got["ending"] == "untested" and got["completion_state"] == "blocked-escalated"
+    enveloped(got)
+
+
+def test_a_step_that_goes_on_has_no_ending(rig):
+    rig.approve(reviewer("one"))
+    rig.edit()
+    assert "ending" not in rig.step()
+
+
 def test_nothing_approved_is_blocked_with_how_to_turn_it_on(rig, monkeypatch):
     monkeypatch.setattr(keys, "read", lambda: {})
     rig.edit()

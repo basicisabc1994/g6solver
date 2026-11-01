@@ -523,6 +523,22 @@ def test_a_test_with_a_case_not_judged_is_never_said_to_pass():
     assert patch_report.NOT_JUDGED == judged
 
 
+@pytest.mark.parametrize("ending", ["clean", "fixed", "contested", "open", "untested"])
+def test_the_review_loops_report_leads_with_its_labelled_ending(ending):
+    text = patch_report.completion_report({**CLEAN, "ending": ending}, "R")
+    assert text.index(f"**Ending:** `{ending}`") < text.index("**Found:**")
+    for word in ("verified", "proved", "proven", "experimental", "correct"):
+        assert word not in text.lower()
+
+
+def test_each_labelled_ending_says_something_of_its_own():
+    assert len(set(patch_report.ENDINGS.values())) == len(patch_report.ENDINGS) == 5
+
+
+def test_a_report_with_no_ending_names_none():
+    assert "**Ending:**" not in patch_report.completion_report(CLEAN, "R")
+
+
 def test_the_review_loops_report_names_its_boundary_only_when_a_test_ran():
     assert "ran inside `a-boundary`" in patch_report.completion_report({**CLEAN, "boundary": "a-boundary"}, "R")
     assert "ran inside" not in patch_report.completion_report({**CLEAN, "boundary": "", "reviews": [review(1, "none")]}, "R")

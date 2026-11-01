@@ -2574,3 +2574,128 @@ def test_a_question_on_the_scouts_loop_is_no_refusal_either(world, monkeypatch):
     world.advance()
     step = world.advance(said="Shall I repair these cases?")
     assert (step.action, step.code) == (loop.WAIT, loop.WAITING_ON_PERSON) and not world.state().get("done")
+
+# --- labelled endings: what stopped the loop says one thing, and where that left the patch another -----------------------------
+
+def ending_of(step) -> str:
+    """The label the report shows, read as a person reads it."""
+    found = re.search(r"\*\*Ending:\*\* `(\w+)`", step.text)
+    return found[1] if found else ""
+
+
+def test_a_review_that_reproduces_nothing_ends_clean(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=reviewer("none"))
+    assert ending_of(step) == "clean" and step.ending == "clean" and world.state()["ending"] == "clean"
+
+
+def test_a_finding_repaired_ends_fixed_and_not_clean(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    tests.failing = set()
+    step = world.advance(critic=critic)
+    assert ending_of(step) == "fixed" and step.ending == "fixed" and not step.code
+
+
+def test_a_finding_rejected_ends_contested(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    step = world.advance(critic=critic, said="They misread the task.")
+    assert ending_of(step) == "contested" and step.ending == "contested" and not step.code
+
+
+def test_repairs_that_ran_out_end_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py", "test_critic_2.py", "test_critic_3.py", "test_critic_4.py")
+    critic = reviewer("one", "two", "three", "four")
+    for repair in range(loop.MAX_REPAIRS):
+        world.edit(FIXED + f"# {repair}\n")
+        world.advance(critic=critic)
+    world.edit(FIXED + "# the last\n")
+    step = world.advance(critic=critic)
+    assert ending_of(step) == "open" and step.ending == "open" and not step.code
+
+
+def test_a_finding_with_no_shown_pass_ends_open_whatever_stopped_the_loop(world, monkeypatch):
+    outcomes = {"test_bug": "failed", "test_smoke": "passed"}
+    Runs(monkeypatch, now=lambda placed: ran(placed, dict(outcomes)))
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    outcomes = {"test_bug": "skipped", "test_smoke": "passed"}
+    step = world.advance(critic=critic)
+    assert loop.CLEAN in step.text and ending_of(step) == "open"      # the stop is K's, and the label is what is true of the patch
+
+
+def test_a_review_that_fails_with_a_finding_open_ends_open_and_keeps_its_code(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", LLMError("gone away"))
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    step = world.advance(critic=critic)
+    assert ending_of(step) == "open" and step.code == loop.NO_CLEAN_REVIEW
+
+
+def test_a_failed_review_ends_untested(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=reviewer(LLMError("gone away")))
+    assert ending_of(step) == "untested" and step.ending == "untested" and step.code == loop.NO_CLEAN_REVIEW
+
+
+def test_a_defect_no_test_could_show_ends_untested(world, monkeypatch):
+    Runs(monkeypatch, now=will_not_run)
+    world.edit()
+    step = world.advance(critic=reviewer("one", "one"))
+    assert ending_of(step) == "untested" and step.code == loop.NOT_REPRODUCED
+
+
+def test_a_review_of_another_patch_ends_untested(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=reads_then(lambda: world.edit(FIXED + "# changed under the review\n")))
+    assert ending_of(step) == "untested"
+
+
+def test_a_defect_named_with_no_test_ends_untested_though_ks_stop_reads_clean(world, monkeypatch):
+    Reviewed(monkeypatch)
+
+    def no_test(system: str, user: str) -> str:
+        proof = re.search(r"review [0-9a-f]{32}", user)[0]
+        return f"READ: {proof}\nRULE: a rule\nVERDICT: defect\nWHY: because\n"
+
+    world.edit()
+    step = world.advance(critic=FakeLLM(no_test))
+    assert loop.CLEAN in step.text and ending_of(step) == "untested" and step.ending == "untested"
+
+
+def test_a_change_taken_back_with_a_finding_open_ends_open(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(BASE)
+    assert ending_of(world.advance(critic=critic)) == "open"
+
+
+def test_a_refused_run_and_a_call_with_no_python_end_untested(world, monkeypatch):
+    critic = reviewer("never")
+    assert world.advance(critic=critic).ending == "untested"       # nothing has changed yet
+    monkeypatch.setattr(proposer, "boundary", lambda root: "no backend here")
+    world.edit()
+    step = world.advance(critic=critic)
+    assert step.code == ISOLATION_UNAVAILABLE and step.ending == "untested" and world.state()["ending"] == "untested"
+
+
+def test_a_call_after_the_end_keeps_its_ending(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    world.edit()
+    assert world.advance(critic=critic).ending == "clean"
+    assert world.advance(critic=critic).ending == "clean"

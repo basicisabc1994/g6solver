@@ -79,6 +79,12 @@ TO_DO = frozenset({"ignored_file_can_change_tests"})
 NOT_PASSED = "ran, but a case that failed has not passed"
 #: A file of a reviewer's test with a case the operating system refused: unknown, so the file neither passes nor fails.
 NOT_JUDGED = "ran, but a case could not be judged"
+#: How a run of the review-until-clean loop ended, in the reply and at the head of the report, and what each label says.
+ENDINGS = {"clean": "a review of this patch reproduced nothing, and no reviewer's test failed on it",
+           "fixed": "each reviewer's test that failed now passes, and a fresh review of this patch reproduced nothing",
+           "contested": "a reviewer's test fails, and the agent left the code as it was",
+           "open": "a reviewer's test that failed has not been shown to pass",
+           "untested": "nothing here tested this patch to a result"}
 #: What the review-until-clean loop's report says of itself, every time (the worked examples' arm K).
 LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
                "- A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure "
@@ -393,6 +399,8 @@ def _review_lines(loop: dict) -> list[str]:
     fixed, still = findings(reviews)
     last, count = reviews[-1]["results"] if reviews else {}, len(fixed) + len(still)
     lines = ["## What the reviews found"]
+    if loop.get("ending"):
+        lines.append(f"- **Ending:** {code(loop['ending'])}: {ENDINGS[loop['ending']]}.")
     lines.append(f"- **Found:** {count} reproduced, each a reviewer's test that failed on the patch." if count else
                  "- **Found:** no reviewer's test failed on the patch.")
     lines += _cut([[f"- **Fixed:** review {one['n']}: {code(one['rule'], 200)}; its test passes now."] for one in fixed],
@@ -447,5 +455,5 @@ def safe_render(assessment: dict) -> str:
                 "assessment's fields. Qualified draft: merging needs your separate approval.")
 
 
-__all__ = ["MAX_LINES", "NOT_JUDGED", "NOT_PASSED", "STANDING_NOTE", "code", "completion_report", "findings", "render",
+__all__ = ["ENDINGS", "MAX_LINES", "NOT_JUDGED", "NOT_PASSED", "STANDING_NOTE", "code", "completion_report", "findings", "render",
            "safe_render"]
