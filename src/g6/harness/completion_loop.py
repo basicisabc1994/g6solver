@@ -566,7 +566,8 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
     fixes nothing. This decides what the report may call fixed, and what fails, and so what goes back, is as it was.
 
     Here the loop parts from K. A review that names a defect whose test shows nothing is told why once, in this round, so no
-    repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair."""
+    repair is spent: only where nothing else failed, as otherwise what failed goes back and a fresh review reads the repair.
+    A review's ``unrun`` says why its test shows nothing on the latest run, so a later run updates it, or takes it away."""
     n, results, failed, failing, where = len(reviews) + 1, {}, {}, set(), session / "sets" / "critic"
     patch, kept, mine = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch", critic_file(n)
     kept.parent.mkdir(parents=True, exist_ok=True)
@@ -585,8 +586,11 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
                          patch_report.NOT_PASSED if any(got.results.get(case) != "passed" for case in owed) else
                          patch_report.NOT_JUDGED if "unknown" in got.results.values() else "passed")
         said["boundary"] = got.boundary or said.get("boundary", "")
-        if name == mine and results[name] in SHOWED_NOTHING:
-            said["unrun"] = _unrun(got)
+        owner = next((one for one in reviews if one["file"] == name), said)
+        if results[name] in SHOWED_NOTHING:
+            owner["unrun"] = _unrun(got)
+        else:
+            owner.pop("unrun", None)
 
     for name in [critic_file(i) for i in range(1, n + 1) if (where / critic_file(i)).is_file()]:
         run(name)
@@ -739,7 +743,7 @@ def _round_outcome(one: dict) -> str:
         return "review_failed"
     if "failed" in one["results"].values():
         return "test_failed"
-    return "test_showed_nothing" if one.get("unrun") else "nothing_reproduced"
+    return "test_showed_nothing" if one["results"].get(one["file"]) in SHOWED_NOTHING else "nothing_reproduced"
 
 
 def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> dict:

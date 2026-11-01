@@ -391,6 +391,12 @@ def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
     return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
 
 
+def _latest(reviews: list[dict], file: str) -> str | None:
+    """What the latest run that reached ``file`` said of it, None if none did. A review's own ``results`` are its round's, and
+    a later repair can change what its test does, so nothing here may read them to say what a test does now."""
+    return next((run["results"][file] for run in reversed(reviews) if file in run["results"]), None)
+
+
 def _review_lines(loop: dict) -> list[str]:
     """What the review-until-clean loop did, reproduced findings first: what was found, what was fixed, what stayed open.
     A finding is a reviewer's test that failed on the patch. It stays open at the cap, or when the agent rejects it, and an
@@ -428,9 +434,9 @@ def _review_lines(loop: dict) -> list[str]:
             lines.append(f"- Review {one['n']} first named a defect, {code(one['claimed'], 200)}, but its test would not run: "
                          f"{code(one['told'], 200)}. The reviewer was told once, and answered again.")
         if one.get("verdict") == "defect" and one not in (*fixed, *still):
-            said = one["results"].get(one["file"])
-            why = (f"a case of its test could not be judged: {code(one['unrun'], 200)}" if said == NOT_JUDGED else
-                   f"its test would not run: {code(one['unrun'], 200)}" if one.get("unrun") else
+            said = _latest(reviews, one["file"])
+            why = (f"a case of its test could not be judged: {code(one.get('unrun', ''), 200)}" if said == NOT_JUDGED else
+                   f"its test would not run: {code(one['unrun'], 200)}" if said == "did not run" and one.get("unrun") else
                    "its test passes on the patch" if said == "passed" else
                    "it wrote no test" if said is None else "its test showed nothing")
             lines.append(f"- Review {one['n']} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")

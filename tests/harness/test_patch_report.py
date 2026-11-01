@@ -539,6 +539,20 @@ def test_a_report_with_no_ending_names_none():
     assert "**Ending:**" not in patch_report.completion_report(CLEAN, "R")
 
 
+@pytest.mark.parametrize("latest, said", [("ran, but a case could not be judged", "a case of its test could not be judged"),
+                                          ("did not run", "its test showed nothing")])
+def test_a_test_that_passed_once_is_said_to_pass_only_if_its_latest_run_does(latest, said):
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {"test_critic_1.py": latest})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "its test passes on the patch" not in text, "the report read the review's own run, not the test's latest"
+    assert f"`rule 1`; {said}" in text
+
+
+def test_a_test_a_later_run_did_not_reach_is_reported_by_the_latest_run_that_did():
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {})]
+    assert "`rule 1`; its test passes on the patch" in patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+
+
 def test_the_review_loops_report_names_its_boundary_only_when_a_test_ran():
     assert "ran inside `a-boundary`" in patch_report.completion_report({**CLEAN, "boundary": "a-boundary"}, "R")
     assert "ran inside" not in patch_report.completion_report({**CLEAN, "boundary": "", "reviews": [review(1, "none")]}, "R")

@@ -2919,3 +2919,44 @@ def test_a_reviewer_told_of_the_error_that_keeps_its_claim_with_no_test_never_en
     world.edit()
     step = world.advance(critic=FakeLLM(reply))
     assert loop.CLEAN not in step.text and step.code == loop.NOT_REPRODUCED and step.ending == "untested"
+
+# --- the first Codex review of these fixes: each case failed on the code it was written against ---------------------------------
+
+def test_a_test_whose_latest_run_has_an_unknown_case_is_not_reported_as_passing(world, monkeypatch):
+    """Review 2's test passed when it was written, beside an older test that failed, and a later repair left it unknown."""
+    def now(placed: str) -> dict:
+        if Path(placed).name == "test_critic.py":
+            return ran(placed, {"test_critic": "failed" if len(critic.calls) < 3 else "passed"})
+        if len(critic.calls) == 2:
+            return ran(placed, {"test_bug": "passed", "test_smoke": "passed"})
+        return refused_access(placed, {"test_bug": "failed", "test_smoke": "passed"})
+
+    Runs(monkeypatch, now=now)
+    critic = reviewer("one", "two", "none")
+    world.edit()
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 1\n")
+    assert world.advance(critic=critic).action == loop.CONTINUE
+    world.edit(FIXED + "# 2\n")
+    ended = world.advance(critic=critic)
+    assert ended.code == loop.NOT_REPRODUCED
+    assert "`rule two`; its test passes on the patch" not in ended.text, "its last run has an unknown case"
+    assert "`rule two`; a case of its test could not be judged: " in ended.text and "PermissionError" in ended.text
+
+
+def test_a_test_that_would_not_run_and_then_passed_is_reported_by_its_latest_run(world, monkeypatch):
+    def now(placed: str) -> dict:
+        if Path(placed).name == "test_critic.py":
+            return ran(placed, {"test_critic": "failed" if len(critic.calls) < 3 else "passed"})
+        return will_not_run() if len(critic.calls) == 2 else ran(placed, {"test_critic": "passed"})
+
+    Runs(monkeypatch, now=now)
+    critic = reviewer("one", "two", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 1\n")
+    world.advance(critic=critic)
+    world.edit(FIXED + "# 2\n")
+    ended = world.advance(critic=critic)
+    assert not ended.code and "`rule two`; its test passes on the patch" in ended.text
+    assert "ImportError" not in ended.text      # what it said once, of a run that is no longer its latest
