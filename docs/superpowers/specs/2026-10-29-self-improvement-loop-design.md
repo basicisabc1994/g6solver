@@ -647,6 +647,19 @@ python -P -m g6.metaharness.loop enrol <folder> --as "Your name"
 
 `g6_improve_start` then starts the runner; lifting a pause is `resume`, with the same arguments, also at a terminal.
 
+**A daily reviewer can take a generation back.** Until this, the only lever on an adoption that looked wrong was the stop:
+
+```
+python -P -m g6.metaharness.loop demote <folder> <generation> --as "Your name"
+```
+
+`<generation>` is the one the digest shows as the head, so a head that moved on since is refused rather than taken back unread.
+It goes back one version, as the monitor may, and the loop runs on from there. The domain's name is typed back, as for `enrol`,
+and a changed domain file refuses it before it runs. The row is a rollback in the same chain with the person's name on it, which
+the lineage and the digest show as theirs, and it carries no figures, since nothing was measured. A rollback is now the one row
+in that chain that can name a person. An adoption still cannot. The candidate can be proposed again: nothing yet keeps a generation
+a person took back from coming back through the gate.
+
 **Only a person's start lets it run.** `run` carries on a start that stands: of the starts and stops on record, the last is
 a start a person agreed to in the client's dialog. With none it is refused, with `G6_E_LOOP_NOT_STARTED`, before any of the
 folder's code runs, so a shell is no way round the dialog. A stop ends the start for good: every stop through the tool is

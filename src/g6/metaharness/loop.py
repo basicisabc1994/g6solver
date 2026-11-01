@@ -797,6 +797,20 @@ class ShadowLoop:
             self.log.resume(who)
         return _envelope("qualified-draft", RESUMED, "the loop is not paused", next_action="loop.tick()")
 
+    @_exclusive
+    def demote(self, generation: int, asked_by: str) -> dict[str, Any]:
+        """A person takes back the generation at the head, having read the digest. The loop goes on from what stood before."""
+        who = asked_by.strip()
+        if not who or is_automated(who):
+            return _blocked(APPROVAL_REQUIRED, "a person takes a generation back (no empty or auto: name)")
+        invalid = self._invalid()
+        if invalid is not None:
+            return invalid
+        taken = self.mh.demote(generation, who)
+        if taken["completion_state"] != "blocked-escalated":
+            self.log.demote(who, at=self._now().isoformat(), undoes=taken["undoes"], head_version=taken["head_version"])
+        return taken
+
     def _row(self) -> dict[str, Any]:
         version, head = self.mh._head()
         return {"at": self._now().isoformat(), "domain": self.domain.name, "head_version": version,

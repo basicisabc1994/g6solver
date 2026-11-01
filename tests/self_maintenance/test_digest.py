@@ -80,6 +80,12 @@ def test_the_lineage_shows_gains_and_losses_with_what_was_measured():
     assert "Generation 2, from 1 (a rollback): went back to generation 0" in text
 
 
+def test_a_persons_rollback_says_whose_it_was_and_claims_no_figures():
+    generations = {"current": 2, "recent": [{"generation": 2, "parent": 1, "kind": "rollback", "asked_by": "Ada",
+                                             "change": "a person went back to generation 0", "measured": {}}]}
+    assert "Generation 2, from 1 (a rollback by Ada): a person went back to generation 0" in _render(generations=generations)
+
+
 def test_wall_clock_is_shown_as_reported_and_not_gated():
     timed = {"split": "held_out", "cases": 80, "before": 0.3, "after": 0.9,
              "not_gated": {"wall_clock_s": {"before": 0.5, "after": 1.25}}}

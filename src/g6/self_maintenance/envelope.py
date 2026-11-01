@@ -2,8 +2,9 @@
 """The loop's records and what halts it (design 6.1, 6.10), which know nothing of what the work is.
 
 ``CycleLog`` is the constraint log, a local hash-chained file for now: every cycle that ran, what limited it and what
-came of it, plus each enrolment, pause, resumption, start and provider's limit. Only a person can enrol a domain, resume a
-paused loop or start the runner, so the loop cannot lift its own pause. A ``STOP`` file in the loop's folder halts it at its
+came of it, plus each enrolment, pause, resumption, start, generation a person took back and provider's limit. Only a
+person can enrol a domain, resume a paused loop, take a generation back or start the runner, so the loop cannot lift its own
+pause. A ``STOP`` file in the loop's folder halts it at its
 next model call, and a stop that cannot be read still stops. Nothing but a person removes that file: a start records the file a
 person agreed to lift, and anything else, or any later write, stands, so a stop has no moment in which it can be lost. A
 runner ended by a stop needs a person's start again, even with the file gone: the records say the last start was stopped. A
@@ -57,7 +58,7 @@ def _rules(kind: str, ident: str, body: dict, seen: Mapping[tuple[str, str], dic
         return [] if known else [f"cycle: unknown outcome {body.get('outcome')!r}"]
     if kind in ("paused", "stopped"):
         return [] if body.get("reason") else [f"a row of kind {kind} states its reason"]
-    if kind in ("enrolled", "resumed", "started"):
+    if kind in ("enrolled", "resumed", "started", "demoted"):
         who = str(body.get("by") or "")
         return [] if who.strip() and not is_automated(who) else [f"{kind}: a person must do this (no empty or auto: name)"]
     if kind == "limited":
@@ -123,6 +124,9 @@ class CycleLog:
     def resume(self, by: str) -> dict:
         return self._append("resumed", {"by": by})
 
+    def demote(self, by: str, **fields: Any) -> dict:
+        return self._append("demoted", {"by": by, **fields})
+
     def start(self, by: str, **fields: Any) -> dict:
         return self._append("started", {"by": by, **fields})
 
@@ -166,10 +170,11 @@ class CycleLog:
         return streak
 
     def quiet_streak(self) -> int:
-        """How many cycles in a row found nothing to try, since a person last enrolled a domain or lifted a pause."""
+        """How many cycles in a row found nothing to try, since a person last enrolled a domain, lifted a pause or took a
+        generation back."""
         streak = 0
         for kind, body in reversed(self._rows()):
-            if kind in ("enrolled", "resumed") or kind == "cycle" and body["outcome"] not in NOTHING_TO_TRY:
+            if kind in ("enrolled", "resumed", "demoted") or kind == "cycle" and body["outcome"] not in NOTHING_TO_TRY:
                 break
             streak += kind == "cycle"
         return streak

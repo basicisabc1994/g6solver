@@ -211,3 +211,59 @@ def test_while_stopped_the_audit_runs_nothing(tmp_path):
     finally:
         stop.release()
     assert got["audited"] == 0 and stub.calls == before
+
+
+# A person takes the head back ----------------------------------------------------------------------------------------------
+
+def test_a_person_takes_the_head_back_one_version_and_the_row_is_theirs(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    before = mh.store.head()[1]
+    got = mh.demote(1, "Ada")
+    assert got["warning_card"]["code"] == "G6_E_LOOP_DEMOTED" and got["completion_state"] == "qualified-draft"
+    assert mh._head() == (2, before) and got["head_version"] == 2 and got["undoes"] == 1
+    row = mh.adoption_rows()[-1]
+    assert row["kind"] == "rollback" and row["by"] == "Ada" and row["target_version"] == 0 and row["measured"] == {}
+    assert [v["kind"] for v in mh.store.versions()] == ["initial"]      # the person's store is not what this moves
+
+
+def test_a_new_process_finds_what_a_person_took_back(tmp_path):
+    mh, wf, _ = _adopted(tmp_path)
+    mh.demote(1, "Ada")
+    assert adapt_shadow(wf, workspace=tmp_path / "ws", clock=rig.Clock())._head()[0] == 2
+
+
+def test_a_person_names_the_generation_they_read_so_a_head_that_moved_on_is_left(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    got = mh.demote(3, "Ada")
+    assert got["warning_card"]["code"] == "G6_E_LOOP_NOT_DEMOTABLE" and "generation 1" in got["message"]
+    assert mh._head() == (1, CAREFUL) and len(mh.adoption_rows()) == 1
+
+
+def test_with_nothing_adopted_there_is_nothing_to_take_back(tmp_path):
+    mh, _, _ = _shadow(tmp_path)
+    assert mh.demote(0, "Ada")["warning_card"]["code"] == "G6_E_LOOP_NOT_DEMOTABLE" and mh.adoption_rows() == []
+
+
+def test_a_head_the_monitor_already_took_back_to_the_start_has_nothing_left_to_take_back(tmp_path):
+    mh, _, stub = _adopted(tmp_path)
+    stub.collapsed = True
+    assert mh.audit(rig.cases("m", 60, 900), count=60)["rolled_back"]
+    assert mh.demote(2, "Ada")["warning_card"]["code"] == "G6_E_LOOP_NOT_DEMOTABLE" and len(mh.adoption_rows()) == 2
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_a_rollback_row_names_who_asked(tmp_path, name):
+    mh, _, _ = _adopted(tmp_path)
+    with pytest.raises(LedgerError, match="who asked"):
+        mh.adoptions.append("rollback", "2", {"kind": "rollback", "version": 2, "base_version": 1, "target_version": 0, "by": name,
+                                              "scope": "shadow", "profile": CAREFUL.model_dump(mode="json")})
+
+
+def test_while_stopped_nothing_is_taken_back(tmp_path):
+    mh, _, _ = _adopted(tmp_path)
+    stop.engage("test")
+    try:
+        assert mh.demote(1, "Ada")["warning_card"]["code"] == stop.STOPPED
+    finally:
+        stop.release()
+    assert mh._head() == (1, CAREFUL)

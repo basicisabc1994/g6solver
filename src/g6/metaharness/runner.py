@@ -30,8 +30,8 @@ calls are billed to one provider, so with more than one window ``provider`` name
 without it. Nothing else is read from it, so neither file can reach ``person_free_adoption_outside_shadow``. Enrolling pins
 its digest, so an edit is a changed frozen item, and ``g6_improve_start`` refuses it before it could run.
 
-``enrol`` and ``resume`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's name is
-typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
+``enrol``, ``resume`` and ``demote`` are a person's: as in ``g6.workforce.decide``, an answer counts only when the domain's
+name is typed back at an interactive terminal. That is a convenience check, not proof that a person typed it.
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -411,20 +411,30 @@ def resume(root: Path, who: str) -> int:
     return 1 if loop is None else _said(loop.resume(who))
 
 
+def demote(root: Path, generation: int, who: str) -> int:
+    loop = _person(root, who, f"take generation {generation} back", pinned=_pinned(root))
+    return 1 if loop is None else _said(loop.demote(generation, who))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -P -m g6.metaharness.loop",
                                      description="Run G6's self-improvement loop on a folder, or act on it as a person.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("run", help="run ticks until a STOP file appears").add_argument("folder")
-    for name, about in (("enrol", "confirm what judges this folder's domain"), ("resume", "lift a pause, having read why")):
+    for name, about in (("enrol", "confirm what judges this folder's domain"), ("resume", "lift a pause, having read why"),
+                        ("demote", "take back the generation at the head, having read the digest")):
         command = commands.add_parser(name, help=about)
         command.add_argument("folder")
+        if name == "demote":
+            command.add_argument("generation", type=int, help="the generation at the head, as the digest shows it")
         command.add_argument("--as", dest="who", required=True, help="your name; recorded as given, not authenticated")
     args = parser.parse_args(argv)
     root = Path(args.folder).expanduser().resolve()
     if args.command == "run":
         return run(root)
+    if args.command == "demote":
+        return demote(root, args.generation, args.who)
     return {"enrol": enrol, "resume": resume}[args.command](root, args.who)
 
 
-__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "enrol", "main", "open_loop", "resume", "run"]
+__all__ = ["FIRST_REST", "LONGEST_REST", "NAP", "Runner", "demote", "enrol", "main", "open_loop", "resume", "run"]

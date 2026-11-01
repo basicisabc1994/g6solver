@@ -24,6 +24,7 @@ from g6.metaharness import Model
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
+from g6.metaharness.shadow import lineage
 from g6.self_maintenance.digest import digest_path, latest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
@@ -840,6 +841,49 @@ def test_only_a_person_at_a_terminal_lifts_a_pause(tmp_path, monkeypatch, capsys
     loop.log.reload()
     assert loop.log.paused() == ""
 
+
+def _adopted_folder(tmp_path: Path) -> Path:
+    root, _ = _enrolled_folder(tmp_path)
+    assert open_loop(root, now=lambda: START + timedelta(days=2))[0].tick()["outcome"] == "adopted"
+    return root
+
+
+def lineage_of(root: Path) -> dict:
+    return lineage(root / "workspace")
+
+
+def _chain_length(root: Path) -> int:
+    return len(lineage_of(root)["recent"])
+
+
+def test_a_person_takes_a_generation_back_by_typing_the_domains_name(tmp_path, monkeypatch, capsys):
+    root = _adopted_folder(tmp_path)
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "word-problems")
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 0
+    assert lineage_of(root)["recent"][-1]["asked_by"] == "Ada" and "generation 1" in capsys.readouterr().out
+
+
+def test_only_a_person_at_a_terminal_takes_a_generation_back(tmp_path, capsys):
+    root = _adopted_folder(tmp_path)
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1
+    assert "terminal" in capsys.readouterr().err and _chain_length(root) == 1
+
+
+def test_the_wrong_name_typed_back_takes_nothing_back(tmp_path, monkeypatch):
+    root = _adopted_folder(tmp_path)
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "yes")
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1 and _chain_length(root) == 1
+
+
+def test_taking_a_generation_back_does_not_run_a_domain_file_changed_since_it_was_enrolled(tmp_path, monkeypatch, capsys):
+    root = _adopted_folder(tmp_path)
+    changed, marker = _plants_a_marker(tmp_path)
+    (tmp_path / "domain.py").write_text(changed, encoding="utf-8")
+    monkeypatch.setattr("g6.metaharness.runner._at_a_terminal", lambda: True)
+    assert main(["demote", str(root), "1", "--as", "Ada"]) == 1 and not marker.exists()
+    assert "enrolled" in capsys.readouterr().err and _chain_length(root) == 1
 
 def test_the_module_runs_as_a_command_with_python_minus_p():
     env = {**os.environ, "PYTHONPATH": str(Path(g6.__file__).resolve().parents[1])}

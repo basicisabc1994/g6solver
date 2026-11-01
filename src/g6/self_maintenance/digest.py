@@ -89,7 +89,8 @@ def _findings(cycles: Sequence[Mapping[str, Any]]) -> list[str]:
 
 
 def _generation(row: Mapping[str, Any]) -> str:
-    kind = " (a rollback)" if row["kind"] == "rollback" else ""
+    asked = f" by {_flat(row['asked_by'])}" if row.get("asked_by") else ""
+    kind = f" (a rollback{asked})" if row["kind"] == "rollback" else ""
     line = f"- Generation {row['generation']}, from {row['parent']}{kind}: {_flat(row.get('change') or 'no change recorded')}"
     measured = row.get("measured") or {}
     if measured.get("before") is None or measured.get("after") is None:

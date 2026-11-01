@@ -145,6 +145,8 @@ def test_only_a_person_resumes_it_or_enrols_a_domain(tmp_path, name):
         log.resume(name)
     with pytest.raises(LedgerError, match="a person"):
         log.enrol(name, {"evaluator": "a"})
+    with pytest.raises(LedgerError, match="a person"):
+        log.demote(name, undoes=1)
     assert log.paused() == "why"
 
 
