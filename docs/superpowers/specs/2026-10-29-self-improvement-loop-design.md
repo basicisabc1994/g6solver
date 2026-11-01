@@ -371,7 +371,7 @@ The owner decided that the loop reads issues, answers them publicly and works on
 
   A weekly digest goes in the same branch and in one comment on a pinned "Loop status" issue: what the loop did,
   usage against the pacing rule, the current constraint, pull requests ready for the owner, and any classifier or
-  permission stops.
+  permission stops. For now a daily digest stands in for it, local only (section 11).
 - **Cleaning.** Before anything is pushed, it passes:
   - the public export scan (`tools/export_public.py --scan`);
   - the local-path patterns of `tests/test_no_local_paths.py`;
@@ -424,8 +424,10 @@ The owner decided that the loop reads issues, answers them publicly and works on
 - A `STOP` file on `main`, which the loop's identity cannot change under the ruleset, or a `STOP` file in the loop's
   local folder, halts the loop at its next tick. Removing it resumes the loop. A `loop:stop` label on the pinned
   status issue also halts it, and the loop never removes that label itself.
-- Three failed cycles in a row pause the loop and post a status comment saying why.
-- The loop writes a heartbeat. A scheduled task on the owner's machine restarts it after a reboot.
+- Three failed cycles in a row pause the loop and post a status comment saying why. A failed cycle is a fault, not a
+  candidate that lost (section 11).
+- The loop writes a heartbeat. A scheduled task on the owner's machine restarts it after a reboot (section 11 has the
+  command; the owner registers it).
 
 ## 7. Integrating pull requests #2 to #7
 
@@ -584,6 +586,71 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   head in a separate ledger, so the loop compounds, and the monitor rolls it back if it gets worse. A person's profile
   store never moves, `activate` and live runs are refused, and each row carries the loop's `auto:` name. Nothing goes
   outward: no push, pull request, merge or tag.
+- **The runner** (`g6/metaharness/runner.py`, 2026-11-01): `python -P -m g6.metaharness.loop run <folder>` repeats a stop
+  check, a tick and a wait, with no sleep over a minute. It holds an operating-system lock for its life, writes its
+  heartbeat, survives a tick that raises and restarts safely, since all it needs is in the folder's records. A loop with
+  nothing to try rests, 15 minutes doubling to a day, and the digest says so. The owner wanted it essentially hands-off,
+  reviewed daily, working through the week. It still has no live engineers: section 3 holds those back.
+- **Three MCP tools** (`g6/mcp/improve.py`): `g6_improve_start` follows the usual allow rule (`metaharness.improve`) and
+  asks the person in the client's dialog; `g6_improve_stop` writes the `STOP` file and kills nothing; `g6_improve_status`
+  only reads.
+- **A daily digest** (`g6/self_maintenance/digest.py`): one local Markdown page a day under the folder's `digests`, under
+  60 lines, with what lost beside what won. It replaces 6.9's weekly digest for now, and pushes nothing.
+- **A cycle's research record:** four optional fields, `structure` (a regularity found in the failing cases), `resource`
+  (what can be exploited), `obstruction` (why it does not hold generally) and `composed_from` (the earlier cycles it
+  builds on). They stay empty when a proposer supplies none, the digest shows them, and the next tick's proposer reads
+  them, with none of what the gate decided.
+- **Numbered generations:** each row of `adoptions.jsonl` reads as a generation, in that one chain with no second ledger:
+  its parent, the profile's digest, the change in plain words, the held-out figures before and after, and those four
+  fields. A rollback is a generation too, so the lineage shows losses as well as gains. Status and the digest show the
+  current one and the recent ones. These are the loop's own numbers, measured on the splits they name. They have nothing
+  to do with G6's version, tags or releases, which stay the owner's.
+- **What each tool reports of the account** (`g6/self_maintenance/usage.py`, checked by running them on 2026-11-01):
+  `codex app-server` (0.165.0) answers `account/rateLimits/read` with no model call, so the loop gives way to Codex's
+  weekly percentage and its limits. Codex says this protocol may change, and a reply that does not read leaves the meter on
+  its own count. Claude Code (2.1.316) lists no such command, so Claude's meter stays on model calls.
+
+**How to run it.** A folder holds `settings.json`. An allowance is in the meter's unit, model calls, and counts as an
+estimate until `"estimated": false`. `reserve_share` defaults to the owner's 20%, and `"read_account": false` turns off
+the Codex read:
+
+```json
+{"domain_file": "<a Python file outside this folder>",
+ "windows": [{"provider": "claude", "allowance": 5000, "week_start": "2026-11-02T00:00:00+00:00"},
+             {"provider": "codex", "allowance": 5000, "week_start": "2026-11-03T04:00:00+00:00"}]}
+```
+
+The domain file is the person's own, as `G6_METAHARNESS` names one, and lies outside the folder, which the loop writes and
+what judges it must never be in. It defines `LOOP = {"domain": ..., "proposer": ...}`, with `method`, `seed`,
+`audit_per_tick` and `eval_calls` where they differ from the defaults. Nothing else is read from either file, so neither
+can reach `person_free_adoption_outside_shadow`. Enrolling pins the domain file's digest, so an edit is a changed frozen
+item, and `g6_improve_start` refuses it before it could run. Then, at a terminal, a person enrols it and types the
+domain's name back:
+
+```
+python -P -m g6.metaharness.loop enrol <folder> --as "Your name"
+```
+
+`g6_improve_start` then starts the runner; lifting a pause is `resume`, with the same arguments, also at a terminal.
+
+**Restart after a reboot.** The owner runs this once, in their own terminal, with the Python that has G6 installed and the
+loop's folder (`pythonw.exe`, so no console window opens that could be closed by accident). `/SC ONLOGON` runs as the owner
+when they sign in, with no stored password:
+
+```
+schtasks /Create /TN "G6 improvement loop" /SC ONLOGON /RL LIMITED /TR "\"<python folder>\pythonw.exe\" -P -m g6.metaharness.loop run \"<folder>\""
+```
+
+To take it away: `schtasks /Delete /TN "G6 improvement loop" /F`. A `STOP` file holds across a reboot: the task's runner
+ends at once until a person removes the stop through `g6_improve_start`. A second runner on the folder is refused, so the
+task and the tool cannot both hold it.
+
+That task covers a reboot and nothing else. To also bring back a runner that ended some other way (see below), use this in
+its place, at the cost of a Python start every 15 minutes that does nothing while a runner is alive:
+
+```
+schtasks /Create /TN "G6 improvement loop" /SC MINUTE /MO 15 /RL LIMITED /TR "\"<python folder>\pythonw.exe\" -P -m g6.metaharness.loop run \"<folder>\""
+```
 
 **What the two test domains showed.** Each ran with `FakeLLM` only and a planted weakness, one a coding-shaped domain,
 the other V6b's GSM8K task, check and exact-answer oracle over generated word problems (the dataset is not in the
@@ -591,11 +658,27 @@ repository). The same code adopted a real gain on both, built on it across ticks
 test ran itself. This shows the machinery works end to end. It does not show that G6 improves anything real: the
 weakness was planted and the models are stubs.
 
+**What a real clock showed (2026-11-01, open for the owner).** Those tests run on a clock that steps by a fixed amount. Two
+runs of the real detached runner on the same fake domain used the real clock, and the gate refused the planted gain both
+times on `wall_clock_s`, whose default objective holds the upper bound on the increase to 5% of the base: 0.6 ms against
+0.06 ms with an instant stub, and 1.6 ms against 1.1 ms with a stub taking 20 ms a call. So a gain that cost no more was
+refused on timing noise, and a real model's latency varies more than either. Each refusal spends one of the split's five
+evaluations, so a loop on a real model may well spend its split on noise and then wait for a person, with generation 0.
+The gate was left as it was: changing what it reads is the owner's call, and no setting of the loop's can reach it.
+
+**One runner ended with no explanation (2026-11-01, open).** Of seven real detached runs that day, six ended only when
+asked, one of them after eight minutes with no parent. One ended within 20 seconds of starting: its log was empty, it wrote
+no last heartbeat or digest line, and SQLite's working files were left behind, which a clean stop never leaves. So something
+outside ended the process, and what did was not found. It did not come back in the four runs after it, on the same code
+with the same work going on beside it. Status read it correctly as not running. Nothing restarts such a runner until the
+next scheduled start, which is what the 15-minute task above is for.
+
 **What remains:**
-- **The rest of P2:** the scheduler, the cleaner (a precondition of pushing anything), the records branch and digest
-  (these need O3, the App), model routing (6.7), a `STOP` on `main` and the `loop:stop` label, the yield measurement of
-  6.3, subordinating work beyond failure traces, and merging `BudgetBook` into the operator's ledger.
-- **O1:** real token usage needs the relay of section 3. Until then the meter's unit is model calls.
+- **The rest of P2:** the cleaner (a precondition of pushing anything), the records branch and public digest (these need
+  O3, the App), model routing (6.7), a `STOP` on `main` and the `loop:stop` label, the yield measurement of 6.3,
+  subordinating work beyond failure traces, and merging `BudgetBook` into the operator's ledger.
+- **O1:** real token usage needs the relay of section 3. Until then the meter's unit is model calls, and only Codex's
+  account figure reaches it.
 - **P3 onward:** the mission, code changes, draft pull requests and evidence packages, the evaluator in a read-only
   checkout outside the loop's process, fresh held-out splits drafted by the loop, issues (P4), the north-star study
   (P5), and method changes through `method_rca`, which need `compare_methods` and a person.
@@ -614,7 +697,7 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 |---|---|
 | **For the owner: one person step stays.** A person enrols a domain, and again for each fresh held-out split. Someone must say what "better" means, and it cannot be the thing judged | The loop stops after five gated candidates per split until a person acts. This is the distance left from "no intervention" |
 | **For the owner: `person_free_adoption_outside_shadow`, off.** With it on, this phase still moves nothing: no path out exists | None today. Wiring it in P3 is a separate decision, and the store's rules would need changing, since they refuse any `auto:` name |
-| The tick lives in `g6.metaharness`, not `g6.self_maintenance`, because the layer contract forbids that import | Section 3's `python -P -m g6.self_maintenance` cannot hold; the entry will be `python -P -m g6.metaharness.loop`. Cheap |
+| The tick lives in `g6.metaharness`, not `g6.self_maintenance`, because the layer contract forbids that import | Section 3's `python -P -m g6.self_maintenance` cannot hold; the entry is `python -P -m g6.metaharness.loop`. Cheap |
 | Adoption is a subclass with its own ledger, not `activate` with a made-up name and not a change to the store | `ShadowHarness` overrides a private method, so a refactor of `MetaHarness._head` can break it. Tests would catch that |
 | One workspace for all adoptions, so held-out uses carry over | None found. A fresh workspace per adoption would have let a split be spent for ever |
 | "Sealed" means section 6.3's pool. The gate scores a seeded cut of the development pool, as 6.5 says | If the owner meant the gate to score the sealed split, one line changes, and the study's pool would be spent |
@@ -630,6 +713,14 @@ boundary, which is P3's mission container, and P5's reports state the limit unde
 | The ceiling is checked inside the reserving transaction, on the ledger as it stands, and pending reservations go on top of the account's figure | The account's figure is read just before that transaction, so use elsewhere in between is unseen until the next tick |
 | A tick charges one provider: the first with room | Real work may split across providers. Harmless until O1 |
 | `BudgetBook` stays for now, on the person-approved `run_one_cycle` only. The loop does not use it | Two ledgers exist until it merges, against section 6.6 |
+| `g6_improve_start` asks for `metaharness.improve`, so a host that lists `metaharness` allows it too, and the dialog still asks | A host that allowed `metaharness` for workflows has allowed this at the host's level. The dialog is what stands between. Cheap to split into a component of its own |
+| A person enrols and lifts a pause at a terminal, by typing the domain's name back, as in `g6.workforce.decide`. It is a convenience check, not proof, and there is no MCP tool for either | An agent with a console can type. The same is true of `decide`, and of a Python call |
+| Start removes a `STOP` file, once the person has agreed and been shown its reason. A reboot does not | A stop someone else set is lifted by whoever agrees in the dialog, and the log keeps who |
+| Refusals do not rest the runner, since a refusal tried something. No winner, no constraint and idle do | A run of refusals is bounded only by the split's five evaluations |
+| Status shows use from the runner's last heartbeat, with its time, because opening the ledger would write to it | With no runner alive the figures are as old as that heartbeat, and with none ever there are none |
+| Each provider's day is its own, and the runner wakes for the next rise of any ceiling, or the end of a reported limit. It wakes even if the rise is too small for a tick | One refused tick a day, which spends nothing |
+| A rollback's before and after are the gate's held-out figures read the other way, with what the monitor saw beside them | They are not fresh: nothing measures a held-out split at a rollback |
+| Earlier findings shown to a proposer carry no outcome, since which candidate the gate took is the held-out split's | A proposer cannot learn directly from what lost. It sees only what earlier proposers said |
 
 ## Appendix A. The outside review's points, as acceptance criteria
 
