@@ -1372,3 +1372,41 @@ def test_the_parent_files_may_be_cut_but_the_task_and_the_patch_never(world, mon
     assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
     assert TASK in pack and repo_tests.diff_text(repo_tests.change(world.repo, base)) in pack
     assert len(pack) == loop.MAX_PACK_CHARS      # the parent file was cut, and that is all that was
+
+
+def the_patch(world) -> str:
+    return repo_tests.diff_text(repo_tests.change(world.repo, world.base))
+
+
+def test_each_reviewed_patch_stays_recoverable_byte_for_byte_after_the_repairs(world, monkeypatch):
+    tests, critic = Reviewed(monkeypatch, "test_critic.py"), reviewer("one", "none")
+    world.edit()
+    first = the_patch(world)
+    world.advance(critic=critic)
+    world.edit(FIXED + "# after one\n")
+    second = the_patch(world)
+    tests.failing = set()
+    world.advance(critic=critic)
+    kept = [(world.session / "rounds" / f"round-{n}.patch").read_bytes().decode("utf-8") for n in (1, 2)]
+    assert kept == [first, second]
+    assert [digest(one) for one in kept] == [one["patch"] for one in world.state()["reviews"]]
+
+
+def test_a_patch_is_kept_before_its_review_so_a_review_that_fails_still_leaves_it(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    patch = the_patch(world)
+    world.advance(critic=reviewer(LLMError("gone away")))
+    assert (world.session / "rounds" / "round-1.patch").read_bytes().decode("utf-8") == patch
+
+
+def test_a_row_names_the_session_that_holds_its_patches(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    patch = the_patch(world)
+    world.advance(critic=critic)
+    world.advance(critic=critic)
+    [row] = rows(world)
+    assert (world.session.parent / row["session"] / "rounds" / "round-1.patch").read_bytes().decode("utf-8") == patch
+    assert digest(patch) == row["reviews"][0]["patch"]

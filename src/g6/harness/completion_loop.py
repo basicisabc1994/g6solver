@@ -485,13 +485,17 @@ def _read_whole(change: repo_tests.Change, task: str) -> bool:
     return task in pack and repo_tests.diff_text(change) in pack
 
 
-def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, where: Path, reviews: list[dict],
+def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shipped: Harness, session: Path, reviews: list[dict],
                  deadline: float) -> tuple[set[str], str]:
     """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
     review's test, each alone. It gives what fails and the words of the latest review whose test fails. A review that failed
     ends the loop whatever fails, as the patch it should have read was not read, so it gives nothing to send back. A hook cut
-    short repeats its review, and that review's test is the only one with its number."""
-    n, results, failing = len(reviews) + 1, {}, set()
+    short repeats its review, and that review's test is the only one with its number. The patch itself is kept first, byte
+    for byte, as ``run.py`` keeps ``round-n.patch``: a later repair must not lose what a finding was about."""
+    n, results, failing, where = len(reviews) + 1, {}, set(), session / "sets" / "critic"
+    patch, kept = repo_tests.diff_text(change), session / "rounds" / f"round-{n}.patch"
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    kept.write_bytes(patch.encode("utf-8"))
     (where / critic_file(n)).unlink(missing_ok=True)
     said = (run_critic(change, task, critic, shipped.critic, where, n) if _read_whole(change, task) else
             {"verdict": "failed", "rule": "", "why": "", "test": "", "error": TOO_LONG})
@@ -503,7 +507,7 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
         said["boundary"] = got.boundary or said.get("boundary", "")
         if name == critic_file(n) and not got.usable:
             said["unrun"] = got.tail[-300:]
-    said.update(n=n, patch=digest(repo_tests.diff_text(change)), file=critic_file(n), results=results)
+    said.update(n=n, patch=digest(patch), file=critic_file(n), results=results)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""
@@ -609,20 +613,21 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
         review)
 
 
-def _failure_row(task: str, base: str, change: repo_tests.Change, state: dict) -> dict:
+def _failure_row(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> dict:
     """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
-    a cause must be a stable code, and a reproduced finding is observed apart from the agent: G6 ran another family's test."""
+    a cause must be a stable code, and a reproduced finding is observed apart from the agent: G6 ran another family's test.
+    ``session`` names the folder beside it that holds each round's patch."""
     reviews = state["reviews"]
     fixed, still = patch_report.findings(reviews)
     return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": OPEN if still else FIXED, "changeable": True,
             "note": (still or fixed)[0]["rule"], "independently_observed": True, "task": digest(task), "base": base,
-            "rounds": len(reviews), "reviews": [{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")}
+            "session": session.name, "rounds": len(reviews), "reviews": [{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")}
                                                 for one in reviews],
             "stop": state["stop"], "left": state.get("left", ""),
             "tree_changed": digest(repo_tests.diff_text(change)) != reviews[0]["patch"]}
 
 
-def _keep_failures(task: str, base: str, change: repo_tests.Change, state: dict) -> None:
+def _keep_failures(task: str, base: str, change: repo_tests.Change, session: Path, state: dict) -> None:
     """The run's row, added to ``FAILURES``, when it reproduced a finding. A row that cannot be written costs no report."""
     if not any(patch_report.findings(state.get("reviews") or [])):
         return
@@ -630,7 +635,7 @@ def _keep_failures(task: str, base: str, change: repo_tests.Change, state: dict)
         path = state_path(*FAILURES)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8", newline="\n") as out:
-            out.write(json.dumps(_failure_row(task, base, change, state), ensure_ascii=False) + "\n")
+            out.write(json.dumps(_failure_row(task, base, change, session, state), ensure_ascii=False) + "\n")
     except (OSError, ValueError) as exc:    # a RepoRefused from reading the final patch is a ValueError too
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
@@ -643,7 +648,7 @@ def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, ses
     if reason == LEFT:
         state["left"] = " ".join(said.split())[:MAX_CASE_CHARS] or NO_REASON
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
-    _keep_failures(task, base, change, state)
+    _keep_failures(task, base, change, session, state)
     reviews = state.get("reviews") or []
     return _finish(session, state, patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
@@ -727,7 +732,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
 
     def refused(text: str, code: str) -> Step:
         state["stop"] = text
-        _keep_failures(task, base, change, state)
+        _keep_failures(task, base, change, session, state)
         return _finish(session, state, text, code)
 
     if not change.sources:
@@ -750,7 +755,7 @@ def advance(repo: str | Path, task: str, base: str, session: str | Path, *, scou
     ends = _clock() + STOP_S - REVIEW_S
 
     def reviewed() -> tuple[set[str], str]:
-        return review_round(change, task, critic, shipped, session / "sets" / "critic", reviews, ends)
+        return review_round(change, task, critic, shipped, session, reviews, ends)
 
     def check() -> tuple[set[str], str]:
         if critic is not None and "critic" not in state:
