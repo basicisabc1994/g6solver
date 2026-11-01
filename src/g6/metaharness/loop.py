@@ -405,12 +405,17 @@ class ShadowLoop:
         proposing = (1 + method.use_recovery * on_dev(remedies + (remedies > most) * most)
                      + method.use_reflection * (on_dev(tries) + tries) + method.use_edits * on_dev(tries))
         racers = 2 + method.use_recovery * min(most, remedies) + (method.use_reflection + method.use_edits) * min(most, tries)
-        racing = min(method.select_budget + per_run,         # failure traces offer one, and a champion races again
-                     per_run * race_calls(len(cut.selection), racers, method.race_block, method.race_keep))
+
+        def racing(entered: int) -> int:                     # failure traces offer one, and a champion races again
+            return min(method.select_budget + per_run,
+                       per_run * race_calls(len(cut.selection), entered, method.race_block, method.race_keep))
+
         one_case = per_run * (per_run + 2)                   # base, candidate and a control matched to the candidate's calls
         room = max(caller.resends for caller in (self._proposer, *(m.caller for m in self.workflow.models.values())))
         return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1) + room
-                + method.cycles * (proposing + racing) + min(self.settings.eval_calls + one_case, len(cut.held_out) * one_case))
+                + method.cycles * proposing + (method.cycles - 1) * racing(racers)
+                + racing(racers + len(self.mh.unfinished()))
+                + min(self.settings.eval_calls + one_case, len(cut.held_out) * one_case))
 
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
@@ -723,7 +728,8 @@ class ShadowLoop:
         # earlier findings only: which candidate the gate took or refused is the held-out split's, and stays out of it
         strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
-                   space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),))
+                   space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
+                   carried=self.mh.unfinished())
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),

@@ -200,6 +200,18 @@ class ShadowHarness(MetaHarness):
         self._measured = key, view
         return view
 
+    def unfinished(self) -> list[Proposal]:
+        """The candidates on this head that a run left with no result: proposed since the last tuning run was written, and
+        not beaten in a race. Only a tick cut off before its end leaves any, since ``proposal`` is written as it is made
+        and a proposer may not offer one twice. It is read from the ledger, so it holds across a restart."""
+        rows = self.ledger.rows()
+        since = rows[1 + max((i for i, row in enumerate(rows) if row["_kind"] == "tuning_run"), default=-1):]
+        beaten = {entry["candidate_digest"] for row in since if row["_kind"] == "selection" for entry in row["ranking"]
+                  if entry["candidate_digest"] != row["winner"]}
+        found = [self._recorded("proposal", row["_id"])[0] for row in since
+                 if row["_kind"] == "proposal" and row["candidate_digest"] not in beaten]
+        return [proposal for proposal in found if proposal is not None and proposal.base_digest == self._head()[1].digest()]
+
     @_serialized
     def propose(self, strategy: Strategy, *, budget: int = 200, max_candidates: int = 3) -> dict[str, Any]:
         """As ``MetaHarness.propose``, on the view the head already has."""

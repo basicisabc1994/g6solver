@@ -709,8 +709,9 @@ ticks on 86 cases at that allowance used 4402 of the 5000.
 the rest of its reservation back and replies `G6_E_LOOP_BUDGET_WAIT` with the reset in `wait_until`. It is no cycle, so it
 writes no result and never counts towards the pause, and an evaluation it cut off is not one of the split's five, since
 nothing read it. The next tick waits for the reset, spending nothing. The reset is held in memory, so after a restart the
-first request finds the limit again. A candidate proposed before the limit stays in the run ledger, so that same profile is
-not offered again.
+first request finds the limit again. The next tick to propose takes up what was left: the candidates proposed since the last
+tuning run and not beaten in a race race again in its first cycle, and the reservation counts them. They are read from the
+run ledger, so a restart loses none, and they are run again from the start of their race, on the same head only.
 
 A limit is read from the text its request raised (`g6/self_maintenance/usage.py`), because no caller marks one, and
 `g6/core/llm.py` and `g6/core/host_models.py` are bound. The built-in HTTP callers and the Anthropic SDK are read reliably: a

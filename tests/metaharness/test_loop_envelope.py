@@ -1004,6 +1004,72 @@ def test_a_sealed_breach_is_recorded_even_when_a_limit_ended_the_tick(tmp_path):
     assert got["outcome"] == "sealed_breach" and _code(got) == "G6_E_LOOP_SEALED_BREACH"
 
 
+def _cut_off_at_the_evaluation(tmp_path, days, proposer):
+    """A loop whose first tick met a limit in the held-out evaluation, with its race won. Lifted, it is past the reset."""
+    loop, domain = _enrolled(tmp_path, proposer=proposer, now=lambda: days[0])
+    held = {c.input for c in loop.cut.held_out[5:]}
+    limited = Limited(domain, held.__contains__)
+    days[0] = datetime.fromisoformat(loop.tick()["wait_until"])
+    limited.lifted = True
+    return loop, domain
+
+
+def test_the_candidate_a_limit_cut_off_is_finished_after_the_reset_and_adopted(tmp_path):
+    days = [NOW]
+    loop, _ = _cut_off_at_the_evaluation(tmp_path, days, domains.proposes(*TWO_OFFERS))
+    won = next(row["winner"] for row in loop.mh.ledger.rows("selection"))
+    got = loop.tick()
+    assert got["outcome"] == "adopted" and got["champion"] == won
+    assert loop.mh.ledger.rows("evaluation") and len(loop.mh.ledger.rows("tuning_run")) == 1
+
+
+def test_a_restart_during_the_wait_loses_no_candidate(tmp_path):
+    days = [NOW]
+    proposer = domains.proposes(*TWO_OFFERS)
+    first, domain = _cut_off_at_the_evaluation(tmp_path, days, proposer)
+    again = ShadowLoop(domain, tmp_path / "loop", SETTINGS, proposer=proposer, now=lambda: days[0], clock=domains.Clock())
+    assert again.tick()["outcome"] == "adopted"
+
+
+def test_only_what_is_unfinished_comes_back(tmp_path):
+    """The race's loser has its result, and a tick that finished leaves nothing behind."""
+    days = [NOW]
+    loop, _ = _cut_off_at_the_evaluation(tmp_path, days, domains.proposes(*TWO_OFFERS))
+    won = next(row["winner"] for row in loop.mh.ledger.rows("selection"))
+    assert [p.candidate_digest for p in loop.mh.unfinished()] == [won]
+    assert loop.tick()["outcome"] == "adopted" and loop.mh.unfinished() == []
+
+
+def test_candidates_a_limit_stopped_before_their_race_race_after_the_reset(tmp_path):
+    days = [NOW]
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS))
+    selection = {c.input for c in loop.cut.selection}
+    limited = Limited(domain, selection.__contains__)
+    days[0] = datetime.fromisoformat(loop.tick()["wait_until"])
+    limited.lifted = True
+    assert len(loop.mh.unfinished()) == 2 and loop.mh.ledger.rows("selection") == []
+    assert loop.tick()["outcome"] == "adopted"
+
+
+def test_what_came_back_from_a_limit_is_in_the_reservation(tmp_path):
+    days = [NOW]
+    fresh, _ = _loop(tmp_path / "fresh", domain=domains.WordProblems(tmp_path / "fresh"))
+    loop, domain = _enrolled(tmp_path, now=lambda: days[0], proposer=domains.proposes(*TWO_OFFERS))
+    selection = {c.input for c in loop.cut.selection}
+    Limited(domain, selection.__contains__)
+    loop.tick()
+    assert loop.worst_case() > fresh.worst_case()
+
+
+def test_candidates_made_on_another_head_do_not_come_back(tmp_path):
+    days = [NOW]
+    loop, domain = _cut_off_at_the_evaluation(tmp_path, days, domains.proposes(*TWO_OFFERS))
+    assert loop.mh.unfinished()
+    other = loop.mh._head()[1].model_copy(update={"prompt": "another head"})
+    loop.mh._head = lambda: (0, other)
+    assert loop.mh.unfinished() == []
+
+
 def test_outside_a_tick_a_limit_is_the_error_it_always_was():
     def refuses(system: str, user: str) -> str:
         raise LLMError(AT_A_LIMIT)
