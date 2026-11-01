@@ -36,6 +36,7 @@ from g6.metaharness.domain import (
     PAID,
     PAID_MODEL,
     PROVIDER_MISMATCH,
+    RETRY_MODEL,
     SEALED_OVERLAP,
     UNKNOWN_CALLER,
     Domain,
@@ -252,6 +253,29 @@ def test_a_model_with_a_fallback_is_refused_since_a_comparison_would_mix_backend
 def test_one_backend_behind_a_wrapper_is_one_backend(tmp_path, wrap):
     domain = domains.WordProblems(tmp_path)
     assert backends(wrap(domain.llm)) == 1
+
+
+@pytest.mark.parametrize("wrap", [EmptyRetry, lambda caller: FallbackCaller((caller,)),
+                                  lambda caller: TimingLLMCaller(EmptyRetry(caller), print)])
+def test_a_model_behind_a_retry_or_a_fallback_is_refused_since_a_refusal_must_never_be_sent_again(tmp_path, wrap):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, wrap(host_models.ClaudeCodeCaller()))
+    problems = domain_problems(domain)
+    assert [code for code, _ in problems] == [RETRY_MODEL]
+    assert "ClaudeCodeCaller" in problems[0][1] and "provider_from_env" in problems[0][1]
+
+
+def test_a_proposer_behind_a_retry_is_refused_too(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    settings = LoopSettings(windows=(ProviderWindow("claude", 1000, datetime(2026, 10, 26, tzinfo=UTC)),))
+    loop = ShadowLoop(domain, tmp_path / "loop", settings, proposer=EmptyRetry(domains.proposes({"prompt": domains.WORKING})))
+    assert loop.enrol("Ada")["warning_card"]["code"] == RETRY_MODEL
+
+
+def test_a_timing_wrapper_retries_nothing_so_it_stands(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_caller(domain, TimingLLMCaller(host_models.ClaudeCodeCaller(), print))
+    assert domain_problems(domain) == []
 
 
 def test_a_loop_with_a_fallback_model_or_proposer_enrols_nothing_and_runs_nothing(tmp_path):

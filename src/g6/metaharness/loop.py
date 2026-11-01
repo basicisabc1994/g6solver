@@ -77,7 +77,7 @@ from g6.self_maintenance.envelope import (
     stop_reason,
 )
 from g6.self_maintenance.pacing import AccountReading, Admission, BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import limit_ends
+from g6.self_maintenance.usage import limit_ends, refused_by, watched
 from g6.workspace._coordination import Coordination
 from g6.workspace._envelope import WorkspaceRefused
 
@@ -106,6 +106,7 @@ CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 TICK_BUDGET_SPENT = "G6_E_LOOP_TICK_BUDGET_SPENT"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
+CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
 #: with. A test holds every module those files import to this set or that one.
 ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/loop.py",
@@ -195,21 +196,33 @@ class _Halted(BaseException):
         self.code, self.said = code, said
 
 
+class _Refused(BaseException):
+    """A classifier or a permission stopped a request, on its way out of the tick as ``_AtLimit`` is. Nothing it cut off is
+    written, so an evaluation it cut off is not one of the split's five."""
+
+
+def _request_digest(system: str, user: str) -> str:
+    """What a request is known by once it has been refused: no text of it is kept."""
+    return hashlib.sha256(f"{system}\0{user}".encode("utf-8", "replace")).hexdigest()
+
+
 class _Requests:
     """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
     nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
     ``stopped`` says which stopped it. A request takes its place in ``sent`` before it goes out, under one lock, so requests
     running at once can never pass the limit between them. During a tick each request looks at ``halted`` first, so a stop
-    lands at the next model call: a request already sent comes back first, since nothing here can end one."""
+    lands at the next model call: a request already sent comes back first, since nothing here can end one. After a refusal
+    nothing more goes out that tick, and ``refused`` holds each request ever refused here, which never goes out again."""
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC),
                  halted: Callable[[], _Halted | None] = lambda: None) -> None:
         self.now, self.halted = now, halted
+        self.refused: set[str] = set()
         self._lock = threading.Lock()
         self.close()
 
     def open(self, limit: float, ends: datetime | None = None) -> None:
-        self.sent, self.limit, self.ends, self.stopped, self.unseen = 0, limit, ends, "", False
+        self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
 
     def close(self) -> None:
         self.open(math.inf)
@@ -217,6 +230,8 @@ class _Requests:
     def admit(self, wait: float = 0.0, *, places: int = 0) -> None:
         """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
         server asked for before this one goes out."""
+        if self.refusal is not None:
+            raise _Refused(self.refusal["said"])
         stopped = self.halted() if self.limit != math.inf else None
         if stopped is not None:
             raise stopped
@@ -244,6 +259,13 @@ class _Requests:
         until = limit_ends(str(failed), self.now())
         if until is not None and self.limit != math.inf:
             raise _AtLimit(until, str(failed)[:300]) from failed
+
+    def at_a_refusal(self, failed: LLMError, request: str) -> None:
+        """End the tick when a classifier or a permission stopped a request, and let nothing more go out of it."""
+        said = refused_by(str(failed))
+        if said and self.limit != math.inf:
+            self.refusal = {"said": said, "request": request}
+            raise _Refused(said) from failed
 
 
 class _Resends(list):
@@ -273,9 +295,9 @@ def _gating_resends(take: Callable[[float], None]) -> Iterator[None]:
 
 class _Counted:
     """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
-    backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so an ``EmptyRetry``
-    or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
-    takes its place from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
+    backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so a retry inside a
+    caller of a domain's own is charged attempt by attempt, and a ``Retry-After`` resend takes its place from
+    ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
 
     Each noted request takes its place at that same boundary, before it goes out, so a retry inside a caller stops at what
     the tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
@@ -293,6 +315,9 @@ class _Counted:
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         self.requests.admit()
+        asked = _request_digest(system, user)
+        if asked in self.requests.refused:
+            raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
         took: list[None] = []
 
         def next_request() -> None:
@@ -304,6 +329,7 @@ class _Counted:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
                 self.requests.at_a_limit(failed)
+                self.requests.at_a_refusal(failed, asked)
                 raise
             finally:
                 self.requests.count(noted() - len(took))     # a child's totals have no boundary
@@ -315,7 +341,7 @@ class _Counted:
 
 def _workflow(domain: Domain, cut: Cut, settings: LoopSettings, requests: _Requests) -> Workflow:
     run, judge = domain.execution(), domain.judge()
-    models = {name: dataclasses.replace(model, caller=_Counted(model.caller, requests))
+    models = {name: dataclasses.replace(model, caller=_Counted(watched(model.caller), requests))
               for name, model in run.models.items()}
     suite = Suite(dev=cut.tune, selection=cut.selection, held_out=cut.held_out,
                   provenance={"dev": "caller", "held_out": judge.answers_by})
@@ -404,7 +430,7 @@ class ShadowLoop:
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self.evaluating = False                   # this tick has begun its held-out evaluation
         self.requests = _Requests(lambda: self._now(), self._halted)
-        self._proposer = _Counted(proposer, self.requests)
+        self._proposer = _Counted(watched(proposer), self.requests)
         self.root = Path(root).resolve()
         reach = _in_reach(self.root, domain)
         if reach:                                # before anything is written: this folder is all the loop ever writes
@@ -415,10 +441,11 @@ class ShadowLoop:
                                  read_account=read_account)
         for provider, until in self.log.limits().items():
             self.meter.limit_reached(provider, until)
-        self.problems = domain_problems(domain) + caller_problems({"the proposer": proposer})
+        self.problems = domain_problems(domain)
         if backends(proposer) > 1:
             self.problems.append((FALLBACK_MODEL, "the proposer can answer from more than one backend, so a limit on one would "
                                   "pass unseen and its calls could go where no window covers"))
+        self.problems += caller_problems({"the proposer": proposer})
         if not settings.windows:
             self.problems.append((NO_BUDGET, "no provider window: an unknown budget stops the loop"))
         named = tuple(self.meter.windows)
@@ -590,7 +617,7 @@ class ShadowLoop:
         fact, and the pause is only its note."""
         cycles = self.log.since_resumed()
         for cycle in reversed(cycles):
-            if cycle["outcome"] == "sealed_breach" or cycle.get("code") == UNMETERED_CALLER:
+            if cycle["outcome"] == "sealed_breach" or cycle.get("code") in (UNMETERED_CALLER, CLASSIFIER_STOP):
                 return cycle["reason"]
         streak = self.log.failed_streak()
         if streak < MAX_FAILED_CYCLES:
@@ -694,6 +721,7 @@ class ShadowLoop:
         halted: _Halted | None = None
         self.evaluating = False
         self.requests.open(spend.amount, spend.ends)
+        self.requests.refused = {c["classifier_stop"]["request"] for c in self.log.cycles() if c.get("classifier_stop")}
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
                 row = self._row() if breaches else self._cycle(recommended)
@@ -701,12 +729,14 @@ class ShadowLoop:
                 row, limit = self._row(), reached
             except _Halted as reached:
                 row, halted = self._row(), reached
+            except _Refused:
+                row = self._row()
             except Exception as exc:  # noqa: BLE001 - an unattended loop records the failure and lives to its next tick
                 row = {"at": self._now().isoformat(), "domain": self.domain.name, "outcome": "error",
                        "code": CYCLE_FAILED, "reason": f"{type(exc).__name__}: {exc}"[:500]}
             finally:             # use nobody could count stays charged at its worst case
                 charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
-        unseen, stopped = self.requests.unseen, self.requests.stopped
+        unseen, stopped, refusal = self.requests.unseen, self.requests.stopped, self.requests.refusal
         self.requests.close()
         if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
             row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
@@ -717,6 +747,10 @@ class ShadowLoop:
             row |= {"outcome": "error", "code": UNMETERED_CALLER,
                     "reason": "a model caller answered with no request noted, so the loop cannot count what it sends: "
                               "nothing is adopted, and a person gives it a caller that notes each request"}
+        elif refusal is not None:     # a cycle, so it is on the record, and a pause, so nothing rephrases it on the next tick
+            row |= {"outcome": "blocked", "code": CLASSIFIER_STOP, "classifier_stop": refusal,
+                    "reason": f"a classifier or a permission stopped a request ({refusal['said']}): nothing is adopted, it is "
+                              "not sent again, and a person reads this before the loop goes on"}
         elif limit is not None:       # a wait and no cycle, like any other: what ran is charged, and none of it counts
             self.meter.limit_reached(spend.provider, limit.until)
             try:

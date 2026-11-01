@@ -47,6 +47,15 @@ before a held-out evaluation, so a limit already there leaves the split unspent.
 is not caught by that: it reads as a refusal, and spends one of the split's five on a reason untrue of the candidate. A limit
 the reading does not show, such as a passing throttle, goes on like that too. The repair is a code of its own from those
 callers, which waits for an issuance window.
+
+**A classifier or a permission stop** is read the same way: ``refused_by`` takes only G6's own code at the start of the text.
+``AnthropicCaller`` raises that code. Claude Code writes a refusal's ``stop_reason`` ahead of its long ``usage`` record, past
+the 300 characters ``g6.core.host_models`` keeps, so nothing in that error can show one, and that file is bound. So the loop
+calls Claude Code through ``WatchedClaude``, which reads the same fields from the whole result as parsed JSON, before the
+caller cuts it. A model's words stay inside the string ``result``, so they cannot read as a field. This was read from the text
+of Claude Code 2.1.316 and has not been seen at a real refusal, and a version that moves those fields is not read. Codex prints
+text, as above, so a refusal from it reads as a failed case, and the same request goes out again on a later tick. That too
+waits for an issuance window.
 """
 from __future__ import annotations
 
@@ -61,12 +70,16 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from g6.core import component_process
+from g6.core import component_process, host_models
+from g6.core.llm import LLMError
 from g6.core.outside import clean_environment, find_program
 from g6.core.process_tree import ProcessTreeError
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow
 
 REFRESH = timedelta(minutes=15)
+MODEL_REFUSED = "G6_E_MODEL_REFUSED"
+#: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
+_STOPPED_BY = ("dlp_request_denied", "safety_monitor_blocked")
 ASK_TIMEOUT = 30.0
 WEEK_MINUTES = 7 * 24 * 60
 FULL = 100
@@ -151,6 +164,39 @@ def limit_ends(said: str, now: datetime) -> datetime | None:
         return None
     seconds = float(limit["seconds"] or 0)
     return now + (timedelta(minutes=min(seconds / 60, WEEK_MINUTES)) if seconds > 0 else REFRESH)
+
+
+def refused_by(said: str) -> str:
+    """What stopped a failed request, when a classifier or a permission did, or ``""``. It reads only G6's own code at the
+    start of the text: anything a server or a program said comes after that."""
+    return said[:300] if said.startswith(f"{MODEL_REFUSED}:") else ""
+
+
+def _stop_in(result: Mapping[str, Any]) -> str:
+    """What Claude Code's own result says stopped the turn, or ``""``."""
+    if result.get("stop_reason") == "refusal":
+        return "refusal"
+    if result.get("api_error") in _STOPPED_BY:
+        return str(result["api_error"])
+    denied = result.get("permission_denials")
+    return f"permission denied ({len(denied)})" if isinstance(denied, list) and denied else ""
+
+
+class WatchedClaude(host_models.ClaudeCodeCaller):
+    """Claude Code as the loop calls it: as the bound caller, and a stop in its result raises G6's own code."""
+
+    def _reply(self, code: int, printed: str, errors: str, files: Any, hide: tuple[str, ...]) -> str:
+        stopped = _stop_in(host_models._result(printed) or {})
+        if stopped:
+            raise LLMError(f"{MODEL_REFUSED}: {stopped}")
+        return super()._reply(code, printed, errors, files, hide)
+
+
+def watched(caller: Any) -> Any:
+    """``caller``, as ``WatchedClaude`` when it is a plain Claude Code caller. A subclass of a domain's own is left as it is,
+    since it may read the result its own way, and so is any wrapper around one."""
+    plain = type(caller) is host_models.ClaudeCodeCaller
+    return WatchedClaude(caller.model, timeout=caller.timeout) if plain else caller
 
 
 def _number(value: Any) -> bool:
@@ -273,5 +319,5 @@ class AccountReader:
         return self.readings.get(provider)
 
 
-__all__ = ["AccountReader", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "codex_limits", "limit_ends", "limits_reading",
-           "read_limits"]
+__all__ = ["AccountReader", "MODEL_REFUSED", "NOT_REPORTED", "REFRESH", "UsageUnavailable", "WatchedClaude", "codex_limits",
+           "limit_ends", "limits_reading", "read_limits", "refused_by", "watched"]

@@ -16,7 +16,7 @@ from g6.core.llm import LLMError
 from g6.operator.store import OperatorStore
 from g6.self_maintenance import usage
 from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import AccountReader, limit_ends, limits_reading, read_limits
+from g6.self_maintenance.usage import AccountReader, WatchedClaude, limit_ends, limits_reading, read_limits, refused_by
 
 START = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
 NOW = START + timedelta(days=2)
@@ -563,3 +563,66 @@ for line in sys.stdin:
 """
     read_limits(_program(tmp_path, server), timeout=30)
     assert "ANTHROPIC_API_KEY" not in seen.read_text(encoding="utf-8")
+
+
+# A stop a classifier or a permission made, read from what a model cannot write -----------------------------------------------
+
+REFUSAL_NOTICE = ("API Error: Claude can't help with this. Start a new session to continue. Learn more: "
+                  "https://www.anthropic.com/legal/aup Request ID: req_0000000000000000000000 Message ID: msg_00000000000000000000")
+
+
+def test_gs_own_code_for_a_refusal_is_a_stop():
+    assert refused_by("G6_E_MODEL_REFUSED: cyber") == "G6_E_MODEL_REFUSED: cyber"
+
+
+@pytest.mark.parametrize("said", ["HTTP 500 from u: G6_E_MODEL_REFUSED: a server's body", "G6_E_LLM_TIMEOUT: no answer", "",
+                                  "G6_E_LLM_HOST_FAILED: codex exited 1: G6_E_MODEL_REFUSED: what it printed",
+                                  "G6_E_LLM_RATE_LIMITED: HTTP 429 from u"])
+def test_any_other_failure_is_no_such_stop(said):
+    assert refused_by(said) == ""
+
+
+def _watched(printed: str, code: int = 0) -> str:
+    return WatchedClaude()._reply(code, printed, "", Path("."), ("system", "user"))
+
+
+@pytest.mark.parametrize("fields,said", [({"stop_reason": "refusal", "api_error": "invalid_request", "result": REFUSAL_NOTICE}, "refusal"),
+                                         ({"api_error": "safety_monitor_blocked", "result": "x"}, "safety_monitor_blocked"),
+                                         ({"api_error": "dlp_request_denied", "result": "x"}, "dlp_request_denied"),
+                                         ({"permission_denials": [{"tool_name": "Bash"}], "result": "x"}, "permission denied")])
+def test_a_stop_claude_code_reports_is_read_from_the_fields_of_its_whole_result(fields, said):
+    with pytest.raises(LLMError) as raised:
+        _watched(_claude_printed(**fields), code=1)
+    assert said in str(raised.value) and refused_by(str(raised.value))
+
+
+def test_a_refusal_with_no_error_flag_on_it_is_a_stop_all_the_same():
+    printed = json.dumps({"type": "result", "is_error": False, "stop_reason": "refusal", "result": ""})
+    with pytest.raises(LLMError, match="G6_E_MODEL_REFUSED"):
+        _watched(printed)
+
+
+def test_the_same_refusal_through_the_plain_caller_is_lost_with_the_text_it_cuts():
+    """Why a subclass is needed at all. The field is written ahead of the long usage record, and the bound caller keeps only
+    the last 300 characters of what was printed, so nothing in the error it raises can say so."""
+    said = _claude(_claude_printed(stop_reason="refusal", api_error="invalid_request", result=REFUSAL_NOTICE))
+    assert refused_by(said) == "" and "refusal" not in said
+
+
+@pytest.mark.parametrize("prose", ['"stop_reason":"refusal"', '"permission_denials":[{"tool_name":"Bash"}]',
+                                   "safety_monitor_blocked", '"api_error":"safety_monitor_blocked"', "I can't help with that."])
+def test_what_a_model_wrote_never_makes_such_a_stop(prose):
+    assert _watched(json.dumps({"type": "result", "is_error": False, "stop_reason": "end_turn", "result": prose})) == prose
+    with pytest.raises(LLMError) as raised:
+        _watched(_claude_printed(result=f"The reply was: {prose}"), code=1)
+    assert refused_by(str(raised.value)) == ""
+
+
+def test_an_ordinary_answer_comes_back_as_it_did():
+    printed = json.dumps({"type": "result", "is_error": False, "stop_reason": "end_turn", "permission_denials": [], "result": "4"})
+    assert _watched(printed) == "4"
+
+
+def test_a_codex_refusal_is_not_read_since_it_prints_text():
+    """The limit of this: what Codex prints cannot be told from a reply, as with its limits. It waits for an issuance window."""
+    assert refused_by(_codex("ERROR: This content may violate our usage policies.")) == ""

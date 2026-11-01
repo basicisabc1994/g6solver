@@ -116,6 +116,18 @@ def test_a_stop_during_a_tick_ends_the_run_at_once_and_the_days_page_says_what_i
     assert "The runner ended" in page and "at a model call after 3 requests" in page
 
 
+def test_the_days_page_says_a_classifier_stopped_a_request_and_that_it_will_not_go_again(tmp_path):
+    runner, _, domain = _runner(tmp_path)
+
+    def refuses(system: str, user: str) -> str:
+        raise LLMError("G6_E_MODEL_REFUSED: cyber")
+
+    domain.llm._responder = refuses
+    runner.step()
+    said = latest(runner.loop.root).read_text(encoding="utf-8").split("## Stops and pauses")[1]
+    assert "A classifier or a permission stopped a request at tick 1" in said and "not sent again" in said
+
+
 def test_no_sleep_is_longer_than_a_minute_so_a_stop_is_seen_within_one(tmp_path):
     runner, time, _ = _runner(tmp_path, settings=_windows(("claude", 100)))     # never room: it only waits
     _stopped_after(time, timedelta(minutes=10))

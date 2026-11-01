@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from g6.core.ledger import digest
-from g6.core.llm import AnthropicCaller, FakeLLM, OllamaCaller, OpenAICompatibleCaller
+from g6.core.llm import AnthropicCaller, EmptyRetry, FakeLLM, FallbackCaller, OllamaCaller, OpenAICompatibleCaller
 from g6.core.vault import AccessDenied, Vault
 from g6.harness import Check
 from g6.metaharness.executor import ExecutorFactory
@@ -59,6 +59,7 @@ SEALED_OVERLAP = "G6_E_LOOP_SEALED_OVERLAP"
 PAID_MODEL = "G6_E_LOOP_PAID_MODEL"
 UNKNOWN_CALLER = "G6_E_LOOP_UNKNOWN_CALLER"
 PROVIDER_MISMATCH = "G6_E_LOOP_PROVIDER_MISMATCH"
+RETRY_MODEL = "G6_E_LOOP_RETRY_MODEL"
 FALLBACK_MODEL = "G6_E_LOOP_FALLBACK_MODEL"
 INDEPENDENT = "independent"
 #: Who pays for a caller's requests, where it is no provider's subscription.
@@ -288,13 +289,24 @@ def who_pays(caller: Any) -> str:
     return LOCAL if isinstance(caller, FakeLLM | OllamaCaller | OpenAICompatibleCaller) else ""
 
 
+def _retries(caller: Any) -> bool:
+    """Whether a wrapper ``g6.core.llm`` has would send a request again by itself. One of a domain's own is not seen."""
+    if isinstance(caller, EmptyRetry | FallbackCaller):
+        return True
+    return _retries(caller._inner) if hasattr(caller, "_inner") else False
+
+
 def caller_problems(callers: Mapping[str, Any]) -> list[tuple[str, str]]:
     """Why the loop sends nothing through these named callers, each with its stable code."""
     payers = {name: {who_pays(found) for found in _behind(caller)} for name, caller in callers.items()}
     paid, unknown = sorted(n for n, who in payers.items() if PAID in who), sorted(n for n, who in payers.items() if "" in who)
+    retried = sorted(name for name, caller in callers.items() if _retries(caller))
     return [*([(PAID_MODEL, f"the loop never spends API credits, and these call with an API key: {paid}")] if paid else []),
             *([(UNKNOWN_CALLER, f"nothing can say who pays for what these send: {unknown}. Use a host or local caller, or a "
-                                "wrapper that holds one as _inner")] if unknown else [])]
+                                "wrapper that holds one as _inner")] if unknown else []),
+            *([(RETRY_MODEL, f"these send a request again by themselves: {retried}, and a classifier's refusal is never sent "
+                             "again. Use the caller bare, such as ClaudeCodeCaller(), and not through provider_from_env, "
+                             "which wraps it")] if retried else [])]
 
 
 def provider_problems(callers: Mapping[str, Any], provider: str) -> list[tuple[str, str]]:
@@ -321,12 +333,11 @@ def domain_problems(domain: Domain) -> list[tuple[str, str]]:
     paid = sorted(name for name, model in models.items() if model.paid)
     if paid:
         found.append((PAID_MODEL, f"the loop never spends API credits, and these declared models are paid: {paid}"))
-    found += caller_problems({name: model.caller for name, model in models.items()})
     mixed = sorted(name for name, model in models.items() if backends(model.caller) > 1)
     if mixed:
         found.append((FALLBACK_MODEL, f"these declared models can answer from more than one backend: {mixed}. A paired "
                                       "comparison would compare backends, and a limit on one would pass unseen"))
-    return found
+    return found + caller_problems({name: model.caller for name, model in models.items()})
 
 
 # The sealed split stays shut while the loop develops --------------------------------------------------------------
@@ -395,6 +406,7 @@ def sealed_closed(vault: Vault) -> Iterator[list[str]]:
 
 
 __all__ = ["Cut", "Domain", "Execution", "FALLBACK_MODEL", "FEWEST", "FailureRecord", "Judge", "LOCAL", "NO_JUDGE", "NO_SEALED",
-           "PAID", "PAID_MODEL", "PERSON_ONLY", "PROVIDER_MISMATCH", "SEALED_OVERLAP", "SHARES", "SealedSplit", "UNKNOWN_CALLER",
+           "PAID", "PAID_MODEL", "PERSON_ONLY", "PROVIDER_MISMATCH", "RETRY_MODEL", "SEALED_OVERLAP", "SHARES", "SealedSplit",
+           "UNKNOWN_CALLER",
            "backends", "caller_problems", "cut_pool", "domain_problems", "judge_source", "provider_problems", "reason_coded",
            "sealed_closed", "who_pays"]

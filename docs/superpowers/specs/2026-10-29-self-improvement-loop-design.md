@@ -808,6 +808,31 @@ pays for it. It is checked at enrolment and before each tick, and `paid=True` st
 it holds its caller as `_inner`, as G6's do. This reads a type, and it is a check and not a boundary: a caller of a known type can
 do what it likes inside. `g6/core/host_models.py` joined `ENVELOPE_PATTERNS`, since this rests on its classes.
 
+**A classifier or permission stop is an outcome of its own.** Section 3 says the loop records such a stop, reports it and never
+retries it, and until 2026-11-02 nothing did any of that: a refusal read as a failed case, and the next tick sent the same thing
+again. Now a refusal ends the tick at once, and nothing more goes out of it. The cycle is `blocked` with
+`G6_E_LOOP_CLASSIFIER_STOP` and a `classifier_stop` field that holds what was said and a digest of the request, never its text.
+Nothing is adopted, an evaluation it cut off is not one of the split's five, and the day's digest has a line for it. The loop
+then pauses until a person has read it and resumes, because the owner's rule for such a stop is to hold and ask, and any other
+tick would rephrase it: a proposer's next prompt on the same case is a new request. After a resume the exact request is still
+never sent again, across restarts, and reads as a failed case. Only the exact request is known: a changed prompt is a new one,
+and only the pause stands between a refusal and that.
+
+What can read one is limited. `G6_E_MODEL_REFUSED` at the start of an error is G6's own code. For Claude Code, `host_models` keeps
+only the last 300 characters of what was printed, and a refusal's `stop_reason` is written ahead of the long `usage` record, so
+nothing in that error can show one. So the loop calls a plain `ClaudeCodeCaller` as `WatchedClaude`, a subclass outside `g6/core`
+as `ToolSession` is, which reads `stop_reason`, `api_error` and `permission_denials` from the whole result as parsed JSON, where
+a model's words stay inside the string `result`. This was read from the text of Claude Code 2.1.316 and has not been seen at a
+real refusal, and it leans on two private names of a bound file, which tests hold. That program can also retry a refusal itself
+on a fallback model, if one is configured: G6 passes none, and a person's own settings are outside this. A subclass of a domain's
+own, or one held inside a wrapper, is left as it is and reads nothing. Codex prints text, so its refusal is a failed case, and the
+same request goes out again. The repair for both is a code of its own from those callers, at an issuance window.
+
+So that nothing retries by itself, `EmptyRetry` and `FallbackCaller` are refused around a declared model or the proposer, with
+`G6_E_LOOP_RETRY_MODEL`, at enrolment and before each tick. `provider_from_env` wraps its callers in `EmptyRetry`, so a domain
+builds its caller bare: `ClaudeCodeCaller()`, not that. A blank reply is then a failed case, unless a profile's own `retries` asks
+for another try, and a retry inside a caller of a domain's own is not seen, though each attempt is charged.
+
 **One backend to a model.** A `FallbackCaller` that holds two backends is refused at enrolment, for a declared model or the
 proposer, with `G6_E_LOOP_FALLBACK_MODEL`, seen through `EmptyRetry` and `TimingLLMCaller`. It answers from the next backend
 when one fails, for any reason, so a scored run could say nothing of which model answered, a paired comparison would compare

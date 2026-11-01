@@ -30,14 +30,23 @@ from g6.integrity import build_manifest
 from g6.metaharness import JUDGING_PATTERNS, Model, SuiteCase
 from g6.metaharness import domain as sealed_module
 from g6.metaharness.domain import Judge, sealed_closed
-from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop, _Counted, _Halted, _Requests
+from g6.metaharness.loop import (
+    ENVELOPE_PATTERNS,
+    LoopSettings,
+    ShadowLoop,
+    _Counted,
+    _Halted,
+    _Refused,
+    _request_digest,
+    _Requests,
+)
 from g6.metaharness.method import Method
 from g6.metaharness.schema import Workflow, default_objectives
 from g6.metaharness.shadow import lineage
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.envelope import ask_to_stop, stop_to_lift
 from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
-from g6.self_maintenance.usage import AccountReader, UsageUnavailable
+from g6.self_maintenance.usage import AccountReader, UsageUnavailable, WatchedClaude
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -85,6 +94,21 @@ class Retrying(FakeLLM):
         return self.inner(system, user)
 
 
+def _retrying_blanks(base):
+    """``base`` with a retry of a blank reply inside it, as a caller of a domain's own may have. No check can see that one, so
+    these tests hold what the metering does about it. ``EmptyRetry`` itself is refused around a declared model."""
+
+    class RetriesBlanks(base):
+        def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+            for _ in range(4):
+                text = super().complete(system, user, max_tokens=max_tokens)
+                if text.strip():
+                    return text
+            raise LLMError("empty completion on 4 attempts")
+
+    return RetriesBlanks
+
+
 def test_1_a_retry_a_caller_notes_is_charged(tmp_path):
     domain = domains.WordProblems(tmp_path)
     tutor, attempts = domain.tutor, []
@@ -93,8 +117,8 @@ def test_1_a_retry_a_caller_notes_is_charged(tmp_path):
         attempts.append(user)
         return "" if attempts.count(user) == 1 else tutor(system, user)
 
-    backend = FakeLLM(blank_first)
-    _with_model(domain, EmptyRetry(backend))
+    backend = _retrying_blanks(FakeLLM)(blank_first)
+    _with_model(domain, backend)
     proposer = domains.proposes({"prompt": domains.WORKING})
     loop, _ = _enrolled(tmp_path, domain=domain, proposer=proposer)
     loop.tick()
@@ -156,7 +180,7 @@ def test_1_a_tick_stops_at_what_it_reserved_and_what_it_ran_counts_for_nothing(t
 
 def test_1_a_proposer_counts_against_the_tick_as_the_model_does(tmp_path):
     proposer = domains.proposes({"prompt": domains.WORKING})
-    loop, domain = _enrolled(tmp_path, proposer=FallbackCaller((proposer,)))
+    loop, domain = _enrolled(tmp_path, proposer=proposer)
     loop.tick()
     assert loop.meter.reading("claude", NOW).used == len(domain.llm.calls) + len(proposer.calls) > 0
 
@@ -646,11 +670,11 @@ class Busy:
         return io.BytesIO(json.dumps(reply).encode())
 
 
-def _on_a_busy_endpoint(tmp_path, monkeypatch, wrap=lambda caller: caller):
+def _on_a_busy_endpoint(tmp_path, monkeypatch, kind=llm.OpenAICompatibleCaller):
     domain = domains.WordProblems(tmp_path, pool=86, weak=0.0)
     busy = Busy(domain.tutor)
     monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: busy)
-    caller = wrap(llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None))
+    caller = kind("local", base_url="https://unused.invalid", api_key=None)
     run = domain.execution()
     domain.execution = lambda: dataclasses.replace(run, models={"local": Model(caller, max_calls_per_run=1)})
     settings = LoopSettings(windows=(ProviderWindow("claude", 500, START),), audit_per_tick=0, eval_calls=1, method=Method(
@@ -669,7 +693,7 @@ def test_no_resend_of_a_busy_endpoint_passes_what_a_tick_reserved(tmp_path, monk
 
 
 def test_a_resend_behind_a_retry_is_held_to_what_was_reserved_too(tmp_path, monkeypatch):
-    loop, busy, proposer = _on_a_busy_endpoint(tmp_path, monkeypatch, wrap=EmptyRetry)
+    loop, busy, proposer = _on_a_busy_endpoint(tmp_path, monkeypatch, kind=_retrying_blanks(llm.OpenAICompatibleCaller))
     reserved = loop.worst_case()
     assert loop.tick()["budget"]["charged"] == len(busy.sent) + len(proposer.calls) <= reserved
 
@@ -764,8 +788,8 @@ def test_a_clean_tick_on_an_http_caller_reserves_what_any_other_does(tmp_path, m
 
 def test_a_tick_of_blank_replies_stops_at_what_it_reserved_retries_and_all(tmp_path, monkeypatch):
     domain = domains.WordProblems(tmp_path)
-    backend = FakeLLM(default="")
-    _with_model(domain, EmptyRetry(backend))
+    backend = _retrying_blanks(FakeLLM)(default="")
+    _with_model(domain, backend)
     proposer = domains.proposes({"prompt": domains.WORKING})
     loop, _ = _enrolled(tmp_path, domain=domain, proposer=proposer)
     start, reserved = loop.mh._head(), 10
@@ -956,7 +980,7 @@ def test_a_gain_past_the_limit_on_model_calls_is_still_refused(tmp_path):
                 return ""
         return tutor(system, user)
 
-    _with_model(domain, EmptyRetry(FakeLLM(twice_for_the_gain)))
+    _with_model(domain, _retrying_blanks(FakeLLM)(twice_for_the_gain))
     loop, _ = _enrolled(tmp_path, domain=domain)
     head = loop.mh._head()
     got = loop.tick()
@@ -1244,3 +1268,123 @@ def test_outside_a_tick_a_stop_holds_no_request_back(tmp_path):
 def test_a_request_goes_out_when_no_stop_stands(tmp_path):
     loop, domain = _enrolled(tmp_path)
     assert loop.tick()["outcome"] == "adopted"
+
+
+# A classifier or permission stop is an outcome of its own, and nothing retries it ----------------------------------------------
+
+REFUSED = "G6_E_MODEL_REFUSED: cyber"
+
+
+def _refuses_the_third(domain) -> list[tuple[str, str]]:
+    tutor, seen = domain.tutor, []
+
+    def third(system: str, user: str) -> str:
+        seen.append((system, user))
+        if len(seen) == 3:
+            raise LLMError(REFUSED)
+        return tutor(system, user)
+
+    domain.llm._responder = third
+    return seen
+
+
+def test_a_refusal_ends_the_tick_at_once_and_is_on_the_cycle(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    seen, head = _refuses_the_third(domain), loop.mh._head()
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_CLASSIFIER_STOP" and got["completion_state"] == "blocked-escalated"
+    assert got["outcome"] == "blocked" and len(seen) == 3 and loop.mh._head() == head
+    row = loop.log.cycles()[-1]["classifier_stop"]
+    assert row["said"] == REFUSED and row["request"] == _request_digest(*seen[-1])
+
+
+def test_nothing_more_goes_out_that_tick_on_any_thread(tmp_path):
+    requests = _Requests()
+    requests.open(10)
+    with pytest.raises(_Refused):
+        requests.at_a_refusal(LLMError(REFUSED), "a request")
+    with pytest.raises(_Refused):
+        requests.take()
+    assert requests.sent == 0
+
+
+def test_a_refusal_a_proposer_met_ends_the_tick_too(tmp_path):
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(REFUSED)
+
+    loop, _ = _enrolled(tmp_path, proposer=FakeLLM(refuses))
+    assert _code(loop.tick()) == "G6_E_LOOP_CLASSIFIER_STOP"
+
+
+def test_a_refusal_during_an_evaluation_spends_none_of_the_split(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    held, tutor = _held_out_inputs(loop), domain.tutor
+
+    def refused_on_the_held_out_split(system: str, user: str) -> str:
+        if _on_the_held_out_split(user, held):
+            raise LLMError(REFUSED)
+        return tutor(system, user)
+
+    domain.llm._responder = refused_on_the_held_out_split
+    before = loop.mh.held_out_left()
+    assert _code(loop.tick()) == "G6_E_LOOP_CLASSIFIER_STOP" and loop.mh.held_out_left() == before
+
+
+def test_a_refusal_holds_the_loop_until_a_person_has_read_it(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+    loop.tick()
+    assert "stopped a request" in loop.log.paused()
+    calls = len(seen)
+    got = loop.tick()
+    assert _code(got) == "G6_E_LOOP_PAUSED" and len(seen) == calls
+
+
+def test_the_refused_request_is_never_sent_again_even_once_a_person_lifts_the_pause(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+    loop.tick()
+    refused = seen[-1]
+    domain.llm._responder = lambda system, user: seen.append((system, user)) or domain.tutor(system, user)
+    assert loop.resume("Ada")["completion_state"] == "qualified-draft"
+    assert _code(loop.tick()) != "G6_E_LOOP_PAUSED"
+    assert seen.count(refused) == 1
+
+
+def test_a_restart_remembers_what_was_refused(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+    seen = _refuses_the_third(domain)
+    loop.tick()
+    refused = seen[-1]
+    domain.llm._responder = lambda system, user: seen.append((system, user)) or domain.tutor(system, user)
+    again, _ = _loop(tmp_path, domain=domain)
+    assert again.resume("Ada")["completion_state"] == "qualified-draft"
+    again.tick()
+    assert seen.count(refused) == 1
+
+
+def test_a_failure_that_is_no_refusal_is_still_a_failed_case_and_pauses_nothing(tmp_path):
+    loop, domain = _enrolled(tmp_path)
+
+    def refused_in_its_own_words(system: str, user: str) -> str:
+        raise LLMError("HTTP 500 from https://model: G6_E_MODEL_REFUSED: a server's body says this")
+
+    domain.llm._responder = refused_in_its_own_words
+    assert _code(loop.tick()) != "G6_E_LOOP_CLASSIFIER_STOP" and loop.log.paused() == ""
+
+
+def test_the_loop_calls_a_plain_claude_code_caller_as_the_one_that_reads_its_whole_result(tmp_path):
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, host_models.ClaudeCodeCaller("a-model", timeout=7.0))
+    loop, _ = _loop(tmp_path, domain=domain, proposer=host_models.ClaudeCodeCaller())
+    inner = loop.workflow.models["local"].caller.inner
+    assert isinstance(inner, WatchedClaude) and inner.model == "a-model" and inner.timeout == 7.0
+    assert isinstance(loop._proposer.inner, WatchedClaude)
+
+
+def test_the_workflow_a_person_enrolled_is_the_same_whichever_claude_caller_runs_it(tmp_path):
+    plain = domains.WordProblems(tmp_path / "a")
+    _with_model(plain, host_models.ClaudeCodeCaller())
+    watched = domains.WordProblems(tmp_path / "b")
+    _with_model(watched, WatchedClaude())
+    assert (_loop(tmp_path / "a", domain=plain)[0].workflow.digest() == _loop(tmp_path / "b", domain=watched)[0].workflow.digest())

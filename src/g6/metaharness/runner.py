@@ -46,7 +46,7 @@ import importlib.util
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from ctypes import wintypes
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -286,8 +286,10 @@ class Runner:
                           "is one. A runner alive keeps what it read, and a restart is refused until a new g6_improve_start."
                           for w in self.loop.meter.windows.values() if w.estimated)]
 
-    def _stops(self, now: datetime, halted: str) -> list[str]:
+    def _stops(self, now: datetime, halted: str, today: Sequence[dict[str, Any]]) -> list[str]:
         found = [f"The runner ended: {halted}."] if halted else []
+        found += [f"A classifier or a permission stopped a request at tick {c['tick']} ({c['classifier_stop']['said']}). It is "
+                  "not sent again." for c in today if c.get("classifier_stop")]
         pause = self._pause()
         if pause is not None:
             found.append(pause["reason"])
@@ -313,7 +315,7 @@ class Runner:
             halted = f"{halted} The generations could not be read: {exc}"[:200].strip()
         return digest.render(day, domain=self.loop.domain.name, status=STATUS_LINE, cycles=today, use=self._use(now),
                              constraint=named[-1] if named else None, generations=generations,
-                             decisions=self._decisions(), stops=self._stops(now, halted))
+                             decisions=self._decisions(), stops=self._stops(now, halted, today))
 
     def _digest(self, now: datetime, halted: str = "") -> None:
         """Today's page, and the day just ended, whole, when the date has moved on. A pass closes a day before its tick,
