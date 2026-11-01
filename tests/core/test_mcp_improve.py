@@ -370,6 +370,31 @@ def test_stop_still_works_with_a_broken_settings_file_and_broken_records(rig):
     assert rig.call("g6_improve_stop", folder=str(rig.root))["stopped"] is True and (rig.root / "STOP").exists()
 
 
+def test_stop_reaches_a_live_runner_whose_settings_and_records_are_gone(rig):
+    rig.enrol()
+    with runner_lock(rig.root):
+        (rig.root / "settings.json").unlink()
+        (rig.root / CYCLE_LOG).unlink()
+        got = rig.call("g6_improve_stop", folder=str(rig.root), reason="stop despite damaged records")
+        assert (rig.root / "STOP").read_text(encoding="utf-8") == "stop despite damaged records\n"
+        assert _code(got) == "G6_E_LOOP_STOP_ASKED" and got["running"] is True and got["stopped"] is False
+
+
+def test_stop_reaches_a_folder_a_runner_once_held_with_nothing_else_left(rig):
+    with runner_lock(rig.root):
+        pass
+    (rig.root / "settings.json").unlink()
+    assert rig.call("g6_improve_stop", folder=str(rig.root))["stopped"] is True and (rig.root / "STOP").exists()
+
+
+def test_status_reads_a_live_runner_whose_settings_and_records_are_gone(rig):
+    rig.enrol()
+    with runner_lock(rig.root):
+        (rig.root / "settings.json").unlink()
+        (rig.root / CYCLE_LOG).unlink()
+        assert improve.status(str(rig.root))["running"] is True
+
+
 def test_stop_on_a_folder_that_is_no_loops_writes_nothing_and_says_so(rig, tmp_path):
     (tmp_path / "plain").mkdir()
     got = rig.call("g6_improve_stop", folder=str(tmp_path / "plain"))

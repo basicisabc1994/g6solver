@@ -35,6 +35,7 @@ from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
     CYCLE_LOG,
     FINDINGS,
+    RUNNER_LOCK,
     STOP_FILE,
     CycleLog,
     ask_to_stop,
@@ -90,7 +91,8 @@ def _root(folder: str) -> Path:
 
 
 def _is_a_loop(root: Path) -> bool:
-    return (root / SETTINGS_FILE).is_file() or (root / CYCLE_LOG).is_file()
+    """Its settings, its records or a runner's lock: a runner must stay within reach with the first two gone."""
+    return (root / SETTINGS_FILE).is_file() or (root / CYCLE_LOG).is_file() or (root / RUNNER_LOCK).is_dir()
 
 
 def _not_a_loop(root: Path) -> dict:
