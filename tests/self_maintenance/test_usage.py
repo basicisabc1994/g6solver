@@ -299,6 +299,40 @@ def test_any_other_field_that_makes_no_sense_makes_the_reply_unreadable(fields):
     assert limits_reading(_limits(25, **fields), WINDOW, NOW) is None
 
 
+def test_a_weekly_figure_whose_own_reset_has_passed_is_of_a_week_that_ended():
+    """A tool that has not caught up with its own reset says last week's use. Its own word on when that ended stands."""
+    gone = int((NOW - timedelta(seconds=1)).timestamp())
+    got = limits_reading(_limits(90, resets=gone), WINDOW, NOW)
+    assert got.used == 0 and got.estimated is True and got.resets_at is None and got.limited_until is None
+
+
+def test_a_figure_with_a_reset_on_the_moment_it_is_read_has_ended_too():
+    assert limits_reading(_limits(90, resets=int(NOW.timestamp())), WINDOW, NOW).used == 0
+
+
+def test_a_full_week_whose_reset_has_passed_is_looked_at_again_and_carries_no_figure():
+    gone = int((NOW - timedelta(hours=1)).timestamp())
+    got = limits_reading(_limits(100, resets=gone), WINDOW, NOW)
+    assert got.used == 0 and got.limited_until == NOW + usage.REFRESH
+
+
+def test_a_stale_reply_after_a_reset_does_not_carry_last_weeks_use_into_the_new_one():
+    reset = NOW + timedelta(minutes=1)
+    stale = _limits(90, resets=int(reset.timestamp()))
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(stale)})
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    reader.refresh(NOW)
+    assert meter.reading("codex", NOW).used == 900
+    after = reset + timedelta(seconds=1)
+    reader.refresh(after)
+    assert meter.reading("codex", after).used == 0
+
+
+def test_a_reset_past_the_end_of_its_window_still_keeps_the_figure():
+    """That reset is nonsense, which says nothing of the figure. A reset that has passed says the figure is over."""
+    assert limits_reading(_limits(40, resets=FAR_OFF), WINDOW, NOW).used == 400
+
+
 def test_a_limit_whose_reset_has_passed_is_looked_at_again_later():
     gone = int((NOW - timedelta(hours=1)).timestamp())
     assert limits_reading(_limits(40, allowed=False, resets=gone), WINDOW, NOW).limited_until == NOW + usage.REFRESH

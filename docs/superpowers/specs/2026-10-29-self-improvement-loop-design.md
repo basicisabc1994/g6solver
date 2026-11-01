@@ -616,7 +616,9 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   charged meanwhile on top, because the owner uses this account too and the meter must not read low for want of a tool
   (the coordinator's ruling, 2026-11-01). Past its reset a figure counts for nothing, though a limit it came with stands to
   its own end, and the tool is read at once, not up to 15 minutes later, so the old week's use never holds back the new week's
-  first tick. That figure is held in memory, so a restart whose first read fails
+  first tick. A tool that has not caught up can still answer with a reset already gone: that figure is last week's, so it is
+  left out and the meter is on its own count until a read says otherwise. That figure is held in memory, so a restart whose
+  first read fails
   starts on the meter's own count. Claude Code (2.1.316) lists no such command, so Claude's meter stays on model calls.
 
 **How to run it.** A folder holds `settings.json`. A tool given no folder uses the one beside G6's state folder, `~/.g6-improve` by

@@ -86,6 +86,7 @@ _STOPPED_BY = ("dlp_request_denied", "safety_monitor_blocked")
 _TELL: contextvars.ContextVar[Callable[[str], None] | None] = contextvars.ContextVar("g6_loop_stops", default=None)
 ASK_TIMEOUT = 30.0
 WEEK_MINUTES = 7 * 24 * 60
+WEEK = timedelta(minutes=WEEK_MINUTES)
 FULL = 100
 READ_LIMITS = "account/rateLimits/read"
 #: What ``codex app-server`` needs before it answers: the third line is the only question.
@@ -253,7 +254,8 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     """``limits`` as the meter reads them, or ``None`` when they do not read: use in the meter's own unit from the
     week's percentage, and a limit when a window is full or the provider says ordinary use is not allowed. One field that
     makes no sense loses the whole reply, since a reply that wrong says nothing about the rest. A limit whose reset has
-    passed is still a limit, so it is looked at again as one with no reset is."""
+    passed is still a limit, so it is looked at again as one with no reset is. A week whose own reset has passed is another
+    matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it."""
     snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
     if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
         return None
@@ -264,7 +266,8 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     full = [w for w in seen if w["usedPercent"] >= FULL]
     resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
-    if week is None:
+    ended = week is not None and (_time(week.get("resetsAt")) or now + WEEK) <= now
+    if week is None or ended:
         return AccountReading(limited_until=until)
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
                           resets_at=_reset(week, now) or window.week_end(now))
