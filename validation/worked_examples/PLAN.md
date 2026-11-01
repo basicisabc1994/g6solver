@@ -1220,3 +1220,47 @@ No rule, arm or bug changes here. `compare.py` could not yet report what the two
 - **Three more kills, by the session's memory guard.** Three K1 runs were killed part way, `click-3434` once and `starlette-3166` twice, measured at $0.09, $0.08 and $0.35. All are closed as killed, not counted as failed, and remade, as the rule on infrastructure kills says. Their containers stayed up with nothing driving them, so any spend after the kill is not in the tally. These are counted with the earlier orphaned run in the report.
 - **A verdict recovered from its record.** `run.py` prints at most 8,000 characters, so the check of `K1-attrs-1509-1`, four rounds long, cut its own verdict off, and `loop.one` said "no verdict" twice. The check had finished both times with the same result. The row was written from that check's saved record, once every patch of that run matched the record by size. No run was repeated and no outcome was read to do it. `check` with no run named scores the latest run of a bug, so retrying that check after repeat 2 had finished would have scored the wrong patch: this is why the row was not left to a retry. `run.py` is unchanged. The same printing limit cannot give a wrong verdict, only none.
 - **The run order changed by accident.** That stop made the stream skip to the held-out bugs, so K1's last four fresh bugs ran after them. No rule depends on that order.
+
+## 2026-11-02: stage 1's result
+
+Every run had ended and every amended verdict was in at 08:30, and no score was read before that. Killed runs were remade as recorded above.
+
+**The rule.** Neither primary meets it, on either score, so uplift over Claude Code alone on stage 1 is not shown. Neither clears 0.025, and the 95% target is not met. M9's best is 72.7% and K1's 68.2%, both on the amended tests.
+
+| Runs passed | A | T | R (report only) | M9 | K1 |
+|---|---:|---:|---:|---:|---:|
+| Eleven fresh bugs, 22 runs, maintainers' tests | 10 | 9 | 9 | 9 | 9 |
+| Eleven fresh bugs, 22 runs, amended tests | 13 | 12 | 13 | 16 | 15 |
+| The seven determined bugs, 14 runs, both scores | 9 | 8 | 9 | 8 | 8 |
+| Held-out second look, 3 bugs, 15 runs, both scores | 5 | 0 | 5 | 6 | 5 |
+| Training, tuned, 14 runs, maintainers' tests | 9 | not run | not all run | 12 (L9) | 12 |
+| Training, tuned, 14 runs, amended tests | 11 | not run | not all run | 14 (L9) | 14 |
+
+| Pairs that differ | Against A, maintainers | Against A, amended | Against T, maintainers | Against T, amended |
+|---|---|---|---|---|
+| M9, fresh | 1-2, p 0.875 | 4-1, p 0.188 | 0-0 | 4-0, p 0.063 |
+| K1, fresh | 0-1, p 1.000 | 3-1, p 0.313 | 1-1, p 0.750 | 4-1, p 0.188 |
+| M9, held-out | 6-5, p 0.500 | the same | 6-0, p 0.016 | the same |
+| K1, held-out | 5-5, p 0.623 | the same | 5-0, p 0.031 | the same |
+
+The 95% interval by bug on the amended tests against A is -5% to +36% for M9 and -9% to +32% for K1.
+
+**What the counts show.** These are counts by bug and arm. No fix, test, run or reply of these bugs was read for them.
+
+- **Most bugs cannot separate the arms.** On the maintainers' tests 9 of the 11 fresh bugs gave every arm the same score: four passed in every arm and five failed in every arm. So at most 3 of 22 pairs differ, and the rule needs at least 5.
+- **The loops' gain sits on the amended bugs.** On those four bugs, 8 runs, the amended tests give A 4, T 4, R 4, M9 8 and K1 7. On the seven determined bugs the loops are one run behind A.
+- **Two effects cancel on the held-out bugs.** `click-3769`: A 0, T 0, R 5, M9 4, K1 5 of 5. `starlette-3718`: A 5, T 0, R 0, M9 0, K1 0. `black-5521`: M9 2, every other arm 0.
+- **The issue's discussion is the likely reason for the second.** Every arm that reads it scored 0 of 5 on `starlette-3718`, and the only arm that does not scored 5 of 5. T against A over the 37 pairs is 1 win and 7 losses on the maintainers' tests. R, M9 and K1 all carry the discussion. This rests on one bug, and its cause has not been read, so it is a hypothesis.
+- **"Clean" did not mean right.** K1 said clean on 8 fresh runs, right on 3 by the maintainers' tests and on 6 by the amended ones, and on 10 held-out runs, right on none. All 8 held-out runs whose last review found nothing were wrong. M9's "clean" was right on 6 of 11 fresh runs by the maintainers' tests, 11 of 11 by the amended tests, and 3 of 9 held-out. A's "done" was right on 10 of 22, 13 of 22 and 5 of 15.
+- **Repairs ran out** on 13 of K1's 22 fresh runs and 2 of its 15 held-out runs.
+- **Training did not carry.** K1 and L9 went from 12 of 14 on training to 9 of 22 on fresh bugs, while A went from 9 of 14 to 10 of 22. The bugs differ, so this is a rough reading, but the uplift over A fell from +21% to -5% on the maintainers' tests.
+
+**What it does not show.** That the loops have no effect. The rule was expected to fire about one time in three at 11 bugs even if the training effect were real, and the interval on the amended tests includes useful gains. M9 and K1 do beat T on the held-out bugs, but the rule asks for A as well.
+
+**Spend.** $82.74 by the runner and $34.65 for Fable's reviews, $117.39 of $180. What the orphaned containers spent after their kills is unmeasured.
+
+**Still to come for stage 1:** the final review of these patches, report only.
+
+**Stage 2 stands as frozen.** Its bugs are unseen, and M9, K1, the rule and the order do not change.
+
+**One exploratory arm is added, before any stage 2 run: K0.** It is K1's review loop on arm A's prompt, without the discussion. It tests the hypothesis above, and it is closer to the product, where K reviews whatever a person asked and nobody supplies a discussion. It was chosen after reading this table, so it is report only: never a primary, no verdict of the rule, and it runs last on each bug, so `finished` never waits for it. A good result would be a hypothesis for a fresh test, not a finding.
