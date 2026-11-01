@@ -20,6 +20,8 @@ from g6.metaharness.method_rca import compare_methods
 
 SCORES =("maintainers", "amended")
 DETERMINED = ("pydantic-13243", "black-5148", "click-3434", "click-3404", "starlette-3189", "fastapi-14616", "fastapi-13920")
+DETERMINED_2 = ("urllib3-5347", "urllib3-5254", "charset-normalizer-772", "pygments-3204", "pygments-3158", "pluggy-809", "botocore-3852", "anyio-1424",
+                "anyio-1354", "s3transfer-423", "python-dotenv-700", "pyjwt-1201", "platformdirs-666")      # the blind audit (PLAN.md, 2026-11-02)
 TARGET = 0.95
 TWO_PRIMARIES = 0.025       # the bar with M9 and K1 both counted (PLAN.md, 2026-11-01): beside the rule, never in place of it
 EXPLORATORY = ("K0",)       # chosen after a result was read (PLAN.md, 2026-11-02): a report, never a verdict of the rule
@@ -235,6 +237,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     stage_2 = finished(rows, unseen, (args.loop, args.second, "A", "T", "R"), (1, 2))
     print(f"stage 2: {len(stage_2)} of {len(unseen)} bugs finished, in the frozen order")
     report(rows, "stage 2, new repos", stage_2, (1, 2), loop_arm=args.loop)
+    report(rows, "stage 2, determined", [t for t in stage_2 if t in DETERMINED_2], (1, 2), loop_arm=args.loop)
     report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop, tuned=later)
     report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",), tuned=True)
     rich(rows, "stage 2, failure-rich", stage_2, (1, 2), args.loop)
@@ -242,6 +245,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     report(rows, f"{second}stage 1, all eleven", fresh, (1, 2), loop_arm=args.second, control=shown, tuned=later_second)
     report(rows, f"{second}stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.second, control=shown, tuned=later_second)
     report(rows, f"{second}stage 2, new repos", stage_2, (1, 2), loop_arm=args.second, control=shown)
+    report(rows, f"{second}stage 2, determined", [t for t in stage_2 if t in DETERMINED_2], (1, 2), loop_arm=args.second, control=shown)
     rich(rows, f"{second}stage 2, failure-rich", stage_2, (1, 2), args.second, control=shown)
     report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown, tuned=later_second)
     report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",), tuned=True)

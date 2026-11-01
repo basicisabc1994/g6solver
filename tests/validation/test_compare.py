@@ -277,7 +277,7 @@ def test_k1_is_judged_in_sections_of_its_own_and_never_pooled_with_m9(tmp_path, 
                     "K1, training, tuned"):
         assert any(line.startswith(section) for line in lines), section
     judged = [line for line in lines if " uplift " in line and "report only" not in line]
-    assert len(judged) == 44      # each primary, on two scores: four sections and failure-rich against A and T, one tuned against A
+    assert len(judged) == 52      # each primary, on two scores: five sections and failure-rich against A and T, one tuned against A
     assert all(" K1 " in line for line in judged if line.startswith("K1, "))
     assert not any(" K1 " in line for line in judged if not line.startswith("K1, "))
     for section, shown in (("K1, stage 1, all eleven", "K1   2/2"), ("K1, stage 2, new repos", "K1   2/2"),
@@ -310,6 +310,23 @@ def test_stage_3_is_judged_against_k1_its_parent_as_well_as_a_and_t(tmp_path, mo
               if line.startswith("stage 3, new repos") and " uplift " in line and "report only" not in line]
     assert sum(" P1 " in line for line in judged) == 6 and sum(" K1 " in line for line in judged) == 2
     assert not any(" M9 " in line for line in judged)
+
+
+def test_stage_2s_determined_bugs_are_reported_beside_all_of_them_and_read_the_rule_on_their_own(tmp_path, monkeypatch, capsys):
+    determined, other = compare.DETERMINED_2[0], "charset-normalizer-715"
+    rows = {(arm, task, repeat): {"maintainers": arm == "K1", "amended": arm == "K1"} for arm in ("M9", "K1", "A", "T", "R")
+            for task in (determined, other) for repeat in (1, 2)}
+    tasks = {compare.we.TASKS_FRESH: [], compare.we.TASKS_UNSEEN: [determined, other], None: []}
+    monkeypatch.setattr(compare.c, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(compare, "saved", lambda root: rows)
+    monkeypatch.setattr(compare.we, "R3_HELD", ())
+    monkeypatch.setattr(compare.we, "load_tasks", lambda path=None: [type("Task", (), {"id": t}) for t in tasks[path]])
+    compare.main([])
+    lines = capsys.readouterr().out.splitlines()
+    assert other not in compare.DETERMINED_2
+    assert any(line.startswith("K1, stage 2, determined") and "K1   2/2" in line for line in lines)
+    assert any(line.startswith("K1, stage 2, new repos") and "K1   4/4" in line for line in lines)
+    assert any(line.startswith("stage 2, determined") and "M9   0/2" in line for line in lines)
 
 
 def test_stage_3_gets_no_verdict_on_stage_1_bugs_which_are_development_for_it(tmp_path, monkeypatch, capsys):
