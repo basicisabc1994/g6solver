@@ -85,6 +85,21 @@ def test_a_single_text_is_not_a_list_of_cases_so_one_case_cannot_match_inside_an
         _lesson(cases="case-10")
 
 
+def test_an_iterator_is_not_a_list_of_cases_since_checking_it_would_empty_it():
+    with pytest.raises(ValueError, match="case_ids"):
+        _lesson(cases=iter(("c1",)))
+
+
+@pytest.mark.parametrize("generation", [float("nan"), 1.5, True, -1])
+def test_a_generation_that_is_not_a_whole_number_is_refused_since_it_would_hide_every_repeat(generation):
+    with pytest.raises(ValueError, match="generation"):
+        _lesson(generation=generation)
+
+
+def test_a_row_with_no_readings_is_not_trusted_even_at_a_floor_of_nothing():
+    assert not trusted((Calibration("clean", "unseen", agreed=0, readings=0, groups=0, groups_agreed=0, lower=0.0),), "clean", "unseen", 0.0)
+
+
 def test_a_mistake_counts_as_repeated_only_after_its_lesson():
     seen = [(1, "verification_gap", "c1"), (2, "verification_gap", "c2"), (2, "bad_remediation", "c3"), (3, "verification_gap", "c1")]
     got = repeats([_lesson(generation=1)], seen)

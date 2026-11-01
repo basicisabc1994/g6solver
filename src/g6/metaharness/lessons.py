@@ -66,7 +66,7 @@ def calibrate(readings: Iterable[Reading]) -> tuple[Calibration, ...]:
 
 def trusted(table: Sequence[Calibration], signal: str, kind: str, floor: float) -> bool:
     """Whether a signal may be relied on for this kind of task. One never measured there is not."""
-    return any(row.signal == signal and row.kind == kind and row.lower >= floor for row in table)
+    return any(row.signal == signal and row.kind == kind and row.readings > 0 and row.lower >= floor for row in table)
 
 
 def gap(tuned: Calibration, unseen: Calibration) -> float:
@@ -91,13 +91,15 @@ class Lesson:
     def __post_init__(self) -> None:
         if self.root_cause not in ROOT_CAUSES:
             raise ValueError(f"root_cause must be one of {', '.join(ROOT_CAUSES)}")
+        if type(self.generation) is not int or self.generation < 0:
+            raise ValueError("generation must be a whole number of at least 0")
         for name in ("lesson_id", "hypothesis", "check", "scope"):
             if not getattr(self, name).strip():
                 raise ValueError(f"{name} is required")
         for name in ("case_ids", "alternatives"):
             value = getattr(self, name)
-            if isinstance(value, str) or not value or not all(isinstance(x, str) and x.strip() for x in value):
-                raise ValueError(f"{name} must be a non-empty collection of texts")
+            if not isinstance(value, tuple | list) or not value or not all(isinstance(x, str) and x.strip() for x in value):
+                raise ValueError(f"{name} must be a non-empty tuple or list of texts")
 
 
 def repeats(lessons: Iterable[Lesson], seen: Iterable[tuple[int, str, str]]) -> dict[str, dict[str, int]]:
