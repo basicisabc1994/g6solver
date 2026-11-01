@@ -21,6 +21,7 @@ from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
 from g6.core.llm import FakeLLM, LLMError
+from g6.harness import completion_hook as hook
 from g6.harness import completion_loop as loop
 from g6.harness import patch_report
 from g6.harness import verification_proposer as proposer
@@ -1490,7 +1491,7 @@ def test_a_hook_killed_in_the_final_review_of_a_rejection_keeps_the_agents_reaso
     assert row["left"] == "They misread the task." and "They misread the task." in step.text
 
 
-def test_a_stop_with_no_python_changed_carries_its_code_and_a_hook_stays_silent(world, monkeypatch):
+def test_a_stop_with_no_python_changed_carries_its_code_and_no_report(world, monkeypatch):
     runs = Runs(monkeypatch)
     step = world.advance(critic=reviewer("never"))
     assert (step.action, step.text, step.code) == (loop.STOP, "", "G6_E_NO_PYTHON_CHANGED")
@@ -2303,3 +2304,185 @@ def test_a_test_that_will_not_run_beside_a_failing_one_is_not_retried_and_later_
     outcome[0] = "passed"
     step = world.advance(critic=critic)
     assert len(critic.calls) == 3 and loop.CLEAN not in step.text and step.code == loop.NOT_REPRODUCED
+
+
+# --- a session's loops, through the hooks and the real loop: the defect was in the join between them ---------------------------
+
+def approved(monkeypatch, critic) -> None:
+    """The person's key file approves a reviewer, which is how a Stop hook finds ``critic``."""
+    monkeypatch.setattr(keys, "read", lambda: {loop.CRITIC_LINE: "codex"})
+    monkeypatch.setattr(host_models, "CodexCaller", lambda timeout: critic)
+
+
+def prompted(world, text: str) -> dict:
+    return hook.on_prompt({"session_id": "s1", "cwd": str(world.repo), "prompt": text})
+
+
+def stopped(world, said: str = "") -> dict:
+    return hook.on_stop({"session_id": "s1", "cwd": str(world.repo), "last_assistant_message": said})
+
+
+def test_a_new_prompt_after_a_loop_ended_arms_a_new_one(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    assert loop.CLEAN in stopped(world)["systemMessage"]
+    prompted(world, "now handle strings too")
+    world.edit(FIXED + "# strings\n")
+    said = stopped(world)
+    assert len(critic.calls) == 2, "the next task in the session went unreviewed"
+    assert "now handle strings too" in critic.calls[1][1] and "# strings" in critic.calls[1][1]
+    assert loop.CLEAN in said["systemMessage"]
+
+
+def test_each_loop_of_a_session_keeps_its_own_row_and_patches(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    prompted(world, "and again")
+    world.edit(FIXED + "# again\n")
+    stopped(world)
+    first, second = rows(world)
+    assert first["session"] != second["session"]
+    for row in (first, second):
+        kept = (world.session.parent / row["session"] / "rounds" / "round-1.patch").read_bytes().decode("utf-8")
+        assert digest(kept) == row["reviews"][0]["patch"]
+
+
+def test_two_loops_on_one_base_are_two_runs_and_a_third_is_armed_too(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "one")
+    for n in range(3):
+        world.edit(FIXED + f"# {n}\n")
+        stopped(world)
+        prompted(world, f"then {n}")
+    assert len(critic.calls) == 3 and len({row["session"] for row in rows(world)}) == 3
+
+
+def test_a_commit_between_two_tasks_moves_the_base_and_the_task_is_the_new_prompt(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    git(world.repo, "add", "mod.py")
+    git(world.repo, "commit", "-qm", "the first task")
+    head = git(world.repo, "rev-parse", "HEAD")
+    prompted(world, "handle strings")
+    assert json.loads((hook.folder("s1") / "task.json").read_text(encoding="utf-8"))["base"] == head
+    world.edit(FIXED + "# strings\n")
+    stopped(world)
+    assert "handle strings" in critic.calls[1][1] and "fix double" not in critic.calls[1][1]
+    assert f"parent/mod.py:\n{FIXED}" in critic.calls[1][1]
+
+
+def test_on_one_base_the_earlier_task_stays_as_the_patch_still_holds_that_work(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    prompted(world, "handle strings")
+    world.edit(FIXED + "# strings\n")
+    stopped(world)
+    assert "fix double" in critic.calls[1][1] and "handle strings" in critic.calls[1][1]
+
+
+def test_a_prompt_that_changes_nothing_after_a_loop_ended_spends_no_review_and_says_why(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    prompted(world, "thanks")
+    said = stopped(world)
+    assert len(critic.calls) == 1
+    assert "did not run" in said.get("systemMessage", ""), "the person was told nothing"
+    assert "has not changed" in said["systemMessage"] and "\n" not in said["systemMessage"]
+    world.edit(FIXED + "# a real change after all\n")
+    assert loop.CLEAN in stopped(world, "done")["systemMessage"] and len(critic.calls) == 2
+
+
+def test_a_stop_with_no_python_changed_tells_the_person_in_one_line(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("never")
+    approved(monkeypatch, critic)
+    prompted(world, "what does double do?")
+    said = stopped(world)
+    assert "did not run" in said.get("systemMessage", "") and "no Python changed" in said["systemMessage"]
+    assert "\n" not in said["systemMessage"] and not critic.calls
+
+
+def test_a_stop_after_a_loop_ended_with_no_new_prompt_says_so(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer("none", "never")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    world.edit(FIXED + "# later\n")
+    said = stopped(world)
+    assert "did not run" in said.get("systemMessage", "") and "\n" not in said["systemMessage"]
+    assert len(critic.calls) == 1
+
+
+def test_a_refused_run_is_armed_again_by_the_next_prompt(world, monkeypatch):
+    Reviewed(monkeypatch)
+    monkeypatch.setattr(keys, "read", lambda: {})
+    prompted(world, "fix double")
+    world.edit()
+    assert "did not run" in stopped(world)["systemMessage"]
+    critic = reviewer("none")
+    approved(monkeypatch, critic)      # the person added the line the report named
+    prompted(world, "I added the line")
+    stopped(world)
+    assert len(critic.calls) == 1
+
+
+def test_a_row_the_log_kept_out_is_written_before_a_new_prompt_leaves_its_run_behind(world, monkeypatch):
+    monkeypatch.setattr(_coordination, "MUTEX_WAIT", 0.05)
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    with _coordination.Coordination(world.session.parent / ".failures").mutex():
+        stopped(world, "They misread the task.")
+    assert not rows(world)
+    prompted(world, "thanks")
+    assert len(rows(world)) == 1
+
+
+def test_a_prompt_while_a_loop_runs_arms_nothing_and_moves_nothing(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one", "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    stopped(world)
+    before = (hook.folder("s1") / "task.json").read_text(encoding="utf-8")
+    prompted(world, "and one more thing")
+    assert (hook.folder("s1") / "task.json").read_text(encoding="utf-8") == before
+
+def test_a_review_that_failed_read_nothing_so_the_next_prompt_may_review_the_same_patch(world, monkeypatch):
+    Reviewed(monkeypatch)
+    critic = reviewer(LLMError("gone away"), "none")
+    approved(monkeypatch, critic)
+    prompted(world, "fix double")
+    world.edit()
+    assert "gone away" in stopped(world)["systemMessage"]
+    prompted(world, "try that again")
+    said = stopped(world)
+    assert len(critic.calls) == 2, "a review that failed was counted as having read the patch"
+    assert loop.CLEAN in said["systemMessage"]

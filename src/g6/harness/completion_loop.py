@@ -143,6 +143,12 @@ NOT_ON = ("G6's completion loop did not run: nothing in your key file approves a
           "G6_LLM_PROVIDER=claude_code turns on the scouts' loop instead. Nothing was tested.")
 NO_TASK = ("G6's completion loop did not run: it could not tell what you asked for, so there was nothing to test the work "
            "against. Nothing was tested.")
+#: The lines a hook shows where a loop did not run and so no report came: one for each reason.
+NOTHING_CHANGED = "G6's completion loop did not run: no Python changed against the base commit, so nothing was tested."
+ALREADY_READ = ("G6's completion loop did not run: the patch has not changed since a review of this session read it, so no "
+                "review was spent on it.")
+ALREADY_ENDED = ("G6's completion loop did not run: it has already ended for this task, and its report stands. Your next "
+                 "prompt starts a new loop.")
 TOO_LONG = (f"the task and the patch are past the {MAX_PACK_CHARS:,} characters a review can read whole, so no reviewer was "
             "asked")
 STOPPED = {"no_counterexample_in_domain": "no probe failed", "timeout": "the loop's time ran out",
@@ -617,10 +623,12 @@ class Repairs:
 class Step:
     """What comes next: ``CONTINUE``, with the text for the agent; ``STOP``, with the report ("" when there is none); or
     ``WAIT``, when another step of the session was running and this one did nothing. ``code``: the stable code of a call
-    that tested nothing or left no clean review, for a surface with G6's envelope."""
+    that tested nothing or left no clean review, for a surface with G6's envelope. ``note``: with no report, the line a hook
+    shows the person in its place, as a tool's reply has its own words for what did not run."""
     action: str
     text: str = ""
     code: str = ""
+    note: str = ""
 
 
 def _load(session: Path) -> dict:
@@ -879,7 +887,7 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         if "row_due" in state:
             _write_row(session, state)
             _save(session, state)
-        return Step(STOP, code=state.get("code", ""))
+        return Step(STOP, code=state.get("code", ""), note=ALREADY_ENDED)
     root = repo_tests.checked_repo(repo)
     change = repo_tests.change(root, base)
 
@@ -890,7 +898,9 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
 
     if not change.sources:
         return (_review_end(root, task, base, change, session, state, WITHDRAWN) if state.get("reviews") else
-                Step(STOP, code=NO_PYTHON))
+                Step(STOP, code=NO_PYTHON, note=NOTHING_CHANGED))
+    if state.get("reviewed") and "started" not in state and state["reviewed"] == digest(repo_tests.diff_text(change)):
+        return Step(STOP, note=ALREADY_READ)
     if not task.strip():
         return refused(NO_TASK, "G6_E_INPUT_VALIDATION")
     why = proposer.boundary(root)
