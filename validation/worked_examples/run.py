@@ -722,7 +722,7 @@ def prompt(task: Task, title: str, text: str, arm: str = "") -> str:
     """The run's prompt: round 1's (and round 3's arm B), round 3's arm A without the G6 instruction, or arm C with the
     addendum."""
     texts = {"": PROMPT, "B": PROMPT, "A": PROMPT_A, "C": PROMPT_C, "D": PROMPT_D, "E": PROMPT_D, "T": PROMPT_A, "R": PROMPT_A,
-             **dict.fromkeys(CONVERT_ARMS, PROMPT_A)}
+             "S": PROMPT_A, **dict.fromkeys(CONVERT_ARMS, PROMPT_A)}
     if re.fullmatch(r"K\d+", arm):
         texts[arm] = PROMPT_A
     if re.fullmatch(r"[GH]\d+", arm):
@@ -965,10 +965,17 @@ ARM_STATE = ("echo we-arm-state >/dev/null; python3 -I -c 'import json, os\n"
              "\"skills\": sorted(os.listdir(s)) if os.path.isdir(s) else []}))'")
 
 
+def screened(task_id: str) -> bool:
+    """Whether arm S may run on a bug: stage 2's bugs and stage 3's development pool."""
+    return any(task.id == task_id for task in (*load_tasks(TASKS_UNSEEN), *load_tasks(TASKS_DEV)))
+
+
 def r3_loop_key(key: tuple[str, str, str, int]) -> bool:
     """A run of the distillation loop: Sonnet, twice. A and E on any bug, ``G<n>`` on training bugs, ``H<n>`` (the same
     text) on the held-out ones. The final comparison runs A and ``H<n>`` five times on each held-out bug."""
     model, task, arm, repeat = key
+    if arm == "S":      # screening has its own runs: never rows of the comparison, and only where no arm has run (PLAN.md, 2026-11-01)
+        return model == R3_MODELS[1] and repeat in (1, 2, 3) and screened(task)
     if arm in CONVERT_ARMS:      # development: never a bug kept for measurement
         return (model == R3_MODELS[1] and task not in R3_HELD and not is_fresh(task)
                 and any((x["task"], x["repeat"]) == (task, repeat) for x in convert_cases()))
@@ -1561,7 +1568,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
     why = "" if dry else refusal(ctx, task)
     cap, stop = c.RUN_CAP_USD, c.RUN_STOP_USD
     if round3:
-        if not re.fullmatch(r"[A-ERT]|[GHKLMX]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
+        if not re.fullmatch(r"[A-ERST]|[GHKLMX]\d+", str(ctx.arm)) or ctx.model not in R3_MODELS:
             why = why or f"round 3 needs an arm ({', '.join(R3_ARMS)}) and a model ({', '.join(R3_MODELS)})"
         elif dry:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
@@ -1907,7 +1914,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     looped = round3 and re.fullmatch(r"[LM]\d+", ctx.arm) is not None
     model = ctx.model if round3 else c.MODEL
     critic_led = round3 and re.fullmatch(r"K\d+", ctx.arm) is not None
-    no_g6 = round3 and (critic_led or ctx.arm in ("A", "T", "R", *CONVERT_ARMS))       # Claude Code alone: no G6 server, skill or command
+    no_g6 = round3 and (critic_led or ctx.arm in ("A", "S", "T", "R", *CONVERT_ARMS))       # Claude Code alone: no G6 server, skill or command
     key = DRY_KEY if dry else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)

@@ -167,12 +167,18 @@ def judged(results: Sequence[Mapping[str, Any]], bar: float = 0.05) -> bool:
     return bool(results) and all(r["missing"] == 0 and r["loop_passed"] > r["other_passed"] and r["p"] < bar for r in results)
 
 
+def failure_rich(rows: Rows, tasks: Iterable[str], score: str) -> list[str]:
+    """The bugs on which at least one of arm S's own runs failed on this score. A run with no verdict is not a failure."""
+    return [t for t in tasks if any(rows.get(("S", t, r), {}).get(score) is False for r in (1, 2, 3))]
+
+
 def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str = "M9",
-           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",), tuned: bool = False) -> None:
+           others: Sequence[str] = ("A", "T"), control: Sequence[str] = ("R",), tuned: bool = False,
+           scores: Sequence[str] = SCORES) -> None:
     """Every comparison on both scores. ``control``: arms reported beside the rule, where they have runs, which never enter it.
     ``tuned``: bugs this arm was tuned on, which are development, so they get no verdict of the rule, however they read."""
-    shown = [arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
-    for score in SCORES:
+    shown =[arm for arm in control if arm != loop_arm and any(key[0] == arm for key in rows)]
+    for score in scores:
         results = [compare(rows, loop_arm, other, tasks, repeats, score) for other in others]
         for r in [*results, *(compare(rows, loop_arm, other, tasks, repeats, score) for other in shown)]:
             uplift = "n/a" if r["uplift"] is None else f"{r['uplift']:+.1%}"
@@ -198,6 +204,15 @@ def report(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], 
               f"95% target: {'met' if rate >= TARGET and not results[0]['missing'] else 'not met'} ({rate:.1%})")
 
 
+def rich(rows: Rows, name: str, tasks: Sequence[str], repeats: Sequence[int], loop_arm: str, control: Sequence[str] = ("R",)) -> None:
+    """The same rule on the arms' own runs of the failure-rich bugs alone, score by score (PLAN.md, 2026-11-01), printed beside the
+    result on all the bugs and never in place of it."""
+    for score in SCORES:
+        kept = failure_rich(rows, tasks, score)
+        print(f"{name:22} {score:11} failure-rich: {len(kept)} of {len(tasks)} bugs")
+        report(rows, name, kept, repeats, loop_arm=loop_arm, control=control, scores=(score,))
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--loop", default="M9", help="the frozen loop's arm")
@@ -216,10 +231,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     report(rows, "stage 2, new repos", stage_2, (1, 2), loop_arm=args.loop)
     report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop)
     report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",), tuned=True)
+    rich(rows, "stage 2, failure-rich", stage_2, (1, 2), args.loop)
     second, shown = f"{args.second}, ", ("R", args.loop)
     report(rows, f"{second}stage 1, all eleven", fresh, (1, 2), loop_arm=args.second, control=shown)
     report(rows, f"{second}stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.second, control=shown)
     report(rows, f"{second}stage 2, new repos", stage_2, (1, 2), loop_arm=args.second, control=shown)
+    rich(rows, f"{second}stage 2, failure-rich", stage_2, (1, 2), args.second, control=shown)
     report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown)
     report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",), tuned=True)
     if args.trained:

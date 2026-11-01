@@ -277,7 +277,7 @@ def test_k1_is_judged_in_sections_of_its_own_and_never_pooled_with_m9(tmp_path, 
                     "K1, training, tuned"):
         assert any(line.startswith(section) for line in lines), section
     judged = [line for line in lines if " uplift " in line and "report only" not in line]
-    assert len(judged) == 36      # each primary: four sections against A and T, one tuned against A, on two scores
+    assert len(judged) == 44      # each primary, on two scores: four sections and failure-rich against A and T, one tuned against A
     assert all(" K1 " in line for line in judged if line.startswith("K1, "))
     assert not any(" K1 " in line for line in judged if not line.startswith("K1, "))
     for section, shown in (("K1, stage 1, all eleven", "K1   2/2"), ("K1, stage 2, new repos", "K1   2/2"),
