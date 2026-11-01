@@ -23,6 +23,7 @@ import dataclasses
 import hashlib
 import math
 import os
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
@@ -186,10 +187,12 @@ class _AtLimit(BaseException):
 class _Requests:
     """What a tick has sent to its backends, the limit it reserved, and when the week it reserved in ends. Past either,
     nothing more goes out: a reset drops the ceiling to a new week's first day, and nothing is reserved under that one.
-    ``stopped`` says which stopped it."""
+    ``stopped`` says which stopped it. A request takes its place in ``sent`` before it goes out, under one lock, so requests
+    running at once can never pass the limit between them."""
 
     def __init__(self, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self.now = now
+        self._lock = threading.Lock()
         self.close()
 
     def open(self, limit: float, ends: datetime | None = None) -> None:
@@ -198,16 +201,27 @@ class _Requests:
     def close(self) -> None:
         self.open(math.inf)
 
-    def admit(self, under_way: int = 0, wait: float = 0.0) -> None:
-        """Refuse what would pass the limit. ``under_way``: the requests of a call in progress, not yet in ``sent``.
-        ``wait``: the seconds a server asked for before this one goes out."""
-        if self.unseen or self.sent + under_way >= self.limit:
-            self.stopped = f"this tick has sent {self.sent + under_way} of the {self.limit:g} it reserved"
-        elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
-            self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
-        else:
-            return
+    def admit(self, wait: float = 0.0, *, places: int = 0) -> None:
+        """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
+        server asked for before this one goes out."""
+        with self._lock:
+            if self.unseen or self.sent >= self.limit:
+                self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
+            elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
+                self.stopped = f"this tick's week ended at {self.ends.isoformat()} and nothing is reserved in the new one"
+            else:
+                self.sent += places
+                return
         raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
+
+    def take(self, wait: float = 0.0) -> None:
+        """A request about to go out. It keeps its place whatever becomes of it: a failed one may have reached the model."""
+        self.admit(wait, places=1)
+
+    def count(self, requests: int) -> None:
+        """Requests that had no boundary to take a place at."""
+        with self._lock:
+            self.sent += requests
 
     def at_a_limit(self, failed: LLMError) -> None:
         """End the tick when a request failed at a provider's limit. Outside a tick there is none to end."""
@@ -219,24 +233,24 @@ class _Requests:
 class _Resends(list):
     """The resends of one call. ``g6.core.llm`` adds each to the open records of ``waits`` just before it waits and sends
     again, which is the only boundary a resend has, so adding to this record is the gate on it, as ``counting``'s observer
-    is on a request. What ``admit`` raises stops the resend, and leaves the caller as a failed request's ``LLMError``."""
+    is on a request. What ``take`` raises stops the resend, and leaves the caller as a failed request's ``LLMError``. That
+    boundary comes before the wait and nothing marks its end, so a wakeup that runs late is not seen."""
 
-    def __init__(self, admit: Callable[[int, float], None], under_way: Callable[[], int]) -> None:
+    def __init__(self, take: Callable[[float], None]) -> None:
         super().__init__()
-        self.admit, self.under_way = admit, under_way
+        self.take = take
 
     def append(self, wait: dict[str, Any]) -> None:
-        self.admit(self.under_way() + len(self), wait["retry_after_s"])
+        self.take(wait["retry_after_s"])
         super().append(wait)
 
 
 @contextmanager
-def _gating_resends(admit: Callable[[int, float], None], under_way: Callable[[], int]) -> Iterator[_Resends]:
+def _gating_resends(take: Callable[[float], None]) -> Iterator[None]:
     """As ``g6.core.llm.waits``, whose record is a plain list, with a record that is the gate above."""
-    resent = _Resends(admit, under_way)
-    token = _WAITS.set((*_WAITS.get(), resent))
+    token = _WAITS.set((*_WAITS.get(), _Resends(take)))
     try:
-        yield resent
+        yield
     finally:
         _WAITS.reset(token)
 
@@ -245,10 +259,10 @@ class _Counted:
     """A model caller the host meters. Every call of a tick passes through one, and what it counts is what reached a
     backend, not how often it was called: ``g6.core.model_calls`` notes each request as it goes out, so an ``EmptyRetry``
     or a ``FallbackCaller`` wrapped around a built-in caller is charged attempt by attempt, and a ``Retry-After`` resend
-    is added from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
+    takes its place from ``g6.core.llm.waits``. Nothing a run reports about itself enters the count.
 
-    Each noted request is admitted at that same boundary, before it goes out, so a retry inside a caller stops at what the
-    tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
+    Each noted request takes its place at that same boundary, before it goes out, so a retry inside a caller stops at what
+    the tick reserved. ``counting`` asks its observers not to raise, because an observer is normally a bystander at someone
     else's request. This one is the gate on that request: it raises before anything is sent or counted, and what it raises
     is the ``LLMError`` a failed request raises, which every caller here passes on. That file is bound, so its sentence
     stays until an issuance window.
@@ -263,18 +277,20 @@ class _Counted:
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         self.requests.admit()
+        took: list[None] = []
 
         def next_request() -> None:
-            self.requests.admit(noted() + len(resent))
+            self.requests.take()
+            took.append(None)
 
-        with counting(before_call=next_request) as noted, _gating_resends(self.requests.admit, noted) as resent:
+        with counting(before_call=next_request) as noted, _gating_resends(self.requests.take):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
                 self.requests.at_a_limit(failed)
                 raise
             finally:
-                self.requests.sent += noted() + len(resent)
+                self.requests.count(noted() - len(took))     # a child's totals have no boundary
             if not noted():
                 self.requests.unseen = True
                 raise LLMError(f"{UNMETERED_CALLER}: a model caller answered with no request noted")

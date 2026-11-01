@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import dataclasses
 import glob
 import importlib.util
@@ -12,15 +13,17 @@ import mmap
 import os
 import random
 import sys
+import threading
 import time
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 import g6
-from g6.core import llm
+from g6.core import llm, model_calls
 from g6.core.llm import EmptyRetry, FakeLLM, FallbackCaller, LLMError
 from g6.core.vault import AccessDenied
 from g6.integrity import build_manifest
@@ -546,6 +549,74 @@ def test_a_retry_within_what_was_reserved_goes_out_and_is_counted():
     requests.open(3)
     assert _Counted(EmptyRetry(backend), requests).complete("system", "user") == "an answer"
     assert len(backend.calls) == requests.sent == 3 and not requests.stopped
+
+
+def _at_once(caller, times: int) -> int:
+    """``times`` calls of ``caller`` on as many threads, and how many were refused at the tick's budget."""
+    with ThreadPoolExecutor(max_workers=times) as workers:
+        pending = [workers.submit(caller.complete, "system", str(i)) for i in range(times)]
+    refused = [f.exception() for f in pending if f.exception() is not None]
+    assert all("G6_E_LOOP_TICK_BUDGET_SPENT" in str(failed) for failed in refused)
+    return len(refused)
+
+
+def test_two_requests_at_once_cannot_both_have_the_last_of_what_was_reserved():
+    both_in_the_backend = threading.Barrier(2)
+
+    def backend(system: str, user: str) -> str:
+        with contextlib.suppress(threading.BrokenBarrierError):
+            both_in_the_backend.wait(timeout=0.5)
+        return "an answer"
+
+    llm_ = FakeLLM(backend)
+    requests = _Requests()
+    requests.open(1)
+    assert _at_once(_Counted(llm_, requests), 2) == 1
+    assert len(llm_.calls) == requests.sent == 1
+
+
+def test_requests_at_once_stop_at_what_was_reserved_and_each_refused_one_takes_no_place():
+    def backend(system: str, user: str) -> str:
+        time.sleep(0.05)
+        return "an answer"
+
+    llm_ = FakeLLM(backend)
+    requests = _Requests()
+    requests.open(3)
+    assert _at_once(_Counted(llm_, requests), 8) == 5
+    assert len(llm_.calls) == requests.sent == 3 and requests.stopped
+
+
+def test_a_request_holds_its_place_from_before_it_goes_out():
+    requests, seen = _Requests(), []
+    requests.open(2)
+    llm_ = FakeLLM(lambda system, user: seen.append(requests.sent) or "an answer")
+    _Counted(llm_, requests).complete("system", "user")
+    assert seen == [1] and requests.sent == 1
+
+
+def test_a_request_that_failed_keeps_its_place():
+    def down(system: str, user: str) -> str:
+        raise LLMError("G6_E_LLM_TIMEOUT: down")
+
+    requests = _Requests()
+    requests.open(2)
+    with pytest.raises(LLMError, match="down"):
+        _Counted(FakeLLM(down), requests).complete("system", "user")
+    assert requests.sent == 1
+
+
+def test_a_childs_requests_which_have_no_boundary_are_counted_as_it_reports_them():
+    class Child:
+        def complete(self, system: str, user: str, *, max_tokens: int = 0) -> str:
+            model_calls.note_model_call()
+            model_calls.note_child_model_calls(scoped=2, process=2)
+            return "an answer"
+
+    requests = _Requests()
+    requests.open(10)
+    _Counted(Child(), requests).complete("system", "user")
+    assert requests.sent == 3
 
 
 class Busy:
