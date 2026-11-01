@@ -342,6 +342,28 @@ def test_the_tool_is_asked_at_most_once_in_a_while():
     assert tool.calls == 2 and reader("codex", START).used == 300.0
 
 
+def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
+    reset = NOW + timedelta(minutes=1)
+    tool = Tool(_limits(90, resets=int(reset.timestamp())), _limits(0))
+    reader = AccountReader((WINDOW,), ask={"codex": tool})
+    reader.refresh(NOW)
+    reader.refresh(reset - timedelta(seconds=1))
+    assert tool.calls == 1
+    reader.refresh(reset + timedelta(seconds=1))
+    assert tool.calls == 2 and reader("codex", START).used == 0
+
+
+def test_a_reset_gets_one_read_however_many_ticks_look_after_it():
+    reset = NOW + timedelta(minutes=1)
+    down = usage.UsageUnavailable("down")
+    tool = Tool(_at_the_limit(reset), down)
+    reader = AccountReader((WINDOW,), ask={"codex": tool})
+    reader.refresh(NOW)
+    for minutes in (2, 3, 4):
+        reader.refresh(NOW + timedelta(minutes=minutes))
+    assert tool.calls == 2
+
+
 @pytest.mark.parametrize("failure", [OSError("no such program"), usage.UsageUnavailable("it stopped"), None, {}])
 def test_a_read_that_fails_keeps_the_last_figure_and_says_why(failure):
     tool = Tool(_limits(25), failure)
@@ -432,7 +454,7 @@ def test_a_limit_kept_through_a_failure_lifts_at_the_first_read_past_its_reset()
     reader.refresh(NOW)
     reader.refresh(NOW + usage.REFRESH)
     assert reader("codex", START) is not None
-    assert not meter.reserve("codex", reset, 10).admitted                # its figure still stands until a read replaces it
+    assert not meter.reserve("codex", reset - timedelta(seconds=1), 10).admitted    # up to its reset, it stands
     past = reset + usage.REFRESH
     reader.refresh(past)
     assert meter.reserve("codex", past, 10).admitted

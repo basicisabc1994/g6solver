@@ -318,6 +318,32 @@ def _shared_meters_with(reading: AccountReading) -> list[BudgetMeter]:
             for _ in range(2)]
 
 
+# A reading's figure is of one week ----------------------------------------------------------------------------------------
+
+RESET = START + timedelta(days=7)
+
+
+def test_a_figure_from_a_week_that_has_ended_says_nothing_of_the_new_one():
+    reading = AccountReading(used=1000, estimated=False, read_at=RESET - timedelta(hours=1), resets_at=RESET)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reading("claude", RESET - timedelta(seconds=1)).used == 1000
+    assert meter.reading("claude", RESET).used == 0 and meter.reserve("claude", RESET, 200).admitted
+
+
+def test_a_limit_still_ahead_stands_when_the_figure_beside_it_has_ended():
+    until = RESET + timedelta(hours=2)
+    reading = AccountReading(used=1000, estimated=False, limited_until=until, read_at=RESET - timedelta(hours=1), resets_at=RESET)
+    meter = _meter(read_account=lambda provider, start: reading)
+    seen = meter.reserve("claude", RESET + timedelta(hours=1), 1)
+    assert not seen.admitted and seen.wait_until == until and seen.used == 0
+
+
+def test_a_figure_with_no_reset_on_it_stands_as_it_did():
+    reading = AccountReading(used=500)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reading("claude", RESET).used == 500
+
+
 # When room comes, and the settings file ----------------------------------------------------------------------------------
 
 def test_the_next_day_of_a_window_is_when_its_ceiling_can_rise():

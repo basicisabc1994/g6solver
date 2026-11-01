@@ -185,6 +185,8 @@ class BudgetMeter:
         start, day = window.place(now)
         venture = self._venture(window, start)
         account = self._read_account(provider, start) if self._read_account is not None else None
+        if account is not None and account.resets_at is not None and account.resets_at <= now:
+            account = replace(account, used=0.0, read_at=None)      # its figure is of a week that has ended; a limit may not be
         booked = self.scope.committed(venture, start.isoformat()).get(_ACCOUNT, 0.0)
         pending = self.scope.outstanding(venture, start.isoformat()).get(_ACCOUNT, 0.0)
         charged_when_read = self._charged_when_read(provider, start, account, booked - pending)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import dataclasses
 import importlib.util
 import json
 import os
@@ -19,6 +20,7 @@ import pytest
 import g6
 from g6.core.ledger import LedgerError, digest
 from g6.core.llm import LLMError
+from g6.metaharness import Model
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
 from g6.metaharness.runner import FIRST_REST, LONGEST_REST, NAP, Runner, main, open_loop, run
@@ -35,7 +37,7 @@ from g6.self_maintenance.envelope import (
     stops_asked,
 )
 from g6.self_maintenance.pacing import AccountReading, ProviderWindow, read_settings
-from g6.self_maintenance.usage import REFRESH
+from g6.self_maintenance.usage import REFRESH, AccountReader
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
 domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
@@ -147,6 +149,28 @@ def test_a_limit_met_during_a_tick_is_waited_out_and_the_days_page_says_so(tmp_p
     assert runner.run() == 0
     assert runner.loop.log.cycles()[0]["outcome"] == "adopted"
     assert datetime.fromisoformat(runner.loop.log.cycles()[0]["at"]) >= first + REFRESH
+
+
+def test_a_full_week_is_waited_out_to_its_reset_and_no_later(tmp_path):
+    """The old week's figure must not count against the new week's first ceiling: that slipped the next try a day."""
+    reset = START + timedelta(days=7)
+    window = ProviderWindow("claude", 5000, START)
+    domain = domains.WordProblems(tmp_path, pool=86)
+    run = domain.execution()
+    domain.execution = lambda: dataclasses.replace(run, models={"local": Model(domain.llm, max_calls_per_run=1)})
+    full = {"rateLimits": {"primary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": reset.timestamp()}}}
+    empty = {"rateLimits": {"primary": {"usedPercent": 0, "windowDurationMins": 10080,
+                                        "resetsAt": (reset + timedelta(days=7)).timestamp()}}}
+    answers = iter((full, empty))
+    reader = AccountReader((window,), ask={"claude": lambda: next(answers)})
+    runner, time, _ = _runner(tmp_path, domain=domain, settings=dataclasses.replace(SETTINGS, windows=(window,)),
+                              read_account=reader, reader=reader, at=reset - timedelta(seconds=1))
+    runner.step()
+    assert runner.last["warning_card"]["code"] == "G6_E_LOOP_BUDGET_WAIT" and runner.not_before == reset
+    calls = len(domain.llm.calls)
+    time.at = reset + timedelta(seconds=1)
+    runner.step()
+    assert runner.not_before <= time.at + REFRESH and len(domain.llm.calls) > calls
 
 
 def test_a_tick_that_raises_does_not_end_the_run_and_counts_as_a_failed_cycle(tmp_path, monkeypatch):

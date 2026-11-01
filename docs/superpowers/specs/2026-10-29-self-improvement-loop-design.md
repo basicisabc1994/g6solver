@@ -614,7 +614,9 @@ cognitive work, with programming as the first toy model. So P2 was built first a
   figure off its scale among them, loses the whole reply. A reply that does not read, a read that fails and a reply with no
   week in it each leave the last good figure standing until a good read replaces it or its reset passes, with what is
   charged meanwhile on top, because the owner uses this account too and the meter must not read low for want of a tool
-  (the coordinator's ruling, 2026-11-01). That figure is held in memory, so a restart whose first read fails
+  (the coordinator's ruling, 2026-11-01). Past its reset a figure counts for nothing, though a limit it came with stands to
+  its own end, and the tool is read at once, not up to 15 minutes later, so the old week's use never holds back the new week's
+  first tick. That figure is held in memory, so a restart whose first read fails
   starts on the meter's own count. Claude Code (2.1.316) lists no such command, so Claude's meter stays on model calls.
 
 **How to run it.** A folder holds `settings.json`. An allowance is in the meter's unit, model calls, and counts as an

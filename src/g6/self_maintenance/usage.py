@@ -15,9 +15,10 @@ What each tool reports was checked by running it, on 2026-11-01:
 A percentage says the same thing whatever the allowance is: use over allowance is what the provider reported. So the
 reading is exact as a share of the week, and only the allowance's unit stays an estimate, which the window says.
 
-The tool is asked between ticks and never inside one, and at most once per ``REFRESH``: a tick starts no process. Each
-reading carries when it was read, so what the loop charges after that goes on top of it until the next one. A reading that
-lags the provider's own count leaves the same gap in the other direction, and nothing here can see that.
+The tool is asked between ticks and never inside one, at most once per ``REFRESH`` and once more when a week it reported
+ends, since what it said before says nothing of the next: a tick starts no process. Each reading carries when it was read, so
+what the loop charges after that goes on top of it until the next one. A reading that lags the provider's own count leaves
+the same gap in the other direction, and nothing here can see that.
 
 **A limit met during a tick** can only be read from the ``LLMError`` the request raised, so ``limit_ends`` reads that text.
 No caller gives a limit a mark of its own, and ``g6.core.llm`` and ``g6.core.host_models`` are bound, so none can yet. It
@@ -222,8 +223,12 @@ class AccountReader:
         self.said = {provider: NOT_REPORTED for provider in self.windows}
         self._asked: datetime | None = None
 
+    def _reset_since(self, now: datetime) -> bool:
+        """Whether a week has ended since the tool was last asked, so what it said then says nothing of this one."""
+        return any(r.resets_at is not None and self._asked < r.resets_at <= now for r in self.readings.values())
+
     def refresh(self, now: datetime) -> None:
-        if self._asked is not None and now - self._asked < REFRESH:
+        if self._asked is not None and now - self._asked < REFRESH and not self._reset_since(now):
             return
         self._asked = now
         for provider in set(self.windows) & set(self.ask):
