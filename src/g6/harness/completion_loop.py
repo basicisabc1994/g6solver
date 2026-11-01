@@ -104,6 +104,8 @@ MODE_LINE = "G6_LOOP_MODE"
 #: How the review-until-clean loop ends, ``reviews_until_clean``'s words where it has them; what a review that was read says.
 CLEAN, NO_REVIEW, RAN_OUT = "a review reproduced nothing", "a review failed", "the repairs ran out with a defect open"
 LEFT, WITHDRAWN, READ_VERDICTS = "the agent left the code as it was", "the agent took its change back", ("none", "defect")
+#: A clean review of a patch that is no longer the patch: what it says of the code that is there is nothing.
+MOVED = "the patch changed after the review that read it"
 NO_REASON = "no reason was given"
 #: A stop that leaves the patch with no review that came back clean, whatever earlier reviews said.
 NO_CLEAN_REVIEW = "G6_E_NO_CLEAN_REVIEW"
@@ -704,22 +706,35 @@ def _keep_failures(task: str, base: str, change: repo_tests.Change, session: Pat
     _write_row(session, state)
 
 
+def _patch_now(root: Path, base: str) -> str:
+    """The digest of the patch as it stands, or "" if it cannot be read. It takes a fresh ``change``: ``diff_text`` reads the
+    tree, but of the new files only those its ``change`` holds, so one taken earlier misses a file added since."""
+    try:
+        return digest(repo_tests.diff_text(repo_tests.change(root, base)))
+    except (OSError, ValueError):     # a RepoRefused is a ValueError
+        return ""
+
+
 def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, session: Path, state: dict, reason: str,
                 said: str = "") -> Step:
     """The end of the review-until-clean loop: what the reviews found above the patch review, then the row. Only a review that
     was read and reproduced nothing is clean, and running out of repairs or a finding the agent rejected is a result. The
     state is saved before the patch review, which is slow: a hook cut short there repeats no review, and ends as this would,
-    unless the patch has changed since a clean review read it, which ``_advance`` then has reviewed again."""
+    unless the patch has changed since a clean review read it, which ``_advance`` then has reviewed again. A clean stop holds
+    only for the patch there as the loop ends, so that is read last of all, after the slow step. A patch that moved under a
+    running step is not reviewed again here: an edit that keeps coming would spend a review each time."""
     state["stop"] = reason
     state["left"] = (" ".join(said.split())[:MAX_CASE_CHARS] or state.get("left") or NO_REASON) if reason == LEFT else ""
-    code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
     reviews = state.get("reviews") or []
     _save(session, state)
+    review = _final_review(root, task, base)
+    if reason == CLEAN and _patch_now(root, base) != reviews[-1]["patch"]:
+        reason = state["stop"] = MOVED
+    code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
     report = patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code),
-        "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")},
-        _final_review(root, task, base))
+        "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
     _keep_failures(task, base, change, session, state)
     return _finish(session, state, report, code)
 

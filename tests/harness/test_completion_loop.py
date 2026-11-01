@@ -2010,3 +2010,94 @@ def test_a_finding_whose_case_passed_is_not_fixed_while_another_case_is_unknown(
     step = world.advance(critic=critic)
     assert "**Fixed:**" not in step.text and "**Open:** review 1" in step.text
     assert "a case could not be judged" in step.text
+
+
+def test_a_clean_review_cannot_finish_a_different_patch(world, monkeypatch):
+    """The reviewer's own case: another thread edits the file while the review of the first patch is in flight."""
+    Reviewed(monkeypatch)
+    reply, read, resume = reviewer("none", "none"), threading.Event(), threading.Event()
+
+    def paused(system: str, user: str) -> str:
+        answer = reply.complete(system, user)
+        if not read.is_set():
+            read.set()
+            assert resume.wait(30), "the test never released the paused review"
+        return answer
+
+    world.edit()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(world.advance, None, FakeLLM(paused))
+        try:
+            assert read.wait(30), "the review never received its patch"
+            world.edit(FIXED + "# changed while the review read the patch\n")
+        finally:
+            resume.set()
+        ended = running.result(timeout=30)
+    state = world.state()
+    assert not (ended.action == loop.STOP and state.get("stop") == loop.CLEAN
+                and state["reviews"][-1]["patch"] != digest(the_patch(world)))
+
+
+def reads_then(change_the_tree) -> FakeLLM:
+    """A review that finds nothing, with the tree changed under it."""
+    quiet = reviewer("none")
+
+    def reply(system: str, user: str) -> str:
+        change_the_tree()
+        return quiet.complete(system, user)
+
+    return FakeLLM(reply)
+
+
+def test_a_review_that_read_another_patch_leaves_no_clean_review(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=reads_then(lambda: world.edit(FIXED + "# changed under the review\n")))
+    assert step.action == loop.STOP and step.code == loop.NO_CLEAN_REVIEW
+    assert loop.CLEAN not in step.text and loop.MOVED in step.text and "**No clean review:**" in step.text
+    assert world.state()["stop"] == loop.MOVED
+
+
+def test_a_new_file_added_under_a_review_changes_the_patch_it_read(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    added = world.repo / "added.py"
+    step = world.advance(critic=reads_then(lambda: added.write_text("y = 1\n", encoding="utf-8")))
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.MOVED in step.text
+
+
+def test_a_patch_that_changes_during_the_final_review_earns_no_clean_end(world, monkeypatch):
+    Reviewed(monkeypatch)
+    real = loop._final_review
+
+    def edits(root, task, base) -> str:
+        world.edit(FIXED + "# changed during the final review\n")
+        return real(root, task, base)
+
+    monkeypatch.setattr(loop, "_final_review", edits)
+    world.edit()
+    step = world.advance(critic=reviewer("none"))
+    assert step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text and "THE REVIEW" in step.text
+
+
+def test_a_repository_gone_at_the_end_earns_no_clean_end(world, monkeypatch):
+    Reviewed(monkeypatch)
+    real, calls = repo_tests.change, []
+
+    def goes_away(*args, **kwargs):
+        calls.append(args)
+        if len(calls) > 1:
+            raise repo_tests.RepoRefused("G6_E_GIT_REPO_INVALID", "the repository went away")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(repo_tests, "change", goes_away)
+    world.edit()
+    step = world.advance(critic=reviewer("none"))
+    assert step.action == loop.STOP and step.code == loop.NO_CLEAN_REVIEW and loop.CLEAN not in step.text
+
+
+def test_a_patch_unchanged_at_the_end_keeps_its_clean_stop(world, monkeypatch):
+    Reviewed(monkeypatch)
+    world.edit()
+    step = world.advance(critic=reviewer("none"))
+    assert step.action == loop.STOP and not step.code and loop.CLEAN in step.text
