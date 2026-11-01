@@ -296,6 +296,9 @@ class AccountReader:
                 continue
             self.readings[provider] = replace(found, read_at=now)
             self.said[provider] = f"reported by its own tool at {now.isoformat(timespec='minutes')}"
+            if found.resets_at is not None:      # so a reply with no reset falls back on the week the tool last reported
+                self.windows[provider] = self.windows[provider].aligned(found.resets_at)
+                self.said[provider] += f"; its week ends at {found.resets_at.isoformat(timespec='minutes')}"
 
     def read_now(self, now: datetime) -> None:
         """Ask the tool whenever it was last asked: the one read a tick makes, just before a held-out evaluation."""

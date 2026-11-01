@@ -344,6 +344,50 @@ def test_a_figure_with_no_reset_on_it_stands_as_it_did():
     assert meter.reading("claude", RESET).used == 500
 
 
+# The provider's own week ---------------------------------------------------------------------------------------------------
+
+OFF_THE_GRID = START + timedelta(days=3, hours=5)           # a reset the typed week_start does not lead to
+
+
+def test_a_window_moves_to_a_reset_it_was_not_on_and_stays_on_one_it_was():
+    window = ProviderWindow("claude", 1000, START)
+    assert window.aligned(OFF_THE_GRID).place(OFF_THE_GRID) == (OFF_THE_GRID, 1)
+    assert window.aligned(START + timedelta(days=14)) is window  # the same moment in another zone must not name a new week
+
+
+def test_a_reset_the_provider_reports_sets_the_day_of_the_week():
+    reading = AccountReading(used=100, estimated=False, read_at=START, resets_at=OFF_THE_GRID)
+    meter = _meter(read_account=lambda provider, start: reading)
+    seen = meter.reading("claude", OFF_THE_GRID - timedelta(hours=1))
+    assert seen.day == 7 and seen.ceiling == 1000                    # by the settings alone it would be day 4, at 800
+
+
+def test_a_reservation_ends_with_the_providers_week_and_not_the_settings(tmp_path):
+    reading = AccountReading(used=100, estimated=False, read_at=START, resets_at=OFF_THE_GRID)
+    meter = _meter(read_account=lambda provider, start: reading)
+    assert meter.reserve("claude", OFF_THE_GRID - timedelta(hours=1), 1).ends == OFF_THE_GRID
+
+
+def test_the_week_stays_where_the_provider_put_it_after_the_reading_goes():
+    readings = [AccountReading(used=100, estimated=False, read_at=START, resets_at=OFF_THE_GRID)]
+    meter = _meter(read_account=lambda provider, start: readings[0])
+    meter.reading("claude", START + timedelta(days=1))
+    readings[0] = None
+    assert meter.reading("claude", OFF_THE_GRID + timedelta(hours=1)).day == 1
+
+
+def test_a_reading_with_no_reset_on_it_moves_nothing():
+    meter = _meter(read_account=lambda provider, start: AccountReading(used=100, read_at=START))
+    assert meter.reading("claude", _day(4)).day == 4
+
+
+def test_the_room_a_tick_waits_for_follows_the_providers_days():
+    reading = AccountReading(used=0, estimated=False, read_at=START, resets_at=OFF_THE_GRID)
+    meter = _meter(read_account=lambda provider, start: reading)
+    meter.reading("claude", START + timedelta(hours=1))
+    assert meter.next_room(START + timedelta(hours=1)) == OFF_THE_GRID - timedelta(days=3)
+
+
 # When room comes, and the settings file ----------------------------------------------------------------------------------
 
 def test_the_next_day_of_a_window_is_when_its_ceiling_can_rise():

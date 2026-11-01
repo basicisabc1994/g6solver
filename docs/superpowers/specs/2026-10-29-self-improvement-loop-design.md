@@ -674,6 +674,15 @@ This was run once, on the fake domain: a scratch venv with a plain install of th
 server whose own G6 was the working tree, with `PYTHONPATH` on that tree. The two digests differed, and the tick adopted, which a
 runner that had imported the working tree could not have done.
 
+**A week is the provider's.** `week_start` is typed by a person, and nothing held it to the provider's week, so the loop could treat
+a tick as crossing a reset that had not happened, or spend hard just after a reset while it thought it was day 4. Where a tool reports
+when its week ends, that now sets the week whatever the setting says: the day, the ceiling, when a reservation ends and when the
+next ceiling rises all follow it, and the digest's account line says when it ends. `settings.json` is left as it is, so nothing
+needs a new start. The week moves in memory, so a restart moves it again at its first good read, and until then is on the setting.
+A week that moves is a new name in the ledger, so what was charged under the old name is not added to the new one, and the meter
+rests on the account's figure, which holds it. A tick under way when it moves is charged under the old name, and reads low until the
+next reading. Claude's tool reports no week, so its `week_start` stands, and a person sets it from what `/usage` shows.
+
 **A daily reviewer can take a generation back.** Until this, the only lever on an adoption that looked wrong was the stop:
 
 ```

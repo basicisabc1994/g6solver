@@ -350,6 +350,25 @@ def test_reading_now_asks_however_lately_the_tool_was_asked():
     assert tool.calls == 2 and reader("codex", START).used == 300.0
 
 
+OFF_THE_GRID = int((START + timedelta(days=3, hours=5)).timestamp())
+
+
+def test_the_week_a_tool_reports_reaches_the_meter_and_is_said():
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=OFF_THE_GRID))})
+    reader.refresh(NOW)
+    meter = BudgetMeter((WINDOW,), store=OperatorStore(":memory:"), read_account=reader)
+    assert meter.reading("codex", NOW + timedelta(days=1, hours=4)).day == 7
+    assert "its week ends at 2026-10-29T13:00" in reader.said["codex"]
+
+
+def test_a_reply_with_no_reset_stays_on_the_week_the_tool_last_reported():
+    """A figure with no reset of its own falls back on the window's week, so that week must be the one the tool reported."""
+    reader = AccountReader((WINDOW,), ask={"codex": Tool(_limits(25, resets=OFF_THE_GRID), _limits(30, resets=None))})
+    reader.refresh(NOW)
+    reader.refresh(NOW + usage.REFRESH)
+    assert reader("codex", START).resets_at == datetime.fromtimestamp(OFF_THE_GRID, UTC)
+
+
 def test_a_reset_passing_is_read_at_once_and_not_up_to_a_refresh_later():
     reset = NOW + timedelta(minutes=1)
     tool = Tool(_limits(90, resets=int(reset.timestamp())), _limits(0))

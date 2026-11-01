@@ -12,7 +12,8 @@ records. ``read_account`` reports the whole account's use, the owner's own sessi
 it; an allowance or a reading that is an estimate says so.
 
 The windows come from ``settings.json`` in the loop's folder. An allowance there is an estimate until the file says
-``"estimated": false``, which it should only once a real figure exists.
+``"estimated": false``, which it should only once a real figure exists. A ``week_start`` there holds until a tool reports when
+its week ends: from then the meter is on the provider's own week, and the file is left as it is.
 """
 from __future__ import annotations
 
@@ -65,6 +66,11 @@ class ProviderWindow:
         """When the provider week ``now`` falls in ends, which is the one time its ceiling falls."""
         return self.place(now)[0] + _WEEK
 
+    def aligned(self, reset: datetime) -> ProviderWindow:
+        """This window on the provider's own week, given a moment one ends. Already on it, it is this same window, since a
+        week's start names it in the ledger and the same moment written in another zone must not name a new one."""
+        return self if self.place(reset)[0] == reset else replace(self, week_start=reset)
+
 
 def read_settings(root: str | Path) -> dict[str, Any]:
     """The settings file in the loop's folder. A ``ValueError`` says what is wrong with it."""
@@ -108,7 +114,7 @@ class AccountReading:
     estimated: bool = True                  # read from limit and reset signals, not from a usage figure
     limited_until: datetime | None = None   # a session window or the weekly cap was hit: nothing starts before this
     read_at: datetime | None = None         # when the figure was read; a charge after that cannot be in it
-    resets_at: datetime | None = field(default=None, compare=False)     # when the week that figure is of ends
+    resets_at: datetime | None = field(default=None, compare=False)     # when the week that figure is of ends, which sets the week
 
 
 @dataclass(frozen=True)
@@ -184,11 +190,13 @@ class BudgetMeter:
         window = self.windows.get(provider)
         if window is None:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, None
+        account = self._read_account(provider, window.place(now)[0]) if self._read_account is not None else None
+        if account is not None and account.resets_at is not None:
+            window = self.windows[provider] = window.aligned(account.resets_at)    # it stays so, should the reading go
+            if account.resets_at <= now:
+                account = replace(account, used=0.0, read_at=None)  # its figure is of a week that has ended; a limit may not be
         start, day = window.place(now)
         venture = self._venture(window, start)
-        account = self._read_account(provider, start) if self._read_account is not None else None
-        if account is not None and account.resets_at is not None and account.resets_at <= now:
-            account = replace(account, used=0.0, read_at=None)      # its figure is of a week that has ended; a limit may not be
         booked = self.scope.committed(venture, start.isoformat()).get(_ACCOUNT, 0.0)
         pending = self.scope.outstanding(venture, start.isoformat()).get(_ACCOUNT, 0.0)
         charged_when_read = self._charged_when_read(provider, start, account, booked - pending)
