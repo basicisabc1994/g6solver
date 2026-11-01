@@ -422,3 +422,12 @@ def test_a_new_file_reads_as_git_reads_a_tracked_one(tmp_path, mark):
     (repo / "new.py").write_bytes(f"# comment{mark}value = 'unsafe'\n".encode("utf-8"))
     text = rt.diff_text(rt.change(repo))
     assert text.count(f"\n+# comment{mark}value = 'unsafe'\n") == 2
+
+def test_a_skip_past_a_form_feed_in_a_new_test_file_is_seen_by_the_scan(tmp_path):
+    """Python runs that call, so a new file's diff must not lose it to the scan: cutting the file whole hands the scan a line
+    that its own cut must not break."""
+    from g6.coding_agent_gate import scan_diff
+
+    repo = make_repo(tmp_path)
+    (repo / "test_new.py").write_bytes(b"import pytest\n\x0cpytest.skip('later')\n")
+    assert "skip or xfail marker added" in scan_diff(rt.diff_text(rt.change(repo)))
