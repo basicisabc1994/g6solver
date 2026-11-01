@@ -23,6 +23,7 @@ DETERMINED = ("pydantic-13243", "black-5148", "click-3434", "click-3404", "starl
 TARGET = 0.95
 TWO_PRIMARIES = 0.025       # the bar with M9 and K1 both counted (PLAN.md, 2026-11-01): beside the rule, never in place of it
 EXPLORATORY = ("K0",)       # chosen after a result was read (PLAN.md, 2026-11-02): a report, never a verdict of the rule
+STAGE_1_PRIMARIES = ("M9", "K1")    # the arms stage 1 tested: for any later arm its bugs are development (PLAN.md, 2026-11-02)
 CLEAN = "no_counterexample_in_domain"
 Rows = Mapping[tuple[str, str, int], Mapping[str, bool | None]]
 
@@ -221,25 +222,28 @@ def main(argv: Sequence[str] | None = None) -> None:
     ap.add_argument("--second", default="K1", help="the second primary, judged apart from --loop and never pooled with it")
     ap.add_argument("--trained", help="stage 3: the arm the loop's own tick produced, judged against --second, its parent, as well")
     args = ap.parse_args(argv)
+    if {args.loop, args.second, args.trained} & set(EXPLORATORY):
+        ap.error("an exploratory arm has its own section and is never a primary")
     root = c.archive_root() / "round3"
     rows = saved(root)
     fresh = [t.id for t in we.load_tasks(we.TASKS_FRESH)]
     unseen = [t.id for t in we.load_tasks(we.TASKS_UNSEEN)]
     train = [t.id for t in we.load_tasks() if t.id not in we.R3_HELD]
-    report(rows, "stage 1, all eleven", fresh, (1, 2), loop_arm=args.loop)
-    report(rows, "stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.loop)
+    later, later_second = args.loop not in STAGE_1_PRIMARIES, args.second not in STAGE_1_PRIMARIES
+    report(rows, "stage 1, all eleven", fresh, (1, 2), loop_arm=args.loop, tuned=later)
+    report(rows, "stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.loop, tuned=later)
     stage_2 = finished(rows, unseen, (args.loop, args.second, "A", "T", "R"), (1, 2))
     print(f"stage 2: {len(stage_2)} of {len(unseen)} bugs finished, in the frozen order")
     report(rows, "stage 2, new repos", stage_2, (1, 2), loop_arm=args.loop)
-    report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop)
+    report(rows, "held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.loop, tuned=later)
     report(rows, "training, tuned", train, (1, 2), loop_arm=f"L{args.loop[1:]}", others=("A",), tuned=True)
     rich(rows, "stage 2, failure-rich", stage_2, (1, 2), args.loop)
     second, shown = f"{args.second}, ", ("R", args.loop)
-    report(rows, f"{second}stage 1, all eleven", fresh, (1, 2), loop_arm=args.second, control=shown)
-    report(rows, f"{second}stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.second, control=shown)
+    report(rows, f"{second}stage 1, all eleven", fresh, (1, 2), loop_arm=args.second, control=shown, tuned=later_second)
+    report(rows, f"{second}stage 1, determined 7", [t for t in fresh if t in DETERMINED], (1, 2), loop_arm=args.second, control=shown, tuned=later_second)
     report(rows, f"{second}stage 2, new repos", stage_2, (1, 2), loop_arm=args.second, control=shown)
     rich(rows, f"{second}stage 2, failure-rich", stage_2, (1, 2), args.second, control=shown)
-    report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown)
+    report(rows, f"{second}held-out, second look", list(we.R3_HELD), (1, 2, 3, 4, 5), loop_arm=args.second, control=shown, tuned=later_second)
     report(rows, f"{second}training, tuned", train, (1, 2), loop_arm=args.second, others=("A",), tuned=True)
     if any(key[0] == "K0" for key in rows):
         report(rows, "K0, stage 2, exploratory", stage_2, (1, 2), loop_arm="K0", control=("R", args.loop, args.second))

@@ -333,18 +333,35 @@ def test_k0_is_a_report_and_the_rule_gives_it_no_verdict(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("flag", ["--loop", "--second", "--trained"])
-def test_k0_gets_no_verdict_however_it_is_called(tmp_path, monkeypatch, capsys, flag):
+def test_k0_is_refused_as_a_primary_so_it_gets_no_verdict_and_chooses_no_bugs(flag, capsys):
+    with pytest.raises(SystemExit):
+        compare.main([flag, "K0"])
+    assert "never a primary" in capsys.readouterr().err
+
+
+def test_k0_gets_no_verdict_from_report_however_it_reads(capsys):
     lost = "u00 v00 w00"
-    rows = _cells(K0="u11 v11 w11", K1=lost, M9=lost, A=lost, T=lost, R=lost)     # six wins and no loss would clear the rule at either bar
-    tasks = {compare.we.TASKS_FRESH: [], compare.we.TASKS_UNSEEN: ["u", "v", "w"], None: []}
+    rows = _cells(K0="u11 v11 w11", A=lost, T=lost)      # six wins and no loss would clear the rule at either bar
+    compare.report(rows, "direct", "uvw", (1, 2), loop_arm="K0", scores=("amended",))
+    lines = [line for line in capsys.readouterr().out.splitlines() if "frozen rule" in line]
+    assert len(lines) == 1 and "frozen rule: not applied, exploratory" in lines[0]
+
+
+@pytest.mark.parametrize("flag", ["--loop", "--second"])
+def test_a_later_arm_gets_no_verdict_on_stage_1_bugs_or_held_out_bugs(tmp_path, monkeypatch, capsys, flag):
+    lost = "f00 g00 h00 x00000"
+    rows = _cells(M10="f11 g11 h11 x11111", M9=lost, K1=lost, A=lost, T=lost, R=lost)
+    tasks = {compare.we.TASKS_FRESH: ["f", "g", "h"], compare.we.TASKS_UNSEEN: [], None: ["x"]}
     monkeypatch.setattr(compare.c, "archive_root", lambda: tmp_path)
     monkeypatch.setattr(compare, "saved", lambda root: rows)
-    monkeypatch.setattr(compare.we, "R3_HELD", ())
+    monkeypatch.setattr(compare.we, "R3_HELD", ("x",))
     monkeypatch.setattr(compare.we, "load_tasks", lambda path=None: [type("Task", (), {"id": t}) for t in tasks[path]])
-    compare.main([flag, "K0"])
-    lines = [line for line in capsys.readouterr().out.splitlines() if "frozen rule" in line]
-    assert not any("frozen rule: met" in line for line in lines)
-    assert any("frozen rule: not applied, exploratory" in line for line in lines)
+    compare.main([flag, "M10"])
+    lines = [line for line in capsys.readouterr().out.splitlines() if "frozen rule" in line and "M10" not in line.split("frozen rule")[1]]
+    named = "" if flag == "--loop" else "M10, "
+    for section in ("stage 1, all eleven", "held-out, second look"):
+        picked = [line for line in lines if line.startswith(named + section)]
+        assert len(picked) == 2 and all("frozen rule: not applied, tuned on these bugs" in line for line in picked), section
 
 
 def test_k0_is_never_what_decides_which_bugs_finished(tmp_path, monkeypatch, capsys):
