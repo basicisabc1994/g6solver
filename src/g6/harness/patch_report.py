@@ -372,24 +372,29 @@ def _times(count: int) -> str:
     return {1: "once", 2: "twice"}.get(count, f"{count} times")
 
 
+def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The reviews whose own test failed when they wrote it, fixed (it passed on the last run) and open (anything else: a
+    test that did not run again says nothing, so it fixes nothing)."""
+    last = reviews[-1]["results"] if reviews else {}
+    found = [one for one in reviews if one["results"].get(one["file"]) == "failed"]
+    return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
+
+
 def _review_lines(loop: dict) -> list[str]:
     """What the review-until-clean loop did, reproduced findings first: what was found, what was fixed, what stayed open.
     A finding is a reviewer's test that failed on the patch. It stays open at the cap, or when the agent rejects it, and an
     open finding is no ruling on the patch: nothing here says it is right or wrong."""
-    reviews, last = loop.get("reviews") or [], {}
-    if reviews:
-        last = reviews[-1]["results"]
-    numbered = list(enumerate(reviews, 1))
-    found = [(n, one) for n, one in numbered if one["results"].get(one["file"]) == "failed"]
-    fixed = [(n, one) for n, one in found if last.get(one["file"]) == "passed"]
-    still = [(n, one) for n, one in found if last.get(one["file"]) != "passed"]
+    reviews = loop.get("reviews") or []
+    fixed, still = findings(reviews)
+    last, count = reviews[-1]["results"] if reviews else {}, len(fixed) + len(still)
     lines = ["## What the reviews found"]
-    lines.append(f"- **Found:** {len(found)} reproduced, each a reviewer's test that failed on the patch." if found else
+    lines.append(f"- **Found:** {count} reproduced, each a reviewer's test that failed on the patch." if count else
                  "- **Found:** no reviewer's test failed on the patch.")
-    lines += _cut([[f"- **Fixed:** review {n}: {code(one['rule'], 200)}; its test passes now."] for n, one in fixed],
+    lines += _cut([[f"- **Fixed:** review {one['n']}: {code(one['rule'], 200)}; its test passes now."] for one in fixed],
                   BUDGET["findings"], "report.md's folder, state.json")
-    lines += _cut([[f"- **Open:** review {n}: {code(one['rule'], 200)}; its test {code(one['file'])} fails.",
-                    f"  - The reviewer's reasons: {code(one['why'], 300)}"] for n, one in still],
+    lines += _cut([[f"- **Open:** review {one['n']}: {code(one['rule'], 200)}; its test {code(one['file'])} "
+                    + ("fails." if last.get(one["file"]) == "failed" else "did not run again, so nothing shows it is fixed."),
+                    f"  - The reviewer's reasons: {code(one['why'], 300)}"] for one in still],
                   BUDGET["findings"], "report.md's folder, state.json")
     if loop.get("left"):
         lines.append(f"- **The agent left the code as it was.** Its reason: {code(loop['left'], 300)}.")
@@ -402,12 +407,12 @@ def _review_lines(loop: dict) -> list[str]:
     if reviews:
         lines.append(f"- A reviewer from another model family read the patch {_times(len(reviews))}: "
                      + ", ".join(code(one.get("verdict")) for one in reviews) + ".")
-    for n, one in numbered:
+    for one in reviews:
         if one.get("verdict") == "defect" and one["results"].get(one["file"]) != "failed":
             why = (f"its test would not run: {code(one['unrun'], 200)}" if one.get("unrun") else
                    "its test passes on the patch" if one["file"] in one["results"] else "it wrote no test")
-            lines.append(f"- Review {n} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
-    if found and loop.get("boundary"):
+            lines.append(f"- Review {one['n']} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
+    if loop.get("boundary"):   # known only from a test that ran
         lines.append(f"- **Boundary:** the reviewers' tests ran inside {code(loop['boundary'])}, in scratch copies with no "
                      "network.")
     return [*lines, "", "## What this loop does not show", *LOOP_LIMITS]
@@ -428,4 +433,4 @@ def safe_render(assessment: dict) -> str:
                 "assessment's fields. Qualified draft: merging needs your separate approval.")
 
 
-__all__ = ["MAX_LINES", "STANDING_NOTE", "code", "completion_report", "render", "safe_render"]
+__all__ = ["MAX_LINES", "STANDING_NOTE", "code", "completion_report", "findings", "render", "safe_render"]

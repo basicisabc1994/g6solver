@@ -1203,6 +1203,92 @@ def test_a_row_that_cannot_be_written_loses_no_report(world, monkeypatch):
     assert step.action == loop.STOP and "THE REVIEW" in step.text and world.state()["row"]
 
 
+def test_a_review_repeated_after_a_cut_hook_never_takes_a_stale_test_for_its_own(world, monkeypatch):
+    tests = Reviewed(monkeypatch, "test_critic.py")
+    where = world.session / "sets" / "critic"
+    where.mkdir(parents=True)
+    (where / "test_critic.py").write_text("def test_critic():\n    assert False\n", encoding="utf-8")   # no state knows of it
+    world.edit()
+    step = world.advance(critic=reviewer("none"))
+    assert step.action == loop.STOP and "a review reproduced nothing" in step.text
+    assert not tests.runs.calls and not (where / "test_critic.py").exists()
+
+
+def test_a_fix_that_stops_an_earlier_test_running_shows_nothing_fixed(world, monkeypatch):
+    def now(placed: str) -> dict:
+        return {"verdict": "collection_error", "said": "gone"} if state["broken"] else ran(placed, {"test_critic": "failed"})
+
+    state = {"broken": False}
+    Runs(monkeypatch, now=now)
+    critic = reviewer("one", "none")
+    world.edit()
+    world.advance(critic=critic)
+    world.edit(FIXED + "# renamed the thing its test imports\n")
+    state["broken"] = True
+    text = world.advance(critic=critic).text
+    assert "**Open:** review 1" in text and "did not run again" in text and "**Fixed:**" not in text
+
+
+def test_the_report_names_the_boundary_the_reviewers_tests_ran_in(world, monkeypatch):
+    Runs(monkeypatch, now=lambda placed: {**ran(placed, {"test_critic": "passed"}), "isolation": {"backend": "a-boundary"}})
+    world.edit()
+    assert "ran inside `a-boundary`" in world.advance(critic=reviewer("one")).text
+
+
+def test_with_no_test_run_the_report_names_no_boundary(world, monkeypatch):
+    Runs(monkeypatch)
+    world.edit()
+    assert "ran inside" not in world.advance(critic=reviewer("none")).text
+
+
+def test_a_row_that_cannot_be_built_loses_no_report(world, monkeypatch):
+    Reviewed(monkeypatch, "test_critic.py")
+    critic = reviewer("one")
+    world.edit()
+    world.advance(critic=critic)
+
+    def gone(change):
+        raise repo_tests.RepoRefused("G6_E_GIT_REPO_INVALID", "the repository went away")
+
+    monkeypatch.setattr(repo_tests, "diff_text", gone)
+    step = world.advance(critic=critic)
+    assert step.action == loop.STOP and "THE REVIEW" in step.text
+    assert "the repository went away" in world.state()["row"] and not rows(world)
+
+
+def test_end_to_end_the_review_loop_with_real_confined_runs_and_the_real_review(bwrap_backend, tmp_path, monkeypatch):
+    """Everything real but the reviewer: its tests run confined, a failure goes back, the earlier test keeps running, and a
+    review that reproduces nothing ends in the real review, with no claim for the patch."""
+    monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return max(x, lo)\n", encoding="utf-8")
+    git(root, "init", "-q")
+    git(root, "add", ".")
+    git(root, "commit", "-qm", "base")
+    base, session = git(root, "rev-parse", "HEAD"), tmp_path / "g6" / "completion_loop" / "s1"
+    tests = iter(["from calc import clamp\n\n\ndef test_high():\n    assert clamp(50, 0, 10) == 10\n",
+                  "from calc import clamp\n\n\ndef test_low():\n    assert clamp(-5, 0, 10) == 0\n"])
+
+    def reply(system: str, user: str) -> str:
+        proof = re.search(r"review [0-9a-f]{32}", user)[0]
+        test = next(tests, "")
+        return (f"READ: {proof}\nRULE: the rule\nVERDICT: {'defect' if test else 'none'}\nWHY: because\n"
+                + (f"```python\n{test}```\n" if test else ""))
+
+    critic = FakeLLM(reply)
+    task = "clamp must keep x between lo and hi"
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return max(x, lo) if x < 40 else x\n", encoding="utf-8")
+    first = loop.advance(root, task, base, session, critic=critic)
+    assert first.action == loop.CONTINUE and "def test_high" in first.text
+    assert not list(root.rglob("g6_check_*"))      # the runs were in scratch copies
+    (root / "calc.py").write_text("def clamp(x, lo, hi):\n    return min(max(x, lo), hi)\n", encoding="utf-8")
+    second = loop.advance(root, task, base, session, critic=critic)     # the second review's test passes
+    assert second.action == loop.STOP and "a review reproduced nothing" in second.text
+    assert "**Fixed:** review 1" in second.text and "insufficient_evidence" in second.text
+    assert "ran inside `bubblewrap`" in second.text
+
+
 def test_the_scouts_loop_writes_no_row(world, monkeypatch):
     Runs(monkeypatch, now=dict(CASES))
     world.edit()

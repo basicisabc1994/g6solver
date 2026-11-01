@@ -480,17 +480,20 @@ def review_round(change: repo_tests.Change, task: str, critic: LLMCaller, shippe
                  deadline: float) -> tuple[set[str], str]:
     """One round of the review-until-clean loop: a fresh review of the patch as it stands, kept in ``reviews``, then every
     review's test, each alone. It gives what fails and the words of the latest review whose test fails. A review that failed
-    ends the loop whatever fails, as the patch it should have read was not read, so it gives nothing to send back."""
+    ends the loop whatever fails, as the patch it should have read was not read, so it gives nothing to send back. A hook cut
+    short repeats its review, and that review's test is the only one with its number."""
     n, results, failing = len(reviews) + 1, {}, set()
+    (where / critic_file(n)).unlink(missing_ok=True)
     said = run_critic(change, task, critic, shipped.critic, where, n)
     for name in [critic_file(i) for i in range(1, n + 1) if (where / critic_file(i)).is_file()]:
         got = run_set(change, where, at_base=False, deadline=deadline, only=name)
         found = failures_of([("critic", got, None)])[0] if got.usable else set()    # one that will not run says nothing
         failing |= found
         results[name] = "failed" if found else "passed" if got.usable else "did not run"
+        said["boundary"] = got.boundary or said.get("boundary", "")
         if name == critic_file(n) and not got.usable:
             said["unrun"] = got.tail[-300:]
-    said.update(patch=digest(repo_tests.diff_text(change)), file=critic_file(n), results=results)
+    said.update(n=n, patch=digest(repo_tests.diff_text(change)), file=critic_file(n), results=results)
     reviews.append(said)
     if said["verdict"] not in READ_VERDICTS or not failing:
         return set(), ""
@@ -596,18 +599,11 @@ def _report(root: Path, task: str, base: str, state: dict, reason: str) -> str:
         review)
 
 
-def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
-    """The reviews whose own test failed when they wrote it, fixed (it passed on the last run) and open (anything else)."""
-    last = reviews[-1]["results"] if reviews else {}
-    found = [one for one in reviews if one["results"].get(one["file"]) == "failed"]
-    return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
-
-
 def _failure_row(task: str, base: str, change: repo_tests.Change, state: dict) -> dict:
     """A run's row for the next cycle of the self-improvement loop: ``metaharness.domain.FailureRecord``'s fields first, as
     a cause must be a stable code, and a reproduced finding is observed apart from the agent: G6 ran another family's test."""
     reviews = state["reviews"]
-    fixed, still = findings(reviews)
+    fixed, still = patch_report.findings(reviews)
     return {"case_id": f"{digest(task)[:16]}:{base[:12]}", "cause": OPEN if still else FIXED, "changeable": True,
             "note": (still or fixed)[0]["rule"], "independently_observed": True, "task": digest(task), "base": base,
             "rounds": len(reviews), "reviews": [{k: one[k] for k in ("verdict", "rule", "why", "test", "patch", "results")}
@@ -618,14 +614,14 @@ def _failure_row(task: str, base: str, change: repo_tests.Change, state: dict) -
 
 def _keep_failures(task: str, base: str, change: repo_tests.Change, state: dict) -> None:
     """The run's row, added to ``FAILURES``, when it reproduced a finding. A row that cannot be written costs no report."""
-    if not any(findings(state.get("reviews") or [])):
+    if not any(patch_report.findings(state.get("reviews") or [])):
         return
     try:
         path = state_path(*FAILURES)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a", encoding="utf-8", newline="\n") as out:
             out.write(json.dumps(_failure_row(task, base, change, state), ensure_ascii=False) + "\n")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:    # a RepoRefused from reading the final patch is a ValueError too
         state["row"] = f"{type(exc).__name__}: {exc}"[:300]
 
 
@@ -638,9 +634,11 @@ def _review_end(root: Path, task: str, base: str, change: repo_tests.Change, ses
         state["left"] = " ".join(said.split())[:MAX_CASE_CHARS] or NO_REASON
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NO_CLEAN_REVIEW
     _keep_failures(task, base, change, state)
+    reviews = state.get("reviews") or []
     return _finish(session, state, patch_report.completion_report({
-        "reason": reason, "reviews": state.get("reviews") or [], "repairs": sum(one["tree"] is not None for one in state["rounds"]),
-        "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "boundary": state.get("boundary")},
+        "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
+        "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code),
+        "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")},
         _final_review(root, task, base)), code)
 
 

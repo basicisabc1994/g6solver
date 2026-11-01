@@ -431,7 +431,7 @@ def test_the_loops_report_says_which_critic_read_the_patch():
 
 
 def review(n: int, verdict: str = "defect", results: dict | None = None, **more) -> dict:
-    return {"verdict": verdict, "rule": f"rule {n}", "why": f"why {n}", "test": "", "error": "", "patch": "d",
+    return {"n": n, "verdict": verdict, "rule": f"rule {n}", "why": f"why {n}", "test": "", "error": "", "patch": "d",
             "file": f"test_critic_{n}.py", "results": results or {}, **more}
 
 
@@ -475,6 +475,7 @@ def test_a_test_that_did_not_run_again_stays_open():
                review(2, "failed", {"test_critic_1.py": "did not run"}, error="gone")]
     text = patch_report.completion_report({**CLEAN, "reason": "a review failed", "reviews": reviews, "no_clean": True}, "R")
     assert "**Open:** review 1" in text and "**No clean review:** a review failed: `gone`." in text
+    assert "`test_critic_1.py` did not run again, so nothing shows it is fixed." in text and "`test_critic_1.py` fails" not in text
 
 
 def test_a_review_with_no_failure_to_show_is_named_and_is_no_finding():

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The product's completion loop against the worked examples' arm L9: the text the package ships, resolved from
+"""The product's completion loop against the worked examples' arms L9 and K: the text the package ships, resolved from
 ``run.py``'s own functions, and the parts of the loop that had to be carried across, on the same inputs, so that the two
 cannot drift. No model, no container, nothing written under ``validation/``."""
 from __future__ import annotations
