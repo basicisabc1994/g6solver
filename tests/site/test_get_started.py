@@ -63,6 +63,16 @@ def test_jev_on_openrouter_has_its_own_model_tab(page):
     assert "G6_LLM_PROVIDER=openrouter" in page and "G6_LLM_MODEL=typesafe/jev-router" in page
 
 
+def test_someone_on_neither_claude_code_nor_codex_is_told_how_to_give_g6_a_model(page):
+    # owner, 2026-11-01: value needs a model in the loop, not only MCP tools. Fails while the model lines sit only under
+    # "In your code", where a person connecting Cursor, Gemini CLI or another client never reads them
+    agent_path = page.split('id="from-agent"', 1)[1].split('id="in-code"', 1)[0]
+    for line in ("G6_LLM_PROVIDER=ollama", "ollama pull", "G6_LLM_PROVIDER=openrouter", "OPENROUTER_API_KEY=",
+                 "G6_LLM_PROVIDER=claude_code", "G6_LLM_PROVIDER=codex", "~/.g6/.env", "g6 doctor"):
+        assert line in agent_path, line
+    assert "Give G6 a model" in agent_path and "named error" in agent_path
+
+
 def test_the_page_says_keys_go_in_the_key_file(page):
     # owner ruling 2026-10-21: a person gives G6 a key only by writing it in their key file
     assert "~/.g6/.env" in page and "g6 doctor" in page and "$env:" not in page

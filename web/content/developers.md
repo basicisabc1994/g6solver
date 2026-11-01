@@ -115,7 +115,7 @@ in G6's state folder that holds every field, and `metaharness_job` with `detail=
 reproduced, add each earlier reproduction as a stated check, and review again, for at most three rounds.
 
 `g6_review_until_clean` (allowed the same way) runs one step of G6's completion loop, for a client the plugin's Stop hook
-cannot reach. It also needs `G6_LOOP_CRITIC=codex` in the person's key file, as it spends their Codex sign-in. Another model
+cannot reach. It also needs `G6_LOOP_CRITIC=codex` in the person's key file, as it spends their own Codex allowance. Another model
 family reads the patch without the agent's reasoning and must state a rule, reasons and a test. If that test fails, the reply
 says continue, with the text for the agent, which may reject the finding. A fresh review reads each repair, at most three
 repairs. Otherwise the reply says stop, with the report: what was found, what was fixed and what stayed open. It returns a

@@ -113,6 +113,39 @@ pip install ".[all]"</code><button type="button" class="btn btn--small copy" dat
                 <code>\\</code>.</p>
             </li>
             <li>
+                <h3 class="h3" id="give-model">Give G6 a model</h3>
+                <p>Tools alone are not enough. The value comes from a model working inside G6's checks, and your agent's
+                model is not G6's. Where G6 itself has to think, such as proposing checks or tuning a task, it needs a
+                model of its own. With none chosen, those parts stop with a named error and everything else still
+                works.</p>
+                <p>On Claude Code or Codex, G6 can use the model you already have: add the line
+                <code>G6_LLM_PROVIDER=claude_code</code> or <code>G6_LLM_PROVIDER=codex</code> to your key file.</p>
+                <p>On anything else, use Ollama or OpenRouter. <a class="link" href="https://ollama.com" rel="noopener">Ollama</a>
+                is free and runs on your own computer: install it, then pull the model below.
+                <a class="link" href="https://openrouter.ai" rel="noopener">OpenRouter</a> reaches many providers' models
+                with one key, paid from your own account.</p>
+                <p>Your key file is <code>.env</code> in G6's folder (<code>~/.g6/.env</code>, or
+                <code>%USERPROFILE%\.g6\.env</code> on Windows): a plain text file you create and only you edit. G6 reads
+                keys only from that file, never from your shell or your agent's settings, so a key there is your
+                go-ahead for G6 to use it. A paid provider uses your own account; G6 never picks one for you.</p>
+                <div class="tabs" data-tabs>
+                    <div class="tabs__list" role="tablist" aria-label="G6's model">
+                        {% for m in models %}<button type="button" role="tab" id="tab-model-{{ m.key }}" aria-controls="panel-model-{{ m.key }}" aria-selected="{% if forloop.first %}true{% else %}false{% endif %}">{{ m.name }}</button>{% endfor %}
+                    </div>
+                    {% for m in models %}
+                    <div class="tabs__panel" role="tabpanel" id="panel-model-{{ m.key }}" aria-labelledby="tab-model-{{ m.key }}">
+                        <div class="cmd"><code id="env-{{ m.key }}">{{ m.snippet }}</code><button type="button" class="btn btn--small copy" data-copy="#env-{{ m.key }}">Copy</button></div>
+                        {% if m.note %}<p class="small quiet">{{ m.note }}</p>{% endif %}
+                        {% if m.docs %}<p class="small"><a class="link" href="{{ m.docs }}" rel="noopener">About this model</a></p>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="small quiet">Then run <code>g6 doctor</code>: it names the keys it finds in that file and never
+                shows a value.</p>
+                <p class="small">G6's patch review needs no model, so it works with any of these. Its review-until-clean
+                loop needs Codex as its reviewer today, so it does not run on Ollama or OpenRouter alone.</p>
+            </li>
+            <li>
                 <h3 class="h3">Teach your agent to use G6</h3>
                 <p>The <code>using-g6</code> skill tells your agent which G6 step to take at each point of its work;
                 <code>g6 setup</code> installs it for Claude Code and Codex. To install it yourself, run this in your project to copy it into <code>.claude/skills</code>, where Claude Code finds it; add
@@ -144,25 +177,8 @@ pip install ".[all]"</code><button type="button" class="btn btn--small copy" dat
         <div class="band__body">
             <div class="cmd"><code id="cmd-lib">pip install .
 python -c "from g6.metaharness import adapt"</code><button type="button" class="btn btn--small copy" data-copy="#cmd-lib">Copy</button></div>
-            <p>Where G6 itself calls a model, it uses the one you choose. Put these lines in your key file,
-            <code>.env</code> in G6's folder (<code>~/.g6/.env</code>, or <code>%USERPROFILE%\.g6\.env</code> on
-            Windows): a plain text file you create and only you edit. G6 reads keys only from that file, never from your
-            shell or your agent's settings, so a key there is your go-ahead for G6 to use it. A paid provider uses your
-            own account; G6 never picks one for you.</p>
-            <div class="tabs" data-tabs>
-                <div class="tabs__list" role="tablist" aria-label="G6's model">
-                    {% for m in models %}<button type="button" role="tab" id="tab-model-{{ m.key }}" aria-controls="panel-model-{{ m.key }}" aria-selected="{% if forloop.first %}true{% else %}false{% endif %}">{{ m.name }}</button>{% endfor %}
-                </div>
-                {% for m in models %}
-                <div class="tabs__panel" role="tabpanel" id="panel-model-{{ m.key }}" aria-labelledby="tab-model-{{ m.key }}">
-                    <div class="cmd"><code id="env-{{ m.key }}">{{ m.snippet }}</code><button type="button" class="btn btn--small copy" data-copy="#env-{{ m.key }}">Copy</button></div>
-                    {% if m.note %}<p class="small quiet">{{ m.note }}</p>{% endif %}
-                    {% if m.docs %}<p class="small"><a class="link" href="{{ m.docs }}" rel="noopener">About this model</a></p>{% endif %}
-                </div>
-                {% endfor %}
-            </div>
-            <p class="small quiet">Then run <code>g6 doctor</code>: it names the keys it finds in that file and never
-            shows a value.</p>
+            <p>Where G6 itself calls a model, it uses the one you choose in your key file, the same way as from an
+            agent: see <a class="link" href="#give-model">Give G6 a model</a>.</p>
             <div class="actions"><a class="btn" href="{% url 'pages:developers' %}">Read the developer guide</a>
             <a class="btn" href="{% url 'pages:metaharness' %}">How the meta-harness works</a></div>
         </div>
