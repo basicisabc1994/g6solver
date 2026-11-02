@@ -114,16 +114,10 @@ CANNOT_RECORD = "G6_E_LOOP_CANNOT_RECORD"
 SPLIT_REUSED = "G6_E_LOOP_SPLIT_REUSED"
 UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
-#: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
-#: with. A test holds every module those files import to this set or that one.
-ENVELOPE_PATTERNS = ("__init__.py", "core/__init__.py", "metaharness/__init__.py", "operator/__init__.py", "self_maintenance/__init__.py",
-                     "workspace/__init__.py", "metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/lessons.py", "metaharness/loop.py",
-                     "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
-                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/reflex.py", "metaharness/runner.py",
-                     "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
-                     "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py",
-                     "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
-                     "core/binomial.py", "core/host_models.py", "core/llm.py", "core/vault.py", "integrity/*.py")
+#: What enforces the envelope, beside ``JUDGING_PATTERNS``: all of G6. The loop's own files import much of the package and those
+#: files import more, so a list of them leaves out whatever an import reaches next. It is read in a tenth of a second, and a
+#: change to what runs is a person's to enrol again, as it is theirs to merge.
+ENVELOPE_PATTERNS = ("**/*.py",)
 UNKNOWN = "unknown"
 #: What the gate holds this loop's candidates to (the owner's ruling, 2026-11-02: quality first, and optimisation only once
 #: everything is correct). Calls, time and cost are still measured, and reported as not gated. ``default_objectives`` and the
@@ -275,6 +269,8 @@ class _Requests:
         if stopped is not None:
             raise stopped
         with self._lock:
+            if self.refusal is not None:                  # one may have come while the stop was being read
+                raise _Refused(self.refusal["said"])
             if self.unseen or self.sent >= self.limit:
                 self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
             elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
@@ -316,7 +312,8 @@ class _Requests:
         asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is sent again."""
         said = refused_by(str(failed))
         if said and self.limit != math.inf:
-            self.refusal = {"said": said, "request": sent or request, "asked": request}
+            with self._lock:
+                self.refusal = {"said": said, "request": sent or request, "asked": request}
             for known in {request, sent or request}:
                 self.refused.add(known)
                 self.keeping(known, said)
@@ -366,7 +363,8 @@ class _Counted:
     resend is admitted as a request is, at its own boundary (``_Resends``), whichever caller sent it. A wrapper that sends from
     a thread of its own is seen only when it answers, as a caller that noted nothing, because ``counting`` holds its observers
     in a context that thread does not have: the tick adopts nothing and the loop pauses, but what it sent has gone. Closing that
-    takes a change to that bound file, which waits for an issuance window."""
+    takes a change to that bound file, which waits for an issuance window. One that copied the context has those observers, and
+    a request it sends once the call has returned is refused: the call's place is gone, and its tick may be."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
         self.inner, self.requests = inner, requests
@@ -376,20 +374,26 @@ class _Counted:
         asked = sent = _request_digest(system, user)
         self.requests.not_refused(asked)
         took: list[None] = []
+        returned = False
+
+        def take(wait: float = 0.0) -> None:
+            if returned:
+                raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved covers it")
+            self.requests.take(wait)
 
         def next_request() -> None:
             nonlocal sent
             sender, sent = _sender(self, asked)
             self.requests.from_sender(sender)
             read_stops(sender)
-            self.requests.take()              # a place first, so a wrapper that keeps trying stops at what the tick reserved
+            take()                            # a place first, so a wrapper that keeps trying stops at what the tick reserved
             self.requests.not_refused(sent)
             took.append(None)
 
         def told(said: str, given: tuple[str, ...]) -> None:
             self.requests.at_a_refusal(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent)
 
-        with counting(before_call=next_request) as noted, _gating_resends(self.requests.take), telling_stops(told):
+        with counting(before_call=next_request) as noted, _gating_resends(take), telling_stops(told):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
@@ -397,6 +401,7 @@ class _Counted:
                 self.requests.at_a_refusal(failed, asked, sent)
                 raise
             finally:
+                returned = True
                 self.requests.count(noted() - len(took))     # a child's totals have no boundary
             if not noted():
                 self.requests.unseen = True
@@ -603,7 +608,7 @@ class ShadowLoop:
 
         def racing(entered: int) -> int:                     # failure traces offer one, and a champion races again
             return min(method.select_budget + per_run,
-                       per_run * race_calls(len(cut.selection), entered, method.race_block, method.race_keep))
+                       per_run * race_calls(len(cut.selection), entered))
 
         one_case = per_run * (per_run + 2)                   # base, candidate and a control matched to the candidate's calls
         return (2 * per_run * min(self.settings.audit_per_tick, len(cut.monitor)) + on_dev(1)

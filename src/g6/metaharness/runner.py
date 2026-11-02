@@ -362,7 +362,7 @@ def _not_started(root: Path) -> str:
 
 def _refuse(root: Path, code: str, why: str, now: Callable[[], datetime]) -> int:
     print(why, file=sys.stderr)
-    beat(root, state="not-running", code=code, reason=why, at=now().isoformat())
+    beat(root, state="not-running", code=code, reason=why, pid=os.getpid(), in_job=_in_job(), at=now().isoformat())
     return 1
 
 

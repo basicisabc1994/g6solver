@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS ledger (seq INTEGER PRIMARY KEY AUTOINCREMENT, ventur
 CREATE TRIGGER IF NOT EXISTS ledger_once BEFORE INSERT ON ledger WHEN NEW.kind <> 'charge'
     AND EXISTS (SELECT 1 FROM ledger WHERE ref = NEW.ref AND kind = NEW.kind)
 BEGIN SELECT RAISE(ABORT, 'a reservation is made once and released once'); END;
+CREATE TABLE IF NOT EXISTS week_books (owner TEXT NOT NULL, provider TEXT NOT NULL, week TEXT NOT NULL, book TEXT NOT NULL,
+    PRIMARY KEY (owner, provider, week));
 """
 
 
@@ -108,6 +110,17 @@ class OwnerScope:
 
     def has_venture(self, name: str) -> bool:
         return self.conn.execute("SELECT 1 FROM ventures WHERE owner=? AND name=?", (self.owner, name)).fetchone() is not None
+
+    def week_book(self, provider: str, week: str) -> str | None:
+        """The book a provider's week went on when its end moved, or ``None`` for a week booked under its own start."""
+        row = self.conn.execute("SELECT book FROM week_books WHERE owner=? AND provider=? AND week=?",
+                                (self.owner, provider, week)).fetchone()
+        return row["book"] if row is not None else None
+
+    def keep_week_book(self, provider: str, week: str, book: str) -> None:
+        """Say which book a provider's week goes on. The first word stands."""
+        with self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, book))
 
     def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
         """The id of this owner's venture of this name, made once however many ask at the same moment."""

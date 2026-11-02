@@ -21,7 +21,7 @@ import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -155,7 +155,6 @@ class BudgetMeter:
         self._read_account = read_account
         self._charged_at: dict[tuple[str, datetime], tuple[datetime, float]] = {}
         self._limits: dict[str, datetime] = {}
-        self._books: dict[tuple[str, datetime], datetime] = {}
 
     def _charged_when_read(self, provider: str, start: datetime, account: AccountReading | None,
                            charged: float) -> float | None:
@@ -178,17 +177,19 @@ class BudgetMeter:
     def _book(self, window: ProviderWindow, now: datetime) -> datetime:
         """The start the week ``now`` falls in is booked under: its own, or the one it had when its end moved."""
         start = window.place(now)[0]
-        return self._books.get((window.provider, start), start)
+        book = self.scope.week_book(window.provider, start.astimezone(UTC).isoformat())
+        return datetime.fromisoformat(book) if book else start
 
     def _on_the_providers_week(self, window: ProviderWindow, reset: datetime, now: datetime) -> ProviderWindow:
         """``window`` moved to the week its provider reports. The week still open keeps its book, or what was charged in it,
         and what a tick reserved there and settles there, would stop counting against the ceiling. A week already over keeps
-        nothing: the week it gives way to is a new one. The moves are held in memory, so a week the ledger already has a book
-        for keeps that book: after a restart the settings' week says nothing of what was reserved under the provider's."""
+        nothing: the week it gives way to is a new one. The move is in the store, so a restart finds it, and a week the ledger
+        already has a book of its own for keeps that book: the settings' week says nothing of what was reserved under the
+        provider's."""
         moved = self.windows[window.provider] = window.aligned(reset)
         start = moved.place(now)[0]
         if moved is not window and reset > now and not self.scope.has_venture(f"{window.provider}@{start.isoformat()}"):
-            self._books[(window.provider, start)] = self._book(window, now)
+            self.scope.keep_week_book(window.provider, start.astimezone(UTC).isoformat(), self._book(window, now).isoformat())
         return moved
 
     def reading(self, provider: str, now: datetime) -> Admission:

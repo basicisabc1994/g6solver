@@ -76,11 +76,11 @@ _THE_OWNERS = (GATE, JUDGE, HELD_OUT, ENVELOPE, STOP, PERSON_ONLY)
 def funnel(cycles: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     """One tuning run's ``cycles`` as counts a row can hold, or nothing for a run that never began. ``offered``: valid candidates proposers gave. ``new``:
     those not tried before. ``repeated``: attempts the pool caught as repeats. ``measured``: run on the tuning split. ``kept``: of those, at least as good as
-    their parent. ``raced``: entries in the races. A strategy keeps running counts over a run, so those are read from its last cycle."""
+    their parent. ``raced``: entries in the races. A strategy keeps running counts over a run, so those are read from the last cycle it reached."""
     if not cycles:
         return {}
     asked = [strategy for cycle in cycles for strategy in cycle["strategies"].values()]
-    last = cycles[-1]["strategies"].values()
+    last = {name: strategy for cycle in cycles for name, strategy in cycle["strategies"].items()}.values()
     return {"offered": sum(s.get("offered") or 0 for s in asked), "new": sum(s["proposed"] for s in asked),
             "repeated": sum(s.get("duplicates") or 0 for s in last), "measured": sum(s.get("measured") or 0 for s in last),
             "kept": sum(s.get("offered") or 0 for s in asked if s.get("attempts") is not None),
@@ -94,7 +94,7 @@ def _fields(value: Any) -> Mapping[str, Any]:
 
 def _count(fields: Mapping[str, Any], name: str) -> int:
     value = fields.get(name)
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+    return max(value, 0) if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _text(value: Any) -> str:
@@ -108,8 +108,8 @@ def _proposing(row: Mapping[str, Any]) -> dict[str, bool]:
         return read
     offered, new, measured = _count(tuned, "offered"), _count(tuned, "new"), _count(tuned, "measured")
     read[PROPOSED] = bool(offered or measured or _count(tuned, "repeated"))
-    if read[PROPOSED]:                 # a candidate that lost on tuning was new as far as anything can tell: what it lost shows at the next stage
-        read[DISTINCT] = bool(new or (measured and not offered))
+    if read[PROPOSED]:                 # measured and never offered: it lost on tuning, so it was new as far as anything can tell, and what it lost shows at the next stage
+        read[DISTINCT] = bool(new or measured > _count(tuned, "kept"))
     if measured:
         read[TUNING] = _count(tuned, "kept") > 0
     return read
