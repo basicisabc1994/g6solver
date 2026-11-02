@@ -103,5 +103,10 @@ class CodingReplay:
             found.append(FailureRecord(record.case_id, cause, record.changeable, record.note, record.independently_observed))
         return tuple(found)
 
+    def root_cause(self, cause: str) -> str | None:
+        """Where a wrong reading sits on the closed list of ``g6.metaharness.lessons``: a defect let through is a gap in verification, and a false alarm
+        sends a right patch to repair. Any other cause has no place on it yet."""
+        return {ACCEPTED_DEFECT: "verification_gap", FALSE_ALARM: "bad_remediation"}.get(cause)
+
 
 __all__ = ["ACCEPTED_DEFECT", "FALSE_ALARM", "READ_AS_WRITTEN", "CodingReplay", "load_cases", "right_verdict", "verdict_of"]

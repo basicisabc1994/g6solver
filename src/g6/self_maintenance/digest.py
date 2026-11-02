@@ -36,6 +36,21 @@ def _newest(lines: Sequence[str], most: int) -> list[str]:
     return [*shown, *([f"- and {len(lines) - most} more."] if len(lines) > most else [])]
 
 
+def _limits(reflex: Mapping[str, Any] | None) -> list[str]:
+    """The page's first line: what limits progress, at which level, the evidence, and what only the owner can do. No diagnosis, no line."""
+    if not reflex or not reflex.get("constraint"):
+        return []
+    evidence = reflex.get("evidence") or {}
+    refused = max((evidence.get("refusals") or {}).items(), key=lambda kept: kept[1], default=None)
+    said = [f"**What limits progress: {_flat(reflex['constraint'])}, at the {_flat(reflex.get('level'))} level.**",
+            *([f"{refused[1]} stopped by {_flat(refused[0])}."] if refused else []),
+            *([f"Stuck for {evidence.get('held')} cycles with no adoption: the next attempt must change its {_flat(reflex.get('change'))}."]
+              if reflex.get("stuck") else []),
+            "Only the owner can change this: the loop names it and never edits it." if reflex.get("level") == "owner"
+            else "Nothing here needs the owner."]
+    return [" ".join(said)]
+
+
 def _ran(domain: str, cycles: Sequence[Mapping[str, Any]]) -> list[str]:
     if not cycles:
         return [f"- No tick ran today on {_flat(domain)}."]
@@ -115,14 +130,15 @@ def _listed(items: Sequence[str]) -> list[str]:
 
 def render(day: date, *, domain: str, status: str, cycles: Sequence[Mapping[str, Any]], use: Sequence[Mapping[str, Any]],
            constraint: Mapping[str, Any] | None, generations: Mapping[str, Any], decisions: Sequence[str],
-           stops: Sequence[str]) -> str:
-    """One day's page. ``cycles`` are that day's; ``constraint`` is the latest cycle that named one, whenever it ran."""
+           stops: Sequence[str], reflex: Mapping[str, Any] | None = None) -> str:
+    """One day's page. ``cycles`` are that day's; ``constraint`` is the latest cycle that named one, whenever it ran; ``reflex`` is what the loop says
+    limits it now, which leads the page when there is one."""
     sections = (("What ran", _ran(domain, cycles)), ("Use against the pacing rule", _use(use)),
                 ("The current constraint", _constraint(constraint)), ("What was tried", _tried(cycles)),
                 ("Failure records read", _failures(cycles)), ("What proposers found", _findings(cycles)),
                 ("Generations", _generations(generations)), ("Decisions for the owner", _listed(decisions)),
                 ("Stops and pauses", _listed(stops)))
-    lines = [f"# G6 improvement loop: {day.isoformat()}", "", status]
+    lines = [f"# G6 improvement loop: {day.isoformat()}", "", *_limits(reflex), status]
     for heading, body in sections:
         lines += ["", f"## {heading}", *body]
     return "\n".join(lines[:MOST_LINES]) + "\n"

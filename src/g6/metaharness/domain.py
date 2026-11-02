@@ -136,6 +136,9 @@ class Domain(Protocol):
 
     def failures(self, view: ProposerView) -> tuple[FailureRecord, ...]: ...
 
+    # A domain may also give ``root_cause(cause)``: a member of ``g6.metaharness.lessons.ROOT_CAUSES``, or ``None``. It is no member of
+    # this protocol, which would make it required: a domain without it leaves no lesson, and nothing else changes.
+
 
 def reason_coded(view: ProposerView) -> tuple[FailureRecord, ...]:
     """One record per failed case, from the harness's reason codes and the judge's verdict: what a domain returns when

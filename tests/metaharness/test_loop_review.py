@@ -337,8 +337,8 @@ def test_3_cases_that_are_truly_new_still_enrol(tmp_path):
 
 # Finding 4: the whole enforcement set is pinned, not just the loop's own files --------------------------------------------
 SRC = Path(g6.__file__).resolve().parent
-LOOP_FILES = ("metaharness/domain.py", "metaharness/loop.py", "metaharness/runner.py", "metaharness/shadow.py",
-              "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py")
+LOOP_FILES = ("metaharness/domain.py", "metaharness/lessons.py", "metaharness/loop.py", "metaharness/reflex.py", "metaharness/runner.py",
+              "metaharness/shadow.py", "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py")
 BEHIND_THEM = ("operator/gates.py", "metaharness/select.py", "metaharness/reflect.py")   # imported by what they import
 
 

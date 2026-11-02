@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The self-improvement loop's tick, in shadow: it works on any domain, with no person in it.
 
-One tick is one cycle of design 6.1. **Measure** the head on the tuning cases. **Identify** the constraint: the cause
+One tick is one cycle of design 6.1. It opens by reading its own records and saying what limits progress (``g6.metaharness.reflex``), which is recorded and
+changes nothing it does. **Measure** the head on the tuning cases. **Identify** the constraint: the cause
 a profile can change that costs the most cases, through ``self_maintenance.constraints``, and none at all when the
 failure records were not independently observed. **Exploit**, by proposing within the meta-harness's editable schema:
 ``method.tune`` runs its usual proposers, with ``FailureTraceStrategy`` shown only the constraint's failures, and races
@@ -59,11 +60,11 @@ from g6.metaharness.domain import (
     sealed_closed,
     sender_problems,
 )
+from g6.metaharness import reflex
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
-from g6.metaharness.reflex import funnel
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
 from g6.metaharness.shadow import SCOPE, adapt_shadow
@@ -121,7 +122,7 @@ ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py",
                      "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
                      "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py",
                      "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
-                     "core/host_models.py", "core/llm.py", "core/vault.py", "integrity/*.py")
+                     "core/binomial.py", "core/host_models.py", "core/llm.py", "core/vault.py", "integrity/*.py")
 UNKNOWN = "unknown"
 #: What the gate holds this loop's candidates to (the owner's ruling, 2026-11-02: quality first, and optimisation only once
 #: everything is correct). Calls, time and cost are still measured, and reported as not gated. ``default_objectives`` and the
@@ -794,6 +795,7 @@ class ShadowLoop:
             self.waited += 1
             return waiting
         self._beat("running", CYCLE)
+        opened = reflex.read(self.log.cycles())     # what limits progress, read before this cycle does anything
         recommended: list[dict[str, Any]] = []
         limit: _AtLimit | None = None
         halted: _Halted | None = None
@@ -850,6 +852,7 @@ class ShadowLoop:
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated, "waited": self.waited}
+        row["reflex"] = opened
         return self._record(row)
 
     def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
@@ -964,10 +967,19 @@ class ShadowLoop:
         constraint = name_constraint(records, len(view.dev))
         row |= {"constraint": constraint.name, "basis": constraint.basis,
                 "observations": [list(o) for o in constraint.observations],
-                "failure_records": dict(Counter(r.cause for r in records))}
+                "failure_records": dict(Counter(r.cause for r in records)), "lessons": self._lessons(records)}
         if constraint.name == UNKNOWN:
             return {**row, "outcome": "no_constraint", "code": NO_CONSTRAINT, "reason": constraint.reason}
         return {**row, **self._exploit(constraint, recommended)}
+
+    def _lessons(self, records: Sequence[FailureRecord]) -> list[dict[str, Any]]:
+        """What this cycle's failures taught, as its row keeps them. This only records, so a domain's fault here costs the cycle nothing."""
+        try:
+            return [dataclasses.asdict(lesson) for lesson in reflex.lessons_from(
+                records, getattr(self.domain, "root_cause", None), generation=self.log.generation(), tick=len(self.log.cycles()) + 1,
+                scope=self.domain.name)]
+        except Exception:  # noqa: BLE001 - see above: a failure that leaves no lesson row is allowed, and one that stops the work is not
+            return []
 
     def _exploit(self, constraint: Constraint, recommended: list[dict[str, Any]]) -> dict[str, Any]:
         """Propose and gate. A recommendation is only held here: it is adopted once the sealed split is known untouched."""
@@ -985,7 +997,7 @@ class ShadowLoop:
             reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
-                "recovery": run.recovery, "tuning": funnel(run.cycles), **strategy.findings}
+                "recovery": run.recovery, "tuning": reflex.funnel(run.cycles), **strategy.findings}
 
     @_exclusive
     def leave_shadow(self) -> dict[str, Any]:

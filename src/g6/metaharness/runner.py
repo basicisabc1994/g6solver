@@ -65,6 +65,7 @@ from g6.metaharness.loop import (
     LoopSettings,
     ShadowLoop,
 )
+from g6.metaharness import reflex
 from g6.metaharness.shadow import lineage
 from g6.self_maintenance import digest
 from g6.self_maintenance.envelope import (
@@ -313,9 +314,11 @@ class Runner:
         except ValueError as exc:
             generations = {"current": "unreadable", "recent": []}
             halted = f"{halted} The generations could not be read: {exc}"[:200].strip()
+        # read fresh: a row's own diagnosis opened that cycle, so it cannot know how that cycle ended
         return digest.render(day, domain=self.loop.domain.name, status=STATUS_LINE, cycles=today, use=self._use(now),
                              constraint=named[-1] if named else None, generations=generations,
-                             decisions=self._decisions(), stops=self._stops(now, halted, today))
+                             decisions=self._decisions(), stops=self._stops(now, halted, today),
+                             reflex=reflex.read(cycles) if any(c.get("reflex") for c in cycles) else None)
 
     def _digest(self, now: datetime, halted: str = "") -> None:
         """Today's page, and the day just ended, whole, when the date has moved on. A pass closes a day before its tick,

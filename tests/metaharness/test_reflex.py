@@ -12,13 +12,17 @@ from pathlib import Path
 import pytest
 
 import g6
+from g6.core.llm import FakeLLM
 from g6.integrity import build_manifest, manifest_sha256
 from g6.metaharness import loop as loop_module
 from g6.metaharness import schema
+from g6.metaharness.coding_replay import CodingReplay
+from g6.metaharness.domain import Domain, FailureRecord
 from g6.metaharness.lessons import Lesson
 from g6.metaharness.loop import ENVELOPE_PATTERNS, LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
-from g6.metaharness.reflex import STAGES, diagnose, funnel, refusals, stages
+from g6.metaharness.reflex import STAGES, diagnose, funnel, lessons_from, lessons_in, read, refusals, seen_in, stages
+from g6.metaharness.runner import Runner
 from g6.self_maintenance.constraints import identify_constraint
 from g6.self_maintenance.envelope import TICK_BUDGET_SPENT
 from g6.self_maintenance.pacing import ProviderWindow
@@ -35,6 +39,9 @@ SETTINGS = LoopSettings(windows=(ProviderWindow("claude", 1_000_000, START),), m
 WALL_CLOCK = "wall_clock_s: the upper bound on the increase 1.4 exceeds 5% of the base (0.1)"
 BUDGET = {"provider": "claude", "day": 3, "charged": 10, "used": 10, "target": 100, "ceiling": 200, "estimated": True, "waited": 0}
 AUDITED = {"audited": 10, "pairs": 10, "mean_difference": 0.0, "threshold": 0.1}
+#: What three ticks did on ``_loop``'s default inputs on the commit before this step existed: read from a run of that commit, not from this code.
+BEFORE = {"outcomes": ["adopted", "no_winner", "no_winner"], "head": "d9fe63586c692aeef4e627f61837b79f036c38e57628f6bef0dddd065f2fdd32",
+          "champion": "6e59ecedf79e17f01c07b084636dd5d3b563c1c4db1754591ce3832a11be573c"}
 
 
 def _loop(tmp_path, domain=None, proposer=None, **kw):
@@ -354,6 +361,173 @@ def test_a_budget_wait_is_written_on_the_next_cycle_and_then_cleared(tmp_path):
     loop._reserve = real
     assert loop.tick()["budget"]["waited"] == 2
     assert loop.tick()["budget"]["waited"] == 0
+
+
+# The tick reads it and records it ------------------------------------------------------------------------------------------
+class _Placed(domains.BugFixes):
+    """A domain that can place a cause on the closed list, and one it cannot."""
+
+    def root_cause(self, cause):
+        return {"accepted_defect": "verification_gap", "refused_patch": "not on the list"}.get(cause)
+
+
+def _kept(row):
+    return {name: row.get(name) for name in ("outcome", "code", "head_version", "head_profile", "champion", "decision", "dev_success", "constraint")}
+
+
+def test_a_tick_records_the_diagnosis_and_its_lessons_and_both_read_back_after_a_restart(tmp_path):
+    domain = _Placed(tmp_path)
+    loop, _ = _loop(tmp_path, domain=domain, proposer=domains.proposes({"prompt": domains.CODE_HINT}))
+    loop.enrol("Ada")
+    first = loop.tick()
+    assert first["reflex"]["constraint"] == "unknown" and first["reflex"]["level"] == "work" and first["reflex"]["stuck"] is False
+    [lesson] = first["lessons"]
+    assert lesson["root_cause"] == "verification_gap" and lesson["generation"] == 0 and lesson["case_ids"] and lesson["check"]
+    second = loop.tick()
+    assert second["reflex"]["evidence"]["adopted"] == 1            # it read the first cycle, written before this one opened
+    again, _ = _loop(tmp_path, domain=domain, proposer=domains.proposes({"prompt": domains.CODE_HINT}))
+    rows = again.log.cycles()
+    assert [row["reflex"]["constraint"] for row in rows] == [first["reflex"]["constraint"], second["reflex"]["constraint"]]
+    assert rows[0]["lessons"] == json.loads(json.dumps(first["lessons"]))
+    [kept] = lessons_in(rows[:1])
+    assert kept.root_cause == "verification_gap" and seen_in((kept,))[0] == (0, "verification_gap", kept.case_ids[0])
+
+
+def test_a_cause_with_no_place_on_the_list_and_a_domain_with_no_root_cause_leave_no_lesson(tmp_path):
+    assert not hasattr(domains.WordProblems, "root_cause")
+    loop, _ = _loop(tmp_path)
+    loop.enrol("Ada")
+    row = loop.tick()
+    assert row["lessons"] == [] and "constraint" in row["reflex"]
+
+
+def test_lessons_come_only_from_what_an_independent_witness_saw():
+    records = (FailureRecord("a", "accepted_defect", True, "", True), FailureRecord("b", "accepted_defect", True, "", False))
+    [lesson] = lessons_from(records, {"accepted_defect": "verification_gap"}.get, generation=2, tick=5, scope="d")
+    assert lesson.case_ids == ("a",) and lesson.generation == 2 and lesson.lesson_id == "5:accepted_defect"
+    assert lessons_from(records, None, generation=2, tick=5, scope="d") == ()
+
+
+def test_coding_replay_places_its_two_ways_of_reading_wrongly(tmp_path):
+    cases = tmp_path / "cases.jsonl"
+    cases.write_text(json.dumps({"id": "p1", "bug": "b1", "input": "a patch", "label": "wrong"}) + "\n", encoding="utf-8")
+    replay = CodingReplay(cases, None, FakeLLM(lambda system, user: "VERDICT: RIGHT"))
+    assert replay.root_cause("accepted_defect") == "verification_gap" and replay.root_cause("false_alarm") == "bad_remediation"
+    assert replay.root_cause("check_rejected") is None
+    assert isinstance(replay, Domain)
+
+
+def test_a_row_from_an_older_log_still_reads():
+    rows = [{"tick": 1, "outcome": "refused", "code": schema.NO_GAIN, "reason": "wins 1", "constraint": "wrong_answer"}, _adopted()]
+    assert read(rows)["constraint"] == "wrong_answer" and lessons_in(rows) == ()
+
+
+def test_a_lesson_that_does_not_read_is_left_out():
+    assert lessons_in([{"lessons": [{"root_cause": "not on the list"}]}]) == ()
+
+
+def test_a_mistake_back_in_a_later_generation_reaches_a_rows_reflex():
+    lesson = {"lesson_id": "1:x", "root_cause": "verification_gap", "hypothesis": "h", "alternatives": ["a"], "check": "c", "scope": "s"}
+    rows = [{"outcome": "no_winner", "lessons": [{**lesson, "generation": 0, "case_ids": ["a"]}]},
+            {"outcome": "no_winner", "lessons": [{**lesson, "generation": 1, "case_ids": ["a", "b"]}]}]
+    assert read(rows)["repeated"] == {"verification_gap": {"after_lesson": 2, "same_cases": 1, "generations": 1, "stuck": False}}
+
+
+def test_a_diagnosis_that_fails_is_recorded_and_costs_the_cycle_nothing(tmp_path, monkeypatch):
+    def fails(*given, **named):
+        raise RuntimeError("the records surprised it")
+
+    monkeypatch.setattr("g6.metaharness.reflex.diagnose", fails)
+    loop, _ = _loop(tmp_path)
+    loop.enrol("Ada")
+    row = loop.tick()
+    assert row["outcome"] == "adopted" and row["reflex"] == {"unreadable": "RuntimeError: the records surprised it"}
+
+
+def test_a_domain_whose_root_cause_fails_costs_the_cycle_nothing(tmp_path):
+    class Faulty(domains.WordProblems):
+        def root_cause(self, cause):
+            raise RuntimeError("no idea")
+
+    loop, _ = _loop(tmp_path, domain=Faulty(tmp_path))
+    loop.enrol("Ada")
+    row = loop.tick()
+    assert row["outcome"] == "adopted" and row["lessons"] == []
+
+
+def test_the_diagnosis_is_on_a_cycle_that_went_wrong_too(tmp_path, monkeypatch):
+    loop, _ = _loop(tmp_path)
+    loop.enrol("Ada")
+
+    def fails(*given, **named):
+        raise RuntimeError("the cycle broke")
+
+    monkeypatch.setattr(loop, "_cycle", fails)
+    row = loop.tick()
+    assert row["outcome"] == "error" and "constraint" in row["reflex"]
+
+
+def test_a_stall_on_a_fake_domain_is_read_from_its_own_rows_within_three_cycles_of_it_starting(tmp_path):
+    loop, _ = _loop(tmp_path, proposer=domains.proposes({"prompt": "Please be polite."}))
+    loop.enrol("Ada")
+    rows = [loop.tick() for _ in range(5)]
+    assert [row["outcome"] for row in rows] == ["no_winner"] * 5
+    assert (rows[-1]["reflex"]["level"], rows[-1]["reflex"]["constraint"]) == ("loop", "distinct")
+    assert rows[-1]["reflex"]["stuck"] and rows[-1]["reflex"]["change"] == "method" and not rows[0]["reflex"]["stuck"]
+
+
+def test_no_proposer_is_shown_what_the_step_recorded(tmp_path):
+    shown: list[str] = []
+    answers = domains.proposes({"prompt": "Please be polite."})
+
+    def reply(system, user):
+        shown.append(user)
+        return answers.complete(system, user)
+
+    loop, _ = _loop(tmp_path, proposer=FakeLLM(reply))
+    loop.enrol("Ada")
+    loop.tick()
+    loop.tick()
+    assert shown and not any("reflex" in text or "lessons" in text for text in shown)
+
+
+def test_a_tick_adopts_exactly_what_it_adopted_before_this_step(tmp_path):
+    loop, _ = _loop(tmp_path)
+    loop.enrol("Ada")
+    rows = [loop.tick() for _ in range(3)]
+    assert [row["outcome"] for row in rows] == BEFORE["outcomes"]
+    assert rows[0]["champion"] == BEFORE["champion"] and rows[0]["head_version"] == 1
+    assert [row["head_profile"] for row in rows[:2]] == [BEFORE["head"], BEFORE["champion"]]
+
+
+def test_the_step_changes_nothing_a_cycle_does_when_it_is_taken_out(tmp_path, monkeypatch):
+    def rows(folder, make):
+        loop, _ = _loop(folder, domain=make(folder), proposer=domains.proposes({"prompt": domains.CODE_HINT}))
+        loop.enrol("Ada")
+        got = [_kept(loop.tick()) for _ in range(3)]
+        return got, loop.meter.reading("claude", NOW).used
+
+    with_it = rows(tmp_path / "a", _Placed)
+    monkeypatch.setattr("g6.metaharness.reflex.read", lambda cycles: {})
+    monkeypatch.setattr("g6.metaharness.reflex.lessons_from", lambda *given, **named: ())
+    assert rows(tmp_path / "b", _Placed) == with_it
+
+
+def test_the_digest_leads_with_what_the_rows_say_now_and_not_with_what_the_last_cycle_opened_on(tmp_path):
+    loop, _ = _loop(tmp_path, proposer=domains.proposes({"prompt": "Please be polite."}))
+    loop.enrol("Ada")
+    for _ in range(4):
+        loop.tick()
+    last = loop.log.cycles()[-1]
+    assert last["reflex"]["stuck"] is False                        # it opened on two cycles of the same
+    page = Runner(loop, now=lambda: NOW)._page(NOW.date(), NOW, "")
+    assert page.splitlines()[2].startswith("**What limits progress: distinct, at the loop level.** Stuck for 3 cycles")
+
+
+def test_a_page_over_a_log_older_than_this_step_has_no_such_line(tmp_path):
+    loop, _ = _loop(tmp_path)
+    loop.enrol("Ada")
+    assert "What limits progress" not in Runner(loop, now=lambda: NOW)._page(NOW.date(), NOW, "")
 
 
 @pytest.mark.parametrize("name", ["metaharness/reflex.py", "metaharness/lessons.py"])

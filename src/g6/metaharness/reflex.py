@@ -22,12 +22,12 @@ refused at enrolment) cannot read itself here: those stand in the digest's stops
 from __future__ import annotations
 
 import re
-from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass
 from typing import Any
 
-from g6.metaharness.lessons import Lesson, repeats
+from g6.metaharness.lessons import ROOT_CAUSES, Lesson, repeats
 from g6.metaharness.lessons import stuck as recurring
 from g6.metaharness.schema import HOLDOUT_REUSED, INSUFFICIENT_EVIDENCE, NO_GAIN, OBJECTIVE_REGRESSED, SUITE_CANNOT_DISCRIMINATE
 from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
@@ -251,4 +251,51 @@ def diagnose(rows: Iterable[Mapping[str, Any]], lessons: Iterable[Lesson] = (), 
                      {cause: {**row, "stuck": cause in keeps} for cause, row in returned.items()})
 
 
-__all__ = ["CHANGES", "Diagnosis", "LOOP", "OWNER", "RECENT", "STAGES", "STUCK", "UNKNOWN", "WORK", "diagnose", "funnel", "refusals", "stages"]
+def lessons_from(records: Iterable[Any], root_cause: Callable[[str], str | None] | None, *, generation: int, tick: int, scope: str) -> tuple[Lesson, ...]:
+    """One lesson for each cause the domain can place on the closed list, from what an independent witness saw: a failure none saw teaches nothing yet.
+    ``root_cause``: the domain's, if it has one. The words are plain code's, so the hypothesis is only that placing, and a model may better them later."""
+    if root_cause is None:
+        return ()
+    cases: dict[str, list[str]] = defaultdict(list)
+    for record in records:
+        if record.independently_observed:
+            cases[record.cause].append(record.case_id)
+    found = []
+    for cause, ids in sorted(cases.items()):
+        root = root_cause(cause)
+        if root in ROOT_CAUSES:
+            found.append(Lesson(f"{tick}:{cause}", generation, root, tuple(ids), f"{cause} is a case of {root}",
+                                ("the cause was read wrongly", "the judge wants something the case does not state"),
+                                f"a later generation fails with {cause} again", f"{scope}, tuning split"))
+    return tuple(found)
+
+
+def lessons_in(rows: Iterable[Mapping[str, Any]]) -> tuple[Lesson, ...]:
+    """The lessons the rows hold. A row from before lessons holds none, and one that does not read is left out: nothing may rest on it."""
+    found = []
+    for row in rows:
+        for kept in row.get("lessons") or ():
+            try:
+                found.append(Lesson(**kept))
+            except (TypeError, ValueError):
+                continue
+    return tuple(found)
+
+
+def seen_in(lessons: Iterable[Lesson]) -> list[tuple[int, str, str]]:
+    """Each failure the lessons record, as ``g6.metaharness.lessons.repeats`` takes them."""
+    return [(lesson.generation, lesson.root_cause, case) for lesson in lessons for case in lesson.case_ids]
+
+
+def read(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """The diagnosis of ``rows`` as a row holds it. This only reads and says, so it may cost a cycle nothing: a failure here is recorded and goes no further."""
+    try:
+        rows = list(rows)
+        known = lessons_in(rows)
+        return asdict(diagnose(rows, known, seen_in(known)))
+    except Exception as exc:  # noqa: BLE001 - see above: no surprise in the records reaches the work
+        return {"unreadable": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+__all__ = ["CHANGES", "Diagnosis", "LOOP", "OWNER", "RECENT", "STAGES", "STUCK", "UNKNOWN", "WORK", "diagnose", "funnel", "lessons_from", "lessons_in", "read",
+           "refusals", "seen_in", "stages"]
