@@ -1,0 +1,1414 @@
+{
+ "about": "Stage 3's tick (2026-11-02), trimmed: pseudonymous ids, labels, groups and outcomes; no case text.",
+ "candidates": [
+  {
+   "candidate": "candidate-1",
+   "fields": [
+    "exemplars"
+   ],
+   "strategy": "recovery"
+  },
+  {
+   "candidate": "candidate-2",
+   "fields": [
+    "prompt"
+   ],
+   "strategy": "failure_trace"
+  },
+  {
+   "candidate": "candidate-3",
+   "fields": [
+    "prompt"
+   ],
+   "strategy": "reflect"
+  },
+  {
+   "candidate": "candidate-4",
+   "fields": [
+    "prompt"
+   ],
+   "strategy": "failure_trace"
+  }
+ ],
+ "champion": "candidate-3",
+ "code": "G6_E_META_NO_GAIN",
+ "constraint": "false_alarm",
+ "dev_cases": 77,
+ "dev_success": 50,
+ "failure_records": {
+  "accepted_defect": 4,
+  "false_alarm": 23
+ },
+ "groups": {
+  "case-001": "bug-01",
+  "case-002": "bug-01",
+  "case-003": "bug-01",
+  "case-004": "bug-04",
+  "case-005": "bug-04",
+  "case-006": "bug-05",
+  "case-007": "bug-05",
+  "case-008": "bug-05",
+  "case-009": "bug-05",
+  "case-010": "bug-05",
+  "case-011": "bug-08",
+  "case-012": "bug-08",
+  "case-013": "bug-08",
+  "case-014": "bug-08",
+  "case-015": "bug-08",
+  "case-016": "bug-08",
+  "case-017": "bug-08",
+  "case-018": "bug-08",
+  "case-019": "bug-08",
+  "case-020": "bug-08",
+  "case-021": "bug-08",
+  "case-022": "bug-08",
+  "case-023": "bug-08",
+  "case-024": "bug-08",
+  "case-025": "bug-08",
+  "case-026": "bug-08",
+  "case-027": "bug-08",
+  "case-028": "bug-02",
+  "case-029": "bug-02",
+  "case-030": "bug-02",
+  "case-031": "bug-02",
+  "case-032": "bug-02",
+  "case-033": "bug-02",
+  "case-034": "bug-02",
+  "case-035": "bug-02",
+  "case-036": "bug-02",
+  "case-037": "bug-02",
+  "case-038": "bug-02",
+  "case-039": "bug-02",
+  "case-040": "bug-02",
+  "case-041": "bug-02",
+  "case-042": "bug-02",
+  "case-043": "bug-02",
+  "case-044": "bug-02",
+  "case-045": "bug-02",
+  "case-046": "bug-02",
+  "case-047": "bug-02",
+  "case-048": "bug-02",
+  "case-049": "bug-03",
+  "case-050": "bug-03",
+  "case-051": "bug-03",
+  "case-052": "bug-03",
+  "case-053": "bug-03",
+  "case-054": "bug-03",
+  "case-055": "bug-03",
+  "case-056": "bug-03",
+  "case-057": "bug-03",
+  "case-058": "bug-03",
+  "case-059": "bug-06",
+  "case-060": "bug-06",
+  "case-061": "bug-06",
+  "case-062": "bug-06",
+  "case-063": "bug-06",
+  "case-064": "bug-06",
+  "case-065": "bug-06",
+  "case-066": "bug-06",
+  "case-067": "bug-06",
+  "case-068": "bug-06",
+  "case-069": "bug-06",
+  "case-070": "bug-06",
+  "case-071": "bug-06",
+  "case-072": "bug-06",
+  "case-073": "bug-06",
+  "case-074": "bug-06",
+  "case-075": "bug-06",
+  "case-076": "bug-06",
+  "case-077": "bug-06",
+  "case-078": "bug-06",
+  "case-079": "bug-06",
+  "case-080": "bug-06",
+  "case-081": "bug-06",
+  "case-082": "bug-06",
+  "case-083": "bug-06",
+  "case-084": "bug-06",
+  "case-085": "bug-06",
+  "case-086": "bug-06",
+  "case-087": "bug-06",
+  "case-088": "bug-06",
+  "case-089": "bug-06",
+  "case-090": "bug-06",
+  "case-091": "bug-06",
+  "case-092": "bug-06",
+  "case-093": "bug-06",
+  "case-094": "bug-06",
+  "case-095": "bug-06",
+  "case-096": "bug-06",
+  "case-097": "bug-06",
+  "case-098": "bug-06",
+  "case-099": "bug-06",
+  "case-100": "bug-06",
+  "case-101": "bug-06",
+  "case-102": "bug-06",
+  "case-103": "bug-06",
+  "case-104": "bug-06",
+  "case-105": "bug-07",
+  "case-106": "bug-07",
+  "case-107": "bug-07",
+  "case-108": "bug-07",
+  "case-109": "bug-07",
+  "case-110": "bug-07",
+  "case-111": "bug-07",
+  "case-112": "bug-07",
+  "case-113": "bug-07",
+  "case-114": "bug-07",
+  "case-115": "bug-07",
+  "case-116": "bug-07",
+  "case-117": "bug-07",
+  "case-118": "bug-07",
+  "case-119": "bug-07",
+  "case-120": "bug-07",
+  "case-121": "bug-07",
+  "case-122": "bug-07",
+  "case-123": "bug-07",
+  "case-124": "bug-07",
+  "case-125": "bug-10",
+  "case-126": "bug-10",
+  "case-127": "bug-10",
+  "case-128": "bug-10",
+  "case-129": "bug-10",
+  "case-130": "bug-10",
+  "case-131": "bug-10",
+  "case-132": "bug-10",
+  "case-133": "bug-10",
+  "case-134": "bug-10",
+  "case-135": "bug-10",
+  "case-136": "bug-10",
+  "case-137": "bug-10",
+  "case-138": "bug-10",
+  "case-139": "bug-10",
+  "case-140": "bug-10",
+  "case-141": "bug-10",
+  "case-142": "bug-10",
+  "case-143": "bug-10",
+  "case-144": "bug-10",
+  "case-145": "bug-10",
+  "case-146": "bug-10",
+  "case-147": "bug-10",
+  "case-148": "bug-10",
+  "case-149": "bug-10",
+  "case-150": "bug-10",
+  "case-151": "bug-10",
+  "case-152": "bug-10",
+  "case-153": "bug-10",
+  "case-154": "bug-10",
+  "case-155": "bug-01",
+  "case-156": "bug-01",
+  "case-157": "bug-01",
+  "case-158": "bug-01",
+  "case-159": "bug-01",
+  "case-160": "bug-01",
+  "case-161": "bug-01",
+  "case-162": "bug-04",
+  "case-163": "bug-04",
+  "case-164": "bug-04",
+  "case-165": "bug-04",
+  "case-166": "bug-04",
+  "case-167": "bug-04",
+  "case-168": "bug-04",
+  "case-169": "bug-04",
+  "case-170": "bug-04",
+  "case-171": "bug-04",
+  "case-172": "bug-04",
+  "case-173": "bug-04",
+  "case-174": "bug-04",
+  "case-175": "bug-04",
+  "case-176": "bug-04",
+  "case-177": "bug-04",
+  "case-178": "bug-05",
+  "case-179": "bug-05",
+  "case-180": "bug-05",
+  "case-181": "bug-05",
+  "case-182": "bug-05",
+  "case-183": "bug-05",
+  "case-184": "bug-05",
+  "case-185": "bug-05",
+  "case-186": "bug-05",
+  "case-187": "bug-05",
+  "case-188": "bug-05",
+  "case-189": "bug-05",
+  "case-190": "bug-05",
+  "case-191": "bug-05",
+  "case-192": "bug-05",
+  "case-193": "bug-05",
+  "case-194": "bug-05",
+  "case-195": "bug-05",
+  "case-196": "bug-05",
+  "case-197": "bug-05",
+  "case-198": "bug-05",
+  "case-199": "bug-05",
+  "case-200": "bug-05",
+  "case-201": "bug-05",
+  "case-202": "bug-05",
+  "case-203": "bug-05",
+  "case-204": "bug-05",
+  "case-205": "bug-09",
+  "case-206": "bug-09",
+  "case-207": "bug-09",
+  "case-208": "bug-09",
+  "case-209": "bug-09",
+  "case-210": "bug-09",
+  "case-211": "bug-09",
+  "case-212": "bug-09",
+  "case-213": "bug-09",
+  "case-214": "bug-09",
+  "case-215": "bug-11",
+  "case-216": "bug-11",
+  "case-217": "bug-11",
+  "case-218": "bug-11",
+  "case-219": "bug-11",
+  "case-220": "bug-11",
+  "case-221": "bug-11",
+  "case-222": "bug-11",
+  "case-223": "bug-11",
+  "case-224": "bug-11",
+  "case-225": "bug-11",
+  "case-226": "bug-11",
+  "case-227": "bug-11",
+  "case-228": "bug-11",
+  "case-229": "bug-12",
+  "case-230": "bug-12",
+  "case-231": "bug-12",
+  "case-232": "bug-12",
+  "case-233": "bug-12",
+  "case-234": "bug-12",
+  "case-235": "bug-12",
+  "case-236": "bug-12",
+  "case-237": "bug-12",
+  "case-238": "bug-12",
+  "case-239": "bug-12",
+  "case-240": "bug-12",
+  "case-241": "bug-12",
+  "case-242": "bug-12",
+  "case-243": "bug-12",
+  "case-244": "bug-12",
+  "case-245": "bug-12",
+  "case-246": "bug-12",
+  "case-247": "bug-12",
+  "case-248": "bug-12",
+  "case-249": "bug-12",
+  "case-250": "bug-12",
+  "case-251": "bug-12",
+  "case-252": "bug-12",
+  "case-253": "bug-12",
+  "case-254": "bug-12"
+ },
+ "held_out": [
+  "case-028",
+  "case-029",
+  "case-030",
+  "case-031",
+  "case-032",
+  "case-033",
+  "case-034",
+  "case-035",
+  "case-036",
+  "case-037",
+  "case-038",
+  "case-039",
+  "case-040",
+  "case-041",
+  "case-042",
+  "case-043",
+  "case-044",
+  "case-045",
+  "case-046",
+  "case-047",
+  "case-048",
+  "case-049",
+  "case-050",
+  "case-051",
+  "case-052",
+  "case-053",
+  "case-054",
+  "case-055",
+  "case-056",
+  "case-057",
+  "case-058",
+  "case-059",
+  "case-060",
+  "case-061",
+  "case-062",
+  "case-063",
+  "case-064",
+  "case-065",
+  "case-066",
+  "case-067",
+  "case-068",
+  "case-069",
+  "case-070",
+  "case-071",
+  "case-072",
+  "case-073",
+  "case-074",
+  "case-075",
+  "case-076",
+  "case-077",
+  "case-078",
+  "case-079",
+  "case-080",
+  "case-081",
+  "case-082",
+  "case-083",
+  "case-084",
+  "case-085",
+  "case-086",
+  "case-087",
+  "case-088",
+  "case-089",
+  "case-090",
+  "case-091",
+  "case-092",
+  "case-093",
+  "case-094",
+  "case-095",
+  "case-096",
+  "case-097",
+  "case-098",
+  "case-099",
+  "case-100",
+  "case-101",
+  "case-102",
+  "case-103",
+  "case-104",
+  "case-105",
+  "case-106",
+  "case-107",
+  "case-108",
+  "case-109",
+  "case-110",
+  "case-111",
+  "case-112",
+  "case-113",
+  "case-114",
+  "case-115",
+  "case-116",
+  "case-117",
+  "case-118",
+  "case-119",
+  "case-120",
+  "case-121",
+  "case-122",
+  "case-123",
+  "case-124",
+  "case-125",
+  "case-126",
+  "case-127",
+  "case-128",
+  "case-129",
+  "case-130",
+  "case-131",
+  "case-132",
+  "case-133",
+  "case-134",
+  "case-135",
+  "case-136",
+  "case-137",
+  "case-138",
+  "case-139",
+  "case-140",
+  "case-141",
+  "case-142",
+  "case-143",
+  "case-144",
+  "case-145",
+  "case-146",
+  "case-147",
+  "case-148",
+  "case-149",
+  "case-150",
+  "case-151",
+  "case-152",
+  "case-153",
+  "case-154"
+ ],
+ "labels": {
+  "case-001": "right",
+  "case-002": "right",
+  "case-003": "right",
+  "case-004": "right",
+  "case-005": "right",
+  "case-006": "wrong",
+  "case-007": "right",
+  "case-008": "wrong",
+  "case-009": "wrong",
+  "case-010": "wrong",
+  "case-011": "right",
+  "case-012": "right",
+  "case-013": "right",
+  "case-014": "right",
+  "case-015": "right",
+  "case-016": "right",
+  "case-017": "right",
+  "case-018": "right",
+  "case-019": "right",
+  "case-020": "right",
+  "case-021": "right",
+  "case-022": "right",
+  "case-023": "right",
+  "case-024": "right",
+  "case-025": "right",
+  "case-026": "right",
+  "case-027": "right",
+  "case-028": "right",
+  "case-029": "right",
+  "case-030": "right",
+  "case-031": "right",
+  "case-032": "right",
+  "case-033": "right",
+  "case-034": "right",
+  "case-035": "right",
+  "case-036": "right",
+  "case-037": "right",
+  "case-038": "right",
+  "case-039": "right",
+  "case-040": "right",
+  "case-041": "right",
+  "case-042": "right",
+  "case-043": "right",
+  "case-044": "right",
+  "case-045": "right",
+  "case-046": "right",
+  "case-047": "right",
+  "case-048": "right",
+  "case-049": "right",
+  "case-050": "right",
+  "case-051": "wrong",
+  "case-052": "wrong",
+  "case-053": "right",
+  "case-054": "right",
+  "case-055": "right",
+  "case-056": "right",
+  "case-057": "right",
+  "case-058": "right",
+  "case-059": "wrong",
+  "case-060": "right",
+  "case-061": "wrong",
+  "case-062": "wrong",
+  "case-063": "wrong",
+  "case-064": "wrong",
+  "case-065": "wrong",
+  "case-066": "right",
+  "case-067": "wrong",
+  "case-068": "right",
+  "case-069": "wrong",
+  "case-070": "wrong",
+  "case-071": "wrong",
+  "case-072": "right",
+  "case-073": "wrong",
+  "case-074": "right",
+  "case-075": "wrong",
+  "case-076": "wrong",
+  "case-077": "wrong",
+  "case-078": "right",
+  "case-079": "wrong",
+  "case-080": "right",
+  "case-081": "wrong",
+  "case-082": "right",
+  "case-083": "wrong",
+  "case-084": "wrong",
+  "case-085": "wrong",
+  "case-086": "right",
+  "case-087": "wrong",
+  "case-088": "wrong",
+  "case-089": "wrong",
+  "case-090": "wrong",
+  "case-091": "wrong",
+  "case-092": "right",
+  "case-093": "wrong",
+  "case-094": "wrong",
+  "case-095": "wrong",
+  "case-096": "wrong",
+  "case-097": "wrong",
+  "case-098": "wrong",
+  "case-099": "wrong",
+  "case-100": "wrong",
+  "case-101": "wrong",
+  "case-102": "wrong",
+  "case-103": "wrong",
+  "case-104": "right",
+  "case-105": "wrong",
+  "case-106": "wrong",
+  "case-107": "wrong",
+  "case-108": "wrong",
+  "case-109": "wrong",
+  "case-110": "wrong",
+  "case-111": "wrong",
+  "case-112": "wrong",
+  "case-113": "wrong",
+  "case-114": "wrong",
+  "case-115": "wrong",
+  "case-116": "wrong",
+  "case-117": "wrong",
+  "case-118": "wrong",
+  "case-119": "wrong",
+  "case-120": "wrong",
+  "case-121": "wrong",
+  "case-122": "wrong",
+  "case-123": "wrong",
+  "case-124": "wrong",
+  "case-125": "right",
+  "case-126": "right",
+  "case-127": "right",
+  "case-128": "right",
+  "case-129": "right",
+  "case-130": "right",
+  "case-131": "right",
+  "case-132": "right",
+  "case-133": "right",
+  "case-134": "wrong",
+  "case-135": "wrong",
+  "case-136": "right",
+  "case-137": "right",
+  "case-138": "right",
+  "case-139": "right",
+  "case-140": "right",
+  "case-141": "wrong",
+  "case-142": "right",
+  "case-143": "wrong",
+  "case-144": "right",
+  "case-145": "right",
+  "case-146": "right",
+  "case-147": "right",
+  "case-148": "wrong",
+  "case-149": "right",
+  "case-150": "wrong",
+  "case-151": "right",
+  "case-152": "right",
+  "case-153": "right",
+  "case-154": "right",
+  "case-155": "wrong",
+  "case-156": "wrong",
+  "case-157": "wrong",
+  "case-158": "wrong",
+  "case-159": "wrong",
+  "case-160": "right",
+  "case-161": "wrong",
+  "case-162": "wrong",
+  "case-163": "wrong",
+  "case-164": "wrong",
+  "case-165": "wrong",
+  "case-166": "wrong",
+  "case-167": "wrong",
+  "case-168": "wrong",
+  "case-169": "wrong",
+  "case-170": "wrong",
+  "case-171": "wrong",
+  "case-172": "wrong",
+  "case-173": "wrong",
+  "case-174": "wrong",
+  "case-175": "wrong",
+  "case-176": "wrong",
+  "case-177": "right",
+  "case-178": "wrong",
+  "case-179": "wrong",
+  "case-180": "wrong",
+  "case-181": "wrong",
+  "case-182": "wrong",
+  "case-183": "wrong",
+  "case-184": "wrong",
+  "case-185": "wrong",
+  "case-186": "wrong",
+  "case-187": "wrong",
+  "case-188": "wrong",
+  "case-189": "wrong",
+  "case-190": "wrong",
+  "case-191": "wrong",
+  "case-192": "wrong",
+  "case-193": "wrong",
+  "case-194": "wrong",
+  "case-195": "wrong",
+  "case-196": "wrong",
+  "case-197": "wrong",
+  "case-198": "wrong",
+  "case-199": "wrong",
+  "case-200": "wrong",
+  "case-201": "right",
+  "case-202": "wrong",
+  "case-203": "wrong",
+  "case-204": "wrong",
+  "case-205": "right",
+  "case-206": "right",
+  "case-207": "right",
+  "case-208": "right",
+  "case-209": "wrong",
+  "case-210": "wrong",
+  "case-211": "right",
+  "case-212": "wrong",
+  "case-213": "wrong",
+  "case-214": "wrong",
+  "case-215": "right",
+  "case-216": "right",
+  "case-217": "right",
+  "case-218": "right",
+  "case-219": "right",
+  "case-220": "right",
+  "case-221": "right",
+  "case-222": "right",
+  "case-223": "right",
+  "case-224": "right",
+  "case-225": "right",
+  "case-226": "right",
+  "case-227": "right",
+  "case-228": "right",
+  "case-229": "wrong",
+  "case-230": "wrong",
+  "case-231": "wrong",
+  "case-232": "wrong",
+  "case-233": "wrong",
+  "case-234": "wrong",
+  "case-235": "wrong",
+  "case-236": "wrong",
+  "case-237": "wrong",
+  "case-238": "right",
+  "case-239": "right",
+  "case-240": "right",
+  "case-241": "right",
+  "case-242": "right",
+  "case-243": "wrong",
+  "case-244": "wrong",
+  "case-245": "wrong",
+  "case-246": "wrong",
+  "case-247": "wrong",
+  "case-248": "wrong",
+  "case-249": "right",
+  "case-250": "wrong",
+  "case-251": "wrong",
+  "case-252": "wrong",
+  "case-253": "right",
+  "case-254": "right"
+ },
+ "outcome": "refused",
+ "report": {
+  "cases": [
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-079"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-102"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-085"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-087"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-096"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-103"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-070"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-090"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-083"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-068"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-104"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-076"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-069"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-067"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-060"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-101"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-059"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-089"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-086"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-063"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-064"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-095"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-071"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-094"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-066"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-082"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-072"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-078"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-074"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-080"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-092"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-084"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-100"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-091"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-081"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-073"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-061"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-093"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-077"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-062"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-099"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-088"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-075"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-065"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-097"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-098"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-143"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-153"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-148"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-134"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-151"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-133"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-141"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-131"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-150"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-145"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-136"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-139"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-129"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-149"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-127"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-126"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-146"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-137"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-138"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-144"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-135"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-154"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-128"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-142"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-147"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-132"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-130"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-140"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-125"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-152"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-028"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-043"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-042"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-045"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-030"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-033"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-037"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-044"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-036"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-048"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-041"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-046"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-032"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-035"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-047"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-031"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-034"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-029"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-039"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-040"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-038"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-053"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-051"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-049"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-054"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-055"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-056"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-058"
+   },
+   {
+    "base": false,
+    "candidate": false,
+    "case": "case-057"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-052"
+   },
+   {
+    "base": false,
+    "candidate": true,
+    "case": "case-050"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-119"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-112"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-123"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-105"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-110"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-121"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-106"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-109"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-108"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-124"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-111"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-116"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-114"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-120"
+   },
+   {
+    "base": true,
+    "candidate": false,
+    "case": "case-115"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-117"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-122"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-107"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-113"
+   },
+   {
+    "base": true,
+    "candidate": true,
+    "case": "case-118"
+   }
+  ],
+  "false_accepts": {
+   "base": 22,
+   "candidate": 30
+  },
+  "n": 127,
+  "power": {
+   "gain_0.05": 0.0729,
+   "gain_0.10": 0.3541,
+   "gain_0.20": 0.9822
+  },
+  "split": "held_out",
+  "success": {
+   "discordant": 36,
+   "losses": 22,
+   "p_one_sided": 0.933751,
+   "ties": 91,
+   "wins": 14
+  }
+ },
+ "selection": [
+  {
+   "cases_used": 50,
+   "ranking": [
+    {
+     "candidate": "candidate-1",
+     "dropped_at_block": null,
+     "losses": 1,
+     "n": 50,
+     "wins": 1
+    },
+    {
+     "candidate": "candidate-2",
+     "dropped_at_block": 1,
+     "losses": 0,
+     "n": 50,
+     "wins": 0
+    }
+   ],
+   "stopped": "",
+   "winner": null
+  },
+  {
+   "cases_used": 50,
+   "ranking": [
+    {
+     "candidate": "candidate-3",
+     "dropped_at_block": null,
+     "losses": 1,
+     "n": 50,
+     "wins": 2
+    },
+    {
+     "candidate": "candidate-4",
+     "dropped_at_block": 1,
+     "losses": 1,
+     "n": 50,
+     "wins": 2
+    }
+   ],
+   "stopped": "",
+   "winner": "candidate-3"
+  }
+ ],
+ "tuning_failed": [
+  "case-001",
+  "case-002",
+  "case-003",
+  "case-004",
+  "case-005",
+  "case-006",
+  "case-007",
+  "case-008",
+  "case-009",
+  "case-010",
+  "case-011",
+  "case-012",
+  "case-013",
+  "case-014",
+  "case-015",
+  "case-016",
+  "case-017",
+  "case-018",
+  "case-019",
+  "case-020",
+  "case-021",
+  "case-022",
+  "case-023",
+  "case-024",
+  "case-025",
+  "case-026",
+  "case-027"
+ ]
+}
