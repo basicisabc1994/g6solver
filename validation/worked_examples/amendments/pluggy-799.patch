@@ -1,5 +1,5 @@
 diff --git a/testing/test_tracer.py b/testing/test_tracer.py
-index b2553f1..d3bb222 100644
+index b2553f1..506f4fb 100644
 --- a/testing/test_tracer.py
 +++ b/testing/test_tracer.py
 @@ -204,29 +204,21 @@ def test_tracing_impostor_value_is_traced_as_itself(
@@ -9,10 +9,11 @@ index b2553f1..d3bb222 100644
 -    assert trace_out == [
 -        f"  echo [hook]\n      value: {value}\n",
 -        f"  finish echo --> {value} [hook]\n",
-+    assert trace_out[0] in [
-+        f"  echo [hook]\n      value: {shown}\n"
-+        for shown in (str(value), repr(value), repr(str(value)))
-     ]
+-    ]
++    shown = (str(value),)
++    if type(value) is FakeStr:  # not a Mock: str() and repr() differ
++        shown = (str(value), repr(value), repr(str(value)))
++    assert trace_out[0] in [f"  echo [hook]\n      value: {s}\n" for s in shown]
 +    assert trace_out[1:] == [f"  finish echo --> {value} [hook]\n"]
  
  

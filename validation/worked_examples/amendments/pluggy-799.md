@@ -12,9 +12,9 @@ Searched the parent's `src/pluggy/_tracing.py`, `src/pluggy/_manager.py` and `te
 
 This is the test that goes from failing to passing.
 
-The `mock-spec-str` and `mock-spec-dict` rows are left as exact as they were. A Mock is not a `str`, so the parent's format applies, and for a Mock `str()` and `repr()` give the same text.
+The `mock-spec-str` and `mock-spec-dict` rows keep their exact first line, `str(value)`. A Mock is not a `str`, so the parent's format applies.
 
-**Pinned format, `fake-class-str` row only.** The first trace line required `str(value)`, `fake str`. This object is not a Mock, and its `str()` and `repr()` differ. A fix that keeps it on the `str` path and falls back on `repr` is honest, and so is one that quotes the text as the parent does for a `str` with a space. The issue does not choose. The first line now accepts `str(value)`, `repr(value)` or `repr(str(value))`. What stays checked: the prefix and key, `is value` on the hook result, and the whole `finish` line, because `_format_message` renders positional arguments with `_safe_str` at the parent.
+**Pinned format, `fake-class-str` row only.** The first trace line required `str(value)`, `fake str`. This object is not a Mock, and its `str()` and `repr()` differ. A fix that keeps it on the `str` path and falls back on `repr` is honest, and so is one that quotes the text as the parent does for a `str` with a space. The issue does not choose. For this row only, the first line accepts `str(value)`, `repr(value)` or `repr(str(value))`. The row is picked by `type(value) is FakeStr`, which the object's `__class__` cannot fool. What stays checked: the prefix and key, `is value` on the hook result, and the whole `finish` line, because `_format_message` renders positional arguments with `_safe_str` at the parent.
 
 **Judgement call.** The `fake-class-str` row stays. It is not a specced Mock, but the issue names `__class__` as the cause, and this object does exactly that and nothing else. A fix that recognises `Mock` by name passes the issue's example and fails this row.
 
@@ -39,11 +39,13 @@ Reasoning, as nothing here has been run.
 - A fix that drops the `finish` line for a `dict` result, drops the result or the tag from it, or writes an extra record, fails `test_tracing_dict_result_is_not_read_as_arguments`.
 - A fix that catches the error and logs nothing for the value fails on the first or second line. So does one that logs a failure description for a Mock, because the parent's format for a non-`str` value applies.
 - A fix that special-cases `str` only fails `mock-spec-dict`.
+- A fix that quotes a Mock's text as if it were a `str` fails the two mock rows.
 
 ## Independent audit
 
-Two blind audit rounds from another model family returned `revise`, each with one finding, counted under over-relaxed and stated-check-could-stay. Both held against the parent, so both are accepted and none was rejected.
+Three blind audit rounds from another model family returned `revise`, each with one finding, counted under over-relaxed and stated-check-could-stay. All three held against the parent, so all are accepted and none was rejected.
 
 - **First round: the `dict` result test no longer checked the completion trace. Accepted.** My first version kept only the first line. That let the `finish` line disappear for this case, or lose the result, and the parent states both: `_manager.py` logs a `finish` line for every call, and `_tracing.py` shows a `dict` as key and value. The test then required that line, its prefix, and the returned key and value, and accepted the parent's form and the fix's.
 - **Second round: that check still dropped the number of records and the tag. Accepted.** The parent emits exactly one call record and one `finish` record through the `hook` tracer, and its tests compare both. The test now requires exactly two records and the `[hook]` tag on the second, and it still accepts both renderings of the `dict`.
-- Both rounds count the removed test as a change beyond names, messages and formats, and judge it justified. It is unchanged.
+- **Third round: the rendering allowance reached the mock rows too. Accepted.** My note said those rows stayed exact, but the list of renderings applied to every row, and for a Mock `repr(str(value))` is a quoted text the parent never prints. The parent renders a Mock argument with `str()`, so those rows are exact again. The allowance applies to `FakeStr` alone.
+- All three rounds count the removed test as a change beyond names, messages and formats, and judge it justified. It is unchanged.

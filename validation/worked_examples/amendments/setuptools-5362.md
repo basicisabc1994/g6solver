@@ -36,13 +36,13 @@ What stays checked: the tag equals the target's `cp` version, ABI and platform f
 
 ## `test_get_abi_tag_windows_without_soabi`
 
-**Pinned format and behaviour the task does not state.** The test required `cp312` from `VERSION` given in the Windows form `312`, and a `d` read from `EXT_SUFFIX`. The issue speaks of the POSIX form only, and the `EXT_SUFFIX` rule is the fix's. `VERSION` is now given in the POSIX form for the running interpreter, and the result must be a `cp` tag.
+**Pinned format and behaviour the task does not state.** The test required `cp312` from `VERSION` given in the Windows form `312`, and a `d` read from `EXT_SUFFIX`. The issue speaks of the POSIX form only, and the `EXT_SUFFIX` rule is the fix's. `VERSION` is now given in the POSIX form for the running interpreter, and the result must be `cp` with that version, with or without `d`.
 
-What stays checked: the `RuntimeWarning` with the parent's own text when `Py_DEBUG` is unset on this path. That warning is in the parent's `get_flag`. The test keeps its id and its two cases.
+What stays checked: the version in the tag, which the parent's fallback on this path also builds, and the `RuntimeWarning` with the parent's own text when `Py_DEBUG` is unset. That warning is in the parent's `get_flag`. The test keeps its id and its two cases.
 
 ## `test_is_debug_from_sysconfig`
 
-**Pinned name.** The test called `_is_debug`, the fix's own helper. It now reads the same result through the public `get_abi_tag()`, on the path with no `SOABI`: the tag ends in `d` exactly when `Py_DEBUG` says so. `VERSION` is given, in the POSIX form, so the test does not also require a fallback for a missing version.
+**Pinned name.** The test called `_is_debug`, the fix's own helper. It now reads the same result through the public `get_abi_tag()`, on the path with no `SOABI`: the tag ends in `d` exactly when `Py_DEBUG` says so. `VERSION` is given, in the POSIX form, so that this test checks only the debug flag. The fallback with no metadata at all is checked once, in `test_config_fallback`.
 
 What stays checked: an explicit `Py_DEBUG` wins over an `EXT_SUFFIX` that says the opposite. That precedence is the parent's, in `get_flag`. The test keeps its id and its two cases.
 
@@ -50,14 +50,16 @@ What stays checked: an explicit `Py_DEBUG` wins over an `EXT_SUFFIX` that says t
 
 **Pinned names.** The parametrisation named the three private helpers. Those rows are removed. The `_is_32bit_interpreter` row stays, so its four test ids do not change.
 
+**Replaced by public behaviour.** What those three rows checked together is stated by the parent: with no target metadata at all, the tag falls back to the running interpreter, its implementation, its version and its debug status. One row is added that reads this through the public `get_abi_tag()`, under the same four environment overrides. It adds four cases. The parent warns on this path when `Py_DEBUG` is unset, and this repository turns warnings into errors, so the test ignores that one warning. The warning itself is checked in `test_get_abi_tag_windows_without_soabi`.
+
 ## Tests removed
 
 Both exist only to pin what the task does not state.
 
 - `test_dist_files_target_version`, 2 cases. The version recorded in `dist_files`. The issue is about the wheel's tag. It does not mention `dist_files`, and the parent records the running version there.
-- `test_target_python_version`, 15 cases. Calls `_python_version` and pins its fallback order: Windows forms, an integer, `SOABI` parsing for four implementations, and the host. The stated row, `VERSION` read from sysconfig, is covered by `test_cross_tags`.
+- `test_target_python_version`, 15 cases. Calls `_python_version` and pins its fallback order: Windows forms, an integer, `SOABI` parsing for four implementations, and the host. The stated rows are covered elsewhere: `VERSION` read from sysconfig by `test_cross_tags`, and the host with no metadata by the public row in `test_config_fallback`.
 
-With `test_config_fallback`, 29 parametrised cases are gone: 17 from these two tests and 12 from the three rows above.
+With `test_config_fallback`, 29 parametrised cases are gone: 17 from these two tests and 12 from the three rows above. Four are added, by the public row.
 
 ## Left unchanged
 
@@ -75,11 +77,12 @@ Reasoning, as nothing here has been run.
 - A fix that uses `py_version_short` in place of `VERSION` fails `test_cross_tags`.
 - A fix that validates the target against `tags.sys_tags()` fails `test_cross_tags`. One that drops the check fails `test_limited_api_newer_than_target`.
 - A fix that leaves `_is_32bit_interpreter` alone fails the `aarch64` rows of `test_cross_tags` and `test_platform_linux32`.
-- A fix that lets `EXT_SUFFIX` override an explicit `Py_DEBUG` fails `test_is_debug_from_sysconfig`. One that drops the warning fails `test_get_abi_tag_windows_without_soabi`.
+- A fix that lets `EXT_SUFFIX` override an explicit `Py_DEBUG` fails `test_is_debug_from_sysconfig`. One that drops the warning, or drops the version from the tag, fails `test_get_abi_tag_windows_without_soabi`.
+- A fix that fails without `VERSION`, or that returns no tag when sysconfig has nothing, fails the public row of `test_config_fallback`. On the parent and with the maintainers' fix that row passes.
 
 ## Independent audit
 
-Two blind audit rounds from another model family returned `revise`. Every finding held when tested against the issue and the parent, so all are accepted and none was rejected.
+Three blind audit rounds from another model family returned `revise`. Every finding held when tested against the issue and the parent, so all are accepted and none was rejected.
 
 First round, three over-relaxations and one pin left in place:
 
@@ -92,4 +95,8 @@ Second round, two stated checks deleted with whole tests:
 
 - **Deleting `test_is_debug_from_sysconfig` also deleted the precedence of an explicit `Py_DEBUG`. Accepted.** I had removed the whole test because it called a private helper. The parent's `get_flag` states that precedence, and the test sets `EXT_SUFFIX` against `Py_DEBUG` on purpose, which the Windows test does not. The test is back, reading the tag through `get_abi_tag()`.
 - **Deleting `test_get_abi_tag_windows_without_soabi` also deleted the warning. Accepted.** I had called the warning incidental. It is the parent's own behaviour on this path, with the parent's own text. The test is back with that check and without the Windows version form or the `EXT_SUFFIX` rule.
-- Across both rounds the audit counted the other removals beyond names, messages and formats as justified, and they are unchanged.
+Third round, two stated checks still too loose:
+
+- **The restored no-`SOABI` test accepted any `cp` tag. Accepted.** I had freed the version along with its Windows spelling. The parent's fallback on this path puts the version in the tag, and with the dotted `VERSION` now given there is only one right version. The tag must carry it, with or without `d`.
+- **Removing the private-helper rows also removed the native fallback. Accepted.** I had treated those rows as checks of private functions only. With no metadata at all, the parent still produces a tag from the running interpreter, and a fix must not lose that. The rows' names stay out, and one public row through `get_abi_tag()` takes their place.
+- Across all three rounds the audit counted the other removals beyond names, messages and formats as justified, and they are unchanged.
