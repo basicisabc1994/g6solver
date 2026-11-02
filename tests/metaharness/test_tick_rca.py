@@ -54,7 +54,7 @@ def _record(*, wins=(), losses=(), ties=(), both_wrong=(), tuning_failed=(), lab
     labels = labels or {}
     return TickRecord(outcome=outcome, labels=labels, tuning_failed=tuple(tuning_failed), held_out=tuple(held_out),
                       races=tuple(races), candidates=tuple({"candidate": f"c{i}", "fields": list(f)} for i, f in enumerate(fields)),
-                      power={"gain_0.10": power}, enrolment="e1")
+                      power={"gain_0.10": power}, enrolment={"method": "e1", "cut": "e1", "domain": "e1"})
 
 
 def _labelled(prefix, label, count):
@@ -123,7 +123,7 @@ def test_the_next_tick_scores_each_cause_as_a_prediction():
                      fields=[("retries",)])
     outcomes = dict(scored(before, better))
     assert outcomes["threshold_move"] == HELD and outcomes["race_noise"] == HELD and outcomes["edit_space_short"] == HELD
-    again = TickRecord.from_dict({**STAGE3, "enrolment": "settings-changed"})     # a person changed something, and it came back
+    again = TickRecord.from_dict({**STAGE3, "enrolment": {"method": "changed"}})     # a person changed something, and it came back
     assert dict(scored(before, again))["threshold_move"] == FAILED
 
 
@@ -138,7 +138,7 @@ def test_a_remedy_for_a_person_left_unapplied_is_not_the_analysis_failing():
     before = tick_rca(TickRecord.from_dict(STAGE3))
     same_enrolment = TickRecord.from_dict(STAGE3)
     assert dict(scored(before, same_enrolment))["edit_space_short"] == OPEN     # nobody gave the domain a new action
-    enrolled_again = TickRecord.from_dict({**STAGE3, "enrolment": "domain-v2"})
+    enrolled_again = TickRecord.from_dict({**STAGE3, "enrolment": {"domain": "v2"}})
     assert dict(scored(before, enrolled_again))["edit_space_short"] == FAILED   # a new version, and still only wording
 
 
@@ -226,6 +226,43 @@ def test_the_replay_domain_labels_each_case_by_the_maintainers_verdict(tmp_path)
     domain = _domain(tmp_path)
     case = domain.development()[0]
     assert domain.label_of(case) == case.expected
+
+
+def test_a_tick_whose_cases_cannot_be_labelled_keeps_its_outcome_and_says_the_analysis_was_unreadable(tmp_path):
+    loop = _loop(tmp_path, FakeLLM(_wording))
+
+    def broken(case):
+        raise RuntimeError("label reader failed")
+
+    loop.domain.label_of = broken
+    loop.tick()
+    row = loop.log.cycles()[-1]
+    assert row["outcome"] not in ("error", "adopted") and row["rca"] == {"unreadable": "RuntimeError: label reader failed"}
+
+
+def test_a_trade_the_next_tick_cannot_label_stays_open():
+    before = tick_rca(TickRecord.from_dict(STAGE3))
+    unlabelled = TickRecord.from_dict({**STAGE3, "labels": {}, "enrolment": {"method": "changed"}})
+    assert dict(scored(before, unlabelled))["threshold_move"] == OPEN
+
+
+def test_a_change_to_the_method_applies_no_remedy_of_the_domains():
+    before = tick_rca(TickRecord.from_dict(STAGE3))
+    method_only = TickRecord.from_dict({**STAGE3, "enrolment": {"method": "a larger selection budget"}})
+    assert dict(scored(before, method_only))["edit_space_short"] == OPEN
+
+
+def test_the_race_read_is_the_last_one_that_chose_the_champion():
+    noisy_last = _record(races=[_race(("a", 20, 0, None)), _race(("a", 2, 1, None))])
+    noisy_last = TickRecord(**{**noisy_last.__dict__, "champion": "a"})
+    assert "race_noise" in _codes(noisy_last)
+
+
+def test_a_gap_of_exactly_twenty_five_points_is_on_the_line_and_names_no_skew():
+    labels = {**_labelled("t", "right", 20), **_labelled("r", "right", 20), **_labelled("u", "wrong", 20), **_labelled("w", "wrong", 20)}
+    tuned = [f"t{i}" for i in range(11)] + [f"u{i}" for i in range(9)]        # 55% right
+    unseen = [f"r{i}" for i in range(6)] + [f"w{i}" for i in range(14)]       # 30% right
+    assert "split_mix_skew" not in _codes(_record(tuning_failed=tuned, both_wrong=unseen, labels=labels))
 
 
 @pytest.mark.parametrize(("history", "stuck"), [

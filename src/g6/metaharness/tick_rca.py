@@ -42,6 +42,11 @@ _JUST_UNDER = 1e-9
 #: evaluation on a noisy race, changes the method a person started the loop with. Telling proposers which error rose would hand
 #: them a held-out result, which the loop keeps from them (``loop._exploit``). The splits and the domain are a person's already.
 WHO = dict.fromkeys(("threshold_move", "split_mix_skew", "race_noise", "edit_space_short", "gate_underpowered"), "person")
+#: What a person changes to apply each remedy, among the parts of ``TickRecord.enrolment``: the remedy counts as applied once
+#: one of these has changed, and a change to another part says nothing of it.
+APPLIED_BY = {"threshold_move": ("method",), "split_mix_skew": ("cut",), "race_noise": ("method", "cut"),
+              "edit_space_short": ("domain",), "gate_underpowered": ("cut",)}
+_PLACES = 9      # a measure is compared at this many decimal places, so a share of exactly 25 points is 25 points
 
 
 @dataclass(frozen=True)
@@ -49,9 +54,9 @@ class TickRecord:
     """What one tick's records say, as ``tick_rca`` reads it. ``labels``: each case's label. ``tuning_failed``: the tuning cases
     the base failed. ``held_out``: each held-out case's (id, base right, candidate right), empty when none was evaluated.
     ``races``: each race's ``winner`` and ``ranking`` rows (``candidate``, ``wins``, ``losses``, ``dropped_at_block``).
-    ``candidates``: each candidate's changed ``fields``. ``power``: the held-out report's, by gain. ``enrolment``: the digest of
-    what a person decides (what they enrolled and the settings they started the loop with), which moves only when they change
-    it, so a person's remedy counts as applied once it has."""
+    ``candidates``: each raced candidate's changed ``fields``. ``power``: the held-out report's, by gain. ``enrolment``: the
+    digest of each part of what a person decides (``method``, ``cut``, ``domain``), each moving only when they change it, so a
+    person's remedy counts as applied once its part has (``APPLIED_BY``)."""
 
     outcome: str
     labels: Mapping[str, str] = field(default_factory=dict)
@@ -60,8 +65,11 @@ class TickRecord:
     races: Sequence[Mapping[str, Any]] = ()
     candidates: Sequence[Mapping[str, Any]] = ()
     power: Mapping[str, float] = field(default_factory=dict)
-    enrolment: str = ""
+    enrolment: Mapping[str, str] = field(default_factory=dict)
     champion: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "enrolment", _parts(self.enrolment))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TickRecord:
@@ -73,7 +81,7 @@ class TickRecord:
                    races=tuple({"winner": s.get("winner"), "ranking": list(s.get("ranking") or ())}
                                for s in data.get("selection") or ()),
                    candidates=tuple(data.get("candidates") or ()), power=dict(report.get("power") or {}),
-                   enrolment=str(data.get("enrolment", "")), champion=str(data.get("champion") or ""))
+                   enrolment=dict(data.get("enrolment") or {}), champion=str(data.get("champion") or ""))
 
 
 @dataclass(frozen=True)
@@ -92,22 +100,29 @@ class TickCause:
 class TickDiagnosis:
     causes: tuple[TickCause, ...]
     outcome: str
-    enrolment: str
+    enrolment: Mapping[str, str]
 
     def to_dict(self) -> dict[str, Any]:
-        return {"outcome": self.outcome, "enrolment": self.enrolment,
+        return {"outcome": self.outcome, "enrolment": dict(self.enrolment),
                 "causes": [{"code": c.code, "summary": c.summary, "measure": c.measure, "check": c.check, "remedy": c.remedy,
                             "who": c.who, "expected": c.prediction.expected, "evidence": c.evidence} for c in self.causes]}
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TickDiagnosis:
         """A diagnosis as a cycle's row keeps it. A cause this code does not know is left out, as nothing could score it."""
-        enrolment = str(data.get("enrolment", ""))
+        enrolment = _parts(data.get("enrolment"))
         causes = tuple(TickCause(c["code"], c["summary"], float(c["measure"]), c["check"], c["remedy"], c["who"],
-                                 Prediction(f"{enrolment}:{c['code']}", c["code"], float(c["measure"]), float(c["expected"])),
+                                 Prediction(c["code"], c["code"], float(c["measure"]), float(c["expected"])),
                                  dict(c.get("evidence") or {}))
                        for c in data.get("causes") or () if c.get("code") in _RULES)
         return cls(causes, str(data.get("outcome", "")), enrolment)
+
+
+def _parts(enrolment: Any) -> dict[str, str]:
+    """``enrolment`` by part. One digest, as a row written before the parts were kept holds, stands for every part."""
+    if isinstance(enrolment, str):
+        return dict.fromkeys(("method", "cut", "domain"), enrolment)
+    return {str(k): str(v) for k, v in dict(enrolment or {}).items()}
 
 
 def _shares(cases: Iterable[str], labels: Mapping[str, str]) -> dict[str, float]:
@@ -119,9 +134,9 @@ def _shares(cases: Iterable[str], labels: Mapping[str, str]) -> dict[str, float]
 def _trade(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
     wins = [case for case, base, candidate in record.held_out if candidate and not base]
     losses = [case for case, base, candidate in record.held_out if base and not candidate]
-    if not record.held_out:
-        return None, {}
-    won, lost = Counter(record.labels.get(c, "unknown") for c in wins), Counter(record.labels.get(c, "unknown") for c in losses)
+    if not record.held_out or any(case not in record.labels for case in (*wins, *losses)):
+        return None, {}               # a case with no label tells nothing of which error moved
+    won, lost = Counter(record.labels[c] for c in wins), Counter(record.labels[c] for c in losses)
     evidence = {"wins": dict(won), "losses": dict(lost)}
     if not wins or not losses or len(won) != 1:
         return 0.0, evidence
@@ -130,8 +145,10 @@ def _trade(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
 
 
 def _skew(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
-    tuned = _shares(record.tuning_failed, record.labels)
-    unseen = _shares((case for case, base, _ in record.held_out if not base), record.labels)
+    unseen_failed = [case for case, base, _ in record.held_out if not base]
+    if any(case not in record.labels for case in (*record.tuning_failed, *unseen_failed)):
+        return None, {}               # a case with no label tells nothing of the mix
+    tuned, unseen = _shares(record.tuning_failed, record.labels), _shares(unseen_failed, record.labels)
     if not tuned or not unseen:
         return None, {}
     gap = max(abs(tuned.get(label, 0.0) - unseen.get(label, 0.0)) for label in {*tuned, *unseen})
@@ -145,7 +162,8 @@ def _net(row: Mapping[str, Any]) -> int:
 
 def _noise(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
     chosen = [race for race in record.races if race.get("winner")]
-    race = next((r for r in chosen if record.champion and r["winner"] == record.champion), chosen[-1] if chosen else None)
+    race = next((r for r in reversed(chosen) if record.champion and r["winner"] == record.champion),   # the one that chose it last
+                chosen[-1] if chosen else None)
     if race is None:
         return None, {}
     rows = race.get("ranking") or []
@@ -204,12 +222,17 @@ def tick_rca(record: TickRecord) -> TickDiagnosis:
     found = []
     for code in CAUSES:
         measure, names, expected, summary, check, remedy = _RULES[code]
-        value, evidence = measure(record)
+        value, evidence = _measured(code, record)
         if value is None or not names(value, record, evidence):
             continue
         found.append(TickCause(code, summary.format(m=value), value, check, remedy, WHO[code],
-                               Prediction(f"{record.enrolment}:{code}", code, value, expected), evidence))
-    return TickDiagnosis(tuple(found), record.outcome, record.enrolment)
+                               Prediction(code, code, value, expected), evidence))
+    return TickDiagnosis(tuple(found), record.outcome, dict(record.enrolment))
+
+
+def _measured(code: str, record: TickRecord) -> tuple[float | None, dict[str, Any]]:
+    value, evidence = _RULES[code][0](record)
+    return (None if value is None else round(value, _PLACES)), evidence
 
 
 def scored(before: TickDiagnosis, now: TickRecord) -> list[tuple[str, str]]:
@@ -218,10 +241,11 @@ def scored(before: TickDiagnosis, now: TickRecord) -> list[tuple[str, str]]:
     has changed), as a remedy nobody applied tells nothing of the analysis."""
     out = []
     for cause in before.causes:
-        if cause.who == "person" and now.enrolment == before.enrolment:
+        parts = APPLIED_BY.get(cause.code, ())
+        if cause.who == "person" and all(now.enrolment.get(p) == before.enrolment.get(p) for p in parts):
             out.append((cause.code, OPEN))
             continue
-        value, _ = _RULES[cause.code][0](now)
+        value, _ = _measured(cause.code, now)
         out.append((cause.code, score(cause.prediction, value)))
     return out
 

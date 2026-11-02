@@ -826,7 +826,7 @@ class ShadowLoop:
         halted: _Halted | None = None
         self.evaluating = False
         self.tuned = []
-        self._rca: TickRecord | None = None      # what this tick's analysis reads, once it has tuned
+        self._rca: TickRecord | str | None = None     # what this tick's analysis reads once it has tuned, or why it could not
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
@@ -878,7 +878,9 @@ class ShadowLoop:
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"], row)
-        if self._rca is not None:                 # read once the outcome is known: an adoption is part of what it reads
+        if isinstance(self._rca, str):           # the read for it failed: the row says so
+            row["rca"] = {"unreadable": self._rca}
+        elif self._rca is not None:               # read once the outcome is known: an adoption is part of what it reads
             row |= self._analysis(dataclasses.replace(self._rca, outcome=str(row.get("outcome", ""))))
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
@@ -1021,6 +1023,10 @@ class ShadowLoop:
         domain gives them (``label_of``), and the digest of what a person decides. It reads the held-out report, so what it
         gives goes into the cycle's row and to no proposer, as the gate's verdicts do not."""
         new = {kind: self.mh.ledger.rows(kind)[count:] for kind, count in marks.items()}
+        raced = {r.get("candidate_digest") for s in new["selection"] for r in s.get("ranking") or ()}
+        made = {p.get("candidate_digest") for p in new["proposal"]}
+        new["proposal"] += [p for p in self.mh.ledger.rows("proposal")[:marks["proposal"]]      # carried in from a tick before
+                            if p.get("candidate_digest") in raced - made]
         report = next((r for r in reversed(new["report"]) if r.get("split") == "held_out"), None) if run.confirmation else None
         label_of = getattr(self.domain, "label_of", None)
         cases = (*self.cut.tune, *self.cut.selection, *self.cut.held_out)
@@ -1036,8 +1042,10 @@ class ShadowLoop:
                         for s in new["selection"]),
             candidates=tuple({"candidate": p.get("candidate_digest"), "fields": sorted(p.get("diff") or {})} for p in new["proposal"]),
             power=dict((report or {}).get("power") or {}),
-            enrolment=digest({"frozen": enrolled.get("frozen"), "held_out": enrolled.get("held_out_digest"),
-                              "method": self.settings.method.digest()}),
+            enrolment={"method": self.settings.method.digest(),
+                       "cut": digest({"held_out": enrolled.get("held_out_digest"),
+                                      **{k: (enrolled.get("frozen") or {}).get(k) for k in ("cases", "sealed")}}),
+                       "domain": str((enrolled.get("frozen") or {}).get("domain_file", ""))},
             champion=str(run.champion or ""))
 
     def _analysis(self, record: TickRecord) -> dict[str, Any]:
@@ -1067,7 +1075,10 @@ class ShadowLoop:
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
                    space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
                    carried=self.mh.unfinished(), cycles=self.tuned)
-        self._rca = self._read_for_analysis(run, marks)
+        try:                                      # only records: a fault reading for it costs the cycle nothing
+            self._rca = self._read_for_analysis(run, marks)
+        except Exception as exc:  # noqa: BLE001 - see above
+            self._rca = f"{type(exc).__name__}: {exc}"[:200]
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         if (run.confirmation or {}).get("partial"):   # first, so the digest's one line for a tick keeps it
             reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]
