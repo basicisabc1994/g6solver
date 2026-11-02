@@ -20,7 +20,7 @@ The `mock-spec-str` and `mock-spec-dict` rows are left as exact as they were. A 
 
 ## `test_tracing_dict_result_is_not_read_as_arguments`
 
-**Behaviour the task does not state.** The test required a real `dict` result to appear on the `finish` line. At the parent such a result is listed as call arguments, under `finish echo --> [hook]`. The fix changes that with a trailing `{}`. The issue is about a mock claiming to be a `dict` and says nothing of real ones, so a fix that leaves them as they are is honest. The check of the `finish` line is removed. What stays checked: the hook result and the first trace line, both as at the parent.
+**Pinned format.** The test required a real `dict` result to appear inline on the `finish` line. At the parent such a result is listed as call arguments, as `  finish echo --> [hook]` followed by `      a: 1`. The fix changes that with a trailing `{}`. The issue is about a mock claiming to be a `dict` and says nothing of real ones, so a fix that leaves them as they are is honest. The exact text of the `finish` line is replaced by what holds in both forms: there is a `finish` line for the call, it starts with the parent's `  finish echo -->`, and it shows the returned key and value. What stays checked as well: the hook result and the first trace line, both as at the parent.
 
 ## Test removed
 
@@ -33,8 +33,16 @@ The `mock-spec-str` and `mock-spec-dict` rows are left as exact as they were. A 
 Reasoning, as nothing here has been run.
 
 - On the parent all three `test_tracing_impostor_value_is_traced_as_itself` rows fail: `TypeError` for the two mocks, as the issue reports, and `AttributeError` for `FakeStr`.
-- With the maintainers' fix they pass. `test_tracing_dict_result_is_not_read_as_arguments` passes on both.
+- With the maintainers' fix they pass. `test_tracing_dict_result_is_not_read_as_arguments` passes on both, with the inline form and with the parent's form.
 - With the `{}` in `_manager.py` and the `_safe` guard both removed from the fix, leaving only `type()` in place of `isinstance()`, the amended module should pass, so neither is required.
 - With the `format` label in the fix changed, the amended module should pass.
+- A fix that drops the `finish` line for a `dict` result, or drops the result from it, fails `test_tracing_dict_result_is_not_read_as_arguments`.
 - A fix that catches the error and logs nothing for the value fails on the first or second line. So does one that logs a failure description for a Mock, because the parent's format for a non-`str` value applies.
 - A fix that special-cases `str` only fails `mock-spec-dict`.
+
+## Independent audit
+
+A blind audit from another model family returned `revise`, with one finding, counted under over-relaxed and stated-check-could-stay.
+
+- **The `dict` result test no longer checked the completion trace. Accepted.** My first version kept only the first line. That let the `finish` line disappear for this case, or lose the result, and the parent states both: `_manager.py` logs a `finish` line for every call, and `_tracing.py` shows a `dict` as key and value. The test now requires that line, its prefix, and the returned key and value, and it accepts the parent's form and the fix's.
+- The audit counts two changes beyond names, messages and formats. One is the finding above. It judges the other, the removed test, justified, and it is unchanged.

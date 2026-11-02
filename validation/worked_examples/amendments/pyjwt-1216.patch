@@ -1,8 +1,18 @@
 diff --git a/tests/test_api_jws.py b/tests/test_api_jws.py
-index 33e3573..60fe97d 100644
+index 33e3573..e81e4a1 100644
 --- a/tests/test_api_jws.py
 +++ b/tests/test_api_jws.py
-@@ -722,6 +722,16 @@ class TestJWS:
+@@ -715,13 +715,25 @@ class TestJWS:
+     def test_decode_accepts_canonical_base64url_padding(
+         self, segment: bytes, decoded: bytes
+     ) -> None:
+-        assert PyJWS._decode_base64url_segment(segment, "crypto") == decoded
++        token = b"e30.e30." + segment
++        options = {"verify_signature": False}
++        assert PyJWS().decode_complete(token, options=options)["signature"] == decoded
+ 
+     @pytest.mark.parametrize(
+         "segment",
          [b"Zg===", b"Zg=", b"a", b"Z?==", b"Zh", b"Zh=="],
      )
      def test_decode_rejects_invalid_base64url_padding(self, segment: bytes) -> None:
