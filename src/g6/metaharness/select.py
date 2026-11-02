@@ -46,8 +46,8 @@ def race_calls(cases: int, candidates: int) -> int:
 def _in_turns(cases: Sequence[SuiteCase]) -> list[SuiteCase]:
     """One case of each group in turn. A case with no group is its own, so cases with none keep their order."""
     groups: dict[Any, list[SuiteCase]] = {}
-    for case in cases:
-        groups.setdefault(case.meta.get("group") or case.case_id, []).append(case)
+    for at, case in enumerate(cases):      # a group's name and a case's place are apart, so no name takes another's turn
+        groups.setdefault(("group", case.meta["group"]) if case.meta.get("group") else ("case", at), []).append(case)
     return [case for turn in zip_longest(*groups.values()) for case in turn if case is not None]
 
 

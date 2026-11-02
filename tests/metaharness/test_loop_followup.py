@@ -564,3 +564,76 @@ def test_a_command_line_run_that_could_read_cached_bytecode_ticks_nothing(tmp_pa
     monkeypatch.setattr(sys, "pycache_prefix", None)
     assert runner.main(["run", str(root)]) == 1 and ticked == []
     assert heartbeat(root)["code"] == runner.CACHED_BYTECODE
+
+
+# --- this branch's second review --------------------------------------------------------------------------------------
+
+def test_a_restart_with_no_reading_stays_on_the_providers_week(tmp_path):
+    reset, path = MONDAY + timedelta(days=8), tmp_path / "operator.db"
+    store = OperatorStore(path)
+    try:
+        meter = _meter(store, resets_at=reset)                         # the provider's weeks run Tuesday to Tuesday
+        assert meter.reserve("codex", MONDAY + timedelta(days=2), 350).admitted
+        assert meter.reserve("codex", MONDAY + timedelta(days=7), 650).admitted
+    finally:
+        store.close()
+    store = OperatorStore(path)
+    try:
+        blind = _meter(store)                                          # the first reading after a restart can fail
+        now = MONDAY + timedelta(days=7, hours=1)                      # past the settings' Monday, inside the provider's week
+        assert blind.reading("codex", now).used == 1000 and not blind.reserve("codex", now, 100).admitted
+    finally:
+        store.close()
+
+
+def test_a_provider_that_moves_its_weeks_again_moves_the_kept_grid(tmp_path):
+    store = OperatorStore(tmp_path / "operator.db")
+    try:
+        _meter(store, resets_at=MONDAY + timedelta(days=8)).reading("codex", MONDAY + timedelta(days=2))
+        _meter(store, resets_at=MONDAY + timedelta(days=9)).reading("codex", MONDAY + timedelta(days=3))
+        later = _meter(store)
+        assert later.reading("codex", MONDAY + timedelta(days=10)).day == 2      # Wednesday weeks now: day 2 is the Thursday
+    finally:
+        store.close()
+
+
+def test_a_charge_after_a_dated_reading_counts_on_top_of_it_for_every_meter(tmp_path):
+    now, path = MONDAY + timedelta(days=3), tmp_path / "operator.db"
+    account = AccountReading(used=500, read_at=now, resets_at=MONDAY + timedelta(days=7), estimated=False)
+    first_store, second_store = OperatorStore(path), OperatorStore(path)
+    try:
+        first = BudgetMeter((ProviderWindow("codex", 1000, MONDAY),), store=first_store, read_account=lambda *_: account)
+        spend = first.reserve("codex", now, 200)
+        first.settle(spend, 200)
+        second = BudgetMeter((ProviderWindow("codex", 1000, MONDAY),), store=second_store, read_account=lambda *_: account)
+        later = now + timedelta(seconds=2)
+        assert second.reading("codex", later).used == 700 and not second.reserve("codex", later, 200).admitted
+    finally:
+        first_store.close()
+        second_store.close()
+
+
+def test_a_group_named_like_a_case_takes_no_case_out_of_its_turn():
+    cases = [SuiteCase("g1", "q", "a", meta={"group": "first"}), SuiteCase("g2", "q", "a", meta={"group": "first"}),
+             SuiteCase("first", "q", "a"), SuiteCase("second", "q", "a")]
+    assert [c.case_id for c in racing._in_turns(cases) if not c.meta.get("group")] == ["first", "second"]
+
+
+@pytest.mark.parametrize("name", ["planted.pyc", "planted.py", "__init__.py"])
+def test_a_module_python_would_import_from_a_cache_folder_changes_the_envelope(tmp_path, monkeypatch, name):
+    source, envelope = _install(tmp_path, monkeypatch)
+    enrolled = envelope()
+    cache = source.parent / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / name).write_bytes(b"planted")                         # importable as g6.metaharness.__pycache__.planted
+    assert envelope() != enrolled
+
+
+def test_a_cache_file_named_for_its_interpreter_is_no_module_and_leaves_the_envelope(tmp_path, monkeypatch):
+    source, envelope = _install(tmp_path, monkeypatch)
+    enrolled = envelope()
+    cache = source.parent / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / f"select.{sys.implementation.cache_tag}.pyc").write_bytes(b"a first import writes this")
+    (cache / f"select.{sys.implementation.cache_tag}.opt-1.pyc").write_bytes(b"and this, under -O")
+    assert envelope() == enrolled

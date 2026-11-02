@@ -467,8 +467,24 @@ def envelope_sha256() -> str:
     for a working tree that holds the same bytes today. It is a tripwire, not custody: the code that compares this digest is
     among what it covers, so an edit to that code can skip the comparison. Holding it needs the read-only checkout of design
     6.5."""
-    return digest({"code": manifest_sha256(build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS)),
+    return digest({"code": manifest_sha256({**build_manifest(_SOURCE, patterns=ENVELOPE_PATTERNS), **_importable_caches(_SOURCE)}),
                    "install": os.path.normcase(str(_SOURCE))})
+
+
+def _importable_caches(root: Path) -> dict[str, str]:
+    """Each file under a ``__pycache__`` folder that Python could import as a module, as ``build_manifest`` gives files. A cache
+    folder is a namespace package, so ``g6.x.__pycache__.name`` imports ``name.py``, ``name.pyc`` or an extension there. A cache
+    a first import writes is named for its interpreter (``select.cpython-312.pyc``), which no import statement can name, so it is
+    left out and a legitimate import changes nothing."""
+    suffixes = sorted(importlib.machinery.all_suffixes(), key=len, reverse=True)
+    found = {}
+    for path in root.rglob("*"):
+        if "__pycache__" not in path.relative_to(root).parts or not path.is_file():
+            continue
+        suffix = next((s for s in suffixes if path.name.endswith(s)), None)
+        if suffix is not None and path.name[:-len(suffix)].isidentifier():
+            found[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return found
 
 
 def _judge_digest(judge: Judge | None) -> str:

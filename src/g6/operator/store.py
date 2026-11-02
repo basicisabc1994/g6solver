@@ -40,6 +40,10 @@ CREATE TRIGGER IF NOT EXISTS ledger_once BEFORE INSERT ON ledger WHEN NEW.kind <
 BEGIN SELECT RAISE(ABORT, 'a reservation is made once and released once'); END;
 CREATE TABLE IF NOT EXISTS week_books (owner TEXT NOT NULL, provider TEXT NOT NULL, week TEXT NOT NULL, book TEXT NOT NULL,
     PRIMARY KEY (owner, provider, week));
+CREATE TABLE IF NOT EXISTS week_grids (owner TEXT NOT NULL, provider TEXT NOT NULL, reset TEXT NOT NULL,
+    PRIMARY KEY (owner, provider));
+CREATE TABLE IF NOT EXISTS reading_baselines (owner TEXT NOT NULL, provider TEXT NOT NULL, book TEXT NOT NULL,
+    read_at TEXT NOT NULL, charged REAL NOT NULL, PRIMARY KEY (owner, provider, book, read_at));
 """
 
 
@@ -124,6 +128,31 @@ class OwnerScope:
         row = self.conn.execute("SELECT book FROM week_books WHERE owner=? AND provider=? AND week=?",
                                 (self.owner, provider, week)).fetchone()
         return row["book"] if row is not None else None
+
+    def week_grid(self, provider: str) -> str | None:
+        """A moment one of the provider's weeks ended, as it last reported, or ``None`` before it has reported one."""
+        row = self.conn.execute("SELECT reset FROM week_grids WHERE owner=? AND provider=?", (self.owner, provider)).fetchone()
+        return row["reset"] if row is not None else None
+
+    def keep_week_grid(self, provider: str, reset: str) -> None:
+        """Where the provider's weeks fall, from a moment one ends. The latest report stands, as a provider may move them."""
+        with self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (self.owner, provider, reset))
+
+    def reading_baseline(self, provider: str, book: str, read_at: str, charged: float) -> float:
+        """What the ledger had charged under ``book`` when the account reading taken at ``read_at`` first reached a meter: the
+        first word stands, so every meter, in any process, measures what was charged since the reading from the same point."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            self.conn.execute("INSERT OR IGNORE INTO reading_baselines VALUES (?, ?, ?, ?, ?)",
+                              (self.owner, provider, book, read_at, float(charged)))
+            row = self.conn.execute("SELECT charged FROM reading_baselines WHERE owner=? AND provider=? AND book=? AND read_at=?",
+                                    (self.owner, provider, book, read_at)).fetchone()
+            self.conn.commit()
+            return float(row["charged"])
+        except BaseException:
+            self.conn.rollback()
+            raise
 
     def week_ledger(self, provider: str, week: str, *, caps: dict[str, float], moved_from: str = "") -> tuple[str, str]:
         """The venture a provider's ``week`` is charged under and its book, the month its rows carry, decided in one
