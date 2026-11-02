@@ -149,6 +149,15 @@ def test_a_new_week_starts_empty():
     assert meter.reserve("claude", _day(8), 200).admitted
 
 
+def test_a_reading_gives_the_end_its_provider_reported_even_one_already_past():
+    soon, gone = _day(2) + timedelta(hours=1), _day(2) - timedelta(hours=1)
+    assert _meter().reading("claude", _day(2)).ends == START + timedelta(days=7)
+    assert _meter(read_account=lambda provider, start: AccountReading(resets_at=soon)).reading("claude", _day(2)).ends == soon
+    past = _meter(read_account=lambda provider, start: AccountReading(resets_at=gone))
+    assert past.reading("claude", _day(2)).ends == gone
+    assert past.reserve("claude", _day(2), 1).ends == gone + timedelta(days=7)   # a tick reserves in the week that came after
+
+
 def test_each_provider_has_its_own_week():
     windows = (ProviderWindow("claude", 100, START), ProviderWindow("codex", 1000, START + timedelta(days=3)))
     meter = BudgetMeter(windows, store=OperatorStore(":memory:"))

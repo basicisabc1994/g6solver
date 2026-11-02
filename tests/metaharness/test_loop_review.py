@@ -44,8 +44,8 @@ from g6.metaharness.method import Method
 from g6.metaharness.schema import Workflow, default_objectives
 from g6.metaharness.shadow import lineage
 from g6.operator.store import OperatorStore
-from g6.self_maintenance.envelope import ask_to_stop, stop_reason, stop_to_lift
-from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
+from g6.self_maintenance.envelope import REFUSED_FILE, ask_to_stop, stop_reason, stop_to_lift
+from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import AccountReader, UsageUnavailable, WatchedClaude
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -1129,6 +1129,52 @@ def test_the_limit_of_this_a_limit_that_arrives_during_an_evaluation_still_spend
     assert loop.tick()["outcome"] == "refused" and loop.mh.held_out_left() == before - 1
 
 
+def _noting_what_the_evaluation_sends(loop, domain, *, then=lambda: None) -> list[str]:
+    tutor, sent = domain.tutor, []
+
+    def answer(system: str, user: str) -> str:
+        if loop.evaluating:
+            sent.append(user)
+            then()
+        return tutor(system, user)
+
+    domain.llm._responder = answer
+    return sent
+
+
+def test_a_week_read_to_end_sooner_ends_what_the_tick_reserved(tmp_path):
+    reset, now = NOW + timedelta(seconds=1), [NOW]
+    week = {"usedPercent": 5, "windowDurationMins": 10080, "resetsAt": reset.timestamp()}
+    loop, domain = _reading(tmp_path, lambda: {"rateLimits": {"primary": week}}, now=lambda: now[0])
+    sent = _noting_what_the_evaluation_sends(loop, domain, then=lambda: now.__setitem__(0, reset))
+    got = loop.tick()
+    assert len(sent) == 1 and _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT" and "week ended" in got["message"]
+    assert got["outcome"] == "blocked" and loop.mh.adoption_rows() == []
+
+
+def test_a_week_read_to_have_ended_already_sends_nothing_more(tmp_path):
+    """``AccountReader`` leaves such a reset out, and a ``read_account`` of another kind may not: the meter's next week starts
+    from it, so what a week ending now would give is seven days off."""
+    reset, account = NOW - timedelta(seconds=1), [None]
+
+    def read_now(now: datetime) -> None:
+        account[0] = AccountReading(estimated=False, read_at=now, resets_at=reset)
+
+    loop, domain = _enrolled(tmp_path, read_account=lambda provider, start: account[0], read_now=read_now)
+    sent = _noting_what_the_evaluation_sends(loop, domain)
+    got = loop.tick()
+    assert sent == [] and _code(got) == "G6_E_LOOP_TICK_BUDGET_SPENT" and "week ended" in got["message"]
+
+
+def test_a_week_read_to_end_later_buys_a_tick_nothing_and_outside_a_tick_nothing_ends():
+    requests = _Requests()
+    requests.ends_by(RESET)
+    assert requests.ends is None
+    requests.open(10, RESET)
+    requests.ends_by(RESET + timedelta(days=1))
+    assert requests.ends == RESET
+
+
 # A stop lands at the next model call, not the next tick --------------------------------------------------------------------
 
 def _held_out_inputs(loop) -> set[str]:
@@ -1636,6 +1682,163 @@ def test_a_host_caller_goes_on_answering_once_it_is_watched(monkeypatch):
     assert _Counted(Delegates(claude), requests).complete("system", "user") == "an answer"
     assert isinstance(claude, ClaudeOfItsOwn) and isinstance(claude, WatchedClaude)
     assert (claude.model, claude.timeout) == ("a-model", 7.0)
+
+
+# A refusal binds what really went out, not what a wrapper was asked --------------------------------------------------------------
+
+FIXED = _request_digest("fixed system", "fixed request")
+
+
+class Rewrites(Delegates):
+    """A wrapper of a domain's own that sends one request whatever it is asked, so what it was asked says nothing of what went
+    out."""
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        return self._inner.complete("fixed system", "fixed request", max_tokens=max_tokens)
+
+
+class RewritesItself(FakeLLM):
+    """The same with nothing between: a subclass of a known caller, which sends for itself."""
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        return super().complete("fixed system", "fixed request", max_tokens=max_tokens)
+
+
+def _refused_through(tmp_path, monkeypatch) -> tuple[ShadowLoop, object, list[str]]:
+    sent = _claude_that_refuses(monkeypatch)
+    domain = domains.WordProblems(tmp_path)
+    _with_model(domain, Rewrites(host_models.ClaudeCodeCaller()))
+    loop, _ = _enrolled(tmp_path, domain=domain)
+    assert _code(loop.tick()) == "G6_E_LOOP_CLASSIFIER_STOP" and sent == ["fixed request"]
+    return loop, domain, sent
+
+
+def test_a_refused_request_is_not_sent_again_through_a_wrapper_that_rewrites_it(tmp_path, monkeypatch):
+    loop, _, sent = _refused_through(tmp_path, monkeypatch)
+    row = loop.log.cycles()[-1]["classifier_stop"]
+    assert row["request"] == FIXED and row["asked"] != FIXED
+    assert loop.resume("Ada")["completion_state"] == "qualified-draft"
+    loop.tick()
+    assert sent == ["fixed request"]
+
+
+@pytest.mark.parametrize("the_note_was_lost", [False, True])
+def test_a_restart_remembers_what_really_went_out(tmp_path, monkeypatch, the_note_was_lost):
+    loop, domain, sent = _refused_through(tmp_path, monkeypatch)
+    if the_note_was_lost:                              # the cycle's own row holds it too
+        (loop.root / REFUSED_FILE).unlink()
+    again, _ = _loop(tmp_path, domain=domain)
+    assert again.resume("Ada")["completion_state"] == "qualified-draft"
+    again.tick()
+    assert sent == ["fixed request"]
+
+
+def test_what_a_caller_really_sends_is_read_at_the_request_for_each_kind_of_caller(monkeypatch):
+    """Nothing in the bound files hands the request over, so this is held by test as the sender is: each built-in caller stops
+    a refused request where it would go out, whichever of its frames notes it."""
+    went_out: list = []
+    monkeypatch.setattr(llm, "_post_json", lambda *args: went_out.append(args) or {})
+    monkeypatch.setattr(host_models.ClaudeCodeCaller, "locate", lambda self: "unused-program")
+    monkeypatch.setattr(host_models.CodexCaller, "locate", lambda self: "unused-program")
+    monkeypatch.setattr(host_models, "_run", lambda *args: went_out.append(args) or (0, "", ""))
+    for caller in (Rewrites(FakeLLM()), RewritesItself(), Rewrites(llm.OllamaCaller()), Rewrites(_keyed()),
+                   Rewrites(llm.AnthropicCaller(client=object())), Rewrites(host_models.ClaudeCodeCaller()),
+                   Rewrites(host_models.CodexCaller())):
+        requests, _ = _notes_who_sends()
+        requests.refused.add(FIXED)
+        with pytest.raises(LLMError, match="G6_E_LOOP_CLASSIFIER_STOP"):
+            _Counted(caller, requests).complete("system", "user")
+    assert went_out == []
+
+
+def test_a_refusal_a_caller_raised_binds_what_it_sent_too():
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(REFUSED)
+
+    backend, requests = FakeLLM(refuses), _Requests()
+    requests.open(10)
+    with pytest.raises(_Refused):
+        _Counted(Rewrites(backend), requests).complete("system", "user")
+    assert FIXED in requests.refused and _request_digest("system", "user") in requests.refused
+
+
+class Varies(Delegates):
+    """One that sends something new each time, so what went out never comes round again."""
+
+    times = 0
+
+    def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+        self.times += 1
+        return self._inner.complete(system, f"{user} {self.times}", max_tokens=max_tokens)
+
+
+def test_what_a_wrapper_was_asked_stays_refused_though_what_it_sends_varies():
+    def refuses(system: str, user: str) -> str:
+        raise LLMError(REFUSED)
+
+    backend, requests = FakeLLM(refuses), _Requests()
+    caller = _Counted(Varies(backend), requests)
+    requests.open(10)
+    with pytest.raises(_Refused):
+        caller.complete("system", "user")
+    requests.open(10)
+    with pytest.raises(LLMError, match="G6_E_LOOP_CLASSIFIER_STOP"):
+        caller.complete("system", "user")
+    assert len(backend.calls) == 1
+
+
+def test_a_refusal_binds_its_own_request_though_another_went_out_while_it_was_away(monkeypatch):
+    """A wrapper can have two out at once: the last one noted is not always the one a refusal came back for."""
+    answered = json.dumps({"type": "result", "is_error": False, "result": "an answer"})
+    refused = json.dumps({"type": "result", "is_error": True, "stop_reason": "refusal", "result": "Request denied"})
+    claude = host_models.ClaudeCodeCaller()
+
+    def program(argv, stdin, *rest):
+        if stdin == "fixed request":
+            claude.complete("another system", "another request")
+            return 1, refused, ""
+        return 0, answered, ""
+
+    monkeypatch.setattr(host_models.ClaudeCodeCaller, "locate", lambda self: "unused-program")
+    monkeypatch.setattr(host_models, "_run", program)
+    requests, _ = _notes_who_sends()
+    with pytest.raises(_Refused):
+        _Counted(Rewrites(claude), requests).complete("system", "user")
+    assert FIXED in requests.refused and _request_digest("another system", "another request") not in requests.refused
+
+
+def test_a_refusal_read_by_a_session_that_hands_over_a_prompt_alone_still_ends_the_tick():
+    """As ``ToolSession`` does: there is no system text to bind, and a stop may never fall over for want of one."""
+    refused = json.dumps({"type": "result", "is_error": True, "stop_reason": "refusal", "result": "Request denied"})
+
+    class Session(host_models.ClaudeCodeCaller):
+        def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+            llm._start_model_call()
+            return self._reply(1, refused, "", None, ("a prompt",))
+
+    requests, _ = _notes_who_sends()
+    with pytest.raises(_Refused):
+        _Counted(Session(), requests).complete("system", "user")
+    assert _request_digest("system", "user") in requests.refused
+
+
+def test_a_wrapper_that_keeps_trying_a_refused_request_stops_at_what_the_tick_reserved():
+    class Insists(Rewrites):
+        def complete(self, system: str, user: str, *, max_tokens: int = 1024) -> str:
+            for _ in range(50):
+                try:
+                    return super().complete(system, user, max_tokens=max_tokens)
+                except LLMError as failed:
+                    if "G6_E_LOOP_CLASSIFIER_STOP" not in str(failed):
+                        raise
+            return "it never gave up"
+
+    backend, requests = FakeLLM(), _Requests()
+    requests.open(5)
+    requests.refused.add(FIXED)
+    with pytest.raises(LLMError, match="G6_E_LOOP_TICK_BUDGET_SPENT"):
+        _Counted(Insists(backend), requests).complete("system", "user")
+    assert backend.calls == [] and requests.sent == 5
 
 
 # A refusal is kept before its cycle is written, so no failure of the log can send it again -------------------------------------

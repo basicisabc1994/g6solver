@@ -131,7 +131,7 @@ class Admission:
     venture: str = ""
     reservation: str = ""
     amount: float = 0.0
-    ends: datetime | None = None     # when the week this reservation is in ends; it covers nothing sent after that
+    ends: datetime | None = None     # when this week ends, as a provider last said; a reservation covers nothing sent after
 
 
 def _used(booked: float, pending: float, account: AccountReading | None,
@@ -219,11 +219,12 @@ class BudgetMeter:
         reported = account.limited_until if account is not None else None
         wait = max((at for at in (reported, self._limits.get(provider)) if at is not None), default=None)
         limited = wait is not None and now < wait
+        ends = (account.resets_at if account is not None else None) or window.week_end(now)
         return Admission(provider, day, used, target(window.allowance, day),
                          ceiling(window.allowance, day, window.reserve_share),
                          window.estimated or (above and account is not None and account.estimated),
                          reason=f"at a reported limit; waiting for the reset at {wait.isoformat()}" if limited else "",
-                         wait_until=wait if limited else None, venture=venture), account, charged_when_read
+                         wait_until=wait if limited else None, venture=venture, ends=ends), account, charged_when_read
 
     def reserve(self, provider: str, now: datetime, worst_case: float) -> Admission:
         """Reserve ``worst_case`` when the week's ceiling allows it. A refusal is an admission with ``admitted`` false

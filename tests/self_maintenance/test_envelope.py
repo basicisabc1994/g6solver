@@ -603,6 +603,19 @@ def test_a_cycle_that_made_no_generation_says_nothing_of_the_chain(tmp_path):
     assert log.generation() == 0
 
 
+def test_the_log_counts_the_generation_a_person_made_by_taking_one_back(tmp_path):
+    log = _log(tmp_path)
+    _cycle(log, "adopted", head_version=1)
+    log.demote("Ada", undoes=1, head_version=2)
+    assert log.generation() == 2
+
+
+def test_a_demotion_that_names_no_generation_says_nothing_of_the_chain(tmp_path):
+    log = _log(tmp_path)
+    log.demote("Ada", undoes=1)
+    assert log.generation() == 0
+
+
 # A start in force ------------------------------------------------------------------------------------------------------
 
 def test_no_start_is_in_force_until_a_person_gives_one(tmp_path):

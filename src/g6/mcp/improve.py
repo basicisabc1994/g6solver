@@ -227,10 +227,10 @@ def _past_opening(root: Path, since: datetime) -> bool:
         return False
 
 
-def _watch(root: Path, process: Any) -> dict:
-    """Whether the runner got past opening its folder, or ended first, and how. Ended later, it is past what this can see:
-    its last heartbeat is what is left."""
-    since, deadline = datetime.now().astimezone(), time.monotonic() + START_WAIT
+def _watch(root: Path, process: Any, since: datetime) -> dict:
+    """Whether the runner spawned at ``since`` got past opening its folder, or ended first, and how. Ended later, it is past
+    what this can see: its last heartbeat is what is left."""
+    deadline = time.monotonic() + START_WAIT
     while time.monotonic() < deadline:
         code = process.poll()
         if code is not None:
@@ -269,7 +269,8 @@ def start(root: Path, who: str, shown: str | None = None) -> dict:
             record_stop(root, why, at=datetime.now().astimezone().isoformat())
             return _blocked(START_STOPPED, f"a stop arrived while the start was being recorded, so nothing was started: {why}"
                             [:500], NOT_ASKED, running=False, folder=str(root))
-        return {**_watch(root, _spawn(root, settings)), "started_by": who}
+        spawned = datetime.now().astimezone()              # before the spawn: a runner can beat before this process looks
+        return {**_watch(root, _spawn(root, settings), spawned), "started_by": who}
     except (OSError, LedgerError, WorkspaceRefused, ValueError) as exc:
         return _blocked(START_FAILED, f"the runner could not be started: {type(exc).__name__}: {exc}"[:500], running=False,
                         folder=str(root))

@@ -14,6 +14,7 @@ import socket
 import stat
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -378,6 +379,21 @@ def test_a_heartbeat_from_before_this_start_says_nothing_of_this_runner(rig, mon
     monkeypatch.setattr(improve, "_spawn", lambda root, settings: Holding(lambda: None))
     got = rig.start()
     assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is False and "not opened" in got["message"]
+
+
+def test_a_heartbeat_written_before_the_spawn_returned_is_this_runners(rig, monkeypatch):
+    """A runner can open its folder before the process that started it is scheduled again. The wait is what makes this a
+    certainty: with no wait, a cutoff taken after the spawn can land on the heartbeat's own tick of the wall clock and pass."""
+    rig.enrol()
+
+    def opens_at_once(root: Path, settings: dict) -> Holding:
+        beat(root, state="waiting", at=datetime.now(UTC).isoformat())
+        time.sleep(0.05)
+        return Holding(lambda: None)
+
+    monkeypatch.setattr(improve, "_spawn", opens_at_once)
+    got = rig.start()
+    assert _code(got) == "G6_E_LOOP_STARTED" and got["running"] is True
 
 
 def test_a_starting_heartbeat_is_no_sign_it_got_past_opening(rig, monkeypatch):
@@ -1017,6 +1033,13 @@ def test_status_says_a_generation_the_log_saw_and_the_chain_lost(rig):
     (rig.root / "workspace" / ADOPTIONS).write_text("", encoding="utf-8")
     got = improve.status(str(rig.root))
     assert got["pause"]["code"] == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 1" in got["pause"]["reason"]
+
+
+def test_status_says_a_generation_a_person_made_and_the_chain_lost(rig):
+    _worked(rig)
+    rig.log.demote("Ada", undoes=1, head_version=2)
+    got = improve.status(str(rig.root))
+    assert got["pause"]["code"] == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 2" in got["pause"]["reason"]
 
 
 def test_status_says_records_that_do_not_check_out_and_does_not_raise(rig):

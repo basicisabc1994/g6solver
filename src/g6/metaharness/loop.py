@@ -211,17 +211,24 @@ def _request_digest(system: str, user: str) -> str:
     return hashlib.sha256(f"{system}\0{user}".encode("utf-8", "replace")).hexdigest()
 
 
-def _sender(counted: Any) -> Any:
-    """The caller sending the request being noted, from ``counting``'s observer. ``g6.core.model_calls`` says only that one is
-    going out, and that file is bound, so this is read from the stack above the note: the first ``self`` there is what calls the
-    model, whatever holds it and whatever that declares. A test holds this for each built-in caller. With no object between the
-    note and ``counted``, a plain function noted it, or another thread did, and the stack cannot say: then it is what ``counted``
-    holds, as declared."""
+def _sender(counted: Any, asked: str) -> tuple[Any, str]:
+    """The caller sending the request being noted and the digest of that request, from ``counting``'s observer.
+    ``g6.core.model_calls`` says only that one is going out, and that file is bound, so both are read from the stack above the
+    note: the first ``self`` there is what calls the model, whatever holds it and whatever that declares, and the nearest of its
+    own frames that names a ``system`` and a ``user`` holds what it was given to send, whatever a wrapper was asked. A test holds
+    both for each built-in caller. With no object between the note and ``counted``, a plain function noted it, or another thread
+    did, and the stack cannot say: then it is what ``counted`` holds, as declared. Where no frame names that text it stays
+    ``asked``, and what a caller of a known type does to the text below those frames cannot be seen."""
     frame = sys._getframe(2)
     while frame is not None and "self" not in frame.f_locals:
         frame = frame.f_back
     found = frame.f_locals["self"] if frame is not None else counted
-    return counted.inner if found is counted else found
+    while frame is not None and frame.f_locals.get("self") is found:
+        if "system" in frame.f_locals and "user" in frame.f_locals:
+            asked = _request_digest(frame.f_locals["system"], frame.f_locals["user"])
+            break
+        frame = frame.f_back
+    return (counted.inner if found is counted else found), asked
 
 
 class _Requests:
@@ -248,6 +255,13 @@ class _Requests:
 
     def close(self) -> None:
         self.open(math.inf)
+
+    def ends_by(self, moment: datetime) -> None:
+        """A provider has said the tick's week ends at ``moment``, which can come to light only once it is under way. What it
+        reserved covers nothing after that. A later end buys it nothing, and outside a tick there is no week to end."""
+        with self._lock:
+            if self.ends is not None and moment < self.ends:
+                self.ends = moment
 
     def admit(self, wait: float = 0.0, *, places: int = 0) -> None:
         """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
@@ -288,14 +302,21 @@ class _Requests:
         if until is not None and self.limit != math.inf:
             raise _AtLimit(until, str(failed)[:300]) from failed
 
-    def at_a_refusal(self, failed: Any, request: str) -> None:
+    def not_refused(self, request: str) -> None:
+        """Refuse what was refused once, whoever asks."""
+        if request in self.refused:
+            raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+
+    def at_a_refusal(self, failed: Any, request: str, sent: str = "") -> None:
         """End the tick when a classifier or a permission stopped a request, and let nothing more go out of it. ``failed``: what
-        the request raised, or what ``WatchedClaude`` read before it raised anything."""
+        the request raised, or what ``WatchedClaude`` read before it raised anything. ``request``: the digest of what the tick
+        asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is sent again."""
         said = refused_by(str(failed))
         if said and self.limit != math.inf:
-            self.refusal = {"said": said, "request": request}
-            self.refused.add(request)
-            self.keeping(request, said)
+            self.refusal = {"said": said, "request": sent or request, "asked": request}
+            for known in {request, sent or request}:
+                self.refused.add(known)
+                self.keeping(known, said)
             raise _Refused(said)
 
 
@@ -346,25 +367,28 @@ class _Counted:
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
         self.requests.admit()
-        asked = _request_digest(system, user)
-        if asked in self.requests.refused:
-            raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
+        asked = sent = _request_digest(system, user)
+        self.requests.not_refused(asked)
         took: list[None] = []
 
         def next_request() -> None:
-            sender = _sender(self)
+            nonlocal sent
+            sender, sent = _sender(self, asked)
             self.requests.from_sender(sender)
             read_stops(sender)
-            self.requests.take()
+            self.requests.take()              # a place first, so a wrapper that keeps trying stops at what the tick reserved
+            self.requests.not_refused(sent)
             took.append(None)
 
-        with (counting(before_call=next_request) as noted, _gating_resends(self.requests.take),
-              telling_stops(lambda said: self.requests.at_a_refusal(said, asked))):
+        def told(said: str, given: tuple[str, ...]) -> None:
+            self.requests.at_a_refusal(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent)
+
+        with counting(before_call=next_request) as noted, _gating_resends(self.requests.take), telling_stops(told):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
                 self.requests.at_a_limit(failed)
-                self.requests.at_a_refusal(failed, asked)
+                self.requests.at_a_refusal(failed, asked, sent)
                 raise
             finally:
                 self.requests.count(noted() - len(took))     # a child's totals have no boundary
@@ -509,14 +533,16 @@ class ShadowLoop:
     def _before_evaluation(self) -> None:
         """Read the account once more before a held-out evaluation: a limit reads as a failed case, and an evaluation of
         failed cases spends one of the split's five on a reason untrue of the candidate. So a run already under a limit ends
-        here, as one met in a request does, with nothing spent. The limit of this: only a read can show a Codex limit, so one
-        that arrives during the evaluation still spends it, until an issuance window gives those callers a code."""
+        here, as one met in a request does, with nothing spent. The same read can move the end of the week, and the tick's
+        requests stop there, as at the end it reserved in. The limit of this: only a read can show a Codex limit, so one that
+        arrives during the evaluation still spends it, until an issuance window gives those callers a code."""
         if self._read_now is not None:
             now = self._now()
             self._read_now(now)
             seen = self.meter.reading(self.provider, now)
             if seen.wait_until is not None:
                 raise _AtLimit(seen.wait_until, seen.reason)
+            self.requests.ends_by(seen.ends)
         self.evaluating = True
 
     def stopped_by(self) -> str:
@@ -758,8 +784,9 @@ class ShadowLoop:
                               wait_until=spend.wait_until.isoformat() if spend.wait_until else "")
 
     def _run(self) -> dict[str, Any]:
-        self.requests.refused |= refused_requests(self.root) | {c["classifier_stop"]["request"] for c in self.log.cycles()
-                                                                if c.get("classifier_stop")}
+        stops = [c["classifier_stop"] for c in self.log.cycles() if c.get("classifier_stop")]
+        self.requests.refused |= refused_requests(self.root) | {kept[name] for kept in stops for name in ("request", "asked")
+                                                                if name in kept}
         spend, waiting = self._reserve()
         if waiting is not None:
             return waiting

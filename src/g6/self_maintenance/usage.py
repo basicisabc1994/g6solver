@@ -53,7 +53,8 @@ callers, which waits for an issuance window.
 the 300 characters ``g6.core.host_models`` keeps, so nothing in that error can show one, and that file is bound. So the loop
 has any Claude Code caller read the same fields from the whole result as parsed JSON, before it is cut: as a request goes out,
 the caller really sending it becomes a ``WatchedClaude`` (``read_stops``), whatever holds it. What that reads goes straight to
-the loop (``telling_stops``), so a wrapper that catches failed requests cannot retry a refusal or hide it. A model's words stay
+the loop (``telling_stops``), so a wrapper that catches failed requests cannot retry a refusal or hide it, with the text that
+caller was given, so a wrapper that rewrites a request cannot send what was refused under another. A model's words stay
 inside the string ``result``, so they cannot read as a field. This was read from the text of Claude Code 2.1.316 and has not been
 seen at a real refusal, and a version that moves those fields is not read. Codex prints text, as above, so a refusal from it
 reads as a failed case, and the same request goes out again on a later tick. That too waits for an issuance window.
@@ -83,7 +84,8 @@ REFRESH = timedelta(minutes=15)
 MODEL_REFUSED = "G6_E_MODEL_REFUSED"
 #: Claude Code's ``api_error`` values that say something other than the model's own reply stopped the turn.
 _STOPPED_BY = ("dlp_request_denied", "safety_monitor_blocked")
-_TELL: contextvars.ContextVar[Callable[[str], None] | None] = contextvars.ContextVar("g6_loop_stops", default=None)
+_Tell = Callable[[str, tuple[str, ...]], None]
+_TELL: contextvars.ContextVar[_Tell | None] = contextvars.ContextVar("g6_loop_stops", default=None)
 ASK_TIMEOUT = 30.0
 WEEK_MINUTES = 7 * 24 * 60
 WEEK = timedelta(minutes=WEEK_MINUTES)
@@ -188,9 +190,11 @@ def _stop_in(result: Mapping[str, Any]) -> str:
 
 
 @contextmanager
-def telling_stops(tell: Callable[[str], None]) -> Iterator[None]:
-    """Inside, a stop ``WatchedClaude`` reads goes to ``tell`` before anything else sees it. What ``tell`` raises is what stops
-    the request, so a wrapper between it and the loop cannot take the refusal for a failed request and send it again."""
+def telling_stops(tell: _Tell) -> Iterator[None]:
+    """Inside, a stop ``WatchedClaude`` reads goes to ``tell`` before anything else sees it, with what the bound caller says it
+    was given: its system text and request first, or for a session of its own, such as ``ToolSession``, a prompt alone. What
+    ``tell`` raises is what stops the request, so a wrapper between it and the loop cannot take the refusal for a failed request
+    and send it again."""
     token = _TELL.set(tell)
     try:
         yield
@@ -206,7 +210,7 @@ class WatchedClaude(host_models.ClaudeCodeCaller):
         if stopped:
             tell = _TELL.get()
             if tell is not None:
-                tell(f"{MODEL_REFUSED}: {stopped}")
+                tell(f"{MODEL_REFUSED}: {stopped}", hide)
             raise LLMError(f"{MODEL_REFUSED}: {stopped}")
         return super()._reply(code, printed, errors, files, hide)
 

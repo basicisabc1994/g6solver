@@ -19,7 +19,7 @@ from g6.core.llm import FakeLLM
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.loop import LoopSettings, ShadowLoop
 from g6.metaharness.method import Method
-from g6.metaharness.shadow import lineage
+from g6.metaharness.shadow import ADOPTIONS, lineage
 from g6.self_maintenance.pacing import ProviderWindow
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -293,3 +293,20 @@ def test_a_chain_a_person_moved_on_is_not_read_as_a_lost_generation(tmp_path):
     assert loop.tick()["outcome"] == "adopted"
     loop.demote(1, "Ada")
     assert loop.tick()["warning_card"]["code"] != "G6_E_LOOP_RECORDS_UNREADABLE"
+
+
+def test_a_chain_cut_back_past_a_persons_rollback_runs_nothing_after_a_restart(tmp_path):
+    """Every row that stays still checks out, and no cycle saw the rollback: only the log's own row for it can show the loss.
+    What comes back is the very head the person took back."""
+    loop, domain = _enrolled(tmp_path)
+    assert loop.tick()["outcome"] == "adopted"
+    chain = loop.root / "workspace" / ADOPTIONS
+    before = chain.read_bytes()
+    assert loop.demote(1, "Ada")["head_version"] == 2
+    chain.write_bytes(before)
+    again = ShadowLoop(domain, loop.root, SETTINGS, proposer=domains.proposes({"prompt": domains.WORKING}), now=lambda: NOW,
+                       clock=domains.Clock())
+    calls = len(domain.llm.calls)
+    got = again.tick()
+    assert got["warning_card"]["code"] == "G6_E_LOOP_RECORDS_UNREADABLE" and "generation 2" in got["message"]
+    assert got["completion_state"] == "blocked-escalated" and len(domain.llm.calls) == calls

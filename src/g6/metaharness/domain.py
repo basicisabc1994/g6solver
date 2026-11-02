@@ -284,15 +284,17 @@ def who_pays(caller: Any) -> str:
     """Who pays for what ``caller`` sends, read from its type and not from what anyone declares: the provider a host program
     signs in to, whose subscription it is; ``PAID`` for one that carries an API key; ``LOCAL`` for one that bills nobody; and
     ``""`` for a type nothing here knows. The Anthropic SDK finds a key of its own, so it is paid with none given. An HTTP
-    caller with no key has nothing to bill. This reads the type: it cannot see what a caller of a known type does inside."""
+    caller with no key has nothing to bill. A type can be several of these, and one that may carry a key is paid whatever else
+    it inherits, so that is read first; a host's constructor gives it no ``api_key`` at all. This reads the type: it cannot see
+    what a caller of a known type does inside."""
     from g6.core.host_models import ClaudeCodeCaller, CodexCaller   # only when asked: it brings in the process-running code
 
+    if isinstance(caller, AnthropicCaller) or isinstance(caller, OpenAICompatibleCaller) and getattr(caller, "api_key", None):
+        return PAID
     if isinstance(caller, ClaudeCodeCaller):
         return "claude"
     if isinstance(caller, CodexCaller):
         return "codex"
-    if isinstance(caller, AnthropicCaller) or isinstance(caller, OpenAICompatibleCaller) and caller.api_key:
-        return PAID
     return LOCAL if isinstance(caller, FakeLLM | OllamaCaller | OpenAICompatibleCaller) else ""
 
 
