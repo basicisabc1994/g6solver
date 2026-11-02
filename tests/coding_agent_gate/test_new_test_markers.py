@@ -82,3 +82,23 @@ def test_the_standalone_gate_blocks_on_a_marker_either_way(body):
     evidence = [Evidence("file", "src/x.py"), Evidence("test", "pytest -q tests/test_x.py", exit_code=0),
                 Evidence("diff", "tests/test_x.py", output=HEAD + body)]
     assert verify_answer("fix f", "Fixed f.", evidence=evidence, task_contract="f returns 1").verdict == "block"
+
+
+#: What ``str.splitlines`` cuts at and no newline is. To Python a form feed is whitespace, so code can follow one on its line.
+NOT_NEWLINES = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+
+
+@pytest.mark.parametrize("mark", NOT_NEWLINES, ids=repr)
+def test_a_skip_past_a_character_that_ends_no_line_is_on_its_added_line(mark):
+    assert MARKER in scan_diff(f"{HEAD} import pytest\n+{mark}pytest.skip('later')\n")
+
+
+@pytest.mark.parametrize("mark", NOT_NEWLINES, ids=repr)
+def test_text_past_a_character_that_ends_no_line_is_no_line_of_its_own(mark):
+    assert "assertion removed" not in scan_diff(f"{HEAD}+value = 1{mark}-    assert f() == 1\n")
+
+
+@pytest.mark.parametrize("diff", [f"{HEAD} import pytest\n+pytest.skip('later')\n", f"{HEAD}-    assert f() == 1\n+    x = 1\n",
+                                  f"{HEAD}+@pytest.mark.skip\n+def test_new():\n+    assert f() == 1\n", f"{HEAD} x = 1\n"])
+def test_line_endings_a_python_file_may_have_change_nothing_the_scan_finds(diff):
+    assert scan_diff(diff.replace("\n", "\r\n")) == scan_diff(diff) == scan_diff(diff.replace("\n", "\r"))

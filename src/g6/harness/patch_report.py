@@ -77,6 +77,14 @@ IGNORED_TO_DO = ("  - What to do: these files are untracked and git-ignored, yet
 TO_DO = frozenset({"ignored_file_can_change_tests"})
 #: A file of a reviewer's test that ran, and nothing failed, but a case that failed before has not passed by its own id.
 NOT_PASSED = "ran, but a case that failed has not passed"
+#: A file of a reviewer's test with a case the operating system refused: unknown, so the file neither passes nor fails.
+NOT_JUDGED = "ran, but a case could not be judged"
+#: How a run of the review-until-clean loop ended, in the reply and at the head of the report, and what each label says.
+ENDINGS = {"clean": "a review of this patch reproduced nothing, and no reviewer's test failed on it",
+           "fixed": "each reviewer's test that failed now passes, and a fresh review of this patch reproduced nothing",
+           "contested": "a reviewer's test fails, and the agent left the code as it was",
+           "open": "a reviewer's test that failed has not been shown to pass",
+           "untested": "nothing here tested this patch to a result"}
 #: What the review-until-clean loop's report says of itself, every time (the worked examples' arm K).
 LOOP_LIMITS = ("- This loop has been measured on seven training bugs only.",
                "- A review that reproduces nothing is not evidence the work is right, only that this reviewer found no failure "
@@ -383,6 +391,12 @@ def findings(reviews: list[dict]) -> tuple[list[dict], list[dict]]:
     return [one for one in found if last.get(one["file"]) == "passed"], [one for one in found if last.get(one["file"]) != "passed"]
 
 
+def _latest(reviews: list[dict], file: str) -> str | None:
+    """What the latest run that reached ``file`` said of it, None if none did. A review's own ``results`` are its round's, and
+    a later repair can change what its test does, so nothing here may read them to say what a test does now."""
+    return next((run["results"][file] for run in reversed(reviews) if file in run["results"]), None)
+
+
 def _review_lines(loop: dict) -> list[str]:
     """What the review-until-clean loop did, reproduced findings first: what was found, what was fixed, what stayed open.
     A finding is a reviewer's test that failed on the patch. It stays open at the cap, or when the agent rejects it, and an
@@ -391,14 +405,17 @@ def _review_lines(loop: dict) -> list[str]:
     fixed, still = findings(reviews)
     last, count = reviews[-1]["results"] if reviews else {}, len(fixed) + len(still)
     lines = ["## What the reviews found"]
+    if loop.get("ending"):
+        lines.append(f"- **Ending:** {code(loop['ending'])}: {ENDINGS[loop['ending']]}.")
     lines.append(f"- **Found:** {count} reproduced, each a reviewer's test that failed on the patch." if count else
                  "- **Found:** no reviewer's test failed on the patch.")
     lines += _cut([[f"- **Fixed:** review {one['n']}: {code(one['rule'], 200)}; its test passes now."] for one in fixed],
                   BUDGET["findings"], "report.md's folder, state.json")
     lines += _cut([[f"- **Open:** review {one['n']}: {code(one['rule'], 200)}; its test {code(one['file'])} "
                     + {"failed": "fails.", NOT_PASSED: "ran, but the case that failed did not pass, so nothing shows it is "
-                                                       "fixed."}.get(last.get(one["file"]),
-                                                                     "did not run again, so nothing shows it is fixed."),
+                                                       "fixed.",
+                       NOT_JUDGED: "ran, but a case could not be judged, so nothing shows it is fixed."}.get(
+                           last.get(one["file"]), "did not run again, so nothing shows it is fixed."),
                     f"  - The reviewer's reasons: {code(one['why'], 300)}"] for one in still],
                   BUDGET["findings"], "report.md's folder, state.json")
     if loop.get("left"):
@@ -413,9 +430,15 @@ def _review_lines(loop: dict) -> list[str]:
         lines.append(f"- A reviewer from another model family read the patch {_times(len(reviews))}: "
                      + ", ".join(code(one.get("verdict")) for one in reviews) + ".")
     for one in reviews:
+        if one.get("told"):
+            lines.append(f"- Review {one['n']} first named a defect, {code(one['claimed'], 200)}, but its test would not run: "
+                         f"{code(one['told'], 200)}. The reviewer was told once, and answered again.")
         if one.get("verdict") == "defect" and one not in (*fixed, *still):
-            why = (f"its test would not run: {code(one['unrun'], 200)}" if one.get("unrun") else
-                   "its test passes on the patch" if one["file"] in one["results"] else "it wrote no test")
+            said = _latest(reviews, one["file"])
+            why = (f"a case of its test could not be judged: {code(one.get('unrun', ''), 200)}" if said == NOT_JUDGED else
+                   f"its test would not run: {code(one['unrun'], 200)}" if said == "did not run" and one.get("unrun") else
+                   "its test passes on the patch" if said == "passed" else
+                   "it wrote no test" if said is None else "its test showed nothing")
             lines.append(f"- Review {one['n']} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
     if loop.get("boundary"):   # known only from a test that ran
         lines.append(f"- **Boundary:** the reviewers' tests ran inside {code(loop['boundary'])}, in scratch copies with no "
@@ -438,4 +461,5 @@ def safe_render(assessment: dict) -> str:
                 "assessment's fields. Qualified draft: merging needs your separate approval.")
 
 
-__all__ = ["MAX_LINES", "NOT_PASSED", "STANDING_NOTE", "code", "completion_report", "findings", "render", "safe_render"]
+__all__ = ["ENDINGS", "MAX_LINES", "NOT_JUDGED", "NOT_PASSED", "STANDING_NOTE", "code", "completion_report", "findings", "render",
+           "safe_render"]

@@ -281,12 +281,13 @@ def _metaharness_tools(server: Any, surface: Any, context_type: Any) -> None:
         one line saying why. Only a reason rejects a finding: a call with the code unchanged and no reason gets the same
         finding back and spends nothing, so a retry is safe. A fresh review reads each repair, at most 3 repairs and so 4
         reviews. Earlier reviewers' tests stay and keep running. Or action "stop" and report: show it to the person as it
-        is. The loop stops when a review reproduces nothing, when you leave the code as it was, when the repairs run out,
-        or when a review fails. A stop
+        is, with ending, one of clean, fixed, contested, open or untested. The loop stops when a review reproduces nothing,
+        when you leave the code as it was, when the repairs run out, or when a review fails. A stop
         with no clean review, or one that tested nothing, is blocked-escalated with its code and any other is
         qualified-draft: a review that reproduces nothing is not evidence the work is right, only that this reviewer found
-        no failure it could show. This loop has been measured on seven training bugs only. Action "wait" means another
-        step of this session is running and this call did nothing: wait for that step's result before you call again.
+        no failure it could show. This loop has been measured on seven training bugs only. Action "wait" means this call
+        did nothing: another step of this session is running, so wait for that step's result before you call again, or your
+        reason was a question, which rejects nothing, so ask the person, then repair or give your reason.
 
         Use one session name for one task, and repeat that task as it was on each call: the first call fixes the session's
         repository, task and base commit, and a call for another repository or task is refused. A later call's base is not

@@ -194,6 +194,21 @@ def test_the_agents_reason_goes_with_its_call(rig):
     enveloped(got)
 
 
+def test_a_reason_that_is_a_question_rejects_nothing_and_says_who_must_answer(rig):
+    critic = reviewer("one", "none")
+    rig.approve(critic)
+    rig.edit()
+    rig.step()
+    got = rig.step(reason="Shall I fix this?")
+    assert "report" not in got and got["action"] == loop.WAIT and got["completion_state"] == "blocked-escalated"
+    assert got["warning_card"]["code"] == loop.WAITING_ON_PERSON and "waiting for your answer" in got["warning_card"]["message"]
+    enveloped(got)
+    assert len(critic.calls) == 1
+    rig.edit("def double(x):\n    return 2 * x\n")      # the person said yes
+    rig.failing = set()
+    assert rig.step()["action"] == "stop" and len(critic.calls) == 2
+
+
 def test_a_review_that_fails_is_blocked_and_says_so_and_carries_the_report(rig):
     rig.approve(reviewer(LLMError("no such program")))
     rig.edit()
@@ -201,6 +216,52 @@ def test_a_review_that_fails_is_blocked_and_says_so_and_carries_the_report(rig):
     assert got["ok"] is False and got["action"] == "stop" and got["completion_state"] == "blocked-escalated"
     assert got["warning_card"]["code"] == "G6_E_NO_CLEAN_REVIEW" and "no such program" in got["report"]
     enveloped(got)
+
+
+def test_a_defect_that_could_not_be_reproduced_is_blocked_and_says_so_and_carries_the_report(rig, monkeypatch):
+    critic = reviewer("one", "one")
+    rig.approve(critic)
+    monkeypatch.setattr(vs, "_run_check", lambda *args, **more: {"verdict": "collection_error", "said": "no such import"})
+    rig.edit()
+    got = rig.step()
+    assert len(critic.calls) == 2 and got["ok"] is False and got["action"] == "stop"
+    assert got["completion_state"] == "blocked-escalated" and got["warning_card"]["code"] == loop.NOT_REPRODUCED
+    assert "a defect was claimed and could not be reproduced" in got["warning_card"]["message"]
+    assert "**No clean review:**" in got["report"]
+    enveloped(got)
+
+
+def test_a_stop_names_its_ending_beside_the_three_states(rig, monkeypatch):
+    rig.approve(reviewer("none"))
+    rig.failing = set()
+    rig.edit()
+    got = rig.step()
+    assert "**Ending:** `clean`" in got["report"] and got["ending"] == "clean" and got["completion_state"] == "qualified-draft"
+    enveloped(got)
+
+
+def test_a_rejected_finding_ends_contested_and_stays_a_draft(rig):
+    rig.approve(reviewer("one"))
+    rig.edit()
+    rig.step()
+    got = rig.step(reason="They misread the task.")
+    assert got["ending"] == "contested" and got["completion_state"] == "qualified-draft"
+    assert rig.step()["ending"] == "contested"      # a repeat says the same
+    enveloped(got)
+
+
+def test_a_stop_that_tested_nothing_ends_untested_and_stays_blocked(rig):
+    rig.approve(reviewer(LLMError("no such program")))
+    rig.edit()
+    got = rig.step()
+    assert got["ending"] == "untested" and got["completion_state"] == "blocked-escalated"
+    enveloped(got)
+
+
+def test_a_step_that_goes_on_has_no_ending(rig):
+    rig.approve(reviewer("one"))
+    rig.edit()
+    assert "ending" not in rig.step()
 
 
 def test_nothing_approved_is_blocked_with_how_to_turn_it_on(rig, monkeypatch):

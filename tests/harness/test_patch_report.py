@@ -512,6 +512,47 @@ def test_a_review_with_no_failure_to_show_is_named_and_is_no_finding():
     assert "Review 3 named a defect but showed no failure: `rule 3`; it wrote no test." in text
 
 
+def test_a_test_with_a_case_not_judged_is_never_said_to_pass():
+    judged = "ran, but a case could not be judged"
+    reviews = [review(1, results={"test_critic_1.py": judged}, unrun="PermissionError"),
+               review(2, results={"test_critic_2.py": "did not run"})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "its test passes on the patch" not in text and "`PermissionError`" in text
+    assert "Review 1 named a defect but showed no failure: `rule 1`; a case of its test could not be judged" in text
+    assert "Review 2 named a defect but showed no failure: `rule 2`; its test showed nothing" in text
+    assert patch_report.NOT_JUDGED == judged
+
+
+@pytest.mark.parametrize("ending", ["clean", "fixed", "contested", "open", "untested"])
+def test_the_review_loops_report_leads_with_its_labelled_ending(ending):
+    text = patch_report.completion_report({**CLEAN, "ending": ending}, "R")
+    assert text.index(f"**Ending:** `{ending}`") < text.index("**Found:**")
+    for word in ("verified", "proved", "proven", "experimental", "correct"):
+        assert word not in text.lower()
+
+
+def test_each_labelled_ending_says_something_of_its_own():
+    assert len(set(patch_report.ENDINGS.values())) == len(patch_report.ENDINGS) == 5
+
+
+def test_a_report_with_no_ending_names_none():
+    assert "**Ending:**" not in patch_report.completion_report(CLEAN, "R")
+
+
+@pytest.mark.parametrize("latest, said", [("ran, but a case could not be judged", "a case of its test could not be judged"),
+                                          ("did not run", "its test showed nothing")])
+def test_a_test_that_passed_once_is_said_to_pass_only_if_its_latest_run_does(latest, said):
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {"test_critic_1.py": latest})]
+    text = patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+    assert "its test passes on the patch" not in text, "the report read the review's own run, not the test's latest"
+    assert f"`rule 1`; {said}" in text
+
+
+def test_a_test_a_later_run_did_not_reach_is_reported_by_the_latest_run_that_did():
+    reviews = [review(1, results={"test_critic_1.py": "passed"}), review(2, "none", {})]
+    assert "`rule 1`; its test passes on the patch" in patch_report.completion_report({**CLEAN, "reviews": reviews}, "R")
+
+
 def test_the_review_loops_report_names_its_boundary_only_when_a_test_ran():
     assert "ran inside `a-boundary`" in patch_report.completion_report({**CLEAN, "boundary": "a-boundary"}, "R")
     assert "ran inside" not in patch_report.completion_report({**CLEAN, "boundary": "", "reviews": [review(1, "none")]}, "R")

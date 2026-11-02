@@ -49,21 +49,35 @@ below runs instead. With neither, nothing is tested, and the report says which l
 2. When the agent finishes and Python files have changed, a reviewer from another model family reads the task, the patch and
    the files it touches, as they were at the base. It sees none of the agent's reasoning. It must state a rule, its reasons
    and a test, and it may find nothing.
-3. G6 runs that test on the patch, inside an operating-system boundary, with no network. A test that will not run says
-   nothing of the patch.
+3. G6 runs that test on the patch, inside an operating-system boundary, with no network. A test that will not run goes back
+   to the reviewer once, with the error. If it still will not run, the loop ends with no clean review: a defect was claimed
+   and could not be reproduced.
 4. If the test fails, the rule, the reasons and the test go back to the agent in the same session. The agent may reject the
    finding: the reviewer can be wrong. A fresh review then reads the new patch, at most three repairs and so four reviews.
-   Each review's test stays and keeps running, to catch a repair that undoes it.
+   Each review's test stays and keeps running, to catch a repair that undoes it. If the agent changes nothing and its reply
+   asks anything, by a question mark anywhere in it, that rejects nothing: the turn ends so you can answer, and the loop goes
+   on when the agent next stops. A reply that asks with no question mark reads as a rejection, with its words in the report.
 5. The loop ends when a review reproduces nothing, when the agent leaves the code as it was, when the repairs run out, or when
-   a review fails or cannot be read. That last one is reported as no clean review, and never counts as clean.
+   a review fails or cannot be read. That last one is reported as no clean review, and never counts as clean. Neither does a
+   review of a patch that changed after it was read.
 6. The turn ends and you see the report, which is also saved beside the session's state.
 
-If no hook saw your prompt, the task is read from the session's transcript and the base is the commit you are on then. The
-loop runs once per session: start a new session for a new task.
+If no hook saw your prompt, the task is read from the session's transcript and the base is the commit you are on then.
+
+A new prompt after a loop has ended arms a new one, on the commit you are on at that prompt. If that is the same commit, the
+earlier task stays in it, as the patch still holds that work, and a patch a loop has already come to a result on is not read
+again, so a "thanks" spends nothing. On a new commit it is read again, even if the diff is the same, as its parent is not.
+After a review that failed the next stop tries again. If a turn ends with nothing to test and the commit then moves, your
+next prompt starts on the new commit. Wherever a loop did not run, you get one line saying what did not run and why.
 
 ## What the report says, and what it does not
 
-The report leads with reproduced findings: what was found, what was fixed, and what stayed open. A finding is fixed only when
+The report starts with how the run ended, in one word: `clean`, when a review of this patch reproduced nothing and no
+reviewer's test failed on it; `fixed`, when each test that failed now passes and a fresh review reproduced nothing;
+`contested`, when a test fails and the agent left the code as it was; `open`, when a test that failed has not been shown to
+pass; `untested`, when nothing tested this patch to a result. A tool's reply gives the same word as `ending`.
+
+Then come the reproduced findings: what was found, what was fixed, and what stayed open. A finding is fixed only when
 the case that failed has passed: a skip or a rename fixes nothing. It is open when the repairs ran out with its test still
 failing, or when the agent rejected it, with the agent's reason if it gave one. On the training bugs an open finding did not
 always mean a wrong patch, so read it as a question for you.
@@ -84,6 +98,8 @@ kept out of training. It also differs from what was measured:
 - The Stop hook replays the rounds: each hook is a new process that reads what is done from a file, where the measured runner
   held the session itself. A review repeats if a hook is cut short.
 - G6 runs each review's test alone, so one that will not run hides no other. The measured runner ran them together.
+- A test that will not run goes back to its reviewer once, and a defect no test could show ends with no clean review. The
+  measured runner said nothing of such a test, and counted that review as clean.
 - Earlier reviewers' tests run even when the latest review wrote none, and a failing one goes back in its own reviewer's words.
   The measured runner ran them only with a new test, and sent the latest reviewer's words.
 - The agent has this plugin and G6's server. The measured agent was plain Claude Code. A patch review of the task's text sits
@@ -97,7 +113,7 @@ repository, the task, a session name and the base commit, and returns a job to p
 continue, with the text for the agent, or stop, with the report. The first call fixes the session's repository, task and
 base, and a call for another repository or task is refused. A session takes one step at a time: a call that finds another
 running does nothing, and says wait. Over this tool only a stated reason rejects a finding, so a client that repeats a call
-gets the same finding back, and nothing is spent.
+gets the same finding back, and nothing is spent. A reason that asks anything rejects nothing, and also says wait.
 
 ## The scouts' loop
 

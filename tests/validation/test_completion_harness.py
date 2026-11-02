@@ -194,9 +194,10 @@ def frozen(monkeypatch, reviews: list[dict], sets: list, moves: bool) -> dict:
     return {"reviews": len(seen), "sent": sent, "reason": got["reason"], "clean": got["status"] == "no_counterexample_in_domain"}
 
 
-def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves: bool) -> dict:
+def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves: bool, again: int = 0) -> dict:
     """``advance``, one hook at a time, on the same reviews. Each new test takes what ``sets`` says, as ``run.py``'s whole folder
-    does, and an earlier one passes, which is all the frozen loop's cases ask of one."""
+    does, and an earlier one passes, which is all the frozen loop's cases ask of one. ``again``: the reviews that rewrote their
+    round's test rather than read a new patch, as the frozen loop has none."""
     left, seen = list(sets), []
     monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
     monkeypatch.setattr(proposer, "boundary", lambda root: "")
@@ -212,7 +213,7 @@ def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves:
                 + (f"```python\n{found['test']}\n```\n" if found["test"] else ""))
 
     def run_check(change, placed, source, node, *, at_base, timeout_s, roots=()):
-        got = left.pop(0) if Path(placed).name == loop.critic_file(len(seen)) else PASSES
+        got = left.pop(0) if Path(placed).name == loop.critic_file(max(len(seen) - again, 1)) else PASSES
         if got.exit not in (0, 1):
             return {"verdict": "collection_error", "said": "will not run"}
         return {"verdict": "failed" if got.exit else "passed", "said": "", "rootdir": "", "loaded_outside": {},
@@ -245,7 +246,6 @@ def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves:
     ([defect(n) for n in range(1, we.MAX_REPAIRS + 2)], [FAILS] * (we.MAX_REPAIRS + 1), True),     # the cap
     ([defect(1), defect(2)], [FAILS], False),                               # the agent rejected it
     ([defect(1)], [PASSES], True),                                          # a test that passes is no finding
-    ([defect(1)], [BROKEN], True),                                          # one that will not run says nothing
     ([{**defect(1), "test": ""}], [], True),                                # a defect with no test sends nothing
     ([FAILED], [], True),                                                   # no clean review
     ([defect(1), FAILED], [FAILS], True),
@@ -253,3 +253,13 @@ def product(tmp_path: Path, monkeypatch, reviews: list[dict], sets: list, moves:
 ])
 def test_the_loop_runs_as_k_runs(tmp_path, monkeypatch, reviews, sets, moves):
     assert product(tmp_path, monkeypatch, reviews, sets, moves) == frozen(monkeypatch, reviews, sets, moves)
+
+
+def test_where_the_product_departs_from_k_a_test_that_will_not_run_ends_no_review_clean(tmp_path, monkeypatch):
+    """The one case the loop no longer shares with K, by the maintainers' ruling. K says nothing of a test that will not run, so
+    its review stands as clean, and a defect a reviewer named is gone from the result. The product tells the reviewer once, and
+    with a test that still will not run it ends with no clean review. The frozen side stays held to what it did."""
+    assert frozen(monkeypatch, [defect(1)], [BROKEN], True) == {
+        "reviews": 1, "sent": [], "reason": "a review reproduced nothing", "clean": True}
+    assert product(tmp_path, monkeypatch, [defect(1), defect(1)], [BROKEN, BROKEN], True, again=1) == {
+        "reviews": 2, "sent": [], "reason": loop.UNREPRODUCED, "clean": False}

@@ -4,13 +4,14 @@ Stop hook cannot reach, in G6's envelope.
 
 Each call is one step of one session, as each Stop hook is. The session's first call fixes its repository, task and base
 commit, under the session's lock, so a commit the agent makes later cannot move the base and two first calls cannot both
-bind it. The name a client gives is only ever digested into a folder, so it can name no path. ``continue`` carries the text for the agent and ``stop`` the report, to show as it is. A stop
+bind it. The name a client gives is only ever digested into a folder, so it can name no path. ``continue`` carries the text for the agent and ``stop`` the report, to show as it is, and how the run ended. A stop
 that tested nothing or left no clean review is ``blocked-escalated`` with its own code; any other is ``qualified-draft`` at
 best, as a review that reproduces nothing is not evidence the work is right. Nothing here decides anything.
 
 A client may repeat a call whose reply it lost, and a server's jobs run one at a time, so that repeat runs just after the call
 it repeats, with no overlap for a lock to see. So only a call with a ``reason`` rejects a finding: with the code unchanged and
-no reason, the same finding goes back, and nothing is spent.
+no reason, the same finding goes back, and nothing is spent. A reason that asks anything rejects nothing either: the step says
+wait, for the person's answer.
 """
 from __future__ import annotations
 
@@ -87,7 +88,8 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     state = loop._load(folder)
     evidence, saved = _evidence(state, asked["base"]), folder / "report.md"
     text = done.text or (saved.read_text(encoding="utf-8") if saved.is_file() else "")
-    said = {"action": done.action, "text" if done.action == loop.CONTINUE else "report": text}
+    said = {"action": done.action, "text": text} if done.action == loop.CONTINUE else {
+        "action": done.action, "report": text, "ending": done.ending}
     if done.code:
         refused = blocked_reply(f"[{done.code}] {state.get('stop') or text or NOTHING}"[:600], request_id=request_id)
         return {**refused, "run_id": folder.name, "evidence": evidence, **said}

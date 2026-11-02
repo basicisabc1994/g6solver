@@ -166,7 +166,7 @@ def test_a_repository_with_no_commit_records_nothing(tmp_path, monkeypatch, caps
 def advance_says(monkeypatch, step) -> list:
     calls = []
 
-    def advance(repo, task, base, session, said=""):
+    def advance(repo, task, base, session, said="", agent=""):
         calls.append((repo, task, base, session))
         if isinstance(step, Exception):
             raise step
@@ -176,11 +176,13 @@ def advance_says(monkeypatch, step) -> list:
     return calls
 
 
-def test_stop_outside_a_repository_does_nothing(tmp_path, monkeypatch, capsys):
+def test_stop_outside_a_repository_runs_nothing_and_says_so_in_one_line(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("G6_HOME", str(tmp_path / "g6"))
     (tmp_path / "plain").mkdir()
     calls = advance_says(monkeypatch, loop.Step(loop.STOP))
-    assert hooked(monkeypatch, capsys, "stop", stop(tmp_path / "plain"))[:2] == (0, "")
+    code, out, _ = hooked(monkeypatch, capsys, "stop", stop(tmp_path / "plain"))
+    said = json.loads(out)["systemMessage"]
+    assert code == 0 and "did not run" in said and "git repository" in said and "\n" not in said
     assert not calls
 
 
@@ -197,7 +199,7 @@ def said_to_the_loop(monkeypatch) -> list:
     """What each stop hook hands the loop as the agent's words."""
     words = []
 
-    def advance(repo, task, base, session, said=""):
+    def advance(repo, task, base, session, said="", agent=""):
         words.append(said)
         return loop.Step(loop.STOP)
 
@@ -248,6 +250,51 @@ def test_a_stop_that_found_another_step_running_ends_the_turn_and_says_so(repo, 
     code, out, _ = hooked(monkeypatch, capsys, "stop", stop(repo))
     assert code == 0 and json.loads(out) == {"systemMessage": loop.ALREADY_RUNNING}
 
+
+def test_a_stop_with_a_line_and_no_report_shows_the_line(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    advance_says(monkeypatch, loop.Step(loop.STOP, note="WHAT DID NOT RUN, AND WHY"))
+    code, out, _ = hooked(monkeypatch, capsys, "stop", stop(repo))
+    assert code == 0 and json.loads(out) == {"systemMessage": "WHAT DID NOT RUN, AND WHY"}
+
+
+def test_a_report_is_shown_before_any_line(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo))
+    advance_says(monkeypatch, loop.Step(loop.STOP, "THE REPORT", note="A LINE"))
+    assert json.loads(hooked(monkeypatch, capsys, "stop", stop(repo))[1]) == {"systemMessage": "THE REPORT"}
+
+
+def test_a_prompt_after_a_loop_ended_records_the_new_task_and_base_and_a_run_of_its_own(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
+    first = recorded()
+    (hook.folder("s1") / "state.json").write_text(json.dumps({"done": True, "reviews": [{"patch": "the digest"}]}), encoding="utf-8")
+    (repo / "new.txt").write_text("n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "later")
+    code, out, _ = hooked(monkeypatch, capsys, "prompt", prompt(repo, "the next task"))
+    assert (code, out) == (0, "")
+    assert recorded() == {**first, "task": "the next task", "base": git(repo, "rev-parse", "HEAD"), "run": 1}
+    run = hook.current("s1", recorded())
+    assert run != hook.folder("s1") and run.parent == hook.folder("s1").parent
+    assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {}      # that review was of another base
+
+
+def test_a_prompt_that_cannot_get_its_turn_changes_nothing_and_says_so(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
+    before = recorded()
+    monkeypatch.setattr(hook, "PROMPT_WAIT", 0.05)
+    with hook._one_prompt(hook.folder("s1")):
+        code, out, err = hooked(monkeypatch, capsys, "prompt", prompt(repo, "and more"))
+    assert (code, out) == (1, "") and "not tested" in err      # any exit but 2 lets the prompt go ahead
+    assert recorded() == before
+
+
+def test_a_prompt_on_the_same_base_keeps_what_the_ended_loop_read(repo, monkeypatch, capsys):
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "the task"))
+    (hook.folder("s1") / "state.json").write_text(json.dumps({"done": True, "reviews": [{"patch": "the digest"}]}), encoding="utf-8")
+    hooked(monkeypatch, capsys, "prompt", prompt(repo, "thanks"))
+    run = hook.current("s1", recorded())
+    assert json.loads((run / "state.json").read_text(encoding="utf-8")) == {"reviewed": "the digest"}
 
 def test_with_nothing_to_say_the_turn_just_ends(repo, monkeypatch, capsys):
     hooked(monkeypatch, capsys, "prompt", prompt(repo))

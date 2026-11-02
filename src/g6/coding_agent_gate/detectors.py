@@ -125,6 +125,9 @@ _TEST_DEF = re.compile(r"^\s*(?:async\s+)?def\s+test_|^\s*(?:it|test)\(\s*['\"]"
 _TEST_NAME = re.compile(r"^\s*(?:async\s+)?def\s+(test_\w*)")
 _MARK = re.compile(r"^\s*@pytest\.mark\.(?:skip|skipif|xfail)\b")
 _CALLED = re.compile(r"\bpytest\.(?:skip|xfail)\(")     # a call can run at import, where it reaches every test in the module
+#: Where Python ends a line. ``str.splitlines`` also cuts at characters that end none, such as a form feed, which is whitespace
+#: to Python: a call after one would be no added line here, and text after one could read as a line of its own.
+_LINE_END = re.compile(r"\r\n|\r|\n")
 
 
 def _width(text: str) -> int:
@@ -158,7 +161,7 @@ def scan_diff(diff: str) -> list[str]:
     and never no hit (attrs-1593, and an outside review that broke an exemption here)."""
     lines: list[tuple[str, bool]] = []
     python = False
-    for line in diff.splitlines():
+    for line in _LINE_END.split(diff):
         if line.startswith("+++"):
             python = line.rstrip().endswith(".py")
         if not line.startswith(("+++", "---")):
