@@ -128,6 +128,68 @@ def test_a_tracked_file_in_another_encoding_is_another_patch_once_its_bytes_chan
     assert repo_tests.diff_text(repo_tests.change(repo)) != before
 
 
+@pytest.mark.parametrize("before,after", [
+    (b"value = 1\n", b"value = 1\r\n"),
+    (b"value = 1\n", b"value = 1"),
+    (b"#" * repo_tests.DIFF_FILE_CHARS + b"\nvalue = 1\n", b"#" * repo_tests.DIFF_FILE_CHARS + b"\nvalue = 999\n"),
+], ids=["line-endings", "last-newline", "past-the-cut"])
+def test_bytes_the_shown_text_leaves_out_still_make_another_patch(rig, before, after):
+    rig.source.write_bytes(before)
+    reviewed = repo_tests.diff_text(rig.change)
+    if len(reviewed) < loop.MAX_PACK_CHARS:     # one a review can read: a change while it reads leaves no clean review
+        rig.on_review = lambda: rig.source.write_bytes(after)
+        ended = loop.advance(rig.repo, TASK, rig.base, rig.session, critic=rig.critic)
+        assert len(rig.calls) == 1 and ended.code == loop.NO_CLEAN_REVIEW
+    rig.source.write_bytes(after)
+    assert repo_tests.diff_text(rig.change) != reviewed
+    assert hashlib.sha256(after).hexdigest() in repo_tests.diff_text(rig.change)
+
+
+def test_a_new_file_shown_whole_gets_no_line_naming_its_bytes(rig):
+    rig.source.write_bytes(b"value = 1\nother = 2\n")
+    assert "\\ G6:" not in repo_tests.diff_text(rig.change)
+
+
+def test_a_repeat_over_mcp_after_a_refusal_with_a_finding_and_an_edit_says_it_tested_nothing(rig, monkeypatch):
+    class FindsOne:
+        model = "recorded-reviewer"
+
+        def complete(self, system, user):
+            rig.calls.append(user)
+            proof = re.search(r"review [0-9a-f]{32}", user)[0]
+            return (f"READ: {proof}\nRULE: value must be one\nVERDICT: defect\nWHY: the value is wrong\n```python\n"
+                    "def test_value():\n    assert False\n```\n")
+
+    rig.critic = FindsOne()
+    monkeypatch.setattr(loop, "run_set", lambda *args, **kwargs: loop.ProbeRun(      # a recorded run: no test executes
+        1, {"test_critic.py::test_value": "failed"}, {"test_critic.py::test_value": "assert False"}, boundary="recorded-boundary"))
+    args = (str(rig.repo), TASK, "refused-then-edited")
+    assert review_loop.step(*args, base=rig.base)["action"] == loop.CONTINUE
+    monkeypatch.setattr(proposer, "boundary", lambda _: "boundary became unavailable")
+    stopped = review_loop.step(*args, base=rig.base)
+    assert stopped["ending"] == "open" and review_loop.step(*args, base=rig.base)["report"] == stopped["report"]
+    rig.source.write_bytes(b"value = 999\n")
+    changed = review_loop.step(*args, base=rig.base)
+    assert len(rig.calls) == 1 and changed["completion_state"] == "blocked-escalated"
+    assert changed["ending"] == "untested" and review_loop.CHANGED in changed["report"]
+    assert changed["error"].startswith("[G6_E_ISOLATION_UNAVAILABLE]")    # why the session's loop ended, kept
+
+
+def test_a_secret_g6_recognises_never_reaches_the_reviewer_and_the_report_says_so(rig):
+    secret = "sk-reviewfixture0123456789ABCDEFGHIJKLMNOP"       # a made-up value of a recognised shape
+    rig.source.write_bytes(f"api_key = '{secret}'\nvalue = 1\n".encode("utf-8"))
+    ended = loop.advance(rig.repo, TASK, rig.base, rig.session, critic=rig.critic)
+    assert len(rig.calls) == 1 and secret not in rig.calls[0]
+    assert "[REDACTED]" in rig.calls[0] and loop.MASKED_NOTE.split(".")[0] in rig.calls[0]
+    assert "**Masked:**" in ended.text and ended.ending == "clean"
+
+
+def test_a_patch_with_no_secret_reaches_the_reviewer_as_it_is(rig):
+    loop.advance(rig.repo, TASK, rig.base, rig.session, critic=rig.critic)
+    assert "value = 1" in rig.calls[0] and "[REDACTED]" not in rig.calls[0]
+    assert loop.MASKED_NOTE.split(".")[0] not in rig.calls[0]
+
+
 def test_the_line_that_names_the_bytes_is_no_line_of_code(tmp_path):
     from g6.coding_agent_gate import scan_diff
 

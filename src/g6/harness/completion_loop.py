@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Any
 
 from g6.cegis import InputDomain, SearchResult, cegis
-from g6.context.redact import mask_paths, scrub
+from g6.context.redact import MASK, mask_paths, scrub
 from g6.core import host_models, keys
 from g6.core.errors import ISOLATION_UNAVAILABLE
 from g6.core.ledger import digest
@@ -112,6 +112,10 @@ MOVED = "the patch changed after the review that read it"
 #: such a test, so its review stands as clean. A named defect that nothing could show is not clean, and it is not a finding.
 UNREPRODUCED = "a defect was claimed and could not be reproduced"
 #: What goes back to that reviewer, once, after the pack: the pack's own limit is for what a reviewer must read whole.
+#: What follows a pack in which G6 masked what looks like a secret (``context.redact.scrub``), so the reviewer, another
+#: vendor's model, never reads one, and knows the mask for what it is.
+MASKED_NOTE = (f"G6 put {MASK} in place of each value above that looks like a secret, so none of them left this machine. {MASK} "
+               "is never the code's own value: write no test that reads it or compares with it.")
 WOULD_NOT_RUN = ("\n\nThe test in your last reply would not run, so it showed nothing. G6 ran it and got:\n{error}\n\nAnswer again "
                  "in the same form: a test that runs, or VERDICT: none if you no longer find a defect.")
 #: What a file of a reviewer's test says when it showed nothing.
@@ -538,17 +542,22 @@ def run_critic(change: repo_tests.Change, task: str, caller: LLMCaller, system: 
     """L9's critic: another model family reads the finished patch once, and K's, ``n`` the review it is. One that fails is
     recorded and L9 goes on. Its test, if it has one, waits in ``where`` to run with the probes. ``told``: what follows the
     pack, for a reviewer sent back. ``patch``: what it reads, as the caller read it. What it gives names the model called,
-    here where the call is made: who is approved may change, and a later step calls no one."""
+    here where the call is made: who is approved may change, and a later step calls no one. What looks like a secret is
+    masked before it is sent, after the pack is cut, so the head the review must read whole stays whole; ``masked`` counts
+    the values, for the report."""
     found = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
+    pack = _pack(change, patch, task, proof)
+    sent = scrub(pack)
+    masked = max(sent.count(MASK) - pack.count(MASK), 1) if sent != pack else 0
     try:
-        found = critic_report(caller.complete(system, _pack(change, patch, task, proof) + told), proof=proof)
+        found = critic_report(caller.complete(system, sent + (f"\n\n{MASKED_NOTE}" if masked else "") + told), proof=proof)
     except (LLMError, OSError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
     if found["test"]:
         where.mkdir(parents=True, exist_ok=True)
         (where / critic_file(n)).write_text(found["test"] + "\n", encoding="utf-8")
-    return {**found, "reviewer": _named(caller)}
+    return {**found, "reviewer": _named(caller), **({"masked": masked} if masked else {})}
 
 
 def _read_whole(patch: str, task: str) -> bool:

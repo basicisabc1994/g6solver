@@ -92,9 +92,9 @@ def step(repo: str, task: str, session: str, base: str = "HEAD", reason: str = "
     text = done.text or (saved.read_text(encoding="utf-8") if saved.is_file() else "")
     code, ending, why, note = done.code, done.ending, state.get("stop") or text or NOTHING, done.note
     if note == loop.ALREADY_ENDED:     # a repeat ran nothing: its report is of the patch the last review read
-        reviews = state.get("reviews") or []
-        if not code and reviews and loop._patch_now(Path(asked["repo"]), asked["base"]) != reviews[-1]["patch"]:
-            text, code, ending, why, note = f"{CHANGED}\n\n{text}", loop.NO_CLEAN_REVIEW, "untested", CHANGED, CHANGED
+        reviews = state.get("reviews") or []    # a stop with a code keeps it, as it says why the session's loop ended
+        if reviews and loop._patch_now(Path(asked["repo"]), asked["base"]) != reviews[-1]["patch"]:
+            text, code, ending, why, note = f"{CHANGED}\n\n{text}", code or loop.NO_CLEAN_REVIEW, "untested", CHANGED, CHANGED
     said = {"action": done.action, "text": text} if done.action == loop.CONTINUE else {
         "action": done.action, "report": text, "ending": ending, **({"note": note} if note else {})}
     if code:

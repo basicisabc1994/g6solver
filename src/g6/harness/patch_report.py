@@ -440,6 +440,10 @@ def _review_lines(loop: dict) -> list[str]:
                    "its test passes on the patch" if said == "passed" else
                    "it wrote no test" if said is None else "its test showed nothing")
             lines.append(f"- Review {one['n']} named a defect but showed no failure: {code(one['rule'], 200)}; {why}.")
+    masked = sum(one.get("masked", 0) for one in reviews)
+    if masked:
+        lines.append(f"- **Masked:** G6 put {code('[REDACTED]')} in place of {masked} value{'s' if masked != 1 else ''} that "
+                     "look like secrets before the reviewer read the patch, so none was sent, and none was reviewed.")
     if loop.get("boundary"):   # known only from a test that ran
         lines.append(f"- **Boundary:** the reviewers' tests ran inside {code(loop['boundary'])}, in scratch copies with no "
                      "network.")

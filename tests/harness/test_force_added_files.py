@@ -194,7 +194,9 @@ def test_on_ordinary_text_a_patch_review_decides_exactly_what_it_did(repo, monke
     """Each caller of ``diff_text`` reads its text and nothing else of this change, so bytes that match decide the same."""
     (repo / rel).write_bytes(text.encode("utf-8"))
     _recorded(monkeypatch)
-    assert _diff_as_it_was(repo_tests.change(repo)) == repo_tests.diff_text(repo_tests.change(repo))
+    now_text = repo_tests.diff_text(repo_tests.change(repo))     # less the line that names bytes the text leaves out
+    assert _diff_as_it_was(repo_tests.change(repo)) == "".join(
+        line for line in now_text.splitlines(keepends=True) if not line.startswith("\\ G6:"))
     now = _review(repo)
     monkeypatch.setattr(repo_tests, "diff_text", _diff_as_it_was)
     assert _decided(now) == _decided(_review(repo))
