@@ -427,7 +427,8 @@ def test_the_runner_is_detached_so_it_outlives_the_session(rig, monkeypatch):
     monkeypatch.undo()                                                  # the real _spawn
     monkeypatch.setattr(subprocess, "Popen", popen)
     improve._spawn(rig.root, {})
-    assert seen["argv"][1:] == ["-P", "-m", "g6.metaharness.loop", "run", str(rig.root)]
+    assert seen["argv"][1:4] == ["-P", "-B", "-X"] and seen["argv"][4].startswith("pycache_prefix=")
+    assert seen["argv"][5:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
     assert seen["argv"][0] == sys.executable and seen["stdin"] == subprocess.DEVNULL
     if os.name == "nt":
         assert seen["creationflags"] & subprocess.DETACHED_PROCESS
@@ -454,7 +455,9 @@ def test_a_pinned_python_runs_the_runner_isolated_so_no_working_tree_can_come_fi
     pinned = tmp_path / "python.exe"
     pinned.write_bytes(b"")
     improve._spawn(rig.root, {"python": str(pinned)})
-    assert seen["argv"] == [str(pinned), "-I", "-m", "g6.metaharness.loop", "run", str(rig.root)]
+    argv = seen["argv"]
+    assert argv[:4] == [str(pinned), "-I", "-B", "-X"] and argv[4].startswith("pycache_prefix=")
+    assert argv[5:] == ["-m", "g6.metaharness.loop", "run", str(rig.root)]
 
 
 def test_the_dialog_names_a_pinned_python_and_what_having_none_means(rig, tmp_path):

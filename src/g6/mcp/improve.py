@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -212,12 +213,17 @@ def asked(folder: str) -> tuple[Path, str, str] | dict:
 def _spawn(root: Path, settings: dict[str, Any]) -> Any:
     """The runner as a process of its own: no console, its own group, its output in its folder. On the Python the settings the
     person agreed to pin, isolated, since ``-P`` leaves ``PYTHONPATH`` standing and that puts a working tree ahead of any
-    install. With none pinned, on this server's Python, as the server's own environment has it."""
+    install. With none pinned, on this server's Python, as the server's own environment has it. Either way it reads its
+    cached bytecode from a folder made empty for it, and writes none, so only the source the envelope pins can run: a
+    ``.pyc`` planted under ``__pycache__`` beside a pinned file would run in its place. These are flags, as ``-I`` reads no
+    ``PYTHON*`` setting."""
     detached = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                 else {"start_new_session": True})
     python = _pinned_python(settings)
+    cache = tempfile.mkdtemp(prefix="g6-loop-no-bytecode-")
     with open(root / RUNNER_LOG, "ab") as log:
-        return subprocess.Popen([python or sys.executable, "-I" if python else "-P", "-m", "g6.metaharness.loop", "run", str(root)],
+        return subprocess.Popen([python or sys.executable, "-I" if python else "-P", "-B", "-X", f"pycache_prefix={cache}",
+                                 "-m", "g6.metaharness.loop", "run", str(root)],
                                 cwd=root, stdin=subprocess.DEVNULL, stdout=log, stderr=log, close_fds=True, **detached)
 
 

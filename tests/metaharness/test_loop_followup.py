@@ -29,7 +29,7 @@ from g6.metaharness.schema import SuiteCase
 from g6.metaharness.select import race, race_calls
 from g6.operator.store import OperatorStore
 from g6.self_maintenance.envelope import CYCLE_LOG, CycleLog, ask_to_stop, heartbeat
-from g6.self_maintenance.pacing import BudgetMeter, ProviderWindow
+from g6.self_maintenance.pacing import AccountReading, BudgetMeter, ProviderWindow
 from g6.self_maintenance.usage import WEEK_MINUTES, AccountReader
 
 _spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
@@ -355,3 +355,212 @@ def test_two_strategies_of_one_name_are_both_counted(tmp_path):
     before = len(loop.mh.ledger.rows("proposal"))
     run = tune(loop.mh, loop.settings.method, approve=lambda _: None, extra=(Offers(1), Offers(2)))
     assert funnel(run.cycles)["new"] == len(loop.mh.ledger.rows("proposal")) - before == 2
+
+
+# --- this branch's first review --------------------------------------------------------------------------------------
+
+def _meter(store, start=MONDAY, resets_at=None):
+    read = (lambda *_: AccountReading(resets_at=resets_at)) if resets_at is not None else None
+    return BudgetMeter((ProviderWindow("codex", 1000, start),), store=store, read_account=read)
+
+
+def test_a_restart_in_the_providers_next_week_starts_a_book_of_its_own(tmp_path):
+    sunday, path = MONDAY + timedelta(days=6), tmp_path / "operator.db"
+    store = OperatorStore(path)
+    try:
+        meter = _meter(store, resets_at=sunday)                   # the provider's weeks end on Sundays
+        admission = meter.reserve("codex", MONDAY + timedelta(days=2), 300)
+        meter.settle(admission, 300)
+    finally:
+        store.close()
+    store = OperatorStore(path)
+    try:
+        later = _meter(store, resets_at=sunday + timedelta(days=7))
+        assert later.reading("codex", sunday + timedelta(hours=1)).used == 0      # last week's 300 were last week's
+    finally:
+        store.close()
+
+
+def test_the_same_week_written_in_another_zone_is_the_same_book(tmp_path):
+    from datetime import timezone
+
+    now, path = MONDAY + timedelta(days=2), tmp_path / "operator.db"
+    store = OperatorStore(path)
+    try:
+        assert _meter(store).reserve("codex", now, 350).admitted
+    finally:
+        store.close()
+    store = OperatorStore(path)
+    try:
+        brisbane = _meter(store, start=MONDAY.astimezone(timezone(timedelta(hours=10))))
+        assert brisbane.reading("codex", now).used == 350
+        assert not brisbane.reserve("codex", now, 350).admitted        # 700 against day 3's 600
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("first", ["moved", "aligned"])
+def test_a_week_is_booked_once_whichever_meter_resolves_it_first(tmp_path, first):
+    now, store = MONDAY + timedelta(days=2), OperatorStore(tmp_path / "operator.db")
+    try:
+        moved = _meter(store, resets_at=MONDAY + timedelta(days=8))     # a restart learning the provider's Tuesdays
+        aligned = _meter(store, start=MONDAY + timedelta(days=1))       # one already on them
+        order = [moved, aligned] if first == "moved" else [aligned, moved]
+        assert order[0].reserve("codex", now, 350).admitted
+        assert not order[1].reserve("codex", now, 350).admitted         # 700 against day 2's 400 of one week
+        assert order[0].reading("codex", now).venture == order[1].reading("codex", now).venture
+    finally:
+        store.close()
+
+
+def test_a_week_resolved_by_another_process_while_this_one_checks_is_booked_once(tmp_path, monkeypatch):
+    """The first review's interleaving: a restarted meter checks for the provider week's own venture, and before it books
+    under the settings' week another process reserves under the provider's."""
+    path, now = tmp_path / "operator.db", MONDAY + timedelta(days=2)
+    store = OperatorStore(path)
+    restarted = _meter(store, resets_at=MONDAY + timedelta(days=8))
+    other = OperatorStore(path)
+    aligned = _meter(other, start=MONDAY + timedelta(days=1))
+    real = restarted.scope.conn.execute
+    raced: list = []
+
+    class Interleaved:
+        def __getattr__(self, name):
+            return getattr(real.__self__, name)
+
+        def __enter__(self):
+            return real.__self__.__enter__()
+
+        def __exit__(self, *exc):
+            return real.__self__.__exit__(*exc)
+
+        def execute(self, sql, *args):
+            cursor = real(sql, *args)              # a read outside a lock has its first row once it is executed
+            if not raced and "ventures" in sql and not real.__self__.in_transaction:
+                raced.append(aligned.reserve("codex", now, 350).admitted)
+            return cursor
+
+    monkeypatch.setattr(restarted.scope, "conn", Interleaved())
+    try:
+        mine = restarted.reserve("codex", now, 350)
+        assert sum([mine.admitted, *raced]) <= 1
+    finally:
+        store.close()
+        other.close()
+
+
+def test_a_request_waiting_on_the_stop_when_its_tick_closes_sends_nothing():
+    reading, release, failures = threading.Event(), threading.Event(), []
+    backend = FakeLLM(default="answer")
+
+    def halted():
+        if threading.current_thread().name == "late":
+            reading.set()
+            assert release.wait(5)
+
+    requests = _Requests(halted=halted)
+    requests.open(2)
+
+    class SendsLater:
+        def complete(self, system, user, *, max_tokens=1024):
+            answer, kept = backend.complete(system, user, max_tokens=max_tokens), contextvars.copy_context()
+
+            def later():
+                try:
+                    kept.run(backend.complete, "system", "sent later")
+                except BaseException as exc:
+                    failures.append(exc)
+
+            self.worker = threading.Thread(target=later, name="late")
+            self.worker.start()
+            assert reading.wait(5)
+            return answer
+
+    caller = SendsLater()
+    try:
+        assert _Counted(caller, requests).complete("system", "asked") == "answer"
+        requests.close()                     # the tick ends while the late request reads the stop
+    finally:
+        release.set()
+        caller.worker.join(10)
+    assert backend.calls == [("system", "asked")] and len(failures) == 1 and isinstance(failures[0], LLMError)
+
+
+def _install(tmp_path, monkeypatch):
+    from g6.metaharness import loop as loop_module
+
+    source = tmp_path / "g6" / "metaharness" / "select.py"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(Path(racing.__file__).read_bytes())
+    monkeypatch.setattr(loop_module, "_SOURCE", tmp_path / "g6")
+    return source, loop_module.envelope_sha256
+
+
+@pytest.mark.parametrize("name", ["stray.pyc", "select.pyd", "select.so"])
+def test_a_file_python_would_import_beside_the_source_changes_the_envelope(tmp_path, monkeypatch, name):
+    import importlib.machinery
+
+    source, envelope = _install(tmp_path, monkeypatch)
+    if not any(suffix.endswith(Path(name).suffix) for suffix in importlib.machinery.all_suffixes()):
+        pytest.skip(f"this platform's Python imports no {Path(name).suffix} file")
+    enrolled = envelope()
+    (source.parent / name).write_bytes(b"planted")
+    assert envelope() != enrolled
+
+
+def test_a_cache_a_first_import_writes_leaves_the_envelope_as_it_was(tmp_path, monkeypatch):
+    import py_compile
+
+    source, envelope = _install(tmp_path, monkeypatch)
+    enrolled = envelope()
+    py_compile.compile(str(source), doraise=True)                      # into __pycache__, as an import writes it
+    assert envelope() == enrolled
+
+
+def test_the_runner_is_started_reading_and_writing_no_cached_bytecode(tmp_path, monkeypatch):
+    from g6.mcp import improve
+
+    seen: dict = {}
+
+    def popen(argv, **kwargs):
+        seen.update(argv=argv)
+        return SimpleNamespace(pid=1)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    root = tmp_path / "loop"
+    root.mkdir()
+    improve._spawn(root, {})
+    argv = seen["argv"]
+    assert "-B" in argv and argv[argv.index("-X") + 1].startswith("pycache_prefix=")
+    prefix = Path(argv[argv.index("-X") + 1].removeprefix("pycache_prefix="))
+    assert prefix.is_dir() and not any(prefix.iterdir())
+    assert argv[-4:] == ["-m", "g6.metaharness.loop", "run", str(root)]
+
+
+def test_the_command_line_runner_ticks_only_when_no_cached_bytecode_can_run(tmp_path, monkeypatch):
+    from g6.metaharness import runner
+
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setattr(sys, "pycache_prefix", None)
+    assert runner._launch_risk()
+    empty = tmp_path / "prefix"
+    empty.mkdir()
+    monkeypatch.setattr(sys, "pycache_prefix", str(empty))
+    assert runner._launch_risk() == ""
+    (empty / "planted.pyc").write_bytes(b"planted")
+    assert runner._launch_risk()
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    (empty / "planted.pyc").unlink()
+    assert runner._launch_risk()
+
+
+def test_a_command_line_run_that_could_read_cached_bytecode_ticks_nothing(tmp_path, monkeypatch):
+    from g6.metaharness import runner
+    from tests.metaharness.test_loop_runner import _enrolled_folder
+
+    root, _ = _enrolled_folder(tmp_path)
+    ticked: list = []
+    monkeypatch.setattr(runner.Runner, "run", lambda self: ticked.append(self) or 0)     # a tick would start here
+    monkeypatch.setattr(sys, "pycache_prefix", None)
+    assert runner.main(["run", str(root)]) == 1 and ticked == []
+    assert heartbeat(root)["code"] == runner.CACHED_BYTECODE

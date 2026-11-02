@@ -13,7 +13,8 @@ gate recommends in the loop's own workspace (``g6.metaharness.shadow``), so the 
 The only person in it is the one who enrols a domain: they confirm what judges the work, once, and the loop runs from
 there. Someone has to say what "better" means, and it cannot be the thing being judged.
 
-``python -P -m g6.metaharness.loop run <folder>`` runs ticks on their own (``g6.metaharness.runner``).
+``python -P -B -X pycache_prefix=<an empty folder> -m g6.metaharness.loop run <folder>`` runs ticks on their own
+(``g6.metaharness.runner``).
 
 Early alpha. Individual capabilities have been tested; general application-level improvements have not yet been
 established.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib.machinery
 import math
 import os
 import sys
@@ -116,8 +118,11 @@ UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: all of G6. The loop's own files import much of the package and those
 #: files import more, so a list of them leaves out whatever an import reaches next. It is read in a tenth of a second, and a
-#: change to what runs is a person's to enrol again, as it is theirs to merge.
-ENVELOPE_PATTERNS = ("**/*.py",)
+#: change to what runs is a person's to enrol again, as it is theirs to merge. Every kind of file Python imports from a
+#: package's folder counts, as a compiled module or a ``.pyc`` with no source beside it is imported as surely as source is,
+#: and an extension module before it. A ``__pycache__`` is left out: a first import writes one, and the runner reads none
+#: (``g6.metaharness.runner``).
+ENVELOPE_PATTERNS = tuple(sorted({f"**/*.{suffix.rsplit('.', 1)[-1]}" for suffix in importlib.machinery.all_suffixes()}))
 UNKNOWN = "unknown"
 #: What the gate holds this loop's candidates to (the owner's ruling, 2026-11-02: quality first, and optimisation only once
 #: everything is correct). Calls, time and cost are still measured, and reported as not gated. ``default_objectives`` and the
@@ -245,10 +250,15 @@ class _Requests:
         self.now, self.halted, self.barring, self.keeping = now, halted, barring, keeping
         self.refused: set[str] = set()
         self._lock = threading.Lock()
+        self.generation = 0
         self.close()
 
     def open(self, limit: float, ends: datetime | None = None) -> None:
-        self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
+        """A tick's limits, from here on. ``generation`` moves with each opening and closing, so a request that took its
+        look at one tick cannot be admitted under the next, or under none."""
+        with self._lock:
+            self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
+            self.generation += 1
 
     def close(self) -> None:
         self.open(math.inf)
@@ -260,9 +270,12 @@ class _Requests:
             if self.ends is not None and moment < self.ends:
                 self.ends = moment
 
-    def admit(self, wait: float = 0.0, *, places: int = 0) -> None:
+    def admit(self, wait: float = 0.0, *, places: int = 0, generation: int | None = None,
+              live: Callable[[], bool] = lambda: True) -> None:
         """Refuse what would pass the limit, and take ``places`` in ``sent`` in that same step. ``wait``: the seconds a
-        server asked for before this one goes out."""
+        server asked for before this one goes out. ``generation``: the tick the request's call began in, and ``live`` whether
+        that call is still running, both checked again under the lock, as the stop is read outside it and the call can return,
+        and its tick close, while it is read."""
         if self.refusal is not None:
             raise _Refused(self.refusal["said"])
         stopped = self.halted() if self.limit != math.inf else None
@@ -271,6 +284,8 @@ class _Requests:
         with self._lock:
             if self.refusal is not None:                  # one may have come while the stop was being read
                 raise _Refused(self.refusal["said"])
+            if (generation is not None and generation != self.generation) or not live():
+                raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved covers it")
             if self.unseen or self.sent >= self.limit:
                 self.stopped = f"this tick has sent {self.sent} of the {self.limit:g} it reserved"
             elif self.ends is not None and self.now() + timedelta(seconds=wait) >= self.ends:
@@ -280,9 +295,9 @@ class _Requests:
                 return
         raise LLMError(f"{TICK_BUDGET_SPENT}: {self.stopped}")
 
-    def take(self, wait: float = 0.0) -> None:
+    def take(self, wait: float = 0.0, *, generation: int | None = None, live: Callable[[], bool] = lambda: True) -> None:
         """A request about to go out. It keeps its place whatever becomes of it: a failed one may have reached the model."""
-        self.admit(wait, places=1)
+        self.admit(wait, places=1, generation=generation, live=live)
 
     def from_sender(self, sender: Any) -> None:
         """Refuse a request its real sender may not send, before it goes out or takes a place."""
@@ -370,16 +385,15 @@ class _Counted:
         self.inner, self.requests = inner, requests
 
     def complete(self, system: str, user: str, *, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
-        self.requests.admit()
+        generation = self.requests.generation
+        self.requests.admit(generation=generation)
         asked = sent = _request_digest(system, user)
         self.requests.not_refused(asked)
         took: list[None] = []
         returned = False
 
         def take(wait: float = 0.0) -> None:
-            if returned:
-                raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved covers it")
-            self.requests.take(wait)
+            self.requests.take(wait, generation=generation, live=lambda: not returned)
 
         def next_request() -> None:
             nonlocal sent

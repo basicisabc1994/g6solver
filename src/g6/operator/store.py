@@ -97,30 +97,61 @@ class OwnerScope:
     def create_venture(self, name: str, *, caps: dict[str, float]) -> dict[str, Any]:
         """``caps`` gives each account in ``gates.ACCOUNTS`` a finite, non-negative monthly budget (0 = none may be
         spent). A missing or invalid cap is refused here, and would stop the venture if it reached the stop check."""
+        with self.conn:
+            venture_id = self._insert_venture(name, caps)
+        return self.venture(venture_id)
+
+    def _insert_venture(self, name: str, caps: dict[str, float]) -> str:
+        """Inside the caller's transaction: the venture's row and its history, and its id."""
         bad = [a for a in gates.ACCOUNTS if gates.cap_of(caps, a) is None]
         if bad:
             raise ValueError(f"caps must give a finite, non-negative monthly budget for {bad}")
         venture_id = uuid.uuid4().hex[:12]
         clean = {a: gates.cap_of(caps, a) for a in gates.ACCOUNTS}
-        with self.conn:
-            self.conn.execute("INSERT INTO ventures VALUES (?, ?, ?, ?, 'active', ?)",
-                              (venture_id, self.owner, name, json.dumps(clean), _now()))
-            self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
-        return self.venture(venture_id)
+        self.conn.execute("INSERT INTO ventures VALUES (?, ?, ?, ?, 'active', ?)",
+                          (venture_id, self.owner, name, json.dumps(clean), _now()))
+        self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
+        return venture_id
 
     def has_venture(self, name: str) -> bool:
-        return self.conn.execute("SELECT 1 FROM ventures WHERE owner=? AND name=?", (self.owner, name)).fetchone() is not None
+        return self._named(name) is not None
 
-    def week_book(self, provider: str, week: str) -> str | None:
-        """The book a provider's week went on when its end moved, or ``None`` for a week booked under its own start."""
+    def _named(self, name: str) -> str | None:
+        row = self.conn.execute("SELECT venture_id FROM ventures WHERE owner=? AND name=?", (self.owner, name)).fetchone()
+        return row["venture_id"] if row is not None else None
+
+    def _book_of(self, provider: str, week: str) -> str | None:
         row = self.conn.execute("SELECT book FROM week_books WHERE owner=? AND provider=? AND week=?",
                                 (self.owner, provider, week)).fetchone()
         return row["book"] if row is not None else None
 
-    def keep_week_book(self, provider: str, week: str, book: str) -> None:
-        """Say which book a provider's week goes on. The first word stands."""
-        with self.conn:
-            self.conn.execute("INSERT OR IGNORE INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, book))
+    def week_ledger(self, provider: str, week: str, *, caps: dict[str, float], moved_from: str = "") -> tuple[str, str]:
+        """The venture a provider's ``week`` is charged under and its book, the month its rows carry, decided in one
+        transaction so that what one process decides every other reads, and never decided twice: a week booked under its own
+        start has a venture of that name, and one booked under another has a row here, the first word standing.
+
+        A week goes on its own book, unless its end moved while ``moved_from`` (the week it was counted in until then) was
+        open: then it takes that week's book, so what was charged there still counts. Not when a venture of its own already
+        exists, as a process has charged it under its own book; nor when another week already holds that book, as what is
+        charged there is that week's, which this one did not make."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            book = self._book_of(provider, week)
+            if book is None and moved_from and moved_from != week and self._named(f"{provider}@{week}") is None:
+                source = self._book_of(provider, moved_from) or moved_from
+                held = self.conn.execute("SELECT 1 FROM week_books WHERE owner=? AND provider=? AND book=? AND week NOT IN (?, ?)",
+                                         (self.owner, provider, source, week, moved_from)).fetchone()
+                if held is None:
+                    self.conn.execute("INSERT INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, source))
+                    book = source
+            book = book or week
+            name = f"{provider}@{book}"
+            found = self._named(name) or self._insert_venture(name, caps)
+            self.conn.commit()
+            return found, book
+        except BaseException:
+            self.conn.rollback()
+            raise
 
     def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
         """The id of this owner's venture of this name, made once however many ask at the same moment."""

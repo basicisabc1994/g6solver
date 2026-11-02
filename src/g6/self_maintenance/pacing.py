@@ -99,6 +99,11 @@ def windows_from(settings: Mapping[str, Any]) -> tuple[ProviderWindow, ...]:
         raise ValueError(f"{SETTINGS_FILE}: a window needs provider, allowance and week_start ({exc!r})") from None
 
 
+def _utc(moment: datetime) -> str:
+    """How the ledger names a moment: the same instant has one name, in whatever zone it was written."""
+    return moment.astimezone(UTC).isoformat()
+
+
 def target(allowance: float, day: int) -> float:
     return allowance * day / 7
 
@@ -153,10 +158,10 @@ class BudgetMeter:
         self.windows = {w.provider: w for w in windows}
         self.scope = store.for_owner(OWNER)
         self._read_account = read_account
-        self._charged_at: dict[tuple[str, datetime], tuple[datetime, float]] = {}
+        self._charged_at: dict[tuple[str, str], tuple[datetime, float]] = {}
         self._limits: dict[str, datetime] = {}
 
-    def _charged_when_read(self, provider: str, start: datetime, account: AccountReading | None,
+    def _charged_when_read(self, provider: str, start: str, account: AccountReading | None,
                            charged: float) -> float | None:
         """What the ledger had charged when this reading first reached the meter, or ``None`` for an undated one. The
         account is read between ticks, so nothing is charged between the read and that first look. The one read inside a
@@ -169,28 +174,21 @@ class BudgetMeter:
             known = self._charged_at[(provider, start)] = (account.read_at, charged)
         return known[1]
 
-    def _venture(self, window: ProviderWindow, start: datetime) -> str:
-        """The ledger's venture for this provider week; its cap is the allowance that held when the week began."""
-        return self.scope.venture_named(f"{window.provider}@{start.isoformat()}",
-                                        caps={_ACCOUNT: window.allowance, "cash": 0})
+    def _ledger(self, window: ProviderWindow, now: datetime, moved_from: str = "") -> tuple[str, str]:
+        """The ledger's venture for the week ``now`` falls in, and its book (``OwnerScope.week_ledger``): one read, which
+        the reading and the reservation share. A week is named by the UTC rendering of its start, so the same instant written
+        in another zone is the same week. Its cap is the allowance that held when the venture was made."""
+        return self.scope.week_ledger(window.provider, _utc(window.place(now)[0]),
+                                      caps={_ACCOUNT: window.allowance, "cash": 0}, moved_from=moved_from)
 
-    def _book(self, window: ProviderWindow, now: datetime) -> datetime:
-        """The start the week ``now`` falls in is booked under: its own, or the one it had when its end moved."""
-        start = window.place(now)[0]
-        book = self.scope.week_book(window.provider, start.astimezone(UTC).isoformat())
-        return datetime.fromisoformat(book) if book else start
-
-    def _on_the_providers_week(self, window: ProviderWindow, reset: datetime, now: datetime) -> ProviderWindow:
-        """``window`` moved to the week its provider reports. The week still open keeps its book, or what was charged in it,
-        and what a tick reserved there and settles there, would stop counting against the ceiling. A week already over keeps
-        nothing: the week it gives way to is a new one. The move is in the store, so a restart finds it, and a week the ledger
-        already has a book of its own for keeps that book: the settings' week says nothing of what was reserved under the
-        provider's."""
+    def _on_the_providers_week(self, window: ProviderWindow, reset: datetime, now: datetime) -> tuple[ProviderWindow, str]:
+        """``window`` moved to the week its provider reports, and the week it was counted in until then, when that week is
+        still open and the move is new: the week ``now`` falls in may then keep that week's book (``_ledger``), or what was
+        charged in it, and what a tick reserved there and settles there, would stop counting against the ceiling. A week
+        already over gives none: the week it gives way to is a new one. The decision is in the store, so a restart finds
+        it."""
         moved = self.windows[window.provider] = window.aligned(reset)
-        start = moved.place(now)[0]
-        if moved is not window and reset > now and not self.scope.has_venture(f"{window.provider}@{start.isoformat()}"):
-            self.scope.keep_week_book(window.provider, start.astimezone(UTC).isoformat(), self._book(window, now).isoformat())
-        return moved
+        return moved, (_utc(window.place(now)[0]) if moved is not window and reset > now else "")
 
     def reading(self, provider: str, now: datetime) -> Admission:
         """Where this provider's week stands; ``admitted`` is left false, since nothing was asked for."""
@@ -205,21 +203,24 @@ class BudgetMeter:
         """The next time any ceiling can rise: the soonest a tick refused for its budget could be admitted."""
         return min(window.next_day(now) for window in self.windows.values())
 
-    def _look(self, provider: str, now: datetime) -> tuple[Admission, AccountReading | None, float | None]:
+    def _look(self, provider: str, now: datetime) -> tuple[Admission, AccountReading | None, float | None, str]:
+        """Where this provider's week stands, what the account said, what the ledger had charged when it said it, and the
+        week's book."""
         window = self.windows.get(provider)
         if window is None:
-            return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, None
+            return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, None, ""
         account = self._read_account(provider, window.place(now)[0]) if self._read_account is not None else None
+        moved_from = ""
         if account is not None and account.resets_at is not None:
-            window = self._on_the_providers_week(window, account.resets_at, now)     # it stays so, should the reading go
+            window, moved_from = self._on_the_providers_week(window, account.resets_at, now)  # it stays so, should the reading go
             if account.resets_at <= now:
                 account = replace(account, used=0.0, read_at=None)  # its figure is of a week that has ended; a limit may not be
         elif account is not None and account.ended_at is not None:
-            window = self._on_the_providers_week(window, account.ended_at, now)
-        day, book = window.place(now)[1], self._book(window, now)
-        venture = self._venture(window, book)
-        booked = self.scope.committed(venture, book.isoformat()).get(_ACCOUNT, 0.0)
-        pending = self.scope.outstanding(venture, book.isoformat()).get(_ACCOUNT, 0.0)
+            window, moved_from = self._on_the_providers_week(window, account.ended_at, now)
+        day = window.place(now)[1]
+        venture, book = self._ledger(window, now, moved_from)
+        booked = self.scope.committed(venture, book).get(_ACCOUNT, 0.0)
+        pending = self.scope.outstanding(venture, book).get(_ACCOUNT, 0.0)
         charged_when_read = self._charged_when_read(provider, book, account, booked - pending)
         used, above = _used(booked, pending, account, charged_when_read)
         reported = account.limited_until if account is not None else None
@@ -230,13 +231,14 @@ class BudgetMeter:
                          ceiling(window.allowance, day, window.reserve_share),
                          window.estimated or (above and account is not None and account.estimated),
                          reason=f"at a reported limit; waiting for the reset at {wait.isoformat()}" if limited else "",
-                         wait_until=wait if limited else None, venture=venture, ends=ends), account, charged_when_read
+                         wait_until=wait if limited else None, venture=venture, ends=ends), account, charged_when_read, book
 
     def reserve(self, provider: str, now: datetime, worst_case: float) -> Admission:
         """Reserve ``worst_case`` when the week's ceiling allows it. A refusal is an admission with ``admitted`` false
         and its reason: the loop waits, and never spends elsewhere. The ceiling is checked inside the transaction that
-        reserves, on the ledger as it stands then, so two ticks that each read room cannot both pass it."""
-        seen, account, charged_when_read = self._look(provider, now)
+        reserves, on the ledger as it stands then, so two ticks that each read room cannot both pass it. The venture and the
+        book are those the look read, once: a week's book, once decided, never changes."""
+        seen, account, charged_when_read, book = self._look(provider, now)
         if seen.reason:
             return seen
 
@@ -247,8 +249,8 @@ class BudgetMeter:
             return f"{used:g} used plus a worst case of {worst_case:g} is over day {seen.day}'s ceiling of {seen.ceiling:g}"
 
         try:
-            reservation = self.scope.reserve(seen.venture, month=self._book(self.windows[provider], now).isoformat(),
-                                             account=_ACCOUNT, amount=worst_case, admit=over_the_ceiling)
+            reservation = self.scope.reserve(seen.venture, month=book, account=_ACCOUNT, amount=worst_case,
+                                             admit=over_the_ceiling)
         except BudgetRefused as exc:
             return replace(seen, reason=str(exc))
         return replace(seen, admitted=True, reservation=reservation, amount=float(worst_case),

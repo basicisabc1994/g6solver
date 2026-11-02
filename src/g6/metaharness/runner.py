@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The self-improvement loop with nobody at the keyboard: ``python -P -m g6.metaharness.loop run <folder>``.
+"""The self-improvement loop with nobody at the keyboard: ``python -P -B -X pycache_prefix=<an empty folder> -m
+g6.metaharness.loop run <folder>``, which reads and writes no cached bytecode, so only the source the envelope pins runs.
 
 The runner repeats one pass: stop check, tick, then wait until the next tick could be admitted or the next digest is due.
 No sleep is longer than ``NAP``, so a waiting runner sees a ``STOP`` within a minute, and a tick meets it at its next model
@@ -92,6 +93,7 @@ BUSY_AGAIN = timedelta(seconds=30)
 CANNOT_OPEN = "G6_E_LOOP_CANNOT_OPEN"
 NOT_STARTED = "G6_E_LOOP_NOT_STARTED"
 SETTINGS_CHANGED = "G6_E_LOOP_SETTINGS_CHANGED"
+CACHED_BYTECODE = "G6_E_LOOP_CACHED_BYTECODE"
 #: What a tick is refused for that passes on its own: anything else with no cycle waits for a person.
 _WAITS = (BUDGET_WAIT, BUSY, STOPPED, stop.STOPPED)
 #: What a domain file may set beside its domain and proposer.
@@ -366,9 +368,26 @@ def _refuse(root: Path, code: str, why: str, now: Callable[[], datetime]) -> int
     return 1
 
 
-def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable[[float], None] = time.sleep) -> int:
+def _launch_risk() -> str:
+    """Why cached bytecode could run in this process in place of the source the envelope pins, or ``""``. Python runs a
+    ``.pyc`` under ``__pycache__`` whose header matches its source, whatever its code, so the runner must read its cache
+    from a folder that held none and write none (``g6.mcp.improve._spawn`` starts it so)."""
+    prefix = sys.pycache_prefix
+    if not sys.dont_write_bytecode or prefix is None:
+        return (f"this runner could read cached bytecode in place of G6's source, so nothing ran: start it as python -B -X "
+                f"pycache_prefix=<an empty folder> -P -m g6.metaharness.loop run <folder>, as g6_improve_start does "
+                f"({CACHED_BYTECODE})")
+    if any(Path(prefix).rglob("*.pyc")):
+        return f"the folder this runner reads cached bytecode from holds some, so nothing ran: {prefix} ({CACHED_BYTECODE})"
+    return ""
+
+
+def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable[[float], None] = time.sleep,
+        unsafe: str = "") -> int:
     """Hold the folder and run until a stop. A stop already there ends it before anything is opened, so a restart after
-    a reboot honours it, and a folder with no start in force is refused before any of its code runs."""
+    a reboot honours it, and a folder with no start in force is refused before any of its code runs. ``unsafe``: why this
+    process could run something other than the pinned source (``_launch_risk``), which refuses it once the folder is open,
+    so its records say why."""
     if not root.is_dir():
         print(f"{root} is not a folder", file=sys.stderr)
         return 1
@@ -390,6 +409,8 @@ def run(root: Path, *, now: Callable[[], datetime] = _local_now, sleep: Callable
                 return _refuse(root, FROZEN_CHANGED, str(exc)[:500], now)
             except Exception as exc:  # noqa: BLE001 - the domain file is the person's own code: say why, and leave word
                 return _refuse(root, CANNOT_OPEN, f"The loop could not be opened: {type(exc).__name__}: {exc}"[:500], now)
+            if unsafe:
+                return _refuse(root, CACHED_BYTECODE, unsafe[:500], now)
             return Runner(loop, now=now, sleep=sleep, reader=reader).run()
     except WorkspaceRefused:
         print("A runner is already alive on this folder; this one did nothing.", file=sys.stderr)
@@ -455,7 +476,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = Path(args.folder).expanduser().resolve()
     if args.command == "run":
-        return run(root)
+        return run(root, unsafe=_launch_risk())
     if args.command == "demote":
         return demote(root, args.generation, args.who)
     return {"enrol": enrol, "resume": resume}[args.command](root, args.who)
