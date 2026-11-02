@@ -134,16 +134,15 @@ class OwnerScope:
         row = self.conn.execute("SELECT reset FROM week_grids WHERE owner=? AND provider=?", (self.owner, provider)).fetchone()
         return row["reset"] if row is not None else None
 
-    def keep_week_grid(self, provider: str, reset: str) -> None:
-        """Where the provider's weeks fall, from a moment one ends. The latest report stands, as a provider may move them."""
-        with self.conn:
-            self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (self.owner, provider, reset))
-
-    def reading_baseline(self, provider: str, book: str, read_at: str, charged: float) -> float:
+    def reading_baseline(self, provider: str, book: str, read_at: str, venture_id: str, account: str) -> float:
         """What the ledger had charged under ``book`` when the account reading taken at ``read_at`` first reached a meter: the
-        first word stands, so every meter, in any process, measures what was charged since the reading from the same point."""
+        first word stands, so every meter, in any process, measures what was charged since the reading from the same point.
+        The charge is summed in the transaction that keeps it, so a settlement on another connection cannot fall between."""
+        vid = self.resolve(venture_id)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            charged = self.conn.execute("SELECT COALESCE(SUM(amount), 0) AS charged FROM ledger WHERE venture_id=? AND month=?"
+                                        " AND account=? AND kind='charge'", (vid, book, account)).fetchone()["charged"]
             self.conn.execute("INSERT OR IGNORE INTO reading_baselines VALUES (?, ?, ?, ?, ?)",
                               (self.owner, provider, book, read_at, float(charged)))
             row = self.conn.execute("SELECT charged FROM reading_baselines WHERE owner=? AND provider=? AND book=? AND read_at=?",
@@ -154,7 +153,8 @@ class OwnerScope:
             self.conn.rollback()
             raise
 
-    def week_ledger(self, provider: str, week: str, *, caps: dict[str, float], moved_from: str = "") -> tuple[str, str]:
+    def week_ledger(self, provider: str, week: str, *, caps: dict[str, float], moved_from: str = "",
+                    grid: str = "") -> tuple[str, str]:
         """The venture a provider's ``week`` is charged under and its book, the month its rows carry, decided in one
         transaction so that what one process decides every other reads, and never decided twice: a week booked under its own
         start has a venture of that name, and one booked under another has a row here, the first word standing.
@@ -162,9 +162,12 @@ class OwnerScope:
         A week goes on its own book, unless its end moved while ``moved_from`` (the week it was counted in until then) was
         open: then it takes that week's book, so what was charged there still counts. Not when a venture of its own already
         exists, as a process has charged it under its own book; nor when another week already holds that book, as what is
-        charged there is that week's, which this one did not make."""
+        charged there is that week's, which this one did not make. ``grid``: a moment one of the provider's weeks ends, kept
+        (the latest standing) in this same transaction, so a move is never kept without the book it gave its week."""
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            if grid:
+                self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (self.owner, provider, grid))
             book = self._book_of(provider, week)
             if book is None and moved_from and moved_from != week and self._named(f"{provider}@{week}") is None:
                 source = self._book_of(provider, moved_from) or moved_from

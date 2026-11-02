@@ -619,7 +619,25 @@ def test_a_group_named_like_a_case_takes_no_case_out_of_its_turn():
     assert [c.case_id for c in racing._in_turns(cases) if not c.meta.get("group")] == ["first", "second"]
 
 
-@pytest.mark.parametrize("name", ["planted.pyc", "planted.py", "__init__.py"])
+def test_a_restart_that_learns_the_weeks_moved_again_keeps_the_book_of_the_week_in_progress(tmp_path):
+    path, now = tmp_path / "operator.db", MONDAY + timedelta(days=2)
+    store = OperatorStore(path)
+    try:
+        aligned = _meter(store, start=MONDAY + timedelta(days=1))           # on the provider's Tuesdays, its own book
+        aligned.reading("codex", now)
+        _meter(store, resets_at=MONDAY + timedelta(days=8)).reading("codex", now)     # the grid is kept: Tuesdays
+        assert aligned.reserve("codex", now, 350).admitted
+    finally:
+        store.close()
+    store = OperatorStore(path)
+    try:
+        moved = _meter(store, resets_at=MONDAY + timedelta(days=9))           # now it says Wednesdays
+        assert moved.reading("codex", now).used == 350 and not moved.reserve("codex", now, 150).admitted
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("name", ["planted.pyc", "planted.py", "__init__.py", "extra-code.py"])
 def test_a_module_python_would_import_from_a_cache_folder_changes_the_envelope(tmp_path, monkeypatch, name):
     source, envelope = _install(tmp_path, monkeypatch)
     enrolled = envelope()

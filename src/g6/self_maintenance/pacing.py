@@ -160,8 +160,7 @@ class BudgetMeter:
         self._read_account = read_account
         self._limits: dict[str, datetime] = {}
 
-    def _charged_when_read(self, provider: str, book: str, account: AccountReading | None,
-                           charged: float) -> float | None:
+    def _charged_when_read(self, provider: str, book: str, account: AccountReading | None, venture: str) -> float | None:
         """What the ledger had charged when this reading first reached a meter, or ``None`` for an undated one. The
         account is read between ticks, so nothing is charged between the read and that first look. The one read inside a
         tick may hold what that tick had sent by then, and the charge goes on top of it until the next reading: high, never
@@ -169,24 +168,22 @@ class BudgetMeter:
         counts what was charged since from the same point."""
         if account is None or account.read_at is None:
             return None
-        return self.scope.reading_baseline(provider, book, _utc(account.read_at), charged)
+        return self.scope.reading_baseline(provider, book, _utc(account.read_at), venture, _ACCOUNT)
 
-    def _ledger(self, window: ProviderWindow, now: datetime, moved_from: str = "") -> tuple[str, str]:
+    def _ledger(self, window: ProviderWindow, now: datetime, moved_from: str = "", grid: str = "") -> tuple[str, str]:
         """The ledger's venture for the week ``now`` falls in, and its book (``OwnerScope.week_ledger``): one read, which
         the reading and the reservation share. A week is named by the UTC rendering of its start, so the same instant written
         in another zone is the same week. Its cap is the allowance that held when the venture was made."""
         return self.scope.week_ledger(window.provider, _utc(window.place(now)[0]),
-                                      caps={_ACCOUNT: window.allowance, "cash": 0}, moved_from=moved_from)
+                                      caps={_ACCOUNT: window.allowance, "cash": 0}, moved_from=moved_from, grid=grid)
 
     def _on_the_providers_week(self, window: ProviderWindow, reset: datetime, now: datetime) -> tuple[ProviderWindow, str]:
         """``window`` moved to the week its provider reports, and the week it was counted in until then, when that week is
         still open and the move is new: the week ``now`` falls in may then keep that week's book (``_ledger``), or what was
         charged in it, and what a tick reserved there and settles there, would stop counting against the ceiling. A week
         already over gives none: the week it gives way to is a new one. The decision is in the store, so a restart finds
-        it."""
+        it, with the new grid, in one transaction (``_ledger``)."""
         moved = self.windows[window.provider] = window.aligned(reset)
-        if self.scope.week_grid(window.provider) != _utc(reset):
-            self.scope.keep_week_grid(window.provider, _utc(reset))   # so a restart with no reading stays on these weeks
         return moved, (_utc(window.place(now)[0]) if moved is not window and reset > now else "")
 
     def reading(self, provider: str, now: datetime) -> Admission:
@@ -208,21 +205,23 @@ class BudgetMeter:
         window = self.windows.get(provider)
         if window is None:
             return Admission(provider, 0, 0.0, 0.0, 0.0, False, reason=f"no budget window for {provider!r}"), None, None, ""
+        if (kept := self.scope.week_grid(provider)) is not None:   # where the provider last said its weeks fall, before any move
+            window = self.windows[provider] = window.aligned(datetime.fromisoformat(kept))
         account = self._read_account(provider, window.place(now)[0]) if self._read_account is not None else None
-        moved_from = ""
+        moved_from, grid = "", ""
         if account is not None and account.resets_at is not None:
             window, moved_from = self._on_the_providers_week(window, account.resets_at, now)  # it stays so, should the reading go
+            grid = _utc(account.resets_at)
             if account.resets_at <= now:
                 account = replace(account, used=0.0, read_at=None)  # its figure is of a week that has ended; a limit may not be
         elif account is not None and account.ended_at is not None:
             window, moved_from = self._on_the_providers_week(window, account.ended_at, now)
-        elif (grid := self.scope.week_grid(provider)) is not None:   # no word on the week now: where it last said they fall
-            window = self.windows[provider] = window.aligned(datetime.fromisoformat(grid))
+            grid = _utc(account.ended_at)
         day = window.place(now)[1]
-        venture, book = self._ledger(window, now, moved_from)
+        venture, book = self._ledger(window, now, moved_from, grid if grid != kept else "")
         booked = self.scope.committed(venture, book).get(_ACCOUNT, 0.0)
         pending = self.scope.outstanding(venture, book).get(_ACCOUNT, 0.0)
-        charged_when_read = self._charged_when_read(provider, book, account, booked - pending)
+        charged_when_read = self._charged_when_read(provider, book, account, venture)
         used, above = _used(booked, pending, account, charged_when_read)
         reported = account.limited_until if account is not None else None
         wait = max((at for at in (reported, self._limits.get(provider)) if at is not None), default=None)

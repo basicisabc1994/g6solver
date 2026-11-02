@@ -482,7 +482,7 @@ def _importable_caches(root: Path) -> dict[str, str]:
         if "__pycache__" not in path.relative_to(root).parts or not path.is_file():
             continue
         suffix = next((s for s in suffixes if path.name.endswith(s)), None)
-        if suffix is not None and path.name[:-len(suffix)].isidentifier():
+        if suffix is not None and path.name[:-len(suffix)] and "." not in path.name[:-len(suffix)]:   # importlib checks no names
             found[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     return found
 
