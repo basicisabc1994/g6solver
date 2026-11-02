@@ -548,8 +548,8 @@ class MetaHarness:
             if problems:
                 refused_rows.append("; ".join(p for _, p in problems))
                 continue
-            valid += 1
-            if parsed.digest() in seen:
+            valid += 1                      # every valid one is offered, though no more are taken past the cap
+            if parsed.digest() in seen or len(proposals) >= max_candidates:
                 continue
             seen.add(parsed.digest())
             made = self.candidate(parsed, proposer=proposer, strategy=strategy.name,
@@ -560,8 +560,6 @@ class MetaHarness:
                 "strategy": strategy.name, "proposer": proposer, "candidate_digest": proposal.candidate_digest,
                 "diff": dict(proposal.diff), "failures_seen": len(view.failures), "dev_calls_used": meter.used})
             proposals.append(proposal)
-            if len(proposals) >= max_candidates:
-                break
         flagged = sorted({p for f in view.failures for p in f.flags})
         if not proposals:
             plan = recovery.for_proposal(None, refused_rows)

@@ -31,7 +31,7 @@ class StageMeasurement:
 
     @property
     def effective_capacity(self) -> float:
-        return self.capacity_per_day * self.succeeded / self.attempted
+        return self.capacity_per_day * (self.succeeded / self.attempted)    # a ratio of ints first: no count is too large
 
 
 @dataclass(frozen=True)

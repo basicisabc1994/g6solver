@@ -166,7 +166,7 @@ class Pooled:
     build on them: recovery's remedies seed the pool this way (frontier design §4.1)."""
 
     def __init__(self, inner: Any, pool: Pool) -> None:
-        self.inner, self.pool, self.name, self._added = inner, pool, inner.name, 0
+        self.inner, self.pool, self.name, self._added, self._repeats = inner, pool, inner.name, 0, 0
 
     def __getattr__(self, name: str) -> Any:
         """What the strategy inside keeps count of, such as ``duplicates``: wrapping one must not hide its counts."""
@@ -176,6 +176,11 @@ class Pooled:
     def measured(self) -> int:
         """The candidates run on the tuning split: the strategy's own count, or what this ran for one that keeps none."""
         return getattr(self.inner, "measured", self._added)
+
+    @property
+    def duplicates(self) -> int:
+        """The repeats the pool caught: the strategy's own count, or what this caught for one that keeps none."""
+        return getattr(self.inner, "duplicates", self._repeats)
 
     @property
     def lineage(self) -> dict[str, tuple[str, ...]]:
@@ -190,6 +195,7 @@ class Pooled:
             except ValueError:
                 continue
             if self.pool.seen(profile):
+                self._repeats += 1
                 continue
             results = run_on_dev(runner, profile, ids)
             if results is None:

@@ -114,15 +114,19 @@ def tune(mh: Any, method: Method, *, approve: Callable[[dict[str, Any]], str | N
         record: dict[str, Any] = {"cycle": cycle, "strategies": stats, "raced": [], "winner": None,
                                   "new_champion": False, "selection_calls": 0, "stopped": "", "select_code": ""}
         run.cycles.append(record)     # now, so a cycle that raises still shows what it made
-        for strategy in strategies:
-            reply = mh.propose(strategy, budget=method.propose_budget, max_candidates=method.candidates_per_cycle)
-            got = list(reply.get("proposals") or [])
+        for number, strategy in enumerate(strategies):
+            name = strategy.name if all(s.name != strategy.name for s in strategies[:number]) else f"{strategy.name}#{number}"
+            reply: dict[str, Any] = {}
+            try:
+                reply = mh.propose(strategy, budget=method.propose_budget, max_candidates=method.candidates_per_cycle)
+            finally:                  # a strategy cut off part way keeps what it had already measured
+                got = list(reply.get("proposals") or [])
+                stats[name] = {"proposed": len(got), "code": (reply.get("warning_card") or {}).get("code", ""),
+                               "attempts": getattr(strategy, "made", None),
+                               "duplicates": getattr(strategy, "duplicates", None),
+                               "offered": reply.get("valid", 0),
+                               "measured": getattr(strategy, "measured", None)}
             proposals += got
-            stats[strategy.name] = {"proposed": len(got), "code": reply["warning_card"]["code"],
-                                    "attempts": getattr(strategy, "made", None),
-                                    "duplicates": getattr(strategy, "duplicates", None),
-                                    "offered": reply.get("valid", 0),
-                                    "measured": getattr(strategy, "measured", None)}
         racers = [*(carried if cycle == 1 else ()), *proposals, *([champion] if champion is not None else [])]
         if racers:
             selected = mh.select(racers, block=method.race_block, keep=method.race_keep, budget=method.select_budget)

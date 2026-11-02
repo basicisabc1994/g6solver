@@ -212,11 +212,11 @@ def test_the_bound_covers_a_race_of_ties(monkeypatch):
 
 
 # The reflexive step's second review -------------------------------------------------------------------------------------
-def _loop(tmp_path, method=None, initial_prompt=None):
+def _loop(tmp_path, method=None, initial_prompt=None, proposer=None):
     method = method or Method(cycles=1, propose_budget=120, select_budget=400, race_block=12, use_recovery=False, use_reflection=False)
     domain = domains.WordProblems(tmp_path, **({"initial_prompt": initial_prompt} if initial_prompt else {}))
     settings = LoopSettings(windows=(ProviderWindow("claude", 1_000_000, MONDAY),), method=method, audit_per_tick=60)
-    loop = ShadowLoop(domain, tmp_path / "loop", settings, proposer=domains.proposes({"prompt": domains.WORKING}),
+    loop = ShadowLoop(domain, tmp_path / "loop", settings, proposer=proposer or domains.proposes({"prompt": domains.WORKING}),
                       now=lambda: MONDAY + timedelta(days=2), clock=domains.Clock())
     assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
     return loop
@@ -280,3 +280,78 @@ def test_a_change_anywhere_in_the_package_is_a_change_to_what_runs():
     source = Path(g6.__file__).resolve().parent
     pinned = build_manifest(source, patterns=(*ENVELOPE_PATTERNS, *JUDGING_PATTERNS))
     assert {path.relative_to(source).as_posix() for path in source.rglob("*.py") if "__pycache__" not in path.parts} <= set(pinned)
+
+
+# The reflexive step's third review -----------------------------------------------------------------------------------------
+def test_offered_counts_every_valid_candidate_past_the_cap_on_new_ones(tmp_path):
+    class OffersThree:
+        name = "three"
+
+        def propose(self, view, runner):
+            return [{**view.base, "retries": 1}] * 3
+
+    loop = _loop(tmp_path, Method(cycles=1, candidates_per_cycle=1, propose_budget=400, select_budget=400, use_recovery=False,
+                                  use_reflection=False))
+    counts = funnel(tune(loop.mh, loop.settings.method, approve=lambda _: None, extra=(OffersThree(),)).cycles)
+    assert (counts["new"], counts["offered"]) == (1, 3)
+
+
+def test_a_tick_cut_off_inside_a_strategy_keeps_what_it_had_measured(tmp_path, monkeypatch):
+    from g6.metaharness import reflect
+
+    measured, replies, real = [], [], reflect.run_on_dev
+
+    def observed(*args, **kwargs):
+        got = real(*args, **kwargs)
+        if got is not None:
+            measured.append(got)
+        return got
+
+    def answer(system, user):
+        replies.append(user)
+        if len(replies) == 2:
+            raise LLMError("G6_E_MODEL_REFUSED: refusal")
+        return json.dumps({"prompt": domains.WORKING})
+
+    monkeypatch.setattr(reflect, "run_on_dev", observed)
+    loop = _loop(tmp_path, Method(cycles=1, propose_budget=400, select_budget=400, use_recovery=False, use_reflection=True,
+                                  reflect_calls=2), proposer=FakeLLM(answer))
+    row = loop.tick()
+    assert row["outcome"] == "blocked" and len(measured) == 1
+    assert row["tuning"]["measured"] == 1
+
+
+def test_a_wrapper_counts_the_repeats_its_pool_caught(tmp_path):
+    class RepeatsTheBase:
+        name = "repeats"
+
+        def propose(self, view, runner):
+            return [view.base, view.base]
+
+    loop = _loop(tmp_path, Method(cycles=1, propose_budget=400, select_budget=400, use_recovery=False, use_reflection=False))
+    counts = funnel(tune(loop.mh, loop.settings.method, approve=lambda _: None, extra=(Pooled(RepeatsTheBase(), Pool()),)).cycles)
+    assert (counts["offered"], counts["new"], counts["measured"], counts["repeated"]) == (2, 0, 0, 2)
+
+
+def test_diagnosis_takes_a_count_too_large_for_a_float(tmp_path):
+    log = CycleLog(tmp_path / "cycles.jsonl")
+    log.cycle({"outcome": "no_winner", "budget": {"waited": 10 ** 400}})
+    log.reload()
+    assert stages(log.cycles())[0].attempted == 10 ** 400 + 1
+    diagnose(log.cycles())
+
+
+def test_two_strategies_of_one_name_are_both_counted(tmp_path):
+    class Offers:
+        name = "offers"
+
+        def __init__(self, retries):
+            self.retries = retries
+
+        def propose(self, view, runner):
+            return [{**view.base, "retries": self.retries}]
+
+    loop = _loop(tmp_path, Method(cycles=1, propose_budget=400, select_budget=400, use_recovery=False, use_reflection=False))
+    before = len(loop.mh.ledger.rows("proposal"))
+    run = tune(loop.mh, loop.settings.method, approve=lambda _: None, extra=(Offers(1), Offers(2)))
+    assert funnel(run.cycles)["new"] == len(loop.mh.ledger.rows("proposal")) - before == 2
