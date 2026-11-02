@@ -63,6 +63,7 @@ from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
+from g6.metaharness.reflex import funnel
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
 from g6.metaharness.select import race_calls
 from g6.metaharness.shadow import SCOPE, adapt_shadow
@@ -114,9 +115,9 @@ UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
 #: with. A test holds every module those files import to this set or that one.
-ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/loop.py",
+ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/lessons.py", "metaharness/loop.py",
                      "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
-                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/runner.py",
+                     "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/reflex.py", "metaharness/runner.py",
                      "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
                      "self_maintenance/digest.py", "self_maintenance/envelope.py", "self_maintenance/pacing.py",
                      "self_maintenance/usage.py", "operator/gates.py", "operator/store.py", "core/adaptation_gate.py",
@@ -487,6 +488,7 @@ class ShadowLoop:
         self.lost_cycles = 0                      # cycles in a row the log would not take: it cannot hold this count
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self.evaluating = False                   # this tick has begun its held-out evaluation
+        self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
         self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
                                   lambda request, said: note_refusal(self.root, request, said))
         self._proposer = _Counted(proposer, self.requests)
@@ -789,6 +791,7 @@ class ShadowLoop:
                                                                 if name in kept}
         spend, waiting = self._reserve()
         if waiting is not None:
+            self.waited += 1
             return waiting
         self._beat("running", CYCLE)
         recommended: list[dict[str, Any]] = []
@@ -831,6 +834,7 @@ class ShadowLoop:
                 self.log.limit(spend.provider, limit.until.isoformat())
             except (OSError, LedgerError):
                 pass                  # this process still waits; after a restart the first request finds the limit again
+            self.waited += 1
             return _blocked(BUDGET_WAIT, f"{spend.provider} met a limit after {charged:g} requests, so this tick scored nothing "
                             f"and waits until {limit.until.isoformat()}: {limit.said}",
                             "The loop waits; it runs again when the limit ends.", wait_until=limit.until.isoformat(),
@@ -845,7 +849,7 @@ class ShadowLoop:
             row |= self._adopt(recommended[-1]["decision"], row)
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
-                         "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated}
+                         "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated, "waited": self.waited}
         return self._record(row)
 
     def _cut_off(self, halted: _Halted, charged: float) -> dict[str, Any]:
@@ -868,7 +872,7 @@ class ShadowLoop:
             reply = self._reply(self.log.cycle(row))
         except (OSError, LedgerError) as exc:
             return self.lost_cycle(exc, refusal=row.get("classifier_stop"))
-        self.lost_cycles = 0
+        self.lost_cycles = self.waited = 0
         self._pause_if_failing()
         return reply
 
@@ -981,7 +985,7 @@ class ShadowLoop:
             reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]
         return {"confirmation": run.confirmation, "decision": run.decision, "champion": run.champion,
                 "outcome": run.outcome, "code": (run.decision or {}).get("code", CYCLE), "reason": "; ".join(reasons),
-                "recovery": run.recovery, **strategy.findings}
+                "recovery": run.recovery, "tuning": funnel(run.cycles), **strategy.findings}
 
     @_exclusive
     def leave_shadow(self) -> dict[str, Any]:

@@ -65,6 +65,22 @@ class TuningRun:
         return asdict(self)
 
 
+class _Offered:
+    """A strategy, and how many candidates it offered. ``mh.propose`` drops one tried before and does not say so, so repeats can only be counted here."""
+
+    def __init__(self, inner: Strategy) -> None:
+        self.inner, self.name, self.offered = inner, inner.name, 0
+
+    @property
+    def lineage(self) -> dict[str, tuple[str, ...]]:
+        return getattr(self.inner, "lineage", {})
+
+    def propose(self, view: Any, runner: Any) -> list[Any]:
+        made = list(self.inner.propose(view, runner))
+        self.offered = len(made)
+        return made
+
+
 def strategies_for(method: Method, workflow: Any, *, reflector: Any = None, space: EditSpace | None = None,
                    pool: Pool | None = None) -> tuple[list[Strategy], list[str]]:
     """The proposers ``method`` asks for, sharing one pool; and a note for each it cannot build."""
@@ -102,18 +118,21 @@ def tune(mh: Any, method: Method, *, approve: Callable[[dict[str, Any]], str | N
         return _finish(mh, run, "blocked")
     _, base = mh._head()
     strategies, notes = strategies_for(method, mh.workflow, reflector=reflector, space=space)
-    strategies += list(extra)
+    strategies = [_Offered(strategy) for strategy in (*strategies, *extra)]
     run = TuningRun(method.digest(), mh.workflow.digest(), base.digest(), notes=notes)
     champion = None
     for cycle in range(1, method.cycles + 1):
         proposals, stats = [], {}
         for strategy in strategies:
+            strategy.offered = 0
             reply = mh.propose(strategy, budget=method.propose_budget, max_candidates=method.candidates_per_cycle)
             got = list(reply.get("proposals") or [])
             proposals += got
             stats[strategy.name] = {"proposed": len(got), "code": reply["warning_card"]["code"],
-                                    "attempts": getattr(strategy, "made", None),
-                                    "duplicates": getattr(strategy, "duplicates", None)}
+                                    "attempts": getattr(strategy.inner, "made", None),
+                                    "duplicates": getattr(strategy.inner, "duplicates", None),
+                                    "offered": max(0, strategy.offered - len(reply.get("refused") or ())),
+                                    "measured": getattr(strategy.inner, "measured", None)}
         racers = [*(carried if cycle == 1 else ()), *proposals, *([champion] if champion is not None else [])]
         record: dict[str, Any] = {"cycle": cycle, "strategies": stats, "raced": [], "winner": None,
                                   "new_champion": False, "selection_calls": 0, "stopped": "", "select_code": ""}

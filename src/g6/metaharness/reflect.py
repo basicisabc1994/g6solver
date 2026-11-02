@@ -76,6 +76,7 @@ class _PoolStrategy:
     seed: int = 0
     made: int = 0                                         # changes attempted
     duplicates: int = 0                                   # attempts that repeated a profile already in the pool
+    measured: int = 0                                     # changes run on the tuning split
 
     lineage: dict[str, tuple[str, ...]] = field(default_factory=dict, init=False)
 
@@ -113,6 +114,7 @@ class _PoolStrategy:
                 if getattr(runner, "last_skipped", 0):
                     break                                 # the dev budget is spent: stop, store nothing cut short
                 continue                                  # this profile cannot run (an undeclared model or check)
+            self.measured += 1
             self.pool.add(profile, results)
             self.lineage[profile.digest()] = parents
             score = sum(results.values())
