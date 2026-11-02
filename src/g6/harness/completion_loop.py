@@ -892,11 +892,16 @@ def _review_end(root: Path, task: str, base: str, session: Path, state: dict, re
         _write_row(session, state)      # this wait protects no clean stop: there is none left to protect
     code = "" if reason in (CLEAN, RAN_OUT, LEFT) else NOT_REPRODUCED if reason == UNREPRODUCED else NO_CLEAN_REVIEW
     ending = _ending(reason, reviews)
-    report = patch_report.completion_report({
+    return _finish(session, state, _reviews_report(state, reason, code, ending, review), code, ending)
+
+
+def _reviews_report(state: dict, reason: str, code: str, ending: str, review: str) -> str:
+    """The report of a loop that reviewed: what its reviews found, why it stopped, then ``review``, the patch review's."""
+    reviews = state["reviews"]
+    return patch_report.completion_report({
         "reason": reason, "reviews": reviews, "repairs": sum(one["tree"] is not None for one in state["rounds"]),
         "max_repairs": MAX_REPAIRS, "left": state.get("left", ""), "no_clean": bool(code), "ending": ending,
         "boundary": next((one["boundary"] for one in reversed(reviews) if one.get("boundary")), "")}, review)
-    return _finish(session, state, report, code, ending)
 
 
 def _scouts(change: repo_tests.Change, task: str, session: Path, state: dict, shipped: Harness, host: Host,
@@ -1031,7 +1036,11 @@ def _advance(repo: str | Path, task: str, base: str, session: Path, scout: Host 
         state["stop"] = text
         _owe_row(task, base, session, state, _patch_now(root, base), cause)
         _write_row(session, state)
-        return _finish(session, state, text, code, "untested")
+        reviews = state.get("reviews") or []
+        if not reviews:
+            return _finish(session, state, text, code, "untested")
+        ending = _ending(text, reviews)      # what earlier rounds found stands: the refusal is why the loop stopped
+        return _finish(session, state, _reviews_report(state, text, code, ending, ""), code, ending)
 
     if not change.sources:
         return (_review_end(root, task, base, session, state, WITHDRAWN) if state.get("reviews") else
