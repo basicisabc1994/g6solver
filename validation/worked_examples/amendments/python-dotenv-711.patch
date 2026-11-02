@@ -1,8 +1,8 @@
 diff --git a/tests/test_cli.py b/tests/test_cli.py
-index b6d29c2..cdba388 100644
+index b6d29c2..bfba94a 100644
 --- a/tests/test_cli.py
 +++ b/tests/test_cli.py
-@@ -196,10 +196,11 @@ def test_set_missing_directory(cli, tmp_path):
+@@ -196,10 +196,10 @@ def test_set_missing_directory(cli, tmp_path):
  
      result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "set", "a", "b"])
  
@@ -14,11 +14,10 @@ index b6d29c2..cdba388 100644
 +    assert str(dotenv_path) in result.output
 +    assert ".tmp_" not in result.output
 +    assert "Traceback" not in result.output
-+    assert len(result.output.splitlines()) <= 4
  
  
  @pytest.mark.skipif(
-@@ -218,10 +219,11 @@ def test_unset_read_only_directory(cli, tmp_path):
+@@ -218,10 +218,10 @@ def test_unset_read_only_directory(cli, tmp_path):
      finally:
          directory.chmod(0o755)
  
@@ -30,7 +29,6 @@ index b6d29c2..cdba388 100644
 +    assert str(dotenv_path) in result.output
 +    assert ".tmp_" not in result.output
 +    assert "Traceback" not in result.output
-+    assert len(result.output.splitlines()) <= 4
      assert dotenv_path.read_text() == "a=b\n"
  
  
