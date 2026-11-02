@@ -381,11 +381,15 @@ def hidden_scouts(arm: str) -> int:
 
 
 def trained(arm: str) -> dict[str, str]:
-    """What harness training added for arm ``L<n>`` or ``M<n>`` from 10 (PLAN.md, stage 3), committed before it ran. It can only
+    """What harness training added for arm ``L<n>`` or ``M<n>`` from 10, or ``K<n>`` from 2 (PLAN.md, stage 3), committed before it ran. It can only
     add to a part's instructions: the sets, the scoring, the reply forms and the stop rule are not among them."""
-    if not re.fullmatch(r"[LM]\d+", arm) or int(arm[1:]) < 10:
+    if re.fullmatch(r"K\d+", arm) and int(arm[1:]) >= 2:
+        name = arm
+    elif re.fullmatch(r"[LM]\d+", arm) and int(arm[1:]) >= 10:
+        name = f"L{arm[1:]}"
+    else:
         return {}
-    text = json.loads((HARNESS / f"L{arm[1:]}.json").read_text(encoding="utf-8"))
+    text = json.loads((HARNESS / f"{name}.json").read_text(encoding="utf-8"))
     odd = sorted(set(text) - set(TRAINED))
     if odd:
         raise ValueError(f"harness training cannot change {odd}")
