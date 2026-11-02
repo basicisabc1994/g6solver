@@ -1291,3 +1291,9 @@ No recorded result changes here. Stage 1's numbers stand, and M9, K1, K0, the ru
 **The order of the runs.** Arm S three times on every bug first, as the 2026-11-01 entry says. Then, bug by bug in the frozen order, A, T, R, M9 and K1 twice each, and K0 twice last. One stream, floor 6.5 GB, and the stream stops once the whole study has spent $170, which counts Fable's $34.65: `loop.py`'s own stop reads only the runner's tally, so the driver holds the study's figure. At about $2.70 a bug that is about 19 of the 20.
 
 **The credits.** Stage 2 runs on the credits that expire on 2026-11-04. Its bugs stay sealed, and nothing read from its runs reaches the loop until stage 3's runs have ended.
+
+## 2026-11-02 (afternoon): one more kill, and the limit restated
+
+**One more kill, by the session's memory guard.** Stage 2's stream was killed at about 15:42, part way through `setuptools-5362` arm M9 repeat 1. The run measured $1.32. It is closed as killed at $1.38 with the runner's 5% margin, not counted as failed, and remade, as the rule on infrastructure kills says. Its container stayed up with nothing driving it for at most about five minutes, until it was removed, so any spend in that time is not in the tally. Every saved run stands: arm S on all 20 bugs, the first four bugs whole, and A, T and R on the fifth. No score was read to do this: `stage2.log` is read by its markers only.
+
+**The limit.** The owner restated it at the restart: the API credits are strictly limited to $180. So the ruling of 2026-11-02 on cost covers the loop's gate and nothing else, and the stream's stop stays at $170 for the whole study, which leaves room for a run already under way. The study stands at $132.38, Fable's $34.65 included. If the stop comes before the twentieth bug, the rule applies to the bugs that finished, with their number stated, as the 2026-11-01 entry says.
