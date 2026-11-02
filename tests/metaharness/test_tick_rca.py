@@ -1,13 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """The tick's own root cause analysis (loop plan Part 24): what the hand analysis of stage 3's refused tick did, as plain code, and
 each analysis scored by the next tick as a prediction."""
+import importlib.util
 import json
+import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from g6.core.llm import FakeLLM
+from g6.metaharness import reflex
 from g6.metaharness.lessons import FAILED, HELD, OPEN
-from g6.metaharness.tick_rca import CAUSES, TickRecord, analysis_is_the_constraint, scored, tick_rca
+from g6.metaharness.loop import LoopSettings, ShadowLoop
+from g6.metaharness.method import Method
+from g6.metaharness.tick_rca import CAUSES, TickDiagnosis, TickRecord, analysis_is_the_constraint, scored, tick_rca
+from g6.self_maintenance.pacing import ProviderWindow
 
 STAGE3 = json.loads((Path(__file__).parent / "fixtures" / "stage3_tick.json").read_text(encoding="utf-8"))
 
@@ -115,7 +123,7 @@ def test_the_next_tick_scores_each_cause_as_a_prediction():
                      fields=[("retries",)])
     outcomes = dict(scored(before, better))
     assert outcomes["threshold_move"] == HELD and outcomes["race_noise"] == HELD and outcomes["edit_space_short"] == HELD
-    again = TickRecord.from_dict(STAGE3)
+    again = TickRecord.from_dict({**STAGE3, "enrolment": "settings-changed"})     # a person changed something, and it came back
     assert dict(scored(before, again))["threshold_move"] == FAILED
 
 
@@ -132,6 +140,92 @@ def test_a_remedy_for_a_person_left_unapplied_is_not_the_analysis_failing():
     assert dict(scored(before, same_enrolment))["edit_space_short"] == OPEN     # nobody gave the domain a new action
     enrolled_again = TickRecord.from_dict({**STAGE3, "enrolment": "domain-v2"})
     assert dict(scored(before, enrolled_again))["edit_space_short"] == FAILED   # a new version, and still only wording
+
+
+def test_a_diagnosis_kept_in_a_row_reads_back_as_the_same_predictions():
+    before = tick_rca(TickRecord.from_dict(STAGE3))
+    again = TickDiagnosis.from_dict(json.loads(json.dumps(before.to_dict())))
+    assert [(c.code, c.prediction, c.who) for c in again.causes] == [(c.code, c.prediction, c.who) for c in before.causes]
+
+
+# --- in the tick ------------------------------------------------------------------------------------------------------
+
+_spec = importlib.util.spec_from_file_location("loop_domains", Path(__file__).with_name("_loop_domains.py"))
+domains = sys.modules.setdefault(_spec.name, importlib.util.module_from_spec(_spec))
+if not hasattr(domains, "WordProblems"):
+    _spec.loader.exec_module(domains)
+MONDAY = datetime(2026, 10, 26, tzinfo=UTC)
+
+
+def _loop(tmp_path, proposer):
+    method = Method(cycles=1, propose_budget=120, select_budget=400, race_block=12, use_recovery=False, use_reflection=False)
+    settings = LoopSettings(windows=(ProviderWindow("claude", 1_000_000, MONDAY),), method=method, audit_per_tick=60)
+    loop = ShadowLoop(domains.WordProblems(tmp_path), tmp_path / "loop", settings, proposer=proposer,
+                      now=lambda: MONDAY + timedelta(days=2), clock=domains.Clock())
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    return loop
+
+
+def _wording(*_):
+    _wording.n = getattr(_wording, "n", 0) + 1
+    return json.dumps({"prompt": f"Note {_wording.n}."})        # a new wording each time, and one that wins nothing
+
+
+def _named(row):
+    return [cause["code"] for cause in row["rca"]["causes"]]
+
+
+def test_a_tick_that_tuned_and_adopted_nothing_says_why_in_its_row(tmp_path):
+    loop = _loop(tmp_path, FakeLLM(_wording))
+    loop.tick()
+    row = loop.log.cycles()[-1]
+    assert row["outcome"] != "adopted" and row["rca"]["outcome"] == row["outcome"]
+    assert "edit_space_short" in _named(row)
+
+
+def test_an_adopted_tick_names_no_short_edit_space(tmp_path):
+    loop = _loop(tmp_path, domains.proposes({"prompt": domains.WORKING}))
+    loop.tick()
+    row = loop.log.cycles()[-1]
+    assert row["outcome"] == "adopted" and "edit_space_short" not in _named(row)
+
+
+def test_the_next_tick_scores_the_last_ones_analysis_and_a_person_has_changed_nothing(tmp_path):
+    loop = _loop(tmp_path, FakeLLM(_wording))
+    loop.tick()
+    loop.tick()
+    first, second = loop.log.cycles()[-2:]
+    assert second["rca_scored"] == [[code, OPEN] for code in _named(first)]
+
+
+def test_an_analysis_that_cannot_be_made_costs_the_tick_nothing(tmp_path, monkeypatch):
+    from g6.metaharness import loop as loop_module
+
+    def broken(record):
+        raise RuntimeError("analysis fault")
+
+    monkeypatch.setattr(loop_module, "tick_rca", broken)
+    loop = _loop(tmp_path, domains.proposes({"prompt": domains.WORKING}))
+    loop.tick()
+    row = loop.log.cycles()[-1]
+    assert row["outcome"] == "adopted" and row["rca"] == {"unreadable": "RuntimeError: analysis fault"}
+
+
+def test_two_ticks_whose_remedies_failed_make_the_analysis_the_loops_constraint():
+    rows = [{"tick": i, "outcome": "refused", "constraint": "false_alarm", "rca_scored": [["threshold_move", FAILED]]}
+            for i in (1, 2)]
+    found = reflex.diagnose(rows)
+    assert found.constraint == reflex.ANALYSIS and found.level == reflex.LOOP
+    rows[1]["rca_scored"] = [["threshold_move", HELD]]
+    assert reflex.diagnose(rows).constraint != reflex.ANALYSIS
+
+
+def test_the_replay_domain_labels_each_case_by_the_maintainers_verdict(tmp_path):
+    from tests.metaharness.test_coding_replay import _domain
+
+    domain = _domain(tmp_path)
+    case = domain.development()[0]
+    assert domain.label_of(case) == case.expected
 
 
 @pytest.mark.parametrize(("history", "stuck"), [

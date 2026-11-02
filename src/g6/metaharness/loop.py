@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -65,6 +65,7 @@ from g6.metaharness.domain import (
 from g6.metaharness import reflex
 from g6.metaharness.failure_strategy import FailureTraceStrategy
 from g6.metaharness.method import Method, tune
+from g6.metaharness.tick_rca import TickDiagnosis, TickRecord, scored, tick_rca
 from g6.metaharness.monitor import MIN_PAIRS
 from g6.metaharness.propose import DevRunner, ProposerView
 from g6.metaharness.schema import APPROVAL_REQUIRED, EvidencePolicy, Suite, SuiteCase, Workflow, default_objectives
@@ -825,6 +826,7 @@ class ShadowLoop:
         halted: _Halted | None = None
         self.evaluating = False
         self.tuned = []
+        self._rca: TickRecord | None = None      # what this tick's analysis reads, once it has tuned
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
@@ -876,6 +878,8 @@ class ShadowLoop:
             row |= {"outcome": "blocked", "code": TICK_BUDGET_SPENT, "reason": f"{stopped}, so nothing is adopted"}
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"], row)
+        if self._rca is not None:                 # read once the outcome is known: an adoption is part of what it reads
+            row |= self._analysis(dataclasses.replace(self._rca, outcome=str(row.get("outcome", ""))))
         seen = self.meter.reading(spend.provider, self._now())
         row["budget"] = {"provider": seen.provider, "day": seen.day, "charged": charged, "used": seen.used,
                          "target": seen.target, "ceiling": seen.ceiling, "estimated": seen.estimated, "waited": self.waited}
@@ -994,6 +998,7 @@ class ShadowLoop:
         if not view.failures:
             return {**row, "outcome": "idle", "code": IDLE, "reason": measured["message"]}
         records = self.domain.failures(view)
+        self._tuning_failed = tuple(record.case_id for record in records)
         constraint = name_constraint(records, len(view.dev))
         row |= {"constraint": constraint.name, "basis": constraint.basis,
                 "observations": [list(o) for o in constraint.observations],
@@ -1011,6 +1016,45 @@ class ShadowLoop:
         except Exception:  # noqa: BLE001 - see above: a failure that leaves no lesson row is allowed, and one that stops the work is not
             return []
 
+    def _read_for_analysis(self, run: Any, marks: Mapping[str, int]) -> TickRecord:
+        """What ``tick_rca`` reads of this tick: the rows tuning added to the ledger since ``marks``, the cases' labels where the
+        domain gives them (``label_of``), and the digest of what a person decides. It reads the held-out report, so what it
+        gives goes into the cycle's row and to no proposer, as the gate's verdicts do not."""
+        new = {kind: self.mh.ledger.rows(kind)[count:] for kind, count in marks.items()}
+        report = next((r for r in reversed(new["report"]) if r.get("split") == "held_out"), None) if run.confirmation else None
+        label_of = getattr(self.domain, "label_of", None)
+        cases = (*self.cut.tune, *self.cut.selection, *self.cut.held_out)
+        enrolled = self.log.enrolled() or {}
+        return TickRecord(
+            outcome="", labels={c.case_id: str(label_of(c)) for c in cases} if callable(label_of) else {},
+            tuning_failed=getattr(self, "_tuning_failed", ()),
+            held_out=tuple((c["case_id"], bool(c["base"]["success"]), bool(c["candidate"]["success"]))
+                           for c in (report or {}).get("cases") or ()),
+            races=tuple({"winner": s.get("winner"),
+                         "ranking": [{"candidate": r.get("candidate_digest"), "wins": r.get("wins", 0), "losses": r.get("losses", 0),
+                                      "dropped_at_block": r.get("dropped_at_block")} for r in s.get("ranking") or ()]}
+                        for s in new["selection"]),
+            candidates=tuple({"candidate": p.get("candidate_digest"), "fields": sorted(p.get("diff") or {})} for p in new["proposal"]),
+            power=dict((report or {}).get("power") or {}),
+            enrolment=digest({"frozen": enrolled.get("frozen"), "held_out": enrolled.get("held_out_digest"),
+                              "method": self.settings.method.digest()}),
+            champion=str(run.champion or ""))
+
+    def _analysis(self, record: TickRecord) -> dict[str, Any]:
+        """The tick's own root cause analysis, and the last one's scored on what this tick saw (``g6.metaharness.tick_rca``).
+        This only records, so a fault in it costs the cycle nothing: the row says the analysis could not be read."""
+        try:
+            found: dict[str, Any] = {"rca": tick_rca(record).to_dict()}
+        except Exception as exc:  # noqa: BLE001 - see above
+            return {"rca": {"unreadable": f"{type(exc).__name__}: {exc}"[:200]}}
+        try:
+            before = next((c["rca"] for c in reversed(self.log.cycles()) if isinstance(c.get("rca"), dict) and "causes" in c["rca"]), None)
+            if before is not None:
+                found["rca_scored"] = [list(pair) for pair in scored(TickDiagnosis.from_dict(before), record)]
+        except Exception:  # noqa: BLE001 - an unscored analysis is recorded as such
+            found["rca_scored"] = None
+        return found
+
     def _exploit(self, constraint: Constraint, recommended: list[dict[str, Any]]) -> dict[str, Any]:
         """Propose and gate. A recommendation is only held here: it is adopted once the sealed split is known untouched."""
 
@@ -1019,9 +1063,11 @@ class ShadowLoop:
 
         # earlier findings only: which candidate the gate took or refused is the held-out split's, and stays out of it
         strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
+        marks = {kind: len(self.mh.ledger.rows(kind)) for kind in ("proposal", "selection", "report")}
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
                    space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
                    carried=self.mh.unfinished(), cycles=self.tuned)
+        self._rca = self._read_for_analysis(run, marks)
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         if (run.confirmation or {}).get("partial"):   # first, so the digest's one line for a tick keeps it
             reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]

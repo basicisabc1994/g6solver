@@ -6,7 +6,7 @@ which is what a person did by hand for stage 3's refused tick. Each cause is a p
 here is a model's opinion:
 
 * ``threshold_move``: on the held-out split, every win of the candidate is on one label and at least 80% of its losses are on
-  another. It traded one error for another, which is not a gain. A proposer is told which error rose.
+  another. It traded one error for another, which is not a gain, and the method should score both kinds of error.
 * ``split_mix_skew``: the labels of the cases the base failed while tuning differ from those of the cases it failed on the
   held-out split by more than 25 points, so the tuning split taught the wrong lesson. A person cuts the splits by label too.
 * ``race_noise``: the race that chose the champion chose it on noise, its margin over the base not clear of a one-sided sign test
@@ -17,7 +17,8 @@ here is a model's opinion:
   gain. A person grows the held-out split before the next real evaluation. A candidate that lost is not refused for want of
   cases.
 
-The order above is the order causes are given in: the first explains a refusal most directly. Each cause is also a prediction
+Every remedy is a person's (``WHO``), so the analysis informs; it changes nothing by itself, and nothing of it reaches a proposer,
+as it reads the held-out split. The order above is the order causes are given in: the first explains a refusal most directly. Each cause is also a prediction
 (``lessons.Prediction``), that with its remedy applied its measure is back across its line at the next tick, and ``scored``
 scores it there. ``analysis_is_the_constraint`` says when two ticks in a row scored a remedy that did not remove its cause: then
 the analysis itself is what limits the loop, the reflexive question of Part 20 made a count.
@@ -37,9 +38,10 @@ CAUSES = ("threshold_move", "split_mix_skew", "race_noise", "edit_space_short", 
 WORDING = frozenset({"prompt", "prompt_layout", "skill_text", "hints", "exemplars"})
 TRADE, SKEW, NOISE, POWER = 0.8, 0.25, 0.05, 0.5
 _JUST_UNDER = 1e-9
-#: Who applies each remedy: a proposer and the method are the loop's own; the splits and the domain are a person's.
-WHO = {"threshold_move": "proposer", "split_mix_skew": "person", "race_noise": "method", "edit_space_short": "person",
-       "gate_underpowered": "person"}
+#: Who applies each remedy. Each is a person's for now. Scoring candidates on both kinds of error, or spending no held-out
+#: evaluation on a noisy race, changes the method a person started the loop with. Telling proposers which error rose would hand
+#: them a held-out result, which the loop keeps from them (``loop._exploit``). The splits and the domain are a person's already.
+WHO = dict.fromkeys(("threshold_move", "split_mix_skew", "race_noise", "edit_space_short", "gate_underpowered"), "person")
 
 
 @dataclass(frozen=True)
@@ -47,8 +49,9 @@ class TickRecord:
     """What one tick's records say, as ``tick_rca`` reads it. ``labels``: each case's label. ``tuning_failed``: the tuning cases
     the base failed. ``held_out``: each held-out case's (id, base right, candidate right), empty when none was evaluated.
     ``races``: each race's ``winner`` and ``ranking`` rows (``candidate``, ``wins``, ``losses``, ``dropped_at_block``).
-    ``candidates``: each candidate's changed ``fields``. ``power``: the held-out report's, by gain. ``enrolment``: what the person
-    enrolled (its digest), which moves only when a person cuts again."""
+    ``candidates``: each candidate's changed ``fields``. ``power``: the held-out report's, by gain. ``enrolment``: the digest of
+    what a person decides (what they enrolled and the settings they started the loop with), which moves only when they change
+    it, so a person's remedy counts as applied once it has."""
 
     outcome: str
     labels: Mapping[str, str] = field(default_factory=dict)
@@ -95,6 +98,16 @@ class TickDiagnosis:
         return {"outcome": self.outcome, "enrolment": self.enrolment,
                 "causes": [{"code": c.code, "summary": c.summary, "measure": c.measure, "check": c.check, "remedy": c.remedy,
                             "who": c.who, "expected": c.prediction.expected, "evidence": c.evidence} for c in self.causes]}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> TickDiagnosis:
+        """A diagnosis as a cycle's row keeps it. A cause this code does not know is left out, as nothing could score it."""
+        enrolment = str(data.get("enrolment", ""))
+        causes = tuple(TickCause(c["code"], c["summary"], float(c["measure"]), c["check"], c["remedy"], c["who"],
+                                 Prediction(f"{enrolment}:{c['code']}", c["code"], float(c["measure"]), float(c["expected"])),
+                                 dict(c.get("evidence") or {}))
+                       for c in data.get("causes") or () if c.get("code") in _RULES)
+        return cls(causes, str(data.get("outcome", "")), enrolment)
 
 
 def _shares(cases: Iterable[str], labels: Mapping[str, str]) -> dict[str, float]:
@@ -200,9 +213,9 @@ def tick_rca(record: TickRecord) -> TickDiagnosis:
 
 
 def scored(before: TickDiagnosis, now: TickRecord) -> list[tuple[str, str]]:
-    """Each cause of ``before`` scored on the tick after it, ``now``: ``held`` when its measure is back across its line, ``failed``
-    when it is not, and ``open`` when ``now`` cannot measure it or a person's remedy was not applied (the enrolment did not move),
-    as a remedy nobody applied tells nothing of the analysis."""
+    """Each cause of ``before`` scored on a later tick, ``now``: ``held`` when its measure is back across its line, ``failed``
+    when it is not, and ``open`` when ``now`` cannot measure it or a person's remedy was not applied (nothing a person decides
+    has changed), as a remedy nobody applied tells nothing of the analysis."""
     out = []
     for cause in before.causes:
         if cause.who == "person" and now.enrolment == before.enrolment:
