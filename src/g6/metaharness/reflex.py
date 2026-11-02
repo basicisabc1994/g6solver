@@ -7,16 +7,30 @@ the tick records it and a person reads it. It draws on the gate's verdicts, whic
 **The stages.** A cycle is a serial process, and each stage is counted in cycles: how many reached it and how many passed. A cycle offering twelve
 candidates and keeping one is one cycle that passed, so a wide proposer does not read as a narrow stage. A stage with no record is unknown, and an
 unknown stage is never a failure, which is how a row from an older log still reads.
+
+**The levels.** A failure names the stage, or what its reason points at: a gate that finds too few cases points at the pool. The work is what candidates
+could not do. The loop is its own pipeline. The owner holds the gate, the judge, the held-out splits, the envelope and the stop: the loop may name these
+with evidence and may never edit them, because the cheapest way through a gate is to lower it. A gate that found no gain is the work and not the gate: it
+did its job on candidates that were no better, and nothing there is for the owner to change.
+
+**Stuck.** The same constraint for three cycles with no adoption is stuck, and the loop may not repeat the same kind of attempt, so ``change`` says what must
+differ: its method first, then its level, then its frame. None of these reaches what is the owner's. Nothing in this file acts on it yet.
+
+**Where this stops.** A wait or a refusal before a cycle leaves no row, so a loop kept out of every cycle (paused, frozen, a spent held-out split, a pool
+refused at enrolment) cannot read itself here: those stand in the digest's stops. ``identify_constraint`` assumes serial stages and one bottleneck.
 """
 from __future__ import annotations
 
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
-from g6.metaharness.schema import OBJECTIVE_REGRESSED
-from g6.self_maintenance.constraints import StageMeasurement
+from g6.metaharness.lessons import Lesson, repeats
+from g6.metaharness.lessons import stuck as recurring
+from g6.metaharness.schema import HOLDOUT_REUSED, INSUFFICIENT_EVIDENCE, NO_GAIN, OBJECTIVE_REGRESSED, SUITE_CANNOT_DISCRIMINATE
+from g6.self_maintenance.constraints import StageMeasurement, identify_constraint
 from g6.self_maintenance.envelope import TICK_BUDGET_SPENT
 
 #: The loop's stages, in order: admitted by budget, not refused, candidates proposed, distinct from those tried, won tuning, won selection, passed the
@@ -25,6 +39,12 @@ BUDGET, REFUSED, PROPOSED, DISTINCT, TUNING, SELECTION, GATE, MONITOR = STAGES =
     "budget", "refused", "proposed", "distinct", "tuning", "selection", "gate", "monitor")
 #: How many of the latest cycles count as recent.
 RECENT = 12
+WORK, LOOP, OWNER = "work", "loop", "owner"
+#: Cycles of one constraint with no adoption that make the loop stuck.
+STUCK = 3
+#: What must differ once it is stuck, each after ``STUCK`` more cycles of the same.
+CHANGES = ("method", "level", "frame")
+UNKNOWN = "unknown"
 # The loop's own codes. ``g6.metaharness.loop`` imports this file, so they are written out; a test holds them equal.
 CYCLE = "G6_E_LOOP_CYCLE"
 IDLE = "G6_E_LOOP_IDLE"
@@ -42,6 +62,15 @@ CYCLE_FAILED = "G6_E_LOOP_CYCLE_FAILED"
 #: Outcomes that went no further than this stage, whatever the reason. ``idle`` is here because a pool with no failure left gave the cycle nothing to do.
 _HELD = ("blocked", "error", "sealed_breach", "no_constraint", "idle")
 _CODE = re.compile(r"\bG6_E_[A-Z0-9_]+\b")
+POOL, HELD_OUT, JUDGE, ENVELOPE, STOP, PERSON_ONLY, ERROR, NO_GAIN_FOUND = (
+    "pool", "held_out", "judge", "envelope", "stop", "person_only", "error", "no_gain")
+#: What a reason points at, where that is not the stage it stopped at.
+_POINTS_AT = {POOL_TOO_SMALL: POOL, IDLE: POOL, INSUFFICIENT_EVIDENCE: POOL, NO_GAIN: NO_GAIN_FOUND, CYCLE_FAILED: ERROR,
+              HELD_OUT_SPENT: HELD_OUT, SPLIT_REUSED: HELD_OUT, SEALED_BREACH: HELD_OUT, HOLDOUT_REUSED: HELD_OUT,
+              SUITE_CANNOT_DISCRIMINATE: JUDGE, FROZEN_CHANGED: ENVELOPE, UNMETERED_CALLER: ENVELOPE, STOPPED: STOP, PAUSED: STOP,
+              CLASSIFIER_STOP: STOP, NO_CONSTRAINT: PERSON_ONLY}
+_THE_WORK = (TUNING, SELECTION, NO_GAIN_FOUND, UNKNOWN)
+_THE_OWNERS = (GATE, JUDGE, HELD_OUT, ENVELOPE, STOP, PERSON_ONLY)
 
 
 def funnel(cycles: Sequence[Mapping[str, Any]]) -> dict[str, int]:
@@ -145,4 +174,81 @@ def refusals(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
     return dict(found)
 
 
-__all__ = ["STAGES", "funnel", "refusals", "stages"]
+def _named(stage: str, row: Mapping[str, Any]) -> str:
+    """What failing ``stage`` on this row names: the stage, or what its reason points at."""
+    if stage == GATE:
+        return _POINTS_AT.get((row.get("decision") or {}).get("code") or _reason(row), stage)
+    return _POINTS_AT.get(_reason(row), stage) if stage == REFUSED else stage
+
+
+def _limit(row: Mapping[str, Any]) -> str | None:
+    """What stopped this cycle: the first stage it failed, named. ``None`` for an adoption, and where its row says nothing of where it stopped."""
+    read = _read(row)
+    stage = None if row.get("outcome") == "adopted" else next((name for name in STAGES if read.get(name) is False), None)
+    return _named(stage, row) if stage else None
+
+
+def _held(rows: Sequence[Mapping[str, Any]]) -> tuple[str | None, int]:
+    """The constraint the latest cycle stopped at, and how many cycles in a row it has held."""
+    limit, held = _limit(rows[-1]) if rows else None, 0
+    for row in reversed(rows):
+        if limit is None or _limit(row) != limit:
+            break
+        held += 1
+    return limit, held
+
+
+def _narrowest(rows: Sequence[Mapping[str, Any]]) -> str:
+    """What the stage that passes the smallest share names. Only a stage that failed can be it, so what no row records never is."""
+    failing = [stage for stage in stages(rows) if stage.succeeded < stage.attempted]
+    if not failing:
+        return UNKNOWN
+    stage = identify_constraint(failing).bottleneck
+    named = Counter(_named(stage, row) for row in rows if _read(row).get(stage) is False)
+    return named.most_common(1)[0][0] if named else stage
+
+
+def _level(constraint: str) -> str:
+    return OWNER if constraint in _THE_OWNERS else WORK if constraint in _THE_WORK else LOOP
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    """What limits progress now. ``level``: ``work``, ``loop`` or ``owner``. ``evidence``: the counts it rests on. ``change``: what the next attempt must do
+    differently, once ``stuck``. ``repeated``: each mistake that came back after its lesson, from ``g6.metaharness.lessons``."""
+
+    level: str
+    constraint: str
+    evidence: Mapping[str, Any]
+    stuck: bool
+    change: str | None
+    repeated: Mapping[str, Mapping[str, Any]]
+
+
+def diagnose(rows: Iterable[Mapping[str, Any]], lessons: Iterable[Lesson] = (), seen: Iterable[tuple[int, str, str]] = ()) -> Diagnosis:
+    """What the recent cycles say limits progress. A cycle adopted within the last ``STUCK`` is a loop that moves, so the work limits it, and the latest cause
+    a cycle named says where. Past that it reads the cycles since its last adoption. ``lessons`` and ``seen``: as ``g6.metaharness.lessons.repeats`` takes."""
+    recent = _recent(rows)
+    last = max((i for i, row in enumerate(recent) if row.get("outcome") == "adopted"), default=-1)
+    since = recent[last + 1:]
+    moving = last >= 0 and len(since) < STUCK
+    limit, held = _held(recent)
+    stuck = held >= STUCK
+    if moving:
+        constraint = next((row["constraint"] for row in reversed(recent) if row.get("constraint")), UNKNOWN)
+    else:
+        constraint = limit if stuck else _narrowest(since)
+    basis = recent if moving else since
+    measured = stages(basis)
+    known = {stage.name for stage in measured}
+    returned = repeats(lessons, seen)
+    keeps = recurring(returned)
+    return Diagnosis(WORK if moving else _level(constraint), constraint,
+                     {"cycles": len(basis), "adopted": sum(row.get("outcome") == "adopted" for row in recent), "held": held,
+                      "stages": {stage.name: {"attempted": stage.attempted, "succeeded": stage.succeeded} for stage in measured},
+                      "unknown": [name for name in STAGES if name not in known], "refusals": refusals(basis)},
+                     stuck, CHANGES[min(held // STUCK, len(CHANGES)) - 1] if stuck else None,
+                     {cause: {**row, "stuck": cause in keeps} for cause, row in returned.items()})
+
+
+__all__ = ["CHANGES", "Diagnosis", "LOOP", "OWNER", "RECENT", "STAGES", "STUCK", "UNKNOWN", "WORK", "diagnose", "funnel", "refusals", "stages"]
