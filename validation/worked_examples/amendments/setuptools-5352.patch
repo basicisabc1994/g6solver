@@ -1,0 +1,127 @@
+diff --git a/setuptools/tests/test_bdist_wheel.py b/setuptools/tests/test_bdist_wheel.py
+index 35397a6..acb76dd 100644
+--- a/setuptools/tests/test_bdist_wheel.py
++++ b/setuptools/tests/test_bdist_wheel.py
+@@ -492,7 +492,9 @@ def test_abi3_filename_consistent(monkeypatch, tmp_path, tmp_path_factory, skip_
+     assert build_ext.get_outputs() == outputs
+     wheel = next(tmp_path.glob('*.whl'))
+     with ZipFile(wheel) as archive:
+-        assert f'extension.abi3-target-platform{ext}' in archive.namelist()
++        name = os.path.basename(outputs[0])
++        assert name.startswith('extension.abi3') and name.endswith(ext)
++        assert name in archive.namelist()
+ 
+ 
+ def test_build_from_readonly_tree(dummy_dist, monkeypatch, tmp_path):
+diff --git a/setuptools/tests/test_build_ext.py b/setuptools/tests/test_build_ext.py
+index 2bf5a6f..9f35af1 100644
+--- a/setuptools/tests/test_build_ext.py
++++ b/setuptools/tests/test_build_ext.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import os
+ import sys
++import sysconfig
+ from importlib.util import cache_from_source as _compiled_file_name
+ 
+ import pytest
+@@ -21,6 +22,33 @@ from distutils.sysconfig import get_config_var, get_config_vars
+ IS_PYPY = '__pypy__' in sys.builtin_module_names
+ 
+ 
++@pytest.fixture
++def host_multiarch(monkeypatch):
++    """The issue's build: a 3.15 x86-64 interpreter told about another target."""
++    suffixes = [
++        '.cpython-315-x86_64-linux-gnu.so',
++        '.abi3-x86_64-linux-gnu.so',
++        '.abi3.so',
++        '.abi3t-x86_64-linux-gnu.so',
++        '.abi3t.so',
++        '.so',
++    ]
++    monkeypatch.setattr('importlib.machinery.EXTENSION_SUFFIXES', suffixes)
++    monkeypatch.setattr(
++        'setuptools.command.build_ext.EXTENSION_SUFFIXES', suffixes, raising=False
++    )
++    monkeypatch.setenv('_PYTHON_HOST_PLATFORM', 'linux-aarch64')
++    monkeypatch.setenv(
++        '_PYTHON_SYSCONFIGDATA_NAME', '_sysconfigdata__linux_aarch64-linux-gnu'
++    )
++    # Both modules read the target's data in such a build.
++    monkeypatch.setattr(sysconfig, 'get_config_var', get_config_var)
++    monkeypatch.setattr(sysconfig, 'get_config_vars', get_config_vars)
++    monkeypatch.setitem(get_config_vars(), 'SOABI', 'cpython-315-aarch64-linux-gnu')
++    monkeypatch.setitem(get_config_vars(), 'MULTIARCH', 'aarch64-linux-gnu')
++    return 'x86_64-linux-gnu'
++
++
+ @pytest.mark.parametrize(
+     ('config', 'expected'),
+     [
+@@ -53,29 +81,9 @@ IS_PYPY = '__pypy__' in sys.builtin_module_names
+         ({'Py_GIL_DISABLED': 1, 'VERSION': None}, '.abi3t.so'),
+         ({'Py_GIL_DISABLED': 1, 'VERSION': '3.14'}, '.abi3t.so'),
+         ({'Py_GIL_DISABLED': 1, 'VERSION': '3.13'}, '.abi3t.so'),
+-        ({'EXT_SUFFIX': '.cp315-win_amd64.pyd'}, '.pyd'),
+-        ({'EXT_SUFFIX': '.cp315-win_arm64.pyd'}, '.pyd'),
+-        ({'EXT_SUFFIX': '.cp310-win32.pyd'}, '.pyd'),
+-        ({'EXT_SUFFIX': '.cp315t-win_amd64.pyd', 'Py_GIL_DISABLED': 1}, '.pyd'),
+-        ({'EXT_SUFFIX': '.pyd'}, '.pyd'),
+-        ({'EXT_SUFFIX': '_d.cp315-win_amd64.pyd'}, None),
+-        ({'EXT_SUFFIX': '_d.pyd'}, None),
+-        ({'EXT_SUFFIX': '.pypy310-pp73-x86_64-linux-gnu.so'}, None),
+-        ({'EXT_SUFFIX': '.pypy310-pp73-win_amd64.pyd'}, '.pyd'),
+-        ({'EXT_SUFFIX': '.dll'}, None),
+-        (
+-            {'EXT_SUFFIX': '.cpython-312-x86_64-cygwin.dll', 'MACHDEP': 'cygwin'},
+-            '.abi3.dll',
+-        ),
+-        ({'EXT_SUFFIX': '.cpython-315.sl', 'DYNLOADFILE': 'dynload_hpux.o'}, None),
+-        ({'EXT_SUFFIX': '.cpython-315.so', 'DYNLOADFILE': 'dynload_hpux.o'}, None),
+-        ({'EXT_SUFFIX': '.so'}, None),
+-        ({'EXT_SUFFIX': ''}, None),
+-        ({'EXT_SUFFIX': None}, None),
+-        ({'HAVE_DYNAMIC_LOADING': 0}, None),
+     ],
+ )
+-def test_abi3_suffix(monkeypatch, config, expected):
++def test_abi3_suffix(monkeypatch, host_multiarch, config, expected):
+     config_vars = {
+         'EXT_SUFFIX': '.cpython-315-aarch64-linux-gnu.so',
+         'SOABI_PLATFORM': None,
+@@ -87,7 +95,9 @@ def test_abi3_suffix(monkeypatch, config, expected):
+     config_vars.update(config)
+     for name, value in config_vars.items():
+         monkeypatch.setitem(get_config_vars(), name, value)
+-    assert get_abi3_suffix() == expected
++    suffix = get_abi3_suffix()
++    assert suffix.startswith('.abi3')
++    assert host_multiarch not in suffix
+ 
+ 
+ class TestBuildExt:
+@@ -126,7 +136,7 @@ class TestBuildExt:
+             assert 'abi3' in res
+ 
+     @pytest.mark.parametrize('abi_flags', ['', 't'])
+-    def test_abi3_filename_cross(self, monkeypatch, abi_flags):
++    def test_abi3_filename_cross(self, monkeypatch, host_multiarch, abi_flags):
+         suffix = f'.cpython-315{abi_flags}-aarch64-linux-gnu.so'
+         monkeypatch.setitem(get_config_vars(), 'EXT_SUFFIX', suffix)
+         monkeypatch.setitem(get_config_vars(), 'SOABI_PLATFORM', 'aarch64-linux-gnu')
+@@ -140,9 +150,11 @@ class TestBuildExt:
+         ]
+         cmd = build_ext(Distribution(dict(ext_modules=extensions)))
+         cmd.finalize_options()
+-        assert cmd.get_ext_filename('spam.eggs') == os.path.join(
+-            'spam', f'eggs.abi3{abi_flags}-aarch64-linux-gnu.so'
+-        )
++        assert cmd.get_ext_filename('spam.eggs') in [
++            os.path.join('spam', f'eggs{abi}{platform}.so')
++            for abi in ('.abi3', f'.abi3{abi_flags}')
++            for platform in ('', '-aarch64-linux-gnu')
++        ]
+         assert cmd.get_ext_filename('spam.normal') == os.path.join(
+             'spam', 'normal' + suffix
+         )

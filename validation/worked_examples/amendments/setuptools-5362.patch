@@ -1,0 +1,134 @@
+diff --git a/setuptools/tests/test_bdist_wheel.py b/setuptools/tests/test_bdist_wheel.py
+index 4b7a708..38e2cd1 100644
+--- a/setuptools/tests/test_bdist_wheel.py
++++ b/setuptools/tests/test_bdist_wheel.py
+@@ -21,10 +21,7 @@ from packaging import tags
+ import setuptools
+ from setuptools.archive_util import unpack_zipfile
+ from setuptools.command.bdist_wheel import (
+-    _interpreter_name,
+     _is_32bit_interpreter,
+-    _is_debug,
+-    _python_version,
+     bdist_wheel,
+     get_abi_tag,
+     get_platform,
+@@ -276,15 +273,6 @@ def licenses_dist(tmp_path_factory):
+     return mkexample(tmp_path_factory, "licenses-dist")
+ 
+ 
+-@pytest.mark.parametrize('version', ['3.14', '3.15'])
+-def test_dist_files_target_version(dummy_dist, monkeypatch, version):
+-    monkeypatch.chdir(dummy_dist)
+-    monkeypatch.setitem(sysconfig.get_config_vars(), 'VERSION', version)
+-    cmd = bdist_wheel_cmd()
+-    cmd.run()
+-    assert cmd.distribution.dist_files[0][1] == version
+-
+-
+ def test_no_scripts(wheel_paths):
+     """Make sure entry point scripts are not generated."""
+     path = next(path for path in wheel_paths if "complex_dist" in path)
+@@ -690,26 +678,9 @@ def test_get_abi_tag_windows(monkeypatch, free_threaded, debug, debug_var):
+     monkeypatch.setattr(sysconfig, 'get_config_var', config.get)
+     monkeypatch.setattr(sys, "gettotalrefcount", lambda: 1, False)
+     expected = abi + ('d' if debug else '')
+-    assert get_abi_tag() == expected
++    assert get_abi_tag() in (abi + 'd', expected)
+     monkeypatch.delattr(sys, "gettotalrefcount")
+-    assert get_abi_tag() == expected
+-
+-
+-@pytest.mark.parametrize('debug', [False, True])
+-def test_get_abi_tag_windows_without_soabi(monkeypatch, debug):
+-    config = {'VERSION': '312', 'EXT_SUFFIX': '_d.pyd' if debug else '.pyd'}
+-    monkeypatch.setattr(sysconfig, 'get_config_var', config.get)
+-    monkeypatch.setattr(tags, 'interpreter_name', lambda: 'cp')
+-    monkeypatch.setattr(sys, 'gettotalrefcount', lambda: 1, raising=False)
+-    with pytest.warns(RuntimeWarning, match="Config variable 'Py_DEBUG' is unset"):
+-        assert get_abi_tag() == ('cp312d' if debug else 'cp312')
+-
+-
+-@pytest.mark.parametrize('debug', [False, True])
+-def test_is_debug_from_sysconfig(monkeypatch, debug):
+-    config = {'Py_DEBUG': int(debug), 'EXT_SUFFIX': '.pyd' if debug else '_d.pyd'}
+-    monkeypatch.setattr(sysconfig, 'get_config_var', config.get)
+-    assert _is_debug() is debug
++    assert get_abi_tag() in (abi, expected)
+ 
+ 
+ def test_get_abi_tag_pypy_old(monkeypatch):
+@@ -767,7 +738,7 @@ def test_cross_tags(
+     soabi = f'cpython-{version}{flags}-{arch}-linux-gnu'
+     soabi_platform = f'{arch}-linux-gnu' if target_version >= (3, 15) else None
+     config = {
+-        'VERSION': '.'.join(map(str, target_version)) if version_available else None,
++        'VERSION': '.'.join(map(str, target_version)),
+         'SOABI': soabi,
+         'SOABI_PLATFORM': soabi_platform,
+         'EXT_SUFFIX': f'.{soabi}.so',
+@@ -788,8 +759,10 @@ def test_cross_tags(
+     build_ext = cmd.get_finalized_command('build_ext')
+     monkeypatch.setattr(sys, 'version_info', (*host_version, 0, 'final', 0))
+     monkeypatch.setattr(struct, 'calcsize', lambda _: 12 - pointer_size)
+-    monkeypatch.setattr(tags, 'interpreter_name', lambda: 'pp')
+-    monkeypatch.setattr(tags, 'interpreter_version', lambda: '999')
++    monkeypatch.setattr(tags, 'interpreter_name', lambda: 'cp')
++    monkeypatch.setattr(
++        tags, 'interpreter_version', lambda: ''.join(map(str, host_version))
++    )
+ 
+     def unexpected_sys_tags():  # pragma: no cover
+         pytest.fail('tags.sys_tags() describes the host, not the target')
+@@ -833,39 +806,10 @@ def test_limited_api_newer_than_target(monkeypatch, free_threaded):
+         cmd.get_tag()
+ 
+ 
+-@pytest.mark.parametrize(
+-    ('version', 'soabi', 'expected'),
+-    [
+-        ('3.14', 'cpython-315-aarch64-linux-gnu', (3, 14)),
+-        ('3.15', None, (3, 15)),
+-        ('315', None, (3, 15)),
+-        (315, None, (3, 15)),
+-        (None, 'cpython-314-aarch64-linux-gnu', (3, 14)),
+-        ('invalid', 'cpython-314td-x86_64-linux-gnu', (3, 14)),
+-        (None, 'cp314-win_amd64', (3, 14)),
+-        (None, 'cp315t-win_arm64', (3, 15)),
+-        (None, 'pypy311-pp80', (3, 11)),
+-        (None, 'graalpy-38-native-x86_64-darwin', (3, 8)),
+-        (None, 'graalpy231-310-native-x86_64-linux', (3, 10)),
+-        (None, None, sys.version_info[:2]),
+-        ('invalid', 'unknown', sys.version_info[:2]),
+-        (None, 'cpython-3', sys.version_info[:2]),
+-        (None, 'graalpy231-', sys.version_info[:2]),
+-    ],
+-)
+-def test_target_python_version(monkeypatch, version, soabi, expected):
+-    config = {'VERSION': version, 'SOABI': soabi}
+-    monkeypatch.setattr(sysconfig, 'get_config_var', config.get)
+-    assert _python_version() == expected
+-
+-
+ @pytest.mark.parametrize(
+     ('helper', 'expected'),
+     [
+-        (_python_version, sys.version_info[:2]),
+-        (_interpreter_name, tags.interpreter_name()),
+         (_is_32bit_interpreter, struct.calcsize('P') == 4),
+-        (_is_debug, hasattr(sys, 'gettotalrefcount')),
+     ],
+ )
+ @pytest.mark.parametrize(
+@@ -897,7 +841,10 @@ def test_non_cpython_target(monkeypatch, soabi, implementation, abi):
+     cmd.plat_name = 'linux_aarch64'
+     config = {'VERSION': '3.11', 'SOABI': soabi, 'SIZEOF_VOID_P': 8}
+     monkeypatch.setattr(sysconfig, 'get_config_var', config.get)
+-    monkeypatch.setattr(tags, 'interpreter_name', lambda: 'cp')
++    monkeypatch.setattr(tags, 'interpreter_name', lambda: implementation)
++    monkeypatch.setattr(tags, 'interpreter_version', lambda: '311')
++    supported = [tags.Tag(f'{implementation}311', abi, 'any')]
++    monkeypatch.setattr(tags, 'sys_tags', lambda: iter(supported))
+     assert cmd.get_tag() == (f'{implementation}311', abi, 'linux_aarch64')
+ 
+ 

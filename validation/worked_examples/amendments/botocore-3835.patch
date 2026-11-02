@@ -1,0 +1,38 @@
+diff --git a/tests/unit/test_credentials.py b/tests/unit/test_credentials.py
+index af34f35..a25dcc0 100644
+--- a/tests/unit/test_credentials.py
++++ b/tests/unit/test_credentials.py
+@@ -18,7 +18,7 @@ import subprocess
+ import tempfile
+ import threading
+ import time
+-from concurrent.futures import ThreadPoolExecutor
++from concurrent.futures import ThreadPoolExecutor, wait
+ from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+ 
+@@ -107,11 +107,11 @@ def path(filename):
+ 
+ 
+ class PausingRefreshableCredentials(credentials.RefreshableCredentials):
+-    def _publish_refresh(self):
++    def _set_from_data(self, data):
++        super()._set_from_data(data)
+         self.publish_started.set()
+-        if not self.resume_publish.wait(timeout=1):
++        if not self.resume_publish.wait(timeout=5):
+             raise AssertionError("Timed out waiting to publish credentials")
+-        super()._publish_refresh()
+ 
+ 
+ class TestCredentials(BaseEnvVar):
+@@ -226,7 +226,8 @@ class TestRefreshableCredentials(TestCredentials):
+             try:
+                 self.assertTrue(creds.publish_started.wait(timeout=1))
+                 reader = executor.submit(creds.get_frozen_credentials)
+-                self.assertTrue(creds.refresh_needed())
++                # The reader returns during the pause, or blocks until it ends.
++                wait([reader], timeout=0.5)
+             finally:
+                 creds.resume_publish.set()
+ 

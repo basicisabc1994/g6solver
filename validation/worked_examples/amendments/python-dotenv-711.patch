@@ -1,0 +1,66 @@
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index b6d29c2..f155cd8 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -196,10 +196,9 @@ def test_set_missing_directory(cli, tmp_path):
+ 
+     result = cli.invoke(dotenv_cli, ["--file", dotenv_path, "set", "a", "b"])
+ 
+-    assert (result.exit_code, result.output) == (
+-        2,
+-        f"Error writing env file: [Errno 2] No such file or directory: {str(dotenv_path)!r}\n",
+-    )
++    assert result.exit_code == 2, result.output
++    assert str(dotenv_path) in result.output
++    assert ".tmp_" not in result.output
+ 
+ 
+ @pytest.mark.skipif(
+@@ -218,10 +217,9 @@ def test_unset_read_only_directory(cli, tmp_path):
+     finally:
+         directory.chmod(0o755)
+ 
+-    assert (result.exit_code, result.output) == (
+-        2,
+-        f"Error writing env file: [Errno 13] Permission denied: {str(dotenv_path)!r}\n",
+-    )
++    assert result.exit_code == 2, result.output
++    assert str(dotenv_path) in result.output
++    assert ".tmp_" not in result.output
+     assert dotenv_path.read_text() == "a=b\n"
+ 
+ 
+diff --git a/tests/test_main.py b/tests/test_main.py
+index ded4f1f..487318a 100644
+--- a/tests/test_main.py
++++ b/tests/test_main.py
+@@ -198,10 +198,11 @@ def test_set_key_permission_error(dotenv_path):
+ def test_set_key_missing_directory(tmp_path):
+     dotenv_path = tmp_path / "nx_dir" / ".env"
+ 
+-    with pytest.raises(FileNotFoundError) as exc_info:
++    with pytest.raises(OSError) as exc_info:
+         dotenv.set_key(dotenv_path, "a", "b")
+ 
+-    assert exc_info.value.filename == str(dotenv_path)
++    assert str(dotenv_path) in str(exc_info.value)
++    assert ".tmp_" not in str(exc_info.value)
+     assert not dotenv_path.parent.exists()
+ 
+ 
+@@ -217,12 +218,13 @@ def test_set_key_read_only_directory(tmp_path):
+     directory.chmod(0o555)
+ 
+     try:
+-        with pytest.raises(PermissionError) as exc_info:
++        with pytest.raises(OSError) as exc_info:
+             dotenv.set_key(dotenv_path, "a", "y")
+     finally:
+         directory.chmod(0o755)
+ 
+-    assert exc_info.value.filename == str(dotenv_path)
++    assert str(dotenv_path) in str(exc_info.value)
++    assert ".tmp_" not in str(exc_info.value)
+     assert dotenv_path.read_text() == "a=x\n"
+     assert list(directory.iterdir()) == [dotenv_path]
+ 
