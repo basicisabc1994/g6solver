@@ -115,6 +115,7 @@ class AccountReading:
     limited_until: datetime | None = None   # a session window or the weekly cap was hit: nothing starts before this
     read_at: datetime | None = None         # when the figure was read; a charge after that cannot be in it
     resets_at: datetime | None = field(default=None, compare=False)     # when the week that figure is of ends, which sets the week
+    ended_at: datetime | None = field(default=None, compare=False)      # a week's end already past, which still says where its weeks fall
 
 
 @dataclass(frozen=True)
@@ -182,10 +183,12 @@ class BudgetMeter:
     def _on_the_providers_week(self, window: ProviderWindow, reset: datetime, now: datetime) -> ProviderWindow:
         """``window`` moved to the week its provider reports. The week still open keeps its book, or what was charged in it,
         and what a tick reserved there and settles there, would stop counting against the ceiling. A week already over keeps
-        nothing: the week it gives way to is a new one."""
+        nothing: the week it gives way to is a new one. The moves are held in memory, so a week the ledger already has a book
+        for keeps that book: after a restart the settings' week says nothing of what was reserved under the provider's."""
         moved = self.windows[window.provider] = window.aligned(reset)
-        if moved is not window and reset > now:
-            self._books[(window.provider, moved.place(now)[0])] = self._book(window, now)
+        start = moved.place(now)[0]
+        if moved is not window and reset > now and not self.scope.has_venture(f"{window.provider}@{start.isoformat()}"):
+            self._books[(window.provider, start)] = self._book(window, now)
         return moved
 
     def reading(self, provider: str, now: datetime) -> Admission:
@@ -210,6 +213,8 @@ class BudgetMeter:
             window = self._on_the_providers_week(window, account.resets_at, now)     # it stays so, should the reading go
             if account.resets_at <= now:
                 account = replace(account, used=0.0, read_at=None)  # its figure is of a week that has ended; a limit may not be
+        elif account is not None and account.ended_at is not None:
+            window = self._on_the_providers_week(window, account.ended_at, now)
         day, book = window.place(now)[1], self._book(window, now)
         venture = self._venture(window, book)
         booked = self.scope.committed(venture, book.isoformat()).get(_ACCOUNT, 0.0)

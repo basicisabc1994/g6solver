@@ -259,7 +259,8 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     week's percentage, and a limit when a window is full or the provider says ordinary use is not allowed. One field that
     makes no sense loses the whole reply, since a reply that wrong says nothing about the rest. A limit whose reset has
     passed is still a limit, so it is looked at again as one with no reset is. A week whose own reset has passed is another
-    matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it."""
+    matter: a tool that has not caught up is saying last week's use, so that figure is left out and nothing stands for it.
+    That reset is kept apart as ``ended_at``: it says where the provider's weeks fall, and it ends no tick."""
     snapshot, allowed = limits.get("rateLimits"), limits.get("ordinaryUsageAllowed")
     if not isinstance(snapshot, Mapping) or not isinstance(allowed, bool | None):
         return None
@@ -271,7 +272,9 @@ def limits_reading(limits: Mapping[str, Any], window: ProviderWindow, now: datet
     resets = [at for w in (full or seen) if (at := _reset(w, now)) is not None]
     until = (max(resets) if resets else now + REFRESH) if full or allowed is False else None
     ended = week is not None and (_time(week.get("resetsAt")) or now + WEEK) <= now
-    if week is None or ended:
+    if ended:
+        return AccountReading(limited_until=until, ended_at=_time(week.get("resetsAt")))
+    if week is None:
         return AccountReading(limited_until=until)
     return AccountReading(used=window.allowance * week["usedPercent"] / FULL, estimated=False, limited_until=until,
                           resets_at=_reset(week, now) or window.week_end(now))

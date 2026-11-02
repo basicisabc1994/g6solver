@@ -541,13 +541,14 @@ class MetaHarness:
             return _blocked(NO_NEW_CANDIDATE, f"the strategy failed: {why}", plan.next_action,
                             recovery=plan.to_dict())
         seen = {r.get("candidate_digest") for r in self.ledger.rows("proposal")} | {base.digest()}
-        proposals, refused_rows = [], []
+        proposals, refused_rows, valid = [], [], 0
         for item in raw:
             parsed, why = parse_profile(item)
             problems = parsed.problems_for(self.workflow) if parsed else [(SCHEMA, why)]
             if problems:
                 refused_rows.append("; ".join(p for _, p in problems))
                 continue
+            valid += 1
             if parsed.digest() in seen:
                 continue
             seen.add(parsed.digest())
@@ -565,10 +566,10 @@ class MetaHarness:
         if not proposals:
             plan = recovery.for_proposal(None, refused_rows)
             return _blocked(NO_NEW_CANDIDATE, "no new candidate: the strategy proposed nothing that is valid and new",
-                            plan.next_action, refused=refused_rows, guard_flags=flagged, dev_calls_used=meter.used,
+                            plan.next_action, refused=refused_rows, valid=valid, guard_flags=flagged, dev_calls_used=meter.used,
                             recovery=plan.to_dict())
         return _envelope("qualified-draft", "G6_E_META_PROPOSED", f"{len(proposals)} candidate(s); evaluate each",
-                         next_action="mh.evaluate(proposal)", proposals=proposals, refused=refused_rows,
+                         next_action="mh.evaluate(proposal)", proposals=proposals, refused=refused_rows, valid=valid,
                          guard_flags=flagged, dev_success=view.dev_success, dev_calls_used=meter.used,
                          notes=list(view.notes))
 

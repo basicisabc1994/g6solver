@@ -87,23 +87,37 @@ def funnel(cycles: Sequence[Mapping[str, Any]]) -> dict[str, int]:
             "raced": sum(len(cycle["raced"]) for cycle in cycles)}
 
 
+def _fields(value: Any) -> Mapping[str, Any]:
+    """A row's field as a mapping. A log holds whatever JSON it was given, and reading it must never be what fails."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _count(fields: Mapping[str, Any], name: str) -> int:
+    value = fields.get(name)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
 def _proposing(row: Mapping[str, Any]) -> dict[str, bool]:
-    """The stages only ``tuning`` records: an older row has none, and a row that has one read them all."""
-    tuned, read = row.get("tuning"), {}
+    """The stages only ``tuning`` records: an older row has none, and a count a row leaves out reads as none."""
+    tuned, read = _fields(row.get("tuning")), {}
     if not tuned:
         return read
-    offered, new, measured = tuned["offered"], tuned["new"], tuned["measured"]
-    read[PROPOSED] = bool(offered or measured or tuned["repeated"])
+    offered, new, measured = _count(tuned, "offered"), _count(tuned, "new"), _count(tuned, "measured")
+    read[PROPOSED] = bool(offered or measured or _count(tuned, "repeated"))
     if read[PROPOSED]:                 # a candidate that lost on tuning was new as far as anything can tell: what it lost shows at the next stage
         read[DISTINCT] = bool(new or (measured and not offered))
     if measured:
-        read[TUNING] = tuned["kept"] > 0
+        read[TUNING] = _count(tuned, "kept") > 0
     return read
 
 
 def _read(row: Mapping[str, Any]) -> dict[str, bool]:
     """What one row says of each stage: passed, failed, or no key where it holds no record."""
-    outcome, code, audit, decision = row.get("outcome"), row.get("code"), row.get("audit") or {}, row.get("decision") or {}
+    outcome, code, audit, decision = row.get("outcome"), row.get("code"), _fields(row.get("audit")), _fields(row.get("decision"))
     read: dict[str, bool] = {}
     if code == TICK_BUDGET_SPENT:      # it stopped where it was told to and compared nothing, so it reached no later stage
         return {BUDGET: False}
@@ -111,8 +125,7 @@ def _read(row: Mapping[str, Any]) -> dict[str, bool]:
         read[BUDGET] = True
     read[REFUSED] = outcome not in _HELD
     read |= _proposing(row)
-    tuned = row.get("tuning") or {}
-    if tuned.get("raced") or row.get("champion"):
+    if _count(_fields(row.get("tuning")), "raced") or row.get("champion"):
         read[SELECTION] = bool(row.get("champion"))
     if decision.get("verdict"):
         read[GATE] = decision["verdict"] == "recommend"
@@ -135,7 +148,7 @@ def stages(rows: Iterable[Mapping[str, Any]]) -> tuple[StageMeasurement, ...]:
     they count as independently observed. A cycle is the unit at every stage, so each has the same capacity and only its share passing tells them apart."""
     recent = _recent(rows)
     read = [_read(row) for row in recent]
-    waited = sum((row.get("budget") or {}).get("waited", 0) for row in recent)
+    waited = sum(_count(_fields(row.get("budget")), "waited") for row in recent)
     found = []
     for name in STAGES:
         said = [one[name] for one in read if name in one]
@@ -147,7 +160,7 @@ def stages(rows: Iterable[Mapping[str, Any]]) -> tuple[StageMeasurement, ...]:
 
 def _reason(row: Mapping[str, Any]) -> str:
     """Why a cycle went no further, as a stable code. A step the harness blocked carries its code at the head of its reason."""
-    code = row.get("code") or ""
+    code = _text(row.get("code"))
     if code and code != CYCLE:
         return code
     found = _CODE.search(str(row.get("reason", "")))
@@ -156,9 +169,10 @@ def _reason(row: Mapping[str, Any]) -> str:
 
 def _refused_by(row: Mapping[str, Any]) -> str:
     """The reason the gate gave, with the objective where one objective refused it."""
-    decision = row.get("decision") or {}
-    code = decision.get("code") or _reason(row)
-    said = (decision.get("reasons") or [str(row.get("reason", ""))])[0]
+    decision = _fields(row.get("decision"))
+    code = _text(decision.get("code")) or _reason(row)
+    reasons = decision.get("reasons")
+    said = str(reasons[0]) if isinstance(reasons, list | tuple) and reasons else str(row.get("reason", ""))
     return f"{code}:{said.split(':', 1)[0]}" if code == OBJECTIVE_REGRESSED and ":" in said else code
 
 
@@ -177,7 +191,7 @@ def refusals(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
 def _named(stage: str, row: Mapping[str, Any]) -> str:
     """What failing ``stage`` on this row names: the stage, or what its reason points at."""
     if stage == GATE:
-        return _POINTS_AT.get((row.get("decision") or {}).get("code") or _reason(row), stage)
+        return _POINTS_AT.get(_text(_fields(row.get("decision")).get("code")) or _reason(row), stage)
     return _POINTS_AT.get(_reason(row), stage) if stage == REFUSED else stage
 
 
@@ -235,7 +249,7 @@ def diagnose(rows: Iterable[Mapping[str, Any]], lessons: Iterable[Lesson] = (), 
     limit, held = _held(recent)
     stuck = held >= STUCK
     if moving:
-        constraint = next((row["constraint"] for row in reversed(recent) if row.get("constraint")), UNKNOWN)
+        constraint = next((row["constraint"] for row in reversed(recent) if _text(row.get("constraint"))), UNKNOWN)
     else:
         constraint = limit if stuck else _narrowest(since)
     basis = recent if moving else since

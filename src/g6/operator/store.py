@@ -106,6 +106,9 @@ class OwnerScope:
             self._append_evidence(venture_id, "created", "", {"name": name, "caps": clean})
         return self.venture(venture_id)
 
+    def has_venture(self, name: str) -> bool:
+        return self.conn.execute("SELECT 1 FROM ventures WHERE owner=? AND name=?", (self.owner, name)).fetchone() is not None
+
     def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
         """The id of this owner's venture of this name, made once however many ask at the same moment."""
         self.conn.execute("BEGIN IMMEDIATE")

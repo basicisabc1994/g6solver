@@ -116,7 +116,8 @@ UNMETERED_CALLER = "G6_E_LOOP_UNMETERED_CALLER"
 CLASSIFIER_STOP = "G6_E_LOOP_CLASSIFIER_STOP"
 #: What enforces the envelope, beside ``JUDGING_PATTERNS``: the loop's own files, and what they spend, seal, pin and propose
 #: with. A test holds every module those files import to this set or that one.
-ENVELOPE_PATTERNS = ("metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/lessons.py", "metaharness/loop.py",
+ENVELOPE_PATTERNS = ("__init__.py", "core/__init__.py", "metaharness/__init__.py", "operator/__init__.py", "self_maintenance/__init__.py",
+                     "workspace/__init__.py", "metaharness/domain.py", "metaharness/failure_strategy.py", "metaharness/lessons.py", "metaharness/loop.py",
                      "metaharness/method.py", "metaharness/pool.py", "metaharness/propose.py",
                      "metaharness/recovery.py", "metaharness/reflect.py", "metaharness/reflex.py", "metaharness/runner.py",
                      "metaharness/select.py", "metaharness/shadow.py", "self_maintenance/constraints.py",
@@ -362,7 +363,10 @@ class _Counted:
     A caller that answers with no request noted is refused, because nothing could say how often it asked. The limit of
     this: a caller that notes one request and retries unnoted looks like one request, and so do the Anthropic SDK's own
     retries. Only a usage record from the provider can show those, which is the relay of design section 3. A ``Retry-After``
-    resend is admitted as a request is, at its own boundary (``_Resends``), whichever caller sent it."""
+    resend is admitted as a request is, at its own boundary (``_Resends``), whichever caller sent it. A wrapper that sends from
+    a thread of its own is seen only when it answers, as a caller that noted nothing, because ``counting`` holds its observers
+    in a context that thread does not have: the tick adopts nothing and the loop pauses, but what it sent has gone. Closing that
+    takes a change to that bound file, which waits for an issuance window."""
 
     def __init__(self, inner: Any, requests: _Requests) -> None:
         self.inner, self.requests = inner, requests
@@ -490,6 +494,7 @@ class ShadowLoop:
         self.cannot_record = ""                   # why this process spends no more, set at MAX_FAILED_CYCLES of those
         self.evaluating = False                   # this tick has begun its held-out evaluation
         self.waited = 0                           # ticks a budget wait turned away since the last cycle: a wait leaves no row
+        self.tuned: list[dict[str, Any]] = []     # this tick's tuning cycles as they happen, for a row that a raise cut short
         self.requests = _Requests(lambda: self._now(), self._halted, self._barred,
                                   lambda request, said: note_refusal(self.root, request, said))
         self._proposer = _Counted(proposer, self.requests)
@@ -800,6 +805,7 @@ class ShadowLoop:
         limit: _AtLimit | None = None
         halted: _Halted | None = None
         self.evaluating = False
+        self.tuned = []
         self.requests.open(spend.amount, spend.ends)
         with sealed_closed(self.domain.sealed().vault) as breaches:
             try:                      # a sealed file already held open: no cycle starts over it
@@ -817,6 +823,8 @@ class ShadowLoop:
                 charged = self.meter.settle(spend, spend.amount if self.requests.unseen else self.requests.sent)
         unseen, stopped, refusal = self.requests.unseen, self.requests.stopped, self.requests.refusal
         self.requests.close()
+        if self.tuned and "tuning" not in row:     # a tick cut short keeps what it had made
+            row["tuning"] = reflex.funnel(self.tuned)
         if breaches:                  # read only now: a strategy that swallowed the refusal adopts nothing either
             row |= {"outcome": "sealed_breach", "code": SEALED_BREACH,
                     "reason": f"{len(breaches)} sign(s) that the sealed split was within reach while developing. Nothing "
@@ -939,6 +947,9 @@ class ShadowLoop:
         invalid = self._invalid()
         if invalid is not None:
             return invalid
+        lost = self._lost_generations()
+        if lost:
+            return _blocked(RECORDS_UNREADABLE, lost, "A person inspects the folder. Nothing runs on records that do not check out.")
         taken = self.mh.demote(generation, who)
         if taken["completion_state"] != "blocked-escalated":
             self.log.demote(who, at=self._now().isoformat(), undoes=taken["undoes"], head_version=taken["head_version"])
@@ -991,7 +1002,7 @@ class ShadowLoop:
         strategy = FailureTraceStrategy(self._proposer, earlier=tuple(self.log.findings()))
         run = tune(self.mh, self.settings.method, approve=nobody, reflector=self._proposer,
                    space=self.domain.execution().space, extra=(_OnConstraint(strategy, constraint.case_ids),),
-                   carried=self.mh.unfinished())
+                   carried=self.mh.unfinished(), cycles=self.tuned)
         reasons = (run.decision or {}).get("reasons") or run.notes or ["no candidate beat the head"]
         if (run.confirmation or {}).get("partial"):   # first, so the digest's one line for a tick keeps it
             reasons = ["the evaluation stopped part way and still spent one of the split's five", *reasons]

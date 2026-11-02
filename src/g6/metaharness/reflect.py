@@ -168,6 +168,10 @@ class Pooled:
     def __init__(self, inner: Any, pool: Pool) -> None:
         self.inner, self.pool, self.name = inner, pool, inner.name
 
+    def __getattr__(self, name: str) -> Any:
+        """What the strategy inside keeps count of, such as ``measured``: wrapping one must not hide its counts."""
+        return getattr(self.inner, name)
+
     @property
     def lineage(self) -> dict[str, tuple[str, ...]]:
         return getattr(self.inner, "lineage", {})

@@ -399,9 +399,17 @@ def _source_of(module: str) -> str:
     return f"{name}.py" if (SRC / f"{name}.py").is_file() else f"{name}/__init__.py"
 
 
+def _initialisers(module: str) -> set[str]:
+    """The package files that run on the way to ``module``: an edit to any of them runs too."""
+    parts = module.split(".")[1:]
+    return {"/".join((*parts[:depth], "__init__.py")) for depth in range(len(parts))}
+
+
 def test_4_every_module_the_loops_own_files_import_is_pinned():
     pinned = build_manifest(SRC, patterns=(*ENVELOPE_PATTERNS, *JUDGING_PATTERNS))
-    needed = {_source_of(m) for name in LOOP_FILES for m in _g6_imports(SRC / name)} | {*LOOP_FILES, *BEHIND_THEM}
+    imported = {m for name in LOOP_FILES for m in _g6_imports(SRC / name)}
+    needed = {_source_of(m) for m in imported} | {*LOOP_FILES, *BEHIND_THEM}
+    needed |= {name for m in imported for name in _initialisers(m)}
     assert sorted(needed - set(pinned)) == []
 
 

@@ -105,9 +105,13 @@ def refused() -> dict | None:
 
 def _root(folder: str) -> Path:
     """The folder named, or the default: beside G6's state folder and not in it, since the server, the completion loop and
-    test runs all write there, and nothing but the loop writes here."""
+    test runs all write there, and nothing but the loop writes here. A loop already in the earlier default stays where it
+    is, so that a stop with no folder named still reaches its runner."""
+    if folder.strip():
+        return Path(folder).expanduser().resolve()
     home = g6_home()
-    return Path(folder).expanduser().resolve() if folder.strip() else home.with_name(f"{home.name}-improve")
+    default, earlier = home.with_name(f"{home.name}-improve"), home / "improve"
+    return earlier if _is_a_loop(earlier) and not _is_a_loop(default) else default
 
 
 def _is_a_loop(root: Path) -> bool:
