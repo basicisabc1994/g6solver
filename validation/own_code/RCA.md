@@ -73,7 +73,12 @@ coming back, and drop it if not.
 
 ## What this does not show
 
-- The labels are one model's reading. Agreement with a second labeller is unmeasured.
+- The labels are a model's reading. A second labeller, blind to the first, chose the same class for 75% of the findings
+  (Cohen's kappa 0.71). The two agreed on whether a finding changes an outcome without a word for 90% (kappa 0.79).
+  Under the second labels recurrence is still at chance: 114 against a shuffle mean of 111, with 95% of shuffles between
+  102 and 119. The order of the two largest classes depends on the labeller. The second put "one fact decided by two
+  rules" first, with 52 findings against the first labeller's 38, mostly from findings the first had called "other".
+  The blame split does not use the labels at all.
 - A finding about a missing check cites the code around the gap, so blame places the gap, not a line that is wrong.
 - "Code the first review read" includes code older than the branch. That share is not split by who wrote it.
 - The 15 loops are one reviewer (Codex) on one author's code, so the classes may be the author's habits as much as
