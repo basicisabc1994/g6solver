@@ -1661,3 +1661,83 @@ Wrong runs that break existing tests sit in 4 of 18 bugs / 3 of 14.
   - Any rule it favours is scored on bugs not yet used before it is claimed.
   - The pool mixes G6's arms with arm A, so it is not "Claude Code run N times". A gain here says that selection carries
     signal, not that a harness beats Claude Code.
+
+## 2026-11-04 (midday): choosing among candidates fails, and why
+
+The lean experiment of 61efa3c was computed by `choose_among.py`, plain code, on all 34 bugs of stage 1 and 2.
+
+**Result.**
+
+| Rule | Amended tests | Maintainers' tests | Amended, by bug against R0 |
+|---|---|---|---|
+| R0, random | 71.3% | 52.9% | — |
+| R1, agreement | 67.5% | 50.6% | better 1, worse 6 |
+| R2, rule test then random | 73.7% | 54.6% | better 3, worse 0, p 0.125 |
+| R3, rule test then agreement | 71.2% | 53.5% | better 4, worse 5 |
+| Arm A | 69.1% | 52.9% | |
+| A perfect chooser | 88.2% | 67.6% | |
+
+**Both predictions fail.** R1 is 3.8 points below R0, not 3 above, and R3 is level with R0, not 5 above. The kill rule as
+written does not fire, since R1 is more than 2 points away. But it is away in the wrong direction, so agreement by patch
+text carries negative signal here, and the next step it names is reconsidered below.
+
+**Why: the wrong runs share one misreading, and the other family's reviewer shares it too.** These counts were made after
+the result. They are exploratory and were not registered. In the 10 mixed bugs on the amended tests, the commonest
+wrong change holds on average 61% of a bug's wrong runs. Flagged by replay 3's rule test, by distinct patch:
+- right patches: 17 of 59 (29%);
+- the commonest wrong change: 12 of 37 (32%);
+- other wrong changes: 40 of 55 (73%).
+
+The frozen review flags 66%, 37% and 56% of the same groups. On the maintainers' tests the pattern holds, and on the
+11 bugs where every run is wrong the rule test flags 0 of 17 patches of the commonest wrong change.
+
+**What it means.**
+- **The reviewers catch the wrong patches that are wrong in their own way, and miss the wrong patch that many runs make.**
+  That patch is the natural reading of the issue to both model families, so it is no Sonnet habit.
+- **Why voting backfires.** Voting among candidates amplifies that reading.
+- **The Swiss cheese holes line up.** A reviewer from another family is no independent layer against the commonest
+  error. A layer counts as independent by the errors it misses, measured, and not by the model family it comes from.
+- **What the next step must bring.** It cannot be another reading of the issue by a model: it needs evidence the issue's
+  natural reading does not give.
+- **Behaviour agreement is predicted to fail the same way.** The `differential.v1` step named by the kill rule would
+  vote on the same shared reading, so it is set aside until the labels below say which evidence separates the readings.
+
+## 2026-11-04 (midday): contrastive blind labels, registered before they run
+
+**Purpose.** To find, for the commonest wrong change, what separates it from a right patch and which evidence could have
+shown it, as classes.
+
+**The protocol.** It is the 2026-11-02 one:
+- the auditors run no task, review no patch and propose nothing;
+- they may read the maintainers' tests and fix, and return labels from closed lists and no text;
+- only the labels are kept, as counts;
+- two raters from different families label apart: Codex on the owner's sign-in, and Claude Opus 5.5 through `claude -p`
+  on the owner's sign-in. No API credit is spent.
+
+**Cases.** One case for each of the 14 bugs that are mixed or all wrong on the amended tests:
+- the commonest wrong change, as one representative patch;
+- beside it, the commonest right change, or the maintainers' fix on a bug where every run is wrong;
+- for an amended bug, the amendment's diff, since the amended tests are the truth here.
+
+Stage 2's bugs can now be read, as stage 3's runs have ended.
+
+**Labels.**
+- **What the commonest wrong change does differently:** `example_only`, `missed_stated_case`, `symptom_not_cause`,
+  `output_detail`, `api_shape`, `over_reach`, `other`.
+- **The cheapest evidence, without the maintainers' tests or fix, that tells the two apart:** `closer_issue_reading`,
+  `issue_discussion`, `issue_example`, `variant_of_issue_example`, `existing_tests`, `docs_or_docstrings`,
+  `analogous_code`, `callers`, `nothing_available`.
+- **Why many independent attempts make the same wrong change:** `example_shaped`, `nearest_code`, `literal_reading`,
+  `convention_not_visible`, `other`.
+
+**What each outcome decides.** Read on the labels both raters agree on, with agreement reported.
+- **If evidence from running inputs leads, on half or more:** `variant_of_issue_example` or `issue_example`. The next
+  step is executed, not prompted. G6 composes variants of the issue's example along the rule's other inputs and paths,
+  then runs them on the parent and on each candidate, with no model judging the result.
+- **If evidence from the repository leads:** `analogous_code`, `callers`, `existing_tests` or `docs_or_docstrings`. The
+  next step gathers that evidence for the author before it edits, through G6's existing context and grounding
+  components, and the reviewer gets the same.
+- **If `nothing_available` leads:** these bugs turn on intent the issue does not give. The target excludes them, and is
+  restated with that number.
+
+Whichever step it is, it is scored on bugs not yet used.
