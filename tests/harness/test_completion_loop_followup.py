@@ -190,6 +190,80 @@ def test_a_patch_with_no_secret_reaches_the_reviewer_as_it_is(rig):
     assert loop.MASKED_NOTE.split(".")[0] not in rig.calls[0]
 
 
+def test_a_tracked_files_working_bytes_are_named_in_the_patch(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "calc.py").write_bytes(b"def add(a, b):\n    return a + b + 0\n")
+    text = repo_tests.diff_text(repo_tests.change(repo))
+    assert hashlib.sha256((repo / "calc.py").read_bytes()).hexdigest() in text
+
+
+def test_line_endings_git_converts_in_a_tracked_file_still_make_another_patch(tmp_path):
+    from tests.workforce.test_repo_tests import git
+
+    repo = _repo(tmp_path)
+    (repo / "lf.py").write_bytes(b"value = 1\n")          # committed with LF, so git converts a CRLF copy back to it
+    git(repo, "add", "lf.py")
+    git(repo, "commit", "-q", "-m", "lf")
+    git(repo, "config", "core.autocrlf", "true")
+    (repo / "lf.py").write_bytes(b"value = 2\n")
+    before = repo_tests.diff_text(repo_tests.change(repo))
+    (repo / "lf.py").write_bytes(b"value = 2\r\n")
+    after = repo_tests.diff_text(repo_tests.change(repo))
+    shown = [line for line in before.splitlines() if not line.startswith("\\ G6:")]
+    assert shown == [line for line in after.splitlines() if not line.startswith("\\ G6:")]    # git's own text is one
+    assert before != after
+
+
+def test_a_repeat_over_mcp_after_a_refusal_before_any_review_and_an_edit_says_it_tested_nothing(rig, monkeypatch):
+    monkeypatch.setattr(proposer, "boundary", lambda _: "boundary unavailable")
+    args = (str(rig.repo), TASK, "refused-before-review")
+    stopped = review_loop.step(*args, base=rig.base)
+    assert stopped["ending"] == "untested" and not rig.calls
+    rig.source.write_bytes(b"value = 999\n")
+    changed = review_loop.step(*args, base=rig.base)
+    assert changed["completion_state"] == "blocked-escalated" and review_loop.CHANGED in changed["report"]
+    assert changed["error"].startswith("[G6_E_ISOLATION_UNAVAILABLE]")
+
+
+def test_a_repeat_over_mcp_of_the_patch_a_refusal_ended_on_gives_that_ending_again(rig, monkeypatch):
+    class FindsOne:
+        model = "recorded-reviewer"
+
+        def complete(self, system, user):
+            rig.calls.append(user)
+            proof = re.search(r"review [0-9a-f]{32}", user)[0]
+            return (f"READ: {proof}\nRULE: value must be one\nVERDICT: defect\nWHY: the value is wrong\n```python\n"
+                    "def test_value():\n    assert False\n```\n")
+
+    rig.critic = FindsOne()
+    monkeypatch.setattr(loop, "run_set", lambda *args, **kwargs: loop.ProbeRun(      # a recorded run: no test executes
+        1, {"test_critic.py::test_value": "failed"}, {"test_critic.py::test_value": "assert False"}, boundary="recorded-boundary"))
+    args = (str(rig.repo), TASK, "edited-then-refused")
+    assert review_loop.step(*args, base=rig.base)["action"] == loop.CONTINUE
+    rig.source.write_bytes(b"value = 42\n")                # the agent's repair, which no review read
+    monkeypatch.setattr(proposer, "boundary", lambda _: "boundary became unavailable")
+    stopped = review_loop.step(*args, base=rig.base)
+    again = review_loop.step(*args, base=rig.base)
+    assert stopped["ending"] == again["ending"] == "open" and again["report"] == stopped["report"]
+    assert review_loop.CHANGED not in again["report"]
+
+
+def test_a_secret_in_a_parent_file_the_pack_cuts_never_reaches_the_reviewer(rig, monkeypatch):
+    from g6.context.redact import scrub
+
+    secret = "made-up-value-for-this-test-77"
+    patch = "--- a/mod.py\n+++ b/mod.py\n@@ -1 +1 @@\n-value = 0\n+value = 1\n"
+    head = loop._head(patch, TASK, "review " + "0" * 32) + "\n\nparent/mod.py:\n"
+    assignment = f"token = '{secret}'\n"
+    room = loop.MAX_PACK_CHARS - len(head) - (len(assignment) - 2)      # the cap falls after the value, before its quote
+    parent = "#" * (room - 1) + "\n" + assignment
+    assert secret not in scrub(parent) and secret in scrub(parent[:-2])
+    monkeypatch.setattr(repo_tests, "read_at", lambda *args: parent)
+    found = loop.run_critic(rig.change, TASK, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch)
+    assert len(rig.calls) == 1 and secret not in rig.calls[0] and found["masked"] >= 1
+    assert rig.calls[0].startswith("issue.txt:\n") and patch in rig.calls[0]       # the head the review reads stays whole
+
+
 def test_the_line_that_names_the_bytes_is_no_line_of_code(tmp_path):
     from g6.coding_agent_gate import scan_diff
 
