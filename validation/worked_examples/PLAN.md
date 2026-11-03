@@ -1443,3 +1443,19 @@ Four more held-out runs drew a defect with no test behind it, all on wrong patch
 part right patches from wrong ones: on the fresh bugs' amended tests a reproduced defect fell on a right patch more often than
 "nothing found" did, and on the held-out bugs "nothing found" came before a wrong patch 32 times in 35. This is the baseline
 the replay of 2026-11-03 (afternoon) is measured against, and it agrees with the first-review calibration read after stage 1.
+
+## 2026-11-03 (night): replay 2's effort, and failed reviews in both replays, before any of their runs
+
+**Effort.** Replay 2 calls Codex as the product's reviewer does, through the product's caller, which leaves Codex at its
+default reasoning effort; the final review it is matched against ran Codex at high effort. So replay 2 measures the product's
+reviewer as it ships, its pack and its effort together. A match under 85% says, as registered, that the product does not
+carry the measured reviewer's behaviour; it does not by itself say the pack is the cause. If that matters for what follows,
+a follow-up gives the product's pack to Codex at high effort, so the two are told apart, and it is registered before it runs.
+Replay 1 uses the final review's own call, at high effort, so its comparison has no such difference.
+
+**Failed reviews.** In both replays a review that failed for any reason is no review: it is saved as failed, counted nowhere
+and made again on a resumed run. That covers a provider limit, a reviewer process that ends in failure whatever it printed,
+a reply that does not quote its pack or gives no verdict, a container, git or patch that fails, and a saved record that
+cannot be read. Two reviewer failures in a row pause the replay, as a Codex limit does; a container, git or patch failure is
+not the reviewer's and does not count toward the pause. The futility stop is read before each review, so a resumed replay
+honours a stop its saved reviews already make.
