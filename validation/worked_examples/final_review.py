@@ -312,11 +312,23 @@ def read(path: Path) -> dict[str, Any] | None:
     return got if isinstance(got, dict) else None
 
 
+#: The words a review says that count: the final review's and replay 1's (``said``), and the product's (``product_review.said``).
+#: "failed" is no review, and so is a record whose word is none of these.
+WORDS = frozenset({"reproduced", "opinion", "none", "defect", "too long"})
+
+
+def counts(found: Mapping[str, Any] | None) -> bool:
+    """Whether a saved review counts: it says one of the ``WORDS``. The one test of a review, for the replays that schedule
+    reviews and for the counts read from them alike, so that a patch is never both waiting for a review and counted."""
+    said = (found or {}).get("said")
+    return isinstance(said, str) and said in WORDS
+
+
 def said_of(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> str | None:
-    """What the review said of this run's patch as it stands; None if it has no review, the review failed, or its record cannot be
-    read."""
-    got = (saved(root, row, folder) or {}).get("said")
-    return None if got == "failed" else got
+    """What the review said of this run's patch as it stands; None if it has no review that ``counts``: none at all, one that
+    failed, one whose word is no reviewer's, or a record that cannot be read."""
+    got = saved(root, row, folder)
+    return got["said"] if counts(got) else None
 
 
 def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: str = FOLDER) -> None:

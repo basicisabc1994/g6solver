@@ -75,7 +75,8 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
 
 
 def counted(review: Mapping[str, Any] | None) -> bool:
-    return review is not None and review.get("said") != "failed"
+    """Whether a review is counted: by the test the replays schedule by (``final_review.counts``), so no patch is both."""
+    return fr.counts(review)
 
 
 def right(name: str, said: str, truth: bool) -> bool | None:
@@ -151,7 +152,8 @@ def futile(root: Path, tasks: Iterable[str], name: str, *, block: int = BLOCK) -
 
 
 def _blocks(rows: Rows, name: str, block: int = BLOCK) -> Iterator[tuple[bool, str]]:
-    """``futility``'s reading of one replay, block by block: whether its prediction can still be reached, and the line saying so."""
+    """``futility``'s reading of one replay, block by block: whether its prediction can still be reached, and the line saying so.
+    Only whole blocks are read, as registered: the patches after the last whole block are no checkpoint of their own."""
     order = list(rows)
     pool = [sha for sha, one in rows.items() if one["amended"] is not None and counted(one[FROZEN])]
     truths = sum(rows[sha]["amended"] for sha in pool)
@@ -162,11 +164,11 @@ def _blocks(rows: Rows, name: str, block: int = BLOCK) -> Iterator[tuple[bool, s
 
     frozen_right, frozen_alarms = standing(FROZEN, pool)
     matching = [sha for sha, one in rows.items() if counted(one[FROZEN])]
-    for number, end in enumerate(range(block, len(order) + block, block), 1):
+    for number, end in enumerate(range(block, len(order) + 1, block), 1):
         if any(rows[sha][name] is None for sha in order[:end]):
             break
         done = set(order[:end])
-        place = f"futility {name}, block {number} (patches {end - block + 1}-{min(end, len(order))} by digest)"
+        place = f"futility {name}, block {number} (patches {end - block + 1}-{end} by digest)"
         if name == REPRODUCE:
             kept = [sha for sha in pool if sha in done and counted(rows[sha][name])]
             ours, alarms = standing(name, kept)

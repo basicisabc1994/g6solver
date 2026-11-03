@@ -172,6 +172,32 @@ def test_a_review_record_that_cannot_be_read_is_no_review(tmp_path, monkeypatch,
     assert "futility reproduce first" not in _report(archive.root, capsys, ["x-1"], futile=True, block=2)
 
 
+@pytest.mark.parametrize("record", [{"task": "x-1", "first_seen_in": "run/A1"}, {"said": None}, {"said": "maybe"},
+                                    {"said": ["none"]}])
+def test_a_record_with_no_word_a_reviewer_gives_is_no_review_to_the_counts_and_the_scheduler(tmp_path, monkeypatch, record):
+    archive = _Archive(tmp_path / "round3", monkeypatch)
+    sha = archive.run("x-1", "one", True, True)
+    for _, folder in rc.REVIEWERS:
+        (archive.root / "loop" / folder).mkdir(exist_ok=True)
+        (archive.root / "loop" / folder / f"{sha}.json").write_text(json.dumps(record), "utf-8")
+        assert len(fr.waiting(archive.root, ["x-1"], folder)) == 1
+    rows = rc.patches(archive.root, ["x-1"])
+    for name, _ in rc.REVIEWERS:
+        assert not rc.counted(rows[sha][name]) and rc.tally(rows, name, "amended")["n"] == 0, name
+
+
+def test_a_last_block_short_of_a_whole_one_is_no_checkpoint(tmp_path, monkeypatch, capsys):
+    archive = _Archive(tmp_path / "round3", monkeypatch)
+    shas = sorted(archive.run("x-1", str(n), True, True) for n in range(3))
+    for sha in shas:
+        archive.said(fr.FOLDER, sha, "none")
+    for sha, said in zip(shas, ("failed", "none", "defect")):     # the failed one waits to be made again
+        archive.said(pr.FOLDER, sha, said)
+    assert rc.futile(archive.root, ["x-1"], rc.PRODUCT, block=2) == ""
+    out = _report(archive.root, capsys, ["x-1"], futile=True, block=2)
+    assert "futility product, block 1" in out and "futility product, block 2" not in out
+
+
 @pytest.mark.parametrize("last", ["failed", "reproduced"])
 def test_a_failed_review_is_still_to_be_made_so_the_stop_still_applies(tmp_path, monkeypatch, last):
     archive, shas = _four(tmp_path, monkeypatch)

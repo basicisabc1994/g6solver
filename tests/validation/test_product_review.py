@@ -197,9 +197,24 @@ def test_the_pack_is_what_claude_nexts_pack_builds_from_the_same_patch(tmp_path)
     ("diff --git a/a b.py b/a b.py\ndeleted file mode 100644\n", ("a b.py",)),
     ('diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n', ("café.py",)),
     ("diff --git a/i.png b/i.png\nindex 1..2\nGIT binary patch\nliteral 3\nKcmZ\n", ("i.png",)),
+    # whatever prefixes git was set to write: each side read as ``git apply`` reads it, one leading part off
+    ("diff --git old/src/a.py new/src/a.py\n--- old/src/a.py\n+++ new/src/a.py\n", ("src/a.py",)),
+    ("diff --git x/src/a b.py yy/src/a b.py\n", ("src/a b.py",)),
+    ("diff --git a/a b/c b/a b/c\n", ("a b/c",)),
+    ('diff --git "old/caf\\303\\251.py" "new/caf\\303\\251.py"\n', ("café.py",)),
 ])
 def test_the_files_a_patch_touches_are_the_ones_git_would_list(patch, files):
     assert pr.touched(patch) == files
+
+
+@pytest.mark.parametrize("prefixes", [(), ("--src-prefix=old/", "--dst-prefix=new/"), ("--src-prefix=x/", "--dst-prefix=yy/")])
+def test_a_real_diff_with_any_prefixes_touches_the_files_git_lists(prefixes):
+    def git(*args):
+        return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=True, timeout=60).stdout.decode("utf-8")
+
+    where = ("5350e2e", "HEAD", "--", "validation/worked_examples", "tests/validation")
+    listed = tuple(sorted(git("diff", "--name-only", "--no-renames", *where).splitlines()))
+    assert listed and pr.touched(git("diff", "--no-renames", *prefixes, *where)) == listed
 
 
 # --- one review ---------------------------------------------------------------------------------------------------------------

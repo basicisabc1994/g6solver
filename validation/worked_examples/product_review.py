@@ -24,7 +24,7 @@ import subprocess
 import tarfile
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,18 +99,39 @@ def _unquoted(name: str) -> str:
     return name
 
 
+def _applied(name: str) -> str:
+    """A header's path as ``git apply`` reads it, as the study applies every saved patch: one leading part off (its ``-p1``),
+    whatever prefix git was set to write, ``a/`` or another; "" where there is no part to take off."""
+    return name.split("/", 1)[1] if "/" in name else ""
+
+
+def _sides(rest: str) -> Iterator[tuple[str, str]]:
+    """The two names of a ``diff --git`` header as git wrote them, at each place they may part: after a quoted first name, or
+    at each space of an unquoted one, since a path may hold a space."""
+    if rest.startswith('"'):
+        end = 1
+        while end < len(rest) and rest[end] != '"':
+            end += 2 if rest[end] == "\\" else 1
+        yield rest[:end + 1], rest[end + 2:]
+        return
+    for at, char in enumerate(rest):
+        if char == " ":
+            yield rest[:at], rest[at + 1:]
+
+
 def touched(patch: str) -> tuple[str, ...]:
     """The files a patch touches, sorted, as the product's ``repo_tests.change`` lists them for the tree the patch makes: git's
-    ``--no-renames`` names both paths of a move. Read from each file's header line and its rename or copy lines, never from its
-    hunks, whose lines all begin with a space, a plus or a minus."""
+    ``--no-renames`` names both paths of a move. Read from each file's header line, where both sides name one path once their
+    prefixes are off (``_applied``), and its rename or copy lines, never from its hunks, whose lines all begin with a space, a
+    plus or a minus."""
     found: set[str] = set()
     for line in patch.split("\n"):
         if line.startswith("diff --git "):
-            rest = line[len("diff --git "):]
-            half = (len(rest) - 1) // 2
-            old, new = _unquoted(rest[:half]), _unquoted(rest[half + 1:])
-            if old.startswith("a/") and new.startswith("b/") and old[2:] == new[2:]:
-                found.add(old[2:])
+            for old, new in _sides(line[len("diff --git "):]):
+                path = _applied(_unquoted(old))
+                if path and path == _applied(_unquoted(new)):
+                    found.add(path)
+                    break
         elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
             found.add(_unquoted(line.split(" ", 2)[2]))
     return tuple(sorted(found))
