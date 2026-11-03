@@ -98,8 +98,8 @@ _ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34,
 
 def _unquoted(name: str) -> str:
     """A path as git writes it in a patch: in double quotes with C escapes when it holds an unusual character, read back to
-    the bytes git escaped, as UTF-8. A character git left as it is (as it leaves UTF-8 with ``core.quotePath`` off) is its
-    own UTF-8."""
+    the bytes git escaped, as UTF-8 with any other byte kept (``surrogateescape``), as the product's own listing of paths
+    keeps it. A character git left as it is (as it leaves UTF-8 with ``core.quotePath`` off) is its own bytes."""
     if not (len(name) > 1 and name[0] == name[-1] == '"'):
         return name
     body, out, at = name[1:-1], bytearray(), 0
@@ -112,9 +112,9 @@ def _unquoted(name: str) -> str:
             out.append(_ESCAPES[body[at + 1]])
             at += 2
         else:
-            out += body[at].encode("utf-8", "surrogatepass")
+            out += body[at].encode("utf-8", "surrogateescape")
             at += 1
-    return out.decode("utf-8", "replace")
+    return out.decode("utf-8", "surrogateescape")
 
 
 def _applied(name: str) -> str:
@@ -193,6 +193,22 @@ def codex(system: str, user: str) -> str:
     return host_models.CodexCaller(timeout=CRITIC_SECONDS).complete(system, user)
 
 
+#: Why a patch that touches a file whose name is not UTF-8 has no review here: the product names such a file to git by its
+#: bytes, but this replay names it through ``docker exec`` from Windows, which cannot carry those bytes, so its parent text
+#: would be left out without a word. It fails before anything starts, and is counted nowhere.
+UNNAMED = ("the patch touches a file whose name is not UTF-8, which this replay cannot name to git in the container, so no "
+           "reviewer was asked")
+
+
+def _named(rel: str) -> bool:
+    """Whether a path can be named to git through ``docker exec`` as it stands: its bytes are UTF-8."""
+    try:
+        rel.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def said(found: Mapping[str, Any]) -> str:
     """What the product's review said: its verdict, "defect" or "none", as it runs no test; "too long" where the product asks no
     one; and "failed" where there was no review, which is no verdict at all."""
@@ -208,10 +224,15 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
     review's ``issue.txt`` holds. A pack whose head does not fit starts nothing and asks no one, as the product asks no one."""
     started = time.monotonic()
     found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
-    diff, issue = patch.read_bytes().decode("utf-8", "replace"), f"{title}\n\n{text}"
+    raw = patch.read_bytes()
+    diff, issue = raw.decode("utf-8", "replace"), f"{title}\n\n{text}"
+    files = touched(raw.decode("utf-8", "surrogateescape"))    # a name keeps its bytes, as the product's listing keeps them
     size, asking = 0, False
     if not _read_whole(diff, issue):
         found["error"] = TOO_LONG
+        return {**found, "said": said(found), "pack_chars": size, "cut": False, "seconds": round(time.monotonic() - started, 1)}
+    if any(not _named(rel) for rel in files):
+        found["error"] = UNNAMED
         return {**found, "said": said(found), "pack_chars": size, "cut": False, "seconds": round(time.monotonic() - started, 1)}
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     image, _ = we.image_names(task, str(ctx.g6["commit"]), ctx.variant)
@@ -226,7 +247,7 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
                     raise RuntimeError(f"git {args[0]} at the parent failed ({done.returncode}): {fr.ended(we.err(done))[-200:]}")
                 return done.stdout
 
-            parent = parent_files(git, task.parent, touched(diff))
+            parent = parent_files(git, task.parent, files)
         finally:
             ctx.docker("rm", "-f", name, timeout=300)
         proof = f"review {uuid.uuid4().hex}"

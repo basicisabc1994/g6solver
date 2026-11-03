@@ -211,6 +211,8 @@ def test_the_pack_is_what_claude_nexts_pack_builds_from_the_same_patch(tmp_path)
     ("diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n@@ -1,2 +1 @@\n--- x/comment\n-y\n+z\n", ("q.sql",)),
     # git's tab after a name that holds a space
     ("diff --git a/a b.py b/a b.py\n--- a/a b.py\t\n+++ b/a b.py\t\n@@ -1 +1 @@\n-x\n+y\n", ("a b.py",)),
+    # a name that is not UTF-8 keeps its bytes, as the product's own listing does (surrogateescape)
+    ('diff --git "a/odd-\\377.py" "b/odd-\\377.py"\nold mode 100644\nnew mode 100755\n', ("odd-\udcff.py",)),
 ])
 def test_the_files_a_patch_touches_are_the_ones_git_would_list(patch, files):
     assert pr.touched(patch) == files
@@ -333,6 +335,17 @@ def test_a_parent_file_git_cannot_read_fails_the_review_and_asks_no_one(tmp_path
     reviewer = _Reviewer(QUIET)
     got = _review(tmp_path, reviewer, _GitFails(command))
     assert got["said"] == "failed" and f"git {command}" in got["error"] and reviewer.calls == [] and not fr.no_review(got)
+
+
+@pytest.mark.parametrize("raw", [b'diff --git "a/odd-\\377.py" "b/odd-\\377.py"\nold mode 100644\nnew mode 100755\n',
+                                 b"diff --git a/odd-\xff.py b/odd-\xff.py\nold mode 100644\nnew mode 100755\n"])
+def test_a_file_whose_name_is_not_utf8_fails_the_review_before_anything_starts(tmp_path, raw):
+    patch = tmp_path / "final.patch"
+    patch.write_bytes(raw)
+    reviewer, docker = _Reviewer(QUIET), _Docker()
+    got = pr.review(_ctx(tmp_path, docker), we.task_by_id(TASK), patch, "a title", "the issue", reviewer=reviewer)
+    assert got["said"] == "failed" and "UTF-8" in got["error"] and reviewer.calls == [] and docker.calls == []
+    assert not fr.no_review(got)
 
 
 def test_a_file_the_parent_does_not_hold_is_left_out_and_is_no_failure(tmp_path):
