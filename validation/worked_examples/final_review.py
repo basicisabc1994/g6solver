@@ -197,22 +197,27 @@ def container(ctx: we.Context, task: we.Task, name: str) -> None:
                "review container")
 
 
-def test_runs(ctx: we.Context, task: we.Task, name: str, test: str, patch: Path, where: str,
-              file: str) -> tuple[we.ProbeRun, we.ProbeRun]:
-    """A reviewer's test in ``name``'s ``where``, run on the parent, then with ``patch`` applied: the one way every replay runs one."""
+def parent_run(ctx: we.Context, task: we.Task, name: str, test: str, where: str, file: str) -> we.ProbeRun:
+    """A reviewer's test written in ``name``'s ``where`` and run on the parent: the first half of the one way every replay runs
+    one, kept apart so that a patch that then fails to apply leaves this run's result in hand."""
     we.write_in(ctx.docker, name, f"{where}/{file}", test + "\n", user="root")
-    base = we.run_set(ctx, task, name, where)
+    return we.run_set(ctx, task, name, where)
+
+
+def patch_run(ctx: we.Context, task: we.Task, name: str, patch: Path, where: str) -> we.ProbeRun:
+    """The second half: ``patch`` applied in ``name``, and the test in ``where`` run again."""
     we.checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
     if ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo).returncode != 0:
         raise RuntimeError("the patch does not apply")
-    return base, we.run_set(ctx, task, name, where)
+    return we.run_set(ctx, task, name, where)
 
 
 def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, prompt: str, where: str, file: str, *,
-          candidate: bool) -> tuple[dict[str, Any], we.ProbeRun | None, we.ProbeRun | None]:
+          candidate: bool, run: bool = True) -> tuple[dict[str, Any], we.ProbeRun | None, we.ProbeRun | None]:
     """One of replay 1's two steps, made as ``review`` makes the frozen review: its own container (``container``), a pack with
     ``prompt`` and the issue, the parent and, if ``candidate``, the patch, and the reviewer's test, if it wrote one, in ``where``,
-    run on the parent and then on the patch (``test_runs``)."""
+    run on the parent (``parent_run``) and then on the patch (``patch_run``). With ``run`` false it returns once the reviewer has
+    answered, so a caller can keep the answer before anything is run."""
     found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
     pack = ctx.archive.root / "critic_packs" / proof.split()[1]   # an ordinary folder, as ``review`` says
@@ -238,8 +243,9 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
         reply = (ctx.critic or codex)(pack)
         asking = False
         found = answered(we.critic_report(reply, proof=proof), reply)
-        if found["test"]:
-            base, now = test_runs(ctx, task, name, found["test"], patch, where, file)
+        if found["test"] and run:
+            base = parent_run(ctx, task, name, found["test"], where, file)
+            now = patch_run(ctx, task, name, patch, where)
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
         if asking:
@@ -348,8 +354,14 @@ def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: s
     short leaves no half record."""
     path = _kept(root, row, folder)
     path.parent.mkdir(exist_ok=True)
+    write_whole(path, json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))
+
+
+def write_whole(path: Path, text: str) -> None:
+    """``text`` saved at ``path`` whole or not at all: written beside it and moved there, so a write cut short leaves no half
+    file. The one way the replays save a record."""
     part = path.with_name(f"{path.name}.{os.getpid()}.part")     # draws no uuid: the frozen review's proofs stay as they were
-    part.write_text(json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1), "utf-8")
+    part.write_text(text, "utf-8")
     part.replace(path)
 
 

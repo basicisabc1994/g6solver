@@ -1418,3 +1418,138 @@ first on a pilot of the first 40 patches by digest. After each block of 40 a reg
 when even every remaining patch going its way could not reach its prediction, and only then; it never stops early for
 success. Nothing is dropped or rerun for a better result. Counts are read on unseen bugs only, as before. A Codex limit
 pauses a replay; it resumes where it stopped, and a review that failed on a limit is not counted as a review.
+
+## 2026-11-03 (afternoon, later): where stage 1's final review stands
+
+Stage 1's final review, which is report only and changes no score, verdict or rule, was stopped by the machine's
+low-memory guard with 165 of about 185 patches reviewed. Each review is saved as it ends and a rerun skips the saved ones,
+so it resumes where it stopped; it is restarted only when the owner asks, and its counts are reported then, whole. The three
+stages' results above stand without it: stage 1, uplift not shown; stage 2, uplift not shown, the review loop 3-0 ahead of
+Claude Code alone (p 0.125) on both scores; stage 3, nothing adopted. The 95% target is met in none.
+
+## 2026-11-03 (evening): stage 1's final review, whole
+
+Restarted at the owner's word, it ended with every patch of stage 1's fresh and held-out bugs reviewed. Report only: it
+changes no score, verdict or rule above. `compare.py`'s tables, pooled once per arm over A, T, R, M9 and K1, counted by run:
+whether the run's patch was right, given what the final review said of it.
+
+| Stage 1 | Review reproduced a defect | Review found nothing |
+|---|---|---|
+| 11 fresh bugs, amended tests | right 57 of 86 (66%) | right 12 of 24 (50%) |
+| 11 fresh bugs, maintainers' tests | right 37 of 86 (43%) | right 9 of 24 (38%) |
+| 3 held-out bugs, both scores | right 18 of 30 (60%) | right 3 of 35 (9%) |
+
+Four more held-out runs drew a defect with no test behind it, all on wrong patches. On unseen bugs the review's word does not
+part right patches from wrong ones: on the fresh bugs' amended tests a reproduced defect fell on a right patch more often than
+"nothing found" did, and on the held-out bugs "nothing found" came before a wrong patch 32 times in 35. This is the baseline
+the replay of 2026-11-03 (afternoon) is measured against, and it agrees with the first-review calibration read after stage 1.
+
+## 2026-11-03 (night): replay 2's effort, and failed reviews in both replays, before any of their runs
+
+**Effort.** Replay 2 calls Codex as the product's reviewer does, through the product's caller, which leaves Codex at its
+default reasoning effort; the final review it is matched against ran Codex at high effort. So replay 2 measures the product's
+reviewer as it ships, its pack and its effort together. A match under 85% says, as registered, that the product does not
+carry the measured reviewer's behaviour; it does not by itself say the pack is the cause. If that matters for what follows,
+a follow-up gives the product's pack to Codex at high effort, so the two are told apart, and it is registered before it runs.
+Replay 1 uses the final review's own call, at high effort, so its comparison has no such difference.
+
+**Failed reviews.** In both replays a review that failed for any reason is no review: it is saved as failed, counted nowhere
+and made again on a resumed run. That covers a provider limit, a reviewer process that ends in failure whatever it printed,
+a reply that does not quote its pack or gives no verdict, a container, git or patch that fails, and a saved record that
+cannot be read. Two reviewer failures in a row pause the replay, as a Codex limit does; a container, git or patch failure is
+not the reviewer's and does not count toward the pause. The futility stop is read before each review, so a resumed replay
+honours a stop its saved reviews already make, and a patch whose review failed is still to be reviewed while it waits. It is
+read on stage 1 and 2 together, where the predictions are; the training patches, reported apart, have no prediction and so no
+stop.
+
+## 2026-11-04 (early): replay 1's pilot, what the saved reviews show, and a test of the issue's rule
+
+Written after reading replay 1's pilot and the saved reviews below, and before any run that follows.
+
+**Replay 1's pilot.** It ran from claude/replays-followup 4fed39c on the first 40 patches by digest of stage 1 and 2's bugs. It
+used the Codex sign-in, took 107 minutes, and had no failed review. On the 40 paired patches the frozen review and the
+reproducing review were right as often: 24 and 24 on the amended tests (one patch each way), and 25 and 26 on the
+maintainers'. The prediction was a rise of 10 points. The registered futility stop does not fire, as it stops only when
+success is arithmetically out of reach, and 380 patches remain.
+
+**Replay 1 pauses after its pilot.** This is a rule written now, after the pilot. Going on would spend about 17 more
+hours of the sign-in on an effect that 38 equal pairs in 40 make unlikely. A stop for futility can only lose a true
+effect; it cannot make one. The pilot is reported as a pilot, with its intervals. The hypothesis is not refuted at
+n = 40, and the run can resume where it stopped.
+
+**Replay 2 is held.** It measures whether the product's reviewer matches the frozen one. The frozen one's verdict barely
+moves the odds (below), so a match or a mismatch would decide nothing now.
+
+**What the saved reviews show** (counts read with plain code from the saved records and the truth, no model call):
+- On stage 1 and 2's 420 patches, amended tests, the frozen review agrees with the truth on 52.6%. It raises a false
+  alarm on 49.5% of right patches and misses 43.3% of wrong ones.
+- A patch the review said "reproduced" is wrong 38% of the time. After "none" it is 28%, and the base rate is 34%.
+- The review's test passing on the parent and failing on the patch (introduced by the patch) carries a signal on the
+  maintainers' tests: 66% wrong, against 53%. It carries none on the amended tests (39% against 37%), and the pattern
+  reverses on the training bugs.
+- In the pilot, step 1's test of the issue's own example passes on the patch for 33 of the 34 patches whose bug it
+  reproduced, wrong patches included (11 on the amended tests, 16 on the maintainers'). The agents' wrong patches fix
+  the issue's example. They fail on the behaviour around it.
+
+**Replay 3, registered now: a test of the issue's rule, written once per bug.**
+- **What it is.** A reviewer is shown the issue and the parent, never a patch. It writes one test of the rule the issue
+  states: the example, its variants a maintainer would also expect to hold, and the other paths that share the code.
+  Each case is its own test. G6 runs the test on the parent and on each distinct patch of that bug.
+- **A patch's verdict.** A test that fails no case on the parent reproduces nothing: the bug has no verdict, and its
+  patches count as "none". Otherwise a patch is "wrong" when any case fails on it.
+- **Cost.** One call per bug, not per patch.
+- **Development.** On the training bugs only, with at most three versions of the instruction, chosen by agreement on
+  the training patches. The instruction is then frozen and its digest written here before stage 1 and 2 run. It may
+  state the rule in general words only: no bug, file or issue of any stage.
+- **Measures, as replay 1's.** Agreement with the truth, false alarms on right patches and misses on wrong ones, on both
+  scores. It is paired with the frozen review by patch and by bug.
+- **Prediction, on stage 1 and 2 together, amended tests:** agreement at least 10 points above the frozen review's
+  52.6%, with false alarms on right patches under 25%.
+- **Kill rule.** Agreement up by less than 5 points, or false alarms not under 40%: then a test of the rule is no
+  better a judge than the review, and the next frame is the maintainers' intent.
+- **What it changes.** If it holds, the review loop's reviewer gains this step for the next study, sized before it runs.
+  Nothing here is a score of G6 against Claude Code.
+
+## 2026-11-04 (early, later): replay 3's measure, before its second version and before any scored run
+
+Written after replay 3's first development run (training bugs only, instruction 838d8da877502eee), and before any other run.
+
+**The development run.** It ran from claude/replay3 7c9609b on the 7 training bugs and 129 patches, in 30 minutes, with
+7 reviewer calls and no failure. Every patch of a bug got the same verdict.
+- On the maintainers' tests: false alarms 0 of 80, misses 30 of 49, agreement 76.7%. All 19 patches it flagged were
+  wrong.
+- On the amended tests: false alarms 17 of 97 (all on one bug, where the two scores differ), misses 30 of 32,
+  agreement 63.6%.
+- Paired with the frozen review on its 79 patches: right 53 and 53, with 17 patches each way.
+
+**A flaw in the registered measure, found now.** On stage 1 and 2, 279 of 420 patches are right on the amended tests. A
+reviewer that always says "none" would agree on 66.4%, with no false alarm. That meets replay 3's prediction, at least
+62.6% and false alarms under 25%, while finding nothing. The frozen review's 52.6% is below that constant. Agreement
+rewards abstaining wherever most patches are right. Replay 1's prediction had the same weakness, though its pilot did
+not turn on it.
+
+**Replay 3's measure, prediction and kill rule, replacing the ones above:**
+- **Measure.** Balanced accuracy: the mean of the share of wrong patches caught and the share of right patches cleared,
+  on each score. A reviewer that always says the same thing scores 50%. Agreement, false alarms and misses are still
+  reported beside it.
+- **Prediction, on stage 1 and 2 together, amended tests:** balanced accuracy at least 10 points above the frozen
+  review's, with false alarms on right patches under 25%. The maintainers' tests are reported beside it.
+- **Kill rule.** Balanced accuracy up by less than 5 points, or false alarms not under 40%.
+- **Choosing the instruction.** By balanced accuracy on the training patches, not agreement. Version 2 aims at what
+  version 1 missed, in general words only: the dimensions the repository's own tests of the same feature cover.
+
+## 2026-11-04 (early, frozen): replay 3's instruction, before its scored run
+
+**Version 2** (fd359f6a87402b72, claude/replay3 97beb23) asked for the dimensions the repository's own tests of the
+feature cover, and 6 to 20 cases. On the 7 training bugs it gave the same verdict as version 1 on every one of the 129
+patches. Balanced accuracy ties: 44.4% on the amended tests and 69.4% on the maintainers'. The frozen review, which was
+developed on these bugs, scores 78.3% and 83.3% on its 79.
+
+**Frozen.** On a tie the earlier and simpler instruction stays: **838d8da877502eee** (claude/replay3 69ce2e1). The
+scored run on stage 1 and 2's 34 bugs uses it and no other, after one Codex review of the branch. Any repair from that
+review may touch the runner but not the instruction.
+
+**Read now, before the scored run.** Two instructions in different words, and two independent reviewer calls a bug, gave
+one verdict a bug, the same both times. A test of the issue's rule passes or fails a bug's patches together. So on
+unseen bugs it can at most tell bugs whose patches are mostly wrong from bugs whose patches are mostly right. That is
+weaker than a judge of each patch. Replay 3's prediction is unchanged and is read as registered.

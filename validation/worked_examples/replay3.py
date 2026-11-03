@@ -27,7 +27,6 @@ import final_review as fr
 import run as we
 import wecommon as c
 
-FOLDER = "final_review_rule"
 #: Where the rule's test waits in the container, apart from the other replays' tests, and its file.
 RULE_AT, FILE = f"{we.WE}/rule", "test_rule.py"
 #: The instruction, in general words only: no bug, file or issue of any stage. Its limits, its reply's form and its grounding rules
@@ -82,6 +81,9 @@ Do not ask questions. Finish.
 </default_follow_through_policy>
 """
 INSTRUCTION = hashlib.sha256(RULE_FIRST.encode("utf-8")).hexdigest()[:16]
+#: Each patch's verdict and each bug's test, by instruction: a record's identity holds the instruction it was made under, so a
+#: changed instruction finds nothing made under another and asks and runs again.
+FOLDER = f"final_review_rule-{INSTRUCTION}"
 Ask = Callable[..., tuple[dict[str, Any], "we.ProbeRun | None", "we.ProbeRun | None"]]
 Run = Callable[[Any, we.Task, str, Path], tuple["we.ProbeRun", "we.ProbeRun"]]
 
@@ -94,9 +96,11 @@ def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun
         said, reason = "failed", found.get("error") or "the reviewer gave no verdict"
     elif not found.get("test"):
         said, reason = "none", "no test was written"
+    elif base is None or now is None or base.exit is None or now.exit is None:
+        said, reason = "failed", "a test run gave no exit, as when the container fails, so nothing was learnt"
     elif not at_parent:
         said, reason = "none", "the test fails no case on the parent, so it reproduces nothing"
-    elif now is None or not now.usable:
+    elif not now.usable:
         said, reason = "none", "the test did not run with the patch"
     elif on_patch:
         said, reason = "reproduced", ""
@@ -118,29 +122,34 @@ def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path) -> tuple[we.P
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     try:
         fr.container(ctx, task, name)
-        return fr.test_runs(ctx, task, name, test, patch, RULE_AT, FILE)
+        base = fr.parent_run(ctx, task, name, test, RULE_AT, FILE)
+        return base, fr.patch_run(ctx, task, name, patch, RULE_AT)
     finally:
         ctx.docker("rm", "-f", name, timeout=300)
 
 
 def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mapping[str, Any]], title: str, text: str, *,
                ask: Ask | None = None, run: Run | None = None) -> list[dict[str, Any]]:
-    """Replay 3 on one bug's waiting patches: its test of the rule, asked once (or read back), then each patch's verdict, saved."""
+    """Replay 3 on one bug's waiting patches: its test of the rule, asked once and saved whole before anything runs (or read back),
+    then each patch, the first among them, run the one way (``run_on``) and its verdict saved."""
     ask, run = ask or fr._step, run or run_on
+    if not rows:
+        return []                                     # nothing waits, so no one is asked
     saved = bug_record(root, task.id)
-    found = json.loads(saved.read_text("utf-8"))["found"] if saved.is_file() else None
+    found = (fr.read(saved) or {}).get("found")       # one cut short is no record, and the bug is asked again
     got = []
-    for at, row in enumerate(rows):
+    if not isinstance(found, dict):
+        started = time.monotonic()
+        found, _, _ = ask(ctx, task, root / str(rows[0]["run"]) / "final.patch", title, text, RULE_FIRST, RULE_AT, FILE,
+                          candidate=False, run=False)
+        if found.get("error") or found.get("verdict") not in ("defect", "none"):
+            return [_keep(root, rows[0], verdict(found, None, None), started)]    # no review: asked again on the next run
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        fr.write_whole(saved, json.dumps({"task": task.id, "instruction": INSTRUCTION, "found": found}, indent=1))
+    for row in rows:
         started, patch = time.monotonic(), root / str(row["run"]) / "final.patch"
         base = now = None
-        if found is None:
-            found, base, now = ask(ctx, task, patch, title, text, RULE_FIRST, RULE_AT, FILE, candidate=False)
-            if found.get("error") or found.get("verdict") not in ("defect", "none"):
-                got.append(_keep(root, row, verdict(found, None, None), started))
-                return got                          # no review: the bug is asked again on the next run
-            saved.parent.mkdir(parents=True, exist_ok=True)
-            saved.write_text(json.dumps({"task": task.id, "instruction": INSTRUCTION, "found": found}, indent=1), "utf-8")
-        elif found.get("test"):
+        if found.get("test"):
             try:
                 base, now = run(ctx, task, found["test"], patch)
             except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
