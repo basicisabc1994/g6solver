@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +93,22 @@ Ask = Callable[..., tuple[dict[str, Any], "we.ProbeRun | None", "we.ProbeRun | N
 Run = Callable[[Any, we.Task, str, Path], tuple["we.ProbeRun", "we.ProbeRun"]]
 
 
+@dataclass(frozen=True)
+class Instruction:
+    """What the bug's reviewer is asked, its digest, the folder its records are saved in, and where its test waits in the
+    container: replay 3's own by default (``rule``), and another replay's when one is given."""
+    text: str
+    digest: str
+    folder: str
+    at: str
+    file: str
+
+
+def rule() -> Instruction:
+    """Replay 3's own instruction, read from this module's names when called."""
+    return Instruction(RULE_FIRST, INSTRUCTION, FOLDER, RULE_AT, FILE)
+
+
 def no_answer(found: Mapping[str, Any]) -> str:
     """Why the reviewer's answer is no answer, or "": an error, a verdict that is neither defect nor none, or a defect with no
     test, which a reply cut short gives. The one test of an answer, wherever replay 3 reads one."""
@@ -132,9 +150,10 @@ def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun
             "at_base": base.results if base else {}, "on_patch": now.results if now else {}}
 
 
-def bug_record(root: Path, task: str) -> Path:
+def bug_record(root: Path, task: str, ins: Instruction | None = None) -> Path:
     """Where a bug's test of the rule is saved: one a bug and instruction."""
-    return root / "loop" / FOLDER / "bugs" / f"{task}-{INSTRUCTION}.json"
+    ins = ins or rule()
+    return root / "loop" / ins.folder / "bugs" / f"{task}-{ins.digest}.json"
 
 
 class Checked:
@@ -156,38 +175,42 @@ class Checked:
         return done
 
 
-def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path) -> tuple[we.ProbeRun, we.ProbeRun]:
+def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path, ins: Instruction | None = None
+           ) -> tuple[we.ProbeRun, we.ProbeRun]:
     """A saved test of the rule on the parent and with ``patch``, in a container of its own, as replay 1 runs its tests, with an
     exec that failed raising (``Checked``)."""
+    ins = ins or rule()
     ctx = copy.copy(ctx)                              # the caller's context keeps its own docker
     ctx.docker = Checked(ctx.docker)
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     try:
         fr.container(ctx, task, name)
-        base = fr.parent_run(ctx, task, name, test, RULE_AT, FILE)
-        return base, fr.patch_run(ctx, task, name, patch, RULE_AT)
+        base = fr.parent_run(ctx, task, name, test, ins.at, ins.file)
+        return base, fr.patch_run(ctx, task, name, patch, ins.at)
     finally:
         ctx.docker("rm", "-f", name, timeout=300)
 
 
 def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mapping[str, Any]], title: str, text: str, *,
-               ask: Ask | None = None, run: Run | None = None) -> list[dict[str, Any]]:
+               ask: Ask | None = None, run: Run | None = None, ins: Instruction | None = None) -> list[dict[str, Any]]:
     """Replay 3 on one bug's waiting patches: its test of the rule, asked once and saved whole before anything runs (or read back),
-    then each patch, the first among them, run the one way (``run_on``) and its verdict saved."""
-    ask, run = ask or fr._step, run or run_on
+    then each patch, the first among them, run the one way (``run_on``) and its verdict saved. ``ins`` is replay 3's own unless
+    another replay gives its own."""
+    ins = ins or rule()
+    ask, run = ask or fr._step, run or functools.partial(run_on, ins=ins)
     if not rows:
         return []                                     # nothing waits, so no one is asked
-    saved = bug_record(root, task.id)
+    saved = bug_record(root, task.id, ins)
     found = (fr.read(saved) or {}).get("found")       # one cut short is no record, and the bug is asked again
     got = []
     if not isinstance(found, dict) or no_answer(found):    # a saved answer meets the same test as a fresh one
         started = time.monotonic()
-        found, _, _ = ask(ctx, task, root / str(rows[0]["run"]) / "final.patch", title, text, RULE_FIRST, RULE_AT, FILE,
+        found, _, _ = ask(ctx, task, root / str(rows[0]["run"]) / "final.patch", title, text, ins.text, ins.at, ins.file,
                           candidate=False, run=False)
         if no_answer(found):
-            return [_keep(root, rows[0], verdict(found, None, None), started)]    # no review: asked again on the next run
+            return [_keep(root, rows[0], verdict(found, None, None), started, ins=ins)]    # no review: asked again next run
         saved.parent.mkdir(parents=True, exist_ok=True)
-        fr.write_whole(saved, json.dumps({"task": task.id, "instruction": INSTRUCTION, "found": found}, indent=1))
+        fr.write_whole(saved, json.dumps({"task": task.id, "instruction": ins.digest, "found": found}, indent=1))
     for row in rows:
         started = time.monotonic()
         raw = (root / str(row["run"]) / "final.patch").read_bytes()    # one read: these bytes are run and named, nothing else
@@ -201,21 +224,24 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
                 base, now = run(ctx, task, found["test"], copy)
             except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 got.append(_keep(root, row, verdict({**found, "error": f"{type(exc).__name__}: {exc}"[:400]}, None, None),
-                                 started, sha))
+                                 started, sha, ins=ins))
                 continue
             finally:
                 copy.unlink(missing_ok=True)
-        got.append(_keep(root, row, verdict(found, base, now), started, sha))
+        got.append(_keep(root, row, verdict(found, base, now), started, sha, ins=ins))
     return got
 
 
-def _keep(root: Path, row: Mapping[str, Any], record: dict[str, Any], started: float, sha: str | None = None) -> dict[str, Any]:
-    record = {**record, "instruction": INSTRUCTION, "seconds": round(time.monotonic() - started, 1)}
-    fr.keep(root, row, record, FOLDER, sha=sha)
+def _keep(root: Path, row: Mapping[str, Any], record: dict[str, Any], started: float, sha: str | None = None, *,
+          ins: Instruction | None = None) -> dict[str, Any]:
+    ins = ins or rule()
+    record = {**record, "instruction": ins.digest, "seconds": round(time.monotonic() - started, 1)}
+    fr.keep(root, row, record, ins.folder, sha=sha)
     return record
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def main(argv: Sequence[str] | None = None, ins: Instruction | None = None) -> None:
+    ins = ins or rule()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--g6", default=we.R3_LOOP_G6, help="the G6 commit the runs' images were built from")
     ap.add_argument("--tasks", nargs="*", default=list(fr.TRAINING), help="the bugs to review; a bug being judged only after its runs end")
@@ -226,9 +252,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     import replay_compare     # here, as it imports this module
 
     replay_compare.patches(root, args.tasks)          # refuses a patch on two bugs, which this replay names by its bytes alone
-    print(json.dumps({"instruction": INSTRUCTION}), flush=True)
-    with one_runner(root / "loop" / FOLDER):
-        _run(ctx, root, args.tasks)
+    print(json.dumps({"instruction": ins.digest}), flush=True)
+    with one_runner(root / "loop" / ins.folder):
+        _run(ctx, root, args.tasks, ins)
 
 
 @contextlib.contextmanager
@@ -250,14 +276,15 @@ def one_runner(folder: Path) -> Iterator[None]:
         lock.unlink(missing_ok=True)
 
 
-def _run(ctx: we.Context, root: Path, tasks: Sequence[str]) -> None:
+def _run(ctx: we.Context, root: Path, tasks: Sequence[str], ins: Instruction | None = None) -> None:
+    ins = ins or rule()
     for name in tasks:
-        rows = fr.waiting(root, [name], FOLDER)
+        rows = fr.waiting(root, [name], ins.folder)
         if not rows:
             continue
         task = we.task_by_id(name)
         title, text = ctx.issue_reader(task)
-        for record in review_bug(ctx, root, task, rows, title, text + we.read_thread(task)):
+        for record in review_bug(ctx, root, task, rows, title, text + we.read_thread(task), ins=ins):
             print(json.dumps({"task": name, "said": record["said"], "reason": record["reason"], "seconds": record["seconds"],
                               "error": record["error"]}), flush=True)
 
