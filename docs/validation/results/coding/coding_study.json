@@ -1,0 +1,140 @@
+{
+  "what": "The coding study's counts: Claude Code fixing reported bugs in well-known Python projects, alone and inside review loops, each run scored afterwards by tests the agent never saw. Counts, arm names and public bug ids only: no task, issue, test or patch text. The Research page reads this file (web/pages/evidence.py, coding_study) and works out every total, share, sign test and range it states.",
+  "label": "Worked example: these runs show what happened in them and say nothing about how often G6 helps.",
+  "ended": "2026-11-03",
+  "model": "Claude Sonnet 5.5",
+  "sources": {
+    "plan": "validation/worked_examples/PLAN.md at commit 3f4aac5 (branch claude/runtime-k), the study's plan, written before each run, with its dated results; each block below names the section",
+    "rca": "commit 89a494a (branch claude/tick-rca), its message: tick_rca run on stage 3's tick, trimmed to pseudonymous ids, labels and outcomes (tests/metaharness/fixtures/stage3_tick.json)",
+    "lead": "the study's lead, 2026-11-03, from the study's records; these figures are not in PLAN.md"
+  },
+  "arms": {
+    "order": ["A", "T", "R", "M9", "K1", "K0"],
+    "comparators": ["A", "T"],
+    "judged": ["M9", "K1"],
+    "report_only": ["R", "K0"],
+    "with_reviewer": ["R", "M9", "K1", "K0"],
+    "max_repairs": 3,
+    "reviewer": "Codex",
+    "source": "plan: 2026-10-31 (night), a control, a trust measure and reference material (arm R); 2026-11-01 (later still), arm K; 2026-11-01 (evening), K1 is a named second primary; 2026-11-02, stage 1's result (arm K0); 2026-10-31, L7 retired unrun, and arm L8 (the scout loop's critic)"
+  },
+  "rule": {
+    "min_wins": 5,
+    "or": [7, 1],
+    "alpha": 0.05,
+    "target_pct": 95,
+    "interval_pct": 95,
+    "source": "plan: 2026-10-31, the loop frozen at L7, and how it is judged; 2026-10-31 (evening), the owner's new goal, in three stages"
+  },
+  "training": {
+    "bugs": 7,
+    "runs": 14,
+    "passed": {
+      "maintainers": {"A": 9, "M9": 12, "K1": 12},
+      "amended": {"A": 11, "M9": 14, "K1": 14}
+    },
+    "cost_per_run_usd": {"A": 0.06, "M9": 0.59, "K1": 0.11},
+    "note": "Tuned scores, on the bugs each loop was shaped on. M9's are L9's, the same scout loop's text on these bugs; arm A's cost is 'about $0.06'.",
+    "source": "plan: 2026-11-01 (midday), K1 frozen; 2026-11-01, L9 frozen"
+  },
+  "stage_1": {
+    "name": "unseen bugs in the training repositories",
+    "bugs": ["pydantic-13243", "black-5148", "click-3434", "click-3404", "starlette-3189", "fastapi-14616", "fastapi-13920", "black-5144", "attrs-1509", "starlette-3166", "pydantic-13133"],
+    "runs": 22,
+    "passed": {
+      "maintainers": {"A": 10, "T": 9, "R": 9, "M9": 9, "K1": 9},
+      "amended": {"A": 13, "T": 12, "R": 13, "M9": 16, "K1": 15}
+    },
+    "pairs": {
+      "A": {"maintainers": {"M9": [1, 2], "K1": [0, 1]}, "amended": {"M9": [4, 1], "K1": [3, 1]}},
+      "T": {"maintainers": {"M9": [0, 0], "K1": [1, 1]}, "amended": {"M9": [4, 0], "K1": [4, 1]}}
+    },
+    "source": "plan: 2026-11-02, stage 1's result (the eleven fresh bugs); the bugs from 2026-10-31, the loop frozen at L7"
+  },
+  "stage_2": {
+    "name": "bugs from repositories never used in training",
+    "bugs": ["urllib3-5347", "urllib3-5254", "charset-normalizer-772", "charset-normalizer-715", "setuptools-5362", "setuptools-5352", "pygments-3204", "pygments-3158", "pluggy-809", "pluggy-799", "botocore-3852", "botocore-3835", "anyio-1424", "anyio-1354", "s3transfer-423", "python-dotenv-711", "python-dotenv-700", "pyjwt-1216", "pyjwt-1201", "platformdirs-666"],
+    "runs": 40,
+    "passed": {
+      "maintainers": {"A": 23, "T": 24, "R": 26, "M9": 21, "K1": 26, "K0": 24},
+      "amended": {"A": 31, "T": 31, "R": 34, "M9": 29, "K1": 34, "K0": 32}
+    },
+    "pairs": {
+      "A": {"maintainers": {"M9": [2, 4], "K1": [3, 0]}, "amended": {"M9": [2, 4], "K1": [3, 0]}},
+      "T": {"maintainers": {"M9": [2, 5], "K1": [2, 0]}, "amended": {"M9": [3, 5], "K1": [3, 0]}}
+    },
+    "interval_vs_A_amended_points": {"M9": [-20, 10], "K1": [0, 20]},
+    "k1_and_a_differ_maintainers": {"urllib3-5254": {"A": 1, "K1": 2}, "s3transfer-423": {"A": 0, "K1": 2}},
+    "one_bug": {"bug": "s3transfer-423", "passed_all": ["R", "M9", "K1", "K0"], "runs_passed": 8,
+                "failed_all": ["A", "T", "S"], "runs_failed": 7},
+    "source": "plan: 2026-11-03, stage 2's result; the bugs from 2026-11-02 (morning), stage 2's twenty bugs and their audit"
+  },
+  "stage_3": {
+    "name": "a change G6 proposed itself",
+    "patches": 416,
+    "bugs": 21,
+    "tuning_cases": 77,
+    "reviewer_right": 50,
+    "candidates": 5,
+    "raced": 4,
+    "held_out": {"wins": 14, "losses": 22, "p": 0.93, "needed": 0.01},
+    "adopted": 0,
+    "budget_spent_usd": 0,
+    "source": "plan: 2026-11-02 (night), stage 3's tick ended, and nothing was adopted; the cases from 2026-11-02 (evening), stage 3 as it will run"
+  },
+  "diagnosis": {
+    "hand_named_not_borne_out": "split_mix_skew",
+    "tuning_false_alarms": [23, 27],
+    "held_out_false_alarms": [21, 22],
+    "skew_line_points": 25,
+    "named": ["threshold_move", "race_noise", "edit_space_short"],
+    "threshold_move": {"wins_all_on_right_patches": 14, "losses_all_on_wrong_patches": 22},
+    "race_noise": {"race_won": [2, 1], "tied_and_dropped": 1},
+    "source": "rca"
+  },
+  "blind_labels": {
+    "patches": 36,
+    "raters": 2,
+    "agreed": 19,
+    "within_reach": 12,
+    "out_of_reach": 7,
+    "source": "lead"
+  },
+  "reviewer_first_verdict": {
+    "unseen": [19, 37],
+    "training": [13, 14],
+    "source": "lead"
+  },
+  "blind_reader": {
+    "choices": 5,
+    "source": "lead: at chance with Codex, and two readers agreeing no better"
+  },
+  "own_code_reviews": {
+    "reviewer": "Codex",
+    "max_repairs": 3,
+    "max_reviews": 4,
+    "counted": "only findings reproduced by a test that failed before the fix",
+    "branches": [
+      {"branch": "k-loop", "found": [5, 5, 4, 4], "ended": "repairs ran out"},
+      {"branch": "improve-control", "found": [6, 5, 5, 3], "ended": "repairs ran out"},
+      {"branch": "loop-fixes", "found": [5, 4, 6, 5], "ended": "repairs ran out"},
+      {"branch": "loop-batch-1", "found": [6, 5, 5, 4], "ended": "repairs ran out"},
+      {"branch": "loop-followup", "found": [5, 4, 4, 2], "ended": "repairs ran out"},
+      {"branch": "tick-rca", "found": [6, 5, 3, 2], "ended": "repairs ran out"},
+      {"branch": "k-fixes", "found": [4, 4, 4, 3], "ended": "repairs ran out"},
+      {"branch": "loop-learn", "found": [4, 3, 0], "ended": "clean"},
+      {"branch": "k-followup", "found": [3, 3, 2], "ended": "in its loop"},
+      {"branch": "loop-followup-2", "found": [4, 4, 4], "ended": "in its loop"}
+    ],
+    "source": "lead: reproduced defects per review, per branch of G6's own code, as of 2026-11-03"
+  },
+  "spend": {
+    "usd": 160.27,
+    "budget_usd": 180,
+    "source": "plan: 2026-11-03, stage 2's result (Spend): $125.62 by the runner and $34.65 for Fable's reviews; Codex's reviews are billed apart"
+  },
+  "next": {
+    "bugs_at_least": 50,
+    "source": "lead: the next steps the owner approved, 2026-11-03; plans, not results"
+  }
+}

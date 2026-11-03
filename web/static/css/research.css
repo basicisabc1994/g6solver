@@ -109,6 +109,11 @@
 .rs-matrix td.is-up { color: var(--teal-ink); font-weight: 700; background: color-mix(in srgb, var(--teal) 14%, transparent); }
 .rs-matrix td.is-down { color: var(--bad); font-weight: 600; background: color-mix(in srgb, var(--bad) 9%, transparent); }
 .rs-matrix td.is-flat { color: var(--muted); }
+/* the coding study's reviews of G6's own code: short branch names, a words column, totals beneath */
+.rs-matrix.is-compact th[scope="row"], .rs-matrix.is-compact thead th:first-child { min-width: 11rem; }
+.rs-matrix .is-text { text-align: left; }
+.rs-matrix td.is-text { color: var(--muted); }
+.rs-matrix tfoot th, .rs-matrix tfoot td { font-weight: 650; border-top: 2px solid var(--ink); border-bottom: 0; }
 
 /* every study run, by what it covers */
 .rs-scope { margin: 2.5rem 0 0; }
@@ -125,7 +130,7 @@
 .rs-entry.is-gain .rs-outcome { color: var(--teal-ink); }
 .rs-entry.is-lower .rs-outcome { color: var(--bad); }
 .rs-entry.is-specialised .rs-outcome, .rs-entry.is-no-difference .rs-outcome,
-.rs-entry.is-no-baseline .rs-outcome { color: var(--muted); }
+.rs-entry.is-no-baseline .rs-outcome, .rs-entry.is-not-shown .rs-outcome { color: var(--muted); }
 .rs-did { color: var(--muted); font-size: 15px; margin: .35rem 0 .6rem; }
 .rs-vs { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .6rem; margin: 0 0 .4rem; font-size: 15px; }
 .rs-vs b { font-size: 1.35rem; font-weight: 760; font-variation-settings: "wdth" 80; font-variant-numeric: tabular-nums; }
