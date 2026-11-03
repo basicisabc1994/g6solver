@@ -1461,3 +1461,51 @@ not the reviewer's and does not count toward the pause. The futility stop is rea
 honours a stop its saved reviews already make, and a patch whose review failed is still to be reviewed while it waits. It is
 read on stage 1 and 2 together, where the predictions are; the training patches, reported apart, have no prediction and so no
 stop.
+
+## 2026-11-04 (early): replay 1's pilot, what the saved reviews show, and a test of the issue's rule
+
+Written after reading replay 1's pilot and the saved reviews below, and before any run that follows.
+
+**Replay 1's pilot.** It ran from claude/replays-followup 4fed39c on the first 40 patches by digest of stage 1 and 2's bugs. It
+used the Codex sign-in, took 107 minutes, and had no failed review. On the 40 paired patches the frozen review and the
+reproducing review were right as often: 24 and 24 on the amended tests (one patch each way), and 25 and 26 on the
+maintainers'. The prediction was a rise of 10 points. The registered futility stop does not fire, as it stops only when
+success is arithmetically out of reach, and 380 patches remain.
+
+**Replay 1 pauses after its pilot.** This is a rule written now, after the pilot. Going on would spend about 17 more
+hours of the sign-in on an effect that 38 equal pairs in 40 make unlikely. A stop for futility can only lose a true
+effect; it cannot make one. The pilot is reported as a pilot, with its intervals. The hypothesis is not refuted at
+n = 40, and the run can resume where it stopped.
+
+**Replay 2 is held.** It measures whether the product's reviewer matches the frozen one. The frozen one's verdict barely
+moves the odds (below), so a match or a mismatch would decide nothing now.
+
+**What the saved reviews show** (counts read with plain code from the saved records and the truth, no model call):
+- On stage 1 and 2's 420 patches, amended tests, the frozen review agrees with the truth on 52.6%. It raises a false
+  alarm on 49.5% of right patches and misses 43.3% of wrong ones.
+- A patch the review said "reproduced" is wrong 38% of the time. After "none" it is 28%, and the base rate is 34%.
+- The review's test passing on the parent and failing on the patch (introduced by the patch) carries a signal on the
+  maintainers' tests: 66% wrong, against 53%. It carries none on the amended tests (39% against 37%), and the pattern
+  reverses on the training bugs.
+- In the pilot, step 1's test of the issue's own example passes on the patch for 33 of the 34 patches whose bug it
+  reproduced, wrong patches included (11 on the amended tests, 16 on the maintainers'). The agents' wrong patches fix
+  the issue's example. They fail on the behaviour around it.
+
+**Replay 3, registered now: a test of the issue's rule, written once per bug.**
+- **What it is.** A reviewer is shown the issue and the parent, never a patch. It writes one test of the rule the issue
+  states: the example, its variants a maintainer would also expect to hold, and the other paths that share the code.
+  Each case is its own test. G6 runs the test on the parent and on each distinct patch of that bug.
+- **A patch's verdict.** A test that fails no case on the parent reproduces nothing: the bug has no verdict, and its
+  patches count as "none". Otherwise a patch is "wrong" when any case fails on it.
+- **Cost.** One call per bug, not per patch.
+- **Development.** On the training bugs only, with at most three versions of the instruction, chosen by agreement on
+  the training patches. The instruction is then frozen and its digest written here before stage 1 and 2 run. It may
+  state the rule in general words only: no bug, file or issue of any stage.
+- **Measures, as replay 1's.** Agreement with the truth, false alarms on right patches and misses on wrong ones, on both
+  scores. It is paired with the frozen review by patch and by bug.
+- **Prediction, on stage 1 and 2 together, amended tests:** agreement at least 10 points above the frozen review's
+  52.6%, with false alarms on right patches under 25%.
+- **Kill rule.** Agreement up by less than 5 points, or false alarms not under 40%: then a test of the rule is no
+  better a judge than the review, and the next frame is the maintainers' intent.
+- **What it changes.** If it holds, the review loop's reviewer gains this step for the next study, sized before it runs.
+  Nothing here is a score of G6 against Claude Code.
