@@ -1572,3 +1572,34 @@ Open, each counted on the archive and touching no count:
 - a container left after a failed removal;
 - the junit file trusted after the test process exits (0 patches add junit or atexit).
 The last three are in the shared runner, for a change of their own.
+
+## 2026-11-04 (morning): replay 3's result
+
+The scored run used claude/replay3-followup 5c2eccb and instruction 838d8da877502eee on the 34 bugs of stage 1 and 2. It
+covered all 420 distinct patches, none failed, and one restart resumed after a GitHub 503 reading an issue thread. Counts
+are from `replay_compare.py` and plain code.
+
+**Amended tests: the registered score.**
+- **Replay 3:** balanced accuracy 63.7%, false alarms 48 of 279 (17.2%), misses 78 of 141 (55.3%), agreement 70.0%.
+- **Frozen review:** balanced accuracy 53.6%, false alarms 49.5%, misses 43.3%, agreement 52.6%.
+- **Paired by patch:** only replay 3 right on 115, only the frozen review on 42.
+- **By bug:** better 19, worse 8, same 7, one-sided sign test p 0.026.
+
+**The prediction holds on its registered measure, by 0.1 point.** It needed 63.6% or more, with false alarms under 25%.
+
+**Maintainers' tests, reported beside it.**
+- Replay 3 has balanced accuracy 52.5%, false alarms 23.7% and misses 71.2%.
+- The frozen review has 50.8%, 51.0% and 47.3%.
+- By bug: better 13, worse 14, same 7, p 0.65. So no gain on this score.
+
+**How to read it.**
+- **Where the gain comes from.** Almost all of it is fewer false alarms, a quieter reviewer, while misses rose.
+- **The unit.** Verdicts cluster by bug: one test a bug, 23 bugs all "none", 3 all "reproduced", and 8 with patches
+  told apart. So the bug is the honest unit, and a sign test by patch would overstate the result.
+- **The two truths disagree.** It is a gain against what the issues ask for (amended), not against the maintainers'
+  hidden tests.
+- **The scale.** A balanced accuracy of 63.7% is far from the 95% goal.
+- **What it is not.** Nothing here is a score of G6 against Claude Code.
+
+**What it changes, as registered.** The review loop's reviewer gains this step for the next study, which is sized before
+it runs. The maintainers' result is carried into that sizing: the step is predicted to cut false alarms, not misses.
