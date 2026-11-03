@@ -246,6 +246,7 @@ class Diagnosis:
 def diagnose(rows: Iterable[Mapping[str, Any]], lessons: Iterable[Lesson] = (), seen: Iterable[tuple[int, str, str]] = ()) -> Diagnosis:
     """What the recent cycles say limits progress. A cycle adopted within the last ``STUCK`` is a loop that moves, so the work limits it, and the latest cause
     a cycle named says where. Past that it reads the cycles since its last adoption. ``lessons`` and ``seen``: as ``g6.metaharness.lessons.repeats`` takes."""
+    rows = list(rows)
     recent = _recent(rows)
     last = max((i for i, row in enumerate(recent) if row.get("outcome") == "adopted"), default=-1)
     since = recent[last + 1:]
@@ -261,7 +262,8 @@ def diagnose(rows: Iterable[Mapping[str, Any]], lessons: Iterable[Lesson] = (), 
     known = {stage.name for stage in measured}
     returned = repeats(lessons, seen)
     keeps = recurring(returned)
-    scored = [[outcome for _, outcome in row["rca_scored"]] for row in recent if isinstance(row.get("rca_scored"), list)]
+    # every tick's, not the recent ones': a run of ticks that decided nothing must not hide the two before it that failed
+    scored = [[outcome for _, outcome in row["rca_scored"]] for row in rows if isinstance(row.get("rca_scored"), list)]
     analysis = analysis_is_the_constraint(scored)
     return Diagnosis(LOOP if analysis else WORK if moving else _level(constraint), ANALYSIS if analysis else constraint,
                      {"cycles": len(basis), "adopted": sum(row.get("outcome") == "adopted" for row in recent), "held": held,

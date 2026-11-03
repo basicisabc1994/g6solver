@@ -10,7 +10,8 @@ here is a model's opinion:
 * ``split_mix_skew``: the labels of the cases the base failed while tuning differ from those of the cases it failed on the
   held-out split by more than 25 points, so the tuning split taught the wrong lesson. A person cuts the splits by label too.
 * ``race_noise``: the race that chose the champion chose it on noise, its margin over the base not clear of a one-sided sign test
-  at 0.05, or it dropped a candidate as good as the one it kept. No held-out evaluation should be spent on such a margin.
+  at 0.05, or it dropped a candidate as good as the one it kept on the cases both ran. No held-out evaluation should be spent
+  on such a margin.
 * ``edit_space_short``: every candidate changed only wording or examples, and none was adopted. The failures may need an action
   the profile cannot express, which only a person can add, as a new version of the domain.
 * ``gate_underpowered``: the gate refused a candidate that did not lose, with less than an even chance of seeing a 10-point
@@ -53,10 +54,10 @@ _PLACES = 9      # a measure is compared at this many decimal places, so a share
 class TickRecord:
     """What one tick's records say, as ``tick_rca`` reads it. ``labels``: each case's label. ``tuning_failed``: the tuning cases
     the base failed. ``held_out``: each held-out case's (id, base right, candidate right), empty when none was evaluated.
-    ``races``: each race's ``winner`` and ``ranking`` rows (``candidate``, ``wins``, ``losses``, ``dropped_at_block``).
-    ``candidates``: each raced candidate's changed ``fields``. ``power``: the held-out report's, by gain. ``enrolment``: the
-    digest of each part of what a person decides (``method``, ``cut``, ``domain``), each moving only when they change it, so a
-    person's remedy counts as applied once its part has (``APPLIED_BY``)."""
+    ``races``: each race's ``winner`` and ``ranking`` rows (``candidate``, ``wins``, ``losses``, ``n``, ``dropped_at_block``,
+    ``net_by_block``). ``candidates``: each raced candidate's changed ``fields``. ``power``: the held-out report's, by gain.
+    ``enrolment``: the digest of each part of what a person decides (``method``; ``cut``; ``domain``, what a profile may
+    express), each moving only when they change it, so a person's remedy counts as applied once its part has (``APPLIED_BY``)."""
 
     outcome: str
     labels: Mapping[str, str] = field(default_factory=dict)
@@ -141,7 +142,7 @@ def _trade(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
     if not wins or not losses or len(won) != 1:
         return 0.0, evidence
     label = next(iter(won))
-    return sum(count for other, count in lost.items() if other != label) / len(losses), evidence
+    return max((count for other, count in lost.items() if other != label), default=0) / len(losses), evidence
 
 
 def _skew(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
@@ -160,6 +161,18 @@ def _net(row: Mapping[str, Any]) -> int:
     return int(row.get("wins", 0)) - int(row.get("losses", 0))
 
 
+def _level_with(row: Mapping[str, Any], winner: Mapping[str, Any]) -> bool | None:
+    """Whether a dropped ``row`` did as well as ``winner`` on the cases both ran, or None when the rows cannot say. Every live
+    candidate runs every case of a block, so a row dropped after block b shared blocks 1 to b with the winner: its net is
+    compared with the winner's after that block, or with the winner's whole net when both ran as many cases."""
+    block, nets = row.get("dropped_at_block"), winner.get("net_by_block") or ()
+    if isinstance(block, int) and 1 <= block <= len(nets):
+        return _net(row) >= int(nets[block - 1])
+    if row.get("n") is not None and row.get("n") == winner.get("n"):
+        return _net(row) >= _net(winner)
+    return None
+
+
 def _noise(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
     chosen = [race for race in record.races if race.get("winner")]
     race = next((r for r in reversed(chosen) if record.champion and r["winner"] == record.champion),   # the one that chose it last
@@ -170,9 +183,11 @@ def _noise(record: TickRecord) -> tuple[float | None, dict[str, Any]]:
     winner = next((row for row in rows if row.get("candidate") == race["winner"]), None)
     if winner is None:
         return None, {}
-    tie_dropped = any(row.get("dropped_at_block") is not None and _net(row) >= _net(winner) for row in rows if row is not winner)
+    level = [_level_with(row, winner) for row in rows if row is not winner and row.get("dropped_at_block") is not None]
+    tie_dropped = any(found is True for found in level)
     p = sign_test_p(int(winner.get("wins", 0)), int(winner.get("losses", 0)))
-    return (1.0 if tie_dropped else p), {"margin": _net(winner), "p_one_sided": round(p, 6), "tie_dropped": tie_dropped}
+    return (1.0 if tie_dropped else p), {"margin": _net(winner), "p_one_sided": round(p, 6), "tie_dropped": tie_dropped,
+                                         "ties_unmeasured": sum(found is None for found in level)}
 
 
 def _structural(record: TickRecord) -> tuple[float | None, dict[str, Any]]:

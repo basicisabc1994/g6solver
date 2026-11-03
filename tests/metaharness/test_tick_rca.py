@@ -82,7 +82,9 @@ def test_tuning_failures_shaped_like_the_held_out_ones_are_no_skew():
 
 
 def _race(*rows):
-    return {"winner": rows[0][0], "ranking": [{"candidate": c, "wins": w, "losses": lo, "dropped_at_block": d} for c, w, lo, d in rows]}
+    """Rows of (candidate, wins, losses, dropped_at_block[, other fields]), the winner first."""
+    return {"winner": rows[0][0], "ranking": [{"candidate": r[0], "wins": r[1], "losses": r[2], "dropped_at_block": r[3],
+                                              **(r[4] if len(r) > 4 else {})} for r in rows]}
 
 
 def test_a_winner_clear_of_noise_with_nothing_tied_dropped_is_no_race_noise():
@@ -92,7 +94,7 @@ def test_a_winner_clear_of_noise_with_nothing_tied_dropped_is_no_race_noise():
 
 def test_a_winner_by_one_case_or_a_dropped_tie_is_race_noise():
     assert "race_noise" in _codes(_record(races=[_race(("a", 2, 1, None))]))
-    assert "race_noise" in _codes(_record(races=[_race(("a", 12, 1, None), ("b", 12, 1, 1))]))
+    assert "race_noise" in _codes(_record(races=[_race(("a", 12, 1, None, {"n": 20}), ("b", 12, 1, 1, {"n": 20}))]))
 
 
 def test_a_candidate_that_changed_structure_is_no_short_edit_space():
@@ -274,3 +276,124 @@ def test_a_gap_of_exactly_twenty_five_points_is_on_the_line_and_names_no_skew():
 ])
 def test_two_remedies_failing_in_a_row_make_the_analysis_itself_the_constraint(history, stuck):
     assert analysis_is_the_constraint(history) is stuck
+
+
+def test_a_trade_needs_eighty_percent_of_the_losses_on_one_other_label():
+    labels = {"win": "A", **_labelled("b", "B", 8), **_labelled("c", "C", 5)}
+    spread = _record(wins=["win"], losses=[*(f"b{i}" for i in range(5)), *(f"c{i}" for i in range(5))], labels=labels)
+    assert "threshold_move" not in _codes(spread)       # half on each of two other labels: neither is at 80%
+    one = _record(wins=["win"], losses=[*(f"b{i}" for i in range(8)), "c0", "c1"], labels=labels)
+    assert "threshold_move" in _codes(one)               # 8 of 10 on one other label
+
+
+def test_a_case_the_domain_gives_no_label_has_none_in_the_record():
+    from types import SimpleNamespace
+
+    from g6.metaharness.schema import SuiteCase
+
+    loop = object.__new__(ShadowLoop)
+    loop.mh = SimpleNamespace(ledger=SimpleNamespace(rows=lambda kind: []))
+    loop.log = SimpleNamespace(enrolled=lambda: {})
+    loop.settings = SimpleNamespace(method=Method())
+    loop.domain = SimpleNamespace(label_of=lambda case: case.expected)
+    loop.cut = SimpleNamespace(tune=(SuiteCase("t", "x", "right"),), selection=(), held_out=(SuiteCase("h", "y", None),))
+    record = loop._read_for_analysis(SimpleNamespace(confirmation=None, champion=""), {"proposal": 0, "selection": 0, "report": 0})
+    assert record.labels == {"t": "right"}
+
+
+def test_a_dropped_candidate_is_compared_with_the_winner_on_the_cases_both_ran():
+    winner = ("a", 10, 2, None, {"n": 12, "net_by_block": [10, 8]})
+    behind = _record(races=[_race(winner, ("b", 9, 0, 1, {"n": 10, "net_by_block": [9]}))])
+    assert "race_noise" not in _codes(behind)            # 9 against the winner's 10 on the first ten cases
+    level = _record(races=[_race(winner, ("b", 10, 0, 1, {"n": 10, "net_by_block": [10]}))])
+    assert "race_noise" in _codes(level)                 # as good as the winner on those ten: a dropped tie
+
+
+def test_a_dropped_row_that_cannot_say_what_it_shared_with_the_winner_is_no_tie():
+    unknown = _record(races=[_race(("a", 10, 2, None, {"n": 12}), ("b", 9, 0, 1, {"n": 10}))])
+    assert "race_noise" not in _codes(unknown)
+    found = tick_rca(_record(races=[_race(("a", 2, 1, None, {"n": 12}), ("b", 9, 0, 1, {"n": 10}))]))
+    assert found.causes[0].evidence["ties_unmeasured"] == 1
+
+
+def test_a_race_records_each_candidates_net_after_every_block():
+    from g6.core.llm import FakeLLM as Fake
+    from g6.harness import Check
+    from g6.metaharness import Model, Profile, Suite, SuiteCase, Workflow
+    from g6.metaharness.executor import model_call_factory
+    from g6.metaharness.select import race
+
+    def reply(system, user):
+        i = int(user.strip())
+        if "first" in system:
+            return "1" if i < 10 else "0"
+        if "second" in system:
+            return "1" if i < 9 else "0"
+        return "0" if i < 10 else "1"
+
+    workflow = Workflow(name="blocks", task="{input}", oracle=lambda out, expected: out == expected,
+                        checks=(Check("a bit", lambda out: out in ("0", "1"), check_id="bit", known_bad=("",), known_good="1"),),
+                        suite=Suite(dev=(), held_out=(), selection=tuple(SuiteCase(str(i), str(i), "1") for i in range(12))),
+                        models={"local": Model(Fake(reply))})
+    base = Profile(routing={"answer": "local"})
+    first, second = (base.model_copy(update={"prompt": p}) for p in ("first", "second"))
+    result = race(workflow, model_call_factory(), base, [first, second], block=10, keep=0.5, budget=100)
+    kept, dropped = result.ranking
+    assert kept["net_by_block"] == [10, 8] and dropped["net_by_block"] == [9] and dropped["dropped_at_block"] == 1
+
+
+def test_ticks_that_decided_nothing_do_not_hide_the_two_before_them_that_failed():
+    rows = [{"tick": i, "outcome": "refused", "rca_scored": [["race_noise", FAILED]]} for i in (1, 2)]
+    rows += [{"tick": i, "outcome": "no_winner", "rca_scored": [["race_noise", OPEN]]} for i in range(3, 3 + reflex.RECENT)]
+    assert reflex.diagnose(rows).constraint == reflex.ANALYSIS
+    assert reflex.diagnose(iter(rows)).constraint == reflex.ANALYSIS
+
+
+_DOMAIN_FILE = '''
+from dataclasses import replace
+from pathlib import Path
+from g6.core.llm import FakeLLM
+from g6.metaharness.method import Method
+from g6.metaharness.pool import EditSpace
+from tests.metaharness.test_tick_rca import domains, _wording
+
+
+class Wider(domains.WordProblems):
+    def execution(self):
+        return replace(super().execution(), space=EditSpace({"retries": [0, 1, 2]}))
+
+
+LOOP = {"domain": domains.WordProblems(Path(__file__).parent), "proposer": FakeLLM(_wording),
+        "method": Method(cycles=1, propose_budget=120, select_budget=400, race_block=12,
+                         use_recovery=False, use_reflection=False), "audit_per_tick": 60}
+'''
+
+
+def _opened(folder, source):
+    from g6.metaharness.runner import open_loop
+
+    domain_file = folder / "domain.py"
+    domain_file.write_text(source, encoding="utf-8")
+    settings = {"domain_file": str(domain_file), "read_account": False,
+                "windows": [{"provider": "claude", "allowance": 1_000_000, "week_start": MONDAY.isoformat()}]}
+    loop, _ = open_loop(folder / "loop", settings=settings, now=lambda: MONDAY + timedelta(days=2))
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    return loop
+
+
+def test_a_method_changed_in_the_domains_own_file_applies_no_remedy_of_the_domains(tmp_path):
+    first = _opened(tmp_path, _DOMAIN_FILE)
+    first.tick()
+    assert "edit_space_short" in _named(first.log.cycles()[-1])
+    second = _opened(tmp_path, _DOMAIN_FILE.replace("race_block=12", "race_block=13"))
+    second.tick()
+    assert dict(second.log.cycles()[-1]["rca_scored"])["edit_space_short"] == OPEN
+
+
+def test_a_wider_edit_space_applies_the_domains_remedy(tmp_path):
+    first = _opened(tmp_path, _DOMAIN_FILE)
+    first.tick()
+    assert "edit_space_short" in _named(first.log.cycles()[-1])
+    second = _opened(tmp_path, _DOMAIN_FILE.replace('"domain": domains.WordProblems(', '"domain": Wider('))
+    second.tick()
+    assert dict(second.log.cycles()[-1]["rca_scored"])["edit_space_short"] != OPEN

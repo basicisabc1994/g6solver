@@ -634,9 +634,14 @@ class ShadowLoop:
     def _frozen(self) -> dict[str, str]:
         """What must not change, read fresh from the domain: the code that judges, every frozen case, and the sealed
         split, and the file that declares it all when a runner opened one. The judge's whole file is digested, since a
-        helper it calls judges too. No profile is in it."""
+        helper it calls judges too. No profile is in it. ``profile_space`` is what a profile may express, which a new version
+        of the domain changes and a change of method in the same file does not (``tick_rca``'s domain part)."""
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
         return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
+                "profile_space": digest({"domain": str(getattr(self.domain, "name", "")),
+                                         "space": {k: [repr(v) for v in values] for k, values in sorted(run.space.space.items())},
+                                         "optional_checks": sorted(run.optional_checks), "pipeline_steps": sorted(run.pipeline_steps),
+                                         "models": sorted(run.models)}),
                 "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
@@ -1032,20 +1037,22 @@ class ShadowLoop:
         cases = (*self.cut.tune, *self.cut.selection, *self.cut.held_out)
         enrolled = self.log.enrolled() or {}
         return TickRecord(
-            outcome="", labels={c.case_id: str(label_of(c)) for c in cases} if callable(label_of) else {},
+            outcome="", labels=({c.case_id: str(label) for c in cases if (label := label_of(c)) is not None}   # no label: none
+                                if callable(label_of) else {}),
             tuning_failed=getattr(self, "_tuning_failed", ()),
             held_out=tuple((c["case_id"], bool(c["base"]["success"]), bool(c["candidate"]["success"]))
                            for c in (report or {}).get("cases") or ()),
             races=tuple({"winner": s.get("winner"),
                          "ranking": [{"candidate": r.get("candidate_digest"), "wins": r.get("wins", 0), "losses": r.get("losses", 0),
-                                      "dropped_at_block": r.get("dropped_at_block")} for r in s.get("ranking") or ()]}
+                                      "n": r.get("n"), "dropped_at_block": r.get("dropped_at_block"),
+                                      "net_by_block": list(r.get("net_by_block") or ())} for r in s.get("ranking") or ()]}
                         for s in new["selection"]),
             candidates=tuple({"candidate": p.get("candidate_digest"), "fields": sorted(p.get("diff") or {})} for p in new["proposal"]),
             power=dict((report or {}).get("power") or {}),
             enrolment={"method": self.settings.method.digest(),
                        "cut": digest({"held_out": enrolled.get("held_out_digest"),
                                       **{k: (enrolled.get("frozen") or {}).get(k) for k in ("cases", "sealed")}}),
-                       "domain": str((enrolled.get("frozen") or {}).get("domain_file", ""))},
+                       "domain": str((enrolled.get("frozen") or {}).get("profile_space", ""))},
             champion=str(run.champion or ""))
 
     def _analysis(self, record: TickRecord) -> dict[str, Any]:

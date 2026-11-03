@@ -58,7 +58,7 @@ def race(workflow: Workflow, factory: ExecutorFactory, base: Profile, candidates
     if block < 1 or not 0 < keep <= 1:
         raise ValueError("block must be >= 1 and keep in (0, 1]")
     base_digest = base.digest()
-    stats = [{"candidate_digest": c.digest(), "wins": 0, "losses": 0, "n": 0, "dropped_at_block": None}
+    stats = [{"candidate_digest": c.digest(), "wins": 0, "losses": 0, "n": 0, "dropped_at_block": None, "net_by_block": []}
              for c in candidates]
     live = [i for i, c in enumerate(candidates) if c.digest() != base_digest]
     base_ok: dict[str, bool] = {}
@@ -98,6 +98,8 @@ def race(workflow: Workflow, factory: ExecutorFactory, base: Profile, candidates
             break
         completed += 1
         used += len(chunk)
+        for i in live:                                   # each live one's net so far, so a dropped one compares on shared cases
+            stats[i]["net_by_block"].append(net(i))
         live.sort(key=lambda i: (net(i), -i), reverse=True)
         last_kept = net(live[max(1, math.ceil(keep * len(live))) - 1])
         for i in live:
