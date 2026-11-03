@@ -33,7 +33,7 @@ Observed: assert 'none' == 'failed'
 
 @pytest.mark.parametrize(("folder", "expected"), [
     ("review-rpf2", ("claude/replays-followup", 2, "")), ("review-fx3b", ("claude/loop-followup-2", 3, "b")),
-    ("review-k", ("claude/k-loop", 1, "")), ("review-kfu1b", ("claude/k-followup", 1, "b")),
+    ("review-k", ("claude/k-loop", 1, "")), ("review-r32", ("claude/replay3", 2, "")), ("review-kfu1b", ("claude/k-followup", 1, "b")),
     ("review-l4b", ("claude/loop-fixes", 4, "b")), ("review-b13", ("claude/loop-batch-1", 3, "")), ("review-zz", (None, None, "")),
 ])
 def test_a_review_folder_names_its_loop_and_round(folder, expected):

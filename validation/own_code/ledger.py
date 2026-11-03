@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 #: The review folders' prefixes and the branch each loop reviewed, longest prefix first.
-LOOPS = (("rpf", "claude/replays-followup"), ("rp", "claude/replays"), ("rca", "claude/tick-rca"),
+LOOPS = (("rpf", "claude/replays-followup"), ("rp", "claude/replays"), ("r3", "claude/replay3"), ("rca", "claude/tick-rca"),
          ("kfu", "claude/k-followup"), ("kf", "claude/k-fixes"), ("k0", "claude/runtime-k (first)"), ("rk", "claude/runtime-k"),
          ("k", "claude/k-loop"), ("fx", "claude/loop-followup-2"), ("fu", "claude/loop-followup"),
          ("lr", "claude/reflexive-step"), ("ll", "claude/loop-learn"), ("l", "claude/loop-fixes"),
