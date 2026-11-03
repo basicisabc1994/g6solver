@@ -1603,3 +1603,61 @@ are from `replay_compare.py` and plain code.
 
 **What it changes, as registered.** The review loop's reviewer gains this step for the next study, which is sized before
 it runs. The maintainers' result is carried into that sizing: the step is predicted to cut false alarms, not misses.
+
+## 2026-11-04 (late morning): where the ceiling is, and choosing among a bug's candidates
+
+These counts were read on stage 1 and 2's 34 bugs before anything below them was computed. They cover every finished run of
+the nine arms and come from plain code (`compare.saved`, the check and recheck records), with no model and no container.
+
+**A bug's runs (maintainers' tests / amended tests).**
+- Bugs where every run is right: 16 / 20; every run wrong: 11 / 4; mixed: 7 / 10.
+- A perfect chooser among the recorded runs reaches 23 of 34 (67.6%) / 30 of 34 (88.2%).
+- Arm A's mean share right per bug is 52.9% / 69.1%.
+
+**Inside the mixed bugs**, by distinct patch, balanced accuracy is:
+- the frozen review, 0.36 / 0.40, worse than chance;
+- replay 3's rule test, 0.54 / 0.64.
+
+**Which tests a wrong run fails** (wrong runs: 244 / 162):
+- new behaviour only (FAIL_TO_PASS): 201 / 132;
+- existing behaviour only (PASS_TO_PASS): 38 / 29;
+- both: 5 / 1.
+
+Wrong runs that break existing tests sit in 4 of 18 bugs / 3 of 14.
+
+**What this says.**
+- **No judge can reach 95% on these candidates.** Between 4 bugs (amended) and 11 (maintainers') have no right patch among
+  roughly 16 runs of nine arms.
+- **So the goal has two parts.** Generation: a right patch exists. Selection: the right patch is the one returned.
+- **What selection can buy.** Uplift from choosing among these candidates is bounded by the gap between arm A and a
+  perfect chooser: 52.9% to 67.6% / 69.1% to 88.2%.
+- **Regression tests help only a little.** Running the existing tests, the Agentless-style filter, reaches only the few
+  bugs whose wrong runs break existing tests.
+- **The main way a patch fails** is reading the new behaviour differently from the maintainers.
+
+**Lean experiment, registered here and computed after this commit: choosing one of a bug's recorded runs.**
+- **Inputs.** Plain code only: no model, no container, no spend.
+- **Pool.** Every finished run of the bug with a non-empty final patch and a truth on the score, from any arm.
+- **R0, random.** The pool's expected share right. This is the baseline.
+- **R1, agreement.**
+  - Runs are grouped by their normalised source change: files outside tests, added and removed lines, with whitespace,
+    blank lines and comment lines dropped.
+  - A run of the largest group is returned. Ties are averaged.
+- **R2, rule test then random.** Runs whose patch replay 3's rule test (instruction 838d8da877502eee) passed, meaning it
+  said "none". If no run passed, all runs.
+- **R3, rule test then agreement.** R1 applied within R2's set.
+- **Measure.**
+  - The share of bugs whose returned run is right, as an expected value over ties, on each score.
+  - Paired by bug against R0, with a sign test.
+  - Beside it, arm A's share right per bug.
+- **Prediction.**
+  - R1 is at least 3 points above R0 on the amended tests.
+  - R3 is at least 5 points above R0, with gains on more mixed bugs than losses.
+  - R2's separation inside the mixed bugs is already counted above, so R2 is reported but is not a new test.
+- **Kill rule.** If R1 and R3 are both within 2 points of R0 on both scores, agreement by patch text carries no signal.
+  The next step is then agreement by behaviour: the candidates run on shared inputs, the `differential.v1` design.
+- **Standing.**
+  - These bugs have been scored, so this is development.
+  - Any rule it favours is scored on bugs not yet used before it is claimed.
+  - The pool mixes G6's arms with arm A, so it is not "Claude Code run N times". A gain here says that selection carries
+    signal, not that a harness beats Claude Code.
