@@ -1553,3 +1553,22 @@ review may touch the runner but not the instruction.
 one verdict a bug, the same both times. A test of the issue's rule passes or fails a bug's patches together. So on
 unseen bugs it can at most tell bugs whose patches are mostly wrong from bugs whose patches are mostly right. That is
 weaker than a judge of each patch. Replay 3's prediction is unchanged and is read as registered.
+
+## 2026-11-04 (morning): replay 3's runner, before its scored run
+
+Replay 3's code went through the Codex review loop. There were four reviews, run under the rules in
+`validation/own_code/RCA.md`: the first review had no cap and walked every class in the ledger's list. They found 10, 3, 4 and
+3 defects, all reproduced. Three repairs followed (claude/replay3 286988a, b639fb3 and 370ceeb), and the last review's
+count-changing finding became its own change (claude/replay3-followup 5c2eccb). The loop ended at its limit, never clean.
+
+The scored run uses **claude/replay3-followup 5c2eccb** and instruction **838d8da877502eee** on the 34 bugs of stage 1 and 2,
+from a clean tree.
+
+Open, each counted on the archive and touching no count:
+- a patch on two bugs across separate task selections (0 of the 549 distinct patches is on two bugs);
+- a patch printing the report marker to hide a failure from the study's shared parser `run.read_probes` (0 of 549 contain
+  it);
+- two overlapping runs within one process (one run holds the folder);
+- a container left after a failed removal;
+- the junit file trusted after the test process exits (0 patches add junit or atexit).
+The last three are in the shared runner, for a change of their own.
