@@ -103,6 +103,17 @@ def tally(rows: Rows, name: str, score: str) -> dict[str, int]:
             "too_long": sum(one[name]["said"] == "too long" for one in rows.values() if counted(one[name]))}
 
 
+def balanced(got: Mapping[str, int]) -> str:
+    """The mean of the share of wrong patches caught and the share of right patches cleared, which a reviewer that always says
+    the same thing puts at 50% (PLAN.md, 2026-11-04, early, later): agreement alone rewards abstaining where most patches are
+    right. "n/a" where either kind of patch is missing."""
+    if not got["right_patches"] or not got["wrong_patches"]:
+        return "n/a"
+    caught = 1 - Fraction(got["misses"], got["wrong_patches"])
+    cleared = 1 - Fraction(got["false_alarms"], got["right_patches"])
+    return f"{float((caught + cleared) / 2):.1%}"
+
+
 def paired(rows: Rows, score: str, name: str = REPRODUCE) -> dict[str, Any]:
     """A replay (``name``, one of ``PAIRED``) against the final review on the patches both reviewed: the exact one-sided sign test
     on those where exactly one is right, and the bugs on which the replay is right on more of them, fewer or as many. Its count of
@@ -220,7 +231,7 @@ def report(root: Path, chosen: Sequence[tuple[str, Sequence[str], bool]] | None 
                 got = tally(rows, name, score)
                 print(f"{group:13} {score:11} {name:15} agree {_share(got['right'], got['n'], upper=False)}  false alarms "
                       f"{_share(got['false_alarms'], got['right_patches'], upper=True)}  misses "
-                      f"{_share(got['misses'], got['wrong_patches'], upper=True)}"
+                      f"{_share(got['misses'], got['wrong_patches'], upper=True)}  balanced {balanced(got)}"
                       + (f"  too long {got['too_long']}" if name == PRODUCT else ""))
             for name in PAIRED:
                 got = paired(rows, score, name)

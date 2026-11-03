@@ -116,6 +116,8 @@ def test_replay_3_is_counted_and_paired_as_replay_1_is(tmp_path, monkeypatch, ca
     assert sorted(order) == shas
     out = _report(archive.root, capsys, ["x-1", "y-1"])
     assert "agree 4/6" in _line(out, "amended", "rule test", "agree")
+    assert "balanced 66.7%" in _line(out, "amended", "rule test", "agree")      # a constant scores 50%
+    assert "balanced 33.3%" in _line(out, "amended", "final review", "agree")
     paired = _line(out, "amended", "rule test against final review")
     assert "6 paired, final review right 2, rule test right 4; only rule test right 2, only final review right 0" in paired
     assert f"one-sided p {compare.sign_test(2, 0):.4f}" in paired and "bugs better 2 worse 0 same 0" in paired

@@ -43,10 +43,12 @@ No fix is in your cwd, and none is described to you. A fix that only makes the i
    kind. Take it from the issue, and from how parent/'s own code, tests and documentation treat the same behaviour.
 2. Find in parent/ each public path that rule governs: the function, class, method, command or option the issue uses, and the other
    public entry points that reach the same code or handle the same kind of input, such as its siblings in the same module and the
-   other types, formats or options it supports.
-3. Write one pytest file that checks the rule on those paths: the issue's own example first, then the variants a maintainer would
-   expect to hold as well (other values of the same kind, the edges of the input's range, each sibling path), then the behaviour
-   next to it that must not change. Write each case as its own test, from 4 to 12 in all, each asserting an exact value that the
+   other types, formats or options it supports. Then read parent/'s own tests of that feature: they show the dimensions its
+   maintainers check, such as each option, type, format or mode it accepts and each place its result is used.
+3. Write one pytest file that checks the rule on those paths and along those dimensions: the issue's own example first, then the
+   variants a maintainer would expect to hold as well (the same rule for each option, type, format and mode, other values of the
+   same kind, the edges of the input's range, each sibling path), then the behaviour next to it that must not change, in the style
+   of parent/'s own tests. Write each case as its own test, from 6 to 20 in all, each asserting an exact value that the
    issue or parent/ justifies. A case of the issue's rule must fail on parent/ if the issue is right; a case of behaviour that must
    not change must pass on parent/. Assert nothing about how a fix might work. Write nothing whose expectation you cannot justify:
    a wrong test is worse than none. If the issue states no rule a test can check, say so and write no test. That is a valid and
