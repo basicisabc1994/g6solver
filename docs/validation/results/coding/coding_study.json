@@ -123,7 +123,7 @@
       {"branch": "tick-rca", "found": [6, 5, 3, 2], "ended": "repairs ran out"},
       {"branch": "k-fixes", "found": [4, 4, 4, 3], "ended": "repairs ran out"},
       {"branch": "loop-learn", "found": [4, 3, 0], "ended": "clean"},
-      {"branch": "k-followup", "found": [3, 3, 2], "ended": "in its loop"},
+      {"branch": "k-followup", "found": [3, 3, 2, 4], "ended": "repairs ran out"},
       {"branch": "loop-followup-2", "found": [4, 4, 4, 3], "ended": "repairs ran out"}
     ],
     "source": "lead: reproduced defects per review, per branch of G6's own code, as of 2026-11-03"

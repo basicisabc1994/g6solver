@@ -274,9 +274,9 @@ def test_the_coding_study_works_out_its_totals_tests_and_ranges_from_the_counts(
     data, found = _coding_data(), evidence.coding_study()
     branches = data["own_code_reviews"]["branches"]
     own = found["own"]
-    assert own["total"] == sum(sum(b["found"]) for b in branches) == 153 and own["count"] == len(branches) == 10
+    assert own["total"] == sum(sum(b["found"]) for b in branches) == 157 and own["count"] == len(branches) == 10
     assert own["per_review"] == [sum(b["found"][i] for b in branches if len(b["found"]) > i) for i in range(4)]
-    assert (own["clean"], own["ran_out"], own["in_loop"]) == (1, 8, 1)
+    assert (own["clean"], own["ran_out"], own["in_loop"]) == (1, 9, 0)
     assert own["open"] == "2 to 5"          # the last review of each branch whose repairs ran out: 2 to 5 still open
     two = found["two"]
     assert (two["bugs"], two["repos"], two["same_bugs"], two["differing"]) == (20, 11, 18, 3)
