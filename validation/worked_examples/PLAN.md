@@ -1426,3 +1426,20 @@ low-memory guard with 165 of about 185 patches reviewed. Each review is saved as
 so it resumes where it stopped; it is restarted only when the owner asks, and its counts are reported then, whole. The three
 stages' results above stand without it: stage 1, uplift not shown; stage 2, uplift not shown, the review loop 3-0 ahead of
 Claude Code alone (p 0.125) on both scores; stage 3, nothing adopted. The 95% target is met in none.
+
+## 2026-11-03 (evening): stage 1's final review, whole
+
+Restarted at the owner's word, it ended with every patch of stage 1's fresh and held-out bugs reviewed. Report only: it
+changes no score, verdict or rule above. `compare.py`'s tables, pooled once per arm over A, T, R, M9 and K1, counted by run:
+whether the run's patch was right, given what the final review said of it.
+
+| Stage 1 | Review reproduced a defect | Review found nothing |
+|---|---|---|
+| 11 fresh bugs, amended tests | right 57 of 86 (66%) | right 12 of 24 (50%) |
+| 11 fresh bugs, maintainers' tests | right 37 of 86 (43%) | right 9 of 24 (38%) |
+| 3 held-out bugs, both scores | right 18 of 30 (60%) | right 3 of 35 (9%) |
+
+Four more held-out runs drew a defect with no test behind it, all on wrong patches. On unseen bugs the review's word does not
+part right patches from wrong ones: on the fresh bugs' amended tests a reproduced defect fell on a right patch more often than
+"nothing found" did, and on the held-out bugs "nothing found" came before a wrong patch 32 times in 35. This is the baseline
+the replay of 2026-11-03 (afternoon) is measured against, and it agrees with the first-review calibration read after stage 1.
