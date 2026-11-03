@@ -349,10 +349,11 @@ def said_of(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> str | N
     return got["said"] if counts(got) else None
 
 
-def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: str = FOLDER) -> None:
+def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: str = FOLDER, *, sha: str | None = None) -> None:
     """Save a review under the patch's digest, whole or not at all: it is written beside its place and moved there, so a run cut
-    short leaves no half record."""
-    path = _kept(root, row, folder)
+    short leaves no half record. ``sha``, where given, is the digest of the bytes the review read, so a patch file changed since
+    is not given this review."""
+    path = root / "loop" / folder / f"{sha}.json" if sha else _kept(root, row, folder)
     path.parent.mkdir(exist_ok=True)
     write_whole(path, json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1))
 

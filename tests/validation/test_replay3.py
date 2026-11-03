@@ -2,6 +2,7 @@
 """Replay 3 (PLAN.md, 2026-11-04, early): one test of the issue's rule a bug, written with no patch shown, run on each of its patches."""
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -24,7 +25,8 @@ FAILS = we.ProbeRun(1, {"t::test_rule": "failed", "t::test_kept": "passed"}, {"t
 PASSES = we.ProbeRun(0, {"t::test_rule": "passed", "t::test_kept": "passed"}, {}, "")
 BROKE_KEPT = we.ProbeRun(1, {"t::test_rule": "passed", "t::test_kept": "failed"}, {"t::test_kept": "assert 2 == 3"}, "")
 WONT_RUN = we.ProbeRun(2, {}, {}, "ImportError")
-NO_EXIT = we.ProbeRun(None, {}, {}, "")                          # no pytest exit read: the container failed
+NO_EXIT = we.ProbeRun(None, {}, {}, "")
+CUT = we.ProbeRun(2, {"t::test_rule": "failed"}, {"t::test_rule": "assert 1 == 2"}, "KeyboardInterrupt")   # failed, then stopped                          # no pytest exit read: the container failed
 
 
 @pytest.mark.parametrize(("found", "base", "now", "said"), [
@@ -36,6 +38,8 @@ NO_EXIT = we.ProbeRun(None, {}, {}, "")                          # no pytest exi
     (WROTE, FAILS, WONT_RUN, "none"),               # pytest could not run it with the patch: no verdict, not a defect
     (WROTE, FAILS, NO_EXIT, "failed"),             # no exit at all, as a Docker failure gives: no review, made again
     (WROTE, NO_EXIT, FAILS, "failed"),
+    (WROTE, FAILS, CUT, "reproduced"),             # a failure recorded before pytest stopped is still a failure
+    ({**WROTE, "test": ""}, None, None, "failed"),  # defect with no test: a reply cut short, no answer
     (NONE, None, None, "none"),                     # no test
     (FAILED_ASK, None, None, "failed"),             # no review: made again on the next run
 ])
@@ -68,13 +72,13 @@ def test_the_reviewer_is_asked_once_a_bug_and_its_test_runs_on_every_patch(tmp_p
         return WROTE, None, None
 
     def run(ctx, task, test, patch):
-        ran.append((patch.parent.name, test))
+        ran.append((patch.read_text("utf-8").split()[1], test))     # the copy of the bytes read, named by its content
         return FAILS, PASSES
 
     rows = _rows(tmp_path, 3)
     got = r3.review_bug(_ctx(tmp_path), tmp_path, we.task_by_id("black-5634"), rows, "title", "text", ask=ask, run=run)
     assert asked == [("run0", r3.RULE_FIRST, r3.RULE_AT, r3.FILE, False, False)]     # asked, and nothing run by the ask
-    assert ran == [("run0", TEST), ("run1", TEST), ("run2", TEST)]                   # every patch runs one way
+    assert ran == [("0", TEST), ("1", TEST), ("2", TEST)]                            # every patch runs one way
     assert [g["said"] for g in got] == ["none", "none", "none"]
     assert all(g["instruction"] == r3.INSTRUCTION for g in got)
     assert [fr.saved(tmp_path, row, r3.FOLDER)["said"] for row in rows] == ["none", "none", "none"]
@@ -126,7 +130,7 @@ def test_a_bug_whose_reviewer_wrote_no_test_gives_each_patch_none_with_no_run(tm
 
 def test_a_patch_whose_run_failed_is_no_review_and_the_rest_still_run(tmp_path):
     def run(ctx, task, test, patch):
-        if patch.parent.name == "run1":
+        if patch.read_text("utf-8") == "patch 1\n":
             raise RuntimeError("the patch does not apply")
         return FAILS, FAILS
 
@@ -149,3 +153,28 @@ def test_a_bug_with_no_waiting_patch_asks_no_one_and_runs_nothing(tmp_path):
     (tmp_path / "loop").mkdir()
     assert r3.review_bug(_ctx(tmp_path), tmp_path, we.task_by_id("black-5634"), [], "t", "x",
                          ask=lambda *a, **k: pytest.fail("asked"), run=lambda *a: pytest.fail("ran")) == []
+
+def test_an_answer_that_says_defect_with_no_test_is_no_answer_and_is_not_kept(tmp_path):
+    rows = _rows(tmp_path, 1)
+    task = we.task_by_id("black-5634")
+    got = r3.review_bug(_ctx(tmp_path), tmp_path, task, rows, "t", "x", ask=lambda *a, **k: ({**WROTE, "test": ""}, None, None),
+                        run=lambda *a: pytest.fail("nothing to run"))
+    assert [g["said"] for g in got] == ["failed"] and not r3.bug_record(tmp_path, task.id).exists()
+    assert not fr.counts(fr.saved(tmp_path, rows[0], r3.FOLDER))
+
+
+def test_a_verdict_is_saved_under_the_bytes_that_were_run_however_the_file_changes_after(tmp_path):
+    rows = _rows(tmp_path, 1)
+    path = tmp_path / rows[0]["run"] / "final.patch"
+    first = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def run(ctx, task, test, patch):
+        assert patch.read_text("utf-8") == "patch 0\n" and patch != path
+        path.write_text("another patch\n", "utf-8")            # the archive's file replaced while the copy runs
+        return FAILS, FAILS
+
+    r3.review_bug(_ctx(tmp_path), tmp_path, we.task_by_id("black-5634"), rows, "t", "x",
+                  ask=lambda *a, **k: (WROTE, None, None), run=run)
+    assert (tmp_path / "loop" / r3.FOLDER / f"{first}.json").is_file()
+    assert fr.saved(tmp_path, rows[0], r3.FOLDER) is None         # the bytes now there were never run, so have no verdict
+    assert not list((tmp_path / "critic_packs").glob("*.patch"))  # the copy is gone

@@ -88,22 +88,39 @@ Ask = Callable[..., tuple[dict[str, Any], "we.ProbeRun | None", "we.ProbeRun | N
 Run = Callable[[Any, we.Task, str, Path], tuple["we.ProbeRun", "we.ProbeRun"]]
 
 
+def no_answer(found: Mapping[str, Any]) -> str:
+    """Why the reviewer's answer is no answer, or "": an error, a verdict that is neither defect nor none, or a defect with no
+    test, which a reply cut short gives. The one test of an answer, wherever replay 3 reads one."""
+    if found.get("error"):
+        return str(found["error"])
+    if found.get("verdict") not in ("defect", "none"):
+        return "the reviewer gave no verdict"
+    if found["verdict"] == "defect" and not found.get("test"):
+        return "the reviewer said it wrote a test and none came, as a reply cut short gives"
+    return ""
+
+
+def failed_cases(run: we.ProbeRun | None) -> list[str]:
+    """The cases a run recorded as failed, whatever pytest's exit: a run cut short after a failure still shows that failure."""
+    return sorted(f"rule:{case}" for case, outcome in (run.results if run else {}).items() if outcome == "failed")
+
+
 def verdict(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.ProbeRun | None) -> dict[str, Any]:
     """One patch's record: "failed" where there was no review, "reproduced" where a test that fails on the parent has a case that
     fails with the patch, and "none" otherwise, with the reason."""
-    at_parent, on_patch = fr._failing(base, "rule"), fr._failing(now, "rule")
-    if found.get("error") or found.get("verdict") not in ("defect", "none"):
-        said, reason = "failed", found.get("error") or "the reviewer gave no verdict"
+    at_parent, on_patch = failed_cases(base), failed_cases(now)
+    if no_answer(found):
+        said, reason = "failed", no_answer(found)
     elif not found.get("test"):
         said, reason = "none", "no test was written"
     elif base is None or now is None or base.exit is None or now.exit is None:
         said, reason = "failed", "a test run gave no exit, as when the container fails, so nothing was learnt"
     elif not at_parent:
         said, reason = "none", "the test fails no case on the parent, so it reproduces nothing"
-    elif not now.usable:
-        said, reason = "none", "the test did not run with the patch"
     elif on_patch:
         said, reason = "reproduced", ""
+    elif not now.usable:
+        said, reason = "none", "the test did not run with the patch"
     else:
         said, reason = "none", "every case holds with the patch"
     return {"said": said, "verdict": {"reproduced": "defect", "none": "none"}.get(said, "failed"), "reason": reason,
@@ -142,27 +159,34 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
         started = time.monotonic()
         found, _, _ = ask(ctx, task, root / str(rows[0]["run"]) / "final.patch", title, text, RULE_FIRST, RULE_AT, FILE,
                           candidate=False, run=False)
-        if found.get("error") or found.get("verdict") not in ("defect", "none"):
+        if no_answer(found):
             return [_keep(root, rows[0], verdict(found, None, None), started)]    # no review: asked again on the next run
         saved.parent.mkdir(parents=True, exist_ok=True)
         fr.write_whole(saved, json.dumps({"task": task.id, "instruction": INSTRUCTION, "found": found}, indent=1))
     for row in rows:
-        started, patch = time.monotonic(), root / str(row["run"]) / "final.patch"
+        started = time.monotonic()
+        raw = (root / str(row["run"]) / "final.patch").read_bytes()    # one read: these bytes are run and named, nothing else
+        sha = hashlib.sha256(raw).hexdigest()
         base = now = None
         if found.get("test"):
+            copy = root / "critic_packs" / f"{uuid.uuid4().hex}.patch"
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes(raw)
             try:
-                base, now = run(ctx, task, found["test"], patch)
+                base, now = run(ctx, task, found["test"], copy)
             except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 got.append(_keep(root, row, verdict({**found, "error": f"{type(exc).__name__}: {exc}"[:400]}, None, None),
-                                 started))
+                                 started, sha))
                 continue
-        got.append(_keep(root, row, verdict(found, base, now), started))
+            finally:
+                copy.unlink(missing_ok=True)
+        got.append(_keep(root, row, verdict(found, base, now), started, sha))
     return got
 
 
-def _keep(root: Path, row: Mapping[str, Any], record: dict[str, Any], started: float) -> dict[str, Any]:
+def _keep(root: Path, row: Mapping[str, Any], record: dict[str, Any], started: float, sha: str | None = None) -> dict[str, Any]:
     record = {**record, "instruction": INSTRUCTION, "seconds": round(time.monotonic() - started, 1)}
-    fr.keep(root, row, record, FOLDER)
+    fr.keep(root, row, record, FOLDER, sha=sha)
     return record
 
 
