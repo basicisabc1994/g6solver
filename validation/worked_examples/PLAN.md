@@ -1537,3 +1537,19 @@ not turn on it.
 - **Kill rule.** Balanced accuracy up by less than 5 points, or false alarms not under 40%.
 - **Choosing the instruction.** By balanced accuracy on the training patches, not agreement. Version 2 aims at what
   version 1 missed, in general words only: the dimensions the repository's own tests of the same feature cover.
+
+## 2026-11-04 (early, frozen): replay 3's instruction, before its scored run
+
+**Version 2** (fd359f6a87402b72, claude/replay3 97beb23) asked for the dimensions the repository's own tests of the
+feature cover, and 6 to 20 cases. On the 7 training bugs it gave the same verdict as version 1 on every one of the 129
+patches. Balanced accuracy ties: 44.4% on the amended tests and 69.4% on the maintainers'. The frozen review, which was
+developed on these bugs, scores 78.3% and 83.3% on its 79.
+
+**Frozen.** On a tie the earlier and simpler instruction stays: **838d8da877502eee** (claude/replay3 69ce2e1). The
+scored run on stage 1 and 2's 34 bugs uses it and no other, after one Codex review of the branch. Any repair from that
+review may touch the runner but not the instruction.
+
+**Read now, before the scored run.** Two instructions in different words, and two independent reviewer calls a bug, gave
+one verdict a bug, the same both times. A test of the issue's rule passes or fails a bug's patches together. So on
+unseen bugs it can at most tell bugs whose patches are mostly wrong from bugs whose patches are mostly right. That is
+weaker than a judge of each patch. Replay 3's prediction is unchanged and is read as registered.
