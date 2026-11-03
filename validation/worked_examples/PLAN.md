@@ -1418,3 +1418,11 @@ first on a pilot of the first 40 patches by digest. After each block of 40 a reg
 when even every remaining patch going its way could not reach its prediction, and only then; it never stops early for
 success. Nothing is dropped or rerun for a better result. Counts are read on unseen bugs only, as before. A Codex limit
 pauses a replay; it resumes where it stopped, and a review that failed on a limit is not counted as a review.
+
+## 2026-11-03 (afternoon, later): where stage 1's final review stands
+
+Stage 1's final review, which is report only and changes no score, verdict or rule, was stopped by the machine's
+low-memory guard with 165 of about 185 patches reviewed. Each review is saved as it ends and a rerun skips the saved ones,
+so it resumes where it stopped; it is restarted only when the owner asks, and its counts are reported then, whole. The three
+stages' results above stand without it: stage 1, uplift not shown; stage 2, uplift not shown, the review loop 3-0 ahead of
+Claude Code alone (p 0.125) on both scores; stage 3, nothing adopted. The 95% target is met in none.
