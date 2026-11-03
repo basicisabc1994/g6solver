@@ -138,9 +138,10 @@ def bug_record(root: Path, task: str) -> Path:
 
 
 class Checked:
-    """``ctx.docker`` for replay 3's test runs: a test run whose ``docker exec`` itself failed raises, so no report it printed is
-    read as a run. The study's ``run.run_set`` reads only what the probe script printed, whose own last command succeeds, so a
-    non-zero status there is the exec's failure, never the test's. Every other call is passed through as it is."""
+    """``ctx.docker`` for replay 3's test runs: any shell command in the container that ends non-zero raises, so a failed review is
+    made again and nothing it printed is read as a run. No such status is normal there: staging the test copy and the probe script
+    both end in a command that succeeds, so non-zero is the exec's own failure, and the one status a caller reads, ``git apply``'s,
+    already makes a failed review. ``docker`` calls themselves (run, cp, rm) are passed through as they are."""
 
     def __init__(self, docker: Any):
         self.docker = docker
@@ -150,8 +151,8 @@ class Checked:
 
     def sh(self, ctr: str, script: str, *args: Any, **kwargs: Any) -> Any:
         done = self.docker.sh(ctr, script, *args, **kwargs)
-        if we.JUNIT_MARK in script and done.returncode != 0:
-            raise RuntimeError(f"the test run's docker exec exited {done.returncode}")
+        if done.returncode != 0:
+            raise RuntimeError(f"a command in the review's container exited {done.returncode}")
         return done
 
 

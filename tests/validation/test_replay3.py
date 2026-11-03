@@ -194,7 +194,10 @@ def test_a_test_run_whose_docker_exec_failed_raises_and_every_other_call_passes_
     with pytest.raises(RuntimeError, match="exited 125"):
         r3.Checked(Fake(125)).sh("ctr", f"pytest; echo {we.JUNIT_MARK}")
     assert r3.Checked(Fake(0)).sh("ctr", f"pytest; echo {we.JUNIT_MARK}").returncode == 0
-    assert r3.Checked(Fake(1)).sh("ctr", "git apply /tmp/we.patch").returncode == 1     # the caller reads this status itself
+    with pytest.raises(RuntimeError, match="exited 125"):           # staging the test copy is no test run, and is checked too
+        r3.Checked(Fake(125)).sh("ctr", "cp -r /we/rule /tmp/held; true")
+    with pytest.raises(RuntimeError, match="exited 1"):             # a patch that does not apply: a failed review, as before
+        r3.Checked(Fake(1)).sh("ctr", "git apply /tmp/we.patch")
     assert r3.Checked(Fake(0))("rm", "-f", "x") == ("called", ("rm", "-f", "x"))
 
 
