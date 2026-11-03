@@ -678,6 +678,99 @@ def test_a_reservation_booked_under_a_week_named_in_another_zone_still_counts(tm
         store.close()
 
 
+def _zone_named(store, start, amount):
+    from g6.self_maintenance.pacing import OWNER
+
+    scope = store.for_owner(OWNER)                # booked as a folder enrolled before weeks were named in UTC did
+    venture = scope.venture_named(f"codex@{start.isoformat()}", caps={"model": 1000, "cash": 0})
+    scope.reserve(venture, month=start.isoformat(), account="model", amount=amount)
+
+
+def test_a_reservation_booked_in_another_zone_survives_two_moves_of_its_week_and_a_restart(tmp_path):
+    from datetime import timezone
+
+    start = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=10)))
+    window, now, path = ProviderWindow("codex", 1000, start), (start + timedelta(days=3, hours=1)).astimezone(UTC), tmp_path / "op.db"
+    store = OperatorStore(path)
+    try:
+        _zone_named(store, start, 350)
+        reading = [None]
+        meter = BudgetMeter((window,), store=store, read_account=lambda *_: reading[0])
+        assert meter.reading("codex", now).used == 350
+        reading[0] = AccountReading(resets_at=start + timedelta(days=8))       # the week's end moves once
+        assert meter.reading("codex", now).used == 350
+    finally:
+        store.close()
+    store = OperatorStore(path)
+    try:                                                                         # and again, after a restart
+        meter = BudgetMeter((window,), store=store, read_account=lambda *_: AccountReading(resets_at=start + timedelta(days=9)))
+        assert meter.reading("codex", now).used == 350
+        assert not meter.reserve("codex", now, 150).admitted                    # 500 is past this day's ceiling of 400
+    finally:
+        store.close()
+
+
+def test_a_week_with_a_venture_of_its_own_in_another_zone_keeps_its_own_book_when_the_grid_moves(tmp_path):
+    from datetime import timezone
+
+    settings = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=10)))
+    provider = settings + timedelta(days=1)
+    store = OperatorStore(tmp_path / "op.db")
+    try:
+        _zone_named(store, settings, 100)
+        _zone_named(store, provider, 350)
+        meter = BudgetMeter((ProviderWindow("codex", 1000, settings),), store=store,
+                            read_account=lambda *_: AccountReading(resets_at=provider + timedelta(days=7)))
+        assert meter.reading("codex", (provider + timedelta(days=2, hours=1)).astimezone(UTC)).used == 350
+    finally:
+        store.close()
+
+
+def test_a_limit_one_request_meets_stops_the_ticks_other_requests():
+    from g6.metaharness.loop import _AtLimit
+
+    def respond(system, user):
+        if user == "first":
+            raise LLMError("G6_E_LLM_RATE_LIMITED: HTTP 429 from provider")
+        return "sent after the limit"
+
+    backend, requests = FakeLLM(responder=respond), _Requests()
+    requests.open(10, datetime.now(UTC) + timedelta(days=7))
+    caller = _Counted(backend, requests)
+    with pytest.raises(_AtLimit):
+        caller.complete("system", "first")
+    done = []
+
+    def other():                                   # another thread of the same tick, still unwinding
+        try:
+            caller.complete("system", "second")
+        except (_AtLimit, LLMError) as stopped:
+            done.append(type(stopped).__name__)
+
+    worker = threading.Thread(target=other)
+    worker.start()
+    worker.join(10)
+    assert backend.calls == [("system", "first")] and done == ["_AtLimit"]
+    requests.open(10, datetime.now(UTC) + timedelta(days=7))        # the next tick starts clear
+    assert caller.complete("system", "third") == "sent after the limit"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="only Windows reads a folder's name without regard to case")
+def test_a_cache_folder_named_in_other_case_is_a_cache_folder_on_windows(tmp_path, monkeypatch):
+    from g6.metaharness import loop as loop_module
+
+    package = tmp_path / "g6"
+    package.mkdir()
+    (package / "mod.py").write_text("value = 1\n", encoding="utf-8")
+    (package / "__PYCACHE__").mkdir()
+    monkeypatch.setattr(loop_module, "_SOURCE", package)
+    enrolled = loop_module.envelope_sha256()
+    (package / "__PYCACHE__" / f"mod.{sys.implementation.cache_tag}.pyc").write_bytes(b"a first import writes this")
+    assert loop_module.envelope_sha256() == enrolled
+    (package / "__PYCACHE__" / "planted.pyc").write_bytes(b"importable as g6.__pycache__.planted")
+    assert loop_module.envelope_sha256() != enrolled
+
+
 def test_an_install_under_a_folder_named_pycache_still_pins_its_source(tmp_path, monkeypatch):
     from g6.metaharness import loop as loop_module
 

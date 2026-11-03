@@ -44,7 +44,7 @@ from g6.core.adaptation_gate import is_automated
 from g6.core.ledger import LedgerError, digest
 from g6.core.llm import _WAITS, DEFAULT_MAX_TOKENS, LLMError
 from g6.core.model_calls import counting
-from g6.integrity import build_manifest, manifest_sha256
+from g6.integrity import build_manifest, in_cache, manifest_sha256
 from g6.metaharness.api import _blocked, _envelope, judging_sha256
 from g6.metaharness.domain import (
     BARRED,
@@ -258,6 +258,7 @@ class _Requests:
         look at one tick cannot be admitted under the next, or under none."""
         with self._lock:
             self.sent, self.limit, self.ends, self.stopped, self.unseen, self.refusal = 0, limit, ends, "", False, None
+            self.limited: tuple[datetime, str] | None = None
             self.generation += 1
 
     def close(self) -> None:
@@ -278,12 +279,16 @@ class _Requests:
         and its tick close, while it is read."""
         if self.refusal is not None:
             raise _Refused(self.refusal["said"])
+        if self.limited is not None:
+            raise _AtLimit(*self.limited)
         stopped = self.halted() if self.limit != math.inf else None
         if stopped is not None:
             raise stopped
         with self._lock:
             if self.refusal is not None:                  # one may have come while the stop was being read
                 raise _Refused(self.refusal["said"])
+            if self.limited is not None:                  # and a limit, met by another of the tick's requests
+                raise _AtLimit(*self.limited)
             if (generation is not None and generation != self.generation) or not live():
                 raise LLMError(f"{TICK_BUDGET_SPENT}: this request came after its call returned, so nothing reserved covers it")
             if self.unseen or self.sent >= self.limit:
@@ -311,9 +316,12 @@ class _Requests:
             self.sent += requests
 
     def at_a_limit(self, failed: LLMError) -> None:
-        """End the tick when a request failed at a provider's limit. Outside a tick there is none to end."""
+        """End the tick when a request failed at a provider's limit, and let nothing more of it go out: the limit is kept
+        until the tick closes, so another of its requests, on another thread, meets it too. Outside a tick there is none."""
         until = limit_ends(str(failed), self.now())
         if until is not None and self.limit != math.inf:
+            with self._lock:
+                self.limited = (until, str(failed)[:300])
             raise _AtLimit(until, str(failed)[:300]) from failed
 
     def not_refused(self, request: str) -> None:
@@ -479,7 +487,7 @@ def _importable_caches(root: Path) -> dict[str, str]:
     suffixes = sorted(importlib.machinery.all_suffixes(), key=len, reverse=True)
     found = {}
     for path in root.rglob("*"):
-        if "__pycache__" not in path.relative_to(root).parts or not path.is_file():
+        if not in_cache(path.relative_to(root)) or not path.is_file():
             continue
         suffix = next((s for s in suffixes if path.name.endswith(s)), None)
         if suffix is not None and path.name[:-len(suffix)] and "." not in path.name[:-len(suffix)]:   # importlib checks no names

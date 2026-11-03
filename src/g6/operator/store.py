@@ -168,25 +168,36 @@ class OwnerScope:
         try:
             if grid:
                 self.conn.execute("INSERT OR REPLACE INTO week_grids VALUES (?, ?, ?)", (self.owner, provider, grid))
-            book = self._book_of(provider, week)
-            if book is None and moved_from and moved_from != week and self._named(f"{provider}@{week}") is None:
-                source = self._book_of(provider, moved_from) or moved_from
+            book, own = self._book_of(provider, week), self._own(provider, week)
+            if book is None and own is None and moved_from and moved_from != week:
+                source = self._book_of(provider, moved_from) or self._own_book(provider, moved_from)
                 held = self.conn.execute("SELECT 1 FROM week_books WHERE owner=? AND provider=? AND book=? AND week NOT IN (?, ?)",
                                          (self.owner, provider, source, week, moved_from)).fetchone()
                 if held is None:
                     self.conn.execute("INSERT INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, source))
                     book = source
-            book = book or week
-            found = self._named(f"{provider}@{book}")
-            if found is None and (older := self._same_moment(provider, book)) is not None:
-                found, book = older       # booked before weeks were named in UTC: its rows carry that name, so it is kept
-                self.conn.execute("INSERT OR REPLACE INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, book))
+            if book is None:
+                found, book = own if own is not None else (None, week)
+            else:
+                found = self._named(f"{provider}@{book}")
             found = found or self._insert_venture(f"{provider}@{book}", caps)
             self.conn.commit()
             return found, book
         except BaseException:
             self.conn.rollback()
             raise
+
+    def _own(self, provider: str, week: str) -> tuple[str, str] | None:
+        """Inside the caller's transaction: the venture named for ``week``'s own start and the book it carries, under the UTC
+        name or, from a folder enrolled before weeks were named in UTC, under the same instant in another zone (its rows carry
+        that rendering, so it stays the book); else ``None``. A week's own venture is never a row of ``week_books``, so a
+        week that moves on from it can be followed by another move."""
+        found = self._named(f"{provider}@{week}")
+        return (found, week) if found is not None else self._same_moment(provider, week)
+
+    def _own_book(self, provider: str, week: str) -> str:
+        own = self._own(provider, week)
+        return own[1] if own is not None else week
 
     def _same_moment(self, provider: str, book: str) -> tuple[str, str] | None:
         """Inside the caller's transaction: a venture of ``provider`` named for the moment ``book`` names, rendered in another
