@@ -1458,4 +1458,6 @@ and made again on a resumed run. That covers a provider limit, a reviewer proces
 a reply that does not quote its pack or gives no verdict, a container, git or patch that fails, and a saved record that
 cannot be read. Two reviewer failures in a row pause the replay, as a Codex limit does; a container, git or patch failure is
 not the reviewer's and does not count toward the pause. The futility stop is read before each review, so a resumed replay
-honours a stop its saved reviews already make.
+honours a stop its saved reviews already make, and a patch whose review failed is still to be reviewed while it waits. It is
+read on stage 1 and 2 together, where the predictions are; the training patches, reported apart, have no prediction and so no
+stop.
