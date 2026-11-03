@@ -186,6 +186,23 @@ def test_a_record_with_no_word_a_reviewer_gives_is_no_review_to_the_counts_and_t
         assert not rc.counted(rows[sha][name]) and rc.tally(rows, name, "amended")["n"] == 0, name
 
 
+def test_a_record_with_no_word_a_reviewer_gives_completes_no_block(tmp_path, monkeypatch, capsys):
+    archive = _Archive(tmp_path / "round3", monkeypatch)
+    shas = sorted(archive.run("x-1", str(n), True, True) for n in range(4))
+    for sha in shas:
+        archive.said(fr.FOLDER, sha, "none")
+    (archive.root / "loop" / pr.FOLDER).mkdir()
+    (archive.root / "loop" / pr.FOLDER / f"{shas[0]}.json").write_text(json.dumps({"said": "maybe"}), "utf-8")
+    archive.said(pr.FOLDER, shas[1], "defect")
+    assert rows_none(rc.patches(archive.root, ["x-1"]), shas[0], rc.PRODUCT)
+    assert rc.futile(archive.root, ["x-1"], rc.PRODUCT, block=2) == ""
+    assert "futility product" not in _report(archive.root, capsys, ["x-1"], futile=True, block=2)
+
+
+def rows_none(rows, sha, name):
+    return rows[sha][name] is None
+
+
 def test_a_last_block_short_of_a_whole_one_is_no_checkpoint(tmp_path, monkeypatch, capsys):
     archive = _Archive(tmp_path / "round3", monkeypatch)
     shas = sorted(archive.run("x-1", str(n), True, True) for n in range(3))

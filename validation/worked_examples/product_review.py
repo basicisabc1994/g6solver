@@ -92,11 +92,29 @@ def _read_whole(patch: str, task: str) -> bool:
 
 # --- the replay ------------------------------------------------------------------------------------------------------------------
 
+#: git's one-letter C escapes in a quoted path (``quote_c_style``); any other byte it escapes is three octal digits.
+_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
 def _unquoted(name: str) -> str:
-    """A path as git writes it in a patch's header: in double quotes, with octal escapes, when it holds an unusual character."""
-    if len(name) > 1 and name[0] == name[-1] == '"':
-        return name[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode("latin-1").decode("utf-8", "replace")
-    return name
+    """A path as git writes it in a patch: in double quotes with C escapes when it holds an unusual character, read back to
+    the bytes git escaped, as UTF-8. A character git left as it is (as it leaves UTF-8 with ``core.quotePath`` off) is its
+    own UTF-8."""
+    if not (len(name) > 1 and name[0] == name[-1] == '"'):
+        return name
+    body, out, at = name[1:-1], bytearray(), 0
+    while at < len(body):
+        octal = body[at + 1:at + 4]
+        if body[at] == "\\" and len(octal) == 3 and all(digit in "01234567" for digit in octal):
+            out.append(int(octal, 8) & 0xFF)
+            at += 4
+        elif body[at] == "\\" and body[at + 1:at + 2] in _ESCAPES:
+            out.append(_ESCAPES[body[at + 1]])
+            at += 2
+        else:
+            out += body[at].encode("utf-8", "surrogatepass")
+            at += 1
+    return out.decode("utf-8", "replace")
 
 
 def _applied(name: str) -> str:
@@ -121,19 +139,31 @@ def _sides(rest: str) -> Iterator[tuple[str, str]]:
 
 def touched(patch: str) -> tuple[str, ...]:
     """The files a patch touches, sorted, as the product's ``repo_tests.change`` lists them for the tree the patch makes: git's
-    ``--no-renames`` names both paths of a move. Read from each file's header line, where both sides name one path once their
-    prefixes are off (``_applied``), and its rename or copy lines, never from its hunks, whose lines all begin with a space, a
-    plus or a minus."""
+    ``--no-renames`` names both paths of a move. Every name the patch gives a file, read as ``git apply`` reads it: its header
+    line, where both sides name one path once their prefixes are off (``_applied``); its ``---`` and ``+++`` lines, each side's
+    own, so that prefixes of different depths still name what git applies; and its rename and copy lines. Those are read in a
+    file's header only, before its first hunk, whose lines all begin with a space, a plus or a minus, so a hunk's line is never
+    a name."""
     found: set[str] = set()
+    header = False
     for line in patch.split("\n"):
         if line.startswith("diff --git "):
+            header = True
             for old, new in _sides(line[len("diff --git "):]):
                 path = _applied(_unquoted(old))
                 if path and path == _applied(_unquoted(new)):
                     found.add(path)
                     break
+        elif not header:
+            continue
+        elif line.startswith(("--- ", "+++ ")):
+            name = _unquoted(line[4:].split("\t", 1)[0])       # git writes a tab after a name that holds a space
+            if name != "/dev/null" and _applied(name):
+                found.add(_applied(name))
         elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
             found.add(_unquoted(line.split(" ", 2)[2]))
+        elif line.startswith(("@@", "GIT binary patch", "Binary files ")):
+            header = False
     return tuple(sorted(found))
 
 

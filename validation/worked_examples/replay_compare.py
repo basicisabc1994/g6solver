@@ -70,7 +70,9 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
         one["split"] = [score for score in SCORES if len(seen[score]) > 1]
         for name, folder in REVIEWERS:
             kept = fr.read(root / "loop" / folder / f"{sha}.json")     # one that cannot be read is no review, as the replays read it
-            one[name] = {"said": kept.get("said"), "verdict": kept.get("verdict")} if kept else None
+            if not (fr.counts(kept) or (kept or {}).get("said") == "failed"):
+                kept = None          # neither a review nor a failed one, so no record at all: it completes no block, as none does
+            one[name] = {"said": kept["said"], "verdict": kept.get("verdict")} if kept else None
     return dict(sorted(found.items()))
 
 

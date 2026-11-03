@@ -202,19 +202,43 @@ def test_the_pack_is_what_claude_nexts_pack_builds_from_the_same_patch(tmp_path)
     ("diff --git x/src/a b.py yy/src/a b.py\n", ("src/a b.py",)),
     ("diff --git a/a b/c b/a b/c\n", ("a b/c",)),
     ('diff --git "old/caf\\303\\251.py" "new/caf\\303\\251.py"\n', ("café.py",)),
+    # a quoted name with raw UTF-8 in it, as git writes it with core.quotePath off, and an escaped quote
+    ('diff --git "汉\\"/src/a.py" "字\\"/src/a.py"\n--- "汉\\"/src/a.py"\n+++ "字\\"/src/a.py"\n', ("src/a.py",)),
+    # prefixes of different depths: each side's name as git apply reads it, as a move names both
+    ("diff --git old/src/app.py new/tree/src/app.py\n--- old/src/app.py\n+++ new/tree/src/app.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n",
+     ("src/app.py", "tree/src/app.py")),
+    # a hunk's removed line that reads like a header line is no name
+    ("diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n@@ -1,2 +1 @@\n--- x/comment\n-y\n+z\n", ("q.sql",)),
+    # git's tab after a name that holds a space
+    ("diff --git a/a b.py b/a b.py\n--- a/a b.py\t\n+++ b/a b.py\t\n@@ -1 +1 @@\n-x\n+y\n", ("a b.py",)),
 ])
 def test_the_files_a_patch_touches_are_the_ones_git_would_list(patch, files):
     assert pr.touched(patch) == files
 
 
-@pytest.mark.parametrize("prefixes", [(), ("--src-prefix=old/", "--dst-prefix=new/"), ("--src-prefix=x/", "--dst-prefix=yy/")])
-def test_a_real_diff_with_any_prefixes_touches_the_files_git_lists(prefixes):
-    def git(*args):
-        return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=True, timeout=60).stdout.decode("utf-8")
+def _git_out(*args, data=None):
+    return subprocess.run(["git", "-C", str(ROOT), *args], input=data, capture_output=True, check=True, timeout=60).stdout
 
-    where = ("5350e2e", "HEAD", "--", "validation/worked_examples", "tests/validation")
-    listed = tuple(sorted(git("diff", "--name-only", "--no-renames", *where).splitlines()))
-    assert listed and pr.touched(git("diff", "--no-renames", *prefixes, *where)) == listed
+
+WHERE = ("5350e2e", "HEAD", "--", "validation/worked_examples", "tests/validation")
+
+
+@pytest.mark.parametrize(("config", "prefixes"), [
+    ((), ()), ((), ("--src-prefix=old/", "--dst-prefix=new/")), ((), ("--src-prefix=x/", "--dst-prefix=yy/")),
+    (("-c", "core.quotePath=false"), ('--src-prefix=汉"/', '--dst-prefix=字"/')),
+])
+def test_a_real_diff_with_any_prefixes_touches_the_files_git_lists(config, prefixes):
+    listed = tuple(sorted(_git_out("diff", "--name-only", "--no-renames", *WHERE).decode("utf-8").splitlines()))
+    patch = _git_out(*config, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", *prefixes, *WHERE)
+    assert listed and pr.touched(patch.decode("utf-8")) == listed
+
+
+def test_with_prefixes_of_different_depths_every_path_git_applies_is_touched():
+    patch = _git_out("diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--src-prefix=old/", "--dst-prefix=new/tree/",
+                     *WHERE)
+    applied = {name.decode("utf-8") for name in _git_out("apply", "--numstat", "-z", "-", data=patch).split(b"\0")
+               for name in [name.split(b"\t")[-1]] if name}
+    assert applied and applied <= set(pr.touched(patch.decode("utf-8")))
 
 
 # --- one review ---------------------------------------------------------------------------------------------------------------
