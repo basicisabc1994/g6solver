@@ -264,6 +264,77 @@ def test_a_secret_in_a_parent_file_the_pack_cuts_never_reaches_the_reviewer(rig,
     assert rig.calls[0].startswith("issue.txt:\n") and patch in rig.calls[0]       # the head the review reads stays whole
 
 
+def test_each_span_the_scrubber_names_is_what_scrub_masks():
+    from g6.context.redact import MASK, scrub, secret_spans
+
+    text = ("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\nid AKIAABCDEFGHIJKLMNOP and sk-abcdefghijklmnop1234\n"
+            "url https://user:pw1234@host.example/x auth bearer abcdefghijklmnop\ntoken = 'quoted-value' password: plainvalue1\n"
+            "AccountKey=abc123def;\n")
+    shown, at = [], 0
+    for start, end in secret_spans(text):
+        shown += [text[at:start], MASK]
+        at = end
+    assert "".join(shown) + text[at:] == scrub(text)
+
+
+def _sent(rig, patch: str, task: str = TASK) -> dict:
+    return loop.run_critic(rig.change, task, rig.critic, loop.harness().critic, rig.session / "sets" / "critic", patch=patch)
+
+
+def test_a_secret_the_diffs_line_marks_part_from_its_name_never_reaches_the_reviewer(rig):
+    from g6.context.redact import scrub
+
+    secret = "made-up-review-secret-value-77"
+    source = 'config = {\n    "api_key":\n        "' + secret + '",\n}\n'
+    rig.source.write_bytes(source.encode())
+    assert secret not in scrub(source)                     # found in the file itself
+    found = _sent(rig, repo_tests.diff_text(rig.change))
+    assert len(rig.calls) == 1 and secret not in rig.calls[0] and found["masked"] >= 1
+
+
+def test_a_secret_split_over_a_tracked_files_hunk_never_reaches_the_reviewer(rig):
+    old, new = "made-up-old-value-0000", "made-up-new-value-1234"
+    patch = (f'--- a/conf.py\n+++ b/conf.py\n@@ -1,3 +1,3 @@\n config = {{\n     "api_key":\n-        "{old}",\n'
+             f'+        "{new}",\n')
+    _sent(rig, patch)
+    assert old not in rig.calls[0] and new not in rig.calls[0] and '"api_key":' in rig.calls[0]
+
+
+def test_a_value_whose_name_the_hunk_leaves_out_is_found_in_the_parent_file(rig, monkeypatch):
+    secret = "made-up-context-value-0123"
+    parent = f'cfg = {{\n    "token":\n\n\n        "{secret}",\n    "a": 1,\n    "b": 2,\n    "c": 3,\n}}\n'
+    monkeypatch.setattr(repo_tests, "read_at", lambda *args: parent)
+    patch = (f'--- a/mod.py\n+++ b/mod.py\n@@ -5,4 +5,4 @@\n         "{secret}",\n     "a": 1,\n     "b": 2,\n'
+             '-    "c": 3,\n+    "c": 4,\n')
+    _sent(rig, patch)
+    assert secret not in rig.calls[0] and '+    "c": 4,' in rig.calls[0]
+
+
+def test_a_task_that_opens_a_private_key_hides_nothing_of_the_patch(rig):
+    ended = loop.advance(rig.repo, "Handle invalid -----BEGIN PRIVATE KEY----- inputs", rig.base, rig.session,
+                         critic=rig.critic)
+    assert "candidate.patch:" in rig.calls[0] and "+value = 1" in rig.calls[0] and "BEGIN PRIVATE" not in rig.calls[0]
+    assert ended.ending == "clean"                          # the marker hid one line's end, and no line of the patch
+
+
+def test_a_key_marker_in_one_file_masks_nothing_of_the_next(rig):
+    patch = ('--- /dev/null\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+MARK = "-----BEGIN PRIVATE KEY-----"\n'
+             '--- /dev/null\n+++ b/b.py\n@@ -0,0 +1,2 @@\n+def kept():\n+    return 1\n')
+    _sent(rig, patch)
+    assert "+def kept():\n+    return 1" in rig.calls[0] and "+++ b/b.py" in rig.calls[0]
+    assert "BEGIN PRIVATE" not in rig.calls[0]
+
+
+def test_a_mask_over_lines_of_the_patch_leaves_no_clean_review(rig):
+    body = "MIIBVgIBADANBgkqhkiG9w0BAQEFAASCAUAwggE8AgEAAkEAmadeupkeybodyonly"
+    rig.source.write_bytes(f"KEY = '''-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----'''\nvalue = 1\n".encode())
+    ended = loop.advance(rig.repo, TASK, rig.base, rig.session, critic=rig.critic)
+    assert len(rig.calls) == 1 and body not in rig.calls[0] and "+value = 1" in rig.calls[0]
+    assert ended.ending != "clean" and ended.code == loop.NO_CLEAN_REVIEW and loop.HIDDEN in ended.text
+    assert json.loads((rig.home / "completion_loop" / "failures.jsonl").read_text().splitlines()[-1])["cause"] == \
+        loop.MASKED_LINES
+
+
 def test_the_line_that_names_the_bytes_is_no_line_of_code(tmp_path):
     from g6.coding_agent_gate import scan_diff
 
