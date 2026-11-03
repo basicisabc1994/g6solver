@@ -410,14 +410,25 @@ def test_the_futility_stop_is_read_before_each_review_so_a_resumed_replay_honour
     import replay_compare as rc
 
     asked = []
-    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append(name) or stop)
+    monkeypatch.setattr(rc, "predicted", lambda: {TASK, "x-9"})
+    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append((name, set(tasks))) or stop)
     critic = _Critic(QUIET)
     got = _main(tmp_path, monkeypatch, capsys, critic, [FAILED], argv=["--reproduce"])
     if stop:
         assert critic.seen == [] and got["saved"] == {} and json.loads(got["out"]) == {"stopped": stop}
     else:
         assert len(critic.seen) == 4 and len(got["saved"]) == 2
-    assert asked and set(asked) == {rc.REPRODUCE}
+    assert asked and asked[0][1] == {TASK, "x-9"} and {name for name, _ in asked} == {rc.REPRODUCE}
+
+
+def test_a_training_patch_has_no_futility_stop(tmp_path, monkeypatch, capsys):
+    import replay_compare as rc
+
+    asked = []
+    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append(name) or "futility: cannot be reached")
+    critic = _Critic(QUIET)
+    got = _main(tmp_path, monkeypatch, capsys, critic, [FAILED], argv=["--reproduce"])
+    assert TASK not in rc.predicted() and asked == [] and len(critic.seen) == 4 and "stopped" not in got["out"]
 
 
 def test_a_saved_review_is_skipped_and_a_failed_one_is_made_again(tmp_path):

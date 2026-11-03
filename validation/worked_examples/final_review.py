@@ -355,7 +355,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     issues: dict[str, tuple[str, str]] = {}
     folder = REPRODUCE if args.reproduce else FOLDER
     rows = waiting(root, args.tasks, folder)
-    missed = 0
+    missed, stopped, predicted = 0, "", set()
+    if args.reproduce:
+        import replay_compare     # here, as it imports this module
+
+        predicted = replay_compare.predicted()
     for row in rows[:args.limit or None]:
         task = we.task_by_id(row["task"])
         if task.id not in issues:
@@ -366,12 +370,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             keep(root, row, got)
             print(json.dumps({"task": task.id, "said": got["said"], "seconds": got["seconds"], "error": got["error"]}), flush=True)
             continue
-        import replay_compare     # here, as it imports this module
-
-        stop = replay_compare.futile(root, args.tasks, replay_compare.REPRODUCE)    # before each review: a resumed run too
-        if stop:
-            print(json.dumps({"stopped": stop}), flush=True)
-            break
+        if row["task"] in predicted:          # the stop is the prediction's: stage 1 and 2 together, not training
+            if stopped:
+                continue
+            stopped = replay_compare.futile(root, predicted, replay_compare.REPRODUCE)    # before each review: a resumed run too
+            if stopped:
+                print(json.dumps({"stopped": stopped}), flush=True)
+                continue
         got = reproduce_review(ctx, task, root / row["run"] / "final.patch", *issues[task.id], earlier=saved(root, row, folder))
         keep(root, row, got, folder)
         print(json.dumps({"task": task.id, "step_1": got["reproduce"]["said"], "said": got["said"], "seconds": got["seconds"],

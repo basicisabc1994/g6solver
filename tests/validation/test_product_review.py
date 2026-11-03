@@ -403,14 +403,32 @@ def test_the_futility_stop_is_read_before_each_review_so_a_resumed_replay_honour
     import replay_compare as rc
 
     asked = []
-    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append(name) or stop)
+    monkeypatch.setattr(rc, "predicted", lambda: {TASK, "x-9"})
+    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append((name, set(tasks))) or stop)
     reviewer = _Reviewer(QUIET)
     got = _main(tmp_path, monkeypatch, capsys, reviewer)
     if stop:
         assert reviewer.calls == [] and got["saved"] == {} and json.loads(got["out"]) == {"stopped": stop}
     else:
         assert len(reviewer.calls) == 2 and len(got["saved"]) == 2
-    assert asked and set(asked) == {rc.PRODUCT}
+    assert asked and set(asked[0][1]) == {TASK, "x-9"} and {name for name, _ in asked} == {rc.PRODUCT}
+
+
+def test_a_training_patch_has_no_futility_stop_and_a_stop_leaves_it_to_be_reviewed(tmp_path, monkeypatch, capsys):
+    import replay_compare as rc
+
+    other = next(task for task in fr.TRAINING if task != TASK)
+    assert not {TASK, other} & rc.predicted()
+    asked = []
+    monkeypatch.setattr(rc, "predicted", lambda: {TASK})        # as if this bug were stage 1's, and the other training
+    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append(name) or "futility product: cannot be reached")
+    root = tmp_path / "round3"
+    _row(root, "B", task=other, body=PATCH + "   ")
+    reviewer = _Reviewer(QUIET)
+    got = _main(tmp_path, monkeypatch, capsys, reviewer, argv=(other,))
+    lines = [json.loads(line) for line in got["out"].splitlines()]
+    assert [line.get("task") for line in lines if "task" in line] == [other] and len(reviewer.calls) == 1
+    assert sum("stopped" in line for line in lines) == 1 and asked == [rc.PRODUCT]
 
 
 @pytest.mark.parametrize("name", ["review", "pack", "touched", "read_at", "codex", "said"])

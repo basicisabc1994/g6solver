@@ -134,11 +134,17 @@ def futility(rows: Rows, *, block: int = BLOCK) -> list[str]:
     return [line for name in (REPRODUCE, PRODUCT) for _, line in _blocks(rows, name, block)]
 
 
+def predicted() -> set[str]:
+    """The bugs the predictions, and so their futility stop, are read on: stage 1 and 2 together. Training has no prediction."""
+    return {task for _, tasks, read in groups() if read for task in tasks}
+
+
 def futile(root: Path, tasks: Iterable[str], name: str, *, block: int = BLOCK) -> str:
     """The registered stop for replay ``name`` as it runs: the line of the last block it has run whole, when that block says its
-    prediction cannot be reached; else "". It never stops for success."""
+    prediction cannot be reached; else "". It never stops for success. A patch is still to be reviewed while it has no review
+    that counts, as a failed one is made again on a resumed run (``final_review.waiting``)."""
     rows = patches(root, tasks)
-    if not any(one[name] is None for one in rows.values()):       # nothing left to review: there is nothing to stop
+    if all(counted(one[name]) for one in rows.values()):          # nothing left to review: there is nothing to stop
         return ""
     found = list(_blocks(rows, name, block))
     return found[-1][1] if found and not found[-1][0] else ""

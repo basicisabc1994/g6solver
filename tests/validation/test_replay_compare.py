@@ -172,6 +172,23 @@ def test_a_review_record_that_cannot_be_read_is_no_review(tmp_path, monkeypatch,
     assert "futility reproduce first" not in _report(archive.root, capsys, ["x-1"], futile=True, block=2)
 
 
+@pytest.mark.parametrize("last", ["failed", "reproduced"])
+def test_a_failed_review_is_still_to_be_made_so_the_stop_still_applies(tmp_path, monkeypatch, last):
+    archive, shas = _four(tmp_path, monkeypatch)
+    for sha, said in zip(shas, ("reproduced", "reproduced", "reproduced", last)):
+        archive.said(fr.REPRODUCE, sha, said)
+    stop = rc.futile(archive.root, ["x-1"], rc.REPRODUCE, block=2)
+    if last == "failed":           # made again on a resumed run, as ``waiting`` queues it: the block that ended it still stops it
+        assert "futility reproduce first, block 2" in stop and "cannot be reached" in stop
+    else:                          # every review counts: there is nothing left to stop
+        assert stop == ""
+
+
+def test_the_predictions_are_read_on_stage_1_and_2_together_and_never_on_training():
+    groups = {name: set(tasks) for name, tasks, _ in rc.groups()}
+    assert rc.predicted() == groups["stage 1 and 2"] and not rc.predicted() & groups["training"]
+
+
 def test_the_futility_check_needs_both_parts_of_the_prediction(tmp_path, monkeypatch, capsys):
     archive = _Archive(tmp_path / "round3", monkeypatch)
     cells = [(True, "none", "reproduced")] + [(True, "none", "none")] * 3 + [(False, "none", "reproduced")] * 4

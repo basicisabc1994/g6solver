@@ -202,14 +202,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     ctx = we.Context(archive=c.Archive(root), docker=we.Docker(), key_reader=lambda: "", issue_reader=we.read_issue,
                      g6=we.g6_info(args.g6), variant=we.ROUND3, arm="L9")
     issues: dict[str, tuple[str, str]] = {}
-    missed = 0
+    missed, stopped = 0, ""
     import replay_compare     # here, as it imports this module
 
+    predicted = replay_compare.predicted()
     for row in fr.waiting(root, args.tasks, FOLDER)[:args.limit or None]:
-        stop = replay_compare.futile(root, args.tasks, replay_compare.PRODUCT)    # before each review: a resumed run too
-        if stop:
-            print(json.dumps({"stopped": stop}), flush=True)
-            break
+        if row["task"] in predicted:          # the stop is the prediction's: stage 1 and 2 together, not training
+            if stopped:
+                continue
+            stopped = replay_compare.futile(root, predicted, replay_compare.PRODUCT)    # before each review: a resumed run too
+            if stopped:
+                print(json.dumps({"stopped": stopped}), flush=True)
+                continue
         task = we.task_by_id(row["task"])
         if task.id not in issues:
             title, text = ctx.issue_reader(task)
