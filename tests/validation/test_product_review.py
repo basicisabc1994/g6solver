@@ -74,8 +74,13 @@ class _Docker:
 
     def __call__(self, *args, input=None, timeout=None, env=None):
         self.calls.append(args)
-        out = _tar(self.files) if "archive" in args else b""
-        return type("Done", (), {"stdout": out, "stderr": b"", "returncode": 0})()
+        out, code = b"", 0
+        if "ls-tree" in args:                    # read_at's way: the path named at the commit, then its blob
+            out = (args[-1].encode() + b"\0") if args[-1] in self.files else b""
+        elif "show" in args:
+            rel = args[-1].split(":", 1)[1]
+            out, code = (self.files[rel], 0) if rel in self.files else (b"", 128)
+        return type("Done", (), {"stdout": out, "stderr": b"", "returncode": code})()
 
     def sh(self, *args, **kw):
         raise AssertionError("replay 2 runs nothing in the container")
@@ -177,7 +182,7 @@ def test_the_pack_is_what_claude_nexts_pack_builds_from_the_same_patch(tmp_path)
     assert "rename from docs/a.txt" in patch and '"a/src/caf\\303\\251.py"' in patch
     proof = f"review {'1' * 32}"
     want = space["_pack"](repo_tests.change(repo, base), patch, "a title\n\nthe issue", proof)
-    got = pr.pack(git("archive", "--format=tar", base), patch, "a title\n\nthe issue", proof)
+    got = pr.pack(pr.parent_files(lambda *a: git(*a), base, pr.touched(patch)), patch, "a title\n\nthe issue", proof)
     assert got == want
     for shown in ("parent/docs/a.txt:", "parent/src/gone.py:", "parent/src/crlf.py:\nx = 1\ny = 2\n", "parent/my file.py:",
                   "parent/src/café.py:"):
@@ -205,7 +210,7 @@ def test_the_reviewer_gets_the_products_prompt_and_pack_and_nothing_else(tmp_pat
     (system, user), = reviewer.calls
     assert system == pr.CRITIC
     proof = user.splitlines()[1]
-    assert proof.startswith("review ") and user == pr.pack(_tar(PARENT), PATCH, "a title\n\nthe issue", proof)
+    assert proof.startswith("review ") and user == pr.pack(PARENT, PATCH, "a title\n\nthe issue", proof)
     assert user == f"issue.txt:\n{proof}\n\na title\n\nthe issue\n\ncandidate.patch:\n{PATCH}\n\nparent/src/app.py:\ndef f():\n    return 1\n"
     assert got["said"] == "none" and got["verdict"] == "none" and got["pack_chars"] == len(user) and not got["cut"]
 

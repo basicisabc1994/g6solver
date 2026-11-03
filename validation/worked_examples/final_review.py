@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -240,7 +241,7 @@ def reproduction(found: Mapping[str, Any], base: we.ProbeRun | None, now: we.Pro
     shown = []
     for case in [one.removeprefix("reproduce:") for one in on_patch][:we.MAX_SHOWN]:
         lines = [line for line in mask_paths(scrub(now.texts.get(case, ""))).splitlines() if line.strip()][-FAILURE_LINES:]
-        shown.append("\n".join([f"- {case}", *(f"  {line}" for line in lines)])[:we.MAX_CASE_CHARS])
+        shown.append("\n".join([f"- {mask_paths(scrub(case))}", *(f"  {line}" for line in lines)])[:we.MAX_CASE_CHARS])
     detail = (NO_TEST if not found.get("test") else "" if at_parent else NOT_REPRODUCED) + (
         "Its cases that failed with the candidate:\n" + "\n".join(shown) + "\n" if shown else "")
     note = REPRODUCTION.format(at_parent="yes" if at_parent else "no", with_patch=with_patch, detail=detail)
@@ -281,23 +282,33 @@ def _kept(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> Path | No
 
 
 def saved(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> dict[str, Any] | None:
-    """The review saved in ``folder`` for this run's patch as it stands, failed or not; None if there is none."""
+    """The review saved in ``folder`` for this run's patch as it stands, failed or not; None if there is none, or if what is there
+    cannot be read, as a write cut short leaves it, so that patch is reviewed again."""
     path = _kept(root, row, folder)
-    return json.loads(path.read_text("utf-8")) if path and path.is_file() else None
+    if not (path and path.is_file()):
+        return None
+    try:
+        got = json.loads(path.read_text("utf-8"))
+    except (ValueError, OSError):
+        return None
+    return got if isinstance(got, dict) else None
 
 
 def said_of(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> str | None:
-    """What the review said of this run's patch as it stands; None if it has no review, or the review failed."""
-    path = _kept(root, row, folder)
-    got = json.loads(path.read_text("utf-8")).get("said") if path and path.is_file() else None
+    """What the review said of this run's patch as it stands; None if it has no review, the review failed, or its record cannot be
+    read."""
+    got = (saved(root, row, folder) or {}).get("said")
     return None if got == "failed" else got
 
 
 def keep(root: Path, row: Mapping[str, Any], found: Mapping[str, Any], folder: str = FOLDER) -> None:
-    """Save a review under the patch's digest."""
+    """Save a review under the patch's digest, whole or not at all: it is written beside its place and moved there, so a run cut
+    short leaves no half record."""
     path = _kept(root, row, folder)
     path.parent.mkdir(exist_ok=True)
-    path.write_text(json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1), "utf-8")
+    part = path.with_name(f"{path.name}.{os.getpid()}.part")     # draws no uuid: the frozen review's proofs stay as they were
+    part.write_text(json.dumps({"task": row["task"], "first_seen_in": row.get("run"), **found}, indent=1), "utf-8")
+    part.replace(path)
 
 
 def waiting(root: Path, tasks: Sequence[str], folder: str = FOLDER) -> list[dict[str, Any]]:
@@ -345,6 +356,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         if missed == PAUSE_AFTER:
             print(json.dumps({"paused": f"{missed} reviews in a row had no review from the reviewer, as at a Codex limit; "
                                         "run again to resume where it stopped"}), flush=True)
+            break
+        import replay_compare     # here, as it imports this module
+
+        stop = replay_compare.futile(root, args.tasks, replay_compare.REPRODUCE)
+        if stop:
+            print(json.dumps({"stopped": stop}), flush=True)
             break
 
 

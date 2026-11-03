@@ -17,7 +17,7 @@ review, failed or not.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -132,7 +132,22 @@ def futility(rows: Rows, *, block: int = BLOCK) -> list[str]:
     every patch it has not reviewed in those blocks or after them going its way, its prediction can still be reached. Replay 1's
     is read on the amended tests against the final review on the same patches: a remaining patch going its way is one it is right
     on, so it adds no false alarm. Replay 2's: a remaining patch going its way is one whose verdict matches."""
-    order, lines = list(rows), []
+    return [line for name in (REPRODUCE, PRODUCT) for _, line in _blocks(rows, name, block)]
+
+
+def futile(root: Path, tasks: Iterable[str], name: str, *, block: int = BLOCK) -> str:
+    """The registered stop for replay ``name`` as it runs: the line of the last block it has run whole, when that block says its
+    prediction cannot be reached; else "". It never stops for success."""
+    rows = patches(root, tasks)
+    if not any(one[name] is None for one in rows.values()):       # nothing left to review: there is nothing to stop
+        return ""
+    found = list(_blocks(rows, name, block))
+    return found[-1][1] if found and not found[-1][0] else ""
+
+
+def _blocks(rows: Rows, name: str, block: int = BLOCK) -> Iterator[tuple[bool, str]]:
+    """``futility``'s reading of one replay, block by block: whether its prediction can still be reached, and the line saying so."""
+    order = list(rows)
     pool = [sha for sha, one in rows.items() if one["amended"] is not None and counted(one[FROZEN])]
     truths = sum(rows[sha]["amended"] for sha in pool)
 
@@ -142,29 +157,29 @@ def futility(rows: Rows, *, block: int = BLOCK) -> list[str]:
 
     frozen_right, frozen_alarms = standing(FROZEN, pool)
     matching = [sha for sha, one in rows.items() if counted(one[FROZEN])]
-    for name in (REPRODUCE, PRODUCT):
-        for number, end in enumerate(range(block, len(order) + block, block), 1):
-            if any(rows[sha][name] is None for sha in order[:end]):
-                break
-            done = set(order[:end])
-            place = f"futility {name}, block {number} (patches {end - block + 1}-{min(end, len(order))} by digest)"
-            if name == REPRODUCE:
-                kept = [sha for sha in pool if sha in done and counted(rows[sha][name])]
-                ours, alarms = standing(name, kept)
-                rise = Fraction(ours + len(pool) - len(kept) - frozen_right, len(pool)) if pool else Fraction(0)
-                more = Fraction(alarms - frozen_alarms, truths) if truths else Fraction(0)
-                reached = bool(pool) and rise >= RISE and more <= MORE_FALSE_ALARMS
-                lines.append(f"{place}: {len(kept)} reviewed, {len(pool) - len(kept)} remaining of {len(pool)}; at best agreement "
-                             f"{_points(rise)} (needs {_points(RISE, '')}), false alarms {_points(more)} (at most "
-                             f"{_points(MORE_FALSE_ALARMS, '')}): {'can still be reached' if reached else 'cannot be reached'}")
-            else:
-                kept = [sha for sha in matching if sha in done and counted(rows[sha][name])]
-                best = Fraction(sum(_matches(rows[sha]) for sha in kept) + len(matching) - len(kept), len(matching) or 1)
-                reached = bool(matching) and best >= MATCH
-                lines.append(f"{place}: {len(kept)} reviewed, {len(matching) - len(kept)} remaining of {len(matching)}; at best "
-                             f"{float(best):.1%} of verdicts match (needs {float(MATCH):.1%}): "
-                             f"{'can still be reached' if reached else 'cannot be reached'}")
-    return lines
+    for number, end in enumerate(range(block, len(order) + block, block), 1):
+        if any(rows[sha][name] is None for sha in order[:end]):
+            break
+        done = set(order[:end])
+        place = f"futility {name}, block {number} (patches {end - block + 1}-{min(end, len(order))} by digest)"
+        if name == REPRODUCE:
+            kept = [sha for sha in pool if sha in done and counted(rows[sha][name])]
+            ours, alarms = standing(name, kept)
+            rise = Fraction(ours + len(pool) - len(kept) - frozen_right, len(pool)) if pool else Fraction(0)
+            more = Fraction(alarms - frozen_alarms, truths) if truths else Fraction(0)
+            reached = bool(pool) and rise >= RISE and more <= MORE_FALSE_ALARMS
+            line = (f"{place}: {len(kept)} reviewed, {len(pool) - len(kept)} remaining of {len(pool)}; at best agreement "
+                         f"{_points(rise)} (needs {_points(RISE, '')}), false alarms {_points(more)} (at most "
+                         f"{_points(MORE_FALSE_ALARMS, '')}): {'can still be reached' if reached else 'cannot be reached'}")
+            yield reached, line
+        else:
+            kept = [sha for sha in matching if sha in done and counted(rows[sha][name])]
+            best = Fraction(sum(_matches(rows[sha]) for sha in kept) + len(matching) - len(kept), len(matching) or 1)
+            reached = bool(matching) and best >= MATCH
+            line = (f"{place}: {len(kept)} reviewed, {len(matching) - len(kept)} remaining of {len(matching)}; at best "
+                         f"{float(best):.1%} of verdicts match (needs {float(MATCH):.1%}): "
+                         f"{'can still be reached' if reached else 'cannot be reached'}")
+            yield reached, line
 
 
 def _share(k: int, n: int, *, upper: bool) -> str:

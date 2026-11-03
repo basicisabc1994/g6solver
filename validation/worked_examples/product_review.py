@@ -19,7 +19,6 @@ failed, at a Codex limit or otherwise, is saved as failed with what it said, is 
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import subprocess
 import tarfile
@@ -117,13 +116,24 @@ def touched(patch: str) -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
-def pack(tree: bytes, patch: str, task: str, proof: str) -> str:
-    """The product's pack for ``patch``: ``_pack`` on the parent's files from ``tree``, a tar of the parent's tree."""
+def parent_files(git: Callable[..., bytes | None], commit: str, files: Sequence[str]) -> dict[str, bytes]:
+    """Each of ``files`` as the product's ``repo_tests.read_at`` reads it at ``commit``: named by ``git ls-tree`` there, then its
+    blob by ``git show``, so an export-ignore attribute or a link hides nothing ``git archive`` would leave out. ``git``: runs git
+    in the parent's checkout and gives its output, or None where git failed."""
+    found = {}
+    for rel in files:
+        listed = git("ls-tree", "-r", "-z", "--name-only", commit, "--", rel)
+        if listed and listed.strip(b"\0"):
+            blob = git("show", f"{commit}:{rel}")
+            if blob is not None:
+                found[rel] = blob
+    return found
+
+
+def pack(parent: Mapping[str, bytes], patch: str, task: str, proof: str) -> str:
+    """The product's pack for ``patch``: ``_pack`` on the parent's files (``parent_files``)."""
     files = touched(patch)
-    with tarfile.open(fileobj=io.BytesIO(tree)) as tar:
-        parent = {member.name: tar.extractfile(member).read() for member in tar.getmembers()
-                  if member.isfile() and member.name in files}
-    return _pack(Parent(parent, "", files), patch, task, proof)
+    return _pack(Parent({rel: raw for rel, raw in parent.items() if rel in files}, "", files), patch, task, proof)
 
 
 def codex(system: str, user: str) -> str:
@@ -161,13 +171,15 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
             we.checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.SECURITY, "-u",
                                   we.USER, "-e", f"HOME={we.HOME}", "-w", task.repo, image, "tail", "-f", "/dev/null", timeout=600),
                        "review container")
-            tree = ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent,
-                              timeout=300)
-            we.checked(tree, "the parent's tree")
+            def git(*args: str) -> bytes | None:
+                done = ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", *args, timeout=300)
+                return done.stdout if done.returncode == 0 else None
+
+            parent = parent_files(git, task.parent, touched(diff))
         finally:
             ctx.docker("rm", "-f", name, timeout=300)
         proof = f"review {uuid.uuid4().hex}"
-        sent = pack(tree.stdout, diff, issue, proof)
+        sent = pack(parent, diff, issue, proof)
         size, asking = len(sent), True
         reply = (reviewer or codex)(CRITIC, sent)
         asking = False
@@ -205,6 +217,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         if missed == fr.PAUSE_AFTER:
             print(json.dumps({"paused": f"{missed} reviews in a row had no review from the reviewer, as at a Codex limit; "
                                         "run again to resume where it stopped"}), flush=True)
+            break
+        import replay_compare     # here, as it imports this module
+
+        stop = replay_compare.futile(root, args.tasks, replay_compare.PRODUCT)
+        if stop:
+            print(json.dumps({"stopped": stop}), flush=True)
             break
 
 
