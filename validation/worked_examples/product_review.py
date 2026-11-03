@@ -143,27 +143,42 @@ def touched(patch: str) -> tuple[str, ...]:
     line, where both sides name one path once their prefixes are off (``_applied``); its ``---`` and ``+++`` lines, each side's
     own, so that prefixes of different depths still name what git applies; and its rename and copy lines. Those are read in a
     file's header only, before its first hunk, whose lines all begin with a space, a plus or a minus, so a hunk's line is never
-    a name."""
+    a name. A line's CR before its LF is no part of it, as ``git apply`` reads a CRLF patch. A copy leaves its source as it
+    was, so its source (``copy from``, and the ``---`` line naming it) is no file it touches: ``--no-renames`` lists the copy
+    alone, where it lists both paths of a move."""
     found: set[str] = set()
+    names: dict[str, str] = {}               # one file's names, by the line that gave each
+
+    def close() -> None:
+        if "copy from" in names:
+            names.pop("copy from")
+            names.pop("---", None)
+        found.update(names.values())
+        names.clear()
+
     header = False
     for line in patch.split("\n"):
+        line = line[:-1] if line.endswith("\r") else line
         if line.startswith("diff --git "):
+            close()
             header = True
             for old, new in _sides(line[len("diff --git "):]):
                 path = _applied(_unquoted(old))
                 if path and path == _applied(_unquoted(new)):
-                    found.add(path)
+                    names["diff --git"] = path
                     break
         elif not header:
             continue
         elif line.startswith(("--- ", "+++ ")):
             name = _unquoted(line[4:].split("\t", 1)[0])       # git writes a tab after a name that holds a space
             if name != "/dev/null" and _applied(name):
-                found.add(_applied(name))
+                names[line[:3]] = _applied(name)
         elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
-            found.add(_unquoted(line.split(" ", 2)[2]))
+            verb, side, name = line.split(" ", 2)
+            names[f"{verb} {side}"] = _unquoted(name)
         elif line.startswith(("@@", "GIT binary patch", "Binary files ")):
             header = False
+    close()
     return tuple(sorted(found))
 
 

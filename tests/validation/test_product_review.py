@@ -213,6 +213,14 @@ def test_the_pack_is_what_claude_nexts_pack_builds_from_the_same_patch(tmp_path)
     ("diff --git a/a b.py b/a b.py\n--- a/a b.py\t\n+++ b/a b.py\t\n@@ -1 +1 @@\n-x\n+y\n", ("a b.py",)),
     # a name that is not UTF-8 keeps its bytes, as the product's own listing does (surrogateescape)
     ('diff --git "a/odd-\\377.py" "b/odd-\\377.py"\nold mode 100644\nnew mode 100755\n', ("odd-\udcff.py",)),
+    # a patch with CRLF line ends, read as git apply reads it
+    ("diff --git a/app.py b/app.py\r\n--- a/app.py\r\n+++ b/app.py\r\n@@ -1 +1 @@\r\n-x\r\n+y\r\n", ("app.py",)),
+    ('diff --git "a/odd-\\377.py" "b/odd-\\377.py"\r\nold mode 100644\r\nnew mode 100755\r\n', ("odd-\udcff.py",)),
+    # a copy leaves its source as it was, so only the copy is listed, as --no-renames lists it; a move still names both
+    ("diff --git a/original.py b/copy.py\nsimilarity index 100%\ncopy from original.py\ncopy to copy.py\n", ("copy.py",)),
+    ("diff --git a/original.py b/copy.py\nsimilarity index 90%\ncopy from original.py\ncopy to copy.py\n--- a/original.py\n"
+     "+++ b/copy.py\n@@ -1 +1 @@\n-x\n+y\ndiff --git a/z.py b/z.py\n--- a/z.py\n+++ b/z.py\n@@ -1 +1 @@\n-a\n+b\n",
+     ("copy.py", "z.py")),
 ])
 def test_the_files_a_patch_touches_are_the_ones_git_would_list(patch, files):
     assert pr.touched(patch) == files
@@ -346,6 +354,19 @@ def test_a_file_whose_name_is_not_utf8_fails_the_review_before_anything_starts(t
     got = pr.review(_ctx(tmp_path, docker), we.task_by_id(TASK), patch, "a title", "the issue", reviewer=reviewer)
     assert got["said"] == "failed" and "UTF-8" in got["error"] and reviewer.calls == [] and docker.calls == []
     assert not fr.no_review(got)
+
+
+def test_a_crlf_patch_still_carries_the_parent_text_of_what_it_touches(tmp_path):
+    reviewer = _Reviewer(QUIET)
+    got = _review(tmp_path, reviewer, body=PATCH.replace("\n", "\r\n"))
+    assert got["said"] == "none" and "\n\nparent/src/app.py:\ndef f():\n    return 1\n" in reviewer.calls[0][1]
+
+
+def test_a_copy_sends_no_parent_text_of_its_unchanged_source():
+    patch = "diff --git a/original.py b/copy.py\nsimilarity index 100%\ncopy from original.py\ncopy to copy.py\n"
+    parent, proof = {"original.py": b"def original(): return 1\n"}, "review " + "1" * 32
+    assert pr.pack(parent, patch, "issue", proof) == pr._pack(pr.Parent(parent, "", ("copy.py",)), patch, "issue", proof)
+    assert "parent/original.py" not in pr.pack(parent, patch, "issue", proof)
 
 
 def test_a_file_the_parent_does_not_hold_is_left_out_and_is_no_failure(tmp_path):
