@@ -69,8 +69,7 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
         one.update({score: next(iter(seen[score])) if len(seen[score]) == 1 else None for score in SCORES})
         one["split"] = [score for score in SCORES if len(seen[score]) > 1]
         for name, folder in REVIEWERS:
-            path = root / "loop" / folder / f"{sha}.json"
-            kept = json.loads(path.read_text("utf-8")) if path.is_file() else None
+            kept = fr.read(root / "loop" / folder / f"{sha}.json")     # one that cannot be read is no review, as the replays read it
             one[name] = {"said": kept.get("said"), "verdict": kept.get("verdict")} if kept else None
     return dict(sorted(found.items()))
 

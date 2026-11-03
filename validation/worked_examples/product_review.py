@@ -116,17 +116,15 @@ def touched(patch: str) -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
-def parent_files(git: Callable[..., bytes | None], commit: str, files: Sequence[str]) -> dict[str, bytes]:
+def parent_files(git: Callable[..., bytes], commit: str, files: Sequence[str]) -> dict[str, bytes]:
     """Each of ``files`` as the product's ``repo_tests.read_at`` reads it at ``commit``: named by ``git ls-tree`` there, then its
-    blob by ``git show``, so an export-ignore attribute or a link hides nothing ``git archive`` would leave out. ``git``: runs git
-    in the parent's checkout and gives its output, or None where git failed."""
+    blob by ``git show``, so an export-ignore attribute or a link hides nothing ``git archive`` would leave out. A file the parent
+    does not hold is left out, as ``read_at`` gives None for it. ``git``: runs git in the parent's checkout and gives its output,
+    and raises where git failed, as the product's own git call does, so a file git could not read is never a file left out."""
     found = {}
     for rel in files:
-        listed = git("ls-tree", "-r", "-z", "--name-only", commit, "--", rel)
-        if listed and listed.strip(b"\0"):
-            blob = git("show", f"{commit}:{rel}")
-            if blob is not None:
-                found[rel] = blob
+        if git("ls-tree", "-r", "-z", "--name-only", commit, "--", rel).strip(b"\0"):
+            found[rel] = git("show", f"{commit}:{rel}")
     return found
 
 
@@ -171,9 +169,11 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
             we.checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.SECURITY, "-u",
                                   we.USER, "-e", f"HOME={we.HOME}", "-w", task.repo, image, "tail", "-f", "/dev/null", timeout=600),
                        "review container")
-            def git(*args: str) -> bytes | None:
+            def git(*args: str) -> bytes:
                 done = ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", *args, timeout=300)
-                return done.stdout if done.returncode == 0 else None
+                if done.returncode != 0:
+                    raise RuntimeError(f"git {args[0]} at the parent failed ({done.returncode}): {fr.ended(we.err(done))[-200:]}")
+                return done.stdout
 
             parent = parent_files(git, task.parent, touched(diff))
         finally:
@@ -183,9 +183,7 @@ def review(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, *
         size, asking = len(sent), True
         reply = (reviewer or codex)(CRITIC, sent)
         asking = False
-        found = we.critic_report(reply, proof=proof)
-        if found["verdict"] == "unread":
-            found["reply_end"] = fr.ended(reply)
+        found = fr.answered(we.critic_report(reply, proof=proof), reply)
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:   # an LLMError is a RuntimeError
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
         if asking:
@@ -205,7 +203,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                      g6=we.g6_info(args.g6), variant=we.ROUND3, arm="L9")
     issues: dict[str, tuple[str, str]] = {}
     missed = 0
+    import replay_compare     # here, as it imports this module
+
     for row in fr.waiting(root, args.tasks, FOLDER)[:args.limit or None]:
+        stop = replay_compare.futile(root, args.tasks, replay_compare.PRODUCT)    # before each review: a resumed run too
+        if stop:
+            print(json.dumps({"stopped": stop}), flush=True)
+            break
         task = we.task_by_id(row["task"])
         if task.id not in issues:
             title, text = ctx.issue_reader(task)
@@ -217,12 +221,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         if missed == fr.PAUSE_AFTER:
             print(json.dumps({"paused": f"{missed} reviews in a row had no review from the reviewer, as at a Codex limit; "
                                         "run again to resume where it stopped"}), flush=True)
-            break
-        import replay_compare     # here, as it imports this module
-
-        stop = replay_compare.futile(root, args.tasks, replay_compare.PRODUCT)
-        if stop:
-            print(json.dumps({"stopped": stop}), flush=True)
             break
 
 

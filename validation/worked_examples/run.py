@@ -572,7 +572,13 @@ def critic_report(said: str, *, proof: str = "") -> dict[str, str]:
 
 
 def run_codex(pack: Path) -> str:
-    """One read-only Codex task in ``pack``, on the owner's sign-in. ``G6_CODEX_COMPANION``: the Codex plugin's companion script."""
+    """One read-only Codex task in ``pack``, on the owner's sign-in: what it printed (``codex_task``)."""
+    return codex_task(pack).stdout.decode("utf-8", errors="replace")
+
+
+def codex_task(pack: Path) -> subprocess.CompletedProcess:
+    """``run_codex``'s call, as it ended: what Codex printed and how it exited. ``G6_CODEX_COMPANION``: the Codex plugin's
+    companion script."""
     companion = os.environ.get("G6_CODEX_COMPANION")
     if not companion:
         raise RuntimeError("G6_CODEX_COMPANION is not set")
@@ -583,7 +589,7 @@ def run_codex(pack: Path) -> str:
         subprocess.run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
                         f"Where-Object {{ $_.CommandLine -like '*{pack.name}*' }} | "
                         "ForEach-Object { taskkill /T /F /PID $_.ProcessId | Out-Null }"], capture_output=True, timeout=60)
-    return got.stdout.decode("utf-8", errors="replace")
+    return got
 
 
 def with_critic(found: tuple[set[str], str], critic: Mapping[str, str]) -> tuple[set[str], str]:

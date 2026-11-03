@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import uuid
@@ -128,7 +129,8 @@ def _main(tmp_path, monkeypatch, capsys, critic, runs, argv=(), rows=(("A", "pat
     monkeypatch.setattr(fr.we, "g6_info", lambda g6: {"commit": "c" * 40})
     monkeypatch.setattr(fr.we, "read_issue", lambda task: ("a title", "the issue"))
     monkeypatch.setattr(fr.we, "read_thread", lambda task: "\n\nthe thread")
-    monkeypatch.setattr(fr.we, "run_codex", critic)
+    monkeypatch.setattr(fr.we, "run_codex", critic)       # the frozen review's call
+    monkeypatch.setattr(fr, "codex", critic)              # replay 1's, which reads Codex's exit too
     monkeypatch.setattr(fr.we, "run_set", lambda ctx, task, agent, where: next(runs))
     monkeypatch.setattr(fr.uuid, "uuid4", lambda: uuid.UUID(int=next(ids)))
     monkeypatch.setattr(fr.time, "monotonic", lambda: next(ticks))
@@ -357,6 +359,67 @@ def test_one_review_with_no_review_does_not_pause_it(tmp_path, monkeypatch, caps
     assert len(got["saved"]) == 2 and "paused" not in got["out"]
 
 
+def _codex_task(code, *replies):
+    """``run.codex_task`` as Codex's companion ends: what it printed, quoting the pack, and how it exited."""
+    given = iter(replies)
+
+    def task(pack):
+        proof = (pack / "issue.txt").read_text("utf-8").splitlines()[0]
+        return subprocess.CompletedProcess(["node"], code, f"READ: {proof}\n{next(given)}".encode(), b"the reviewer crashed")
+
+    return task
+
+
+@pytest.mark.parametrize("code", [1, -9])
+def test_a_reviewer_that_exits_non_zero_gave_no_review_whatever_it_printed(tmp_path, monkeypatch, code):
+    monkeypatch.setattr(we, "codex_task", _codex_task(code, QUIET, QUIET))
+    got = _review(tmp_path, None)
+    first = got["reproduce"]
+    assert got["said"] == "failed" and first["said"] == "failed" and first["failed_at"] == "reviewer" and fr.no_review(first)
+    assert f"exited {code}" in first["error"] and "crashed" in first["error"]
+
+
+def test_a_reviewer_that_exits_zero_is_read_as_before(tmp_path, monkeypatch):
+    monkeypatch.setattr(we, "codex_task", _codex_task(0, QUIET, QUIET))
+    got = _review(tmp_path, None)
+    assert got["said"] == "none" and got["reproduce"]["said"] == "not reproduced" and not got["error"]
+
+
+def test_the_frozen_reviews_own_call_still_reads_only_what_codex_printed(monkeypatch):
+    monkeypatch.setattr(we, "codex_task", lambda pack: subprocess.CompletedProcess(["node"], 1, b"what it printed", b""))
+    assert we.run_codex(Path("pack")) == "what it printed"
+
+
+@pytest.mark.parametrize("step", [1, 2])
+def test_a_reply_that_quotes_the_pack_but_gives_no_verdict_is_the_reviewers_failure(tmp_path, step):
+    cut = "RULE: The issue requires"
+    got = _review(tmp_path, _Critic(*((cut, QUIET) if step == 1 else (QUIET, cut))))
+    failed = got["reproduce"] if step == 1 else got
+    assert got["said"] == "failed" and failed["failed_at"] == "reviewer" and fr.no_review(failed) and cut in failed["reply_end"]
+
+
+def test_two_replies_in_a_row_with_no_verdict_pause_the_replay(tmp_path, monkeypatch, capsys):
+    rows = (("A", "patch one", True), ("G1", "patch two", True), ("L9", "patch three", True))
+    critic = _Critic("RULE: The issue requires")
+    got = _main(tmp_path, monkeypatch, capsys, critic, [FAILED], argv=["--reproduce"], rows=rows)
+    assert len(critic.seen) == 2 and "paused" in json.loads(got["out"].splitlines()[-1])
+
+
+@pytest.mark.parametrize("stop", ["", "futility reproduce first, block 1 (patches 1-40 by digest): cannot be reached"])
+def test_the_futility_stop_is_read_before_each_review_so_a_resumed_replay_honours_it(tmp_path, monkeypatch, capsys, stop):
+    import replay_compare as rc
+
+    asked = []
+    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append(name) or stop)
+    critic = _Critic(QUIET)
+    got = _main(tmp_path, monkeypatch, capsys, critic, [FAILED], argv=["--reproduce"])
+    if stop:
+        assert critic.seen == [] and got["saved"] == {} and json.loads(got["out"]) == {"stopped": stop}
+    else:
+        assert len(critic.seen) == 4 and len(got["saved"]) == 2
+    assert asked and set(asked) == {rc.REPRODUCE}
+
+
 def test_a_saved_review_is_skipped_and_a_failed_one_is_made_again(tmp_path):
     root = tmp_path / "round3"
     row = _row(root, "A")
@@ -393,6 +456,6 @@ def test_everything_a_step_used_goes(tmp_path, monkeypatch):
     assert sum(args[:2] == ("rm", "-f") for args in docker.calls) == 2
 
 
-@pytest.mark.parametrize("name", ["reproduce_review", "reproduction", "no_review", "saved", "ended"])
+@pytest.mark.parametrize("name", ["reproduce_review", "reproduction", "no_review", "saved", "ended", "codex", "read"])
 def test_the_module_says_what_each_new_step_does(name):
     assert getattr(fr, name).__doc__

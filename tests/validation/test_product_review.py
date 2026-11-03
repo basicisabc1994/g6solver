@@ -275,6 +275,40 @@ def test_a_container_that_fails_is_no_reviewers_failure(tmp_path):
     assert got["said"] == "failed" and "review container" in got["error"] and not fr.no_review(got) and reviewer.calls == []
 
 
+class _GitFails(_Docker):
+    """The parent's checkout, where one git command exits as git does when it cannot read what it was asked for."""
+
+    def __init__(self, command):
+        super().__init__()
+        self.command = command
+
+    def __call__(self, *args, **kw):
+        done = super().__call__(*args, **kw)
+        if self.command in args:
+            return type("Done", (), {"stdout": b"", "stderr": b"fatal: object read failed", "returncode": 128})()
+        return done
+
+
+@pytest.mark.parametrize("command", ["ls-tree", "show"])
+def test_a_parent_file_git_cannot_read_fails_the_review_and_asks_no_one(tmp_path, command):
+    reviewer = _Reviewer(QUIET)
+    got = _review(tmp_path, reviewer, _GitFails(command))
+    assert got["said"] == "failed" and f"git {command}" in got["error"] and reviewer.calls == [] and not fr.no_review(got)
+
+
+def test_a_file_the_parent_does_not_hold_is_left_out_and_is_no_failure(tmp_path):
+    reviewer = _Reviewer(QUIET)
+    got = _review(tmp_path, reviewer, _Docker({}))
+    assert got["said"] == "none" and "\nparent/" not in reviewer.calls[0][1]
+
+
+@pytest.mark.parametrize("reply", ["RULE: The issue requires", "RULE: x\nVERDICT: maybe\nWHY: x\n"])
+def test_a_reply_that_quotes_the_pack_but_gives_no_verdict_is_the_reviewers_failure(tmp_path, reply):
+    got = _review(tmp_path, _Reviewer(reply))
+    assert got["said"] == "failed" and got["failed_at"] == "reviewer" and fr.no_review(got)
+    assert reply.splitlines()[0] in got["reply_end"]
+
+
 def test_the_default_reviewer_is_codex_as_critic_host_builds_it(monkeypatch):
     made = []
 
@@ -355,6 +389,28 @@ def test_two_reviews_in_a_row_with_no_review_pause_the_replay(tmp_path, monkeypa
     lines = [json.loads(line) for line in got["out"].splitlines()]
     assert [line.get("said") for line in lines[:2]] == ["failed", "failed"] and "paused" in lines[2] and len(lines) == 3
     assert len(got["saved"]) == 2
+
+
+def test_two_replies_in_a_row_with_no_verdict_pause_the_replay(tmp_path, monkeypatch, capsys):
+    rows = (("A", PATCH, True), ("G1", PATCH + " ", True), ("L9", PATCH + "  ", True))
+    reviewer = _Reviewer("RULE: The issue requires")
+    got = _main(tmp_path, monkeypatch, capsys, reviewer, rows=rows)
+    assert len(reviewer.calls) == 2 and "paused" in json.loads(got["out"].splitlines()[-1])
+
+
+@pytest.mark.parametrize("stop", ["", "futility product, block 1 (patches 1-40 by digest): cannot be reached"])
+def test_the_futility_stop_is_read_before_each_review_so_a_resumed_replay_honours_it(tmp_path, monkeypatch, capsys, stop):
+    import replay_compare as rc
+
+    asked = []
+    monkeypatch.setattr(rc, "futile", lambda root, tasks, name: asked.append(name) or stop)
+    reviewer = _Reviewer(QUIET)
+    got = _main(tmp_path, monkeypatch, capsys, reviewer)
+    if stop:
+        assert reviewer.calls == [] and got["saved"] == {} and json.loads(got["out"]) == {"stopped": stop}
+    else:
+        assert len(reviewer.calls) == 2 and len(got["saved"]) == 2
+    assert asked and set(asked) == {rc.PRODUCT}
 
 
 @pytest.mark.parametrize("name", ["review", "pack", "touched", "read_at", "codex", "said"])

@@ -161,6 +161,17 @@ def test_the_futility_check_runs_after_each_block_and_stops_only_when_the_predic
     assert "4 reviewed, 0 remaining of 4" in second and "agreement -25.0 points" in second and "cannot be reached" in second
 
 
+@pytest.mark.parametrize("raw", [b'{"said":', b"[1]", b"\xff\xfe{}"])
+def test_a_review_record_that_cannot_be_read_is_no_review(tmp_path, monkeypatch, capsys, raw):
+    archive, shas = _four(tmp_path, monkeypatch)
+    for sha in shas[1:]:
+        archive.said(fr.REPRODUCE, sha, "none")
+    (archive.root / "loop" / fr.REPRODUCE / f"{shas[0]}.json").write_bytes(raw)
+    assert rc.patches(archive.root, ["x-1"])[shas[0]][rc.REPRODUCE] is None
+    assert rc.futile(archive.root, ["x-1"], rc.REPRODUCE) == ""
+    assert "futility reproduce first" not in _report(archive.root, capsys, ["x-1"], futile=True, block=2)
+
+
 def test_the_futility_check_needs_both_parts_of_the_prediction(tmp_path, monkeypatch, capsys):
     archive = _Archive(tmp_path / "round3", monkeypatch)
     cells = [(True, "none", "reproduced")] + [(True, "none", "none")] * 3 + [(False, "none", "reproduced")] * 4

@@ -167,9 +167,25 @@ def ended(said: str) -> str:
 
 
 def no_review(found: Mapping[str, Any]) -> bool:
-    """Whether the reviewer itself gave no review: its call failed, or its reply did not quote its pack, as at a Codex limit. A
-    container or a patch that failed is not the reviewer's."""
+    """Whether the reviewer itself gave no review: its call failed or ended in failure, or its reply did not quote its pack, as
+    at a Codex limit, or gave no verdict, as a reply cut short does. A container or a patch that failed is not the reviewer's."""
     return found.get("verdict") == "unread" or found.get("failed_at") == "reviewer"
+
+
+def answered(found: dict[str, Any], reply: str) -> dict[str, Any]:
+    """A reply as a review: one that did not quote its pack or gave no verdict is the reviewer's failure, with its end kept."""
+    if found["verdict"] not in ("defect", "none"):
+        found["failed_at"], found["reply_end"] = "reviewer", ended(reply)
+    return found
+
+
+def codex(pack: Path) -> str:
+    """Replay 1's reviewer: the frozen review's Codex call (``run.codex_task``), whose exit is read as well, so a reviewer that
+    ended in failure gave no review whatever it printed. The frozen review's own call (``run.run_codex``) stays as it was."""
+    got = we.codex_task(pack)
+    if got.returncode != 0:
+        raise RuntimeError(f"the reviewer exited {got.returncode}: {ended(we.err(got))[-200:]}")
+    return got.stdout.decode("utf-8", errors="replace")
 
 
 def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, prompt: str, where: str, file: str, *,
@@ -202,11 +218,9 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
         (pack / "issue.txt").write_text(f"{proof}\n\n{title}\n\n{text}", encoding="utf-8")
         (pack / "critic_prompt.md").write_text(prompt, encoding="utf-8")
         asking = True
-        reply = (ctx.critic or we.run_codex)(pack)
+        reply = (ctx.critic or codex)(pack)
         asking = False
-        found = we.critic_report(reply, proof=proof)
-        if found["verdict"] == "unread":
-            found["reply_end"] = ended(reply)
+        found = answered(we.critic_report(reply, proof=proof), reply)
         if found["test"]:
             we.write_in(ctx.docker, name, f"{where}/{file}", found["test"] + "\n", user="root")
             base = we.run_set(ctx, task, name, where)
@@ -285,11 +299,15 @@ def saved(root: Path, row: Mapping[str, Any], folder: str = FOLDER) -> dict[str,
     """The review saved in ``folder`` for this run's patch as it stands, failed or not; None if there is none, or if what is there
     cannot be read, as a write cut short leaves it, so that patch is reviewed again."""
     path = _kept(root, row, folder)
-    if not (path and path.is_file()):
-        return None
+    return read(path) if path else None
+
+
+def read(path: Path) -> dict[str, Any] | None:
+    """A saved review as it stands; None if there is none, or if what is there cannot be read as one, as a write cut short
+    leaves it: so it is no review to the replays and to their counts alike."""
     try:
         got = json.loads(path.read_text("utf-8"))
-    except (ValueError, OSError):
+    except (ValueError, OSError):           # a file that is not there is an OSError, and bytes that are not UTF-8 a ValueError
         return None
     return got if isinstance(got, dict) else None
 
@@ -348,6 +366,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             keep(root, row, got)
             print(json.dumps({"task": task.id, "said": got["said"], "seconds": got["seconds"], "error": got["error"]}), flush=True)
             continue
+        import replay_compare     # here, as it imports this module
+
+        stop = replay_compare.futile(root, args.tasks, replay_compare.REPRODUCE)    # before each review: a resumed run too
+        if stop:
+            print(json.dumps({"stopped": stop}), flush=True)
+            break
         got = reproduce_review(ctx, task, root / row["run"] / "final.patch", *issues[task.id], earlier=saved(root, row, folder))
         keep(root, row, got, folder)
         print(json.dumps({"task": task.id, "step_1": got["reproduce"]["said"], "said": got["said"], "seconds": got["seconds"],
@@ -356,12 +380,6 @@ def main(argv: Sequence[str] | None = None) -> None:
         if missed == PAUSE_AFTER:
             print(json.dumps({"paused": f"{missed} reviews in a row had no review from the reviewer, as at a Codex limit; "
                                         "run again to resume where it stopped"}), flush=True)
-            break
-        import replay_compare     # here, as it imports this module
-
-        stop = replay_compare.futile(root, args.tasks, replay_compare.REPRODUCE)
-        if stop:
-            print(json.dumps({"stopped": stop}), flush=True)
             break
 
 
