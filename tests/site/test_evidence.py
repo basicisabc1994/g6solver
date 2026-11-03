@@ -274,9 +274,9 @@ def test_the_coding_study_works_out_its_totals_tests_and_ranges_from_the_counts(
     data, found = _coding_data(), evidence.coding_study()
     branches = data["own_code_reviews"]["branches"]
     own = found["own"]
-    assert own["total"] == sum(sum(b["found"]) for b in branches) == 150 and own["count"] == len(branches) == 10
+    assert own["total"] == sum(sum(b["found"]) for b in branches) == 153 and own["count"] == len(branches) == 10
     assert own["per_review"] == [sum(b["found"][i] for b in branches if len(b["found"]) > i) for i in range(4)]
-    assert (own["clean"], own["ran_out"], own["in_loop"]) == (1, 7, 2)
+    assert (own["clean"], own["ran_out"], own["in_loop"]) == (1, 8, 1)
     assert own["open"] == "2 to 5"          # the last review of each branch whose repairs ran out: 2 to 5 still open
     two = found["two"]
     assert (two["bugs"], two["repos"], two["same_bugs"], two["differing"]) == (20, 11, 18, 3)
@@ -317,9 +317,11 @@ def test_a_changed_count_in_the_coding_studys_file_changes_what_the_module_says(
         data["own_code_reviews"]["branches"][0]["found"][0] += 4
         data["stage_2"]["passed"]["maintainers"]["K1"] = 30
 
+    before = _coding_data()["own_code_reviews"]["branches"]
     _coding_copy(tmp_path, monkeypatch, change)
     found = evidence.coding_study()
-    assert found["own"]["total"] == 154 and found["own"]["per_review"][0] == 52
+    assert found["own"]["total"] == sum(sum(b["found"]) for b in before) + 4
+    assert found["own"]["per_review"][0] == sum(b["found"][0] for b in before) + 4
     assert found["two"]["passed"]["maintainers"]["K1"] == 30 and found["two"]["lead"] == "+17.5"
 
 

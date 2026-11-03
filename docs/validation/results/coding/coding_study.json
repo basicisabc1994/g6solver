@@ -124,14 +124,16 @@
       {"branch": "k-fixes", "found": [4, 4, 4, 3], "ended": "repairs ran out"},
       {"branch": "loop-learn", "found": [4, 3, 0], "ended": "clean"},
       {"branch": "k-followup", "found": [3, 3, 2], "ended": "in its loop"},
-      {"branch": "loop-followup-2", "found": [4, 4, 4], "ended": "in its loop"}
+      {"branch": "loop-followup-2", "found": [4, 4, 4, 3], "ended": "repairs ran out"}
     ],
     "source": "lead: reproduced defects per review, per branch of G6's own code, as of 2026-11-03"
   },
   "spend": {
     "usd": 160.27,
+    "runs_usd": 125.62,
+    "design_review_usd": 34.65,
     "budget_usd": 180,
-    "source": "plan: 2026-11-03, stage 2's result (Spend): $125.62 by the runner and $34.65 for Fable's reviews; Codex's reviews are billed apart"
+    "source": "plan: 2026-11-03, stage 2's result (Spend): $125.62 by the runner and $34.65 for Fable's reviews of the design; Codex's reviews are billed apart"
   },
   "next": {
     "bugs_at_least": 50,

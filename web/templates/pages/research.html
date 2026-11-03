@@ -155,8 +155,9 @@ number comes from docs/validation/results/coding/coding_study.json through evide
         branch{{ own.clean|pluralize:"es" }} of {{ own.count }} did; {{ own.ran_out }} ran out of repairs with
         {{ own.open }} findings still open, and {{ own.in_loop }} {{ own.in_loop|pluralize:"is,are" }} still in
         {{ own.in_loop|pluralize:"its loop,their loops" }}.</li>
-        <li><strong>Spend:</strong> the study spent ${{ c.spend.usd }} of its ${{ c.spend.budget }} budget for paid model
-        calls; {{ c.reviewer }}'s reviews were billed apart.</li>
+        <li><strong>Spend:</strong> ${{ c.spend.usd }} of the ${{ c.spend.budget }} budget for paid model calls went:
+        ${{ c.spend.runs }} on the study's runs and ${{ c.spend.design_review }} on a review of its design by another
+        model. {{ c.reviewer }}'s reviews ran on a subscription, outside that budget.</li>
     </ul>
 
     <h3>Why</h3>

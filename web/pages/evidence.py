@@ -729,7 +729,8 @@ def coding_study() -> dict:
                 "total": sum(b["total"] for b in branches), "count": len(branches), "clean": ends["clean"],
                 "ran_out": ends["repairs ran out"], "in_loop": ends["in its loop"],
                 "open": _span(min(ran_out), max(ran_out)) if ran_out else ""},
-        "spend": {"usd": f"{spend['usd']:.2f}", "budget": f"{spend['budget_usd']:g}"},
+        "spend": {"usd": f"{spend['usd']:.2f}", "budget": f"{spend['budget_usd']:g}", "runs": f"{spend['runs_usd']:.2f}",
+                  "design_review": f"{spend['design_review_usd']:.2f}"},
         "next": data["next"],
         "url": f"{REPO}docs/validation/results/coding/coding_study.json",
         "plan_url": f"{REPO}validation/worked_examples/PLAN.md"}

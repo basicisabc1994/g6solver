@@ -223,7 +223,9 @@ def test_the_coding_studys_numbers_on_the_page_are_its_files(client):
     text = _text(section)
     stage3 = data["stage_3"]
     assert f"{stage3['held_out']['wins']} wins to {stage3['held_out']['losses']} losses" in text
-    assert f"${data['spend']['usd']:.2f} of its ${data['spend']['budget_usd']} budget" in text
+    spend = data["spend"]
+    assert f"${spend['usd']:.2f} of the ${spend['budget_usd']} budget" in text
+    assert f"${spend['runs_usd']:.2f} on the study's runs and ${spend['design_review_usd']:.2f} on a review" in text
     k1 = data["stage_2"]["passed"]
     assert (f"it passed {k1['maintainers']['K1']} of {data['stage_2']['runs']} runs against {k1['maintainers']['A']} "
             f"on the maintainers' tests") in text
@@ -255,11 +257,12 @@ def test_a_changed_count_in_a_copy_of_the_coding_studys_file_changes_the_page(cl
     data = json.loads(path.read_text(encoding="utf-8"))
     data["stage_2"]["passed"]["maintainers"]["K1"] = 29
     data["own_code_reviews"]["branches"][1]["found"][0] += 7
+    total = sum(sum(b["found"]) for b in data["own_code_reviews"]["branches"])
     path.write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setattr(evidence, "VALIDATION_DIR", copy)
     text = _text(_section(_page(client), "coding-study"))
     assert "it passed 29 of 40 runs against 23 on the maintainers' tests" in text
-    assert "found 157 defects in 10 branches" in text and "Together the reviews found 157." in text
+    assert f"found {total} defects in 10 branches" in text and f"Together the reviews found {total}." in text
 
 
 def test_the_page_claims_no_more_than_the_coding_study_shows(client):
