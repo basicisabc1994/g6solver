@@ -336,14 +336,17 @@ class _Requests:
         if request in self.refused:
             raise LLMError(f"{CLASSIFIER_STOP}: this request was refused once, and nothing sends it again")
 
-    def at_a_refusal(self, failed: Any, request: str, sent: str = "") -> None:
+    def at_a_refusal(self, failed: Any, request: str, sent: str = "", generation: int | None = None) -> None:
         """End the tick when a classifier or a permission stopped a request, and let nothing more go out of it. ``failed``: what
         the request raised, or what ``WatchedClaude`` read before it raised anything. ``request``: the digest of what the tick
-        asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is sent again."""
+        asked for, and ``sent``: of what went out, where a wrapper made that another request. Neither is sent again.
+        ``generation``: the tick the request began in; a refusal that comes once that tick has closed ends nothing of the
+        next, though what it refused is still never sent again."""
         said = refused_by(str(failed))
         if said and self.limit != math.inf:
             with self._lock:
-                self.refusal = {"said": said, "request": sent or request, "asked": request}
+                if generation is None or generation == self.generation:
+                    self.refusal = {"said": said, "request": sent or request, "asked": request}
             for known in {request, sent or request}:
                 self.refused.add(known)
                 self.keeping(known, said)
@@ -422,7 +425,7 @@ class _Counted:
             took.append(None)
 
         def told(said: str, given: tuple[str, ...]) -> None:
-            self.requests.at_a_refusal(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent)
+            self.requests.at_a_refusal(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent, generation)
 
         def limited(wait: dict[str, Any]) -> None:
             hint = float(wait.get("retry_after_s") or 0.0)
@@ -434,11 +437,12 @@ class _Counted:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
                 self.requests.at_a_limit(failed, generation)
-                self.requests.at_a_refusal(failed, asked, sent)
+                self.requests.at_a_refusal(failed, asked, sent, generation)
                 raise
             finally:
                 returned = True
-                self.requests.count(noted() - len(took))     # a child's totals have no boundary
+                # a child's totals have no boundary; one that took its place and is not yet noted gives none back
+                self.requests.count(max(noted() - len(took), 0))
             if not noted():
                 self.requests.unseen = True
                 raise LLMError(f"{UNMETERED_CALLER}: a model caller answered with no request noted")

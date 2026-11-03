@@ -766,6 +766,151 @@ def test_a_new_week_still_cannot_take_a_book_another_week_moved_into(tmp_path):
         store.close()
 
 
+def test_a_week_that_returns_to_its_own_grid_and_moves_on_keeps_its_book(tmp_path):
+    window, now, path = ProviderWindow("codex", 1000, MONDAY), MONDAY + timedelta(days=4, hours=1), tmp_path / "op.db"
+    store = OperatorStore(path)
+    try:
+        assert BudgetMeter((window,), store=store).reserve("codex", now, 350).admitted
+    finally:
+        store.close()
+    seen = []
+    for days in (8, 7, 9, 7, 10):           # Monday to Tuesday, back, to Wednesday, back, to Thursday, a restart each time
+        store = OperatorStore(path)
+        try:
+            meter = BudgetMeter((window,), store=store,
+                                read_account=lambda *_, reset=MONDAY + timedelta(days=days): AccountReading(resets_at=reset))
+            seen.append(meter.reading("codex", now).used)
+        finally:
+            store.close()
+    assert seen == [350] * 5
+
+
+def test_a_week_that_moved_before_weeks_were_named_in_utc_keeps_its_book_after_the_upgrade(tmp_path):
+    from datetime import timezone
+
+    from g6.self_maintenance.pacing import OWNER
+
+    start = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=10)))
+    moved, caps, path = start + timedelta(days=1), {"model": 1000, "cash": 0}, tmp_path / "op.db"
+    store = OperatorStore(path)
+    try:                                    # both weeks named in the settings' zone, as before the upgrade
+        scope = store.for_owner(OWNER)
+        venture, book = scope.week_ledger("codex", start.isoformat(), caps=caps)
+        scope.reserve(venture, month=book, account="model", amount=350)
+        assert scope.week_ledger("codex", moved.isoformat(), caps=caps, moved_from=start.isoformat(),
+                                 grid=(moved + timedelta(days=7)).isoformat()) == (venture, book)
+    finally:
+        store.close()
+    store = OperatorStore(path)
+    try:
+        meter = BudgetMeter((ProviderWindow("codex", 1000, start),), store=store)
+        assert meter.reading("codex", (start + timedelta(days=4, hours=1)).astimezone(UTC)).used == 350
+    finally:
+        store.close()
+
+
+def _late_refusal(requests: _Requests, release: threading.Event, failures: list):
+    """A caller that answers, then has its result read on a thread of its own once ``release`` is set, in the call's context."""
+    from g6.self_maintenance.usage import WatchedClaude
+
+    class AnswersFirst:
+        workers: list = []
+
+        def complete(self, system, user, *, max_tokens=1024):
+            answer = FakeLLM(default="answer").complete(system, user)
+            context = contextvars.copy_context()
+
+            def late():
+                try:
+                    release.wait(5)
+                    context.run(WatchedClaude()._reply, 0, '{"type":"result","stop_reason":"refusal"}', "", None,
+                                (system, user))
+                except BaseException as exc:
+                    failures.append(exc)
+
+            self.workers.append(threading.Thread(target=late))
+            self.workers[-1].start()
+            return answer
+
+    return AnswersFirst()
+
+
+@pytest.mark.parametrize("next_tick", [True, False])
+def test_a_refusal_a_closed_ticks_request_met_late_leaves_the_next_tick_clear(next_tick):
+    from g6.metaharness.loop import _request_digest
+
+    requests, release, failures = _Requests(), threading.Event(), []
+    requests.open(10)
+    late = _late_refusal(requests, release, failures)
+    assert _Counted(late, requests).complete("system", "old question") == "answer"
+    requests.close()
+    if next_tick:
+        requests.open(10)
+    release.set()
+    for worker in late.workers:
+        worker.join(10)
+    assert failures and requests.refusal is None
+    if next_tick:                           # the refused request is still never sent again
+        assert _request_digest("system", "old question") in requests.refused
+        fresh = FakeLLM(default="fresh")
+        assert _Counted(fresh, requests).complete("system", "new question") == "fresh" and len(fresh.calls) == 1
+
+
+def test_a_place_a_request_took_is_not_given_back_as_its_call_returns(monkeypatch):
+    from g6.core import model_calls
+
+    backend, counting, failures = FakeLLM(default="answer"), threading.Event(), []
+    requests = _Requests()
+    requests.open(2)
+
+    class SeenLock:
+        """``model_calls``'s lock, which shows when the child has taken its place and waits to be counted."""
+
+        def __init__(self):
+            self.lock = threading.Lock()
+
+        def __enter__(self):
+            if threading.current_thread().name == "child":
+                counting.set()
+            self.lock.acquire()
+
+        def __exit__(self, *exc):
+            self.lock.release()
+
+    seen = SeenLock()
+    monkeypatch.setattr(model_calls, "_lock", seen)
+
+    class ReturnsWhileItsChildIsCounted:
+        child = None
+
+        def complete(self, system, user, *, max_tokens=1024):
+            answer = backend.complete(system, user)
+            context = contextvars.copy_context()
+            seen.lock.acquire()
+
+            def child():
+                try:
+                    context.run(backend.complete, system, "second")
+                except BaseException as exc:
+                    failures.append(exc)
+
+            self.child = threading.Thread(target=child, name="child")
+            self.child.start()
+            assert counting.wait(5)
+            return answer
+
+    caller = ReturnsWhileItsChildIsCounted()
+    try:
+        assert _Counted(caller, requests).complete("system", "first") == "answer"
+    finally:
+        seen.lock.release()
+        caller.child.join(10)
+    assert not failures and len(backend.calls) == 2 and requests.sent == 2
+    with pytest.raises(LLMError, match="TICK_BUDGET_SPENT"):
+        _Counted(backend, requests).complete("system", "third")
+    assert len(backend.calls) == 2
+
+
 def test_a_limit_a_resend_was_told_of_ends_the_tick_before_it_is_resent(monkeypatch):
     import io
     import urllib.error
