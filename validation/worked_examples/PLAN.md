@@ -1331,3 +1331,45 @@ Stage 1 set no limit on the audit's passes, and its hardest bug took three. Stag
 ## 2026-11-02 (night): stage 3's tick ended, and nothing was adopted
 
 The loop's one tick ran from 16:32 to 21:33 on Codex's sign-in, with no API credit. It measured the reviewer on the 77 tuning cases (50 right), named the constraint `false_alarm` (23 false alarms against 4 accepted defects in the failure records), offered 5 candidates of which 4 were new, measured 4, kept 1, raced 4, and took a champion to the held-out split. There it lost to its parent, K1's reading: 14 wins, 22 losses, p 0.93 against the 0.01 it needed, and the gate refused it with `G6_E_META_NO_GAIN`. So stage 3's result is the one this plan named in advance: nothing adopted, and no K2 to run. None of the 254 per-case records carries an error, so no case was lost to a provider's failure. The $8 kept for K2 stays unspent. The loop's folder is in the job's scratch space until it is archived. The scoring of whether the proposers reached the two hypotheses kept out of their prompts (running the issue's own scenario, reading neighbouring code) waits for a read of the four candidates.
+
+## 2026-11-03: stage 2's result
+
+Every run had ended at 10:04, all 20 bugs in the frozen order, and stage 3 had ended with no K2 to run. No score was read before then. The amendments' controls ran first, with only their counts read: all six diffs passed, each control on the diff's own bytes, with 1 to 68 tests failing on the parent and passing with the fix. `charset-normalizer-715` keeps the maintainers' tests, as its reviewer left it.
+
+**The rule.** Neither primary meets it, on either score, so uplift over Claude Code alone on bugs from repositories never used in training is not shown. Neither clears 0.025, and the 95% target is not met. K1's best is 85.0% and M9's 72.5%, both on the amended tests.
+
+| Runs passed | A | T | R (report only) | M9 | K1 | K0 (exploratory) |
+|---|---:|---:|---:|---:|---:|---:|
+| Twenty new-repository bugs, 40 runs, maintainers' tests | 23 | 24 | 26 | 21 | 26 | 24 |
+| Twenty new-repository bugs, 40 runs, amended tests | 31 | 31 | 34 | 29 | 34 | 32 |
+| The thirteen determined bugs, 26 runs, both scores | 21 | 22 | 24 | 19 | 24 | 22 |
+| Stage 1, eleven fresh bugs, 22 runs, maintainers' tests | 10 | 9 | 9 | 9 | 9 | not run |
+| Stage 1, eleven fresh bugs, 22 runs, amended tests | 13 | 12 | 13 | 16 | 15 | not run |
+| Training, tuned, 14 runs, maintainers' tests | 9 | not run | not all run | 12 (L9) | 12 | not run |
+| Training, tuned, 14 runs, amended tests | 11 | not run | not all run | 14 (L9) | 14 | not run |
+
+| Pairs that differ, stage 2 | Against A, maintainers | Against A, amended | Against T, maintainers | Against T, amended |
+|---|---|---|---|---|
+| M9 | 2-4, p 0.891 | 2-4, p 0.891 | 2-5, p 0.938 | 3-5, p 0.855 |
+| K1 | 3-0, p 0.125 | 3-0, p 0.125 | 2-0, p 0.250 | 3-0, p 0.125 |
+
+The 95% interval by bug on the amended tests against A is -20% to +10% for M9 and +0% to +20% for K1.
+
+**What the counts show.** These are counts by bug and arm. No fix, test, run or reply of these bugs was read for them.
+
+- **Most bugs cannot separate the arms, again.** On the maintainers' tests 15 of the 20 bugs gave A, T, R, M9 and K1 the same score: eight passed in every one of those arms and seven failed in every one. K1 and A differ on two bugs only, `urllib3-5254` (A 1 of 2, K1 2) and `s3transfer-423` (A 0, K1 2), so 3 of 40 pairs differ, and the rule needs at least 5.
+- **The amendments moved every arm alike.** On `setuptools-5352`, `pluggy-799`, `botocore-3835` and `pyjwt-1216` every arm failed on the maintainers' tests and passed on the amended ones, but for one T run on `setuptools-5352`. `setuptools-5362` failed in every arm on both, and `python-dotenv-711` passed in every arm on both. So the amended score adds 7 or 8 runs to every arm, and unlike stage 1 the loops gain nothing there. `pyjwt-1216`'s amendment stayed contested (the entry above); since it moves every arm alike, no comparison turns on it.
+- **M9 lost runs A won:** `anyio-1424` (A 2, M9 0), `anyio-1354` (A 2, M9 1) and `urllib3-5254` (A 1, M9 0), and won `s3transfer-423` (A 0, M9 2).
+- **One bug where a review helped.** On `s3transfer-423`, A, T and the screening arm S failed all 7 runs, and R, M9, K1 and K0 passed all 8. K0 is K1's loop without the issue's discussion, so the discussion is not what made the difference there. This rests on one bug, and its cause has not been read, so it is a hypothesis.
+- **K0, report only.** Stage 1 suggested the issue's discussion cost runs. Here K0 is level with A (24 against 23, 3-2) and two runs behind K1, which reads the discussion; its only bug apart from every other arm is `urllib3-5347`, which every other arm passed and K0 failed twice. So stage 2 does not bear that hypothesis out. K0 was chosen after reading stage 1, so this is not a finding either way.
+- **"Clean" was right more often than on stage 1.** K1 said clean on 33 runs, right on 23 by the maintainers' tests and on 30 by the amended ones. M9's "clean" was right on 12 of 17 and 15 of 17, R's on 24 of 38 and 32 of 38, and A's "done" on 23 and 31 of 40.
+- **How K1's runs ended**, as the entry of 2026-11-01 (evening) asks: 33 with the last review finding nothing, 6 with the repairs run out and a defect open (3 of them right on both scores), and 1 with the agent leaving the code as it was. None ended on a defect whose test would not run.
+- **Training did not carry, though less steeply than on stage 1.** K1 went from 12 of 14 on training to 26 of 40 here, and A from 9 of 14 to 23 of 40, so K1's uplift over A fell from +21% to +7.5% on the maintainers' tests; on stage 1's fresh bugs it was -5%. The bugs differ, so this is a rough reading.
+
+**What it does not show.** That K1 has no effect on unseen repositories. Every one of the three pairs that differ favours K1, and its interval on the amended tests runs from no gain to +20%. The rule was expected to fire about two times in three at 20 bugs if the training effect were real, but it needs bugs that tell the arms apart, and 18 of these 20 gave K1 and A the same score. A larger unseen set is needed to decide it, and by the entry of 2026-11-02 (morning) it has to be drawn fresh.
+
+**Verdicts read from their records.** `run.py` prints at most 8,000 characters, which cut the verdict off for all 15 runs of `setuptools-5362` and for K1's second run of `setuptools-5352`. Each row was written from that check's saved record, as on stage 1 (entry of 2026-11-02). No run was repeated and no outcome was read to do it. All 16 failed, on both scores.
+
+**Spend.** The study stands at $160.27 of $180: $125.62 by the runner, up $42.88 since stage 1's tally, and $34.65 for Fable's reviews. Stage 3's tick ran on Codex's sign-in and spent no API credit. What the one killed run's container spent after its kill is unmeasured.
+
+**The three stages, together.** Stage 1, unseen bugs in the training repositories: not shown. Stage 2, unseen bugs in repositories never used in training: not shown, with K1 ahead of A on every pair that differs. Stage 3, a change G6 proposed itself from its own failure records: the loop proposed and raced candidates with no change written in session, and the gate adopted nothing, so there was no K2 to measure. On no stage is the 95% target met.
