@@ -88,7 +88,8 @@ def findings(roots: Iterable[Path]) -> tuple[list[dict[str, Any]], list[dict[str
             for at in range(1, len(parts), 2):
                 body = parts[at + 1].split("\n## ")[0]
                 rows.append({"folder": folder.name, "branch": branch, "round": number, "mark": mark, "finding": int(parts[at]),
-                             "rule": _field(body, "Rule"), "why": _field(body, "Why"), "test": _field(body, "Test"),
+                             "rule": _field(body, "Rule"), "class_said": _field(body, "Class"), "why": _field(body, "Why"),
+                             "test": _field(body, "Test"),
                              "cites": sorted(set(re.findall(r"[\w./-]+\.py:\d+", body)))})
     return rows, clean
 
@@ -160,6 +161,15 @@ def _met_again(pairs: Iterable[tuple[int, str]]) -> Counter[str]:
             again[cls] += 1
         first.setdefault(cls, number)
     return again
+
+
+def met_before(rows: Sequence[Mapping[str, Any]], labels: Mapping[tuple[str, int], Mapping[str, str]],
+               row: Mapping[str, Any]) -> list[tuple[str, int]]:
+    """The findings of ``row``'s class in an earlier round of its own loop or in any other loop. Asked before a repair: if
+    any, the repair removes the class (``CHECKS``), since patching another instance is the same mistake made twice."""
+    cls = _class(labels[row["folder"], row["finding"]])
+    return sorted((r["folder"], r["finding"]) for r in rows if _class(labels[r["folder"], r["finding"]]) == cls
+                  and (r["branch"] != row["branch"] or r["round"] < row["round"]))
 
 
 def by_chance(rows: Sequence[Mapping[str, Any]], labels: Mapping[tuple[str, int], Mapping[str, str]],

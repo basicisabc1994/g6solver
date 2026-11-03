@@ -15,6 +15,7 @@ import ledger  # noqa: E402
 
 REPORT = """## Finding 1
 Rule: A saved record must count once.
+Class: one_fact_two_rules
 Why: `validation/x.py:12` counts it twice, and `src/g6/y.py:3` too.
 Test: tests/_review/test_finding_1.py
 Observed: assert 2 == 1
@@ -52,6 +53,7 @@ def test_each_finding_is_a_row_and_a_report_with_none_is_kept_apart(tmp_path):
     assert [(r["folder"], r["finding"], r["round"]) for r in rows] == [("review-rp1", 1, 1), ("review-rp1", 2, 1)]
     assert rows[0]["rule"] == "A saved record must count once." and rows[0]["cites"] == ["src/g6/y.py:3", "validation/x.py:12"]
     assert rows[1]["cites"] == [] and "Looked at" not in rows[1]["why"]
+    assert [r["class_said"] for r in rows] == ["one_fact_two_rules", ""]     # the reviewer's own label, where it gave one
     assert [c["folder"] for c in clean] == ["review-rp2"]
 
 
@@ -125,6 +127,20 @@ def test_the_counts_name_a_class_that_came_back_after_the_first_repair():
     assert got["by_loop"]["b"] == {"by_round": [2, 1, 1], "last_round": {"fails_loudly": 1},
                                    "later_lines": {"last repair": 1, "earlier": 1}}
     assert got["effect_by_round"][1] == {"changes_outcome": 1, "latent": 1}
+
+
+def test_a_finding_whose_class_was_met_before_names_the_earlier_ones_so_its_repair_removes_the_class():
+    rows = [{"folder": "review-rp1", "finding": 1, "branch": "b", "round": 1},
+            {"folder": "review-rp1", "finding": 2, "branch": "b", "round": 1},
+            {"folder": "review-rp2", "finding": 1, "branch": "b", "round": 2},
+            {"folder": "review-rp2", "finding": 2, "branch": "b", "round": 2},
+            {"folder": "review-k1", "finding": 1, "branch": "k", "round": 1}]
+    labels = {("review-rp1", 1): {"mechanism": "one_fact_two_rules"}, ("review-rp1", 2): {"mechanism": "one_fact_two_rules"},
+              ("review-rp2", 1): {"mechanism": "one_fact_two_rules"}, ("review-rp2", 2): {"mechanism": "boundary_case"},
+              ("review-k1", 1): {"mechanism": "boundary_case"}}
+    assert ledger.met_before(rows, labels, rows[2]) == [("review-rp1", 1), ("review-rp1", 2)]
+    assert ledger.met_before(rows, labels, rows[3]) == [("review-k1", 1)]          # another loop met it: that counts too
+    assert ledger.met_before(rows, labels, rows[0]) == []                            # its own round is no earlier round
 
 
 def test_every_named_class_has_one_check_a_reviewer_and_a_repair_can_run():
