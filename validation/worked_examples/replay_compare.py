@@ -62,7 +62,11 @@ def patches(root: Path, tasks: Iterable[str]) -> dict[str, dict[str, Any]]:
         patch = root / str(row.get("run")) / "final.patch"
         if row.get("task") not in wanted or row.get("status") != "finished" or not patch.is_file() or not patch.stat().st_size:
             continue
-        one = found.setdefault(c.sha256_file(patch), {"task": row["task"], "seen": {score: set() for score in SCORES}})
+        sha = c.sha256_file(patch)
+        one = found.setdefault(sha, {"task": row["task"], "seen": {score: set() for score in SCORES}})
+        if one["task"] != row["task"]:      # every review is saved by a patch's digest alone, so one patch is one bug's
+            raise ValueError(f"the patch {sha[:12]} is on two bugs, {one['task']} and {row['task']}, and a review is saved by "
+                             "its digest alone")
         for score in SCORES:
             value = verdicts.get((row["arm"], row["task"], row["repeat"]), {}).get(score)
             if value is not None:

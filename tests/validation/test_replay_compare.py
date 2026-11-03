@@ -296,3 +296,11 @@ def test_the_groups_are_the_plans():
 @pytest.mark.parametrize("name", ["patches", "right", "tally", "paired", "matched", "futility", "report", "groups"])
 def test_the_module_says_what_each_step_does(name):
     assert getattr(rc, name).__doc__
+
+
+def test_a_patch_on_two_bugs_is_refused_since_a_review_is_saved_by_its_digest_alone(tmp_path, monkeypatch):
+    archive = _Archive(tmp_path / "round3", monkeypatch)
+    archive.run("x-1", "same", True, True)
+    archive.run("y-1", "same", True, True)
+    with pytest.raises(ValueError, match="on two bugs"):
+        rc.patches(archive.root, ["x-1", "y-1"])

@@ -14,12 +14,15 @@ call and a changed instruction asks again; each patch's verdict is saved under i
 from __future__ import annotations
 
 import argparse
+import contextlib
+import copy
 import hashlib
 import json
+import os
 import subprocess
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -134,8 +137,29 @@ def bug_record(root: Path, task: str) -> Path:
     return root / "loop" / FOLDER / "bugs" / f"{task}-{INSTRUCTION}.json"
 
 
+class Checked:
+    """``ctx.docker`` for replay 3's test runs: a test run whose ``docker exec`` itself failed raises, so no report it printed is
+    read as a run. The study's ``run.run_set`` reads only what the probe script printed, whose own last command succeeds, so a
+    non-zero status there is the exec's failure, never the test's. Every other call is passed through as it is."""
+
+    def __init__(self, docker: Any):
+        self.docker = docker
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.docker(*args, **kwargs)
+
+    def sh(self, ctr: str, script: str, *args: Any, **kwargs: Any) -> Any:
+        done = self.docker.sh(ctr, script, *args, **kwargs)
+        if we.JUNIT_MARK in script and done.returncode != 0:
+            raise RuntimeError(f"the test run's docker exec exited {done.returncode}")
+        return done
+
+
 def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path) -> tuple[we.ProbeRun, we.ProbeRun]:
-    """A saved test of the rule on the parent and with ``patch``, in a container of its own, as replay 1 runs its tests."""
+    """A saved test of the rule on the parent and with ``patch``, in a container of its own, as replay 1 runs its tests, with an
+    exec that failed raising (``Checked``)."""
+    ctx = copy.copy(ctx)                              # the caller's context keeps its own docker
+    ctx.docker = Checked(ctx.docker)
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     try:
         fr.container(ctx, task, name)
@@ -155,7 +179,7 @@ def review_bug(ctx: we.Context, root: Path, task: we.Task, rows: Sequence[Mappin
     saved = bug_record(root, task.id)
     found = (fr.read(saved) or {}).get("found")       # one cut short is no record, and the bug is asked again
     got = []
-    if not isinstance(found, dict):
+    if not isinstance(found, dict) or no_answer(found):    # a saved answer meets the same test as a fresh one
         started = time.monotonic()
         found, _, _ = ask(ctx, task, root / str(rows[0]["run"]) / "final.patch", title, text, RULE_FIRST, RULE_AT, FILE,
                           candidate=False, run=False)
@@ -198,8 +222,35 @@ def main(argv: Sequence[str] | None = None) -> None:
     root = c.archive_root() / "round3"
     ctx = we.Context(archive=c.Archive(root), docker=we.Docker(), key_reader=lambda: "", issue_reader=we.read_issue,
                      g6=we.g6_info(args.g6), variant=we.ROUND3, arm="L9")
+    import replay_compare     # here, as it imports this module
+
+    replay_compare.patches(root, args.tasks)          # refuses a patch on two bugs, which this replay names by its bytes alone
     print(json.dumps({"instruction": INSTRUCTION}), flush=True)
-    for name in args.tasks:
+    with one_runner(root / "loop" / FOLDER):
+        _run(ctx, root, args.tasks)
+
+
+@contextlib.contextmanager
+def one_runner(folder: Path) -> Iterator[None]:
+    """One replay 3 run at a time on a folder: a second refuses to start while a first holds it, as two would each ask a bug's
+    reviewer. A run that died leaves the lock, named in the refusal, for a person to remove after checking no run is alive."""
+    folder.mkdir(parents=True, exist_ok=True)
+    lock = folder / ".running"
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise SystemExit(f"another replay 3 run holds {lock.name} in {folder.name} ({lock.read_text('utf-8', 'replace')}); "
+                         "remove it only once no run is alive") from None
+    try:
+        os.write(fd, f"pid {os.getpid()}".encode())
+        os.close(fd)
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _run(ctx: we.Context, root: Path, tasks: Sequence[str]) -> None:
+    for name in tasks:
         rows = fr.waiting(root, [name], FOLDER)
         if not rows:
             continue

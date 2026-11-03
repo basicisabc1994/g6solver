@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -178,3 +179,41 @@ def test_a_verdict_is_saved_under_the_bytes_that_were_run_however_the_file_chang
     assert (tmp_path / "loop" / r3.FOLDER / f"{first}.json").is_file()
     assert fr.saved(tmp_path, rows[0], r3.FOLDER) is None         # the bytes now there were never run, so have no verdict
     assert not list((tmp_path / "critic_packs").glob("*.patch"))  # the copy is gone
+
+def test_a_test_run_whose_docker_exec_failed_raises_and_every_other_call_passes_through():
+    class Fake:
+        def __init__(self, code):
+            self.code = code
+
+        def __call__(self, *args, **kwargs):
+            return ("called", args)
+
+        def sh(self, ctr, script, *args, **kwargs):
+            return subprocess.CompletedProcess(script, self.code, b"", b"")
+
+    with pytest.raises(RuntimeError, match="exited 125"):
+        r3.Checked(Fake(125)).sh("ctr", f"pytest; echo {we.JUNIT_MARK}")
+    assert r3.Checked(Fake(0)).sh("ctr", f"pytest; echo {we.JUNIT_MARK}").returncode == 0
+    assert r3.Checked(Fake(1)).sh("ctr", "git apply /tmp/we.patch").returncode == 1     # the caller reads this status itself
+    assert r3.Checked(Fake(0))("rm", "-f", "x") == ("called", ("rm", "-f", "x"))
+
+
+def test_a_saved_answer_that_is_no_answer_is_asked_again_and_runs_nothing(tmp_path):
+    rows = _rows(tmp_path, 1)
+    task = we.task_by_id("black-5634")
+    saved = r3.bug_record(tmp_path, task.id)
+    saved.parent.mkdir(parents=True)
+    saved.write_text(json.dumps({"found": {**WROTE, "error": "a failed ask"}}), "utf-8")
+    asked, ran = [], []
+    r3.review_bug(_ctx(tmp_path), tmp_path, task, rows, "t", "x", ask=lambda *a, **k: asked.append(1) or (NONE, None, None),
+                  run=lambda *a: ran.append(1) or (FAILS, FAILS))
+    assert asked == [1] and ran == []
+
+
+def test_one_run_at_a_time_holds_the_folder_and_a_second_refuses(tmp_path):
+    with r3.one_runner(tmp_path / "f"):
+        with pytest.raises(SystemExit, match="another replay 3 run"):
+            with r3.one_runner(tmp_path / "f"):
+                pass
+    with r3.one_runner(tmp_path / "f"):                 # released when the first ended
+        pass
