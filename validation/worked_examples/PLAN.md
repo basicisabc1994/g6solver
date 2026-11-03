@@ -1373,3 +1373,48 @@ The 95% interval by bug on the amended tests against A is -20% to +10% for M9 an
 **Spend.** The study stands at $160.27 of $180: $125.62 by the runner, up $42.88 since stage 1's tally, and $34.65 for Fable's reviews. Stage 3's tick ran on Codex's sign-in and spent no API credit. What the one killed run's container spent after its kill is unmeasured.
 
 **The three stages, together.** Stage 1, unseen bugs in the training repositories: not shown. Stage 2, unseen bugs in repositories never used in training: not shown, with K1 ahead of A on every pair that differs. Stage 3, a change G6 proposed itself from its own failure records: the loop proposed and raced candidates with no change written in session, and the gate adopted nothing, so there was no K2 to measure. On no stage is the 95% target met.
+
+## 2026-11-03 (afternoon): two replays on recorded patches, before any of their runs
+
+The owner approved, after the three stages, a reviewer that reproduces the issue before it judges, measured against the
+truth on patches already recorded, and a check that the product's reviewer behaves as the measured one. Both are replays:
+no agent runs, no API credit, the owner's Codex sign-in only, and they change no score, verdict or rule above.
+
+**Patches.** The distinct final patches of every arm on stage 1's fresh and held-out bugs and stage 2's bugs, which are
+development from the 2026-11-02 (morning) entry on, in the order of their digests. Truth is each patch's own verdict on the
+amended tests, and the maintainers' verdict is reported beside it. The 79 training patches are reported apart, since they
+shaped the reviewer. The reviewer reads what the final review reads (the issue with its discussion, the parent tree from
+the agent's image, the patch) and is told nothing of the arm or the verdict. No maintainers' test or fix reaches it.
+
+**Replay 1: the reviewer reproduces first.** The hypothesis, from the blind labels (12 of the 19 failures both raters agreed
+on were within reach of running the issue's own example or reading the surrounding code): a review that first writes a test
+of the issue's own scenario, which G6 runs at the parent, where it must fail, and on the patch, and that is then given those
+results and reads the patched code's callers and neighbours before it judges, agrees with the truth more often than the
+final review as frozen. The reviewer still runs no code itself; G6 runs its tests in the bug's own container, as the final
+review does. The baseline is the final review as frozen, on the same patches: stage 1's from its run now going, stage 2's
+from the same script, run first.
+- **Measures:** per patch, right when the review reproduces a defect on a wrong patch or finds none on a right one;
+  false alarms on right patches and misses on wrong ones kept apart, each with an exact bound; paired by patch against
+  the baseline, and by bug.
+- **Prediction, written now:** on stage 1 and stage 2 together, agreement with the truth on the amended tests rises by
+  at least 10 points, with false alarms on right patches up by no more than 5.
+- **Kill rule:** agreement up by less than 5 points, or false alarms up by more than misses fall: the hypothesis is
+  refuted at this rung, and what follows is a test of the reading step alone, or a change of frame.
+- **What it changes:** if it holds, the reproducing reviewer is the review loop's reviewer for the next study, which is
+  sized before it runs by whether it can meet the rule. If it fails, the next study does not use it.
+- **The test:** an exact one-sided sign test on the patches where the two reviews differ in being right, p below 0.05.
+
+**Replay 2: the product's reviewer against the measured one.** The product sends the same prompt as the review loop's
+reviewer, byte for byte, but no tools and only the files the patch touches, cut at 120,000 characters; the measured
+reviewer had the whole parent tree and tools to read it. On the same patches, the product's pack, built by the product's own
+code from the saved patch and the parent files, goes to Codex with no tools.
+- **Measures:** how often its verdict matches the final review's on the same patch, and its agreement with the truth.
+- **Prediction:** the two verdicts match on at least 85% of patches.
+- **What it changes:** under that, the product does not carry the measured reviewer's behaviour, and its reviewer is
+  given the whole tree through a caller outside core before any claim rests on the study.
+
+**Order and stops.** Both start after stage 1's final review ends, so neither competes with it for the sign-in. Each runs
+first on a pilot of the first 40 patches by digest. After each block of 40 a registered futility stop applies: it stops
+when even every remaining patch going its way could not reach its prediction, and only then; it never stops early for
+success. Nothing is dropped or rerun for a better result. Counts are read on unseen bugs only, as before. A Codex limit
+pauses a replay; it resumes where it stopped, and a review that failed on a limit is not counted as a review.
