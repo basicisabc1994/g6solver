@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import importlib.machinery
+import inspect
 import math
 import os
 import sys
@@ -51,6 +52,7 @@ from g6.metaharness.domain import (
     FALLBACK_MODEL,
     Cut,
     Domain,
+    Execution,
     FailureRecord,
     Judge,
     backends,
@@ -472,6 +474,38 @@ def envelope_sha256() -> str:
                    "install": os.path.normcase(str(_SOURCE))})
 
 
+def _profile_space(name: str, run: Execution) -> str:
+    """The digest of what a profile may express in a domain: the values each field may take, as a set, and the checks and
+    steps it may switch on, each by what it does (a check's code, a step's op and the source of what it runs), so the same
+    edits in another order are the same domain and an action replaced under its own name is a new one."""
+    def does(fn: Callable[..., Any]) -> str:
+        fn = inspect.unwrap(fn)
+        try:
+            text = inspect.getsource(fn)
+        except (OSError, TypeError):      # no source to read (a built-in, a callable object): its name stands for it
+            text = ""
+        return f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', type(fn).__qualname__)}\n{text}"
+
+    return digest({"domain": name, "models": sorted(run.models),
+                   "space": {k: sorted({repr(v) for v in values}) for k, values in sorted(run.space.space.items())},
+                   "optional_checks": {k: check.code_sha() for k, check in sorted(run.optional_checks.items())},
+                   "pipeline_steps": {k: [step.component, step.op, step.authority, step.effect, step.mandatory,
+                                          hashlib.sha256(does(step.run).encode("utf-8", "backslashreplace")).hexdigest()]
+                                      for k, step in sorted(run.pipeline_steps.items())}})
+
+
+def _writable(value: Any) -> Any:
+    """``value`` with every string, keys too, made writable as UTF-8: what cannot be (a lone surrogate) is spelled out with
+    a backslash, so a row that repeats a domain's labels or an error's words can always be written."""
+    if isinstance(value, str):
+        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+    if isinstance(value, Mapping):
+        return {_writable(k): _writable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_writable(v) for v in value]
+    return value
+
+
 def _judge_digest(judge: Judge | None) -> str:
     source = judge_source(judge.verdict) if judge is not None else None
     return hashlib.sha256(source.read_bytes()).hexdigest() if source is not None else ""
@@ -638,10 +672,7 @@ class ShadowLoop:
         of the domain changes and a change of method in the same file does not (``tick_rca``'s domain part)."""
         run, sealed, judge = self.domain.execution(), self.domain.sealed(), self.domain.judge()
         return {"envelope": envelope_sha256(), "domain_file": file_digest(self.domain_file),
-                "profile_space": digest({"domain": str(getattr(self.domain, "name", "")),
-                                         "space": {k: [repr(v) for v in values] for k, values in sorted(run.space.space.items())},
-                                         "optional_checks": sorted(run.optional_checks), "pipeline_steps": sorted(run.pipeline_steps),
-                                         "models": sorted(run.models)}),
+                "profile_space": _profile_space(str(getattr(self.domain, "name", "")), run),
                 "evaluator": digest({"judging": judging_sha256(), "judge": _judge_digest(judge),
                                      "independence": [judge.answers_by, judge.is_model] if judge is not None else [],
                                      "task": run.task, "checks": [c.code_sha() for c in (*run.checks,
@@ -884,7 +915,7 @@ class ShadowLoop:
         elif recommended:
             row |= self._adopt(recommended[-1]["decision"], row)
         if isinstance(self._rca, str):           # the read for it failed: the row says so
-            row["rca"] = {"unreadable": self._rca}
+            row["rca"] = _writable({"unreadable": self._rca})
         elif self._rca is not None:               # read once the outcome is known: an adoption is part of what it reads
             row |= self._analysis(dataclasses.replace(self._rca, outcome=str(row.get("outcome", ""))))
         seen = self.meter.reading(spend.provider, self._now())
@@ -1057,18 +1088,19 @@ class ShadowLoop:
 
     def _analysis(self, record: TickRecord) -> dict[str, Any]:
         """The tick's own root cause analysis, and the last one's scored on what this tick saw (``g6.metaharness.tick_rca``).
-        This only records, so a fault in it costs the cycle nothing: the row says the analysis could not be read."""
+        This only records, so a fault in it costs the cycle nothing: the row says the analysis could not be read. What it
+        records is written as UTF-8, so text that cannot be (a label's or an error's) is spelled out (``_writable``)."""
         try:
             found: dict[str, Any] = {"rca": tick_rca(record).to_dict()}
         except Exception as exc:  # noqa: BLE001 - see above
-            return {"rca": {"unreadable": f"{type(exc).__name__}: {exc}"[:200]}}
+            return _writable({"rca": {"unreadable": f"{type(exc).__name__}: {exc}"[:200]}})
         try:
             before = next((c["rca"] for c in reversed(self.log.cycles()) if isinstance(c.get("rca"), dict) and "causes" in c["rca"]), None)
             if before is not None:
                 found["rca_scored"] = [list(pair) for pair in scored(TickDiagnosis.from_dict(before), record)]
         except Exception:  # noqa: BLE001 - an unscored analysis is recorded as such
             found["rca_scored"] = None
-        return found
+        return _writable(found)
 
     def _exploit(self, constraint: Constraint, recommended: list[dict[str, Any]]) -> dict[str, Any]:
         """Propose and gate. A recommendation is only held here: it is adopted once the sealed split is known untouched."""

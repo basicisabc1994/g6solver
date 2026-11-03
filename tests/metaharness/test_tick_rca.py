@@ -390,6 +390,88 @@ def test_a_method_changed_in_the_domains_own_file_applies_no_remedy_of_the_domai
     assert dict(second.log.cycles()[-1]["rca_scored"])["edit_space_short"] == OPEN
 
 
+def test_an_analysis_whose_words_cannot_be_written_as_utf8_still_leaves_the_tick_its_row(tmp_path):
+    loop = _loop(tmp_path, domains.proposes({"prompt": domains.WORKING}))
+
+    def unreadable(case):
+        raise ValueError("label reader failed on \ud800")
+
+    loop.domain.label_of = unreadable
+    loop.tick()
+    row = loop.log.cycles()[-1]
+    assert row["outcome"] == "adopted" and row["rca"]["unreadable"].endswith("\\ud800")
+
+
+def test_a_label_that_cannot_be_written_as_utf8_is_written_spelled_out():
+    from types import SimpleNamespace
+
+    loop = object.__new__(ShadowLoop)
+    loop.log = SimpleNamespace(cycles=lambda: [])
+    labels = {**_labelled("r", "right\udc80", 5), **_labelled("w", "wrong", 5)}
+    found = loop._analysis(_record(wins=["r0", "r1", "r2", "r3"], losses=["w0", "w1", "w2", "w3", "w4"], labels=labels))
+    json.dumps(found, ensure_ascii=False).encode("utf-8")          # as a cycle's row is written
+    assert "threshold_move" in [cause["code"] for cause in found["rca"]["causes"]]
+
+
+def _reenrolled(loop, monkeypatch, execution):
+    monkeypatch.setattr(loop.domain, "execution", lambda: execution)
+    assert loop.enrol("Ada")["completion_state"] == "qualified-draft"
+    loop.tick()
+    return dict(loop.log.cycles()[-1]["rca_scored"])["edit_space_short"]
+
+
+def test_the_same_edits_in_another_order_apply_no_remedy_of_the_domains(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from g6.metaharness.pool import EditSpace
+
+    loop = _loop(tmp_path, FakeLLM(_wording))
+    loop.tick()
+    assert "edit_space_short" in _named(loop.log.cycles()[-1])
+    reordered = replace(loop.domain.execution(), space=EditSpace({"retries": [1, 0]}))
+    assert _reenrolled(loop, monkeypatch, reordered) == OPEN
+
+
+def _step(output, contract, ctx):
+    return output
+
+
+def _another_step(output, contract, ctx):
+    return output.strip()
+
+
+def test_an_action_replaced_under_its_own_name_applies_the_domains_remedy(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from g6.metaharness.schema import PipelineStep
+
+    loop = _loop(tmp_path, FakeLLM(_wording))
+    loop.tick()
+    first = replace(loop.domain.execution(), pipeline_steps={"tidy": PipelineStep("tidy", "review", "keep", _step)})
+    _reenrolled(loop, monkeypatch, first)                       # a new step is a new version of the domain too
+    assert "edit_space_short" in _named(loop.log.cycles()[-1])
+    again = replace(first, pipeline_steps={"tidy": PipelineStep("tidy", "review", "strip", _another_step)})
+    assert _reenrolled(loop, monkeypatch, again) != OPEN
+
+
+def test_a_check_replaced_under_its_own_name_applies_the_domains_remedy(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from g6.harness import Check
+
+    loop = _loop(tmp_path, FakeLLM(_wording))
+    loop.tick()
+    run = loop.domain.execution()
+    name = next(iter(run.optional_checks))
+    first = replace(run, optional_checks={name: Check("a number", lambda out: any(ch.isdigit() for ch in out), check_id=name,
+                                                      known_bad=("",), known_good="1")})
+    _reenrolled(loop, monkeypatch, first)
+    assert "edit_space_short" in _named(loop.log.cycles()[-1])
+    again = replace(run, optional_checks={name: Check("a short number", lambda out: out.strip().isdigit(), check_id=name,
+                                                      known_bad=("",), known_good="1")})
+    assert _reenrolled(loop, monkeypatch, again) != OPEN
+
+
 def test_a_wider_edit_space_applies_the_domains_remedy(tmp_path):
     first = _opened(tmp_path, _DOMAIN_FILE)
     first.tick()
