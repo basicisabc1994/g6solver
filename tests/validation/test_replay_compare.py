@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "validation" / "worked_examples"))
 import compare  # noqa: E402
 import final_review as fr  # noqa: E402
 import product_review as pr  # noqa: E402
+import replay3 as r3  # noqa: E402
 import replay_compare as rc  # noqa: E402
 import run as we  # noqa: E402
 from g6.core.binomial import lower_bound  # noqa: E402
@@ -103,6 +104,22 @@ def test_the_paired_sign_test_counts_the_patches_where_exactly_one_is_right(tmp_
     assert "6 paired, final review right 2, reproduce first right 5" in paired
     assert f"only reproduce first right 3, only final review right 0, one-sided p {compare.sign_test(3, 0):.4f}" in paired
     assert "p 0.1250" in paired and "bugs better 2 worse 0 same 0" in paired
+
+
+def test_replay_3_is_counted_and_paired_as_replay_1_is(tmp_path, monkeypatch, capsys):
+    archive = _six(tmp_path, monkeypatch)
+    shas = sorted(p.stem for p in (archive.root / "loop" / fr.FOLDER).glob("*.json"))
+    by_run = {json.loads(p.read_text("utf-8"))["run"]: p for p in (archive.root / "loop").glob("*-*.json")}
+    order = [hashlib.sha256((archive.root / run / "final.patch").read_bytes()).hexdigest() for run in sorted(by_run)]
+    for sha, said in zip(order, ("none", "none", "reproduced", "reproduced", "reproduced", "none")):
+        archive.said(r3.FOLDER, sha, said)
+    assert sorted(order) == shas
+    out = _report(archive.root, capsys, ["x-1", "y-1"])
+    assert "agree 4/6" in _line(out, "amended", "rule test", "agree")
+    paired = _line(out, "amended", "rule test against final review")
+    assert "6 paired, final review right 2, rule test right 4; only rule test right 2, only final review right 0" in paired
+    assert f"one-sided p {compare.sign_test(2, 0):.4f}" in paired and "bugs better 2 worse 0 same 0" in paired
+    assert "futility rule test" not in out
 
 
 def test_a_review_that_failed_is_no_review_and_is_counted_nowhere(tmp_path, monkeypatch, capsys):

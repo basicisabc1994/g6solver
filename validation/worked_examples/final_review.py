@@ -188,22 +188,39 @@ def codex(pack: Path) -> str:
     return got.stdout.decode("utf-8", errors="replace")
 
 
+def container(ctx: we.Context, task: we.Task, name: str) -> None:
+    """A review's own container, as ``review`` makes the frozen review's: from the agent's image, never the oracle's, with no
+    network."""
+    image, _ = we.image_names(task, str(ctx.g6["commit"]), ctx.variant)
+    we.checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.SECURITY, "-u", we.USER,
+                          "-e", f"HOME={we.HOME}", "-w", task.repo, image, "tail", "-f", "/dev/null", timeout=600),
+               "review container")
+
+
+def test_runs(ctx: we.Context, task: we.Task, name: str, test: str, patch: Path, where: str,
+              file: str) -> tuple[we.ProbeRun, we.ProbeRun]:
+    """A reviewer's test in ``name``'s ``where``, run on the parent, then with ``patch`` applied: the one way every replay runs one."""
+    we.write_in(ctx.docker, name, f"{where}/{file}", test + "\n", user="root")
+    base = we.run_set(ctx, task, name, where)
+    we.checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
+    if ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo).returncode != 0:
+        raise RuntimeError("the patch does not apply")
+    return base, we.run_set(ctx, task, name, where)
+
+
 def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, prompt: str, where: str, file: str, *,
           candidate: bool) -> tuple[dict[str, Any], we.ProbeRun | None, we.ProbeRun | None]:
-    """One of replay 1's two steps, made as ``review`` makes the frozen review: its own container with no network from the agent's
-    image, a pack with ``prompt`` and the issue, the parent and, if ``candidate``, the patch, and the reviewer's test, if it wrote
-    one, in ``where``, run on the parent and then on the patch."""
+    """One of replay 1's two steps, made as ``review`` makes the frozen review: its own container (``container``), a pack with
+    ``prompt`` and the issue, the parent and, if ``candidate``, the patch, and the reviewer's test, if it wrote one, in ``where``,
+    run on the parent and then on the patch (``test_runs``)."""
     found: dict[str, Any] = {"verdict": "failed", "rule": "", "why": "", "test": "", "error": ""}
     proof = f"review {uuid.uuid4().hex}"
     pack = ctx.archive.root / "critic_packs" / proof.split()[1]   # an ordinary folder, as ``review`` says
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
-    image, _ = we.image_names(task, str(ctx.g6["commit"]), ctx.variant)
     base = now = None
     asking = False
     try:
-        we.checked(ctx.docker("run", "-d", "--name", name, "--label", "g6we=1", "--network", "none", *we.SECURITY, "-u", we.USER,
-                              "-e", f"HOME={we.HOME}", "-w", task.repo, image, "tail", "-f", "/dev/null", timeout=600),
-                   "review container")
+        container(ctx, task, name)
         pack.mkdir(parents=True)
         tree = ctx.docker("exec", "-u", we.USER, "-w", task.repo, name, "git", "archive", "--format=tar", task.parent, timeout=300)
         we.checked(tree, "the parent's tree")
@@ -222,12 +239,7 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
         asking = False
         found = answered(we.critic_report(reply, proof=proof), reply)
         if found["test"]:
-            we.write_in(ctx.docker, name, f"{where}/{file}", found["test"] + "\n", user="root")
-            base = we.run_set(ctx, task, name, where)
-            we.checked(ctx.docker("cp", str(patch), f"{name}:/tmp/we.patch", timeout=300), "patch copy")
-            if ctx.docker.sh(name, "git apply --binary --whitespace=nowarn /tmp/we.patch", workdir=task.repo).returncode != 0:
-                raise RuntimeError("the patch does not apply")
-            now = we.run_set(ctx, task, name, where)
+            base, now = test_runs(ctx, task, name, found["test"], patch, where, file)
     except (RuntimeError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
         found["error"] = f"{type(exc).__name__}: {exc}"[:400]
         if asking:

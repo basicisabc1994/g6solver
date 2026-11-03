@@ -25,6 +25,7 @@ from typing import Any
 import compare
 import final_review as fr
 import product_review as pr
+import replay3 as r3
 import run as we
 import wecommon as c
 from g6.core.binomial import lower_bound, upper_bound
@@ -33,8 +34,10 @@ BLOCK, ALPHA = 40, 0.05
 #: The predictions, written before any run: replay 1's agreement up by at least 10 points with false alarms up by at most 5, and
 #: replay 2's verdicts matching the final review's on at least 85% of patches.
 RISE, MORE_FALSE_ALARMS, MATCH = Fraction(1, 10), Fraction(1, 20), Fraction(17, 20)
-FROZEN, REPRODUCE, PRODUCT = "final review", "reproduce first", "product"
-REVIEWERS = ((FROZEN, fr.FOLDER), (REPRODUCE, fr.REPRODUCE), (PRODUCT, pr.FOLDER))
+FROZEN, REPRODUCE, PRODUCT, RULE = "final review", "reproduce first", "product", "rule test"
+REVIEWERS = ((FROZEN, fr.FOLDER), (REPRODUCE, fr.REPRODUCE), (PRODUCT, pr.FOLDER), (RULE, r3.FOLDER))
+#: The replays paired with the final review, patch by patch: replay 1, and replay 3 (PLAN.md, 2026-11-04, early).
+PAIRED = (REPRODUCE, RULE)
 SCORES = ("amended", "maintainers")
 Rows = Mapping[str, Mapping[str, Any]]
 
@@ -100,11 +103,12 @@ def tally(rows: Rows, name: str, score: str) -> dict[str, int]:
             "too_long": sum(one[name]["said"] == "too long" for one in rows.values() if counted(one[name]))}
 
 
-def paired(rows: Rows, score: str) -> dict[str, Any]:
-    """Replay 1 against the final review on the patches both reviewed: the exact one-sided sign test on those where exactly one is
-    right, and the bugs on which replay 1 is right on more of them, fewer or as many."""
-    both = [one for one in rows.values() if one[score] is not None and counted(one[FROZEN]) and counted(one[REPRODUCE])]
-    marks = [(one["task"], right(FROZEN, one[FROZEN]["said"], one[score]), right(REPRODUCE, one[REPRODUCE]["said"], one[score]))
+def paired(rows: Rows, score: str, name: str = REPRODUCE) -> dict[str, Any]:
+    """A replay (``name``, one of ``PAIRED``) against the final review on the patches both reviewed: the exact one-sided sign test
+    on those where exactly one is right, and the bugs on which the replay is right on more of them, fewer or as many. Its count of
+    right reviews is under ``reproduce`` whichever replay it is."""
+    both = [one for one in rows.values() if one[score] is not None and counted(one[FROZEN]) and counted(one[name])]
+    marks = [(one["task"], right(FROZEN, one[FROZEN]["said"], one[score]), right(name, one[name]["said"], one[score]))
              for one in both]
     wins, losses = sum(ours and not theirs for _, theirs, ours in marks), sum(theirs and not ours for _, theirs, ours in marks)
     bugs = {"better": 0, "worse": 0, "same": 0}
@@ -218,10 +222,12 @@ def report(root: Path, chosen: Sequence[tuple[str, Sequence[str], bool]] | None 
                       f"{_share(got['false_alarms'], got['right_patches'], upper=True)}  misses "
                       f"{_share(got['misses'], got['wrong_patches'], upper=True)}"
                       + (f"  too long {got['too_long']}" if name == PRODUCT else ""))
-            got = paired(rows, score)
-            print(f"{group:13} {score:11} {REPRODUCE} against {FROZEN}: {got['n']} paired, {FROZEN} right {got['frozen']}, "
-                  f"{REPRODUCE} right {got['reproduce']}; only {REPRODUCE} right {got['wins']}, only {FROZEN} right "
-                  f"{got['losses']}, one-sided p {got['p']:.4f}; bugs better {got['better']} worse {got['worse']} same {got['same']}")
+            for name in PAIRED:
+                got = paired(rows, score, name)
+                print(f"{group:13} {score:11} {name} against {FROZEN}: {got['n']} paired, {FROZEN} right {got['frozen']}, "
+                      f"{name} right {got['reproduce']}; only {name} right {got['wins']}, only {FROZEN} right "
+                      f"{got['losses']}, one-sided p {got['p']:.4f}; bugs better {got['better']} worse {got['worse']} "
+                      f"same {got['same']}")
         got = matched(rows)
         share = f"{got['matches'] / got['n']:.1%}" if got["n"] else "n/a"
         print(f"{group:13} {PRODUCT} against {FROZEN}: verdicts match on {got['matches']} of {got['n']} ({share}), "
