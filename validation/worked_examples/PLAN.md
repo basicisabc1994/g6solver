@@ -1509,3 +1509,31 @@ moves the odds (below), so a match or a mismatch would decide nothing now.
   better a judge than the review, and the next frame is the maintainers' intent.
 - **What it changes.** If it holds, the review loop's reviewer gains this step for the next study, sized before it runs.
   Nothing here is a score of G6 against Claude Code.
+
+## 2026-11-04 (early, later): replay 3's measure, before its second version and before any scored run
+
+Written after replay 3's first development run (training bugs only, instruction 838d8da877502eee), and before any other run.
+
+**The development run.** It ran from claude/replay3 7c9609b on the 7 training bugs and 129 patches, in 30 minutes, with
+7 reviewer calls and no failure. Every patch of a bug got the same verdict.
+- On the maintainers' tests: false alarms 0 of 80, misses 30 of 49, agreement 76.7%. All 19 patches it flagged were
+  wrong.
+- On the amended tests: false alarms 17 of 97 (all on one bug, where the two scores differ), misses 30 of 32,
+  agreement 63.6%.
+- Paired with the frozen review on its 79 patches: right 53 and 53, with 17 patches each way.
+
+**A flaw in the registered measure, found now.** On stage 1 and 2, 279 of 420 patches are right on the amended tests. A
+reviewer that always says "none" would agree on 66.4%, with no false alarm. That meets replay 3's prediction, at least
+62.6% and false alarms under 25%, while finding nothing. The frozen review's 52.6% is below that constant. Agreement
+rewards abstaining wherever most patches are right. Replay 1's prediction had the same weakness, though its pilot did
+not turn on it.
+
+**Replay 3's measure, prediction and kill rule, replacing the ones above:**
+- **Measure.** Balanced accuracy: the mean of the share of wrong patches caught and the share of right patches cleared,
+  on each score. A reviewer that always says the same thing scores 50%. Agreement, false alarms and misses are still
+  reported beside it.
+- **Prediction, on stage 1 and 2 together, amended tests:** balanced accuracy at least 10 points above the frozen
+  review's, with false alarms on right patches under 25%. The maintainers' tests are reported beside it.
+- **Kill rule.** Balanced accuracy up by less than 5 points, or false alarms not under 40%.
+- **Choosing the instruction.** By balanced accuracy on the training patches, not agreement. Version 2 aims at what
+  version 1 missed, in general words only: the dimensions the repository's own tests of the same feature cover.
