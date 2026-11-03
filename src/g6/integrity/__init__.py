@@ -33,9 +33,11 @@ def _sha(data: bytes) -> str:
 
 
 def build_manifest(root: str | os.PathLike[str], *, patterns: tuple[str, ...] = ("**/*.py",)) -> dict[str, str]:
-    """``relative/posix/path -> sha256`` for every file under ``root`` matching ``patterns`` (``__pycache__`` skipped)."""
+    """``relative/posix/path -> sha256`` for every file under ``root`` matching ``patterns`` (``__pycache__`` skipped, read
+    below ``root`` only, so a root installed under a folder of that name still has its files)."""
     base = Path(root)
-    found = {p for pattern in patterns for p in base.glob(pattern) if p.is_file() and "__pycache__" not in p.parts}
+    found = {p for pattern in patterns for p in base.glob(pattern)
+             if p.is_file() and "__pycache__" not in p.relative_to(base).parts}
     return {p.relative_to(base).as_posix(): _sha(p.read_bytes()) for p in sorted(found)}
 
 

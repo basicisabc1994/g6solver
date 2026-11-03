@@ -177,13 +177,38 @@ class OwnerScope:
                     self.conn.execute("INSERT INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, source))
                     book = source
             book = book or week
-            name = f"{provider}@{book}"
-            found = self._named(name) or self._insert_venture(name, caps)
+            found = self._named(f"{provider}@{book}")
+            if found is None and (older := self._same_moment(provider, book)) is not None:
+                found, book = older       # booked before weeks were named in UTC: its rows carry that name, so it is kept
+                self.conn.execute("INSERT OR REPLACE INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, book))
+            found = found or self._insert_venture(f"{provider}@{book}", caps)
             self.conn.commit()
             return found, book
         except BaseException:
             self.conn.rollback()
             raise
+
+    def _same_moment(self, provider: str, book: str) -> tuple[str, str] | None:
+        """Inside the caller's transaction: a venture of ``provider`` named for the moment ``book`` names, rendered in another
+        zone, as a folder enrolled before weeks were named in UTC holds one, and that rendering; else ``None``."""
+        try:
+            moment = datetime.fromisoformat(book)
+        except ValueError:
+            return None
+        if moment.tzinfo is None:
+            return None
+        prefix = f"{provider}@"
+        rows = self.conn.execute("SELECT venture_id, name FROM ventures WHERE owner=? AND substr(name, 1, ?) = ? ORDER BY rowid",
+                                 (self.owner, len(prefix), prefix)).fetchall()
+        for row in rows:
+            rendering = row["name"][len(prefix):]
+            try:
+                other = datetime.fromisoformat(rendering)
+            except ValueError:
+                continue
+            if other.tzinfo is not None and other == moment:
+                return row["venture_id"], rendering
+        return None
 
     def venture_named(self, name: str, *, caps: dict[str, float]) -> str:
         """The id of this owner's venture of this name, made once however many ask at the same moment."""

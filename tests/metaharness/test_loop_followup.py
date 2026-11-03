@@ -655,3 +655,39 @@ def test_a_cache_file_named_for_its_interpreter_is_no_module_and_leaves_the_enve
     (cache / f"select.{sys.implementation.cache_tag}.pyc").write_bytes(b"a first import writes this")
     (cache / f"select.{sys.implementation.cache_tag}.opt-1.pyc").write_bytes(b"and this, under -O")
     assert envelope() == enrolled
+
+
+@pytest.mark.parametrize("hours", [10, -5])
+def test_a_reservation_booked_under_a_week_named_in_another_zone_still_counts(tmp_path, hours):
+    from datetime import timezone
+
+    from g6.self_maintenance.pacing import OWNER
+
+    start = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=hours)))
+    store = OperatorStore(tmp_path / "operator.db")
+    try:
+        scope = store.for_owner(OWNER)            # as a folder enrolled before weeks were named in UTC booked it
+        venture = scope.venture_named(f"codex@{start.isoformat()}", caps={"model": 1000, "cash": 0})
+        scope.reserve(venture, month=start.isoformat(), account="model", amount=350)
+        meter = BudgetMeter((ProviderWindow("codex", 1000, start),), store=store)
+        now = (start + timedelta(days=2)).astimezone(UTC)
+        assert meter.reading("codex", now).used == 350
+        assert not meter.reserve("codex", now, 350).admitted        # 700 is past the third day's ceiling of 600
+        assert meter.reading("codex", now).used == 350
+    finally:
+        store.close()
+
+
+def test_an_install_under_a_folder_named_pycache_still_pins_its_source(tmp_path, monkeypatch):
+    from g6.metaharness import loop as loop_module
+
+    package = tmp_path / "__pycache__" / "g6"
+    package.mkdir(parents=True)
+    (package / "mod.py").write_text("value = 1\n", encoding="utf-8")
+    (package / "__pycache__").mkdir()
+    (package / "__pycache__" / f"mod.{sys.implementation.cache_tag}.pyc").write_bytes(b"a first import writes this")
+    assert list(build_manifest(package)) == ["mod.py"]          # the cache inside the package still stays out
+    monkeypatch.setattr(loop_module, "_SOURCE", package)
+    enrolled = loop_module.envelope_sha256()
+    (package / "mod.py").write_text("value = 2\n", encoding="utf-8")
+    assert loop_module.envelope_sha256() != enrolled
