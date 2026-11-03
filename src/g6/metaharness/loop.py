@@ -315,14 +315,21 @@ class _Requests:
         with self._lock:
             self.sent += requests
 
-    def at_a_limit(self, failed: LLMError) -> None:
-        """End the tick when a request failed at a provider's limit, and let nothing more of it go out: the limit is kept
-        until the tick closes, so another of its requests, on another thread, meets it too. Outside a tick there is none."""
+    def at_a_limit(self, failed: LLMError, generation: int | None = None) -> None:
+        """End the tick when a request failed at a provider's limit (``met_a_limit``)."""
         until = limit_ends(str(failed), self.now())
-        if until is not None and self.limit != math.inf:
-            with self._lock:
-                self.limited = (until, str(failed)[:300])
-            raise _AtLimit(until, str(failed)[:300]) from failed
+        if until is not None:
+            self.met_a_limit(until, str(failed)[:300], generation, failed)
+
+    def met_a_limit(self, until: datetime, reason: str, generation: int | None = None, cause: BaseException | None = None) -> None:
+        """End the tick at a provider's limit, and let nothing more of it go out: the limit is kept until the tick closes, so
+        another of its requests, on another thread, meets it too. ``generation``: the tick the request began in; one whose
+        tick has closed latches nothing on the next, and outside a tick there is none to end."""
+        with self._lock:
+            if self.limit == math.inf or (generation is not None and generation != self.generation):
+                return
+            self.limited = (until, reason)
+        raise _AtLimit(until, reason) from cause
 
     def not_refused(self, request: str) -> None:
         """Refuse what was refused once, whoever asks."""
@@ -349,19 +356,21 @@ class _Resends(list):
     is on a request. What ``take`` raises stops the resend, and leaves the caller as a failed request's ``LLMError``. That
     boundary comes before the wait and nothing marks its end, so a wakeup that runs late is not seen."""
 
-    def __init__(self, take: Callable[[float], None]) -> None:
+    def __init__(self, take: Callable[[float], None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> None:
         super().__init__()
-        self.take = take
+        self.take, self.limited = take, limited
 
     def append(self, wait: dict[str, Any]) -> None:
+        if wait.get("status") == 429:      # a provider's limit, however short the wait it asks: the tick ends, nothing resent
+            self.limited(wait)
         self.take(wait["retry_after_s"])
         super().append(wait)
 
 
 @contextmanager
-def _gating_resends(take: Callable[[float], None]) -> Iterator[None]:
+def _gating_resends(take: Callable[[float], None], limited: Callable[[dict[str, Any]], None] = lambda wait: None) -> Iterator[None]:
     """As ``g6.core.llm.waits``, whose record is a plain list, with a record that is the gate above."""
-    token = _WAITS.set((*_WAITS.get(), _Resends(take)))
+    token = _WAITS.set((*_WAITS.get(), _Resends(take, limited)))
     try:
         yield
     finally:
@@ -415,11 +424,16 @@ class _Counted:
         def told(said: str, given: tuple[str, ...]) -> None:
             self.requests.at_a_refusal(said, asked, _request_digest(*given[:2]) if len(given) > 1 else sent)
 
-        with counting(before_call=next_request) as noted, _gating_resends(take), telling_stops(told):
+        def limited(wait: dict[str, Any]) -> None:
+            hint = float(wait.get("retry_after_s") or 0.0)
+            self.requests.met_a_limit(self.requests.now() + timedelta(seconds=max(hint, 0.0)),
+                                      "HTTP 429: the provider's limit was met", generation)
+
+        with counting(before_call=next_request) as noted, _gating_resends(take, limited), telling_stops(told):
             try:
                 text = self.inner.complete(system, user, max_tokens=max_tokens)
             except LLMError as failed:
-                self.requests.at_a_limit(failed)
+                self.requests.at_a_limit(failed, generation)
                 self.requests.at_a_refusal(failed, asked, sent)
                 raise
             finally:
@@ -489,8 +503,9 @@ def _importable_caches(root: Path) -> dict[str, str]:
     for path in root.rglob("*"):
         if not in_cache(path.relative_to(root)) or not path.is_file():
             continue
-        suffix = next((s for s in suffixes if path.name.endswith(s)), None)
-        if suffix is not None and path.name[:-len(suffix)] and "." not in path.name[:-len(suffix)]:   # importlib checks no names
+        name = os.path.normcase(path.name)          # Windows imports ``planted.PY`` as it does ``planted.py``
+        suffix = next((s for s in suffixes if name.endswith(os.path.normcase(s))), None)
+        if suffix is not None and name[:-len(suffix)] and "." not in name[:-len(suffix)]:   # importlib checks no names
             found[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     return found
 

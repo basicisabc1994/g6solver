@@ -726,6 +726,102 @@ def test_a_week_with_a_venture_of_its_own_in_another_zone_keeps_its_own_book_whe
         store.close()
 
 
+@pytest.mark.parametrize("zone", [10, 0])
+def test_a_week_whose_end_moves_three_times_across_restarts_keeps_its_book(tmp_path, zone):
+    from datetime import timezone
+
+    start = datetime(2026, 10, 26, tzinfo=timezone(timedelta(hours=zone)))
+    window, now, path = ProviderWindow("codex", 1000, start), (start + timedelta(days=4, hours=1)).astimezone(UTC), tmp_path / "op.db"
+    store = OperatorStore(path)
+    try:
+        _zone_named(store, start, 350)
+    finally:
+        store.close()
+    seen = []
+    for days in (8, 9, 10, 11):
+        store = OperatorStore(path)
+        try:
+            meter = BudgetMeter((window,), store=store,
+                                read_account=lambda *_, reset=start + timedelta(days=days): AccountReading(resets_at=reset))
+            seen.append(meter.reading("codex", now).used)
+        finally:
+            store.close()
+    assert seen == [350, 350, 350, 350]
+
+
+def test_a_new_week_still_cannot_take_a_book_another_week_moved_into(tmp_path):
+    from g6.self_maintenance.pacing import OWNER
+
+    store = OperatorStore(tmp_path / "op.db")
+    try:
+        scope = store.for_owner(OWNER)
+        caps = {"model": 1000, "cash": 0}
+        first, _ = scope.week_ledger("codex", "2026-10-26T00:00:00+00:00", caps=caps)
+        moved, book = scope.week_ledger("codex", "2026-10-27T00:00:00+00:00", caps=caps, moved_from="2026-10-26T00:00:00+00:00")
+        assert (moved, book) == (first, "2026-10-26T00:00:00+00:00")
+        other, other_book = scope.week_ledger("codex", "2026-10-28T00:00:00+00:00", caps=caps,
+                                              moved_from="2026-10-26T00:00:00+00:00")       # not the week the book moved to
+        assert other != first and other_book == "2026-10-28T00:00:00+00:00"
+    finally:
+        store.close()
+
+
+def test_a_limit_a_resend_was_told_of_ends_the_tick_before_it_is_resent(monkeypatch):
+    import io
+    import urllib.error
+
+    from g6.core import llm
+    from g6.metaharness.loop import _AtLimit
+
+    sent = []
+
+    class Transport:
+        def open(self, request, timeout):
+            sent.append(request)
+            if len(sent) == 1:
+                raise urllib.error.HTTPError(request.full_url, 429, "rate limited", {"Retry-After": "0"}, io.BytesIO(b"limit"))
+            return io.BytesIO(b'{"choices":[{"message":{"content":"resent"}}]}')
+
+    monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *_: Transport())
+    requests = _Requests()
+    requests.open(10)
+    caller = _Counted(llm.OpenAICompatibleCaller("local", base_url="https://unused.invalid", api_key=None), requests)
+    with pytest.raises(_AtLimit):
+        caller.complete("system", "question")
+    assert len(sent) == 1
+    with pytest.raises(_AtLimit):                     # and nothing more of that tick goes out
+        caller.complete("system", "another")
+    assert len(sent) == 1
+
+
+def test_a_limit_a_closed_ticks_request_met_late_leaves_the_next_tick_clear():
+    from g6.metaharness.loop import _AtLimit
+
+    requests = _Requests()
+    requests.open(10)
+    began = requests.generation
+    requests.close()
+    requests.open(10)
+    failed = LLMError("G6_E_LLM_RATE_LIMITED: HTTP 429 from provider")
+    requests.at_a_limit(failed, began)                # a call of the closed tick, answering now
+    assert requests.limited is None
+    with pytest.raises(_AtLimit):                     # one of this tick's own still ends it
+        requests.at_a_limit(failed, requests.generation)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="only Windows imports a module whatever the case of its suffix")
+def test_a_module_in_a_cache_folder_with_a_suffix_in_other_case_changes_the_envelope(tmp_path, monkeypatch):
+    from g6.metaharness import loop as loop_module
+
+    package = tmp_path / "g6"
+    (package / "__pycache__").mkdir(parents=True)
+    (package / "mod.py").write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setattr(loop_module, "_SOURCE", package)
+    enrolled = loop_module.envelope_sha256()
+    (package / "__pycache__" / "planted.PY").write_text("value = 2\n", encoding="utf-8")
+    assert loop_module.envelope_sha256() != enrolled
+
+
 def test_a_limit_one_request_meets_stops_the_ticks_other_requests():
     from g6.metaharness.loop import _AtLimit
 

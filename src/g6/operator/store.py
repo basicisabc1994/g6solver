@@ -160,9 +160,9 @@ class OwnerScope:
         start has a venture of that name, and one booked under another has a row here, the first word standing.
 
         A week goes on its own book, unless its end moved while ``moved_from`` (the week it was counted in until then) was
-        open: then it takes that week's book, so what was charged there still counts. Not when a venture of its own already
-        exists, as a process has charged it under its own book; nor when another week already holds that book, as what is
-        charged there is that week's, which this one did not make. ``grid``: a moment one of the provider's weeks ends, kept
+        open: then it takes that week's book, so what was charged there still counts, through any number of moves. Not when a
+        venture of its own already exists, as a process has charged it under its own book; nor when the book last went to a
+        week other than the one this moved from, as what is charged there is that week's, which this one did not make. ``grid``: a moment one of the provider's weeks ends, kept
         (the latest standing) in this same transaction, so a move is never kept without the book it gave its week."""
         self.conn.execute("BEGIN IMMEDIATE")
         try:
@@ -171,9 +171,10 @@ class OwnerScope:
             book, own = self._book_of(provider, week), self._own(provider, week)
             if book is None and own is None and moved_from and moved_from != week:
                 source = self._book_of(provider, moved_from) or self._own_book(provider, moved_from)
-                held = self.conn.execute("SELECT 1 FROM week_books WHERE owner=? AND provider=? AND book=? AND week NOT IN (?, ?)",
-                                         (self.owner, provider, source, week, moved_from)).fetchone()
-                if held is None:
+                last = self.conn.execute("SELECT week FROM week_books WHERE owner=? AND provider=? AND book=? ORDER BY rowid DESC "
+                                         "LIMIT 1", (self.owner, provider, source)).fetchone()
+                if last is None or last["week"] == moved_from:     # the book is where this week moved from, however often
+                    # it moved: a week the book went to last is the one moving on; any other holding it is another week
                     self.conn.execute("INSERT INTO week_books VALUES (?, ?, ?, ?)", (self.owner, provider, week, source))
                     book = source
             if book is None:

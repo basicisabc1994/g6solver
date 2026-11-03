@@ -139,11 +139,12 @@ def test_1_each_attempt_of_a_fallback_is_charged():
 
 
 def test_1_a_resend_after_retry_after_is_charged(tmp_path):
+    """A 503's resend: after a 429 nothing is resent at all (``test_loop_followup``)."""
     domain = domains.WordProblems(tmp_path)
 
     def resent_once(system: str, user: str) -> str:
         for found in llm._WAITS.get():
-            found.append({"url": "http://model", "status": 429, "retry_after_s": 1.0, "waited_s": 1.0, "cap_s": 30.0})
+            found.append({"url": "http://model", "status": 503, "retry_after_s": 1.0, "waited_s": 1.0, "cap_s": 30.0})
         return domain.tutor(system, user)
 
     backend = FakeLLM(resent_once)
@@ -750,8 +751,8 @@ def test_no_resend_goes_out_at_or_past_the_end_of_the_week_it_reserved_in(monkey
     class Slow:
         def open(self, request, timeout):
             sent.append(now[0])
-            now[0] = RESET
-            raise urllib.error.HTTPError(request.full_url, 429, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
+            now[0] = RESET    # a 503, which is resent; a 429 is never resent (test_loop_followup)
+            raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "0"}, io.BytesIO(b"busy"))
 
     monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: Slow())
     requests = _Requests(lambda: now[0])
@@ -766,8 +767,8 @@ def test_a_wait_that_would_reach_the_end_of_the_week_is_not_taken(monkeypatch):
 
     class AsksForTen:
         def open(self, request, timeout):
-            sent.append(request)
-            raise urllib.error.HTTPError(request.full_url, 429, "busy", {"Retry-After": "10"}, io.BytesIO(b"busy"))
+            sent.append(request)    # a 503, which is resent; a 429 is never resent (test_loop_followup)
+            raise urllib.error.HTTPError(request.full_url, 503, "busy", {"Retry-After": "10"}, io.BytesIO(b"busy"))
 
     monkeypatch.setattr(llm.urllib.request, "build_opener", lambda *args: AsksForTen())
     monkeypatch.setattr(llm, "_sleep", slept.append)
