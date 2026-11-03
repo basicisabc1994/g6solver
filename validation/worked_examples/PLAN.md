@@ -1741,3 +1741,66 @@ Stage 2's bugs can now be read, as stage 3's runs have ended.
   restated with that number.
 
 Whichever step it is, it is scored on bugs not yet used.
+
+## 2026-11-04 (late morning): the contrastive labels' result, and replay 4 registered before it runs
+
+**The labels.** Both raters labelled all 14 bugs, Codex and Claude Opus 5.5 on the owner's sign-ins, with no API credit
+spent. Only labels were kept, counted by `contrast_labels.py` in plain code.
+
+**What the commonest wrong change does differently** (agreed on 11 of 14, kappa 0.64):
+- `example_only`: 7;
+- `missed_stated_case`: 2;
+- `output_detail`: 1;
+- `over_reach`: 1.
+
+**Why many runs make it** (agreed on 11, kappa 0.50):
+- `example_shaped`: 9;
+- `literal_reading`: 1;
+- `convention_not_visible`: 1.
+
+**The cheapest evidence that tells it apart** (agreed on 8, kappa 0.42):
+- `variant_of_issue_example`: 4;
+- `issue_example`: 1;
+- `existing_tests`: 1;
+- `analogous_code`: 1;
+- `closer_issue_reading`: 1.
+
+Each rater alone put running inputs first: 7 of 14 for Claude and 10 of 14 for Codex. Only Claude gave
+`nothing_available`, on 2 bugs.
+
+**The decision, as registered.** Running inputs leads, at 5 of the 8 agreed labels. So the next step is executed, not
+prompted.
+
+**Replay 4: symptom variants.**
+- **The machinery.** Replay 3's runner is used unchanged:
+  - one reviewer call per bug, shown the issue and the parent and never a patch;
+  - its pytest file runs on the parent and on each distinct patch;
+  - a patch is "reproduced" when a case that fails on the parent also fails with it.
+  
+  The code is `claude/replay4`: replay 3 takes the instruction as a parameter, and its own instruction and records are
+  unchanged.
+- **The instruction.** `replay4.SYMPTOM_FIRST`, digest 780e81dac0e14cb1, asks for 6 to 16 cases: the issue's example,
+  then variants of it along the rule's other inputs, paths, call forms and options.
+- **The one change from replay 3: each case asserts only that the symptom is absent.** The symptom is what the issue
+  reports, and any other outcome skips. Replay 3 asserted exact values, and a model writing what a variant should return
+  writes the reading the patches share. Here no model writes a right result. The issue gives the symptom, the reviewer
+  gives the inputs, and running them on the parent says which variants show it.
+
+**A development check, on the 34 bugs of stage 1 and 2.**
+- **Standing.** These bugs are development: their labels shaped this step, and replay 3's results on them have been
+  read. So the result is a go or no-go for a fresh test, and never a score.
+- **Cost.** One reviewer call per bug on the Codex sign-in, and local containers. No API credit.
+- **Measures, amended tests first.**
+  - Inside the mixed bugs: the share of distinct patches flagged among right patches, the commonest wrong change, and
+    other wrong patches. This is the shared-misreading table of 3812894, so replay 3's figures sit beside it.
+  - Over all 34 bugs: balanced accuracy, false alarms and misses.
+  - Replay 3 and replay 4 combined: flagged by either.
+- **Prediction.**
+  - Replay 4 flags the commonest wrong change at least 25 points more often than right patches. Replay 3 was 3 points
+    apart.
+  - Its balanced accuracy is at least replay 3's 63.7%, with false alarms at or under 25%.
+- **Kill rule.** If the gap between the commonest wrong change and right patches is under 10 points, a symptom oracle on
+  executed variants does not break the shared reading. The next hypothesis is then the repository's own evidence
+  (analogous code and callers), gathered before anyone edits.
+- **If it passes.** Replay 4 is scored on bugs not yet used, against the frozen review and replay 3, under the
+  balanced-accuracy amendment. Those bugs and their runs are drawn and registered first.
