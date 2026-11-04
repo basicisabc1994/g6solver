@@ -387,7 +387,8 @@ def _bare(probe: str) -> str | None:
 
 def parse_model(text: str) -> tuple[dict[str, Any] | None, str]:
     """Reader 1's model, or None and why it breaks its form: factors of distinct JSON scalars or lists, ``1..MAX_CASES`` cases
-    in their product, observations distinct identifiers, a probe of some source, and a table ``check_rows`` passes."""
+    in their product, observations distinct identifiers, a probe of some source Python's tokenizer and parser both read, and a
+    table ``check_rows`` passes."""
     try:
         got = _loads(text)
     except _Refused as exc:
@@ -799,8 +800,8 @@ def again(root: Path, task: str, title: str, text: str) -> bool:
     """A bug's saved record that stands, made by another compiler (``COMPILER``), made again by this one from the answers it
     holds and saved whole in its place, with no reader asked: reader 1's model and reader 2's reply. A record older than the
     reply's keeping has the table kept of it, whose numbers are floats, so two values the reply told apart can only become one,
-    which leaves the bug ambiguous and flags nothing. Whether it was made again. A record that does not stand has nothing
-    compiled, and is kept as it was."""
+    which leaves the bug ambiguous and flags nothing. Its masks stay the ones reader 2 was shown when it was asked. Whether it
+    was made again. A record that does not stand has nothing compiled, and is kept as it was."""
     saved = r3.bug_record(root, task, FORMAL)
     found = (fr.read(saved) or {}).get("found")
     if not isinstance(found, dict) or found.get("status") != "stands" or found.get("compiler") == COMPILER:
@@ -810,6 +811,8 @@ def again(root: Path, task: str, title: str, text: str) -> bool:
         reply = json.dumps({"rules": (found.get("tables") or {}).get("reader_2") or []})
     answer = {**{key: found.get(key, "") for key in ("verdict", "rule", "why", "error")}, "test": found.get("model", "")}
     got = formal(answer, title, text, _Said(reply))
+    if "masked" in got:                               # what reader 2 was shown, which no reader asked again changes
+        got["masked"] = found.get("masked")
     if got["status"] == "no_answer":                  # read again, its answers are no answer: closed, as no reader is asked
         got = _closed({**got, "error": ""}, "invalid", f"made again by compiler {COMPILER}: {r3.no_answer(got)}"[:400])
     fr.write_whole(saved, json.dumps({"task": task, "instruction": FORMAL.digest, "found": got}, indent=1))

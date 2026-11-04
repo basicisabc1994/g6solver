@@ -484,16 +484,16 @@ def test_a_standing_record_another_compiler_made_is_made_again_exactly_from_its_
     reply = json.dumps({"rules": rows}).replace('"A"', "0.1000000000000000055511151231257827")
     fresh = r6.formal(text, "Issue", QUOTE, SimpleNamespace(complete=lambda system, user: reply))
     assert fresh["status"] == "stands" and fresh["comparison"]["cells_unholdable"] == 1
-    old = {**fresh, "compiler": "an-older-one", "test": "AN OLDER FILE"}
+    old = {**fresh, "compiler": "an-older-one", "test": "AN OLDER FILE", "masked": 7}    # what reader 2 was shown then
     if kept == "table":
         del old["reader_2_reply"]
     saved = _record(tmp_path, "black-5634", old)
     assert r6.again(tmp_path, "black-5634", "Issue", QUOTE)
     got = fr.read(saved)["found"]
     if kept == "reply":
-        assert got == json.loads(json.dumps(fresh))
+        assert got == json.loads(json.dumps({**fresh, "masked": 7}))
     else:
-        assert got["status"] == "ambiguous" and got["test"] == "" and got["compiler"] == r6.COMPILER
+        assert got["status"] == "ambiguous" and got["test"] == "" and got["compiler"] == r6.COMPILER and got["masked"] == 7
     assert not r6.again(tmp_path, "black-5634", "Issue", QUOTE)          # made once
 
 
