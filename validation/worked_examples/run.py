@@ -1061,8 +1061,9 @@ def r3_refusal(ctx: Context, task: Task) -> tuple[str, float, float]:
     if ctx.arm == "D" and not str(ctx.g6.get("commit")).startswith(R3_D_G6):
         return f"arm D runs only on the reviewed G6, {R3_D_G6}", 0.0, 0.0
     done = r3_done(rows)
-    # a run that met the subscription's usage limit gave no verdict, so it is made again, as a killed run is (PLAN.md, 2026-11-04)
-    if key in done and done[key] != "limited" and not (ctx.rerun_why and done[key] == "error"):
+    # a host run that met the subscription's usage limit, or was refused at its session's start, gave no verdict, so it is made
+    # again, as a killed run is (PLAN.md, 2026-11-04)
+    if key in done and done[key] not in ("limited", "refused") and not (ctx.rerun_why and done[key] == "error"):
         return f"run {key} was already made ({done[key]}); no run is made again for a better result", 0.0, 0.0
     earlier = [k for k in sched if R3_MODELS.index(k[0]) < R3_MODELS.index(ctx.model) and k not in done]
     if earlier and key not in R3_SMOKE and key not in R3_PROBE and not r3_loop_key(key):
@@ -1454,8 +1455,23 @@ HOST_FLAGS = ("-p", "--restricted", "--tools", "Read,Edit,Write,Glob,Grep", "--m
               "--max-turns", "{turns}")
 HOST_SETTINGS = {"permissions": {"blockReadsOutsideWorkingDirectories": True, "blockWritesOutsideWorkingDirectories": True},
                  "disableAllHooks": True}
-#: Any of these would sign the host's Claude Code in with a key or token in place of the subscription.
-HOST_SECRETS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+#: What the host session keeps of the driver's environment, by name in any case: what a program needs to run on Windows or POSIX
+#: and to find the user's own sign-in, the proxy and CA variables, and docker's. Nothing else passes: not the driver's own Claude
+#: Code session's variables, nor a key or token, which would sign in in place of the subscription.
+HOST_ENV_NAMES = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "USER",
+    "LOGNAME", "SHELL", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
+    "PROGRAMFILES(X86)", "PROGRAMW6432", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432", "TEMP", "TMP",
+    "TMPDIR", "LANG", "TERM", "OS", "NUMBER_OF_PROCESSORS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "SSL_CERT_FILE",
+    "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"})
+HOST_ENV_PREFIXES = ("LC_", "PROCESSOR_", "DOCKER_")
+#: Set in every host session, after the allowlist: no claude.ai connectors (2.1.318 lets them through --strict-mcp-config), no
+#: retry of a refused request on another model, and the container runs' no updates, telemetry, error reports, other traffic or
+#: memory, so the version stays fixed through the study.
+HOST_FIXED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK": "1", "DISABLE_AUTOUPDATER": "1",
+                  "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                  "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+HOST_BOX = ("box", "mcp__box__run")      # the one MCP server, and its one tool, a host session may have
 #: Claude Code's word that the subscription's usage limit is reached, with when it resets when it says.
 HOST_LIMIT = re.compile(r"You(?:'|’)ve hit your (?:[\w-]+ ){0,3}limit\b\W{0,4}(resets\b[^\n|]*)?", re.I)
 #: A name part Windows would refuse or change (a device name, a reserved character, a trailing dot or space).
@@ -1470,8 +1486,43 @@ def host_args(mcp_file: Path, settings_file: Path, model: str, *, resume: str = 
 
 
 def host_env(environ: Mapping[str, str]) -> dict[str, str]:
-    """The host session's environment: ``environ`` without a key or token (``HOST_SECRETS``), whatever its case."""
-    return {k: v for k, v in environ.items() if k.upper() not in HOST_SECRETS}
+    """The host session's environment: what ``HOST_ENV_NAMES`` and ``HOST_ENV_PREFIXES`` allow of ``environ``, never a name that
+    starts with CLAUDE or ANTHROPIC, in any case, then ``HOST_FIXED_ENV``."""
+    kept = {k: v for k, v in environ.items() if (k.upper() in HOST_ENV_NAMES or k.upper().startswith(HOST_ENV_PREFIXES))
+            and not k.upper().startswith(("CLAUDE", "ANTHROPIC"))}
+    return {**kept, **HOST_FIXED_ENV}
+
+
+def host_init(obj: Any) -> dict[str, Any] | None:
+    """A stream record that is the session's init: its tool and MCP server names, and why the session may not go on ("" when it
+    may): an MCP server other than the box, or an MCP tool other than the box's ``run``. Other built-in tools are only recorded."""
+    if not (isinstance(obj, dict) and obj.get("type") == "system" and obj.get("subtype") == "init"):
+        return None
+    tools = [str(t) for t in obj.get("tools") or []]
+    servers = [str(s.get("name") if isinstance(s, dict) else s) for s in obj.get("mcp_servers") or []]
+    other = [s for s in servers if s != HOST_BOX[0]] + [t for t in tools if t.startswith("mcp__") and t != HOST_BOX[1]]
+    why = f"the host session had MCP servers or tools other than the box: {', '.join(other)}" if other else ""
+    return {"tools": tools, "servers": servers, "why": why}
+
+
+def host_facts(path: Path, model: str) -> dict[str, Any]:
+    """What a saved host stream says of its session: its init (``host_init``), the models that wrote its messages (Claude Code's
+    own synthetic ones apart), and each record of a refused request (its subtype, category and models)."""
+    init, seen, refusals = None, set(), []
+    for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        init = init or host_init(obj)
+        msg = obj.get("message")
+        if obj.get("type") == "assistant" and isinstance(msg, dict) and msg.get("model") and msg.get("model") != "<synthetic>":
+            seen.add(str(msg["model"]))
+        if obj.get("type") == "system" and "refusal" in str(obj.get("subtype") or ""):
+            refusals.append({k: obj.get(k) for k in ("subtype", "apiRefusalCategory", "originalModel", "fallbackModel")})
+    return {"init": init, "models": seen, "refusals": refusals, "switched": any(not m.startswith(model) for m in seen)}
 
 
 def limit_of(line: str) -> str | None:
@@ -1671,7 +1722,7 @@ def run_task(ctx: Context, task: Task, *, dry: bool = False) -> dict[str, Any]:
             cap, stop = r3_caps(ctx.model, spent=0.0, fable_left=1)
         elif not why:
             why, cap, stop = r3_refusal(ctx, task)
-    if not why and ctx.executor != "container":
+    if not why and getattr(ctx, "executor", "container") != "container":
         why = host_refusal(ctx, dry=dry)
     if why:
         return {"status": "refused", "why": why, "task": task.id}
@@ -1760,8 +1811,9 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
                  resume: str = "", seconds: float, tally: c.Tally, stop_usd: float) -> str:
     """One Claude Code session on the host, on the subscription's sign-in, its stream saved as ``name`` as ``run_session`` saves
     one, with the same deadline and stop; its folder the workspace, and the bug's container reached only through the box.
-    ``resume``: the session a repair goes on with. How it ended, as ``read_stream`` says, or "limited" when Claude Code said the
-    usage limit was reached: the session ends at that line, and the limit's reset is saved beside the stream."""
+    ``resume``: the session a repair goes on with. How it ended, as ``read_stream`` says; "refused" when its init names an MCP
+    server or tool other than the box's (``host_init``), the session ended at once and why saved beside the stream; or "limited"
+    when Claude Code said the usage limit was reached: the session ends at that line, and the limit's reset is saved beside it."""
     command = [shutil.which(HOST_CLAUDE) or HOST_CLAUDE, *host_args(mcp_file, settings_file, ctx.model, resume=resume)]
     proc = (ctx.starter or subprocess.Popen)(command, cwd=str(workspace), env=host_env(os.environ if ctx.environ is None else ctx.environ),
                                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1770,11 +1822,20 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     drain = threading.Thread(target=lambda: errors.append(proc.stderr.read() or b""), daemon=True)
     drain.start()
     limit: list[str] = []
+    refused: list[str] = []
 
     def lines() -> Iterator[bytes]:
         for line in iter(proc.stdout.readline, b""):
             yield line
-            said = limit_of(line.decode("utf-8", errors="replace"))
+            text = line.decode("utf-8", errors="replace")
+            try:
+                init = host_init(json.loads(text))
+            except ValueError:
+                init = None
+            if init and init["why"]:
+                refused.append(init["why"])
+                return
+            said = limit_of(text)
             if said is not None:
                 limit.append(said)
                 return
@@ -1793,6 +1854,9 @@ def host_session(ctx: Context, run: Any, workspace: Path, mcp_file: Path, settin
     drain.join(timeout=30)
     stem, said = Path(name).stem, b"".join(errors).decode("utf-8", errors="replace")
     run.write(f"{stem}_stderr.txt", said)
+    if refused:
+        run.write(f"{stem}_refused.txt", refused[0])
+        return "refused"
     limit.extend(x for x in map(limit_of, said.splitlines() if not limit else []) if x is not None)
     if limit:
         run.write(f"{stem}_limit.txt", limit[0])
@@ -2105,8 +2169,9 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
         if session is None:
             run_session(ctx, run, agent, scout_again(docker_args), key, tally, note, f"repair_stream_{n}.jsonl",
                         seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
-        elif session(note, f"repair_stream_{n}.jsonl") == "limited":
-            reason = "the repair met the subscription's usage limit"
+        elif (ended := session(note, f"repair_stream_{n}.jsonl")) in ("limited", "refused"):
+            reason = ("the repair met the subscription's usage limit" if ended == "limited"
+                      else "the repair's session was refused: it had more than the box")
             break
         if tree() == before:
             reason = "the agent left the code as it was"
@@ -2292,7 +2357,7 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
     critic_led = round3 and re.fullmatch(r"K\d+", ctx.arm) is not None
     test_led = round3 and bug_led(ctx.arm)
     no_g6 = round3 and (critic_led or test_led or ctx.arm in ("A", "S", "T", "R", *CONVERT_ARMS))   # Claude Code alone: no G6 server, skill or command
-    host = ctx.executor == "host"      # Claude Code on the host, on the subscription's sign-in: no key is read (PLAN.md, 2026-11-04)
+    host = getattr(ctx, "executor", "container") == "host"      # Claude Code on the host, on the subscription's sign-in: no key is read (PLAN.md, 2026-11-04)
     key = DRY_KEY if dry else "" if host else ctx.key_reader()
     ctx.archive.redact = c.Redactor(key, *ctx.archive.redact.secrets)
     task_image, _ = image_names(task, str(ctx.g6["commit"]), ctx.variant)
@@ -2425,7 +2490,15 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             left = c.WALL_CLOCK_S - (time.monotonic() - started)
             ended = host_session(ctx, run, workspace, mcp_file, settings_file, note, name, resume=resume,
                                  seconds=max(60.0, left) if resume else left, tally=tally, stop_usd=stop)
+            facts = host_facts(run.path / name, model)      # recorded whatever happens; every session's models and refusals
+            if facts["init"] and "host_tools" not in record:
+                record.update(host_tools=facts["init"]["tools"], host_mcp_servers=facts["init"]["servers"])
+            record["models_seen"] = sorted({*record.get("models_seen", []), *facts["models"]})
+            record["model_refusals"] = [*record.get("model_refusals", []), *facts["refusals"]]
+            record["model_switched"] = bool(record.get("model_switched")) or facts["switched"]
             box_mcp.mirror(workspace, ctx.docker, container=agent, repo=task.repo, user=USER, timeout=BOX_TIMEOUT_S)
+            if ended == "refused" and "why" not in record:
+                record["why"] = (run.path / f"{Path(name).stem}_refused.txt").read_text(encoding="utf-8")
             if ended == "limited" and "limit" not in record:
                 record["limit"] = {"stream": name, "resets": (run.path / f"{Path(name).stem}_limit.txt").read_text(encoding="utf-8")}
             return ended
@@ -2470,7 +2543,9 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
-        record.update(status_detail=status_of("limited" if "limit" in record else ended, tally), agent_usd=tally.cost_usd,
+        record.update(status_detail=status_of("refused" if host and "why" in record else "limited" if "limit" in record else ended,
+                                              tally),
+                      agent_usd=tally.cost_usd,
                       cost_usd=round(tally.cost_usd + float(record.get("cost_usd") or 0.0)
                                      + float((record.get("scout") or {}).get("usd") or 0.0), 6),
                       stream_usd=round(tally.stream_usd, 6),

@@ -24,9 +24,12 @@ TRAILERS = ("Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n"
             "Claude-Session: https://claude.ai/code/session_016opK1M2VFbXVve6kiJtAxW")
 
 
+EXECUTOR = "container"      # run.py's --executor for every call: "host" runs Claude Code on the subscription (PLAN.md, 2026-11-04)
+
+
 def tool(command: str, *args: str, timeout: int = 7800) -> str:
-    return subprocess.run([sys.executable, str(HERE / "run.py"), command, "--round", "3", *args], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=timeout).stdout
+    return subprocess.run([sys.executable, str(HERE / "run.py"), command, "--round", "3", "--executor", EXECUTOR, *args],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout).stdout
 
 
 def last_json(text: str) -> dict[str, Any]:
@@ -206,11 +209,15 @@ def generations(root: Path, g6: str, train: list[str], arm: str, text: str, rows
     return result, runner.best_arm, runner.best
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    global EXECUTOR
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--g6", default=we.R3_LOOP_G6)
     ap.add_argument("--rescore", action="store_true", help="score saved runs on the amended tests, and nothing else")
-    args = ap.parse_args()
+    ap.add_argument("--executor", choices=("container", "host"), default="container",
+                    help="run.py's executor for every run and check: host runs Claude Code on the host, on the subscription")
+    args = ap.parse_args(argv)
+    EXECUTOR = args.executor
     root = c.archive_root() / "round3"
     if args.rescore:
         print(json.dumps(rescore(root, args.g6), indent=1), flush=True)

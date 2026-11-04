@@ -85,8 +85,13 @@ def export_of(repo: Path) -> bytes:
     return tar_of(entries)
 
 
-def stream(sid: str, *, cost: float = 0.42, extra: tuple[dict, ...] = ()) -> list[str]:
-    lines = [{"type": "system", "subtype": "init", "session_id": sid, "claude_code_version": "2.1.318"},
+TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "TodoWrite", "mcp__box__run"]
+
+
+def stream(sid: str, *, cost: float = 0.42, extra: tuple[dict, ...] = (), tools: list[str] = TOOLS,
+           servers: tuple[str, ...] = ("box",)) -> list[str]:
+    lines = [{"type": "system", "subtype": "init", "session_id": sid, "claude_code_version": "2.1.318", "tools": tools,
+              "mcp_servers": [{"name": s, "status": "connected"} for s in servers]},
              {"type": "assistant", "session_id": sid, "message": {"id": f"m-{sid}", "model": SONNET, "content": [],
                                                                   "usage": {"input_tokens": 10, "output_tokens": 5}}},
              *extra,
@@ -224,10 +229,35 @@ def test_the_host_command_line_is_exactly_the_validated_flags_and_resumes_only_o
     assert (run.path / "stream.jsonl").is_file() and (run.path / "repair_stream_1.jsonl").is_file()
 
 
+FIXED = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK": "1", "DISABLE_AUTOUPDATER": "1",
+         "DISABLE_TELEMETRY": "1", "DISABLE_ERROR_REPORTING": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+SESSION_OWN = ("CLAUDE_CODE_AGENT", "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT", "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
+               "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_HOST_SHORT_TEMP_DIRS", "CLAUDE_CODE_MESSAGING_SOCKET",
+               "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_SESSION_ID", "CLAUDE_JOB_DIR", "CLAUDE_PID",
+               "CLAUDECODE", "ClaudeCode_Lower", "anthropic_base_url")
+
+
+def test_the_host_sessions_fixed_environment_is_pinned():
+    assert we.HOST_FIXED_ENV == FIXED
+
+
+def test_the_host_environment_is_an_allowlist_without_any_claude_or_anthropic_name_but_the_fixed_ones():
+    kept = {"PATH": "p", "PATHEXT": ".EXE", "SystemRoot": "r", "USERPROFILE": "u", "APPDATA": "a", "ProgramFiles(x86)": "pf",
+            "TEMP": "t", "LC_ALL": "C", "PROCESSOR_ARCHITECTURE": "AMD64", "http_proxy": "h", "NO_PROXY": "n",
+            "NODE_EXTRA_CA_CERTS": "ca", "DOCKER_HOST": "d", "HOME": "hm"}
+    dropped = {"ANTHROPIC_API_KEY": "sk-ant-api03-notakey000000", "ANTHROPIC_AUTH_TOKEN": "tok", "CLAUDE_CODE_OAUTH_TOKEN": "oat",
+               "anthropic_api_key": "lower", "PYTHONPATH": "x", "SECRET_THING": "s", "G6_WE_ARCHIVE": "g",
+               "DISABLE_AUTOUPDATER": "0", **dict.fromkeys(SESSION_OWN, "v")}
+    got = we.host_env({**kept, **dropped})
+    assert got == {**kept, **FIXED}
+    assert not {k for k in got if k.upper().startswith(("CLAUDE", "ANTHROPIC"))} - set(FIXED)
+
+
 def test_no_key_or_token_reaches_the_host_session_even_when_set(tmp_path):
     environ = {"ANTHROPIC_API_KEY": "sk-ant-api03-notakey000000", "ANTHROPIC_AUTH_TOKEN": "tok", "CLAUDE_CODE_OAUTH_TOKEN": "oat",
-               "anthropic_api_key": "lower", "PATH": "p", "USERPROFILE": "u"}
-    assert we.host_env(environ) == {"PATH": "p", "USERPROFILE": "u"}
+               "anthropic_api_key": "lower", "PATH": "p", "USERPROFILE": "u", **dict.fromkeys(SESSION_OWN, "v")}
+    assert we.host_env(environ) == {"PATH": "p", "USERPROFILE": "u", **FIXED}
     start, starts = starter([("s1", "", None)])
     ctx = we.Context(archive=we.c.Archive(tmp_path / "a"), docker=None, key_reader=lambda: pytest.fail("no key"), issue_reader=None,
                      g6={}, variant=we.ROUND3, arm="K1", model=SONNET, environ=environ, executor="host", starter=start)
@@ -235,7 +265,7 @@ def test_no_key_or_token_reaches_the_host_session_even_when_set(tmp_path):
     we.host_session(ctx, ctx.archive.start("run", "t"), tmp_path / "ws", tmp_path / "m.json", tmp_path / "s.json", "go",
                     "stream.jsonl", resume="", seconds=60.0, tally=we.c.Tally(), stop_usd=10.5)
     env = starts[0]["env"]
-    assert env == {"PATH": "p", "USERPROFILE": "u"} and not {k.upper() for k in env} & set(SECRETS)
+    assert env == {"PATH": "p", "USERPROFILE": "u", **FIXED} and not {k.upper() for k in env} & set(SECRETS)
 
 
 # --- the workspace's export -------------------------------------------------------------------------------------------------
@@ -426,7 +456,60 @@ def test_a_limited_run_is_never_scored_and_may_be_made_again(monkeypatch, tmp_pa
     assert "already made" in we.r3_refusal(ctx, task)[0]                 # an error is made again only with a reason, as before
 
 
-def test_a_repair_that_meets_the_limit_ends_arm_ks_loop(monkeypatch):
+@pytest.mark.parametrize(("tools", "servers", "named"), [
+    (TOOLS, ("box", "claude.ai Gmail"), "claude.ai Gmail"),
+    ([*TOOLS, "mcp__claude_ai_Gmail__send_message"], ("box",), "mcp__claude_ai_Gmail__send_message")])
+def test_a_session_whose_init_names_another_mcp_server_or_tool_is_stopped_and_the_run_refused(monkeypatch, tmp_path, tools, servers,
+                                                                                              named):
+    lines = stream("s1", tools=tools, servers=servers)
+    monkeypatch.setattr(we, "run_critic", lambda *a, **kw: pytest.fail("a refused run is not reviewed"))
+    record, _, starts, ctx, _, _ = host_run(monkeypatch, tmp_path, "K1", [("s1", "", lines)])
+    assert record["status"] == "refused" and named in record["why"] and len(starts) == 1
+    assert record["host_tools"] == tools and record["host_mcp_servers"] == list(servers) and "repairs" not in record
+    saved = (ctx.archive.root / record["run"] / "stream.jsonl").read_text("utf-8").splitlines()
+    assert len(saved) == 1 and json.loads(saved[0])["subtype"] == "init"       # stopped at once, at the init
+    import loop
+    monkeypatch.setattr(loop, "tool", lambda command, *a, **kw: json.dumps(record))
+    with pytest.raises(SystemExit, match="refused"):
+        loop.one(tmp_path, "g6", "K1", "t", 1)
+
+
+def test_a_model_refusal_fallback_is_recorded_with_the_models_that_wrote(monkeypatch, tmp_path):
+    fallback = {"type": "system", "subtype": "model_refusal_fallback", "originalModel": SONNET, "fallbackModel": "claude-opus-4-8",
+                "apiRefusalCategory": "cyber", "direction": "retry", "session_id": "s1"}
+    other = {"type": "assistant", "session_id": "s1", "message": {"id": "m2", "model": "claude-opus-4-8", "content": []}}
+    record, _, starts, _, _, _ = host_run(monkeypatch, tmp_path, "A", [("s1", "", stream("s1", extra=(fallback, other)))])
+    assert record["model_refusals"] == [{"subtype": "model_refusal_fallback", "apiRefusalCategory": "cyber", "originalModel": SONNET,
+                                         "fallbackModel": "claude-opus-4-8"}]
+    assert record["models_seen"] == sorted([SONNET, "claude-opus-4-8"]) and record["model_switched"] is True
+    assert len(starts) == 1                                                  # nothing is retried, rephrased or resent
+
+
+def test_a_limited_or_refused_run_may_be_made_again(tmp_path):
+    archive = we.c.Archive(tmp_path / "r3")
+    ctx = SimpleNamespace(archive=archive, tasks=None, model=SONNET, arm="K1", repeat=1, g6={"commit": we.R3_LOOP_G6}, rerun_why="")
+    for task, status in zip(we.load_tasks(we.TASKS_STAGE4)[:2], ("limited", "refused")):
+        archive.start("run", task.id, model=SONNET, arm="K1", repeat=1).finish({"agent_started": True, "cost_usd": 0.0}, status)
+        assert "already made" not in we.r3_refusal(ctx, task)[0]
+
+
+def test_loop_threads_its_executor_to_every_runner_call(monkeypatch, tmp_path):
+    import loop
+    seen = []
+    monkeypatch.setattr(loop, "EXECUTOR", "container")
+    monkeypatch.setattr(loop.subprocess, "run", lambda argv, **kw: (seen.append(argv), SimpleNamespace(stdout="{}"))[1])
+    monkeypatch.setattr(loop, "rescore", lambda root, g6: [loop.tool("check", "--task", "t")])
+    monkeypatch.setenv("G6_WE_ARCHIVE", str(tmp_path))
+    loop.main(["--rescore"])
+    loop.tool("run", "--task", "t")
+    loop.main(["--executor", "host", "--rescore"])
+    loop.tool("run", "--task", "t")
+    assert [argv[argv.index("--executor") + 1] for argv in seen] == ["container", "container", "host", "host"]
+    assert all(argv[2] in ("check", "run") for argv in seen)
+
+
+@pytest.mark.parametrize("end", ["limited", "refused"])
+def test_a_repair_that_meets_the_limit_or_is_refused_ends_arm_ks_loop(monkeypatch, end):
     class Docker:
         def sh(self, *a, **kw):
             return ok(b"tree")
@@ -437,8 +520,8 @@ def test_a_repair_that_meets_the_limit_ends_arm_ks_loop(monkeypatch):
     got = we.reviews_until_clean(SimpleNamespace(docker=Docker(), arm="K1"), SimpleNamespace(repo="/w/r"),
                                  SimpleNamespace(write_json=lambda *a: None), "agent", "base", [], "", None, 1.0, 0.0,
                                  lambda n: {"verdict": "defect", "rule": "r", "why": "w", "test": TEST, "seconds": 1.0},
-                                 session=lambda text, name: (asked.append(name), "limited")[1])
-    assert asked == ["repair_stream_1.jsonl"] and got["status"] == "inconclusive" and "limit" in got["reason"]
+                                 session=lambda text, name: (asked.append(name), end)[1])
+    assert asked == ["repair_stream_1.jsonl"] and got["status"] == "inconclusive" and end[:5] in got["reason"]
 
 
 # --- the host mode of a run -------------------------------------------------------------------------------------------------------
@@ -458,6 +541,8 @@ def test_the_host_mode_runs_claude_code_on_the_host_and_every_command_in_a_conta
     assert (run / "final.patch").read_text("utf-8") == "def f():\n    return 1\n"     # the host's edit reached the container
     assert record["executor"] == "host" and record["cost_usd"] == 0.0 and record["subscription_usd_estimate"] == pytest.approx(0.42)
     assert record["claude_version"] == "2.1.318" and not workspaces[0].exists()
+    assert record["host_tools"] == TOOLS and record["host_mcp_servers"] == ["box"]          # a built-in tool is recorded, not refused
+    assert record["models_seen"] == [SONNET] and record["model_switched"] is False and record["model_refusals"] == []
     ended = [r for r in ctx.archive.rows() if r.get("event") == "ended"]
     assert ended[-1]["cost_usd"] == 0.0
     box = json.loads((run / "host_mcp.json").read_text("utf-8"))["mcpServers"]["box"]
