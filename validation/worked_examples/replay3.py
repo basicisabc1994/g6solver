@@ -241,17 +241,18 @@ def run_on(ctx: we.Context, task: we.Task, test: str, patch: Path, ins: Instruct
 
 def _apart(ctx: we.Context, task: we.Task, run: Callable[[str], Any]) -> Any:
     """``run`` in a container made for it alone and removed once it ends, so one is removed before the next is made. A
-    removal that fails (``Checked``) fails the run, as a container still there is none removed; where the run had failed
-    already, its own error is the one raised."""
+    removal that fails (``final_review.removed``, the one rule) fails the run, as a container still there is none removed;
+    where the run had failed already, its own error is the one raised."""
     name = f"g6we-review-{uuid.uuid4().hex[:10]}"
     try:
         fr.container(ctx, task, name)
         got = run(name)
     except BaseException:
-        with contextlib.suppress(RuntimeError, OSError, subprocess.SubprocessError):
-            ctx.docker("rm", "-f", name, timeout=300)
+        fr.removed(ctx, name)
         raise
-    ctx.docker("rm", "-f", name, timeout=300)
+    gone = fr.removed(ctx, name)
+    if gone:
+        raise RuntimeError(gone)
     return got
 
 

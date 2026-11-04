@@ -188,6 +188,18 @@ def codex(pack: Path) -> str:
     return got.stdout.decode("utf-8", errors="replace")
 
 
+def removed(ctx: we.Context, name: str) -> str:
+    """A replay's review container removed (``docker rm -f``): "" where it was, else why not. The one rule for every replay's
+    containers, its reviewer's step (``_step``) and its test runs (``replay3._apart``) alike: a container a review could not
+    remove fails that review, so nothing it gave is counted and it is made again (replay 6's follow-up reviews 1 and 2,
+    finding 3). The frozen review (``review``) is left as it ran."""
+    try:
+        done = ctx.docker("rm", "-f", name, timeout=300)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        return f"the review's container could not be removed: {type(exc).__name__}: {exc}"[:400]
+    return "" if done.returncode == 0 else f"the review's container could not be removed (docker rm exited {done.returncode})"
+
+
 def container(ctx: we.Context, task: we.Task, name: str) -> None:
     """A review's own container, as ``review`` makes the frozen review's: from the agent's image, never the oracle's, with no
     network."""
@@ -251,8 +263,10 @@ def _step(ctx: we.Context, task: we.Task, patch: Path, title: str, text: str, pr
         if asking:
             found["failed_at"] = "reviewer"
     finally:
-        ctx.docker("rm", "-f", name, timeout=300)
+        gone = removed(ctx, name)
         shutil.rmtree(pack, ignore_errors=True)
+    if gone and not found.get("error"):                # a container still there fails the review (``removed``)
+        found["error"], base, now = gone, None, None
     return found, base, now
 
 

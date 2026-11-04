@@ -11,10 +11,12 @@ import ast
 import hashlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -731,3 +733,132 @@ def test_follow_up_review_1_finding_4_a_timeout_ends_a_process_whose_parent_had_
         else:
             time.sleep(max(0, 9 - (time.monotonic() - started)))
     assert not alive, "the probe overran, and a process it started outlived it"
+
+# --- follow-up review 2 ---------------------------------------------------------------------------------------------------------
+def test_follow_up_review_2_finding_1_a_json_text_whose_key_is_an_expected_value_is_masked():
+    got, text = _user(f"A = '{{\"R1_SECRET\": 0}}'\n{OBSERVE}", [SECRET, HALF])
+    assert text == f"A = MASKED.literal\n{OBSERVE}" and got["masked"] == 1
+
+
+@pytest.mark.parametrize(("probe", "kept"), [
+    ('class Marker:\n    """R1 a marker type."""\n' + OBSERVE, "class Marker:\n    pass\n"),
+    ("def helper():\n    'R1 helps'\n" + OBSERVE, "def helper():\n    pass\n"),
+    ("if True:\n    'R1 note'\nelse:\n    'R1 other'\n" + OBSERVE, "if True:\n    pass\nelse:\n    pass\n"),
+    ('class Marker:  "R1 inline"\n' + OBSERVE, "class Marker:  pass\n"),
+    ('"R1 first"; A = 2\n' + OBSERVE, "pass; A = 2\n")])
+def test_follow_up_review_2_finding_2_a_string_statement_stands_as_pass_so_what_reader_2_sees_parses(probe, kept):
+    """Each statement that is a string alone stands as ``pass``, a statement where a statement was, so no suite is left empty
+    and no line begins with a ";"; and what reader 2 is shown is read by Python's parser whether or not anything was masked."""
+    got, text = _user(probe, [SECRET, HALF])
+    ast.parse(text)
+    assert text.startswith(kept) and "R1" not in text and got["masked"] == 0
+
+
+def test_follow_up_review_2_finding_3_reader_1s_container_that_was_not_removed_fails_the_review(tmp_path):
+    class Docker:
+        def __init__(self):
+            self.live, self.removals = set(), []
+
+        def __call__(self, *args, **kwargs):
+            if args[:2] == ("run", "-d"):
+                self.live.add(args[args.index("--name") + 1])
+            if args[:2] == ("rm", "-f"):
+                self.removals.append(args[2])
+                return subprocess.CompletedProcess(args, 1, b"", b"container removal failed")
+            if "archive" in args:
+                data = io.BytesIO()
+                with tarfile.open(fileobj=data, mode="w"):
+                    pass
+                return subprocess.CompletedProcess(args, 0, data.getvalue(), b"")
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    def critic(pack):
+        proof = (pack / "issue.txt").read_text("utf-8").splitlines()[0]
+        return f"READ: {proof}\nRULE: No rule.\nVERDICT: none\nWHY: No model.\n"
+
+    docker = Docker()
+    ctx = SimpleNamespace(docker=docker, g6={"commit": "0" * 40}, variant=we.ROUND3, archive=SimpleNamespace(root=tmp_path),
+                          critic=critic)
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "final.patch").write_text("fake patch", encoding="utf-8")
+    row = {"task": "black-5634", "run": "run"}
+    [record] = r6.review_bug(ctx, tmp_path, we.task_by_id(row["task"]), [row], "Issue", "No rule.",
+                             caller=SimpleNamespace(complete=_no_reader))
+    assert docker.live and docker.removals == list(docker.live)
+    assert record["said"] == "failed" and not fr.counts(record) and "removed" in record["error"]
+
+
+def test_the_one_rule_for_a_review_container_removed_or_not():
+    ok = SimpleNamespace(docker=lambda *a, **k: subprocess.CompletedProcess(a, 0, b"", b""))
+    failed = SimpleNamespace(docker=lambda *a, **k: subprocess.CompletedProcess(a, 1, b"", b"no"))
+
+    def raises(*a, **k):
+        raise RuntimeError("docker rm in the review exited 1")
+
+    assert fr.removed(ok, "g6we-review-x") == ""
+    assert "could not be removed" in fr.removed(failed, "g6we-review-x")
+    assert "could not be removed" in fr.removed(SimpleNamespace(docker=raises), "g6we-review-x")
+
+
+def test_follow_up_review_2_finding_4_the_probes_interpreter_runs_no_startup_code_of_the_project():
+    """``-I`` (no PYTHONPATH, no user site, no script folder on the path) and ``-S`` (no site, so no sitecustomize, no .pth):
+    nothing of the project runs before the probe's process is held, and its path is the one pytest sends."""
+    space = {"__name__": "follow_up_compiled"}
+    exec(r6.compile_test("def observe(case):\n    return {'result': 'ok'}\n", {"x": [0]},
+                         {(r6.canon({"x": 0}), "result"): "ok"}), space)
+    started = []
+
+    def popen(args, **kwargs):
+        started.append(args)
+        raise OSError("not started in this test")
+
+    space["subprocess"] = SimpleNamespace(Popen=popen, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL,
+                                          TimeoutExpired=subprocess.TimeoutExpired)
+    assert space["_g6_ask"]() == (None, "the probe's process did not start")
+    assert started[0][1:4] == ["-I", "-S", "-c"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a Windows job object; POSIX starts the probe's session before it runs anything")
+def test_a_startup_module_of_the_project_cannot_start_a_process_before_the_probe_is_held(tmp_path, monkeypatch):
+    import ctypes
+    from ctypes import wintypes
+    pid_file = tmp_path / "started.json"
+    (tmp_path / "sitecustomize.py").write_text(
+        "import json, subprocess, sys\nfrom pathlib import Path\n"
+        "p = subprocess.Popen([sys.executable, '-S', '-c', 'import time; time.sleep(4)'], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        f"Path({str(pid_file)!r}).write_text(json.dumps(p.pid), encoding='ascii')\n", encoding="utf-8")
+    space = {"__name__": "follow_up_compiled"}
+    exec(r6.compile_test("import time\ndef observe(case):\n    time.sleep(10)\n    return {'result': 'ok'}\n", {"x": [0]},
+                         {(r6.canon({"x": 0}), "result"): "ok"}), space)
+    space["_G6_SECONDS"] = 0.5
+    hold = space["_g6_hold"]
+
+    def hold_late(child):
+        deadline = time.monotonic() + 3
+        while not pid_file.is_file() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return hold(child)
+
+    space["_g6_hold"] = hold_late
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    started, handle, alive = time.monotonic(), None, False
+    try:
+        answer_, why = space["_g6_ask"]()
+        assert answer_ is None and "ran past" in why, why
+        if pid_file.is_file():
+            handle = kernel.OpenProcess(0x100000, False, json.loads(pid_file.read_text("ascii")))
+            alive = bool(handle) and kernel.WaitForSingleObject(handle, 0) == 258
+    finally:
+        if handle:
+            assert kernel.WaitForSingleObject(handle, 10000) == 0, "the descendant must end before this test does"
+            kernel.CloseHandle(handle)
+        else:
+            time.sleep(max(0, 8 - (time.monotonic() - started)))
+    assert not pid_file.is_file() and not alive, "the project's startup module ran in the probe's interpreter"

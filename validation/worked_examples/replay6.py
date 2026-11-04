@@ -320,8 +320,9 @@ def _telling(rules: Sequence[Mapping[str, Any]]) -> tuple[set[str], set[str], st
 
 
 def _holds(value: Any, rows: set[str]) -> bool:
-    """Whether a JSON value is one of these rows or holds one, at any depth."""
-    parts = value if isinstance(value, list) else value.values() if isinstance(value, dict) else ()
+    """Whether a JSON value is one of these rows or holds one, at any depth: an object's keys as well as its values (follow-up
+    review 2, finding 1)."""
+    parts = value if isinstance(value, list) else [*value, *value.values()] if isinstance(value, dict) else ()
     return canon(value) in rows or any(_holds(part, rows) for part in parts)
 
 
@@ -369,13 +370,14 @@ WITHHELD = "(the probe is withheld: masking what would tell reader 1's expectati
 
 def _shown(probe: str, rules: Sequence[Mapping[str, Any]] = ()) -> tuple[str, int] | None:
     """The probe as reader 2 is shown it, and how many of its literals were masked. Its text, with its newlines as Python reads
-    them, less every comment, as Python's own tokenizer reads one, and every statement that is a string alone (``_inert``), as
-    Python's own parser reads one, so no text of reader 1's that does nothing as the probe runs reaches reader 2; and each
-    literal that tells one of the expectations of ``rules`` (``_masks``) replaced by ``MASK``. What is shown is read again by
-    Python's own parser, and where it cannot read it (a sign before a mask in a ``case``, which allows a sign only before a
-    number), ``WITHHELD`` is shown in its place, never the text. None where the tokenizer cannot read the probe. A probe the
-    parser cannot read loses its comments alone (``parse_model`` refuses one: it cannot run, and none of its literals can be
-    found)."""
+    them, less every comment, as Python's own tokenizer reads one, and with every statement that is a string alone
+    (``_inert``), as Python's own parser reads one, standing as ``pass``, a statement where a statement was, so no text of
+    reader 1's that does nothing as the probe runs reaches reader 2 and no suite is left empty; and each literal that tells
+    one of the expectations of ``rules`` (``_masks``) replaced by ``MASK``. What is shown is read again by Python's own
+    parser, whether or not anything was masked, and where it cannot read it (a sign before a mask in a ``case``, which allows a
+    sign only before a number), ``WITHHELD`` is shown in its place, never the text. None where the tokenizer cannot read the
+    probe. A probe the parser cannot read loses its comments alone (``parse_model`` refuses one: it cannot run, and none of
+    its literals can be found)."""
     text = probe.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
     try:
@@ -392,7 +394,7 @@ def _shown(probe: str, rules: Sequence[Mapping[str, Any]] = ()) -> tuple[str, in
     def edit(node: ast.AST, new: str) -> tuple[tuple[int, int], tuple[int, int], str]:
         return at(node.lineno, node.col_offset), at(node.end_lineno, node.end_col_offset), new
 
-    edits += [edit(node, "") for node in nodes if _inert(node)]
+    edits += [edit(node, "pass") for node in nodes if _inert(node)]   # a statement where a statement was
     edits += [edit(node, MASK) for node in (_masks(nodes, _telling(rules)) if rules else ())]
     starts = list(itertools.accumulate((len(line) + 1 for line in lines), initial=0))
     spans = [(starts[row - 1] + column, starts[end_row - 1] + end_column, new)
@@ -404,7 +406,7 @@ def _shown(probe: str, rules: Sequence[Mapping[str, Any]] = ()) -> tuple[str, in
             kept.append(text[done:start] + new)
             done, masked = end, masked + (new == MASK)
     shown = "".join(kept) + text[done:]
-    return (shown if not masked or tree is None or _tree(shown) is not None else WITHHELD), masked
+    return (shown if tree is None or _tree(shown) is not None else WITHHELD), masked
 
 
 def _bare(probe: str) -> str | None:
@@ -644,7 +646,9 @@ def _g6_ask():
     path = [entry for entry in sys.path if isinstance(entry, str)]
     sent = json.dumps({"probe": _G6_PROBE, "cases": list(cases.values()), "path": path}).encode("ascii")
     try:
-        child = subprocess.Popen([sys.executable, "-c", _G6_CHILD], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        # -I and -S: no PYTHONPATH, user site, site, sitecustomize or .pth file, so nothing of the project runs as the
+        # interpreter starts, before its process is held (_g6_hold); its path is the one sent (follow-up review 2, finding 4).
+        child = subprocess.Popen([sys.executable, "-I", "-S", "-c", _G6_CHILD], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.DEVNULL, **_G6_APART)
     except OSError:
         return None, "the probe's process did not start"
