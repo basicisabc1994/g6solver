@@ -2423,3 +2423,42 @@ tests in round 3's replay records writes outside a temporary folder. The count l
 runs as registered and reports the same count for its own tests.
 
 **When.** Replay 6's development check waits for the follow-up's review loop. It still runs after replay 5.
+
+## 2026-11-04 (night): the host session's code review ended at its limit; a follow-up comes before the host pilot
+
+**The loop.** `claude/host-author` had four Codex reviews and three repairs (0bf7fcd, 1e4a95d, ddf1d0b). The reviews found 23, 12,
+9 and 6. Every finding was reproduced by its own test before it was counted. The loop never reached a clean review. All 694
+saved verdicts of the round 3 archive read the same under its code as before it.
+
+**Rejected or recorded, with the reason.**
+- Review 1, finding 21: a timing bound that counted cleanup. Rejected: the test was flaky, not the code.
+- Review 1, finding 23: the container K1 path is kept as it is. Recorded as a limit.
+- Review 2, finding 3: a launcher started outside G6's process tree. Rejected: no real path starts one there.
+- Review 3, finding 2: `process_tree._Tree.kill` called twice is not idempotent on Windows. That file is bound, so it goes on
+  the issuance list.
+- Review 4, finding 3: a run's ending changes between two reads of it. Rejected: `loop.one` reads only after the runner's
+  process has returned, so only a second process writing the same run's folder could reach it, and none does.
+
+**Open from review 4, reproduced on ddf1d0b.** They are repaired as their own change, `claude/host-author-followup`, test
+first, with its own review loop. Review 4's tests are its first failing tests.
+1. A proxy variable is passed to the host session by its name, and its value can carry a password. No proxy variable is set
+   on the study machine, so no run here was exposed.
+2. A file written while the workspace is packed for a box run can be left out of that run without a refusal. The scored
+   patch is read from the final tree, so no score moves; one test run can see an older tree.
+4. Claude Code's refusal stop reason on an assistant message is not read as a refusal. Such a run ends `error`, and so it is
+   scored as a failed run, not on its patch as registered.
+5. One reader of the finished transcript still splits it its own way, so a line separator inside model text breaks a
+   finished run into `error`. This is a class met before: the earlier repair added `host_lines` and left a consumer outside it.
+6. A file name that the container cannot hold is found only after some files are mirrored, so the container is left part
+   old and part new.
+
+**Decided for that change: remove the root, not the instances.**
+- Every reader of a host transcript goes through one framing function, and a test fails if any other split appears.
+- One recogniser of a model refusal serves both the host path and the earlier one that already read the stop reason.
+- A value is checked as well as a name. A URL carrying a password is not passed on.
+- A pack is checked whole before anything is sent:
+  - every name is one the receiver can hold;
+  - the tree is walked again after packing, and any change is refused, so the model's next call sends it.
+
+**When.** The host pilot on development bugs waits for this loop. It needs containers, so it runs after stage 4 and replay 5
+in any case.
