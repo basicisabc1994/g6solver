@@ -23,6 +23,7 @@ started, by name. The key is read only through ``g6.core.keys`` and passed by na
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -1880,12 +1881,15 @@ def finding_rule(arm: str) -> str:
 
 
 def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
-                        stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any") -> dict[str, Any]:
+                        stop: float, started: float, critique: Callable[[int], dict[str, Any]], finding: str = "any",
+                        after_step: bool = False) -> dict[str, Any]:
     """Arm K (PLAN.md, 2026-11-01): plain Claude Code, then the patch is read by another model family, repaired in the same session if
     the reader's test fails on it, and read again, until a reader reproduces nothing. One review saw one layer of a defect, so one
     repair stopped there. The agent may reject a finding, and leaving the code as it was ends the loop. No scout, no probes, no G6.
     With ``finding`` "parent" (K2, PLAN.md, 2026-11-04, evening), each round's test is also run on the parent in a container of its
-    own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back."""
+    own, and only the cases that failed there and still fail go back; a parent run with no result sends nothing back.
+    ``after_step``: K3's rule step ran before the loop, and the patch review 1 reads is saved already as ``rule.patch``, so round 1
+    saves none and ``round-1.patch`` stays the first session's."""
     def tree() -> str:
         return out(ctx.docker.sh(agent, "git status --porcelain; git diff", workdir=task.repo, timeout=120))
 
@@ -1894,7 +1898,8 @@ def reviews_until_clean(ctx: Context, task: Task, run: Any, agent: str, base: st
     rounds, failing, reason, verdicts, seconds, broken = 0, [], "", [], 0.0, False
     for n in range(1, MAX_REPAIRS + 2):
         rounds = n
-        keep_first_patch(ctx, task, agent, base, n)
+        if n > 1 or not after_step:
+            keep_first_patch(ctx, task, agent, base, n)
         critic = critique(n)
         verdicts.append(critic.get("verdict"))
         seconds += float(critic.get("seconds") or 0.0)
@@ -1961,6 +1966,48 @@ def review_once(ctx: Context, task: Task, run: Any, agent: str, docker_args: lis
         failing = check()
     return {"status": "inconclusive" if failing else "no_counterexample_in_domain", "rounds": rounds, "reason": "",
             "failing": sorted(failing)[:40], "critic": {k: critic.get(k) for k in ("verdict", "seconds", "error")}}
+
+
+# --- arm K3: K2 with the author's rule step after the first patch (PLAN.md, 2026-11-05, morning, later, items 1 and 4) ----------
+RULE_STEP_ARMS = ("K3",)
+#: What the same session is told after its first patch is saved; its digest is pinned by a test and recorded in each run.
+RULE_STEP = """Before you finish: list each behaviour your change keeps on the code path it touches. For each one, find the
+reference the issue gives for it: the words of the issue, the old version's rule, or a parent or sibling class the issue
+names. Write one test that checks the whole rule against that reference, every case the issue or the reference fixes, not
+only the issue's own example, and run it. Where the reference and your code disagree, fix the code. Where the issue's own
+example and the reference it names disagree, say so in your reply and follow the reference. Then reply with the list and
+what you changed."""
+RULE_DIGEST = hashlib.sha256(RULE_STEP.encode("utf-8")).hexdigest()[:16]
+RULE_PATCH = "rule.patch"      # the tree after the step, in ``rounds`` beside each round's patch, scored by ``check`` as "rule"
+
+
+def rule_led(arm: str) -> bool:
+    """Arm K3: K2's loop, with the rule step between the first session and the first review."""
+    return arm in RULE_STEP_ARMS
+
+
+def first_prompt_check(task: Task, title: str, text: str, sent: str) -> tuple[str, str]:
+    """The first prompt a K3 run sends, against what arm A's prompt builder gives for the same task, title and issue text, the
+    text as this run read it (with the issue's discussion, as every K arm's: ``gets_thread``): its sha256, and "" when the two
+    digests are the same, else why the run is refused. A first prompt that is not arm A's would make a first patch that is not
+    Claude Code alone, so the within-run comparison could not read it."""
+    got = hashlib.sha256(sent.encode("utf-8")).hexdigest()
+    want = hashlib.sha256(prompt(task, title, text, "A").encode("utf-8")).hexdigest()
+    if got == want:
+        return got, ""
+    return got, (f"the first prompt (sha256 {got[:16]}) is not arm A's for this task (sha256 {want[:16]}): its first patch "
+                 "would not be Claude Code alone, so the run is refused before the agent starts and is never scored")
+
+
+def rule_step(ctx: Context, task: Task, run: Any, agent: str, base: str, docker_args: list[str], key: str, tally: c.Tally,
+              stop: float, started: float) -> str:
+    """Arm K3's step, after the first patch is saved as ``round-1.patch``: the same session resumed with ``RULE_STEP``, as a
+    repair resumes it, on the run's one clock, tally and stop, so its turns and spend count against the run's allowance. Then
+    the tree is saved as ``RULE_PATCH``. Returns how the session ended, as ``read_stream`` says ("" when it ran to its end)."""
+    ended = run_session(ctx, run, agent, scout_again(docker_args), key, tally, RULE_STEP, "rule_stream.jsonl",
+                        seconds=max(60.0, c.WALL_CLOCK_S - (time.monotonic() - started)), stop_usd=stop)
+    ctx.docker.sh(agent, diff_script(task.repo, base, f"{WE}/rounds/{RULE_PATCH}"), workdir=task.repo, timeout=300)
+    return ended
 
 
 # --- arms V3 and V4: arm K's loop with the reviewer's test written before any patch (PLAN.md, 2026-11-04) ---------------
@@ -2201,6 +2248,12 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
                         "apply the starting patch")
                 ctx.docker.sh(agent, "rm -f /tmp/we-start.patch", user="root", timeout=60)
         run.write("prompt.txt", text_in)
+        if round3 and rule_led(ctx.arm):    # K3's first session is arm A's, byte for byte, by digest (PLAN.md, 2026-11-05)
+            record["first_prompt_sha256"], why = first_prompt_check(task, title, text, text_in)
+            if why:
+                record["why"] = why
+                status = "refused"
+                return run.finish(record, status)
         args = claude_args(model, cap)
         way_out = DEAD_PROXY if dry else f"http://{px}:{PROXY_PORT}"
         env_names = ["ANTHROPIC_API_KEY", f"HTTPS_PROXY={way_out}", f"HTTP_PROXY={way_out}",
@@ -2254,10 +2307,15 @@ def _run_task(ctx: Context, task: Task, *, dry: bool, cap: float, stop: float) -
             keep_first_patch(ctx, task, agent, base)
             record["repairs"] = review_once(ctx, task, run, agent, docker_args, key, tally, stop, started,
                                             lambda: run_critic(ctx, task, run, agent, base, title, text))
+        stepped = critic_led and rule_led(ctx.arm) and not dry and not ended
+        if stepped:      # K3: the first patch is saved before the step, then the step's patch, then K2's loop on it
+            keep_first_patch(ctx, task, agent, base)
+            ended = rule_step(ctx, task, run, agent, base, docker_args, key, tally, stop, started)
+            record["rule_step"] = {"ended": ended, "instruction": RULE_DIGEST}
         if critic_led and not dry and not ended:
             record["repairs"] = reviews_until_clean(ctx, task, run, agent, base, docker_args, key, tally, stop, started,
                                                     lambda n: run_critic(ctx, task, run, agent, base, title, text, n),
-                                                    finding=finding_rule(ctx.arm))
+                                                    finding=finding_rule(ctx.arm), after_step=stepped)
         if test_led and not dry and not ended:
             record["repairs"] = reviews_with_bug_test(ctx, task, run, agent, base, docker_args, key, tally, stop, started, bug)
         result = tally.result or {}
@@ -2416,6 +2474,13 @@ def amend_control(archive: c.Archive, task_id: str) -> dict[str, Any] | None:
     return found if found and diff and found["record"].get("sha256") == c.sha256_file(diff) else None
 
 
+def scored_patches(rounds: Path) -> list[Path]:
+    """The patches ``check`` scores before the final one, in the order a run made them: each round's (``round-<n>.patch``, by
+    ``n``), and arm K3's patch after its rule step (``RULE_PATCH``), made after round 1's and before review 1."""
+    found = [*rounds.glob("**/round-*.patch"), *rounds.glob(f"**/{RULE_PATCH}")]
+    return sorted(found, key=lambda p: (1, 1) if p.name == RULE_PATCH else (int(p.stem.split("-")[1]), 0))
+
+
 def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool = False) -> dict[str, Any]:
     v = amend_control(ctx.archive, task.id) if amended else latest(ctx.archive, "validate", task.id)
     if v is None:
@@ -2427,7 +2492,7 @@ def check(ctx: Context, task: Task, run_rel: str | None = None, *, amended: bool
     f2p, p2p = v["record"]["fail_to_pass"], v["record"]["pass_to_pass"]
     folder = ctx.archive.start("recheck" if amended else "check", task.id,
                                checked_run=str(src.relative_to(ctx.archive.root)).replace("\\", "/"))
-    patches = [] if amended else sorted((src / "rounds").glob("**/round-*.patch"), key=lambda p: int(p.stem.split("-")[1]))
+    patches = [] if amended else scored_patches(src / "rounds")
     rows = []
     for patch in [*patches, src / "final.patch"]:
         label = patch.stem
