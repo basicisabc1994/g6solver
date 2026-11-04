@@ -3,8 +3,10 @@
 
 **Status: the draw is final, on 2026-11-04, before any of its runs.** 130 bugs from
 74 projects. Tasks are drafted (`tasks_stage5.json`, below); next come the blind determinacy audit, then preparation
-(`images`, `validate`, `selfcheck`, `freecheck`); a bug that fails preparation gives way to the next kept candidate in this
-order, as stage 2's rule says.
+(`images`, `validate`, `selfcheck`, `freecheck`). A bug that fails preparation gives way with no replacement, as stage 5's
+registration says (PLAN.md, "After the draw, in order"); the candidates kept past the stop are not reserves. (Corrected
+2026-11-04, night: this line first said a failed bug gives way to the next kept candidate, which is stage 2's and stage 4's
+rule, not stage 5's.)
 
 ## Tasks drafted
 
@@ -22,7 +24,7 @@ CUDA tests (6), a Python other than the image's 3.12 (4: private-gpt-2394 needs 
 two exo tasks 3.13 only), a non-Python build step (15), very heavy dependencies (22) and services such as Redis, Postgres or
 the network (20). deepspeed-8882's pull request changes no test module, only CI files and `tests/conftest.py`, so it has no
 maintainers' test to fail at the parent. These are not reasons to leave a bug out before preparation: each stays in the draw,
-and one that fails preparation gives way to the next kept candidate, as the rule says.
+and one that fails preparation gives way with no replacement, as the registration says.
 
 ## The rule
 
